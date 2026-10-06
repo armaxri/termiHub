@@ -15,6 +15,7 @@ import { flushAsync } from "@/test/flushAsync";
 import type { RemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFileChannel";
+import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
 import { RemoteDesktopTab } from "./RemoteDesktopTab";
 
 type DragPayload =
@@ -27,6 +28,8 @@ const hoisted = vi.hoisted(() => ({
   session: null as unknown as RemoteDesktopSession,
   channel: vi.fn(),
   upload: vi.fn(),
+  openBrowser: vi.fn(),
+  closeBrowser: vi.fn(),
   info: vi.fn(),
 }));
 
@@ -45,6 +48,9 @@ vi.mock("@/services/api", () => ({
   remoteDesktopMonitorLayout: vi.fn(() => Promise.resolve([])),
   remoteDesktopFileChannel: hoisted.channel,
   remoteDesktopUpload: hoisted.upload,
+  remoteDesktopOpenFileBrowser: hoisted.openBrowser,
+  remoteDesktopCloseFileBrowser: hoisted.closeBrowser,
+  sessionListFiles: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -98,6 +104,14 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   vi.clearAllMocks();
   hoisted.channel.mockResolvedValue(READY);
+  useRemoteDesktopBrowseStore.setState({ sources: {} });
+  hoisted.openBrowser.mockImplementation((_id: string, dir?: string) =>
+    Promise.resolve({
+      channel: READY.status === "ready" ? READY.channel : null,
+      startDir: dir ?? "/home/arne/Desktop",
+    })
+  );
+  hoisted.closeBrowser.mockResolvedValue(undefined);
   hoisted.upload.mockResolvedValue({
     destDir: "/home/arne/Desktop",
     host: "tiger-box",
@@ -220,5 +234,61 @@ describe("RemoteDesktopTab — drop to upload (#4192)", () => {
     expect(q("remote-desktop-files-route")?.textContent).toContain(
       "/home/arne/Desktop on tiger-box"
     );
+  });
+});
+
+describe("RemoteDesktopTab — browse remote files (#4193)", () => {
+  async function openBrowse() {
+    act(() => q("remote-desktop-files-btn")?.click());
+    await flushAsync();
+    act(() => q("remote-desktop-files-browse")?.click());
+    await flushAsync();
+  }
+
+  it("opens the File Browser on the side channel at the upload folder", async () => {
+    useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: true });
+    await render("active");
+    await openBrowse();
+    expect(hoisted.openBrowser).toHaveBeenCalledWith(SID, "/home/arne/Desktop");
+    const source = useRemoteDesktopBrowseStore.getState().sources[tabId];
+    expect(source).toMatchObject({ sessionId: SID, dir: "/home/arne/Desktop" });
+    expect(source.channel.host).toBe("tiger-box");
+    expect(useAppStore.getState().sidebarView).toBe("files");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+    // The popover hands over to the sidebar.
+    expect(q("remote-desktop-files")).toBeNull();
+  });
+
+  it("gives a view-only session no entry point", async () => {
+    await render("active", true);
+    expect(q("remote-desktop-files-btn")).toBeNull();
+    expect(q("remote-desktop-files-browse")).toBeNull();
+    expect(hoisted.openBrowser).not.toHaveBeenCalled();
+  });
+
+  it("records nothing when the open is refused", async () => {
+    hoisted.openBrowser.mockRejectedValue("SFTP is not enabled on tiger-box");
+    await render("active");
+    await openBrowse();
+    expect(useRemoteDesktopBrowseStore.getState().sources[tabId]).toBeUndefined();
+  });
+
+  it("re-attaches the browser after a reconnect, keeping its folder", async () => {
+    await render("active");
+    await openBrowse();
+    hoisted.openBrowser.mockClear();
+    await render("reconnecting");
+    await render("active");
+    expect(hoisted.openBrowser).toHaveBeenCalledWith(SID);
+    expect(useRemoteDesktopBrowseStore.getState().sources[tabId]?.openCount).toBe(1);
+  });
+
+  it("closes the browser source with the session", async () => {
+    await render("active");
+    await openBrowse();
+    act(() => root.unmount());
+    root = createRoot(container);
+    expect(hoisted.closeBrowser).toHaveBeenCalledWith(SID);
+    expect(useRemoteDesktopBrowseStore.getState().sources[tabId]).toBeUndefined();
   });
 });
