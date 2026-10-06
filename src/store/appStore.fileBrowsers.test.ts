@@ -654,3 +654,58 @@ describe("stale directory-list responses are dropped by request order (SM-007)",
     expect(currentFileBrowsersView().session.error).toBe("session string err");
   });
 });
+
+describe("a refresh never lands the pane on a path it is leaving (#4017)", () => {
+  it("refreshSession during an in-flight navigation re-lists the navigation's target", async () => {
+    // Regression: the refresh claimed the newest request slot with the pane's
+    // *old* path, so the navigation's own result was dropped as stale and the
+    // pane settled on the directory the user was leaving.
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/", entries: [], loading: false, error: null } });
+    const nav = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => nav.promise)
+      .mockResolvedValueOnce([entry("home-file")]);
+
+    const pNav = useAppStore.getState().navigateSession("sess-1", "/home/me");
+    await useAppStore.getState().refreshSession();
+    nav.resolve([entry("home-file")]);
+    await pNav;
+    await settle();
+
+    expect(vi.mocked(sessionListFiles)).toHaveBeenLastCalledWith("sess-1", "/home/me");
+    expect(currentFileBrowsersView().session.path).toBe("/home/me");
+    expect(currentFileBrowsersView().session.entries.map((e) => e.name)).toEqual(["home-file"]);
+  });
+
+  it("refreshSession lists the new session's home while the pane shows another session", async () => {
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([entry("passwd")]);
+    await useAppStore.getState().navigateSession("sess-old", "/etc");
+    await settle();
+
+    useAppStore.setState({ sessionFileBrowserId: "sess-new" });
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([entry("mine")]);
+    await useAppStore.getState().refreshSession();
+    await settle();
+
+    expect(vi.mocked(sessionListFiles)).toHaveBeenLastCalledWith("sess-new", "~");
+    expect(currentFileBrowsersView().session.path).toBe("~");
+  });
+
+  it("refreshLocal during an in-flight navigation re-lists the navigation's target", async () => {
+    seedFileBrowsers({ local: { path: "/old", entries: [], loading: false, error: null } });
+    const nav = deferred<FileEntry[]>();
+    vi.mocked(localListDir)
+      .mockImplementationOnce(() => nav.promise)
+      .mockResolvedValueOnce([entry("new-file")]);
+
+    const pNav = useAppStore.getState().navigateLocal("/new");
+    await useAppStore.getState().refreshLocal();
+    nav.resolve([entry("new-file")]);
+    await pNav;
+    await settle();
+
+    expect(vi.mocked(localListDir)).toHaveBeenLastCalledWith("/new");
+    expect(currentFileBrowsersView().local.path).toBe("/new");
+  });
+});

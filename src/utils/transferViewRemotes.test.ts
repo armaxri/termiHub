@@ -57,4 +57,16 @@ describe("transferRemoteOptions", () => {
     const noFiles = [{ id: "ag", capabilities: { connectionTypes: [typeInfo("local", false)] } }];
     expect(transferRemoteOptions([agentTab], types, noFiles)).toEqual([]);
   });
+
+  it("matches an agent shell tab (`sessionType: shell`) to the agent's `local` type (#4017)", () => {
+    // Regression: the agent reports its shell backend as `local`, while the
+    // New Shell Session tab says `shell`, so the lookup missed and the tab was
+    // treated as unable to browse files.
+    const shellTab = tab("h", {
+      connectionType: "remote-session",
+      config: { type: "remote-session", config: { agentId: "ag", sessionType: "shell" } },
+    });
+    const agents = [{ id: "ag", capabilities: { connectionTypes: [typeInfo("local", true)] } }];
+    expect(transferRemoteOptions([shellTab], types, agents).map((o) => o.tabId)).toEqual(["h"]);
+  });
 });

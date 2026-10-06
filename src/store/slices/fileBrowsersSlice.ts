@@ -45,6 +45,41 @@ export function sessionListErrorMessage(err: unknown): string {
 let localFileBrowserRequestSeq = 0;
 let sessionFileBrowserRequestSeq = 0;
 
+// The directory the newest in-flight listing of each pane is loading, or `null`
+// when none is in flight. A refresh issued while a navigation is still loading
+// must re-list the navigation's *target*, not the pane's last-shown path: the
+// refresh claims the newest request slot, so the navigation's own result is then
+// dropped as stale — and a refresh of the old path would land the pane back on
+// the directory the user was leaving (or, right after a session switch, on the
+// previous session's directory). Cleared when the newest request settles.
+let localPendingPath: string | null = null;
+let sessionPending: { sessionId: string; path: string } | null = null;
+
+// The session whose listing the session pane currently shows. The pane is one
+// shared view across sessions, so after the active session changes its path and
+// entries still belong to the previous session until a listing for the new one
+// lands. Readers use {@link sessionPaneLoadedFor} to tell "already loaded" from
+// "showing another session's directory".
+let sessionPaneOwner: string | null = null;
+
+/**
+ * Whether the session pane is known to show a listing of a session other than
+ * `sessionId` — i.e. the active session changed and no listing for it has landed
+ * yet. `false` while no listing has been recorded at all.
+ */
+export function sessionPaneShowsOtherSession(sessionId: string): boolean {
+  return sessionPaneOwner !== null && sessionPaneOwner !== sessionId;
+}
+
+/** Reset the module-level request bookkeeping (tests only). */
+export function resetFileBrowserRequestStateForTest(): void {
+  localFileBrowserRequestSeq = 0;
+  sessionFileBrowserRequestSeq = 0;
+  localPendingPath = null;
+  sessionPending = null;
+  sessionPaneOwner = null;
+}
+
 /**
  * SFTP / local file-browser domain slice — the first cut of the appStore
  * god-module split (ARCH-001 / FES-011).
@@ -117,10 +152,12 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
     // Claim the latest local-pane request slot (SM-007): a slower earlier
     // listing that resolves after this one must not overwrite it.
     const requestSeq = ++localFileBrowserRequestSeq;
+    localPendingPath = normalizedPath;
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
     try {
       const entries = await localListDir(normalizedPath);
       if (requestSeq !== localFileBrowserRequestSeq) return;
+      localPendingPath = null;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "local",
         path: normalizedPath,
@@ -128,18 +165,23 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== localFileBrowserRequestSeq) return;
+      localPendingPath = null;
       const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
     }
   },
 
   refreshLocal: async () => {
-    const localCurrentPath = currentFileBrowsersView().local.path;
+    // Re-list an in-flight navigation's target rather than the path it is
+    // leaving (see `localPendingPath`).
+    const localCurrentPath = localPendingPath ?? currentFileBrowsersView().local.path;
     const requestSeq = ++localFileBrowserRequestSeq;
+    localPendingPath = localCurrentPath;
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
     try {
       const entries = await localListDir(localCurrentPath);
       if (requestSeq !== localFileBrowserRequestSeq) return;
+      localPendingPath = null;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "local",
         path: localCurrentPath,
@@ -147,6 +189,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== localFileBrowserRequestSeq) return;
+      localPendingPath = null;
       const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
     }
@@ -160,10 +203,13 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
     // Claim the latest session-pane request slot (SM-007): a slower earlier
     // listing that resolves after this one must not overwrite it.
     const requestSeq = ++sessionFileBrowserRequestSeq;
+    sessionPending = { sessionId, path };
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
     try {
       const entries = await sessionListFiles(sessionId, path);
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
+      sessionPending = null;
+      sessionPaneOwner = sessionId;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "session",
         path,
@@ -171,6 +217,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
+      sessionPending = null;
       const message = sessionListErrorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }
@@ -179,12 +226,24 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
   refreshSession: async () => {
     const { sessionFileBrowserId } = get();
     if (!sessionFileBrowserId) return;
-    const sessionCurrentPath = currentFileBrowsersView().session.path;
+    // Which directory to re-list: an in-flight navigation's target (see
+    // `sessionPending`); else, when the pane is known to show another
+    // session's directory, this session's home (the same start the
+    // auto-navigate uses); else the shown path.
+    const sessionCurrentPath =
+      sessionPending?.sessionId === sessionFileBrowserId
+        ? sessionPending.path
+        : sessionPaneShowsOtherSession(sessionFileBrowserId)
+          ? "~"
+          : currentFileBrowsersView().session.path;
     const requestSeq = ++sessionFileBrowserRequestSeq;
+    sessionPending = { sessionId: sessionFileBrowserId, path: sessionCurrentPath };
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
     try {
       const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
+      sessionPending = null;
+      sessionPaneOwner = sessionFileBrowserId;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "session",
         path: sessionCurrentPath,
@@ -192,6 +251,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
+      sessionPending = null;
       const message = sessionListErrorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }

@@ -6,6 +6,7 @@
  */
 
 import type { ConnectionTypeInfo } from "@/services/api";
+import { findAgentConnectionType } from "@/utils/agentSessionType";
 import type { TabContent } from "@/types/terminal";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
@@ -44,7 +45,9 @@ function isBrowsableRemote(
     const agentId = readConfigString(tab.config, "agentId");
     const sessionType = readConfigString(tab.config, "sessionType") ?? "local";
     const agent = agents.find((a) => a.id === agentId);
-    return supportsFileBrowser(sessionType, agent?.capabilities?.connectionTypes ?? []);
+    // Alias-aware: an agent shell tab says `shell`, the registry `local`.
+    const agentTypes = agent?.capabilities?.connectionTypes ?? [];
+    return findAgentConnectionType(agentTypes, sessionType)?.capabilities.fileBrowser ?? false;
   }
   return supportsFileBrowser(tab.connectionType, types);
 }

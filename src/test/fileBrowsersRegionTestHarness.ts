@@ -39,6 +39,7 @@ import {
   type FileBrowsersView,
 } from "@/store/fileBrowsersBridge";
 import type { FileClipboard } from "@/store/appStore";
+import { resetFileBrowserRequestStateForTest } from "@/store/slices/fileBrowsersSlice";
 import type { FileEntry } from "@/types/connection";
 
 /** A partial file-browsers view (per-pane fields optional) for seeding helpers. */
@@ -250,6 +251,9 @@ export function fileBrowsersHarnessTransport(): FakeFileBrowsersTransport {
  */
 export function setupFileBrowsersRegion(initial?: FileBrowsersView): void {
   beforeEach(() => {
+    // The slice's request bookkeeping (in-flight targets, the pane's owning
+    // session) is module state; start every test from a fresh pane.
+    resetFileBrowserRequestStateForTest();
     activeHarness = installFileBrowsersHarness(initial ?? EMPTY_FILE_BROWSERS_VIEW, {
       reflectDispatch: true,
     });
