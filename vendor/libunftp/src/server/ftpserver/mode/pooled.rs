@@ -55,7 +55,7 @@ where
     User: UserDetail + 'static,
 {
     pub async fn listen_pooled(mut self) -> std::result::Result<(), ServerError> {
-        let control_listener = tokio::net::TcpListener::bind(self.bind_address).await?;
+        let control_listener = crate::server::ftpserver::bind_control_listener(self.prebound.take(), self.bind_address).await?;
 
         let mut passive_listeners: Vec<tokio::net::TcpListener> = Vec::new();
         let listener_ip = control_listener.local_addr()?.ip();

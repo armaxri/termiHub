@@ -29,6 +29,11 @@ use std::{
 use unftp_core::auth::{Authenticator, DefaultUser, DefaultUserDetailProvider, UserDetail, UserDetailProvider};
 use unftp_core::storage::{Metadata, StorageBackend};
 
+/// termiHub fork delta (armaxri/termiHub#4100): decides, from the peer address of a freshly
+/// accepted TCP connection, whether a PROXY protocol mode listener serves it. See
+/// [`ServerBuilder::proxy_protocol_peer_filter`].
+pub(crate) type ProxyPeerFilter = Arc<dyn Fn(SocketAddr) -> bool + Send + Sync>;
+
 /// An instance of an FTP(S) server. It aggregates an [`Authenticator`](unftp_core::auth::Authenticator)
 /// implementation that will be used for authentication, and a [`StorageBackend`](unftp_core::storage::StorageBackend)
 /// implementation that will be used as the virtual file system.
@@ -81,6 +86,9 @@ where
     connection_helper: Option<OsString>,
     connection_helper_args: Vec<OsString>,
     binder: Arc<std::sync::Mutex<Option<Box<dyn crate::options::Binder>>>>,
+    // termiHub fork delta (armaxri/termiHub#4100): see `ServerBuilder::proxy_protocol_peer_filter`.
+    #[cfg_attr(not(feature = "proxy_protocol"), allow(dead_code))]
+    proxy_peer_filter: Option<ProxyPeerFilter>,
 }
 
 /// Used to create [`Server`]s.
@@ -116,6 +124,8 @@ where
     connection_helper: Option<OsString>,
     connection_helper_args: Vec<OsString>,
     binder: Option<Box<dyn crate::options::Binder>>,
+    // termiHub fork delta (armaxri/termiHub#4100): see `ServerBuilder::proxy_protocol_peer_filter`.
+    proxy_peer_filter: Option<ProxyPeerFilter>,
 }
 
 impl<Storage> ServerBuilder<Storage, DefaultUser>
@@ -167,6 +177,7 @@ where
             connection_helper: None,
             connection_helper_args: Vec::new(),
             binder: None,
+            proxy_peer_filter: None,
         }
     }
 
@@ -242,6 +253,7 @@ where
             connection_helper: self.connection_helper,
             connection_helper_args: self.connection_helper_args,
             binder: self.binder,
+            proxy_peer_filter: self.proxy_peer_filter,
         }
     }
 }
@@ -300,6 +312,7 @@ where
             connection_helper: None,
             connection_helper_args: Vec::new(),
             binder: None,
+            proxy_peer_filter: None,
         }
     }
 
@@ -382,6 +395,7 @@ where
             connection_helper: self.connection_helper,
             connection_helper_args: self.connection_helper_args,
             binder,
+            proxy_peer_filter: self.proxy_peer_filter,
         })
     }
 
@@ -723,6 +737,40 @@ where
         self
     }
 
+    // termiHub fork delta (armaxri/termiHub#4100): accept filter for PROXY protocol mode.
+    /// Restricts which TCP peers the PROXY protocol mode listener serves.
+    ///
+    /// A PROXY protocol listener trusts the header each connection starts with, so anything
+    /// that can reach the listening port can claim any client address. When the proxy runs on
+    /// the same host, the listener is reachable by every local process, not just the proxy.
+    ///
+    /// The filter is called with the peer address of each accepted connection, before a single
+    /// byte is read. A connection it returns `false` for is logged and closed at once, so its
+    /// header is never parsed. For example, a proxy can bind each outbound socket itself and
+    /// only allow the local addresses it bound.
+    ///
+    /// Only used in PROXY protocol mode (see [`proxy_protocol_mode`](Self::proxy_protocol_mode)).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use libunftp::ServerBuilder;
+    /// use unftp_sbe_fs::Filesystem;
+    ///
+    /// let server = ServerBuilder::new(Box::new(|| Filesystem::new("/tmp").unwrap()))
+    ///     .proxy_protocol_mode(2121)
+    ///     .proxy_protocol_peer_filter(|peer| peer.ip().is_loopback())
+    ///     .build();
+    /// ```
+    #[cfg(feature = "proxy_protocol")]
+    pub fn proxy_protocol_peer_filter<F>(mut self, filter: F) -> Self
+    where
+        F: Fn(SocketAddr) -> bool + Send + Sync + 'static,
+    {
+        self.proxy_peer_filter = Some(Arc::new(filter));
+        self
+    }
+
     /// Allows telling libunftp when and how to shutdown gracefully.
     ///
     /// The passed argument is a future that resolves when libunftp should shut down. The future
@@ -936,8 +984,45 @@ where
     ///
     #[tracing_attributes::instrument]
     pub async fn listen<T: Into<String> + Debug>(self, bind_address: T) -> std::result::Result<(), ServerError> {
-        let logger = self.logger.clone();
         let bind_address: SocketAddr = bind_address.into().parse()?;
+        self.listen_on(bind_address, None).await
+    }
+
+    // termiHub fork delta (armaxri/termiHub#4100): serve on a listener the caller bound.
+    /// Runs the server like [`listen`](Server::listen), but accepts control connections (and, in
+    /// PROXY protocol mode, all connections) on a listener the caller has already bound.
+    ///
+    /// The caller owns the socket from the start: there is no window between picking a free
+    /// port and libunftp binding it in which another process could take the port, and the
+    /// caller knows the bound address before the server runs. In pooled mode the passive
+    /// listeners are bound on the listener's IP, as with [`listen`](Server::listen).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use libunftp::ServerBuilder;
+    /// use unftp_sbe_fs::Filesystem;
+    /// use tokio::runtime::Runtime;
+    ///
+    /// let mut rt = Runtime::new().unwrap();
+    /// rt.spawn(async {
+    ///     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    ///     println!("serving on {}", listener.local_addr().unwrap());
+    ///     let server = ServerBuilder::new(Box::new(|| Filesystem::new("/srv/ftp").unwrap())).build().unwrap();
+    ///     server.listen_with_listener(listener).await
+    /// });
+    /// // ...
+    /// drop(rt);
+    /// ```
+    pub async fn listen_with_listener(self, listener: tokio::net::TcpListener) -> std::result::Result<(), ServerError> {
+        let bind_address = listener.local_addr()?;
+        self.listen_on(bind_address, Some(listener)).await
+    }
+
+    // termiHub fork delta (armaxri/termiHub#4100): the body of upstream's `listen`, which binds
+    // `bind_address` unless a `prebound` listener is passed (see `bind_control_listener`).
+    async fn listen_on(self, bind_address: SocketAddr, prebound: Option<tokio::net::TcpListener>) -> std::result::Result<(), ServerError> {
+        let logger = self.logger.clone();
         let shutdown_notifier = Arc::new(shutdown::Notifier::new());
 
         let failed_logins = self.failed_logins_policy.as_ref().map(|policy| FailedLoginsCache::new(policy.clone()));
@@ -950,8 +1035,10 @@ where
                 Box::pin(
                     listen_prebound::PreboundListener {
                         bind_address,
+                        prebound,
                         logger: self.logger.clone(),
                         external_control_port,
+                        peer_filter: self.proxy_peer_filter.clone(),
                         options: (&self).into(),
                         switchboard,
                         shutdown_topic: shutdown_notifier.clone(),
@@ -966,8 +1053,10 @@ where
                 Box::pin(
                     listen_prebound::PreboundListener {
                         bind_address,
+                        prebound,
                         logger: self.logger.clone(),
                         external_control_port: None,
+                        peer_filter: None,
                         options: (&self).into(),
                         switchboard,
                         shutdown_topic: shutdown_notifier.clone(),
@@ -979,6 +1068,7 @@ where
             ListenerMode::Legacy => Box::pin(
                 listen::Listener {
                     bind_address,
+                    prebound,
                     logger: self.logger.clone(),
                     options: (&self).into(),
                     shutdown_topic: shutdown_notifier.clone(),
@@ -1133,6 +1223,15 @@ where
     }
 }
 
+// termiHub fork delta (armaxri/termiHub#4100): every listener mode binds its control listener
+// through this, so `Server::listen_with_listener` can hand in one the caller already bound.
+async fn bind_control_listener(prebound: Option<tokio::net::TcpListener>, bind_address: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
+    match prebound {
+        Some(listener) => Ok(listener),
+        None => tokio::net::TcpListener::bind(bind_address).await,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(in crate::server) enum ListenerMode {
     Legacy,
@@ -1221,5 +1320,54 @@ mod tests {
             .build();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("user_detail_provider"));
+    }
+
+    // termiHub fork delta (armaxri/termiHub#4100): `listen_with_listener` and
+    // `proxy_protocol_peer_filter`.
+
+    /// Start a PROXY protocol server on a prebound loopback listener with `filter`, send one
+    /// control connection with a PROXY header and return what the server answered.
+    #[cfg(feature = "proxy_protocol")]
+    async fn proxy_greeting_with_filter(filter: impl Fn(SocketAddr) -> bool + Send + Sync + 'static) -> Vec<u8> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = builder().proxy_protocol_mode(2121).proxy_protocol_peer_filter(filter).build().unwrap();
+        let task = tokio::spawn(server.listen_with_listener(listener));
+
+        // No retry loop: the listener is bound before the server task runs.
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // A refused connection may be reset before or after this write; either way the server
+        // must not answer it.
+        let _ = client.write_all(b"PROXY TCP4 192.0.2.7 192.0.2.1 40000 2121\r\n").await;
+        let mut reply = Vec::new();
+        let mut buf = [0u8; 64];
+        let read = tokio::time::timeout(Duration::from_secs(5), async {
+            while !reply.ends_with(b"\r\n") {
+                match client.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => reply.extend_from_slice(&buf[..n]),
+                }
+            }
+        })
+        .await;
+        task.abort();
+        assert!(read.is_ok(), "server neither answered nor closed the connection");
+        reply
+    }
+
+    #[cfg(feature = "proxy_protocol")]
+    #[tokio::test]
+    async fn proxy_peer_filter_allowing_the_peer_serves_it() {
+        let reply = proxy_greeting_with_filter(|peer| peer.ip().is_loopback()).await;
+        assert!(reply.starts_with(b"220"), "reply: {:?}", String::from_utf8_lossy(&reply));
+    }
+
+    #[cfg(feature = "proxy_protocol")]
+    #[tokio::test]
+    async fn proxy_peer_filter_refusing_the_peer_closes_it_unserved() {
+        let reply = proxy_greeting_with_filter(|_| false).await;
+        assert!(reply.is_empty(), "refused peer was served: {:?}", String::from_utf8_lossy(&reply));
     }
 }
