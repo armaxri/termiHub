@@ -217,6 +217,7 @@ impl Server {
             session_id,
             config_json,
             settings_json,
+            data_dir,
         } = create;
         let output = SessionOutput::new(session_id, Arc::clone(&self.channel));
         let sender = shim::output_sender(&output);
@@ -228,8 +229,7 @@ impl Server {
                 Arc::clone(&self.plugin_shutdown),
             );
             let handle = SessionServices::handle(&state);
-            let data_dir = self.configure.data_dir.as_deref().unwrap_or("");
-            let context = PluginHostContext::new(&self.configure.host_version, data_dir, &handle);
+            let context = PluginHostContext::new(&self.configure.host_version, &data_dir, &handle);
             let result = self.library.create_backend_with_context(
                 &config_json,
                 &settings_json,

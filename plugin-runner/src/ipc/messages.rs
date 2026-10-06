@@ -38,9 +38,6 @@ pub struct Configure {
     pub plugin_id: String,
     /// The application version handed to ABI 1.1 plugins.
     pub host_version: String,
-    /// The plugin's private data directory (ABI 1.1 host context), already
-    /// created by the host. `None` for an ABI 1.0 plugin.
-    pub data_dir: Option<String>,
 }
 
 /// Runner → host: which confinement layers the runner applied before loading
@@ -131,6 +128,10 @@ pub struct CreateSession {
     pub config_json: String,
     /// The plugin-level settings JSON (PLG-008).
     pub settings_json: String,
+    /// The plugin's private data directory (ABI 1.1 host context), already
+    /// created by the host; empty when there is none (an ABI 1.0 plugin, whose
+    /// ABI is only known after `Loaded`).
+    pub data_dir: String,
 }
 
 /// A plugin error as it crosses the wire: the ABI status code plus the text.

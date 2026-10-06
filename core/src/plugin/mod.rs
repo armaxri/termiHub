@@ -75,6 +75,7 @@ mod package;
 mod platform;
 mod plugin_index;
 mod plugin_state;
+pub mod sandbox;
 mod security;
 mod settings_migration;
 mod signature;

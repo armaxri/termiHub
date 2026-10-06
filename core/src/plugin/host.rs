@@ -55,13 +55,14 @@ pub use termihub_plugin_runner::loader::{BackendLoadOptions, LoadedPluginInfo};
 use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistry};
 
 use super::capabilities::ConnectionPolicy;
-use super::connection::{PluginConnectionType, SessionHostContext};
+use super::connection::{PluginConnectionType, PluginRuntime, SessionHostContext};
 use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
 use super::log_rate_limit::PluginLogLimiter;
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
 use super::plugin_state::{self, PluginStateRecord};
+use super::sandbox::{PluginRunnerConfig, SandboxedPluginHandle};
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 use super::signer_change::PackageSigner;
 use super::trust_store::TrustStore;
@@ -276,6 +277,33 @@ pub enum HostError {
         /// The underlying I/O error rendered as a string.
         detail: String,
     },
+
+    /// The out-of-process plugin runner (#4182) could not be started: the
+    /// sidecar binary is missing or not executable, or this platform has no
+    /// runner transport yet.
+    #[error("plugin runner `{path}` could not be started: {detail}")]
+    RunnerUnavailable {
+        /// The runner binary the host tried to start.
+        path: PathBuf,
+        /// Why it could not be started.
+        detail: String,
+    },
+
+    /// The plugin runner violated the IPC protocol, stopped responding during
+    /// the handshake, or exited before reporting a result. It was killed.
+    #[error("plugin runner failed: {0}")]
+    RunnerProtocol(String),
+
+    /// The plugin runner refused or failed to load the plugin library. The
+    /// message is the runner-side loader's, verbatim; `incompatible` keeps the
+    /// ABI/toolchain-vs-load-error distinction the management layer relies on.
+    #[error("{message}")]
+    RunnerLoad {
+        /// Whether the runner reported a version incompatibility.
+        incompatible: bool,
+        /// The loader's message.
+        message: String,
+    },
 }
 
 impl From<LoadError> for HostError {
@@ -325,6 +353,10 @@ impl HostError {
             HostError::IncompatibleAbi(_)
                 | HostError::IncompatibleToolchain(_)
                 | HostError::PlatformUnavailable { .. }
+                | HostError::RunnerLoad {
+                    incompatible: true,
+                    ..
+                }
         )
     }
 }
@@ -893,9 +925,9 @@ const PLUGIN_TYPE_ICON: &str = "puzzle";
 /// library backing it.
 struct HostEntry {
     connection_type: String,
-    /// Held to keep the library loaded for the plugin's lifetime, and to signal
-    /// its sessions on unload.
-    library: Arc<LoadedLibrary>,
+    /// Held to keep the library loaded (or the runner reachable) for the
+    /// plugin's lifetime, and to signal / stop its sessions on unload.
+    runtime: PluginRuntime,
 }
 
 /// The result of driving [`PluginHost::note_failure`]: what the host decided to
@@ -938,6 +970,10 @@ pub struct PluginHost {
     /// context (PLG-014). Defaults to this crate's version; the desktop sets the
     /// app's own via [`with_host_version`](Self::with_host_version).
     host_version: String,
+    /// When set, native plugins run out of process in a
+    /// `termihub-plugin-runner` (#4182) instead of being `dlopen`ed here.
+    /// Opt-in until the plugin OS-sandbox cut-over (concept phase 7).
+    runner: Option<PluginRunnerConfig>,
 }
 
 impl PluginHost {
@@ -954,6 +990,38 @@ impl PluginHost {
             active: Mutex::new(HashSet::new()),
             recovery: Mutex::new(HashMap::new()),
             host_version: env!("CARGO_PKG_VERSION").to_owned(),
+            runner: None,
+        }
+    }
+
+    /// Run native plugin backends out of process through the plugin runner
+    /// (#4182) — or, with `None`, in process (the default). Phase 1 of the
+    /// plugin OS-sandbox rollout: the runner applies no OS sandbox yet and its
+    /// capability bridge refuses every request, so this stays opt-in.
+    #[must_use]
+    pub fn with_runner(mut self, runner: Option<PluginRunnerConfig>) -> Self {
+        self.runner = runner;
+        self
+    }
+
+    /// Whether native plugins run out of process.
+    #[must_use]
+    pub fn runs_out_of_process(&self) -> bool {
+        self.runner.is_some()
+    }
+
+    /// The runner serving plugin `id`, when it is loaded out of process.
+    #[must_use]
+    pub fn sandboxed_plugin(&self, id: &str) -> Option<Arc<SandboxedPluginHandle>> {
+        match &self
+            .loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)?
+            .runtime
+        {
+            PluginRuntime::Sandboxed(handle) => Some(Arc::clone(handle)),
+            PluginRuntime::InProcess(_) => None,
         }
     }
 
@@ -1078,20 +1146,23 @@ impl PluginHost {
         // across the `dlopen`. A legacy unsigned plugin with no install record
         // yields `None` — nothing to bind — as before.
         let expected_digest = self.load_binding(&id, &plugin_dir, &lib_path)?;
-        let library = load_backend_library_with(
-            &lib_path,
-            &BackendLoadOptions {
-                expected_digest: expected_digest.as_deref(),
-                manifest_api_version: Some(&plugin.manifest.api_version),
-                accept_unverified_toolchain,
-            },
-        )?;
+        let options = BackendLoadOptions {
+            expected_digest: expected_digest.as_deref(),
+            manifest_api_version: Some(&plugin.manifest.api_version),
+            accept_unverified_toolchain,
+        };
+        let runtime = match &self.runner {
+            None => PluginRuntime::InProcess(load_backend_library_with(&lib_path, &options)?),
+            Some(config) => {
+                PluginRuntime::Sandboxed(self.start_runner(config, &id, &lib_path, &options)?)
+            }
+        };
 
         // ABI 1.1 host context (PLG-014): a private, host-created data directory
         // plus the app version and plugin-wide cancellation, handed to every
         // session. Built only for a plugin that can read it — a 1.0 plugin gets
         // no directory and exactly the 1.0 call.
-        let host_context = if library.supports(ABI_1_1) {
+        let host_context = if runtime.info().abi_version.supports(ABI_1_1) {
             Some(SessionHostContext {
                 plugin_id: id.clone(),
                 host_version: self.host_version.clone(),
@@ -1100,6 +1171,9 @@ impl PluginHost {
         } else {
             None
         };
+        if let (PluginRuntime::Sandboxed(handle), Some(ctx)) = (&runtime, &host_context) {
+            handle.set_data_dir(ctx.data_dir.clone());
+        }
 
         // Translate the plugin's declared `configSchema` into the form schema the
         // dynamic connection editor renders (#1999). Derived once here and cloned
@@ -1107,7 +1181,7 @@ impl PluginHost {
         let settings_schema =
             super::connection::config_schema_to_settings_schema(&backend.config_schema);
 
-        let lib_for_factory = Arc::clone(&library);
+        let runtime_for_factory = runtime.clone();
         let schema_for_factory = settings_schema;
         // Each session created for this plugin carries its own permission scope,
         // so a host-mediated capability (filesystem path resolution, network, …)
@@ -1139,8 +1213,8 @@ impl PluginHost {
                 move |ct_for_factory, dn_for_factory| {
                     Box::new(move || {
                         Box::new(
-                            PluginConnectionType::new(
-                                Arc::clone(&lib_for_factory),
+                            PluginConnectionType::from_runtime(
+                                runtime_for_factory.clone(),
                                 ct_for_factory.clone(),
                                 dn_for_factory.clone(),
                                 schema_for_factory.clone(),
@@ -1162,7 +1236,7 @@ impl PluginHost {
                 id,
                 HostEntry {
                     connection_type,
-                    library,
+                    runtime,
                 },
             );
         self.active
@@ -1173,6 +1247,40 @@ impl PluginHost {
         // recovery counter so a future, unrelated failure gets a full budget.
         self.clear_recovery(&plugin.manifest.id);
         Ok(())
+    }
+
+    /// Start plugin `id`'s runner and run the load sequence in it. The runner
+    /// receives the same digest binding, manifest mirror and toolchain
+    /// acceptance the in-process loader would have used.
+    fn start_runner(
+        &self,
+        config: &PluginRunnerConfig,
+        id: &str,
+        lib_path: &Path,
+        options: &BackendLoadOptions<'_>,
+    ) -> Result<Arc<SandboxedPluginHandle>, HostError> {
+        let library_path = lib_path
+            .to_str()
+            .ok_or_else(|| {
+                HostError::RunnerProtocol(format!(
+                    "plugin library path `{}` is not valid UTF-8",
+                    lib_path.display()
+                ))
+            })?
+            .to_owned();
+        let configure = termihub_plugin_runner::ipc::Configure {
+            library_path,
+            expected_digest: options.expected_digest.map(str::to_owned),
+            manifest_api_version: options.manifest_api_version.map(str::to_owned),
+            accept_unverified_toolchain: options.accept_unverified_toolchain,
+            plugin_id: id.to_owned(),
+            host_version: self.host_version.clone(),
+        };
+        SandboxedPluginHandle::start(
+            config.clone(),
+            configure,
+            Arc::new(PluginLogLimiter::default()),
+        )
     }
 
     /// The digest `id`'s backend library at `lib_path` must match at load; see
@@ -1217,9 +1325,15 @@ impl PluginHost {
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
         if let Some(entry) = entry {
-            // Tell every live session of this plugin to wind down (ABI 1.1
-            // cancellation): sessions keep the library mapped past this point.
-            entry.library.signal_shutdown();
+            match &entry.runtime {
+                // Tell every live session of this plugin to wind down (ABI 1.1
+                // cancellation): sessions keep the library mapped past this point.
+                PluginRuntime::InProcess(library) => library.signal_shutdown(),
+                // Out of process the teardown is bounded and complete: cancel,
+                // close every session (2 s), `Shutdown` (2 s), kill (concept
+                // "Lifecycle"). The plugin's sessions end with it.
+                PluginRuntime::Sandboxed(handle) => handle.stop(),
+            }
             self.registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -2524,7 +2638,7 @@ mod tests {
                 id.to_string(),
                 HostEntry {
                     connection_type: id.to_string(),
-                    library: lib,
+                    runtime: PluginRuntime::InProcess(lib),
                 },
             );
             host.active.lock().unwrap().insert(id.to_string());
@@ -2532,7 +2646,10 @@ mod tests {
 
         // An independent clone of plug-b's library so we can watch its refcount
         // across plug-a's unload.
-        let b_lib = Arc::clone(&host.loaded.lock().unwrap()["plug-b"].library);
+        let b_lib = match &host.loaded.lock().unwrap()["plug-b"].runtime {
+            PluginRuntime::InProcess(lib) => Arc::clone(lib),
+            PluginRuntime::Sandboxed(_) => unreachable!("inserted in process above"),
+        };
         let b_refs_before = Arc::strong_count(&b_lib);
 
         host.unload("plug-a");

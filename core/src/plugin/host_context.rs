@@ -190,6 +190,31 @@ unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr)
     .unwrap_or(PluginStatus::Panic)
 }
 
+/// Emit one log line a plugin runner forwarded (#4182) through the same
+/// pipeline as the in-process services callback: the plugin-wide rate limit,
+/// sanitisation (control characters, invalid UTF-8, truncation marker) and the
+/// host-trusted `[<id>]` tag. `bytes` must already be bounded to
+/// [`MAX_LOG_MESSAGE_BYTES`]; an invalid `level` is dropped.
+pub(crate) fn emit_runner_log(
+    limiter: &PluginLogLimiter,
+    plugin_id: &str,
+    level: u32,
+    bytes: &[u8],
+    truncated: bool,
+) {
+    let Some(level) = PluginLogLevel::from_wire(level) else {
+        return;
+    };
+    let admission = limiter.admit(plugin_id);
+    if let Some(count) = admission.summary {
+        emit_suppression_summary(plugin_id, count);
+    }
+    if admission.emit {
+        let bounded = &bytes[..bytes.len().min(MAX_LOG_MESSAGE_BYTES)];
+        emit_plugin_log(level, plugin_id, &sanitize_log_message(bounded, truncated));
+    }
+}
+
 /// Turn untrusted plugin log bytes into one safe log line: invalid UTF-8 is
 /// replaced, every control character (newlines included, so a message cannot
 /// forge extra log lines) becomes a space, and a truncation marker is appended
