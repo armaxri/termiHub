@@ -688,6 +688,15 @@ native OS drag pipeline (see [Not covered](#not-covered)).
   it). `dragTo` therefore waits past that teardown window before resolving, so a
   click (or any verb) issued right after a drag sees a settled DOM.
 
+- **Target on top of the source** — when both endpoints are laid out and their
+  centers coincide (a virtualized list mid-re-layout can briefly stack two rows),
+  a wake "toward the target" has no direction: it used to be a zero move, so the
+  sensor stayed pending and the release aborted the press without a drag, a drop
+  or an error (#4110). `dragTo` now waits up to 30 frames for the two to separate,
+  re-reads the press point, and otherwise wakes in a fixed direction. Each
+  `dragTo` writes one durable `test_bridge` line to `termihub.log` with both
+  rects, so a failure artifact shows where the bridge pressed and aimed.
+
 ### Reading form values (`getValue` vs `getAttribute`)
 
 A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,

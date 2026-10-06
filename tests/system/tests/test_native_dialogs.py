@@ -132,11 +132,22 @@ class TestNativeDialogs(
             lambda: self.driver.exists("password-prompt-save-checkbox"),
             what="the password-prompt Save checkbox",
         )
-        self.driver.click("password-prompt-save-checkbox")
+        # The box defaults to *checked* whenever a credential store is active, so
+        # a blind click toggled it OFF and nothing was ever saved — the export then
+        # carried no `$encrypted` section and the vault held only the shared
+        # credential (every OS, nightly 37431203434). Make sure it ends up checked.
+        if not self._save_box_checked():
+            self.driver.click("password-prompt-save-checkbox")
+        self.wait(self._save_box_checked, what="the password-prompt Save box to be checked")
         self.driver.click("password-prompt-connect")
         # The connect to port 1 fails; close any error tab it produced.
         self.close_all_tabs()
         return name
+
+    def _save_box_checked(self) -> bool:
+        """Whether the password prompt's "Save password" box is checked."""
+        state = self.driver.get_attribute("password-prompt-save-checkbox", "aria-checked")
+        return state == "true"
 
     def _import_connections_doc(self, name: str) -> dict:
         """A minimal valid export-format document with one local connection.
@@ -567,13 +578,20 @@ class TestNativeDialogs(
         conn_name = unique_name("ext-conn")
         fixture = self._scratch("external", "shared-connections.json")
         fixture.write_text(
+            # The external-store schema (`ExternalConnectionStore`): a `version`
+            # plus the nested `children` tree, like connections.json. The flat
+            # `folders`/`connections` shape this used to write does not parse, so
+            # the file registered but never loaded a connection.
             json.dumps(
                 {
                     "name": "Shared",
-                    "version": "1",
-                    "folders": [],
-                    "connections": [
-                        {"name": conn_name, "config": {"type": "local", "config": {}}}
+                    "version": "2",
+                    "children": [
+                        {
+                            "type": "connection",
+                            "name": conn_name,
+                            "config": {"type": "local", "config": {}},
+                        }
                     ],
                 }
             ),
@@ -711,7 +729,8 @@ class TestNativeDialogs(
         file is sealed (no saved secret nor the passphrase appears in it), then
         opens Import vault with the file stubbed as the Open pick. The harness
         proves a wrong passphrase is refused, previews with the right one (both
-        credentials are in the file and match the store) and applies the import.
+        credentials — plus any an earlier test in the class saved into the shared
+        store — are in the file and match the store) and applies the import.
 
         Then the overwrite path (#4076, MT-CRED-10): the harness changes the
         shared credential's secret, and the same file is picked again. The
@@ -780,16 +799,21 @@ class TestNativeDialogs(
         self.wait(
             lambda: self.driver.exists("vault-import-preview-panel"), what="the import preview"
         )
-        assert self._preview_counts() == ("2", "0", "0"), (
-            "expected the SSH password and the shared credential, both unchanged; preview: "
-            f"{self._preview_counts()}"
+        # The vault holds every credential in the store, and the store is shared
+        # by the whole class (an earlier test's saved SSH password is in it too),
+        # so the total is "ours plus whatever was already there" — at least the
+        # two this test saved, all matching the store.
+        total, new_count, conflicts = self._preview_counts()
+        assert int(total) >= 2 and (new_count, conflicts) == ("0", "0"), (
+            "expected the SSH password and the shared credential (plus any credential "
+            f"saved earlier in the class), all unchanged; preview: {self._preview_counts()}"
         )
         self._apply_vault_import()
 
         # Overwrite: change the shared secret, then import the file with Replace.
         self._rotate_shared_credential(shared_id, _SHARED_SECRET_CHANGED)
         self._pick_vault_and_preview(target)
-        assert self._preview_counts() == ("2", "0", "1"), (
+        assert self._preview_counts() == (total, "0", "1"), (
             f"expected only the changed shared credential to differ; preview: "
             f"{self._preview_counts()}"
         )
@@ -804,7 +828,7 @@ class TestNativeDialogs(
 
         # The exported secret is back: the same file now matches the store.
         self._pick_vault_and_preview(target)
-        assert self._preview_counts() == ("2", "0", "0"), (
+        assert self._preview_counts() == (total, "0", "0"), (
             "Replace did not restore the exported secret — the file still differs from the "
             f"store; preview: {self._preview_counts()}"
         )

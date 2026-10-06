@@ -54,6 +54,8 @@ const file: FileEntry = {
 
 /** Viewport rects per row (the failing nightly's layout: folder above file). */
 const ROW_TOP: Record<string, number> = { dest: 180, "file.txt": 208 };
+/** Per-test override of the file row's top (e.g. laid out on top of the folder). */
+let fileRowTop: () => number = () => ROW_TOP["file.txt"];
 const ROW_HEIGHT = 28;
 
 function Row({ entry }: { entry: FileEntry }) {
@@ -68,7 +70,8 @@ function Row({ entry }: { entry: FileEntry }) {
 function rectFor(el: Element): DOMRect {
   const row = (el as HTMLElement).closest("[data-row]")?.getAttribute("data-row");
   if (!row || ROW_TOP[row] === undefined) return new DOMRect(0, 0, 0, 0);
-  return new DOMRect(48, ROW_TOP[row], 250, ROW_HEIGHT);
+  const top = row === "file.txt" ? fileRowTop() : ROW_TOP[row];
+  return new DOMRect(48, top, 250, ROW_HEIGHT);
 }
 
 let root: Root;
@@ -78,6 +81,7 @@ const deps = (): BridgeDeps => ({ root: document }) as unknown as BridgeDeps;
 const logged = () => durable.mock.calls.map(([, message]) => message);
 
 beforeEach(() => {
+  fileRowTop = () => ROW_TOP["file.txt"];
   durable.mockReset();
   onDrop.mockReset();
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
@@ -153,7 +157,10 @@ describe("FileBrowserDndProvider — real PointerSensor gesture (#4110)", () => 
           l.startsWith(`end: active=file:${file.path} over=dir:${dest.path}`) && /→ move$/.test(l)
       )
     ).toBe(true);
-    expect(durable.mock.calls.every(([target]) => target === "file_drag")).toBe(true);
+    // Only the provider's drag lines and the bridge's one geometry line per drag.
+    expect(
+      durable.mock.calls.every(([target]) => target === "file_drag" || target === "test_bridge")
+    ).toBe(true);
   });
 
   it("logs a mid-drag window resize as the cancel reason (and drops nothing)", async () => {
@@ -208,4 +215,82 @@ describe("FileBrowserDndProvider — real PointerSensor gesture (#4110)", () => 
     // The provider reset itself: no drag chip is left stuck on screen.
     expect(document.querySelector('[data-testid="file-browser-drag-chip"]')).toBeNull();
   });
+
+  it("reproduces the Windows nightly signature: a press that never moves aborts on release", async () => {
+    // The 2026-10-06 Windows nightly (run 37431203434) logged, for every attempt,
+    //   pending: id=file:…_file.txt at=(154,194) constraint={"distance":8}
+    //   abort before activation: id=file:…_file.txt reason=pointerup
+    // ~180ms apart and nothing else: the bridge's pointer never got 8px from the
+    // press point. Replay that exact sequence — press, the bridge's seven
+    // frame-separated moves all at the press point, release — through the real
+    // PointerSensor: no drag starts, nothing drops, and the abort line now says
+    // how many moves dnd-kit saw and how far the farthest one got.
+    const button = document.querySelector('[data-testid="file-row-file.txt"]')!;
+    const fire = (target: EventTarget, type: string) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          clientX: 154,
+          clientY: 194,
+          pointerId: 1,
+          isPrimary: true,
+          pointerType: "mouse",
+        })
+      );
+    fire(button, "pointerdown");
+    for (let i = 0; i < 7; i++) {
+      fire(document, "pointermove");
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    fire(document, "pointerup");
+
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(logged()).toEqual([
+      `pending: id=file:${file.path} at=(154,194) constraint={"distance":8}`,
+      `abort before activation: id=file:${file.path} reason=pointerup moves=7 farthest=(0,0)`,
+    ]);
+  });
+
+  it("waits for a target laid out on top of the source to separate, then drops (#4110)", async () => {
+    // The nightly pressed the file row at the folder row's spot: the two rows'
+    // centers coincided, so the old wake (`dx / 1 * 12` with dx = 0) never moved
+    // the pointer and the press aborted. Model a re-layout that briefly stacks the
+    // file row on the folder row: dragTo must wait for them to separate and then
+    // press the file row where it really is.
+    let settled = false;
+    setTimeout(() => (settled = true), 120);
+    fileRowTop = () => (settled ? ROW_TOP["file.txt"] : ROW_TOP.dest);
+
+    expect(await dragFileOntoFolder()).toEqual({ ok: true, action: "dragTo" });
+
+    expect(onDrop).toHaveBeenCalledTimes(1);
+    expect(onDrop.mock.calls[0][1]).toBe(dest.path);
+    const lines = logged();
+    expect(lines).toContain(`pending: id=file:${file.path} at=(173,222) constraint={"distance":8}`);
+    expect(
+      lines.some((l) =>
+        /^dragTo file-row-file\.txt \[48,208 250x28\] -> file-row-dest \[48,180 250x28\] — target separated from the source after \d+ frame\(s\)$/.test(
+          l
+        )
+      )
+    ).toBe(true);
+  });
+
+  it("still activates the drag when the target never leaves the source (#4110)", async () => {
+    // If the stacked layout never resolves, the bridge drags anyway with a
+    // fixed-direction wake so dnd-kit activates (instead of a silent pending →
+    // abort) and logs that the target was on top of the source.
+    fileRowTop = () => ROW_TOP.dest;
+
+    expect(await dragFileOntoFolder()).toEqual({ ok: true, action: "dragTo" });
+
+    const lines = logged();
+    expect(lines.some((l) => l.startsWith(`start: active=file:${file.path}`))).toBe(true);
+    expect(lines.some((l) => l.startsWith("abort before activation"))).toBe(false);
+    expect(
+      lines.some((l) => l.includes("target still on top of the source after 30 frame(s)"))
+    ).toBe(true);
+  }, 15000);
 });
