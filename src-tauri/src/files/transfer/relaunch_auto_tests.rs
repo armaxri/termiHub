@@ -246,6 +246,168 @@ fn an_agent_sourced_remote_copy_waits_for_its_source_agent() {
     );
 }
 
+// --- agent-to-agent remote copies wait on both ends (#4158) -------------------
+
+use crate::files::transfer::persist::PersistedAgentTarget;
+use crate::files::transfer::relaunch_agent::{resolve_agent_target, AgentSessionIdentity};
+
+fn agent_target(agent: &str, definition: &str) -> PersistedAgentTarget {
+    PersistedAgentTarget {
+        agent_id: agent.to_string(),
+        remote_session_id: "remote-old".to_string(),
+        definition_id: Some(definition.to_string()),
+    }
+}
+
+/// A remote-to-remote copy from `agent-src` (`def-src`) to `agent-dst`
+/// (`def-dst`).
+fn agent_to_agent_copy(id: &str) -> PersistedTransfer {
+    let mut copy = remote_copy(id, "conn-src", "conn-dst");
+    copy.agent = Some(agent_target("agent-dst", "def-dst"));
+    if let Some(source) = copy.remote_source.as_mut() {
+        source.agent = Some(agent_target("agent-src", "def-src"));
+    }
+    copy
+}
+
+/// A reopened (new agent-side id) live session on `agent` from `definition`.
+fn live(agent: &str, definition: &str) -> (AgentSessionIdentity, String) {
+    (
+        AgentSessionIdentity {
+            agent_id: agent.to_string(),
+            remote_session_id: "remote-new".to_string(),
+            definition_id: Some(definition.to_string()),
+        },
+        format!("{agent}/{definition}"),
+    )
+}
+
+/// Relaunch an agent-to-agent copy against the `live` agent sessions as the
+/// app does: resolve the source, then the destination, each by its identity
+/// and the ranged probe; a missing end blocks the row and puts it back on the
+/// wait list. Returns the resolved ends when both are live.
+async fn relaunch_copy(
+    waits: &CredentialWaits,
+    record: &PersistedTransfer,
+    live: &[(AgentSessionIdentity, String)],
+) -> Option<(String, String)> {
+    let probe = |_: String| async { Ok(()) };
+    let src = record
+        .remote_source
+        .as_ref()
+        .and_then(|s| s.agent.as_ref())
+        .unwrap();
+    let dst = record.agent.as_ref().unwrap();
+    let resolved = match resolve_agent_target(src, live.to_vec(), probe).await {
+        Ok(src) => resolve_agent_target(dst, live.to_vec(), probe)
+            .await
+            .map(|dst| (src, dst)),
+        Err(e) => Err(e),
+    };
+    match resolved {
+        Ok(ends) => Some(ends),
+        Err(blocked) => {
+            note_blocked(waits, record, &blocked);
+            None
+        }
+    }
+}
+
+/// Destination agent back first: the row retries and pauses again; once the
+/// source agent reconnects too, the row resumes over both ends.
+#[tokio::test]
+async fn an_agent_to_agent_copy_resumes_when_the_source_returns_after_the_destination() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    let copy = agent_to_agent_copy("r2r");
+    assert_eq!(relaunch_copy(&waits, &copy, &[]).await, None);
+    assert!(waits.contains("r2r"));
+
+    let mut sessions = vec![live("agent-dst", "def-dst")];
+    let trigger = agent_opened("agent-dst", Some("def-dst"));
+    assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+    assert_eq!(relaunch_copy(&waits, &copy, &sessions).await, None);
+    assert!(waits.contains("r2r"), "only the destination is back");
+
+    sessions.push(live("agent-src", "def-src"));
+    let trigger = agent_opened("agent-src", Some("def-src"));
+    assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+    assert_eq!(
+        relaunch_copy(&waits, &copy, &sessions).await,
+        Some(("agent-src/def-src".to_string(), "agent-dst/def-dst".to_string()))
+    );
+    assert!(!waits.contains("r2r"));
+}
+
+/// Source agent back first: the same, the other way round.
+#[tokio::test]
+async fn an_agent_to_agent_copy_resumes_when_the_destination_returns_after_the_source() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    let copy = agent_to_agent_copy("r2r");
+    assert_eq!(relaunch_copy(&waits, &copy, &[]).await, None);
+
+    let mut sessions = vec![live("agent-src", "def-src")];
+    let trigger = agent_opened("agent-src", Some("def-src"));
+    assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+    assert_eq!(relaunch_copy(&waits, &copy, &sessions).await, None);
+    assert!(waits.contains("r2r"), "only the source is back");
+
+    sessions.push(live("agent-dst", "def-dst"));
+    let trigger = agent_opened("agent-dst", Some("def-dst"));
+    assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+    assert!(relaunch_copy(&waits, &copy, &sessions).await.is_some());
+    assert!(!waits.contains("r2r"));
+}
+
+/// With only one end back the row stays paused and keeps waiting on both
+/// identities, however often that end's sessions reopen.
+#[tokio::test]
+async fn an_agent_to_agent_copy_with_one_end_back_stays_paused() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    let copy = agent_to_agent_copy("r2r");
+    assert_eq!(relaunch_copy(&waits, &copy, &[]).await, None);
+
+    let sessions = [live("agent-dst", "def-dst")];
+    for _ in 0..2 {
+        let trigger = agent_opened("agent-dst", Some("def-dst"));
+        assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+        assert_eq!(relaunch_copy(&waits, &copy, &sessions).await, None);
+        assert!(waits.contains("r2r"));
+    }
+    // It still waits on the source's identity, too.
+    let trigger = agent_opened("agent-src", Some("def-src"));
+    assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
+}
+
+/// Sessions that match neither end's identity never retry the row, and a
+/// relaunch against them never resumes it.
+#[tokio::test]
+async fn an_agent_to_agent_copy_never_resumes_on_mismatched_identities() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    let copy = agent_to_agent_copy("r2r");
+    assert_eq!(relaunch_copy(&waits, &copy, &[]).await, None);
+
+    for (agent, definition) in [
+        ("agent-other", Some("def-src")),
+        ("agent-src", Some("def-dst")),
+        ("agent-dst", Some("def-src")),
+        ("agent-dst", None),
+    ] {
+        let trigger = agent_opened(agent, definition);
+        assert!(due(&waits, &trigger, &registry).is_empty(), "{agent}");
+    }
+    assert!(waits.contains("r2r"));
+
+    // Swapped definitions on the right agents are still the wrong file
+    // systems: the relaunch pauses the row again.
+    let swapped = [live("agent-src", "def-dst"), live("agent-dst", "def-src")];
+    assert_eq!(relaunch_copy(&waits, &copy, &swapped).await, None);
+    assert!(waits.contains("r2r"));
+}
+
 /// An ad-hoc agent session can only come back as itself, so any session on
 /// its agent retries it (the relaunch's identity check decides).
 #[test]
