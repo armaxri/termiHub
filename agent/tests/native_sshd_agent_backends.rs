@@ -158,6 +158,12 @@ impl Fixture {
             "authMethod": auth_method,
             "enableMonitoring": false,
             "enableFileBrowser": false,
+            // No shell-integration injection: these tests grade the session
+            // transport and auth, not OSC 7 / 133. The injected setup is POSIX
+            // shell sent with LF, which a PowerShell DefaultShell (PSReadLine)
+            // takes as a continuation line rather than a submit, so the probe
+            // typed next was merged into it and never ran (#4143).
+            "shellIntegration": false,
         });
         if let Some(path) = key_path {
             config["keyPath"] = json!(path);
