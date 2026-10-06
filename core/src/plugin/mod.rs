@@ -75,6 +75,7 @@ mod package;
 mod platform;
 mod plugin_index;
 mod plugin_state;
+mod runtime;
 // Windows has no runner transport yet (next slice of #4182): the runner is
 // never spawned there, so its session machinery is unreachable until it lands.
 #[cfg_attr(

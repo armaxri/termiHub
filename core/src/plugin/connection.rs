@@ -45,8 +45,10 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
 use super::capabilities::ConnectionPolicy;
-use super::host::{LoadedLibrary, LoadedPluginInfo};
+use super::host::LoadedLibrary;
 use super::host_context::ServicesState;
+use super::runtime::ActiveBackend;
+pub(crate) use super::runtime::PluginRuntime;
 use super::sandbox::{SandboxedPluginHandle, SandboxedSession};
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
@@ -63,63 +65,6 @@ pub struct SessionHostContext {
     pub host_version: String,
     /// The plugin's private, already-created data directory (UTF-8).
     pub data_dir: String,
-}
-
-/// Where a plugin's code runs.
-#[derive(Clone)]
-pub(crate) enum PluginRuntime {
-    /// `dlopen`ed into this process (the default until the plugin OS-sandbox
-    /// cut-over; see `docs/concepts/backlog/plugin-os-sandbox.html`).
-    InProcess(Arc<LoadedLibrary>),
-    /// Served by a `termihub-plugin-runner` process (#4182).
-    Sandboxed(Arc<SandboxedPluginHandle>),
-}
-
-impl PluginRuntime {
-    pub(crate) fn info(&self) -> &LoadedPluginInfo {
-        match self {
-            PluginRuntime::InProcess(library) => library.info(),
-            PluginRuntime::Sandboxed(handle) => handle.info(),
-        }
-    }
-}
-
-/// The live session behind a connected [`PluginConnectionType`].
-enum ActiveBackend {
-    /// An in-process backend (its vtable lives in the loaded library).
-    InProcess(LoadedBackend),
-    /// A session in a plugin runner.
-    Sandboxed(SandboxedSession),
-}
-
-impl ActiveBackend {
-    fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
-        match self {
-            ActiveBackend::InProcess(b) => b.write_input(data),
-            ActiveBackend::Sandboxed(s) => s.write_input(data),
-        }
-    }
-
-    fn resize(&self, cols: u16, rows: u16) -> Result<(), PluginError> {
-        match self {
-            ActiveBackend::InProcess(b) => b.resize(cols, rows),
-            ActiveBackend::Sandboxed(s) => s.resize(cols, rows),
-        }
-    }
-
-    fn close(&mut self) -> Result<(), PluginError> {
-        match self {
-            ActiveBackend::InProcess(b) => b.close(),
-            ActiveBackend::Sandboxed(s) => s.close(),
-        }
-    }
-
-    fn is_alive(&self) -> bool {
-        match self {
-            ActiveBackend::InProcess(b) => b.is_alive(),
-            ActiveBackend::Sandboxed(s) => s.is_alive(),
-        }
-    }
 }
 
 /// A [`ConnectionType`] backed by a native plugin backend — a library loaded
