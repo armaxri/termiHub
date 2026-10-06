@@ -188,7 +188,7 @@ impl BridgeClient {
             }
             #[cfg(not(unix))]
             StreamTransport::HandlePassed => {
-                // TODO(#4201): Windows handle passing (DuplicateHandle +
+                // TODO(#4219): Windows handle passing (DuplicateHandle +
                 // overlapped ReadFile/WriteFile) lands with the Windows
                 // transport; until then the host only offers `Proxy` here.
                 drop(guard);

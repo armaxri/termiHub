@@ -1,6 +1,6 @@
 //! Host side of a **proxied** bridge connection (#4183): the fallback where a
 //! connected socket cannot be handed to the runner (Windows until the
-//! `DuplicateHandle` path lands with its transport, #4201; a socket that is not
+//! `DuplicateHandle` path lands, #4219; a socket that is not
 //! a kernel handle). The host keeps the socket and relays its bytes:
 //!
 //! * **socket → runner:** a pump thread reads the socket and sends
