@@ -27,6 +27,12 @@
 //!
 //! # Waiting for the session
 //!
+//! A side-channel transfer that was still queued or running when the app quit
+//! is put on that wait list at startup ([`park_interrupted`]): its row shows
+//! paused with [`GRAPHICAL_SESSION_UNAVAILABLE`], and reopening the VNC
+//! connection resumes it without another click. One the user had paused stays
+//! an ordinary paused row until the user resumes it.
+//!
 //! A relaunch never opens a VNC session itself. When no session of the
 //! connection is open yet — always the case right after a restart — or its
 //! side channel is not `ready` (the tunnel or agent is still coming up), the
@@ -37,6 +43,7 @@
 //! either way. The resumed transfer is queued under the **new** graphical
 //! session id, so closing that session cancels it like any other upload of it.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -44,6 +51,7 @@ use tauri::{AppHandle, Manager};
 use termihub_core::connection::{FileSideChannel, FileSideChannelKind};
 
 use super::persist::PersistedGraphicalTarget;
+use super::persist_manager::TransferPersistenceManager;
 use super::relaunch_credentials::RelaunchBlocked;
 use crate::session::graphical_file_channel::{AgentFiles, RemoteDesktopFileChannel};
 use crate::session::graphical_manager::GraphicalSessionManager;
@@ -289,6 +297,26 @@ pub(crate) async fn resolve_live_graphical_target(
         }
     })
     .await
+}
+
+/// Park the side-channel transfers a quit cut off (#4205) at startup: each
+/// waits for a session of its VNC connection, so reopening the connection
+/// resumes it — the user started it, and the quit, not the user, stopped it.
+/// One the user had paused stays an ordinary paused row. Returns the parked
+/// transfer ids, whose rows show [`GRAPHICAL_SESSION_UNAVAILABLE`].
+pub(crate) fn park_interrupted(persist: &TransferPersistenceManager) -> HashSet<String> {
+    persist
+        .interrupted_side_channel_transfers()
+        .into_iter()
+        .map(|record| {
+            super::relaunch_auto::note_blocked(
+                persist.credential_waits(),
+                &record,
+                &RelaunchBlocked::GraphicalSessionUnavailable,
+            );
+            record.transfer_id
+        })
+        .collect()
 }
 
 #[cfg(test)]

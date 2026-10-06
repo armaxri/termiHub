@@ -845,7 +845,10 @@ fn seed_projection_regions(
             .handle()
             .try_state::<crate::files::transfer::TransferPersistenceManager>()
         {
-            seed_rehydrated_transfers(store.as_ref(), pm.load_incomplete_as_paused());
+            // A VNC side-channel transfer the quit cut off waits for its VNC
+            // connection and shows why (#4205).
+            let parked = crate::files::transfer::relaunch_graphical::park_interrupted(&pm);
+            seed_rehydrated_transfers(store.as_ref(), pm.load_incomplete_as_paused(), &parked);
         }
         projection_state.projector.register_region(
             transfers_projection::projection::TRANSFERS_REGION,
@@ -895,10 +898,13 @@ fn init_transfer_persistence(app: &tauri::App) {
 /// `transfers` store, so the Transfer Queue panel shows them on startup
 /// (PROD-0011). Each persisted incomplete transfer is rendered as a `paused` row;
 /// the user explicitly resumes it (never auto-resumed). A no-op when nothing was
-/// persisted.
+/// persisted. The `waiting` rows (VNC side-channel transfers cut off by the
+/// quit, #4205) carry the reason they wait: reopening their VNC connection
+/// resumes them.
 fn seed_rehydrated_transfers(
     store: &transfers_projection::TransferStore,
     records: Vec<crate::files::transfer::PersistedTransfer>,
+    waiting: &std::collections::HashSet<String>,
 ) {
     use crate::files::transfer::TransferDirection as EngineDirection;
     use std::collections::HashMap;
@@ -931,7 +937,10 @@ fn seed_rehydrated_transfers(
             percent,
             speed_bytes_per_sec: None,
             eta_seconds: None,
-            error: None,
+            error: waiting.contains(&r.transfer_id).then(|| {
+                crate::files::transfer::relaunch_graphical::GRAPHICAL_SESSION_UNAVAILABLE
+                    .to_string()
+            }),
             attempt: None,
             max_attempts: None,
             updated_at: r.updated_at_ms,

@@ -30,11 +30,13 @@
 //! pauses the row again with the same reason and puts it back on the list.
 //!
 //! Only transfers on the list resume. A row is added only when its relaunch was
-//! blocked for credentials, and it leaves the list when the user resumes,
-//! pauses or cancels it. A transfer that already has a live handle (it runs,
-//! or the user paused it after it ran again) is never resumed from here. The
-//! list is in memory only; after a restart every row is an ordinary paused row
-//! again.
+//! blocked (credentials, an agent or VNC session), and it leaves the list when
+//! the user resumes, pauses or cancels it. A transfer that already has a live
+//! handle (it runs, or the user paused it after it ran again) is never resumed
+//! from here. The list is in memory only; after a restart every row is an
+//! ordinary paused row again — except a VNC side-channel transfer the quit cut
+//! off, which is put back on the list at startup to wait for its VNC
+//! connection ([`super::relaunch_graphical::park_interrupted`], #4205).
 
 use std::collections::HashMap;
 use std::sync::Mutex;

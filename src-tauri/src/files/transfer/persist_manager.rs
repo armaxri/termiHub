@@ -458,6 +458,24 @@ impl TransferPersistenceManager {
         self.lock().incomplete_as_paused()
     }
 
+    /// The graphical side-channel transfers (#4205) that were still queued or
+    /// running when the previous run ended — cut off by the quit, not paused
+    /// by the user. Each record keeps its persisted status.
+    pub fn interrupted_side_channel_transfers(&self) -> Vec<PersistedTransfer> {
+        self.lock()
+            .transfers
+            .iter()
+            .filter(|t| {
+                t.graphical.is_some()
+                    && matches!(
+                        t.status,
+                        PersistedTransferStatus::Queued | PersistedTransferStatus::Active
+                    )
+            })
+            .cloned()
+            .collect()
+    }
+
     /// The current persisted record for a transfer id, if any (a clone).
     ///
     /// Used by the resume-relaunch path (#3199) to recover a rehydrated transfer's

@@ -282,3 +282,61 @@ async fn a_carrier_that_does_not_open_is_skipped_then_fails() {
         other => panic!("expected Failed, got {other:?}"),
     }
 }
+
+// ── Startup ─────────────────────────────────────────────────────────
+
+/// At startup, a side-channel upload the quit cut off (still queued or
+/// running) waits for its VNC connection, and reopening it resumes the upload;
+/// one the user had paused, and any other kind of transfer, stays an ordinary
+/// paused row.
+#[test]
+fn quit_interrupted_side_channel_transfers_wait_for_their_vnc_connection() {
+    use crate::files::transfer::persist::PersistedTransferStatus;
+    use crate::files::transfer::relaunch_auto::{due, WaitTrigger};
+    use crate::files::transfer::{TransferDirection, TransferRegistry};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let persist = TransferPersistenceManager::new_test(dir.path());
+    for (id, graphical, status) in [
+        ("cut-off", true, PersistedTransferStatus::Active),
+        ("queued", true, PersistedTransferStatus::Queued),
+        ("user-paused", true, PersistedTransferStatus::Paused),
+        ("ssh", false, PersistedTransferStatus::Active),
+    ] {
+        persist.record_registration(
+            id,
+            "rd-old",
+            TransferDirection::Upload,
+            "big.bin",
+            "/home/pi/Desktop/big.bin",
+            Some("/local/big.bin".to_string()),
+            0,
+        );
+        if graphical {
+            persist.record_graphical_target(id, persisted(SSH));
+        }
+        if status != PersistedTransferStatus::Queued {
+            persist.note_progress(id, status, 4096, 8192, false, None);
+        }
+    }
+
+    let mut parked: Vec<_> = park_interrupted(&persist).into_iter().collect();
+    parked.sort();
+    assert_eq!(parked, ["cut-off", "queued"]);
+
+    let registry = TransferRegistry::new();
+    let waits = persist.credential_waits();
+    assert!(due(
+        waits,
+        &WaitTrigger::GraphicalSessionActive("Lab/other".to_string()),
+        &registry
+    )
+    .is_empty());
+    let mut resumed = due(
+        waits,
+        &WaitTrigger::GraphicalSessionActive("Lab/pi-desktop".to_string()),
+        &registry,
+    );
+    resumed.sort();
+    assert_eq!(resumed, ["cut-off", "queued"]);
+}
