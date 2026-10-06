@@ -85,7 +85,14 @@
       "vitest>picomatch": ">=4.0.4",
       "micromatch>picomatch": "2.3.2",
       "minimatch@3>brace-expansion": ">=1.1.18 <2",
-      "smol-toml": ">=1.7.1 <2"
+      "smol-toml": ">=1.7.1 <2",
+      "micromark-extension-math>katex": ">=0.18.2 <0.19"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-p98j-92pf-mc4p",
+        "GHSA-6688-9rhm-gjv2"
+      ]
     },
     "onlyBuiltDependencies": [
       "esbuild"
