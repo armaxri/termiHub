@@ -353,6 +353,18 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(result).toBe("rd-session-1");
     });
 
+    it("remoteDesktopConnect names the saved connection only when set (#4205)", async () => {
+      mockedInvoke.mockResolvedValue("rd-session-2");
+
+      await remoteDesktopConnect("vnc", { host: "10.0.0.5" }, "Lab/pi-desktop");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_connect", {
+        typeId: "vnc",
+        settings: { host: "10.0.0.5" },
+        savedConnectionId: "Lab/pi-desktop",
+      });
+    });
+
     it("remoteDesktopResize forwards pixel dimensions", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 

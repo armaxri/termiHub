@@ -249,7 +249,9 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         const connectSettings = layout
           ? { ...tab.config.config, monitorLayout: layout }
           : tab.config.config;
-        const id = await remoteDesktopConnect(tab.config.type, connectSettings);
+        // Name the saved connection (#4205) so a file transfer over this
+        // session's side channel can resume after a restart.
+        const id = await remoteDesktopConnect(tab.config.type, connectSettings, tab.connectionId);
         connectPendingRef.current = false;
         if (canceled) {
           fireAndForget(
