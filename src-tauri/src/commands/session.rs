@@ -719,7 +719,10 @@ pub async fn session_upload_local_file(
     remote_path: String,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    debug!(session_id, local_path, remote_path, "Session upload from local file");
+    debug!(
+        session_id,
+        local_path, remote_path, "Session upload from local file"
+    );
     let path = local_path.clone();
     let bytes = tokio::task::spawn_blocking(move || crate::files::local::read_file_bytes(&path))
         .await
@@ -739,7 +742,10 @@ pub async fn session_download_to_local_file(
     local_path: String,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    debug!(session_id, remote_path, local_path, "Session download to local file");
+    debug!(
+        session_id,
+        remote_path, local_path, "Session download to local file"
+    );
     let bytes = manager.read_file(&session_id, &remote_path).await?;
     tokio::task::spawn_blocking(move || crate::files::local::write_file_bytes(&local_path, &bytes))
         .await

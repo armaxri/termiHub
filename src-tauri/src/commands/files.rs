@@ -143,9 +143,7 @@ pub fn local_open_folder<R: tauri::Runtime>(
     use tauri_plugin_opener::OpenerExt;
 
     let opened = match resolve_folder_target(&path)? {
-        FolderTarget::Open(dir) => app
-            .opener()
-            .open_path(dir.to_string_lossy(), None::<&str>),
+        FolderTarget::Open(dir) => app.opener().open_path(dir.to_string_lossy(), None::<&str>),
         FolderTarget::Reveal(entry) => app.opener().reveal_item_in_dir(entry),
     };
     opened.map_err(|e| TerminalError::EditorError(format!("could not open the folder: {e}")))

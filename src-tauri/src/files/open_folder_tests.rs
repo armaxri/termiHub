@@ -93,7 +93,9 @@ fn launching_names_are_detected_case_insensitively() {
 
 #[test]
 fn ordinary_folder_names_are_opened() {
-    for name in ["projects", "my.notes", "v1.2", ".app", "app", "src", ".config"] {
+    for name in [
+        "projects", "my.notes", "v1.2", ".app", "app", "src", ".config",
+    ] {
         assert!(!launches_when_opened(name), "{name}");
     }
 }
