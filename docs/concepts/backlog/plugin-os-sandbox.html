@@ -386,6 +386,7 @@
             <a href="https://github.com/armaxri/termiHub/issues/3769">#3769</a> (SEC-002)</span
           >
           <span>Related: #3296 (hash-bound trust ack), PLG-004 (terminal-only), ADR-15</span>
+          <span>Phase 0 spike: <a href="#spike">#4181 results</a></span>
           <span><code>docs/concepts/backlog/plugin-os-sandbox.html</code></span>
         </div>
       </header>
@@ -399,6 +400,7 @@
           <li><a href="#handling">General Handling</a></li>
           <li><a href="#behavior">States &amp; Sequences</a></li>
           <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#spike">Spike Results (Phase 0, #4181)</a></li>
           <li><a href="#sync">Sync Ledger</a></li>
         </ol>
       </nav>
@@ -1559,9 +1561,12 @@ flowchart TD
           <li>
             <strong>Handle passing</strong> for bridge sockets uses <code>SCM_RIGHTS</code> on Unix
             (via <code>rustix</code>/<code>nix</code>, already in the tree) and
-            <code>WSADuplicateSocketW</code> on Windows. If a handle cannot be passed (to be
-            verified in the spike for AppContainer), the runner falls back to proxying stream bytes
-            as <code>StreamData</code> frames.
+            <code>DuplicateHandle</code> on Windows (decided in the spike, #4181). The runner drives
+            the passed socket as a plain overlapped file handle
+            (<code>ReadFile</code>/<code>WriteFile</code>) and never loads Winsock, because Winsock
+            cannot start under LPAC. <code>WSADuplicateSocketW</code> works into a plain
+            AppContainer but not into LPAC. The <code>StreamData</code> proxy stays only as the
+            fallback for a socket that is not a kernel file handle (a non-IFS layered provider).
           </li>
           <li>
             <strong>Semantics delta, host side only.</strong> <code>write_input</code> and
@@ -1624,7 +1629,7 @@ flowchart TD
         </p>
 
         <h3>Per-OS sandbox</h3>
-        <h4>macOS — Seatbelt via <code>sandbox_init</code> (recommended)</h4>
+        <h4>macOS — Seatbelt via <code>sandbox_init</code> (proven in the spike)</h4>
         <ul>
           <li>
             The runner calls <code>sandbox_init_with_parameters</code> on itself, after opening the
@@ -1643,9 +1648,20 @@ flowchart TD
           <li>
             Caveat: the API is formally deprecated or private, but it has been stable for over a
             decade and is relied on by every major browser. The fallback, should Apple ever remove
-            it, is the App Sandbox (below). The phase-1 spike first evaluates
-            <code>birdcage</code> (it applies Seatbelt the same way). If it fits, use it per the
-            prefer-libraries rule; otherwise use a ~100-line FFI wrapper.
+            it, is the App Sandbox (below).
+          </li>
+          <li>
+            <strong
+              >Decided in the spike (#4181): a hand-written FFI wrapper, not
+              <code>birdcage</code>.</strong
+            >
+            <code>birdcage</code> is GPL-3.0-or-later (fails the <code>deny.toml</code> licence
+            allowlist), only offers a spawn-a-child API instead of confining the calling process,
+            and its fixed base profile allows <code>mach*</code>, <code>ipc*</code>,
+            <code>sysctl*</code>, <code>process-fork</code> and global
+            <code>file-read-metadata</code>. The FFI wrapper is ~60 lines. The proven profile needs
+            <strong>no</strong> <code>mach-lookup</code> at all. See
+            <a href="#spike">Spike results</a>.
           </li>
           <li>
             <strong>App Sandbox entitlements — rejected for now.</strong> They need a signed helper
@@ -1696,10 +1712,15 @@ flowchart TD
           <li>
             <code>extrasafe</code> and <code>birdcage</code> were considered as all-in-one wrappers.
             The two focused crates give exact control over the enforced-layer report, which the
-            fail-closed policy depends on.
+            fail-closed policy depends on. <strong>Confirmed in the spike (#4181):</strong>
+            <code>landlock</code> 0.4 + <code>seccompiler</code> 0.5 confine the runner before
+            <code>dlopen</code> with <code>FullyEnforced</code> on Ubuntu 24.04 (kernel 6.17) and
+            inside Docker's default seccomp profile (kernel 6.12). Seccomp must answer
+            <code>clone3</code> with <code>ENOSYS</code> so glibc falls back to the inspectable
+            <code>clone</code>. See <a href="#spike">Spike results</a>.
           </li>
         </ul>
-        <h4>Windows — AppContainer + job object</h4>
+        <h4>Windows — Less-Privileged AppContainer + job object (proven in the spike)</h4>
         <ul>
           <li>
             A per-plugin AppContainer profile (<code>CreateAppContainerProfile</code>, name
@@ -1707,10 +1728,23 @@ flowchart TD
             <strong>zero capabilities</strong>: no <code>internetClient</code>, no loopback, no
             user-profile access. The runner is spawned with
             <code>PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES</code>. The host adds ACEs for the
-            AppContainer SID on the install folder (read+execute) and the data folder (modify), and
-            removes the profile on uninstall. Evaluate Less-Privileged AppContainer (LPAC) in the
-            spike; it is stronger but may break <code>dlopen</code> of the plugin's CRT
-            dependencies.
+            AppContainer SID on the runner's folder and the install folder (read+execute) and the
+            data folder (modify), and removes the profile on uninstall.
+          </li>
+          <li>
+            <strong
+              >Decided in the spike (#4181): Less-Privileged AppContainer (LPAC), zero
+              capabilities.</strong
+            >
+            The runner is also spawned with
+            <code>PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY</code> =
+            <code>PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT</code>. LPAC loads the plugin
+            and its dynamic CRT (<code>VCRUNTIME140.dll</code>, <code>api-ms-win-crt-*</code>) fine.
+            A plain AppContainer can still open <code>HKCU\Software</code> (other apps' saved
+            sessions live there); LPAC denies it. Do <strong>not</strong> add the
+            <code>registryRead</code> capability: it makes Winsock work again but re-opens
+            <code>HKCU\Software</code>. Under LPAC Winsock cannot start (<code>WSAStartup</code> =
+            10107), which shapes bridge-socket passing (see <a href="#spike">Spike results</a>).
           </li>
           <li>
             <strong>Job object</strong> (via the <code>win32job</code> crate or the
@@ -1818,7 +1852,8 @@ flowchart TD
                 <td>
                   <strong>Spike:</strong> Seatbelt via <code>birdcage</code> vs. FFI, AppContainer +
                   LPAC <code>dlopen</code> of a real plugin, <code>WSADuplicateSocket</code> into an
-                  AppContainer. Output is an amendment to this concept.
+                  AppContainer. Output is an amendment to this concept. <strong>Done</strong> — see
+                  <a href="#spike">Spike results</a>.
                 </td>
                 <td>M</td>
                 <td>—</td>
@@ -1947,6 +1982,323 @@ flowchart LR
         </ol>
       </section>
 
+      <!-- ── Spike results ──────────────────────────────────────────── -->
+      <section>
+        <h2 id="spike">Spike Results (Phase 0, #4181) <a class="anchor" href="#spike">#</a></h2>
+        <p>
+          Phase 0 answered the three platform questions with throwaway prototypes on 2026-10-06. The
+          prototype code was not merged; its key parts are in the PR that added this section. Each
+          prototype runs the same steps as the planned runner: open the IPC channel and canary
+          listeners, apply the sandbox to itself, then load the real
+          <code>echo-backend</code> example plugin, create a session and round-trip
+          <code>hello sandbox</code> through it. After that it tries a set of escape probes. A
+          control run without the sandbox shows every probe succeeding, so each denial below comes
+          from the sandbox.
+        </p>
+
+        <h3>Verdicts</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Verdict</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>macOS: Seatbelt on the runner, then <code>dlopen</code></td>
+                <td><strong>Works</strong></td>
+                <td>
+                  Hand-written FFI to <code>sandbox_init_with_parameters</code> (~60 lines).
+                  <code>birdcage</code> rejected.
+                </td>
+              </tr>
+              <tr>
+                <td>Windows: AppContainer vs. LPAC, <code>LoadLibrary</code> with CRT deps</td>
+                <td><strong>Both work; LPAC is viable</strong></td>
+                <td>LPAC with zero capabilities.</td>
+              </tr>
+              <tr>
+                <td>Windows: socket handle passing into the sandbox</td>
+                <td>
+                  <strong>Works with <code>DuplicateHandle</code></strong
+                  >; <code>WSADuplicateSocketW</code> fails under LPAC
+                </td>
+                <td>
+                  <code>DuplicateHandle</code> + overlapped
+                  <code>ReadFile</code>/<code>WriteFile</code>. The <code>StreamData</code> proxy is
+                  only a fallback.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Linux (extra, de-risks phase 4): landlock + seccomp, then <code>dlopen</code>
+                </td>
+                <td><strong>Works</strong></td>
+                <td>As designed: <code>landlock</code> + <code>seccompiler</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>macOS — Seatbelt</h3>
+        <p>
+          <strong>Why not <code>birdcage</code>.</strong> Version 0.8.1 is licensed
+          <code>GPL-3.0-or-later</code>, which the <code>deny.toml</code> licence allowlist rejects
+          for a distributed binary. Its API only applies the sandbox and then spawns a child
+          (<code>Sandbox::spawn(Command)</code>), which does not fit a runner that confines itself
+          and then calls <code>dlopen</code>. Its fixed base profile also allows <code>mach*</code>,
+          <code>ipc*</code>, <code>sysctl*</code>, <code>system*</code>,
+          <code>process-fork</code> and <code>file-read-metadata</code> on every path. Any one of
+          these rules it out.
+        </p>
+        <p>
+          <strong>The profile that works.</strong> Paths are canonicalised before the sandbox is
+          applied and passed as parameters, never spliced into the string. No
+          <code>mach-lookup</code> rule is needed: the dyld shared cache and libSystem are already
+          mapped when the profile is applied.
+        </p>
+        <pre>
+(version 1)
+(deny default)
+(allow file-read* file-map-executable
+  (subpath "/usr/lib") (subpath "/System/Library")
+  (subpath "/System/Cryptexes/OS") (subpath "/System/Volumes/Preboot/Cryptexes/OS"))
+(allow file-read* (literal "/dev/urandom") (literal "/dev/random"))
+(allow file-read* file-write-data (literal "/dev/null"))
+(allow file-read* file-map-executable (subpath (param "INSTALL_DIR")))
+(allow file-read* file-write* (subpath (param "DATA_DIR")))
+(allow sysctl-read)
+(allow process-info* (target self))
+(allow signal (target self))
+(deny network*)
+(deny process-exec* process-fork)
+(deny iokit-open)</pre
+        >
+        <p>
+          Evidence: macOS 26.5.2 on arm64 (local), confirmed on the <code>macos-latest</code> (macOS
+          26.6.2) runner.
+        </p>
+        <pre>
+$ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
+  sandbox applied in 5.65ms
+  [PASS] dlopen + init + create_backend  allowed  (echo-backend 1.0.0, 537µs)
+  [PASS] echo round trip                 allowed  (echo&gt; hello sandbox)
+  [PASS] pre-opened IPC fd still usable  allowed
+  [PASS] read install dir (manifest)     allowed
+  [PASS] write data dir                  allowed
+  [PASS] read canary outside             DENIED   (Operation not permitted, os error 1)
+  [PASS] list $HOME                      DENIED   (os error 1)
+  [PASS] read /etc/hosts                 DENIED   (os error 1)
+  [PASS] write outside data dir          DENIED   (os error 1)
+  [PASS] TCP connect to loopback canary  DENIED   (os error 1)
+  [PASS] unix-socket connect (agent)     DENIED   (os error 1)
+  [PASS] new socket() + bind             DENIED   (os error 1)
+  [PASS] DNS resolve                     DENIED
+  [PASS] spawn /bin/sh                   DENIED   (os error 1)
+  [PASS] fork()                          DENIED   (os error 1)
+== RESULT mode=seatbelt: ALL PASS</pre
+        >
+        <p>
+          Cold start: the whole process (spawn, sandbox, <code>dlopen</code>, probes) takes about 10
+          ms warm. The very first run of a newly built binary takes about 330 ms, because Gatekeeper
+          assesses it once; later runs do not pay this. This is within the 150 ms p95 budget, but
+          the first-run cost should be measured on the signed bundle in phase 5a.
+        </p>
+
+        <h3>Windows — AppContainer, LPAC and socket passing</h3>
+        <p>
+          Run on the <code>windows-latest</code> runner (Windows Server 2025, build 26100) through a
+          temporary workflow on a throwaway branch, since deleted. The host process creates the
+          profile <code>termiHub.Plugin.spike4181</code> with zero capabilities, grants its SID
+          <code>RX</code> on the runner and install folders and <code>M</code> on the data folder,
+          and spawns the runner with <code>CREATE_SUSPENDED</code>, a handle list holding only the
+          stdout pipe, <code>PROCESS_CREATION_CHILD_PROCESS_RESTRICTED</code> and a job object (kill
+          on close, active-process limit 1). While the runner is suspended, the host passes it two
+          connected loopback sockets: one with <code>WSADuplicateSocketW</code>, one with
+          <code>DuplicateHandle</code>. Both the plugin and the runner link the dynamic CRT
+          (<code>VCRUNTIME140.dll</code>, <code>api-ms-win-crt-runtime/heap</code>, checked with
+          <code>dumpbin /dependents</code>).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Probe</th>
+                <th>no sandbox</th>
+                <th>AppContainer</th>
+                <th>LPAC</th>
+                <th>LPAC + <code>registryRead</code></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>LoadLibrary</code> + init + echo round trip</td>
+                <td>ok</td>
+                <td>ok</td>
+                <td><strong>ok</strong></td>
+                <td>ok</td>
+              </tr>
+              <tr>
+                <td><code>WSAStartup</code></td>
+                <td>ok</td>
+                <td>ok</td>
+                <td><strong>fails (10107)</strong></td>
+                <td>ok</td>
+              </tr>
+              <tr>
+                <td>Socket via <code>WSADuplicateSocketW</code> + <code>WSASocketW</code></td>
+                <td>ok</td>
+                <td>ok</td>
+                <td><strong>fails (10093, no Winsock)</strong></td>
+                <td>ok</td>
+              </tr>
+              <tr>
+                <td>
+                  Socket via <code>DuplicateHandle</code> + overlapped <code>ReadFile</code>/<code
+                    >WriteFile</code
+                  >
+                </td>
+                <td>ok</td>
+                <td>ok</td>
+                <td><strong>ok</strong></td>
+                <td>ok</td>
+              </tr>
+              <tr>
+                <td>Read install folder / write data folder</td>
+                <td>ok</td>
+                <td>ok</td>
+                <td>ok</td>
+                <td>ok</td>
+              </tr>
+              <tr>
+                <td>Read canary outside, list <code>%USERPROFILE%</code>, write outside</td>
+                <td>allowed</td>
+                <td>denied (5)</td>
+                <td>denied (5)</td>
+                <td>denied (5)</td>
+              </tr>
+              <tr>
+                <td>Open <code>HKCU\Software</code></td>
+                <td>allowed</td>
+                <td><strong>allowed</strong></td>
+                <td><strong>denied (5)</strong></td>
+                <td><strong>allowed</strong></td>
+              </tr>
+              <tr>
+                <td>TCP connect to a loopback canary</td>
+                <td>allowed</td>
+                <td>denied (time-out, dropped)</td>
+                <td>denied (no Winsock)</td>
+                <td>denied (10013)</td>
+              </tr>
+              <tr>
+                <td>TCP connect to <code>1.1.1.1:443</code></td>
+                <td>allowed</td>
+                <td>denied (10013)</td>
+                <td>denied (no Winsock)</td>
+                <td>denied (10013)</td>
+              </tr>
+              <tr>
+                <td>DNS resolve</td>
+                <td>allowed</td>
+                <td>denied</td>
+                <td>denied</td>
+                <td>denied</td>
+              </tr>
+              <tr>
+                <td>Spawn <code>cmd.exe</code></td>
+                <td>allowed</td>
+                <td>denied (367)</td>
+                <td>denied (367)</td>
+                <td>denied (367)</td>
+              </tr>
+              <tr>
+                <td>Read <code>System32\drivers\etc\hosts</code></td>
+                <td>allowed</td>
+                <td>allowed</td>
+                <td>allowed</td>
+                <td>allowed</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>
+            <strong>LPAC is viable and the stronger choice.</strong> It loads the plugin with its
+            dynamic CRT, and it is the only variant that closes <code>HKCU\Software</code>, where
+            other applications keep saved sessions (PuTTY, WinSCP). Error 367 is
+            <code>ERROR_CHILD_PROCESS_BLOCKED</code>: the child-process mitigation fires before the
+            job's process limit. System files stay readable, which is expected and harmless.
+          </li>
+          <li>
+            <strong>Winsock cannot start under LPAC</strong> (<code>WSAStartup</code> returns
+            <code>WSASYSCALLFAILURE</code>). <code>registryRead</code> fixes that but re-opens
+            <code>HKCU\Software</code>, so it is not granted. As a result, a passed socket is driven
+            as a kernel file handle. Rust's <code>std::net</code> panics inside an LPAC process (its
+            lazy Winsock init asserts), so a plugin that bypasses the bridge and uses
+            <code>std::net</code> crashes its own helper. This is contained, but
+            <code>plugin-authoring.md</code> must say so.
+          </li>
+          <li>
+            Spawn plus sandbox plus <code>LoadLibrary</code> takes 15–60 ms end to end on the
+            runner, within budget.
+          </li>
+        </ul>
+
+        <h3>Linux — landlock + seccomp</h3>
+        <p>
+          Run in Docker (<code>rust:1.98-bookworm</code>, kernel 6.12, Docker's default seccomp
+          profile, as root and as <code>nobody</code>) and on the <code>ubuntu-latest</code>
+          runner (Ubuntu 24.04, kernel 6.17). On both, landlock reports
+          <code>FullyEnforced</code> (fs and net, ABI v6, with <code>no_new_privs</code>). Every
+          probe is denied: file reads return <code>EACCES</code> from landlock; network, exec and
+          fork return <code>EPERM</code> from seccomp. The plugin still loads and echoes, and the
+          sandbox takes about 0.3–0.6 ms to apply. One finding: <code>clone3</code> must return
+          <code>ENOSYS</code>, because its flags sit behind a pointer that seccomp cannot inspect.
+          glibc then falls back to <code>clone</code>, whose <code>CLONE_THREAD</code> bit the
+          filter checks.
+        </p>
+
+        <h3>Changes to later phases</h3>
+        <ul>
+          <li>
+            <strong>Phase 1:</strong> on Windows the runner must not call Winsock at all, including
+            through <code>std::net</code>. Its IPC is the inherited pipe handle, which the spike
+            showed works through <code>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</code> into LPAC.
+          </li>
+          <li>
+            <strong>Phase 2:</strong> Windows bridge sockets use <code>DuplicateHandle</code> into
+            the suspended or running helper. The runner builds <code>PluginTcpStream</code> over
+            overlapped <code>ReadFile</code>/<code>WriteFile</code>/<code>CancelIoEx</code>.
+            Shutdown and socket options are done host-side over IPC, because the runner has no
+            Winsock. The <code>StreamData</code> proxy is built only as the fallback for a socket
+            that is not a kernel file handle. Unix stays <code>SCM_RIGHTS</code>.
+          </li>
+          <li>
+            <strong>Phase 4:</strong> seccomp needs the <code>clone3</code> → <code>ENOSYS</code>
+            rule. Docker's default profile allows the landlock syscalls (Docker 29), so the "Docker
+            no-userns" job should see the full layer set.
+          </li>
+          <li>
+            <strong>Phase 5a:</strong> no <code>birdcage</code>; ship the profile above, generated
+            with parameters. Measure the first-launch Gatekeeper cost on the signed bundle.
+          </li>
+          <li>
+            <strong>Phase 5b:</strong> LPAC with zero capabilities. Grant the AppContainer SID
+            <code>RX</code> on the runner's own folder, not only the plugin install folder. Add
+            <code>HKCU\Software</code> to the escape probe as an explicit assertion.
+          </li>
+          <li>
+            <strong>Phase 7:</strong> <code>plugin-authoring.md</code> states that direct
+            <code>std::net</code>/Winsock use from a plugin fails on Windows (and is denied
+            everywhere). Network goes only through the bridge.
+          </li>
+        </ul>
+      </section>
+
       <!-- ── Sync ledger ────────────────────────────────────────────── -->
       <section>
         <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
@@ -1985,6 +2337,18 @@ flowchart LR
                 <td><code>NATIVE_TRUST_DISCLOSURE</code> says "no operating-system sandbox"</td>
                 <td>Correct for today</td>
                 <td>Rewrite in phase 6</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  Platform mechanisms (Seatbelt FFI, LPAC, <code>DuplicateHandle</code> socket
+                  passing, landlock + seccomp)
+                </td>
+                <td>
+                  Proven by throwaway prototypes in the Phase 0 spike (#4181); no product code
+                </td>
+                <td>Decided</td>
+                <td>Implement in phases 1, 2, 4, 5a and 5b as recorded in Spike results</td>
               </tr>
             </tbody>
           </table>
