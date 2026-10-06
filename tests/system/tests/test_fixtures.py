@@ -712,3 +712,17 @@ def test_no_linux_runtime_skips_before_building_even_on_ci(
     with pytest.raises(ContainerRuntimeUnavailable, match=reason):
         fx.stage_remote_agent_binary()
     assert agent_tree.calls == []
+
+
+def test_real_swap_container_is_recreated_per_test_attempt(request):
+    """#4092: the real-swap test mutates its container (the installed agent is
+    swapped), and the integration lane re-runs a failed test. A session-scoped
+    fixture handed every rerun the already-swapped container, so the reruns
+    failed up front on "the staged update must differ from the installed agent"
+    and masked the first attempt's real failure. Function scope re-runs the
+    force-recreating bring-up for each attempt."""
+    defs = request._fixturemanager.getfixturedefs(
+        "remote_agent_update_swap_fixtures", request.node
+    )
+    assert defs, "conftest must define remote_agent_update_swap_fixtures"
+    assert defs[-1].scope == "function"
