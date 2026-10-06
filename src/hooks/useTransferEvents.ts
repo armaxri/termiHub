@@ -29,10 +29,12 @@ function toastTerminalPhase(progress: TransferProgress): void {
   const isLocalCopy = progress.sessionId === LOCAL_TRANSFER_SESSION;
   if (phase === "done") {
     const verb = isLocalCopy ? "Copied" : direction === "download" ? "Downloaded" : "Uploaded";
-    toast.success(`${verb} ${fileName}`);
+    toast.success(`${verb} ${fileName}`, { testId: "transfer-done-toast" });
   } else if (phase === "error") {
     const verb = isLocalCopy ? "Copy" : direction === "download" ? "Download" : "Upload";
-    toast.error(`${verb} of ${fileName} failed: ${message ?? "Transfer failed"}`);
+    toast.error(`${verb} of ${fileName} failed: ${message ?? "Transfer failed"}`, {
+      testId: "transfer-error-toast",
+    });
   }
   // `cancelled` and `transferring` intentionally emit no toast.
 }

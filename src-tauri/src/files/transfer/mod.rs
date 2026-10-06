@@ -34,6 +34,7 @@ pub mod persist;
 pub mod persist_manager;
 pub mod persist_storage;
 pub(crate) mod relaunch;
+pub(crate) mod relaunch_agent;
 pub(crate) mod relaunch_auto;
 pub(crate) mod relaunch_credentials;
 pub(crate) mod relaunch_docker;

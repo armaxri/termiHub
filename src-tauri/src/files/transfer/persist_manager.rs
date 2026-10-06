@@ -17,8 +17,9 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::persist::{
-    FolderPasteEndpoint, FolderPasteOperation, PersistedDockerTarget, PersistedFolderPaste,
-    PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+    FolderPasteEndpoint, FolderPasteOperation, PersistedAgentTarget, PersistedDockerTarget,
+    PersistedFolderPaste, PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus,
+    PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::relaunch_auto::CredentialWaits;
@@ -195,6 +196,7 @@ impl TransferPersistenceManager {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -269,6 +271,20 @@ impl TransferPersistenceManager {
             return;
         };
         entry.saved_connection_id = Some(connection_id.to_string());
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the agent-hosted session identity to a registered ranged
+    /// transfer (#4114), so a relaunch after a restart can find the session
+    /// once the user reconnects the agent. Ids only — never a secret. A no-op
+    /// for an unknown id (never fabricates a record).
+    pub fn record_agent_target(&self, transfer_id: &str, agent: PersistedAgentTarget) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.agent = Some(agent);
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -720,6 +736,34 @@ mod tests {
             rehydrated[0].saved_connection_id.as_deref(),
             Some("Work/files")
         );
+    }
+
+    /// The agent session identity of an agent-hosted transfer (#4114) survives
+    /// progress checkpoints and rehydration; attaching it to an unknown id
+    /// never fabricates a record.
+    #[test]
+    fn agent_target_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        let agent = PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: Some("def-a".to_string()),
+        };
+        m.record_agent_target("t1", agent.clone());
+        m.record_agent_target("ghost", agent.clone());
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+            None,
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(rehydrated[0].agent, Some(agent));
+        assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
     }
 
     #[test]

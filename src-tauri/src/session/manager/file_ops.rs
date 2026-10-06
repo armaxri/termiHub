@@ -261,6 +261,19 @@ impl SessionManager {
         self.file_ops().ranged_transfer_target(session_id).await
     }
 
+    /// Every live agent-hosted session serving ranged slices, with its
+    /// identity (#4114): how a relaunched agent-hosted transfer finds its
+    /// session once the user has reconnected the agent. See
+    /// [`FileOps::agent_ranged_sessions`](crate::session::file_ops).
+    pub(crate) async fn agent_ranged_sessions(
+        &self,
+    ) -> Vec<(
+        crate::files::transfer::relaunch_agent::AgentSessionIdentity,
+        Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>,
+    )> {
+        self.file_ops().agent_ranged_sessions().await
+    }
+
     /// Find a live Docker session's transfer target for exactly `container_id`
     /// (#3585): how a relaunched Docker transfer re-attaches once the user has
     /// reconnected the container's session under a new session id.

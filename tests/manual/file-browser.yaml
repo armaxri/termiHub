@@ -42,3 +42,21 @@ tests:
       - "The originals stay in place."
     verification: manual
     tags: [os-native]
+
+  - id: MT-FB-32
+    release_gate: true
+    manual_reason: "opens a real OS file-manager window (Finder / Explorer / Files)"
+    name: "Open in File Manager opens folders and never launches an app bundle"
+    pr: 4140
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In the local file browser click the toolbar's Open in Finder/Explorer/File Manager action."
+      - "Right-click a folder row and choose the same action."
+      - "On macOS, browse to /Applications, right-click an .app and choose Open in Finder."
+    expected:
+      - "The OS file manager opens at the current folder, then at the clicked folder."
+      - "The .app is shown selected in /Applications; the application does not start."
+    verification: manual
+    tags: [os-native]

@@ -7,6 +7,7 @@
 //! output — and answers only the worker that holds the session.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -29,11 +30,27 @@ struct FakeFiles {
     dirs: StdMutex<Vec<String>>,
     /// Whether the backend offers ranged access (#3587).
     ranges: bool,
+    /// Offers ranged access up front but learns on connect that the server
+    /// cannot serve slices, like FTP without `REST STREAM` (#4146).
+    learns_unsupported: bool,
+    /// Probes that reached the backend.
+    probes: AtomicUsize,
 }
 
 #[async_trait::async_trait]
 impl RangedFileAccess for FakeFiles {
+    async fn probe(&self) -> Result<(), FileError> {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+        if self.learns_unsupported {
+            Err(FileError::NotSupported)
+        } else {
+            Ok(())
+        }
+    }
     async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        if self.learns_unsupported {
+            return Err(FileError::NotSupported);
+        }
         let files = self.files.lock().unwrap();
         let data = files
             .get(path)
@@ -506,6 +523,43 @@ async fn a_ranged_backend_serves_slices_through_the_daemon() {
         ranged.read_range("/missing", 0, 4).await,
         Err(FileError::NotFound(_))
     ));
+}
+
+/// The zero-length probe is forwarded to the daemon's live browser (#4146):
+/// a backend that offered slices up front but learns on connect that it
+/// cannot serve them (FTP without `REST STREAM`) refuses the probe as
+/// not-supported — so the desktop falls back to whole-file transfers — while
+/// a supporting backend confirms it. Neither moves any file data.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_ranged_probe_reaches_the_daemons_live_browser() {
+    for (learns_unsupported, label) in [(true, "probe-no"), (false, "probe-ok")] {
+        let endpoint = unique_endpoint(label);
+        let files = Arc::new(FakeFiles {
+            ranges: true,
+            learns_unsupported,
+            ..FakeFiles::default()
+        });
+        let _out = spawn_daemon(&endpoint, Some(files.clone())).await;
+        let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+            .await
+            .expect("worker attaches");
+        let browser = client.file_browser().expect("file capability");
+        let ranged = browser
+            .ranged()
+            .expect("advertised for the whole session at start");
+
+        let probed = ranged.probe().await;
+        if learns_unsupported {
+            assert!(
+                matches!(probed, Err(FileError::NotSupported)),
+                "the live browser's refusal comes back typed: {probed:?}"
+            );
+        } else {
+            probed.expect("a supporting backend confirms the probe");
+        }
+        assert_eq!(files.probes.load(Ordering::SeqCst), 1, "forwarded once");
+        assert!(files.files.lock().unwrap().is_empty(), "no file data moved");
+    }
 }
 
 /// A backend whose browser has no ranged access is not advertised as having

@@ -125,6 +125,11 @@ pub async fn create_connection(
     if let Some(tab_id) = &initial_tab_id {
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
     }
+    // The saved agent definition an agent-hosted session is opened from: once
+    // it connects, transfers waiting for that session resume (#4114).
+    let agent_definition_id = agent_id
+        .as_ref()
+        .and_then(|_| agent_definition_id(&settings));
 
     let connect = manager.create_connection(
         &type_id,
@@ -170,7 +175,34 @@ pub async fn create_connection(
             ),
         );
     }
+    // An agent-hosted session's file browser is ready now: resume the
+    // agent-hosted transfers that were waiting for it after a restart (#4114).
+    if let (Some(agent_id), Ok(_)) = (&agent_id, &result) {
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+            &app_handle,
+            crate::files::transfer::relaunch_auto::WaitTrigger::AgentSessionOpened {
+                agent_id: agent_id.clone(),
+                definition_id: agent_definition_id,
+            },
+        );
+    }
     result
+}
+
+/// The saved agent definition id the frontend placed in an agent-hosted
+/// session's settings (top level or under `config`), as the agent proxy reads
+/// it.
+fn agent_definition_id(settings: &Value) -> Option<String> {
+    let config = settings.get("config");
+    ["definitionId", "definition_id"]
+        .iter()
+        .find_map(|key| {
+            config
+                .and_then(|c| c.get(*key))
+                .or_else(|| settings.get(*key))
+        })
+        .and_then(Value::as_str)
+        .map(String::from)
 }
 
 /// The frontend `tab_id` to fold an *initial*-connect lifecycle edge for, parsed
@@ -706,6 +738,52 @@ pub async fn session_write_file(
     manager.write_file(&session_id, &path, &bytes).await
 }
 
+/// Copy a local file to a session through its file browser capability.
+///
+/// The byte-based (remote agent) upload leg of the local ↔ session copy engine
+/// (`src/services/paneTransfer.ts`). The backend reads the local file itself,
+/// so the bytes never cross IPC and the webview needs no fs-plugin access to
+/// arbitrary local paths (#3115).
+#[tauri::command]
+pub async fn session_upload_local_file(
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(
+        session_id,
+        local_path, remote_path, "Session upload from local file"
+    );
+    let path = local_path.clone();
+    let bytes = tokio::task::spawn_blocking(move || crate::files::local::read_file_bytes(&path))
+        .await
+        .map_err(|e| TerminalError::InternalError(e.to_string()))??;
+    manager.write_file(&session_id, &remote_path, &bytes).await
+}
+
+/// Copy a session file to the local disk through its file browser capability.
+///
+/// The byte-based (remote agent) download leg of the local ↔ session copy
+/// engine; the backend writes the local file itself (see
+/// [`session_upload_local_file`], #3115).
+#[tauri::command]
+pub async fn session_download_to_local_file(
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(
+        session_id,
+        remote_path, local_path, "Session download to local file"
+    );
+    let bytes = manager.read_file(&session_id, &remote_path).await?;
+    tokio::task::spawn_blocking(move || crate::files::local::write_file_bytes(&local_path, &bytes))
+        .await
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?
+}
+
 /// Delete a file via a session's file browser capability.
 #[tauri::command]
 pub async fn session_delete_file(
@@ -1081,9 +1159,13 @@ async fn start_session_transfer(
             SessionTransferTarget::Docker(docker) => {
                 pm.record_docker_target(&transfer_id, docker.container_id());
             }
-            // An agent-hosted transfer is not relaunched after a restart yet:
-            // its row comes back as "session unavailable" (#4114).
-            SessionTransferTarget::Ranged(_) => {}
+            // An agent-hosted transfer records its session's identity (agent,
+            // agent-side session, saved definition — never a secret), so a
+            // relaunch after a restart finds the session once the agent is
+            // reconnected (#4114).
+            SessionTransferTarget::Ranged(proxy) => {
+                pm.record_agent_target(&transfer_id, proxy.agent_session_identity().to_persisted());
+            }
             _ => {
                 // An SFTP/FTP transfer records the saved connection behind its
                 // session, so a relaunch after a restart can re-source its secret
@@ -1595,11 +1677,23 @@ pub async fn get_agent_session_buffer(
 #[cfg(test)]
 mod tests {
     use super::{
-        container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
-        killed_disconnect_tab_id, parse_container_runtime,
+        agent_definition_id, container_list_error, decode_file_bytes, encode_file_bytes,
+        initial_connect_tab_id, killed_disconnect_tab_id, parse_container_runtime,
     };
     use termihub_core::config::ContainerRuntime;
     use termihub_core::errors::SessionError;
+
+    /// The saved agent definition an agent session is opened from is read
+    /// where the frontend places it — at the top level or under `config` —
+    /// so the transfers waiting for that session resume (#4114).
+    #[test]
+    fn agent_definition_id_is_read_from_the_settings() {
+        let top = serde_json::json!({ "definitionId": "def-a", "shell": "bash" });
+        assert_eq!(agent_definition_id(&top).as_deref(), Some("def-a"));
+        let nested = serde_json::json!({ "config": { "definition_id": "def-b" } });
+        assert_eq!(agent_definition_id(&nested).as_deref(), Some("def-b"));
+        assert_eq!(agent_definition_id(&serde_json::json!({})), None);
+    }
 
     #[test]
     fn container_runtime_parses_like_the_backend() {

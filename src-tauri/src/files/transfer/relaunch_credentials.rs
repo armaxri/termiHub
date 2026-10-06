@@ -53,6 +53,11 @@ pub(crate) enum RelaunchBlocked {
     /// The secret cannot be resolved unattended (store locked, or nothing
     /// stored): the row stays paused with [`NEEDS_CREDENTIALS`].
     NeedsCredentials,
+    /// An agent-hosted transfer's session is not live yet — typically after a
+    /// restart, before the user reconnects the agent (#4114): the row stays
+    /// paused with [`AGENT_SESSION_UNAVAILABLE`](super::relaunch_agent::AGENT_SESSION_UNAVAILABLE)
+    /// and resumes by itself once a matching agent session opens.
+    AgentSessionUnavailable,
     /// Anything else (the connection is gone, unreachable, …): the row fails
     /// with this message, and **Retry** runs the relaunch again.
     Failed(String),
@@ -63,6 +68,9 @@ impl RelaunchBlocked {
     pub(crate) fn message(&self) -> String {
         match self {
             Self::NeedsCredentials => NEEDS_CREDENTIALS.to_string(),
+            Self::AgentSessionUnavailable => {
+                super::relaunch_agent::AGENT_SESSION_UNAVAILABLE.to_string()
+            }
             Self::Failed(message) => message.clone(),
         }
     }

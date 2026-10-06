@@ -30,10 +30,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (options: unknown) => openMock(options),
 }));
 
-const writeFileMock = vi.fn((_path: string, _data: Uint8Array) => Promise.resolve());
-vi.mock("@tauri-apps/plugin-fs", () => ({
-  writeFile: (path: string, data: Uint8Array) => writeFileMock(path, data),
-}));
+// Byte-based downloads are written by the backend (#3115), never the fs plugin.
+vi.mock("@tauri-apps/plugin-fs", () => {
+  throw new Error("downloads must not use the fs plugin (#3115)");
+});
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -238,7 +238,6 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
             : [entry("app.log"), entry("data", true)]
         );
       }
-      if (cmd === "session_read_file") return Promise.resolve("");
       return Promise.resolve(undefined);
     });
     seedAgentSession("docker", sessionId);
@@ -262,17 +261,21 @@ describe("FileBrowser — agent-hosted sessions (#3242)", () => {
     await flushAsync();
     await flushAsync();
 
-    const readPaths = mockedInvoke.mock.calls
-      .filter(([cmd]) => cmd === "session_read_file")
-      .map(([, args]) => (args as { path: string }).path);
-    // Folders list first; the folder itself is never read as one file.
-    expect([...readPaths].sort()).toEqual(["/srv/app.log", "/srv/data/inner.txt"]);
+    const downloads = () =>
+      mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === "session_download_to_local_file")
+        .map(([, args]) => args as { remotePath: string; localPath: string });
     expect(openMock).toHaveBeenCalledWith(expect.objectContaining({ directory: true }));
     expect(saveMock).toHaveBeenCalledTimes(1);
+    // Folders list first; the folder itself is never copied as one file.
     await vi.waitFor(() =>
-      expect(writeFileMock.mock.calls.map(([path]) => path).sort()).toEqual([
-        "/local/app.log",
-        "/local/target/data/inner.txt",
+      expect(
+        downloads()
+          .map((d) => `${d.remotePath} -> ${d.localPath}`)
+          .sort()
+      ).toEqual([
+        "/srv/app.log -> /local/app.log",
+        "/srv/data/inner.txt -> /local/target/data/inner.txt",
       ])
     );
   });

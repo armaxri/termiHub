@@ -9,14 +9,19 @@ name: Windows SSH Host
 # survives a disconnect and is re-attached), which used to be manual because
 # there was no Windows SSH-host fixture, plus the `--version` probe and `--stdio`
 # launch from an install path containing a space (#4067; backend.rs builds them).
+# A second phase runs agent/tests/native_sshd_agent_backends.rs against the same
+# host: what a Windows-hosted agent opens from there -- an SSH session with I/O,
+# resize and a clean close (MT-AGENT-26), default-key and ssh-agent-service auth
+# (MT-AGENT-27), and the Docker engine over its named pipe (MT-AGENT-28).
 #
 # The host is the native sshd fixture (scripts/internal/native-sshd-fixture.sh:
 # Win32-OpenSSH on a loopback port, key-auth test user), as in the native-sshd
 # job of integration-fixtures.yml. One matrix leg per OpenSSH `DefaultShell`;
 # each runs scripts/internal/run-windows-ssh-host-suite.sh <shell>, which sets
 # HKLM\SOFTWARE\OpenSSH\DefaultShell, brings the fixture up, runs exactly that
-# shell's test under TERMIHUB_REQUIRE_WINDOWS_SSH=1, fails on a skip or a test
-# that did not run, and tears everything down. The recipe lives in the script,
+# shell's desktop test and then the agent-side suite under
+# TERMIHUB_REQUIRE_WINDOWS_SSH=1, fails on a skip or a test that did not run,
+# and tears everything down. The recipe lives in the script,
 # so a scheduled run (main's copy of this file) runs develop's recipe.
 #
 # Not on every PR (a Windows build of the desktop crate costs several minutes):
@@ -36,6 +41,9 @@ on:
       - "src-tauri/src/terminal/agent_manager/live_channel_support.rs"
       - "src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs"
       - "src-tauri/src/utils/remote_exec.rs"
+      - "core/src/backends/ssh/auth.rs"
+      - "agent/tests/native_sshd_agent_backends.rs"
+      - "agent/tests/common/**"
       - "agent/src/daemon/**"
       - "scripts/internal/run-windows-ssh-host-suite.sh"
       - "scripts/internal/native-sshd-fixture.*"

@@ -2,13 +2,16 @@
 //!
 //! Speaks just enough of RFC 959 / RFC 3659 for the transfer executor to run a
 //! real `suppaftp` client against it on loopback: login, `TYPE`, `FEAT`,
-//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR` and `QUIT`. Which of
+//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR`, `APPE` and `QUIT`. Which of
 //! `FEAT`, `REST` and `MDTM` the server supports is configurable, so a test can
 //! stand up the server shapes the resume logic has to cope with — a modern
 //! server advertising `REST STREAM` and `MDTM`, one without `REST`, one without
 //! `MDTM`, or a legacy server that does not answer `FEAT` at all — without the
-//! Docker fixture. Every `RETR`/`STOR` is logged with the offset it started
-//! from, so a test can assert whether a transfer resumed or restarted.
+//! Docker fixture. Every `RETR`/`STOR`/`APPE` is logged with the offset it
+//! started from, so a test can assert whether a transfer resumed or restarted.
+//! A `RETR` whose data connection the client closes early is answered `426`,
+//! like a real server, so ranged reads can prove the control connection stays
+//! in step after cutting a transfer short.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -115,7 +118,7 @@ impl MockFtpServer {
         self.lock().files.get(path).map(|f| f.data.clone())
     }
 
-    /// Every `RETR`/`STOR` the server ran, in order.
+    /// Every `RETR`/`STOR`/`APPE` the server ran, in order.
     pub(crate) fn transfers(&self) -> Vec<MockTransfer> {
         self.lock().transfers.clone()
     }
@@ -239,8 +242,15 @@ async fn serve(
                     }
                     data
                 };
-                let (Some(data), Some(listener)) = (data, data_listener.take()) else {
+                // On a refusal keep the data listener open (like a real
+                // server) so the client's data connect, sent right after the
+                // command, is not refused before it reads the `550`.
+                let Some(data) = data else {
                     reply(&mut w, "550 no such file").await?;
+                    continue;
+                };
+                let Some(listener) = data_listener.take() else {
+                    reply(&mut w, "425 no data connection").await?;
                     continue;
                 };
                 reply(&mut w, "150 opening data connection").await?;
@@ -248,12 +258,17 @@ async fn serve(
                 let start = usize::try_from(offset)
                     .unwrap_or(usize::MAX)
                     .min(data.len());
-                let _ = conn.write_all(&data[start..]).await;
+                let sent = conn.write_all(&data[start..]).await;
                 let _ = conn.shutdown().await;
                 drop(conn);
-                reply(&mut w, "226 transfer complete").await?;
+                if sent.is_ok() {
+                    reply(&mut w, "226 transfer complete").await?;
+                } else {
+                    reply(&mut w, "426 connection closed; transfer aborted").await?;
+                }
             }
-            "STOR" => {
+            "STOR" | "APPE" => {
+                let command = if cmd == "APPE" { "APPE" } else { "STOR" };
                 let offset = std::mem::take(&mut rest);
                 let Some(listener) = data_listener.take() else {
                     reply(&mut w, "425 no data connection").await?;
@@ -266,7 +281,7 @@ async fn serve(
                 {
                     let mut st = state.lock().expect("mock state");
                     st.transfers.push(MockTransfer {
-                        command: "STOR",
+                        command,
                         path: arg.clone(),
                         offset,
                     });
@@ -274,10 +289,13 @@ async fn serve(
                         data: Vec::new(),
                         mtime: "20240101000000".to_string(),
                     });
-                    let keep = usize::try_from(offset)
-                        .unwrap_or(usize::MAX)
-                        .min(file.data.len());
-                    file.data.truncate(keep);
+                    // `APPE` keeps everything; `STOR` keeps the `REST` prefix.
+                    if command == "STOR" {
+                        let keep = usize::try_from(offset)
+                            .unwrap_or(usize::MAX)
+                            .min(file.data.len());
+                        file.data.truncate(keep);
+                    }
                     file.data.extend_from_slice(&received);
                 }
                 reply(&mut w, "226 transfer complete").await?;

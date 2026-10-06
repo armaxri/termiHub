@@ -272,14 +272,13 @@ pub fn kill_pid(pid: u32) {
 }
 
 /// How long [`reap_spawned_daemon`] lets a daemon that is already shutting down
-/// finish exiting before it falls back to SIGKILL. A clean exit takes
+/// finish exiting before it falls back to a kill. A clean exit takes
 /// milliseconds; the bound only matters when something is wrong.
-#[cfg(unix)]
 pub const DAEMON_EXIT_GRACE: Duration = Duration::from_secs(10);
 
-/// Stop a session daemon the test spawned itself (a `Child` serving the unix
-/// socket at `socket_path`) without SIGKILLing one that is already exiting
-/// (#3742).
+/// Stop a session daemon the test spawned itself (a `Child` serving the
+/// endpoint at `socket_path`: a unix socket path, or a `\\.\pipe\` name on
+/// windows) without killing one that is already exiting (#3742).
 ///
 /// Tests often end by closing the session (`connection.close`, `MSG_KILL`, the
 /// shell exiting), which makes the daemon exit on its own — and then drop a
@@ -289,22 +288,20 @@ pub const DAEMON_EXIT_GRACE: Duration = Duration::from_secs(10);
 /// rejects the whole coverage run with "file header is corrupt".
 ///
 /// The daemon drops its listener when its run loop returns, before the process
-/// exits, so a socket that refuses connections means "on its way out": wait for
-/// it (bounded by [`DAEMON_EXIT_GRACE`]). A daemon still serving is idle, not
+/// exits, so an endpoint that is no longer served means "on its way out": wait
+/// for it (bounded by [`DAEMON_EXIT_GRACE`]). A daemon still serving is idle, not
 /// exiting, so it is killed at once, as before.
-#[cfg(unix)]
 pub fn reap_spawned_daemon(child: &mut std::process::Child, socket_path: &std::path::Path) {
     reap_spawned_daemon_within(child, socket_path, DAEMON_EXIT_GRACE);
 }
 
-#[cfg(unix)]
 fn reap_spawned_daemon_within(
     child: &mut std::process::Child,
     socket_path: &std::path::Path,
     grace: Duration,
 ) {
     let running = matches!(child.try_wait(), Ok(None));
-    if running && std::os::unix::net::UnixStream::connect(socket_path).is_err() {
+    if running && !endpoint_serving(socket_path) {
         let deadline = Instant::now() + grace;
         while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -312,6 +309,44 @@ fn reap_spawned_daemon_within(
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Whether a daemon is still serving `endpoint`. On unix a socket that refuses
+/// connections is not (its file can linger after the listener is gone).
+#[cfg(unix)]
+fn endpoint_serving(endpoint: &std::path::Path) -> bool {
+    std::os::unix::net::UnixStream::connect(endpoint).is_ok()
+}
+
+/// Whether a daemon is still serving `endpoint`: on windows, whether the named
+/// pipe exists (see [`pipe_exists`]).
+#[cfg(windows)]
+fn endpoint_serving(endpoint: &std::path::Path) -> bool {
+    pipe_exists(endpoint)
+}
+
+/// Whether the named pipe `endpoint` currently exists, **without connecting to
+/// it** — the windows analog of `Path::exists` on a unix socket.
+///
+/// A `\\.\pipe\` name is not a filesystem path, and a probe that opens the
+/// pipe would be accepted by a session daemon as a client (an attach/detach it
+/// never asked for). `WaitNamedPipeW` asks the pipe namespace instead: it
+/// returns at once with `ERROR_FILE_NOT_FOUND` when no instance of the pipe
+/// exists, succeeds when an instance is free, and times out (`ERROR_SEM_TIMEOUT`)
+/// when every instance is busy with a client — which still means the pipe is up.
+#[cfg(windows)]
+pub fn pipe_exists(endpoint: &std::path::Path) -> bool {
+    use windows_sys::Win32::Foundation::ERROR_SEM_TIMEOUT;
+    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+
+    let wide: Vec<u16> = endpoint
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // Safety: `wide` is a valid NUL-terminated UTF-16 string.
+    let free = unsafe { WaitNamedPipeW(wide.as_ptr(), 1) } != 0;
+    free || std::io::Error::last_os_error().raw_os_error() == Some(ERROR_SEM_TIMEOUT as i32)
 }
 
 #[cfg(test)]

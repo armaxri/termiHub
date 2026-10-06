@@ -83,6 +83,14 @@ describe("classify", () => {
     }
   });
 
+  it("runs the frontend suite for capability changes — the capability guard is vitest (#3115)", () => {
+    expect(on(classify(["src-tauri/capabilities/default.json"]))).toEqual([
+      "rust",
+      "frontend",
+      "rustdoc",
+    ]);
+  });
+
   it("runs the script smoke (real ConPTY fetch) when the ConPTY pins change (#4121)", () => {
     expect(classify(["src-tauri/packaging/windows/conpty.env"])).toMatchObject({
       rust: true,

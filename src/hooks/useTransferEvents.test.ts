@@ -120,6 +120,22 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
   });
 
+  it("tags the terminal toasts with test ids a system test can find (#4128)", async () => {
+    await mountHook();
+
+    act(() => {
+      emit!(progress({ phase: "done" }));
+      emit!(progress({ phase: "error", message: "EIO" }));
+    });
+
+    expect(vi.mocked(toast.success).mock.calls[0][1]).toEqual({
+      testId: "transfer-done-toast",
+    });
+    expect(vi.mocked(toast.error).mock.calls[0][1]).toEqual({
+      testId: "transfer-error-toast",
+    });
+  });
+
   it("refreshes the ownership map on a session-ownership-changed event, debounced (#1985)", async () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ refreshSessionOwners: refresh });

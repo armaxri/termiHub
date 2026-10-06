@@ -1906,6 +1906,17 @@ export async function localWriteFile(path: string, content: string): Promise<voi
 }
 
 /**
+ * Open a local folder in the OS file manager (Finder / Explorer / …).
+ *
+ * The backend accepts only an existing absolute directory and reveals a
+ * launching bundle (e.g. `Foo.app`) in its parent instead of opening it, so this
+ * can never start a program (#3115).
+ */
+export async function localOpenFolder(path: string): Promise<void> {
+  await invoke("local_open_folder", { path });
+}
+
+/**
  * Start watching a local file for external on-disk changes (#1620).
  *
  * `watchId` is an opaque per-editor-instance key; the resulting
@@ -1982,6 +1993,30 @@ export async function sessionWriteFile(
   data: Uint8Array | number[]
 ): Promise<void> {
   await invoke("session_write_file", { sessionId, path, data: bytesToBase64(data) });
+}
+
+/**
+ * Copy a local file to a session (the byte-based upload leg). The backend reads
+ * the local file, so the bytes never cross IPC (#3115).
+ */
+export async function sessionUploadLocalFile(
+  sessionId: string,
+  localPath: string,
+  remotePath: string
+): Promise<void> {
+  await invoke("session_upload_local_file", { sessionId, localPath, remotePath });
+}
+
+/**
+ * Copy a session file to the local disk (the byte-based download leg). The
+ * backend writes the local file (#3115).
+ */
+export async function sessionDownloadToLocalFile(
+  sessionId: string,
+  remotePath: string,
+  localPath: string
+): Promise<void> {
+  await invoke("session_download_to_local_file", { sessionId, remotePath, localPath });
 }
 
 /** Delete a file or directory via a session's file browser capability. */

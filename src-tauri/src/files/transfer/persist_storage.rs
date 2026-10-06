@@ -98,6 +98,7 @@ mod tests {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         }
     }
 

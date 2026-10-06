@@ -3,8 +3,9 @@
  *
  * Two local-only toolbar actions act on the currently-browsed folder
  * (`currentPath`):
- *   1. "Open in File Manager" — opens the OS-native file manager (frontend-only
- *      via `openPath` from `@tauri-apps/plugin-opener`).
+ *   1. "Open in File Manager" — opens the OS-native file manager through the
+ *      backend's validated `local_open_folder` command (#3115; the webview has
+ *      no `opener:allow-open-path` capability).
  *   2. "Open Folder in VS Code" — opens the folder as a workspace, reusing the
  *      existing `vscode_open_local` plumbing.
  *
@@ -31,6 +32,11 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openPath: (...args: unknown[]) => openPath(...args),
   openUrl: vi.fn().mockResolvedValue(undefined),
 }));
+
+/** The `local_open_folder` invocations so far. */
+function openFolderCalls(): unknown[] {
+  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === "local_open_folder").map(([, a]) => a);
+}
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -197,8 +203,9 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
       q("file-browser-open-in-explorer")!.click();
     });
     await flushAsync();
-    expect(openPath).toHaveBeenCalledTimes(1);
-    expect(openPath).toHaveBeenCalledWith("/home");
+    expect(openFolderCalls()).toEqual([{ path: "/home" }]);
+    // Never the opener plugin: its open-path permission is not granted (#3115).
+    expect(openPath).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -213,7 +220,11 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
   });
 
   it("shows an error toast when opening the file manager fails", async () => {
-    openPath.mockRejectedValueOnce(new Error("no file manager"));
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      if (cmd === "local_open_folder") return Promise.reject(new Error("no file manager"));
+      return Promise.resolve(undefined);
+    });
     await renderLocal();
     await act(async () => {
       q("file-browser-open-in-explorer")!.click();
