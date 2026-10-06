@@ -44,11 +44,7 @@ vi.mock("@/components/ui", () => ({
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  useTransferEvents,
-  TRANSFER_DONE_TOAST_TESTID,
-  TRANSFER_ERROR_TOAST_TESTID,
-} from "./useTransferEvents";
+import { useTransferEvents } from "./useTransferEvents";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import type { TransferProgress } from "@/services/api";
@@ -133,10 +129,10 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     });
 
     expect(vi.mocked(toast.success).mock.calls[0][1]).toEqual({
-      testId: TRANSFER_DONE_TOAST_TESTID,
+      testId: "transfer-done-toast",
     });
     expect(vi.mocked(toast.error).mock.calls[0][1]).toEqual({
-      testId: TRANSFER_ERROR_TOAST_TESTID,
+      testId: "transfer-error-toast",
     });
   });
 
