@@ -149,3 +149,29 @@ tests:
       - "No resize is needed to fix the layout."
     verification: manual
     tags: [visual]
+
+  # --- Unicode glyph painting on the GPU renderer (#3059) ---
+  # Automated: test_terminal_glyph_shaping.py asserts xterm's cell model (wide
+  # CJK, attached combining marks, logical-order RTL, intact ZWJ sequences) and
+  # the DOM renderer's painted rows, with a screenshot; terminalCells.test.ts pins
+  # the cell model per PR. What remains is how the WebGL renderer paints them.
+
+  - id: MT-UI-46
+    release_gate: true
+    manual_reason: "WebGL-painted glyph shapes depend on each OS's font fallback; the DOM screenshot cannot capture the GPU canvas"
+    name: "CJK, combining marks, RTL and emoji paint correctly on the WebGL renderer"
+    pr: 3059
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell (Git Bash on Windows) with the default WebGL renderer."
+      - "Run: printf '日本語한국|\\ne\\314\\201a\\314\\210x|\\nשלום سلام|\\n👨\\342\\200\\215👩\\342\\200\\215👧|\\n'"
+      - "Look at the four output lines."
+    expected:
+      - "Each CJK character fills exactly two columns; the '|' after them lines up with the grid and nothing overlaps or is clipped."
+      - "The accents sit on their letters (é, ä), not beside them or on the next cell."
+      - "Hebrew and Arabic letters render with a real font (no boxes or question marks)."
+      - "The family emoji shows as three emoji people in six columns (xterm does not join ZWJ sequences); no boxes, no stray joiner glyph."
+    verification: manual
+    tags: [visual]

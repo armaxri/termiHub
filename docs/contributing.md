@@ -1019,6 +1019,11 @@ pnpm tauri build
 
 **Output**: `src-tauri\target\release\bundle\msi\termiHub_<version>_x64_en-US.msi` and `src-tauri\target\release\bundle\nsis\termiHub_<version>_x64-setup.exe`.
 
+Release builds link the Visual C++ runtime statically, so the installers run on
+machines without the VC++ Redistributable; debug builds (`scripts/dev.cmd`,
+`cargo test`) link it dynamically, which the Visual Studio Build Tools provide. See
+[Architecture → Windows Visual C++ runtime](architecture.md#desktop-application) for why.
+
 ### Raspberry Pi / ARM64 Linux
 
 termiHub builds for ARM64 Linux, covering Raspberry Pi 3 (64-bit OS), Pi 4, Pi 5, and other ARM64 SBCs (Orange Pi, Rock Pi, etc.).

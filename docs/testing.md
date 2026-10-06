@@ -2255,8 +2255,29 @@ by hand. Two places gate it for a release:
 | Area          | Items          | What it checks                                                                                                                                                                                                                 |
 | ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Drag-and-drop | MT-NIN-01 … 07 | Multi-file drop quoting (POSIX single quotes vs Windows double quotes), pane hit-testing on scaled and mixed-DPI displays, Wayland vs X11 (Linux), drop onto the file browser, native drag-out, a tab drag released off-window |
-| IME           | MT-NIN-10 … 16 | Per-platform terminal composition (IMK / TSF / IBus-Fcitx5 under Wayland and X11), editor and form-field composition (the committing Enter must not submit, Escape must not close), dead keys, the OS emoji picker             |
+| IME           | MT-NIN-10 … 16 | Native preedit and candidate window per platform (IMK / TSF / IBus-Fcitx5 under Wayland and X11), the real IME's Enter / Escape order in the editor and form fields, dead keys, the OS emoji picker                            |
 | Focus         | MT-NIN-20 … 24 | Focus survives an app switch, returns after a native Save dialog, first click into an inactive window (macOS differs), per-window keyboard routing, remote-desktop key release on blur                                         |
+
+**IME commit behaviour is automated (#3059).** The `compose` bridge verb replays
+an input method's DOM sequence (`keydown` 229, `compositionstart`,
+`compositionupdate` + `input` per preedit, `compositionend`) in each OS webview,
+updating the control's value as an IME does.
+[`test_ime_composition.py`](../tests/system/tests/test_ime_composition.py)
+asserts the commit reaches the shell, and Monaco's saved file, exactly once — no
+preedit leak, no duplicate or partial commit — and
+`src/testbridge/composition.test.ts` pins the same replay against the real xterm
+per PR. MT-NIN-10 … 14 now gate only what no script reaches: the native preedit
+and candidate window, and the real IME's key order.
+
+**Glyph layout is automated too (#3059).**
+[`test_terminal_glyph_shaping.py`](../tests/system/tests/test_terminal_glyph_shaping.py)
+prints CJK, combining marks, RTL and an emoji ZWJ sequence in a real shell and
+asserts xterm's cell model through `readTerminalCells`: wide CJK cells with a
+spacer, marks attached to their base, logical-order RTL, every joiner kept on
+its emoji (Unicode 11 widths do not join ZWJ sequences). It also waits for the
+DOM renderer to paint each sample and saves `glyphs.png` for visual review;
+`src/testbridge/terminalCells.test.ts` pins the cell model per PR. How the
+WebGL renderer paints them with each OS's font fallback stays manual (MT-UI-46).
 
 #### Would reviving `tauri-driver` on Linux/Windows cover this?
 
@@ -2327,8 +2348,8 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 - [ ] MT-WIN-01 (macOS) — closing the last window keeps the app in the Dock; a Dock click reopens a window
 - [ ] MT-WIN-02 (macOS) — Cmd+Q quits the app with several windows open
 - [ ] MT-NIN-01 … MT-NIN-07 — native drag-and-drop: multi-file drop quoting, scaled and mixed-DPI pane hit-testing, file-browser drop, drag-out, off-window tab release; MT-NIN-04 (Linux) under Wayland and X11
-- [ ] MT-NIN-10 (macOS), MT-NIN-11 (Windows), MT-NIN-12 (Linux) — IME composition in the terminal
-- [ ] MT-NIN-13 … MT-NIN-16 — IME in the editor and in form fields, dead keys, the OS emoji picker
+- [ ] MT-NIN-10 (macOS), MT-NIN-11 (Windows), MT-NIN-12 (Linux) — native IME preedit and candidate window in the terminal (commit-once automated, #3059)
+- [ ] MT-NIN-13 … MT-NIN-16 — native IME in the editor and in form fields, dead keys, the OS emoji picker
 - [ ] MT-NIN-20 … MT-NIN-24 — native focus: app switch, native Save dialog, inactive-window click, two windows, remote-desktop key release
 
 Folded in from the per-feature walkthroughs (#3695):
@@ -2370,6 +2391,7 @@ Folded in from the per-feature walkthroughs (#3695):
 - [ ] MT-UI-43 (macOS) — OSC 133 gutter bars and jump highlight look right
 - [ ] MT-UI-44 (macOS, Windows) — Inline SIXEL/iTerm2 images draw correctly
 - [ ] MT-UI-45 (macOS) — Sidebar paints fully on cold launch
+- [ ] MT-UI-46 — CJK, combining marks, RTL and emoji paint correctly on the WebGL renderer (cell layout automated, #3059)
 
 **3. Pending automation (interim)** — until its issue lands, each `automation_issue` item in the YAML is still walked by `scripts/test-manual.py` for a release. The issue removes it from the YAML when it automates it.
 

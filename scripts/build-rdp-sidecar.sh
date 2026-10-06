@@ -82,6 +82,14 @@ if [ -n "$TARGET" ]; then
     *) BIN_NAME="termihub-rdp-helper" ;;
     esac
     CARGO_FLAGS+=(--target "$TARGET")
+    # Windows MSVC: link the Visual C++ runtime statically (#4172), so the helper
+    # shipped in the installer needs no VC++ redistributable, like termihub.exe
+    # (src-tauri/build.rs). With an explicit --target, RUSTFLAGS reach only the
+    # target's crates, never build scripts or proc macros, and `cc`-built C code
+    # follows the crt-static target feature to /MT.
+    case "$TARGET" in
+    *-windows-msvc) export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C target-feature=+crt-static" ;;
+    esac
     BIN_PATH="rdp-sidecar/target/${TARGET}/${PROFILE}/${BIN_NAME}"
 else
     BIN_NAME="termihub-rdp-helper"

@@ -11,6 +11,7 @@ import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
 import { inspectTerminal } from "./terminalInspection";
 import { loseTerminalWebglContext, measureTerminal } from "./terminalRender";
+import { readTerminalCells } from "./terminalCells";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 import { bridgeRunnerUrl } from "./wsProtocol";
@@ -103,6 +104,13 @@ export function TestBridge() {
         const handles = getTerminalHandles(tabId);
         return handles ? measureTerminal(handles) : undefined;
       },
+      // xterm's buffer cell model — wide/combining/emoji glyph layout (#3059).
+      readTerminalCells: (tabId, contains) => {
+        const handles = getTerminalHandles(tabId);
+        return handles ? readTerminalCells(handles.xterm, contains) : undefined;
+      },
+      // The terminal's hidden input textarea, where a real IME composes (#3059).
+      getTerminalInputElement: (tabId) => getTerminalHandles(tabId)?.xterm.textarea,
       // Force a real WebGL context loss so the DOM fallback runs (#2988). It
       // mutates renderer state, so re-check test mode at the call site like the
       // other verbs that act past a plain DOM read.
