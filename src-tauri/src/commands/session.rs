@@ -896,16 +896,23 @@ enum SessionTransferTarget {
     /// Docker-backed session: streams through its own `docker exec` per attempt
     /// (PARITY-004, #3567).
     Docker(termihub_core::backends::docker::DockerTransferTarget),
+    /// Agent-hosted session: offset-addressed slices over the agent's
+    /// `connection.files.read_range` / `write_range`, one request per chunk
+    /// (#3587).
+    Ranged(std::sync::Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>),
 }
 
 /// Resolve how a session's queued transfer should run: SFTP (dedicated channel),
-/// FTP (server-resolved settings, credentials never leaving the backend), or
-/// Docker (a streaming `docker exec` per attempt).
+/// FTP (server-resolved settings, credentials never leaving the backend),
+/// Docker (a streaming `docker exec` per attempt), or — for an agent-hosted
+/// session — ranged slices over the agent (#3587).
 ///
 /// Tries the SFTP browser first (the fast, unchanged path), then the FTP config,
-/// then the Docker target. A backend that supports none of them (a remote-agent
-/// session) surfaces the SFTP "not supported" error, so the queue path stays
-/// reserved for backends that can actually drive it (PROD-010).
+/// then the Docker target, then the agent's ranged slices. A backend that
+/// supports none of them (an agent too old for ranged slices, or an
+/// agent-hosted backend without them) surfaces the SFTP "not supported" error,
+/// so the queue path stays reserved for backends that can actually drive it
+/// (PROD-010).
 async fn resolve_session_transfer_target(
     manager: &SessionManager,
     session_id: &str,
@@ -918,8 +925,11 @@ async fn resolve_session_transfer_target(
     if let Ok(config) = manager.ftp_transfer_config(session_id).await {
         return Ok(SessionTransferTarget::Ftp(config));
     }
-    match manager.docker_transfer_target(session_id).await {
-        Ok(target) => Ok(SessionTransferTarget::Docker(target)),
+    if let Ok(target) = manager.docker_transfer_target(session_id).await {
+        return Ok(SessionTransferTarget::Docker(target));
+    }
+    match manager.ranged_transfer_target(session_id).await {
+        Ok(proxy) => Ok(SessionTransferTarget::Ranged(proxy)),
         // None of the queue-capable backends: preserve the SFTP
         // "not supported" error shape the callers expect.
         Err(_) => Err(sftp_err),
@@ -965,6 +975,21 @@ fn spawn_session_transfer(
                 transfer::ftp::run_ftp_transfer(
                     config,
                     ftp_direction,
+                    remote_path,
+                    local_path,
+                    handle,
+                    registry,
+                    sink,
+                    0,
+                )
+                .await;
+            });
+        }
+        SessionTransferTarget::Ranged(proxy) => {
+            tauri::async_runtime::spawn(async move {
+                termihub_core::files::transfer::ranged::run_ranged_transfer(
+                    proxy,
+                    direction,
                     remote_path,
                     local_path,
                     handle,
@@ -1052,18 +1077,24 @@ async fn start_session_transfer(
         );
         // A Docker transfer also records its container identity, so a relaunch
         // after a restart can re-attach to the same container (#3585).
-        if let SessionTransferTarget::Docker(docker) = &target {
-            pm.record_docker_target(&transfer_id, docker.container_id());
-        } else {
-            // An SFTP/FTP transfer records the saved connection behind its
-            // session, so a relaunch after a restart can re-source its secret
-            // from the credential store (#3876).
-            crate::files::transfer::relaunch_session::record_saved_connection(
-                &pm,
-                &manager,
-                &transfer_id,
-                &session_id,
-            );
+        match &target {
+            SessionTransferTarget::Docker(docker) => {
+                pm.record_docker_target(&transfer_id, docker.container_id());
+            }
+            // An agent-hosted transfer is not relaunched after a restart yet:
+            // its row comes back as "session unavailable" (#4114).
+            SessionTransferTarget::Ranged(_) => {}
+            _ => {
+                // An SFTP/FTP transfer records the saved connection behind its
+                // session, so a relaunch after a restart can re-source its secret
+                // from the credential store (#3876).
+                crate::files::transfer::relaunch_session::record_saved_connection(
+                    &pm,
+                    &manager,
+                    &transfer_id,
+                    &session_id,
+                );
+            }
         }
     }
     let registry = (*registry).clone();
@@ -1147,11 +1178,12 @@ pub async fn session_upload(
 /// pausable/resumable transfer for it rather than the frontend's blocking
 /// byte-based fallback.
 ///
-/// Returns `true` for an SFTP-backed (SSH), FTP-backed or Docker-backed session
-/// and `false` for a byte-based backend (remote-agent) or an unknown session.
-/// The frontend uses this to route FTP and Docker transfers through the queue
-/// exactly like SFTP while leaving agent sessions on the byte-based path
-/// (PROD-010, #3567).
+/// Returns `true` for an SFTP-backed (SSH), FTP-backed or Docker-backed session,
+/// and for an agent-hosted session whose agent and backend serve ranged slices
+/// (#3587); `false` for a byte-based backend (an older agent, or an
+/// agent-hosted backend without ranged access) or an unknown session. The
+/// frontend uses this to route transfers through the queue, leaving the rest
+/// on the byte-based path (PROD-010, #3567).
 #[tauri::command]
 pub async fn session_supports_transfer_queue(
     session_id: String,

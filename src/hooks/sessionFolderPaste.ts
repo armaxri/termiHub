@@ -19,7 +19,7 @@
  * Why a manifest rather than planning the folder backend-side and queueing
  * every file up front (as `local_copy_start` does for local folders): session
  * ids do not survive a restart, so pre-queued session rows could not resume by
- * themselves anyway, and the byte-based legs (remote agents, mixed transports)
+ * themselves anyway, and the byte-based legs (older agents, mixed transports)
  * have no transfer queue at all. The manifest covers every variant the same
  * way and never reports a half-copied folder as complete.
  */
@@ -163,8 +163,8 @@ export async function pasteFileLeg(
     return tracked;
   }
   // local→session: the same per-leg upload as the dual-pane transfer view
-  // (#3563) — a queued transfer on a queue-capable (SFTP/FTP/Docker) session,
-  // a blocking byte round-trip on a remote agent.
+  // (#3563) — a queued transfer on a queue-capable (SFTP/FTP/Docker/agent with
+  // ranged slices) session, a blocking byte round-trip otherwise.
   return uploadLocalFile(
     { sessionId: t.destSession, queueCapable: t.destQueueCapable },
     srcPath,

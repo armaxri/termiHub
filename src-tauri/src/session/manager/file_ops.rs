@@ -250,6 +250,17 @@ impl SessionManager {
         self.file_ops().docker_transfer_target(session_id).await
     }
 
+    /// Resolve the agent proxy behind an agent-hosted session for a ranged
+    /// queued transfer (#3587), mirroring
+    /// [`docker_transfer_target`](Self::docker_transfer_target). See
+    /// [`FileOps::ranged_transfer_target`](crate::session::file_ops).
+    pub async fn ranged_transfer_target(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>, TerminalError> {
+        self.file_ops().ranged_transfer_target(session_id).await
+    }
+
     /// Find a live Docker session's transfer target for exactly `container_id`
     /// (#3585): how a relaunched Docker transfer re-attaches once the user has
     /// reconnected the container's session under a new session id.

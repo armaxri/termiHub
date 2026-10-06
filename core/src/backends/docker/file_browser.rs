@@ -382,6 +382,10 @@ impl FileBrowser for DockerFileBrowser {
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
+
+    fn ranged(&self) -> Option<&dyn crate::files::RangedFileAccess> {
+        Some(self)
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---

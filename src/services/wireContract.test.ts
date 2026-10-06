@@ -212,6 +212,7 @@ describe("wire contract: agent connect / definitions", () => {
       "connectionTypes",
       "dockerAvailable",
       "embeddedServerActivity",
+      "fileRanges",
       "maxSessions",
       "monitoringSupported",
       "sessionFiles",

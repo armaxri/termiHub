@@ -9,7 +9,8 @@ use std::sync::Mutex as StdMutex;
 
 use base64::Engine;
 use termihub_core::errors::FileError;
-use termihub_core::files::{FileBrowser, FileEntry};
+use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess, MAX_RANGE_BYTES};
+use termihub_core::protocol::methods::FilesReadRangeResult;
 
 use crate::session::manager::SessionProcessError;
 
@@ -18,14 +19,28 @@ use crate::session::manager::SessionProcessError;
 struct FakeBrowser {
     host: String,
     files: StdMutex<HashMap<String, Vec<u8>>>,
+    /// Whether it offers ranged access (#3587).
+    ranges: bool,
+    /// Every ranged read and write reaching the backend, as `(op, offset)`.
+    range_calls: StdMutex<Vec<(&'static str, u64)>>,
 }
 
 impl FakeBrowser {
     fn new(host: &str) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new(Self::with_ranges(host, true))
+    }
+
+    fn without_ranges(host: &str) -> Arc<Self> {
+        Arc::new(Self::with_ranges(host, false))
+    }
+
+    fn with_ranges(host: &str, ranges: bool) -> Self {
+        Self {
             host: host.to_string(),
             files: StdMutex::new(HashMap::new()),
-        })
+            ranges,
+            range_calls: StdMutex::new(Vec::new()),
+        }
     }
 
     fn entry(&self, path: &str, size: u64) -> FileEntry {
@@ -111,6 +126,39 @@ impl FileBrowser for FakeBrowser {
     }
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
+    }
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        self.ranges.then_some(self as &dyn RangedFileAccess)
+    }
+}
+
+#[async_trait::async_trait]
+impl RangedFileAccess for FakeBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        self.range_calls.lock().unwrap().push(("read", offset));
+        let files = self.files.lock().unwrap();
+        let data = files
+            .get(path)
+            .ok_or_else(|| FileError::NotFound(path.to_string()))?;
+        let start = (offset as usize).min(data.len());
+        let end = (start + len as usize).min(data.len());
+        Ok(data[start..end].to_vec())
+    }
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        self.range_calls.lock().unwrap().push(("write", offset));
+        let mut files = self.files.lock().unwrap();
+        let file = files.entry(path.to_string()).or_default();
+        if offset == 0 {
+            file.clear();
+        } else if file.len() as u64 != offset {
+            return Err(termihub_core::files::ranged::offset_mismatch(
+                path,
+                file.len() as u64,
+                offset,
+            ));
+        }
+        file.extend_from_slice(data);
+        Ok(())
     }
 }
 
@@ -470,4 +518,182 @@ async fn an_unknown_id_is_not_found() {
     )
     .await;
     assert_eq!(r["error"]["code"], errors::CONNECTION_NOT_FOUND, "{r}");
+}
+
+// ── connection.files.read_range / write_range (#3587) ──────────────
+
+#[tokio::test]
+async fn initialize_advertises_file_ranges() {
+    let handler = make_handler();
+    let r = dispatch(&handler, "initialize", init_params(), 1).await;
+    assert_eq!(r["result"]["capabilities"]["fileRanges"], true, "{r}");
+}
+
+/// Slices are written at the current size and read back at an offset, with
+/// `eof` set on a short read, all through the session's own backend.
+#[tokio::test]
+async fn ranged_slices_reach_the_sessions_backend() {
+    let sessions = FilesSessionManager::new();
+    let docker = FakeBrowser::new("docker");
+    let ssh = FakeBrowser::new("ssh");
+    sessions.script("docker-session", Ok(docker.clone()));
+    sessions.script("ssh-session", Ok(ssh.clone()));
+    let handler = handler_with(sessions).await;
+    let id = "docker-session";
+
+    for (offset, data) in [(0, &b"hello "[..]), (6, &b"world"[..])] {
+        let r = dispatch(
+            &handler,
+            pm::CONNECTION_FILES_WRITE_RANGE,
+            json!({"connection_id": id, "path": "/app/f", "offset": offset, "data": b64(data)}),
+            2,
+        )
+        .await;
+        assert!(r.get("error").is_none(), "{r}");
+    }
+    assert_eq!(docker.files.lock().unwrap()["/app/f"], b"hello world");
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": id, "path": "/app/f", "offset": 6, "length": 3}),
+        3,
+    )
+    .await;
+    let read: FilesReadRangeResult = serde_json::from_value(r["result"].clone()).unwrap();
+    assert_eq!((read.data, read.eof), (b64(b"wor"), false));
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": id, "path": "/app/f", "offset": 9, "length": 8}),
+        4,
+    )
+    .await;
+    let read: FilesReadRangeResult = serde_json::from_value(r["result"].clone()).unwrap();
+    assert_eq!((read.data, read.eof), (b64(b"ld"), true));
+    assert!(
+        ssh.files.lock().unwrap().is_empty(),
+        "no cross-session leak"
+    );
+}
+
+/// A write that would not land at the end of the file is refused by the
+/// backend and nothing changes.
+#[tokio::test]
+async fn a_misplaced_ranged_write_is_refused() {
+    let sessions = FilesSessionManager::new();
+    let ssh = FakeBrowser::new("ssh");
+    ssh.files
+        .lock()
+        .unwrap()
+        .insert("/f".into(), b"abcdef".to_vec());
+    sessions.script("ssh-session", Ok(ssh.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"connection_id": "ssh-session", "path": "/f", "offset": 2, "data": b64(b"X")}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+    assert_eq!(ssh.files.lock().unwrap()["/f"], b"abcdef");
+}
+
+/// A zero-length read is the capability probe: it succeeds on a ranged
+/// backend without touching it (the path need not even exist).
+#[tokio::test]
+async fn a_zero_length_read_probes_without_io() {
+    let sessions = FilesSessionManager::new();
+    let wsl = FakeBrowser::new("wsl");
+    sessions.script("wsl-session", Ok(wsl.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": "wsl-session", "path": "", "offset": 0, "length": 0}),
+        2,
+    )
+    .await;
+    assert_eq!(r["result"]["data"], "", "{r}");
+    assert!(wsl.range_calls.lock().unwrap().is_empty());
+}
+
+/// A backend without ranged access answers `-32013` for the probe and for
+/// real slices alike, and is never written.
+#[tokio::test]
+async fn a_backend_without_ranges_is_not_supported() {
+    let sessions = FilesSessionManager::new();
+    let ftp = FakeBrowser::without_ranges("ftp");
+    sessions.script("ftp-session", Ok(ftp.clone()));
+    let handler = handler_with(sessions).await;
+
+    for (method, params) in [
+        (
+            pm::CONNECTION_FILES_READ_RANGE,
+            json!({"connection_id": "ftp-session", "path": "/f", "offset": 0, "length": 0}),
+        ),
+        (
+            pm::CONNECTION_FILES_WRITE_RANGE,
+            json!({"connection_id": "ftp-session", "path": "/f", "offset": 0, "data": b64(b"x")}),
+        ),
+    ] {
+        let r = dispatch(&handler, method, params, 2).await;
+        assert_eq!(
+            r["error"]["code"],
+            errors::FILE_BROWSING_NOT_SUPPORTED,
+            "{method}: {r}"
+        );
+    }
+    assert!(ftp.files.lock().unwrap().is_empty());
+}
+
+/// Oversized slices are refused as invalid params before reaching a backend.
+#[tokio::test]
+async fn oversized_slices_are_invalid() {
+    let sessions = FilesSessionManager::new();
+    let ssh = FakeBrowser::new("ssh");
+    sessions.script("ssh-session", Ok(ssh.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": "ssh-session", "path": "/f", "offset": 0,
+               "length": MAX_RANGE_BYTES + 1}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::INVALID_PARAMS, "{r}");
+
+    let big = vec![0u8; MAX_RANGE_BYTES as usize + 1];
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"connection_id": "ssh-session", "path": "/f", "offset": 0, "data": b64(&big)}),
+        3,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::INVALID_PARAMS, "{r}");
+    assert!(ssh.range_calls.lock().unwrap().is_empty());
+}
+
+/// Ownership applies to ranged slices exactly as to every file operation.
+#[tokio::test]
+async fn ranged_slices_of_a_session_held_elsewhere_are_refused() {
+    let sessions = FilesSessionManager::new();
+    sessions.script("theirs", Err(SessionProcessError::HeldElsewhere));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_READ_RANGE,
+        json!({"connection_id": "theirs", "path": "/etc/shadow", "offset": 0, "length": 16}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{r}");
 }

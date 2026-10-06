@@ -290,6 +290,44 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         })
     }
 
+    /// Resolve the agent proxy behind an agent-hosted session so a background
+    /// transfer moves the file in offset-addressed slices over
+    /// `connection.files.read_range` / `write_range` (#3587) — the agent
+    /// analogue of [`docker_transfer_target`](Self::docker_transfer_target).
+    ///
+    /// The proxy is cloned out of the sessions lock, then the agent is asked
+    /// (a zero-length read, no I/O) whether this session's backend serves
+    /// slices: a backend without ranged access, or a session started by an
+    /// older session daemon, refuses it here, so such a session stays on the
+    /// byte-based path instead of failing on the queue.
+    pub(super) async fn ranged_transfer_target(
+        &self,
+        session_id: &str,
+    ) -> Result<std::sync::Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>, TerminalError>
+    {
+        use crate::session::remote_proxy::RemoteFileBrowserProxy;
+        let proxy = {
+            let sessions = self.sessions.lock().await;
+            let browser = Self::browser(&sessions, session_id)?;
+            browser
+                .as_any()
+                .and_then(|any| any.downcast_ref::<RemoteFileBrowserProxy>())
+                .filter(|proxy| proxy.ranged().is_some())
+                .cloned()
+                .ok_or_else(|| {
+                    TerminalError::RemoteError(
+                        "Session does not serve ranged file slices; queued transfer unavailable"
+                            .to_string(),
+                    )
+                })?
+        };
+        proxy
+            .probe_ranges()
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+        Ok(std::sync::Arc::new(proxy))
+    }
+
     /// Find a live Docker session streaming into exactly `container_id` and
     /// return its transfer target (#3585).
     ///
