@@ -101,7 +101,8 @@ class TestBackupRestore(ConnectionsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
             lambda: self.driver.get_text("backup-restore-file-name") == target.name,
             what="the picked backup to be read",
         )
-        assert "encrypted" in self.driver.get_text("backup-restore-header")
+        header = self.driver.get_text("backup-restore-header")
+        assert "· encrypted" in header, f"the backup is not read as encrypted: {header!r}"
         self.driver.type("backup-restore-passphrase", _PASSPHRASE)
         self.driver.click("backup-restore-preview")
         self.wait(
