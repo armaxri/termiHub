@@ -237,3 +237,14 @@ fn marking_dead_ends_every_session_and_releases_waiters() {
     assert!(rx.try_recv().is_err());
     assert!(rx.is_closed());
 }
+
+#[test]
+fn a_vanished_runner_is_an_exit_not_invalid_data() {
+    use std::io::{Error, ErrorKind};
+    assert!(runner_went_away(&ProtocolError::Io(Error::from(
+        ErrorKind::ConnectionReset
+    ))));
+    assert!(runner_went_away(&ProtocolError::Truncated));
+    assert!(!runner_went_away(&ProtocolError::UnknownKind(0xEE)));
+    assert!(!runner_went_away(&ProtocolError::FrameTooLarge(1 << 30)));
+}

@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use termihub_plugin_api::{PluginError, MAX_LOG_MESSAGE_BYTES};
-use termihub_plugin_runner::ipc::{FrameReader, Message, Sender};
+use termihub_plugin_runner::ipc::{FrameReader, Message, ProtocolError, Sender};
 
 use crate::connection::OutputSender;
 use crate::plugin::host_context::emit_runner_log;
@@ -180,6 +180,10 @@ impl Shared {
                 // below classifies the exit before the sessions are ended, so
                 // a session never reports dead without its cause.
                 Ok(None) => break,
+                // The runner died mid-stream (Linux resets a socket closed
+                // with unread data): that is an exit, classified by `reap`,
+                // not invalid data.
+                Err(e) if runner_went_away(&e) => break,
                 Err(e) => {
                     self.violation(&e.to_string());
                     break;
@@ -466,6 +470,22 @@ impl Shared {
         drop(guard);
         self.finish(status);
         self.mark_dead("the plugin runner exited");
+    }
+}
+
+/// Whether a read error means the runner's end of the channel is gone (it
+/// exited or was killed) rather than that it sent something malformed.
+fn runner_went_away(error: &ProtocolError) -> bool {
+    match error {
+        ProtocolError::Truncated => true,
+        ProtocolError::Io(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof
+        ),
+        _ => false,
     }
 }
 
