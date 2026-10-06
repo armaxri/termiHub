@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { FileCode, Trash2 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";

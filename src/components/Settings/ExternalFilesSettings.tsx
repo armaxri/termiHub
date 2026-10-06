@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";

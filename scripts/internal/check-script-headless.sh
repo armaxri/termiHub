@@ -47,6 +47,9 @@
 # FAIL on stubs that skip the clean-exit line or let a second instance keep
 # running, so the gate is proven to bite before a release ever depends on it.
 #
+# A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
+# must pass one without the test-bridge build marker and fail on one with it.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -63,6 +66,7 @@ SCRIPTS=(
   "scripts/build-agents.sh"
   "scripts/internal/agent-update-signing.sh"
   "scripts/internal/apply-branch-protection.sh"
+  "scripts/internal/assert-no-test-bridge.sh"
   "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
@@ -497,16 +501,47 @@ lifecycle_run applevent "reports the clean exit as skipped when no Quit is deliv
 lifecycle_run applevent "fails when a delivered Quit leaves no clean-exit line" fail \
   STUB_NO_CLEAN_EXIT=1
 rm -rf "$LS/lock"
+app_lifecycle_and_earlier_failures="$failures"
+
+# --- Release test-bridge guard (#4122) ---
+# assert-no-test-bridge.sh must pass a binary without the test-bridge build
+# marker and fail (exit 1) on one that carries it, so the release gate is proven
+# to bite before a release depends on it. The dummy binaries hold NUL bytes like
+# a real one; the marker is read from its Rust definition, as the guard does.
+GUARD="scripts/internal/assert-no-test-bridge.sh"
+TB="$LC/test-bridge-guard"
+mkdir -p "$TB"
+tb_marker="$(sed -n 's/^pub const TEST_BRIDGE_BUILD_MARKER: &str = "\(.*\)";$/\1/p' \
+  src-tauri/src/utils/test_bridge.rs)"
+printf 'release\0binary\0' >"$TB/release-app"
+printf 'test\0%s\0binary' "$tb_marker" >"$TB/test-bridge-app"
+guard_run() { # <label> <expected exit> <binary...>
+  local label="$1" want="$2" out rc=0
+  shift 2
+  out="$(bash "$GUARD" "$@" 2>&1)" || rc=$?
+  if [ -n "$tb_marker" ] && [ "$rc" -eq "$want" ]; then
+    echo "ok    test-bridge guard: ${label} (exit ${rc})"
+  else
+    echo "::error file=${GUARD}::test-bridge guard: ${label}: expected exit ${want}, got ${rc}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+guard_run "passes a binary without the marker" 0 "$TB/release-app"
+guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
+guard_run "refuses a missing binary" 2 "$TB/missing"
 
 echo ""
 if [ "$failures" -gt 0 ]; then
   echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
     "${lifecycle_failures} signing-lifecycle check(s) failed," \
     "$((sidecar_and_earlier_failures - help_failures - lifecycle_failures)) checksum-sidecar" \
-    "check(s) failed, $((failures - sidecar_and_earlier_failures)) app-lifecycle-smoke check(s)" \
-    "failed."
+    "check(s) failed," \
+    "$((app_lifecycle_and_earlier_failures - sidecar_and_earlier_failures)) app-lifecycle-smoke" \
+    "check(s) failed, $((failures - app_lifecycle_and_earlier_failures)) test-bridge-guard" \
+    "check(s) failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
-  "the signing-key dry-run lifecycle, the checksum sidecar writer and the app lifecycle" \
-  "smoke (on a stub app) passed."
+  "the signing-key dry-run lifecycle, the checksum sidecar writer, the app lifecycle" \
+  "smoke (on a stub app) and the release test-bridge guard passed."

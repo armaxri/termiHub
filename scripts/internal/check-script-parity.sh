@@ -91,6 +91,9 @@ ALLOWLIST=(
   # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
   # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
   "scripts/internal/assert-no-test-signing-key.sh" # CI-only binary grep (bash on every runner)
+  # Release test-bridge guard (#4122): CI-only gate run by release.yml on every
+  # desktop build (Windows leg via `shell: bash`); never run by hand.
+  "scripts/internal/assert-no-test-bridge.sh" # CI-only binary grep (bash on every runner)
 )
 
 in_allowlist() {

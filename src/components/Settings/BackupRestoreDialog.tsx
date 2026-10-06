@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { open as openFileDialog } from "@/services/nativeDialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import {
   applyBackupRestore,

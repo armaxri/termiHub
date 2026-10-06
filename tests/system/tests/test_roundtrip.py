@@ -231,6 +231,38 @@ def test_emit_event_empty_name_raises_bridge_error(bridge):
             driver.emit_event("")
 
 
+def test_stub_native_dialog_round_trips_kind_and_path(bridge, tmp_path):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.stub_native_dialog("save", tmp_path / "export.json")
+        driver.stub_native_dialog("open", str(tmp_path))
+
+        assert handler.recorded["dialogStubs"] == [
+            {"kind": "save", "path": str(tmp_path / "export.json")},
+            {"kind": "open", "path": str(tmp_path)},
+        ]
+
+
+def test_stub_native_dialog_cancel_omits_the_path(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.stub_native_dialog("open")
+
+        # A cancel goes over the wire with no path key; the app reads it as null.
+        assert handler.recorded["dialogStubs"] == [{"kind": "open", "path": None}]
+
+
+def test_stub_native_dialog_unknown_kind_raises_bridge_error(bridge):
+    with FakeApp(bridge.port, dispatcher_like()):
+        driver = bridge.wait_for_app(timeout=5)
+        with pytest.raises(BridgeError):
+            driver.stub_native_dialog("message", "/tmp/x")
+
+
 def test_screenshot_round_trip(bridge):
     data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
     handler = dispatcher_like(screenshot=data_url)
