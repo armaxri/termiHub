@@ -53,6 +53,18 @@ pub const IPC_FD: i32 = 3;
 /// Bytes of the session id prefixing an `Input` / `Output` payload.
 pub const SESSION_ID_LEN: usize = 4;
 
+/// Largest data chunk one bridge frame carries (`ReadFile` / `WriteFile` data,
+/// `StreamData` / `StreamWrite`): well under [`MAX_PAYLOAD_LEN`] so the
+/// MessagePack envelope and a path always fit. Larger reads and writes are
+/// split into several requests.
+pub const MAX_BRIDGE_CHUNK: usize = 512 * 1024;
+
+/// Flow-control window of one proxied connection, per direction: the most
+/// `StreamData` bytes the host sends before the runner acknowledges them, and
+/// the most `StreamWrite` bytes the runner sends before the host acknowledges
+/// them. A peer exceeding it is a protocol violation.
+pub const STREAM_WINDOW: usize = 1024 * 1024;
+
 /// Which side may send a frame kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sender {

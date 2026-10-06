@@ -22,9 +22,7 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
-use nix::sys::socket::{
-    recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr,
-};
+use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 
 /// Most descriptors one `recvmsg` accepts. The host passes one per frame and
 /// the kernel never merges two descriptor-carrying writes into one read, so
@@ -108,7 +106,10 @@ impl FdQueue {
     }
 
     fn push(&self, fd: OwnedFd) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push_back(fd);
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(fd);
     }
 }
 
@@ -195,6 +196,7 @@ mod tests {
     use super::*;
     use std::io::Read;
     use std::net::{TcpListener, TcpStream};
+    use std::os::fd::AsFd;
 
     #[test]
     fn a_passed_socket_arrives_in_order_and_works() {
@@ -206,9 +208,9 @@ mod tests {
         let b = TcpStream::connect(addr).unwrap();
         let (mut b_peer, _) = listener.accept().unwrap();
 
-        send_with_fd(&host, b"one", BorrowedFd::from(&a)).unwrap();
+        send_with_fd(&host, b"one", a.as_fd()).unwrap();
         (&host).write_all(b"-plain-").unwrap();
-        send_with_fd(&host, b"two", BorrowedFd::from(&b)).unwrap();
+        send_with_fd(&host, b"two", b.as_fd()).unwrap();
         // The host side drops its copies: the runner's are independent.
         drop((a, b));
         drop(host);
@@ -237,7 +239,7 @@ mod tests {
         let (host, runner) = UnixStream::pair().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        send_with_fd(&host, b"x", BorrowedFd::from(&sock)).unwrap();
+        send_with_fd(&host, b"x", sock.as_fd()).unwrap();
         let mut reader = FdReader::new(runner);
         let mut byte = [0u8; 1];
         reader.read_exact(&mut byte).unwrap();
@@ -252,6 +254,6 @@ mod tests {
         let (host, _runner) = UnixStream::pair().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        assert!(send_with_fd(&host, b"", BorrowedFd::from(&sock)).is_err());
+        assert!(send_with_fd(&host, b"", sock.as_fd()).is_err());
     }
 }
