@@ -304,6 +304,23 @@ class SystemTest:
         ``["--workspace", name]`` to launch a saved workspace at startup (#3778).
         """
         self.app.restart(between, args=args)
+        self._reacquire_driver()
+
+    def adopt_app_self_restart(self, timeout: float = 60.0) -> None:
+        """Follow an app that restarted *itself*, then re-acquire the bridge.
+
+        Call right after the action that makes the app restart on its own (a
+        backup restore's "Restore and restart", #4127). Unlike
+        :meth:`restart_app` the harness does not kill anything: it waits for the
+        app to exit and adopts the process the app relaunched (see
+        :meth:`~termihub_harness.orchestrator.AppInstance.adopt_self_restart`),
+        so teardown still reaps it.
+        """
+        self.app.adopt_self_restart(timeout)
+        self._reacquire_driver()
+
+    def _reacquire_driver(self) -> None:
+        """Bind the suite's driver to the next app connection after a relaunch."""
         type(self).driver = self.bridge.wait_for_app(
             request_timeout=type(self).request_timeout
         )
