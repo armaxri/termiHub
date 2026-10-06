@@ -74,26 +74,63 @@ doubled every budget, which hid genuinely slow operations and made a real hang
 take twice as long to fail (audit finding WA-CI-006, tracked together with
 WA-CI-005).
 
-| Deadline              | Value              | Applies to                                                                            |
-| --------------------- | ------------------ | ------------------------------------------------------------------------------------- |
-| `APP_CONNECT`         | 60 s               | `Bridge.wait_for_app`: a launched app's bridge client dialling in                     |
-| `COMMAND`             | 10 s               | one bridge command round trip (`Driver` default)                                      |
-| `LIVE_COMMAND`        | 60 s               | commands of the live-connect / SFTP suites (#2460)                                    |
-| `UI_WAIT`             | 20 s               | default `SystemTest.wait` poll budget (call sites pass their own)                     |
-| `DIAGNOSTIC_PROBE`    | 60 s               | failure-artifact probes, which must outlive `LIVE_COMMAND`                            |
-| `CONTENDED_UI_FACTOR` | 2× (slow category) | commands and UI poll loops on a macOS/Windows process that is one of >1 xdist workers |
+| Deadline                 | Value         | Applies to                                                                        |
+| ------------------------ | ------------- | --------------------------------------------------------------------------------- |
+| `APP_CONNECT`            | 35 s          | `Bridge.wait_for_app`: a launched app's bridge client dialling in                 |
+| `COMMAND`                | 10 s          | one bridge command round trip (`Driver` default)                                  |
+| `LIVE_COMMAND`           | 60 s          | commands of the live-connect / SFTP suites (#2460)                                |
+| `UI_WAIT`                | 20 s          | default `SystemTest.wait` poll budget (call sites pass their own)                 |
+| `DIAGNOSTIC_PROBE`       | 60 s          | failure-artifact probes, which must outlive `LIVE_COMMAND`                        |
+| `CONTENDED_OP_DEADLINES` | per op        | named ops on a macOS/Windows process that is one of >1 xdist workers (see below)  |
+| `CONTENDED_UI_FACTOR`    | 2× (fallback) | only poll loops that record no timing line (file-browser row wait, host-key loop) |
 
 - **Headroom rule.** A deadline is at least `HEADROOM` (2) × the largest duration
   observed for that operation in CI, rounded up to 5 s, and never below its
-  serial-tuned base. Never size one from a single fast run.
-- **Slow categories must be earned by data.** The only one is the
-  contended-webview category above: on the 2-worker macOS/Windows bulk legs, UI
-  waits and commands hit their deadline 5.8 (macOS) / 12.6 (Windows) times per
-  job at 1× but 0.7 / 1.8 at 2×. Serial runs — Linux, the display-critical
-  grades, local — get no factor: their 1× failures were real bugs. The harness
-  detects the category itself (`sys.platform` + `PYTEST_XDIST_WORKER_COUNT`), so
-  no workflow sets anything. `APP_CONNECT` has no slow category: the slowest
-  passing class setup was 28.3 s (Linux), within 2 s of the old 30 s budget.
+  serial-tuned base. Never size one from a single fast run. Size from
+  _completed_ samples only, and never raise a budget for an op that timed out
+  because the feature is broken (e.g. VNC open, `Save to enable`, the fit to
+  stay settled, the Windows file move — they time out with a sub-second max).
+- **Slow categories must be earned by data, per op (#3663).** A parallel
+  macOS/Windows worker (2 xdist workers, each with a full WKWebView/WebView2 app)
+  is the only contended case. There, an op keeps its serial budget unless its
+  own contended max × 2 exceeds it; then it is listed in
+  `CONTENDED_OP_DEADLINES` and gets `max(call-site budget, listed value)`. Serial
+  runs — Linux, the display-critical grades, local — get nothing extra. The
+  harness detects the case itself (`sys.platform` + `PYTEST_XDIST_WORKER_COUNT`),
+  so no workflow sets anything. Commands are checked against `COMMAND` (10 s),
+  the smallest budget one can run under.
+
+  Evidence: the `[termihub-test-timing]` lines of 10 macOS, 10 Windows and 11
+  Linux integration-lane jobs (2026-09-30 → 2026-10-06), plus 30 serial
+  display-critical jobs. Contended maxima that needed an entry:
+
+  | Op                                                    | OS      | Max (s) | Contended deadline |
+  | ----------------------------------------------------- | ------- | ------: | -----------------: |
+  | `wait:'…' in terminal output`                         | Windows |    39.1 |               80 s |
+  | `wait:the shell prompt`                               | Windows |    34.4 |               70 s |
+  | `wait:the terminal to report it exited`               | Windows |    34.0 |               70 s |
+  | `wait:the '…' row in the terminal buffer`             | Windows |    33.3 |               70 s |
+  | `wait:the active terminal's shell prompt`             | Windows |    32.2 |               65 s |
+  | `wait:the shell's echo of the composed line`          | Windows |    27.5 |               55 s |
+  | `wait:the PTY to report N rows x N cols`              | Windows |    25.9 |               55 s |
+  | `wait:the PTYSZN stty answer`                         | Windows |    25.9 |               55 s |
+  | `wait:the DOM renderer to paint '…'`                  | Windows |    24.6 |               50 s |
+  | `wait:connection '…'`                                 | Windows |    19.2 |               40 s |
+  | `wait:the new terminal's shell prompt`                | Windows |    15.3 |               35 s |
+  | `wait:'…' in window '…'`                              | Windows |    13.2 |               30 s |
+  | `wait:the restored terminals to reach a shell prompt` | Windows |    10.2 |               25 s |
+  | `wait:the editor status to populate`                  | macOS   |    10.1 |               25 s |
+  | `command:projectionSubscribe`                         | Windows |    18.9 |               40 s |
+  | `command:getState`                                    | macOS   |     8.6 |               20 s |
+  | `command:click`                                       | macOS   |     5.3 |               15 s |
+  | `command:screenshot`                                  | macOS   |     5.2 |               15 s |
+
+  Most are Windows shell starts and PTY round trips; the same waits take ≤ 8.6 s
+  on the serial Windows display lane, so they are contention, not slowness.
+  `APP_CONNECT` has no slow category: the slowest app connect was 16.0 s (serial
+  Windows display lane; 15.1 s macOS / 13.6 s Windows contended, 3.3 s Linux),
+  so 2 × 16.0 → 35 s on every OS.
+
 - **Timing lines.** The harness records every app-connect, bridge command
   (`command:<action>`) and `wait` (`wait:<what>`, dynamic parts collapsed) and,
   in CI (or locally with `TERMIHUB_TEST_TIMING=1`), prints one
@@ -105,6 +142,11 @@ WA-CI-005).
   python scripts/system-test-timing.py --runs 10            # successful jobs only
   python scripts/system-test-timing.py --runs 30 --all-jobs # + deadline hits in failed jobs
   ```
+
+  The script pools every lane of the workflow; size a contended deadline from the
+  macOS/Windows **integration-lane** jobs (the 2-worker ones), not the serial
+  display-critical jobs. A new op that proves slow under contention gets its own
+  `CONTENDED_OP_DEADLINES` entry with the max it was sized from.
 
 - **Local debugging override.** `TERMIHUB_WAIT_SCALE` still multiplies every
   budget when running locally — `0.5` makes a suspected hang fail fast, `3` gives
