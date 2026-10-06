@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::backends::ssh::auth::connect_and_authenticate;
+use crate::backends::ssh::handler::SshSession;
 use crate::errors::SessionError;
 
 use super::config::VncConfig;
@@ -30,11 +31,26 @@ use super::config::VncConfig;
 ///
 /// Holds the loopback address the RFB client should connect to, and keeps the
 /// forwarder task alive. Dropping it cancels the token and tears the tunnel down.
-#[derive(Debug)]
+///
+/// It also keeps the authenticated SSH session reachable, so the file-transfer
+/// side channel (#4191) can open an SFTP subsystem on it. That channel's
+/// lifetime is bound to the tunnel's cancellation token: when the token fires,
+/// the session is disconnected, which closes every channel on it.
 pub struct SshTunnel {
     /// Loopback `127.0.0.1:<port>` the RFB client connects to.
     pub local_port: u16,
+    /// The tunnel's authenticated SSH session (host key already verified).
+    session: Arc<SshSession>,
     cancel: CancellationToken,
+}
+
+impl std::fmt::Debug for SshTunnel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshTunnel")
+            .field("local_port", &self.local_port)
+            .field("cancelled", &self.cancel.is_cancelled())
+            .finish_non_exhaustive()
+    }
 }
 
 impl SshTunnel {
@@ -77,10 +93,11 @@ impl SshTunnel {
 
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
+        let task_session = session.clone();
         tokio::spawn(async move {
             run_forwarder(
                 listener,
-                session,
+                task_session,
                 vnc_host,
                 vnc_port,
                 local_port,
@@ -88,9 +105,35 @@ impl SshTunnel {
             )
             .await;
         });
+        spawn_disconnect_on_cancel(session.clone(), cancel.clone());
 
-        Ok(Self { local_port, cancel })
+        Ok(Self {
+            local_port,
+            session,
+            cancel,
+        })
     }
+
+    /// The tunnel's authenticated SSH session, for opening an SFTP subsystem
+    /// channel on it (#4191). `None` once the tunnel has been torn down.
+    pub fn ssh_session(&self) -> Option<Arc<SshSession>> {
+        (!self.cancel.is_cancelled()).then(|| self.session.clone())
+    }
+}
+
+/// Disconnect `session` once `cancel` fires, so anything still riding it — the
+/// file-transfer SFTP channel (#4191) — ends with the tunnel instead of keeping
+/// the SSH connection alive through its own `Arc`.
+fn spawn_disconnect_on_cancel(session: Arc<SshSession>, cancel: CancellationToken) {
+    tokio::spawn(async move {
+        cancel.cancelled().await;
+        if let Err(e) = session
+            .disconnect(russh::Disconnect::ByApplication, "tunnel closed", "en")
+            .await
+        {
+            debug!(error = %e, "vnc ssh-tunnel disconnect after cancel failed");
+        }
+    });
 }
 
 impl Drop for SshTunnel {

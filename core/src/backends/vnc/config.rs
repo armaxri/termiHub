@@ -18,7 +18,7 @@ use crate::connection::graphical_resolution::{
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
 };
 use crate::connection::schema::{
-    Condition, FieldType, FilePathKind, SelectOption, SettingsField, SettingsGroup,
+    Condition, FieldType, FilePathKind, NoticeSeverity, SelectOption, SettingsField, SettingsGroup,
 };
 use crate::connection::{is_fixed_mode, shared_field_base, SettingsSchema};
 
@@ -114,6 +114,13 @@ pub struct VncConfig {
     /// SSH gateway password. Doubles as the private-key passphrase when the auth
     /// method is `"key"`; ignored for `"agent"`.
     pub ssh_password: String,
+    /// Allow file transfer over the connection's side channel — SFTP on the SSH
+    /// tunnel's session, or the hosting agent's file service (#3770, #4191).
+    /// Off by default; never honoured in view-only sessions.
+    pub file_transfer: bool,
+    /// Default destination folder on the file host. Unset means `~/Desktop`
+    /// when it exists, else `~`.
+    pub file_transfer_dir: Option<String>,
     /// Monitor mode select (`"single" | "all" | "custom"`, #3696). Anything
     /// else — including the empty value of a pre-#3696 config — is single.
     pub monitors: String,
@@ -161,6 +168,8 @@ impl Default for VncConfig {
             ssh_auth_method: "password".to_string(),
             ssh_key_path: None,
             ssh_password: String::new(),
+            file_transfer: false,
+            file_transfer_dir: None,
             monitors: MONITORS_SINGLE.to_string(),
             monitor_count: None,
             monitor_layout: Vec::new(),
@@ -583,7 +592,71 @@ pub fn vnc_settings_schema() -> SettingsSchema {
         ],
     });
 
+    groups.push(file_transfer_group());
+
     SettingsSchema { groups }
+}
+
+/// Only shown when `fileTransfer` is enabled.
+fn when_file_transfer_enabled() -> Option<Condition> {
+    Some(Condition {
+        field: "fileTransfer".to_string(),
+        equals: serde_json::json!(true),
+    })
+}
+
+/// The "File Transfer" group (#3770, #4191): the opt-in plus the default
+/// folder, after SSH Tunnel. Off by default. The notice says where files land;
+/// the live route (SSH vs agent host, and whether that is the desktop host) is
+/// resolved per session by `remote_desktop_file_channel`.
+fn file_transfer_group() -> SettingsGroup {
+    SettingsGroup {
+        collapsed: false,
+        key: "fileTransfer".to_string(),
+        label: "File Transfer".to_string(),
+        fields: vec![
+            SettingsField {
+                default: Some(serde_json::json!(false)),
+                description: Some(
+                    "Move files over the connection's SSH tunnel (SFTP) or its agent. \
+                     VNC itself has no portable file transfer. Not available in \
+                     view-only sessions."
+                        .to_string(),
+                ),
+                ..field(
+                    "fileTransfer",
+                    "Allow file transfer over the side channel",
+                    FieldType::Boolean,
+                )
+            },
+            SettingsField {
+                placeholder: Some("~/Desktop".to_string()),
+                description: Some(
+                    "Folder on the file host that uploads go to. Empty means \
+                     ~/Desktop if it exists, else the home folder."
+                        .to_string(),
+                ),
+                visible_when: when_file_transfer_enabled(),
+                ..field("fileTransferDir", "Default folder", FieldType::Text)
+            },
+            SettingsField {
+                description: Some(
+                    "Files go to the SSH tunnel host (or the agent host), as that \
+                     host's user. If the VNC host is not localhost or that same \
+                     host, files land on the SSH/agent host, not on the desktop."
+                        .to_string(),
+                ),
+                visible_when: when_file_transfer_enabled(),
+                ..field(
+                    "fileTransferRouteNotice",
+                    "",
+                    FieldType::Notice {
+                        severity: NoticeSeverity::Info,
+                    },
+                )
+            },
+        ],
+    }
 }
 
 #[cfg(test)]
@@ -730,7 +803,14 @@ mod tests {
         // Shared base first, then the protocol-specific groups appended.
         assert_eq!(
             keys,
-            vec!["connection", "display", "features", "vnc", "sshTunnel"]
+            vec![
+                "connection",
+                "display",
+                "features",
+                "vnc",
+                "sshTunnel",
+                "fileTransfer"
+            ]
         );
     }
 
@@ -1039,6 +1119,45 @@ mod tests {
     }
 
     #[test]
+    fn file_transfer_defaults_off_and_parses_opt_in() {
+        let cfg = VncConfig::from_settings(serde_json::json!({ "host": "h" })).unwrap();
+        assert!(!cfg.file_transfer);
+        assert_eq!(cfg.file_transfer_dir, None);
+        let cfg = VncConfig::from_settings(serde_json::json!({
+            "host": "h",
+            "fileTransfer": true,
+            "fileTransferDir": "~/Uploads",
+        }))
+        .unwrap();
+        assert!(cfg.file_transfer);
+        assert_eq!(cfg.file_transfer_dir.as_deref(), Some("~/Uploads"));
+    }
+
+    #[test]
+    fn schema_has_file_transfer_group_after_ssh_tunnel_off_by_default() {
+        let schema = vnc_settings_schema();
+        let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
+        let tunnel = keys.iter().position(|k| *k == "sshTunnel").unwrap();
+        assert_eq!(keys.get(tunnel + 1), Some(&"fileTransfer"));
+        let group = &schema.groups[tunnel + 1];
+        assert_eq!(group.label, "File Transfer");
+        let toggle = group
+            .fields
+            .iter()
+            .find(|f| f.key == "fileTransfer")
+            .unwrap();
+        assert!(matches!(toggle.field_type, FieldType::Boolean));
+        assert_eq!(toggle.default, Some(serde_json::json!(false)));
+        assert!(toggle.visible_when.is_none());
+        for key in ["fileTransferDir", "fileTransferRouteNotice"] {
+            let f = group.fields.iter().find(|f| f.key == key).unwrap();
+            let cond = f.visible_when.as_ref().unwrap();
+            assert_eq!(cond.field, "fileTransfer");
+            assert_eq!(cond.equals, serde_json::json!(true));
+        }
+    }
+
+    #[test]
     fn ssh_tunnel_fields_are_conditionally_visible() {
         let schema = vnc_settings_schema();
         let group = schema.groups.iter().find(|g| g.key == "sshTunnel").unwrap();
@@ -1178,6 +1297,6 @@ mod tests {
         let schema = vnc_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 5);
+        assert_eq!(back.groups.len(), 6);
     }
 }

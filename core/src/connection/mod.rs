@@ -18,6 +18,7 @@ pub mod clipboard_dib;
 pub mod clipboard_image;
 pub mod connect_timeout;
 pub mod graphical;
+pub mod graphical_files;
 pub mod graphical_monitors;
 pub mod graphical_resolution;
 pub mod lifecycle;
@@ -46,6 +47,9 @@ pub use graphical::{
     FrameViolation, GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent,
     RectViolation, RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_CURSOR_DIMENSION,
     MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
+};
+pub use graphical_files::{
+    FileChannelPolicy, FileChannelUnavailable, FileSideChannel, FileSideChannelKind,
 };
 pub use graphical_monitors::{
     monitor_fields, multi_monitor_requested, resolve_monitor_layout, MonitorLayout, MonitorMode,
