@@ -19,6 +19,7 @@ use crate::utils::errors::TerminalError;
 
 use termihub_core::session::registry::Sessions;
 
+use super::graphical_browse::{SharedFileBrowser, SideChannelBrowsers};
 use super::manager::{SessionEntry, SessionMap};
 
 /// Borrowing facade exposing a session's file-browser operations.
@@ -29,28 +30,52 @@ use super::manager::{SessionEntry, SessionMap};
 /// mirrors the corresponding [`FileBrowser`] operation.
 pub(super) struct FileOps<'a, M: SessionMap = Sessions<SessionEntry>> {
     sessions: &'a Mutex<M>,
+    /// Graphical sessions' side channels open for browsing (#4193), consulted
+    /// for an id that is not a session.
+    side_channels: Option<&'a SideChannelBrowsers>,
 }
 
 impl<'a, M: SessionMap> FileOps<'a, M> {
     /// Wrap the manager's `sessions` map.
     pub(super) fn new(sessions: &'a Mutex<M>) -> Self {
-        Self { sessions }
+        Self {
+            sessions,
+            side_channels: None,
+        }
+    }
+
+    /// Also resolve graphical session ids through their open side channels.
+    pub(super) fn with_side_channels(mut self, side_channels: &'a SideChannelBrowsers) -> Self {
+        self.side_channels = Some(side_channels);
+        self
     }
 
     /// Resolve a session's file browser, preserving the manager's exact errors:
-    /// [`TerminalError::SessionNotFound`] when the session is unknown and
-    /// [`TerminalError::RemoteError`] when it exposes no file-browser capability.
-    fn browser<'g>(
+    /// [`TerminalError::SessionNotFound`] when the id is neither a session nor
+    /// a graphical session with an open side channel, and
+    /// [`TerminalError::RemoteError`] when the session exposes no file-browser
+    /// capability.
+    ///
+    /// A side channel (#4193) is an owned handle: it is parked in `holder` so
+    /// the returned borrow lives as long as the session one. Only the plain
+    /// reference is held across the caller's `await`, as before.
+    fn resolve<'g>(
+        &self,
         sessions: &'g M,
+        holder: &'g mut Option<SharedFileBrowser>,
         session_id: &str,
     ) -> Result<&'g dyn FileBrowser, TerminalError> {
-        let entry = sessions
-            .get(session_id)
+        if let Some(entry) = sessions.get(session_id) {
+            return entry.connection.file_browser().ok_or_else(|| {
+                TerminalError::RemoteError("No file browser capability".to_string())
+            });
+        }
+        let carrier = self
+            .side_channels
+            .and_then(|side| side.get(session_id))
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))
+        let browser: &'g SharedFileBrowser = holder.insert(carrier.file_browser());
+        Ok(browser.as_ref())
     }
 
     /// List directory contents via the session's file browser.
@@ -60,7 +85,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         path: &str,
     ) -> Result<Vec<FileEntry>, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .list_dir(path)
             .await
@@ -74,7 +100,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         path: &str,
     ) -> Result<Vec<u8>, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .read_file(path)
             .await
@@ -88,7 +115,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         path: &str,
     ) -> Result<FileEntry, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .stat(path)
             .await
@@ -103,7 +131,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         data: &[u8],
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .write_file(path, data)
             .await
@@ -113,7 +142,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     /// Delete a file via the session's file browser.
     pub(super) async fn delete(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .delete(path)
             .await
@@ -128,7 +158,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         to: &str,
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .rename(from, to)
             .await
@@ -138,7 +169,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     /// Create a directory via the session's file browser.
     pub(super) async fn mkdir(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .mkdir(path)
             .await
@@ -154,7 +186,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         mode: u32,
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .set_permissions(path, mode)
             .await
@@ -171,7 +204,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         gid: Option<u32>,
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .set_owner(path, uid, gid)
             .await
@@ -187,7 +221,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         link_path: &str,
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .create_symlink(target, link_path)
             .await
@@ -202,7 +237,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         dest: &str,
     ) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         browser
             .copy(src, dest)
             .await
@@ -230,7 +266,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
     ) -> Result<Arc<SftpFileBrowser>, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         let sftp = browser
             .as_any()
             .and_then(|any| any.downcast_ref::<SftpFileBrowser>())
@@ -259,7 +296,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
     ) -> Result<termihub_core::config::FtpConfig, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         termihub_core::backends::ftp::ftp_config_of(browser).ok_or_else(|| {
             TerminalError::RemoteError(
                 "Session file browser is not FTP-backed; queued transfer unavailable".to_string(),
@@ -281,7 +319,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
     ) -> Result<termihub_core::backends::docker::DockerTransferTarget, TerminalError> {
         let sessions = self.sessions.lock().await;
-        let browser = Self::browser(&sessions, session_id)?;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
         termihub_core::backends::docker::docker_transfer_target_of(browser).ok_or_else(|| {
             TerminalError::RemoteError(
                 "Session file browser is not Docker-backed; queued transfer unavailable"
@@ -308,7 +347,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         use crate::session::remote_proxy::RemoteFileBrowserProxy;
         let proxy = {
             let sessions = self.sessions.lock().await;
-            let browser = Self::browser(&sessions, session_id)?;
+            let mut side = None;
+            let browser = self.resolve(&sessions, &mut side, session_id)?;
             browser
                 .as_any()
                 .and_then(|any| any.downcast_ref::<RemoteFileBrowserProxy>())
