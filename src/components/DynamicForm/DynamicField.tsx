@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import { HelpCircle, Info, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";

@@ -514,6 +514,11 @@ class TestExport(ConnectionsUi, ManualUi, SystemTest):
         )
 ```
 
+A native file dialog alone no longer needs an operator: stub its result with
+`self.driver.stub_native_dialog("save", path)` before the click that opens it
+(#4122, see [docs/test-bridge.md](../../docs/test-bridge.md)). The example above
+is only an illustration of the operator verbs.
+
 Operator verbs on `ManualUi`:
 
 | Call                                   | Behavior                                                     |
@@ -527,7 +532,7 @@ Operator verbs on `ManualUi`:
 single guided test interactively (use `-s` so the prompts reach your console):
 
 ```sh
-./pytest.sh --manual -k native_dialog -s
+./pytest.sh --manual -k visual_rendering -s
 # select a different platform's platform-scoped items:
 ./pytest.sh --manual --manual-platform=windows -s
 ```

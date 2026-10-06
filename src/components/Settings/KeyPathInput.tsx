@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { validateSshKey, SshKeyValidation } from "@/services/api";

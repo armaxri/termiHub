@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";

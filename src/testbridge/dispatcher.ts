@@ -140,6 +140,14 @@ export interface BridgeDeps {
    */
   exitApp?: () => Promise<void>;
   /**
+   * Pre-program the next native `kind` dialog's result (#4122): grant fs access
+   * to `path` through the test-bridge-only `test_allow_dialog_path` command, then
+   * queue it in `@/services/nativeDialog` (`null` = a cancel). Optional — absent
+   * outside the harness, so the `stubNativeDialog` verb then fails with a clear
+   * "not available" error.
+   */
+  stubNativeDialog?: (kind: "open" | "save", path: string | null) => Promise<void>;
+  /**
    * Drive the projection substrate (#2149) for the assertion harness (#2164):
    * subscribe to a region and record its pushed frames, dispatch intents, force
    * a gap, resync. The live {@link import("./TestBridge").TestBridge} wires a
@@ -1011,6 +1019,21 @@ export async function dispatchCommand(
         return ok("exitApp");
       } catch (error) {
         return fail("exitApp", errorMessage(error));
+      }
+    }
+
+    case "stubNativeDialog": {
+      if (command.kind !== "open" && command.kind !== "save") {
+        return fail("stubNativeDialog", 'kind must be "open" or "save"');
+      }
+      if (!deps.stubNativeDialog) {
+        return fail("stubNativeDialog", "native dialog stubbing is not available");
+      }
+      try {
+        await deps.stubNativeDialog(command.kind, command.path ?? null);
+        return ok("stubNativeDialog");
+      } catch (error) {
+        return fail("stubNativeDialog", errorMessage(error));
       }
     }
 

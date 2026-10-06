@@ -879,6 +879,10 @@ pub fn run() -> anyhow::Result<()> {
             // LLVM-instrumented test build writes its coverage profile.
             #[cfg(feature = "test-bridge")]
             commands::window::test_exit_app,
+            // Test-bridge-only (SEC-005, #4122): fs access for a stubbed
+            // native-dialog path, the grant a real dialog pick makes.
+            #[cfg(feature = "test-bridge")]
+            commands::test_dialog::test_allow_dialog_path,
             // Macros
             commands::macros::list_macros,
             commands::macros::get_macro,

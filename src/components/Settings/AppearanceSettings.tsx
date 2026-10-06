@@ -1,7 +1,7 @@
 import { useState } from "react";
 import * as RadixSelect from "@radix-ui/react-select";
 import { Puzzle } from "lucide-react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@/services/nativeDialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
