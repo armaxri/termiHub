@@ -751,6 +751,8 @@ jobs:
           # build-rdp-sidecar.cmd must carry the identical line (one tested copy).
           rdp="$(grep -m1 -E '^powershell .*SHA256' scripts/build-rdp-sidecar.cmd | tr -d '\r')"
           [ "$line" = "$rdp" ] || { echo "::error::build-rdp-sidecar.cmd checksum line differs from build-agents.cmd"; exit 1; }
+          runner="$(grep -m1 -E '^powershell .*SHA256' scripts/build-plugin-runner.cmd | tr -d '\r')"
+          [ "$line" = "$runner" ] || { echo "::error::build-plugin-runner.cmd checksum line differs from build-agents.cmd"; exit 1; }
           # A cmdlet in the line breaks when launched from pwsh (#4029).
           if grep -qiE 'Get-FileHash|Resolve-Path' <<<"$line"; then
             echo "::error::checksum line must use .NET only, no cmdlets (#4029)"; exit 1
@@ -895,6 +897,93 @@ jobs:
             od -c "$bad.sha256"
             exit 1
           fi
+
+      # build-plugin-runner.cmd (#4202): the same --help / fail-fast / stub-cargo
+      # coverage as build-rdp-sidecar.cmd above. The runner is a workspace
+      # member, so the stub drops it where `cargo build -p` puts it (target\).
+      - name: build-plugin-runner.cmd --help and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\build-plugin-runner.cmd --help
+          if errorlevel 1 exit /b 1
+          call scripts\build-plugin-runner.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          call scripts\build-plugin-runner.cmd --target
+          if not errorlevel 1 (echo expected failure: --target without a value& exit /b 1)
+          call scripts\build-plugin-runner.cmd --release --out
+          if not errorlevel 1 (echo expected failure: --out without a value& exit /b 1)
+          echo build-plugin-runner.cmd fail-fast smoke OK
+          exit /b 0
+
+      - name: Stage a stub cargo for build-plugin-runner.cmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(cygpath -u "$RUNNER_TEMP")/stub-cargo-runner"
+          mkdir -p "$dir"
+          # Mimics `cargo build -p termihub-plugin-runner --bin termihub-plugin-runner
+          # [--release] [--target <triple>]`: writes the runner where cargo's layout
+          # puts it, and records the RUSTFLAGS it saw. STUB_CARGO_FAIL fails it.
+          printf '%s\r\n' \
+            '@echo off' \
+            'setlocal' \
+            'if defined STUB_CARGO_FAIL (echo stub cargo: failing on purpose 1>&2& exit /b 101)' \
+            'set "P=debug"' \
+            'set "T="' \
+            ':a' \
+            'if "%~1"=="" goto b' \
+            'if "%~1"=="--release" set "P=release"' \
+            'if "%~1"=="--target" set "T=%~2"' \
+            'shift' \
+            'goto a' \
+            ':b' \
+            'set "D=target\%P%"' \
+            'if defined T set "D=target\%T%\%P%"' \
+            'if not exist "%D%" mkdir "%D%"' \
+            '>"%D%\termihub-plugin-runner.exe" echo stub plugin runner %P% %T%' \
+            '>"%D%\stub-rustflags.txt" echo RUSTFLAGS=[%RUSTFLAGS%]' \
+            'exit /b 0' >"$dir/cargo.cmd"
+
+      - name: build-plugin-runner.cmd runs end to end (stub cargo)
+        shell: cmd
+        run: |
+          set "PATH=%RUNNER_TEMP%\stub-cargo-runner;%PATH%"
+          rem Host triple from rustc, release, staged for externalBin, copied to --out.
+          call scripts\build-plugin-runner.cmd --release --tauri-externalbin --out "%RUNNER_TEMP%\runner-out"
+          if errorlevel 1 (echo externalBin run failed& exit /b 1)
+          rem Explicit --target without staging: cargo's per-target output dir.
+          call scripts\build-plugin-runner.cmd --target aarch64-pc-windows-msvc
+          if errorlevel 1 (echo --target run failed& exit /b 1)
+          rem A failed cargo build must fail the script.
+          set "STUB_CARGO_FAIL=1"
+          call scripts\build-plugin-runner.cmd --release
+          if not errorlevel 1 (echo expected failure: cargo build failed& exit /b 1)
+          set "STUB_CARGO_FAIL="
+          echo build-plugin-runner.cmd stub runs OK
+          exit /b 0
+
+      - name: build-plugin-runner.cmd outputs are correct
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
+          staged="src-tauri/binaries/termihub-plugin-runner-${triple}.exe"
+          test -s "$staged" || { echo "::error::not staged: $staged"; exit 1; }
+          built="target/${triple}/release/termihub-plugin-runner.exe"
+          cmp "$built" "$staged"
+          hex="$(sha256sum <"$staged" | cut -c1-64)"
+          printf '%s  %s\n' "$hex" "termihub-plugin-runner-${triple}.exe" >"$RUNNER_TEMP/expected-runner.sha256"
+          if ! cmp "$RUNNER_TEMP/expected-runner.sha256" "$staged.sha256"; then
+            od -c "$staged.sha256"
+            exit 1
+          fi
+          (cd src-tauri/binaries && sha256sum -c "termihub-plugin-runner-${triple}.exe.sha256")
+          out="$(cygpath -u "$RUNNER_TEMP")/runner-out/termihub-plugin-runner.exe"
+          cmp "$built" "$out"
+          test -s target/aarch64-pc-windows-msvc/debug/termihub-plugin-runner.exe
+          # Windows MSVC targets link the static VC runtime (#4172).
+          grep -q 'crt-static' "target/${triple}/release/stub-rustflags.txt" ||
+            { echo "::error::no +crt-static for ${triple}"; cat "target/${triple}/release/stub-rustflags.txt"; exit 1; }
 
       # fetch-conpty.cmd (#4121): the flag parser, then REAL fetches of the
       # pinned Microsoft.Windows.Console.ConPTY package through the PowerShell
