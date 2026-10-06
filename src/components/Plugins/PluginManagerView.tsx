@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin } from "@/types/plugin";
 import { Button, SearchInput, StatusDot, toast } from "@/components/ui";

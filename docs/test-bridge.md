@@ -138,17 +138,18 @@ unchanged (TIN-014, #3720). The rules are backward compatible:
 
 The Python `Driver` addresses windows by label:
 
-| Call                                 | Does                                                                                    |
-| ------------------------------------ | --------------------------------------------------------------------------------------- |
-| `driver.window_label`                | The label of the window this driver drives (`main` for the suite's driver)              |
-| `driver.windows()`                   | Labels of every window with a live bridge connection, main first                        |
-| `driver.window(label)`               | A `Driver` for that window, waiting for it to connect; `window("main")` is `self`       |
-| `driver.wait_for_window(predicate)`  | Wait for a window whose label matches (e.g. one not in an earlier `windows()` snapshot) |
-| `driver.wait_until_closed()`         | Block until this window's socket closes (the window was destroyed)                      |
-| `driver.close_window()`              | The `closeWindow` verb — close this window through the OS close path                    |
-| `driver.list_windows()`              | The `listWindows` verb — the backend window registry                                    |
-| `driver.read_coverage_chunk(offset)` | The `readCoverage` verb — one chunk of this window's coverage (coverage builds)         |
-| `driver.exit_app()`                  | The `exitApp` verb — quit the app normally so coverage profiles are written             |
+| Call                                         | Does                                                                                            |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `driver.window_label`                        | The label of the window this driver drives (`main` for the suite's driver)                      |
+| `driver.windows()`                           | Labels of every window with a live bridge connection, main first                                |
+| `driver.window(label)`                       | A `Driver` for that window, waiting for it to connect; `window("main")` is `self`               |
+| `driver.wait_for_window(predicate)`          | Wait for a window whose label matches (e.g. one not in an earlier `windows()` snapshot)         |
+| `driver.wait_until_closed()`                 | Block until this window's socket closes (the window was destroyed)                              |
+| `driver.close_window()`                      | The `closeWindow` verb — close this window through the OS close path                            |
+| `driver.list_windows()`                      | The `listWindows` verb — the backend window registry                                            |
+| `driver.read_coverage_chunk(offset)`         | The `readCoverage` verb — one chunk of this window's coverage (coverage builds)                 |
+| `driver.exit_app()`                          | The `exitApp` verb — quit the app normally so coverage profiles are written                     |
+| `driver.stub_native_dialog(kind, path=None)` | The `stubNativeDialog` verb — answer the next native open/save dialog with `path` (or a cancel) |
 
 ```python
 before = self.driver.windows()                      # ["main"]
@@ -245,6 +246,7 @@ unmount.
 | `listWindows`              | Read the backend window registry (`[{ label, tabCount? }]`)    |
 | `readCoverage`             | Read a chunk of `window.__coverage__` (coverage builds only)   |
 | `exitApp`                  | Test-only: quit the app normally (coverage profiles, below)    |
+| `stubNativeDialog`         | Test-only: answer the next native open/save dialog (below)     |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -581,6 +583,42 @@ A native window's close has no DOM control, so the close-with-live-tabs decision
 Like `emitEvent`, `closeWindow` acts past the DOM, so the live `TestBridge`
 re-checks `isTestBridgeEnabled()` at the call site. Unit tests inject stubs via
 the `closeWindow` / `listWindows` deps.
+
+### Stubbing native file dialogs (`stubNativeDialog`)
+
+A native OS open/save dialog is not part of the webview, so no DOM verb can pick
+a file in it. Instead the harness pre-programs the dialog's result (#4122):
+
+- `{ action: "stubNativeDialog", kind: "open" | "save", path? }` makes the next
+  `open` / `save` from [`src/services/nativeDialog.ts`](../src/services/nativeDialog.ts)
+  return `path` without showing a dialog. An absent `path` is a cancel (`null`).
+  A folder picker is an `open` dialog. One stub per kind is pending at a time; a
+  newer one replaces it, and each is used once.
+- For a path, the live `TestBridge` first calls the test-bridge-only
+  `test_allow_dialog_path` Tauri command. A real pick adds the chosen path to the
+  fs plugin's scope, and the stub has to do the same, or the app's following
+  `writeTextFile` / `readTextFile` is refused. An existing directory is granted
+  recursively; anything else (including a save target that does not exist yet)
+  as a single file. The path must be absolute.
+
+```python
+target = tmp_dir / "connections-export.json"
+self.driver.stub_native_dialog("save", target)   # before the click
+self.driver.click("export-submit")               # the dialog "returns" target
+```
+
+Every dialog call site imports `open` / `save` from `@/services/nativeDialog`;
+an ESLint rule rejects importing them from `@tauri-apps/plugin-dialog` anywhere
+else, so a new dialog cannot bypass the seam. `window.__TAURI_INTERNALS__.invoke`
+cannot be wrapped instead: Tauri defines it non-writable and non-configurable.
+
+**Gating.** A stub is honoured only while `isTestBridgeEnabled()` is true, which a
+production build without `VITE_TEST_BRIDGE=1` can never be. `test_allow_dialog_path`
+is compiled only with the `test-bridge` cargo feature and refuses unless the test
+bridge is enabled at runtime. `scripts/internal/assert-no-test-bridge.sh` fails
+when a release binary carries the test-bridge build marker, and runs on every
+release build. The stubbed suite is
+[`tests/system/tests/test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py).
 
 ### Coverage collection (`readCoverage`, `exitApp`)
 

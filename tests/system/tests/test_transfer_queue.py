@@ -25,7 +25,8 @@ Two suites, split by what each can assert *deterministically*:
     bridge can drive. Every other one (file-browser Download/Upload, the
     editor's "Download a copy") opens a native OS file dialog first, which the
     in-webview bridge cannot reach — the same constraint documented in
-    ``test_sftp_infra.py`` and handled as guided-manual in ``test_native_dialogs.py``.
+    ``test_sftp_infra.py``. (Since #4122 such a dialog can be stubbed with
+    ``driver.stub_native_dialog``, as ``test_native_dialogs.py`` does.)
 
 ``TestTransferQueuePanel``
     Drives the panel through ``emitEvent`` (#1545, PR #1556), injecting
