@@ -41,8 +41,11 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::host::HostError;
-use super::signature::DIGEST_ALGORITHM;
+use super::LoadError;
+
+/// The digest algorithm prefix of a `sha256:<hex>` digest — the same value
+/// `termihub_core::plugin::DIGEST_ALGORITHM` names.
+pub const DIGEST_ALGORITHM: &str = "sha256";
 
 /// Windows `FILE_SHARE_READ`: while our handle is open, other openers may only
 /// read (or map/execute) the file — never write, delete or rename it.
@@ -53,7 +56,7 @@ const FILE_SHARE_READ: u32 = 0x0000_0001;
 /// loaded from [`load_path`](Self::load_path) and then confirmed with
 /// [`confirm_after_load`](Self::confirm_after_load). Keep it alive until then.
 #[derive(Debug)]
-pub(super) struct PinnedLibrary {
+pub struct PinnedLibrary {
     path: PathBuf,
     file: File,
     expected: String,
@@ -62,9 +65,9 @@ pub(super) struct PinnedLibrary {
 impl PinnedLibrary {
     /// Open `path`, hash it through the opened handle, and require the digest to
     /// equal `expected` (`sha256:`-prefixed). A file that cannot be opened or
-    /// read fails closed with [`HostError::LibraryDigestMismatch`].
-    pub(super) fn open_verified(path: &Path, expected: &str) -> Result<Self, HostError> {
-        let mismatch = |actual: String| HostError::LibraryDigestMismatch {
+    /// read fails closed with [`LoadError::LibraryDigestMismatch`].
+    pub fn open_verified(path: &Path, expected: &str) -> Result<Self, LoadError> {
+        let mismatch = |actual: String| LoadError::LibraryDigestMismatch {
             path: path.to_owned(),
             expected: expected.to_owned(),
             actual,
@@ -85,7 +88,7 @@ impl PinnedLibrary {
     ///
     /// Linux / Android: `/proc/self/fd/<n>` — the hashed inode itself. Elsewhere
     /// the real path, after confirming it still names the hashed file.
-    pub(super) fn load_path(&self) -> Result<PathBuf, HostError> {
+    pub fn load_path(&self) -> Result<PathBuf, LoadError> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsRawFd;
@@ -104,7 +107,7 @@ impl PinnedLibrary {
     /// Re-verify after the load: the retained handle still hashes to the
     /// expected digest and (path-loading platforms) the path still names it.
     /// On `Err` the caller must drop (unload) the library.
-    pub(super) fn confirm_after_load(&self) -> Result<(), HostError> {
+    pub fn confirm_after_load(&self) -> Result<(), LoadError> {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         self.check_path_still_names_handle()?;
         let actual = sha256_of_handle(&self.file).map_err(|e| self.changed(e.to_string()))?;
@@ -115,8 +118,8 @@ impl PinnedLibrary {
         }
     }
 
-    fn changed(&self, detail: String) -> HostError {
-        HostError::LibraryChangedDuringLoad {
+    fn changed(&self, detail: String) -> LoadError {
+        LoadError::LibraryChangedDuringLoad {
             path: self.path.clone(),
             detail,
         }
@@ -125,7 +128,7 @@ impl PinnedLibrary {
     /// Path-loading platforms: fail unless `self.path` still resolves to the
     /// same file as the hashed handle (a replace changes the file identity).
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    fn check_path_still_names_handle(&self) -> Result<(), HostError> {
+    fn check_path_still_names_handle(&self) -> Result<(), LoadError> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -176,8 +179,16 @@ fn sha256_of_handle(file: &File) -> std::io::Result<String> {
 }
 
 #[cfg(test)]
+
+/// The `sha256:`-prefixed digest of `bytes` (test helper; core's
+/// `signature::sha256_digest` produces the same value).
+#[cfg(test)]
+fn sha256_digest(bytes: &[u8]) -> String {
+    format!("{DIGEST_ALGORITHM}:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+#[cfg(test)]
 mod tests {
-    use super::super::signature::sha256_digest;
     use super::*;
 
     fn lib_with(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
@@ -193,7 +204,7 @@ mod tests {
         let file = open_pinned(&path).unwrap();
         assert_eq!(
             sha256_of_handle(&file).unwrap(),
-            super::super::signature::sha256_file(&path).unwrap()
+            sha256_digest(&std::fs::read(&path).unwrap())
         );
     }
 
@@ -201,7 +212,7 @@ mod tests {
     fn a_mismatched_digest_is_refused_before_load() {
         let (_tmp, path) = lib_with(b"evil bytes");
         match PinnedLibrary::open_verified(&path, &sha256_digest(b"good bytes")) {
-            Err(HostError::LibraryDigestMismatch { actual, .. }) => {
+            Err(LoadError::LibraryDigestMismatch { actual, .. }) => {
                 assert_eq!(actual, sha256_digest(b"evil bytes"));
             }
             other => panic!("expected LibraryDigestMismatch, got {other:?}"),
@@ -214,7 +225,7 @@ mod tests {
         let missing = tmp.path().join("gone.bin");
         assert!(matches!(
             PinnedLibrary::open_verified(&missing, &sha256_digest(b"x")),
-            Err(HostError::LibraryDigestMismatch { .. })
+            Err(LoadError::LibraryDigestMismatch { .. })
         ));
     }
 
@@ -254,7 +265,7 @@ mod tests {
         std::fs::write(&path, b"evil bytes").unwrap();
         assert!(matches!(
             pin.confirm_after_load(),
-            Err(HostError::LibraryChangedDuringLoad { .. })
+            Err(LoadError::LibraryChangedDuringLoad { .. })
         ));
     }
 
@@ -272,11 +283,11 @@ mod tests {
 
         assert!(matches!(
             pin.load_path(),
-            Err(HostError::LibraryChangedDuringLoad { .. })
+            Err(LoadError::LibraryChangedDuringLoad { .. })
         ));
         assert!(matches!(
             pin.confirm_after_load(),
-            Err(HostError::LibraryChangedDuringLoad { .. })
+            Err(LoadError::LibraryChangedDuringLoad { .. })
         ));
     }
 
@@ -290,7 +301,7 @@ mod tests {
         std::fs::write(&path, b"evil bytes").unwrap();
         assert!(matches!(
             pin.confirm_after_load(),
-            Err(HostError::LibraryChangedDuringLoad { .. })
+            Err(LoadError::LibraryChangedDuringLoad { .. })
         ));
     }
 

@@ -66,7 +66,6 @@ mod fat_pack;
 mod host;
 mod host_context;
 mod index_signature;
-mod library_pin;
 mod log_rate_limit;
 mod manager;
 mod manifest;

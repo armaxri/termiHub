@@ -39,24 +39,24 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use libloading::{Library, Symbol};
-use termihub_plugin_api::symbols::{
-    PluginAbiVersionFn, PluginCreateBackendFn, PluginInitFn, PluginShutdownFn,
-    SYMBOL_PLUGIN_ABI_VERSION, SYMBOL_PLUGIN_CREATE_BACKEND, SYMBOL_PLUGIN_INIT,
-    SYMBOL_PLUGIN_SHUTDOWN,
-};
+#[cfg(test)]
+use termihub_plugin_api::symbols::PluginShutdownFn;
 use termihub_plugin_api::{
-    AbiIncompatibility, AbiVersion, LoadedBackend, PluginBackend, PluginError, PluginHostBridge,
-    PluginHostContext, PluginInfo, PluginOutputSender, PluginSessionConfig, Toolchain,
-    ToolchainIncompatibility, ABI_1_1, CURRENT_PLUGIN_ABI_VERSION,
+    AbiIncompatibility, AbiVersion, LoadedBackend, PluginError, PluginHostBridge,
+    PluginHostContext, PluginOutputSender, ToolchainIncompatibility, ABI_1_1,
 };
+#[cfg(test)]
+use termihub_plugin_api::{Toolchain, CURRENT_PLUGIN_ABI_VERSION};
+#[cfg(test)]
+use termihub_plugin_runner::loader;
+use termihub_plugin_runner::loader::{load_plugin_library, LoadError, PluginLibrary};
+pub use termihub_plugin_runner::loader::{BackendLoadOptions, LoadedPluginInfo};
 
 use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistry};
 
 use super::capabilities::ConnectionPolicy;
 use super::connection::{PluginConnectionType, SessionHostContext};
 use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
-use super::library_pin::PinnedLibrary;
 use super::log_rate_limit::PluginLogLimiter;
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
@@ -278,6 +278,41 @@ pub enum HostError {
     },
 }
 
+impl From<LoadError> for HostError {
+    /// Map a shared-loader failure onto the host's error, variant for variant
+    /// (same message), so moving the loader (#4182) changed no error the user
+    /// or the management layer sees.
+    fn from(err: LoadError) -> Self {
+        match err {
+            LoadError::LibraryDigestMismatch {
+                path,
+                expected,
+                actual,
+            } => HostError::LibraryDigestMismatch {
+                path,
+                expected,
+                actual,
+            },
+            LoadError::LibraryChangedDuringLoad { path, detail } => {
+                HostError::LibraryChangedDuringLoad { path, detail }
+            }
+            LoadError::Open { path, source } => HostError::Open { path, source },
+            LoadError::MissingSymbol(name) => HostError::MissingSymbol(name),
+            LoadError::IncompatibleAbi(detail) => HostError::IncompatibleAbi(detail),
+            LoadError::ManifestAbiMismatch { manifest, library } => {
+                HostError::ManifestAbiMismatch { manifest, library }
+            }
+            LoadError::InconsistentAbi { symbol, info } => {
+                HostError::InconsistentAbi { symbol, info }
+            }
+            LoadError::Init(detail) => HostError::Init(detail),
+            LoadError::IncompatibleToolchain(detail) => HostError::IncompatibleToolchain(detail),
+            LoadError::UnverifiedToolchain { abi } => HostError::UnverifiedToolchain { abi },
+            LoadError::Panicked(entry) => HostError::Panicked(entry),
+        }
+    }
+}
+
 impl HostError {
     /// Whether this failure is specifically an ABI/version incompatibility (or a
     /// multi-platform package lacking this host's platform, PLG-011), as
@@ -294,79 +329,38 @@ impl HostError {
     }
 }
 
-/// Metadata a loaded plugin reported through `plugin_init`, copied out of the
-/// FFI-owned [`PluginInfo`] into owned Rust strings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadedPluginInfo {
-    /// Stable plugin identifier the library reported.
-    pub id: String,
-    /// Human-readable display name.
-    pub name: String,
-    /// The plugin's own semantic version.
-    pub version: String,
-    /// ABI version the plugin was built against (already checked compatible
-    /// with this host, and consistent with the library's exported version).
-    pub abi_version: AbiVersion,
-    /// The build toolchain the plugin reported — `Some` only for a plugin whose
-    /// ABI records it (1.1+); `None` for an ABI 1.0 plugin, which never wrote
-    /// those fields and must not have them read.
-    pub toolchain: Option<Toolchain>,
-}
-
-impl LoadedPluginInfo {
-    fn from_ffi(info: &PluginInfo) -> Self {
-        let abi_version = info.abi_version();
-        Self {
-            id: info.id.as_str().to_owned(),
-            name: info.name.as_str().to_owned(),
-            version: info.version.as_str().to_owned(),
-            abi_version,
-            // Read the appended 1.1 fields only when the plugin's ABI has them.
-            toolchain: abi_version.supports(ABI_1_1).then(|| info.toolchain()),
-        }
-    }
-}
-
-/// A loaded plugin backend library plus its resolved entry points.
+/// A loaded plugin backend library plus the host-side per-plugin state its
+/// sessions share.
 ///
 /// Reference-counted via [`Arc`] so it outlives every session it produces (see
-/// the module docs). The `library` field is declared **last** so it is dropped
-/// last: [`Drop`] calls the plugin's `shutdown` entry point while the library is
-/// still mapped, then the library unloads.
+/// the module docs). The gated library itself is a
+/// [`PluginLibrary`](termihub_plugin_runner::loader::PluginLibrary) from the
+/// loader shared with the out-of-process runner (#4182); dropping it calls the
+/// plugin's `shutdown` while still mapped, then unmaps it.
 pub struct LoadedLibrary {
-    info: LoadedPluginInfo,
-    /// Resolved `plugin_create_backend`. Valid as long as `library` is loaded.
-    create_backend: PluginCreateBackendFn,
-    /// Resolved `plugin_shutdown`, called once on drop.
-    shutdown: PluginShutdownFn,
     /// Plugin-wide cancellation flag (ABI 1.1 host context): set when the host
     /// unloads the plugin, observed by every session's services handle.
     shutdown_signal: Arc<AtomicBool>,
     /// Plugin-wide log rate limiter (ABI 1.1 host log callback, #3581), shared
     /// by every session's services handle.
     log_limiter: Arc<PluginLogLimiter>,
-    /// The open library. Never read directly — held solely to keep the mapping
-    /// alive (the resolved function pointers point into it) and to unmap on drop.
-    /// **Must be the last field** so it is dropped last, after [`Drop`] runs.
-    #[expect(
-        dead_code,
-        reason = "RAII: held only to keep the library mapped; unmapped on drop"
-    )]
-    library: Library,
+    /// The gated library. Declared last; [`Drop`] signals shutdown first.
+    library: PluginLibrary,
 }
 
-// SAFETY: `libloading::Library` is `Send + Sync`; the resolved function pointers
-// are plain `extern "C"` pointers into that library. The plugin ABI requires
-// backends and their entry points to be callable from any thread (see
-// `termihub_plugin_api`), so sharing a `LoadedLibrary` across threads is sound.
-unsafe impl Send for LoadedLibrary {}
-unsafe impl Sync for LoadedLibrary {}
-
 impl LoadedLibrary {
+    fn new(library: PluginLibrary) -> Self {
+        Self {
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
+            log_limiter: Arc::new(PluginLogLimiter::default()),
+            library,
+        }
+    }
+
     /// Metadata this plugin reported at load time.
     #[must_use]
     pub fn info(&self) -> &LoadedPluginInfo {
-        &self.info
+        self.library.info()
     }
 
     /// Whether this plugin's ABI includes an addition introduced in ABI
@@ -375,7 +369,7 @@ impl LoadedLibrary {
     /// field, or a newer enum variant (see `termihub_plugin_api::version`).
     #[must_use]
     pub fn supports(&self, since: AbiVersion) -> bool {
-        self.info.abi_version.supports(since)
+        self.library.supports(since)
     }
 
     /// Signal every session of this plugin to wind down (sticky): their host
@@ -430,87 +424,40 @@ impl LoadedLibrary {
         bridge: PluginHostBridge,
         context: Option<&PluginHostContext>,
     ) -> Result<LoadedBackend, PluginError> {
-        let config = match context {
-            Some(context) if self.supports(ABI_1_1) => {
-                PluginSessionConfig::with_context(config_json, settings_json, context)
-            }
-            _ => PluginSessionConfig::with_settings(config_json, settings_json),
-        };
-        let mut backend = PluginBackend {
-            state: std::ptr::null_mut(),
-            vtable: std::ptr::null(),
-        };
-        // SAFETY: `config` outlives the call; `output` and `bridge` ownership are
-        // transferred to the plugin; `&mut backend` is a valid out-parameter. The
-        // plugin writes a valid `PluginBackend` on `Ok`. The call is wrapped in
-        // `catch_unwind` so a panic inside the plugin's entry point is contained
-        // rather than unwinding across the FFI boundary (undefined behavior) — a
-        // misbehaving plugin must not crash the host (concept "Error recovery").
-        let create_backend = self.create_backend;
-        let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-            create_backend(&config, output, bridge, &mut backend)
-        }))
-        .map_err(|_| PluginError::Panicked)?;
-        status.into_result()?;
-        // SAFETY: on `Ok` the plugin has written a live backend produced by the
-        // same library, whose ownership now transfers to the wrapper.
-        Ok(unsafe { LoadedBackend::from_raw(backend) })
+        self.library.create_backend_with_context(
+            config_json,
+            settings_json,
+            output,
+            bridge,
+            context,
+        )
     }
 }
 
 impl Drop for LoadedLibrary {
     fn drop(&mut self) {
         // Any handle a plugin thread still holds reports cancelled from here on.
+        // The `library` field then drops: `plugin_shutdown`, then unmap.
         self.signal_shutdown();
-        // Give the plugin a chance to release process-wide resources before the
-        // library unmaps. Contain any panic rather than unwinding across FFI.
-        let shutdown = self.shutdown;
-        // SAFETY: `shutdown` is a valid entry point in the still-loaded library.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { shutdown() }));
     }
 }
 
 #[cfg(test)]
 impl LoadedLibrary {
     /// Build a `LoadedLibrary` for teardown-ordering tests (CORE-029) without a
-    /// real plugin dylib.
-    ///
-    /// The `library` handle is obtained from the already-loaded process image
-    /// (`dlopen(NULL)` / the current module handle), which loads nothing new and
-    /// runs no initializers, so it is safe to construct and drop. The only
-    /// observable effect on drop is the `shutdown` callback, which a test uses as
-    /// a drop-order probe. `create_backend` is never invoked by such tests.
+    /// real plugin dylib; see [`PluginLibrary::for_drop_order_test`]. The only
+    /// observable effect on drop is the `shutdown` callback.
     pub(crate) fn for_drop_order_test(shutdown: PluginShutdownFn) -> Self {
-        unsafe extern "C" fn unused_create_backend(
-            _config: *const PluginSessionConfig,
-            _output: PluginOutputSender,
-            _bridge: PluginHostBridge,
-            _out_backend: *mut PluginBackend,
-        ) -> termihub_plugin_api::PluginStatus {
-            termihub_plugin_api::PluginStatus::Other
-        }
-
-        #[cfg(unix)]
-        let library: Library = libloading::os::unix::Library::this().into();
-        #[cfg(windows)]
-        let library: Library = libloading::os::windows::Library::this()
-            .expect("handle to the current module")
-            .into();
-
-        Self {
-            info: LoadedPluginInfo {
+        Self::new(PluginLibrary::for_drop_order_test(
+            LoadedPluginInfo {
                 id: "drop-order-test".to_owned(),
                 name: "Drop Order Test".to_owned(),
                 version: "0.0.0".to_owned(),
                 abi_version: CURRENT_PLUGIN_ABI_VERSION,
                 toolchain: Some(Toolchain::current()),
             },
-            create_backend: unused_create_backend,
             shutdown,
-            shutdown_signal: Arc::new(AtomicBool::new(false)),
-            log_limiter: Arc::new(PluginLogLimiter::default()),
-            library,
-        }
+        ))
     }
 }
 
@@ -675,198 +622,50 @@ pub fn load_backend_library_for_manifest(
     )
 }
 
-/// Options for [`load_backend_library_with`]. The default is the strictest
-/// load: no digest binding, no manifest mirror check, and **no** acceptance of
-/// an unverifiable toolchain.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct BackendLoadOptions<'a> {
-    /// Signed digest the library bytes must match immediately before `dlopen`
-    /// (CORE-034); `None` for an unsigned plugin.
-    pub expected_digest: Option<&'a str>,
-    /// The manifest `apiVersion` the library's ABI must mirror (PLG-002).
-    pub manifest_api_version: Option<&'a str>,
-    /// Whether the user explicitly accepted an **unverifiable build toolchain**
-    /// for this exact library (recorded in its trust acknowledgment). Only an
-    /// ABI 1.0 plugin, which predates the toolchain record, needs it; without it
-    /// such a plugin is refused ([`HostError::UnverifiedToolchain`]). It never
-    /// relaxes the check for a plugin that does report a toolchain.
-    pub accept_unverified_toolchain: bool,
-}
-
 /// [`load_backend_library`] with explicit [`BackendLoadOptions`].
 ///
 /// After the ABI gate and `plugin_init`, this enforces the **toolchain rule**
 /// (PLG-013, ADR-15): a plugin whose ABI records its build toolchain (1.1+) must
 /// report exactly this host's rustc and panic strategy, and one that cannot
 /// (ABI 1.0) loads only with `accept_unverified_toolchain`.
+///
+/// The gates themselves live in the loader shared with the out-of-process
+/// runner ([`termihub_plugin_runner::loader`], #4182), so both enforce exactly
+/// the same sequence.
 pub fn load_backend_library_with(
     library_path: &Path,
     options: &BackendLoadOptions<'_>,
 ) -> Result<Arc<LoadedLibrary>, HostError> {
-    load_backend_library_impl(library_path, options)
+    let library = load_plugin_library(library_path, options)?;
+    Ok(Arc::new(LoadedLibrary::new(library)))
 }
 
-/// Enforce the toolchain rule for a plugin that passed the ABI gate: exact
-/// match when its ABI records a toolchain, explicit acceptance otherwise. Pure
-/// so the matrix can be tested without a library.
+/// Enforce the toolchain rule (see [`loader::check_library_toolchain`]).
+#[cfg(test)]
 fn check_library_toolchain(
     info: &LoadedPluginInfo,
     host: &Toolchain,
     accept_unverified_toolchain: bool,
 ) -> Result<(), HostError> {
-    match &info.toolchain {
-        Some(plugin) => plugin
-            .check_host_compatibility(host)
-            .map_err(HostError::IncompatibleToolchain),
-        None if accept_unverified_toolchain => Ok(()),
-        None => Err(HostError::UnverifiedToolchain {
-            abi: info.abi_version,
-        }),
-    }
+    Ok(loader::check_library_toolchain(
+        info,
+        host,
+        accept_unverified_toolchain,
+    )?)
 }
 
-/// Decide whether a library that exported ABI `found` may be loaded by a host
-/// at ABI `host`, and — when a manifest is being checked — whether the
-/// manifest's `apiVersion` mirrors it. Pure so the compatibility matrix can be
-/// tested against simulated host versions.
+/// Apply the ABI gate (see [`loader::check_library_abi`]).
+#[cfg(test)]
 fn check_library_abi(
     found: AbiVersion,
     host: AbiVersion,
     manifest_api_version: Option<&str>,
 ) -> Result<(), HostError> {
-    found
-        .check_host_compatibility(host)
-        .map_err(HostError::IncompatibleAbi)?;
-    if let Some(declared) = manifest_api_version {
-        if AbiVersion::parse(declared) != Some(found) {
-            return Err(HostError::ManifestAbiMismatch {
-                manifest: declared.to_owned(),
-                library: found,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn load_backend_library_impl(
-    library_path: &Path,
-    options: &BackendLoadOptions<'_>,
-) -> Result<Arc<LoadedLibrary>, HostError> {
-    let BackendLoadOptions {
-        expected_digest,
+    Ok(loader::check_library_abi(
+        found,
+        host,
         manifest_api_version,
-        accept_unverified_toolchain,
-    } = *options;
-    // Re-check the exact bytes about to be loaded against the digest they were
-    // verified with, through a handle held open across the load (CORE-034,
-    // #2796). The per-OS residual of the check→open race is documented in
-    // `library_pin`. Fails closed: an unreadable file is refused, not loaded.
-    let pinned = expected_digest
-        .map(|expected| PinnedLibrary::open_verified(library_path, expected))
-        .transpose()?;
-    let open_path = match &pinned {
-        Some(pin) => pin.load_path()?,
-        None => library_path.to_owned(),
-    };
-
-    // SAFETY: opening an arbitrary library runs its initializers; this is the
-    // irreducible unsafety of a plugin host. Failures are returned, not panicked.
-    let library = unsafe { Library::new(&open_path) }.map_err(|source| HostError::Open {
-        path: library_path.to_owned(),
-        source,
-    })?;
-    if let Some(pin) = pinned {
-        // On failure `library` is dropped here (unloaded) before anything in it
-        // is called.
-        pin.confirm_after_load()?;
-    }
-
-    // --- 1. ABI version gate, before anything else is called. ---
-    let found = {
-        // SAFETY: resolving a symbol to its documented type alias; the pointer is
-        // only used while `library` is alive.
-        let abi_version: Symbol<PluginAbiVersionFn> = unsafe {
-            library
-                .get(SYMBOL_PLUGIN_ABI_VERSION)
-                .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_ABI_VERSION)))?
-        };
-        // Copy out the plain `extern "C"` fn pointer (`Copy`, `UnwindSafe`) so the
-        // `catch_unwind` closure does not capture the `Symbol` borrow.
-        let abi_version_fn = *abi_version;
-        // SAFETY: the plugin's abi-version entry point takes no arguments and
-        // returns a plain `u32`. Contained in `catch_unwind` so a panicking plugin
-        // cannot unwind across FFI and abort the host.
-        let packed = std::panic::catch_unwind(|| unsafe { abi_version_fn() })
-            .map_err(|_| HostError::Panicked("plugin_abi_version"))?;
-        AbiVersion::from_packed(packed)
-    };
-    check_library_abi(found, CURRENT_PLUGIN_ABI_VERSION, manifest_api_version)?;
-
-    // --- 2. Read plugin metadata. ---
-    let info = {
-        // SAFETY: resolving `plugin_init` to its type alias.
-        let init: Symbol<PluginInitFn> = unsafe {
-            library
-                .get(SYMBOL_PLUGIN_INIT)
-                .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_INIT)))?
-        };
-        let init_fn = *init;
-        let mut info = PluginInfo::empty();
-        // SAFETY: `&mut info` is a valid out-parameter the plugin fills in; on a
-        // non-`Ok` status it leaves the empty placeholder untouched. Contained in
-        // `catch_unwind` so a panic in `plugin_init` cannot unwind across FFI.
-        let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-            init_fn(&mut info)
-        }))
-        .map_err(|_| HostError::Panicked("plugin_init"))?;
-        status
-            .into_result()
-            .map_err(|e| HostError::Init(e.to_string()))?;
-        let loaded = LoadedPluginInfo::from_ffi(&info);
-        // One authoritative version: the info must repeat the exported one.
-        if loaded.abi_version != found {
-            return Err(HostError::InconsistentAbi {
-                symbol: found,
-                info: loaded.abi_version,
-            });
-        }
-        // Toolchain rule (PLG-013): exact match, or explicit acceptance for a
-        // 1.0 plugin that cannot report one. Before any entry point beyond
-        // `plugin_init` is resolved or called.
-        check_library_toolchain(&loaded, &Toolchain::current(), accept_unverified_toolchain)?;
-        loaded
-    };
-
-    // --- 3. Resolve the remaining entry points and detach them from the borrow. ---
-    // We store the raw function pointers alongside the owned `Library` so they
-    // stay valid for the library's whole lifetime.
-    let create_backend: PluginCreateBackendFn = {
-        // SAFETY: resolving `plugin_create_backend` to its type alias.
-        let sym: Symbol<PluginCreateBackendFn> = unsafe {
-            library
-                .get(SYMBOL_PLUGIN_CREATE_BACKEND)
-                .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_CREATE_BACKEND)))?
-        };
-        *sym
-    };
-    let shutdown: PluginShutdownFn = {
-        // SAFETY: resolving `plugin_shutdown` to its type alias.
-        let sym: Symbol<PluginShutdownFn> = unsafe {
-            library
-                .get(SYMBOL_PLUGIN_SHUTDOWN)
-                .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_SHUTDOWN)))?
-        };
-        *sym
-    };
-
-    Ok(Arc::new(LoadedLibrary {
-        info,
-        create_backend,
-        shutdown,
-        shutdown_signal: Arc::new(AtomicBool::new(false)),
-        log_limiter: Arc::new(PluginLogLimiter::default()),
-        library,
-    }))
+    )?)
 }
 
 /// The co-located signature's verdict on a backend library: who signed the
@@ -1046,11 +845,6 @@ pub(super) fn rel_to_slash(rel: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
-}
-
-/// Render a NUL-terminated symbol constant as a printable name for errors.
-fn symbol_name(sym: &[u8]) -> String {
-    String::from_utf8_lossy(sym.strip_suffix(b"\0").unwrap_or(sym)).into_owned()
 }
 
 /// Register a plugin's terminal backend into `registry` under its **stable,
@@ -2117,9 +1911,13 @@ mod tests {
 
     #[test]
     fn symbol_name_strips_trailing_nul() {
-        assert_eq!(symbol_name(SYMBOL_PLUGIN_INIT), "termihub_plugin_init");
-        assert_eq!(symbol_name(b"foo\0"), "foo");
-        assert_eq!(symbol_name(b"bar"), "bar");
+        use termihub_plugin_api::symbols::SYMBOL_PLUGIN_INIT;
+        assert_eq!(
+            loader::symbol_name(SYMBOL_PLUGIN_INIT),
+            "termihub_plugin_init"
+        );
+        assert_eq!(loader::symbol_name(b"foo\0"), "foo");
+        assert_eq!(loader::symbol_name(b"bar"), "bar");
     }
 
     #[test]

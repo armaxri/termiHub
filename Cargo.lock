@@ -7672,6 +7672,7 @@ dependencies = [
  "temp-env",
  "tempfile",
  "termihub-plugin-api",
+ "termihub-plugin-runner",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
@@ -7698,6 +7699,21 @@ dependencies = [
 name = "termihub-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "termihub-plugin-runner"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "libloading",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "sha2 0.10.9",
+ "tempfile",
+ "termihub-plugin-api",
  "thiserror 2.0.21",
 ]
 
