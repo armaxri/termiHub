@@ -202,6 +202,18 @@ jobs:
           echo "Installed binary: $BIN"
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
 
+      # The plugin runner (#4202) ships next to the app binary in both packages.
+      # It must start and match the digest the app embeds, or the app would
+      # refuse it as tampered (e.g. if AppImage packaging rewrote it).
+      - name: Verify the bundled plugin runner (AppImage + .deb)
+        env:
+          APPRUN: ${{ steps.appimage.outputs.bin }}
+          DEB_BIN: ${{ steps.deb.outputs.bin }}
+        run: |
+          set -euo pipefail
+          scripts/internal/verify-plugin-runner-bundle.sh "$(dirname "$APPRUN")/usr/bin/termihub"
+          scripts/internal/verify-plugin-runner-bundle.sh "$(readlink -f "$DEB_BIN")"
+
       - name: Smoke-test AppImage (headless)
         id: smoke_appimage
         # continue-on-error only so both smoke steps always run and report; the
