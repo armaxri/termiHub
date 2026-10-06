@@ -1147,6 +1147,17 @@ therefore keep the dynamic runtime. The RDP helper builds with
 `.exe`/`.dll` in the MSI (and dev NSIS) imports `VCRUNTIME*.dll` or `MSVCP*.dll`
 (`scripts/internal/verify-no-vcruntime.ps1`).
 
+The Windows **agent** binaries (#4175: `termihub-agent-windows-x64.exe` /
+`-arm64.exe`) link it statically too, because the desktop deploys them to remote hosts
+that may lack the redistributable (Windows Server Core, a fresh VM). Their release
+builds add `-C target-feature=+crt-static` to `RUSTFLAGS` with an explicit
+`--target` (`release.yml`'s `agent-binaries-windows` job, `scripts/build-agents.*`
+for `*-pc-windows-msvc` targets), so the flag reaches only the agent's own crates,
+never build scripts or proc macros; the agent's `cargo test` builds stay dynamic.
+`release.yml` and `agent.yml`'s `build-windows` job check the built `.exe` with
+`verify-no-vcruntime.ps1 -Exe`, and the Windows SSH-host lane
+(`scripts/internal/run-windows-ssh-host-suite.sh`) deploys a static build as well.
+
 ### CI/CD Pipeline
 
 Three GitHub Actions workflows handle the build and release pipeline. See `.github/workflows/` for details.

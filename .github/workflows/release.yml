@@ -780,8 +780,23 @@ jobs:
         with:
           key: release-agent-${{ matrix.target }}
 
+      # Link the Visual C++ runtime statically (#4175): the desktop deploys this
+      # binary to remote Windows hosts over SSH, and a minimal host (Server Core,
+      # a fresh VM) may lack VCRUNTIME140.dll. Step-scoped RUSTFLAGS with the
+      # explicit --target reach only the target's crates, never build scripts or
+      # proc macros, and `cc`-built C code follows the crt-static feature to /MT.
+      # Same flag as scripts/build-agents.{sh,cmd}; agent tests stay dynamic.
       - name: Build agent
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+
+      # Fail the release if the agent still imports a VC++ runtime DLL (#4175).
+      - name: Verify no Visual C++ runtime dependency in the agent
+        shell: pwsh
+        run: |
+          ./scripts/internal/verify-no-vcruntime.ps1 -Exe "target/${{ matrix.target }}/release/termihub-agent.exe"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Upload agent binary and checksum as release assets
         shell: bash
