@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
-use super::remote_shell::RemoteShell;
+use super::remote_shell::{self, RemoteShell, SetupGate};
 
 // ── Type aliases for complex closure types ─────────────────────────
 
@@ -62,8 +62,9 @@ pub struct SshShellHandle {
     /// up as files-only instead of tearing it down. Never set for a shell that
     /// ran and later exited (e.g. the user typed `exit`).
     pub shell_refused: Arc<AtomicBool>,
-    /// The remote login shell, when the connector was asked to detect it
-    /// (#4143); [`RemoteShell::Unknown`] otherwise.
+    /// The remote login shell, when the connector probed it — asked to (shell
+    /// integration, #4143) or because it typed env / X11 setup lines (#4147);
+    /// [`RemoteShell::Unknown`] otherwise.
     pub remote_shell: RemoteShell,
 }
 
@@ -289,8 +290,11 @@ impl SshConnector for RusshSshConnector {
         // Ask the host which login shell it runs (#4143) on its own exec
         // channel, closed again before the shell channel opens — so a host
         // with `MaxSessions 1` is not refused the shell, and the answer is in
-        // hand before anything is typed into the session.
-        let remote_shell = if detect_remote_shell {
+        // hand before anything is typed into the session. Needed whenever a
+        // setup line will be typed: shell integration (the caller asks), the
+        // env-var fallback and the X11 lines (#4147).
+        let types_setup = !config.env.is_empty() || config.enable_x11_forwarding;
+        let remote_shell = if detect_remote_shell || types_setup {
             super::remote_shell::detect_remote_shell(&session).await
         } else {
             RemoteShell::Unknown
@@ -412,45 +416,41 @@ impl SshConnector for RusshSshConnector {
         let shell_requested_at = std::time::Instant::now();
         let shell_refused = Arc::new(AtomicBool::new(false));
 
-        // Inject an `export` line for the user-specified environment variables.
-        // This guarantees they take effect in the interactive shell even when
-        // the server's `AcceptEnv` rejected the `set_env` requests above. The
-        // line is briefly visible, matching the X11 `export DISPLAY` injection.
-        if let Some(export_line) = super::build_ssh_env_export(&config.env) {
-            // Never log `export_line` — it embeds the env values, which may be
-            // secrets. On failure the configured env vars silently won't apply, so
-            // surface the write error itself.
-            if let Err(e) = channel.data(export_line.as_bytes()).await {
-                tracing::warn!(
-                    error = %e,
-                    "failed to inject SSH env export line; configured environment variables may not apply"
-                );
+        // Type the setup lines into the shell, in its own syntax and line
+        // ending (#4147): the env-var fallback — covering names the server's
+        // `AcceptEnv` rejected above — then the X11 `DISPLAY` / `xauth` lines.
+        // Never log these lines: they embed env values and the
+        // MIT-MAGIC-COOKIE-1 secret. A PowerShell login shell on Linux/macOS
+        // gets them only once its first prompt is up (#4148): the gate holds
+        // them, and every later write, until then.
+        let mut gate = SetupGate::new(
+            remote_shell::defers_setup_until_prompt(remote_shell),
+            shell_requested_at,
+        );
+        let mut setup: Vec<(&str, String)> = Vec::new();
+        if let Some(line) = remote_shell::env_setup_line(remote_shell, &config.env) {
+            setup.push(("env", line));
+        }
+        if let Some(display_num) = x11_display {
+            for line in remote_shell::x11_setup_lines(remote_shell, display_num, x11_cookie.as_deref())
+            {
+                setup.push(("x11", line));
             }
         }
-
-        // Inject DISPLAY and xauth if X11 forwarding is active.
-        if let Some(display_num) = x11_display {
-            let export_cmd = format!("export DISPLAY=localhost:{display_num}.0\n");
-            if let Err(e) = channel.data(export_cmd.as_bytes()).await {
-                tracing::warn!(
-                    display = display_num,
-                    error = %e,
-                    "failed to inject DISPLAY for X11 forwarding; X11 apps may not display"
-                );
-            }
-            if let Some(ref cookie) = x11_cookie {
-                let xauth_cmd = format!(
-                    "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n"
-                );
-                // Never log `xauth_cmd` — it embeds the MIT-MAGIC-COOKIE-1 secret.
-                if let Err(e) = channel.data(xauth_cmd.as_bytes()).await {
+        for (what, line) in setup {
+            if let Some(data) = gate.write(line.into_bytes()) {
+                if let Err(e) = channel.data(&data[..]).await {
                     tracing::warn!(
-                        display = display_num,
+                        setup = what,
                         error = %e,
-                        "failed to inject xauth cookie for X11 forwarding; X11 apps may not display"
+                        "failed to inject an SSH session setup line; configured environment \
+                         variables or X11 display forwarding may not apply"
                     );
                 }
             }
+        }
+        if gate.is_holding() {
+            tracing::debug!("holding the session setup until the remote PowerShell prompt is up");
         }
 
         // ── Async→sync bridge ──────────────────────────────────────────
@@ -470,12 +470,32 @@ impl SshConnector for RusshSshConnector {
             // Success / Failure answers it.
             let mut awaiting_shell_reply = true;
             loop {
+                // Release the held setup once the prompt is up (#4148).
+                if let Some(burst) = gate.poll(std::time::Instant::now()) {
+                    tracing::debug!(writes = burst.len(), "releasing the held session setup");
+                    let mut ok = true;
+                    for data in burst {
+                        ok = should_continue_after_send(channel.data(&data[..]).await, "write");
+                        if !ok {
+                            break;
+                        }
+                    }
+                    if !ok {
+                        break;
+                    }
+                }
+                // Far in the future when the gate is open (the branch is off then).
+                let gate_check = gate
+                    .next_check()
+                    .unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(3600));
                 tokio::select! {
                     biased;
                     // Outgoing commands (write / resize / close).
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(ChannelCmd::Write(data)) => {
+                                // Held (in order) until the prompt, or sent now.
+                                let Some(data) = gate.write(data) else { continue };
                                 if !should_continue_after_send(
                                     channel.data(&data[..]).await,
                                     "write",
@@ -501,6 +521,7 @@ impl SshConnector for RusshSshConnector {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
+                                gate.on_output(std::time::Instant::now());
                                 capture_early_output(&mut early_output, data);
                                 if data_tx.send(data.to_vec()).is_err() {
                                     break;
@@ -520,6 +541,9 @@ impl SshConnector for RusshSshConnector {
                             _ => {}
                         }
                     }
+                    // The held setup's settle / cap deadline (#4148).
+                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(gate_check)),
+                        if gate.is_holding() => {}
                 }
             }
             // Flag a refusal *before* signalling EOF or clearing `alive`, so the
