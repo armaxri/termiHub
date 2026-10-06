@@ -338,6 +338,15 @@ of falling back to xrdp's login window. The session script
 clipboard echo loop — copying `ping:<x>` into the session makes it reply
 `pong:<x>`, a text round trip through the real server in both directions.
 
+xrdp's chansrv mounts redirected drives (RDPDR) and files the client offers on
+its clipboard (CLIPRDR serve) under `~testuser/thinclient_drives` through FUSE
+(#4086). The image installs `fuse3` (the setuid `fusermount` Debian's
+libfuse2-linked chansrv calls), and the compose service passes `/dev/fuse`,
+`CAP_SYS_ADMIN` and `apparmor:unconfined` (docker-default denies `mount(2)`).
+The mount is private to `testuser`, so probe it as that user, e.g.
+`docker exec -u testuser termihub-rdp ls ~testuser/thinclient_drives` while a
+session with drive redirection is connected.
+
 ### Verifying the fixture
 
 ```bash

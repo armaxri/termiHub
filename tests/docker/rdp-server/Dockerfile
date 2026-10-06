@@ -20,6 +20,16 @@
 #            logs the key/button events the client sends; `xdotool` reads the
 #            session's pointer position. Both let the UI suite assert that input
 #            typed into the canvas reached the server (tests/system test_rdp.py).
+# FUSE:      chansrv mounts redirected drives (RDPDR, #1757) and files the client
+#            offers on its clipboard (CLIPRDR serve, #1778) under
+#            ~testuser/thinclient_drives through FUSE (#4086). Debian's chansrv
+#            links libfuse2, which mounts through the setuid `fusermount`
+#            helper; `fuse3` ships it (`fusermount` -> `fusermount3`). The
+#            compose service passes /dev/fuse + CAP_SYS_ADMIN and lifts the
+#            AppArmor profile (docker-default denies mount(2)). Without them
+#            chansrv logs "FUSE mount ... failed" and the session runs on
+#            without drives. The mount is private to testuser (no
+#            allow_other), so tests read it as that user (`su testuser`).
 FROM debian:trixie-slim
 
 # Harden apt against transient mirror failures in CI (#2768).
@@ -36,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xclip \
     x11-utils \
     xdotool \
+    fuse3 \
     ssl-cert \
     && rm -rf /var/lib/apt/lists/*
 

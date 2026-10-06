@@ -423,6 +423,13 @@ pub struct SidecarClipboardBackend {
     /// Empty until a remote copy is surfaced; carries each entry's advertised size
     /// and directory flag.
     remote_offer: Vec<RemoteClipboardFile>,
+    /// Whether the CLIPRDR channel finished its initialization handshake (the
+    /// server acknowledged our first FormatList). IronRDP refuses
+    /// `initiate_file_copy` before that, so a file offer must wait (#4086).
+    channel_ready: bool,
+    /// A local file offer deferred from the initial format-list request until
+    /// the channel is ready ([`Self::on_ready`]), see [`Self::channel_ready`].
+    offer_files_when_ready: bool,
 }
 
 impl std::fmt::Debug for SidecarClipboardBackend {
@@ -516,6 +523,8 @@ impl SidecarClipboardBackend {
                 chunk_bytes: CLIPBOARD_CHUNK_BYTES,
                 delayed_render: false,
                 remote_offer: Vec::new(),
+                channel_ready: false,
+                offer_files_when_ready: false,
             },
             rx,
         )
@@ -1366,12 +1375,29 @@ impl CliprdrBackend for SidecarClipboardBackend {
 
     fn on_ready(&mut self) {
         debug!("cliprdr channel ready");
+        self.channel_ready = true;
+        // The file offer deferred from the initialization format list (#4086).
+        if std::mem::take(&mut self.offer_files_when_ready) && self.serves_local_files() {
+            if let Some(files) = self.build_local_file_offer() {
+                self.emit(ClipboardEvent::AdvertiseFiles(files));
+            }
+        }
     }
 
     fn on_request_format_list(&mut self) {
-        // The initialization sequence needs us to send a format list. When
-        // serving is enabled and the shared folder holds files, offer them so
-        // the remote can paste them (#1778); otherwise fall back to the host
+        // The initialization sequence needs us to send a format list. The first
+        // one must be IronRDP's `initiate_copy` bundle (Capabilities + Temporary
+        // Directory + FormatList): `initiate_file_copy` is refused until the
+        // server acknowledges it, so an offer sent here was dropped and left the
+        // channel uninitialised (#4086). Complete the handshake with the text
+        // advertisement and offer the files once the channel is ready.
+        if !self.channel_ready && self.serves_local_files() {
+            self.offer_files_when_ready = true;
+            self.emit(ClipboardEvent::AdvertiseLocal);
+            return;
+        }
+        // When serving is enabled and the shared folder holds files, offer them
+        // so the remote can paste them (#1778); otherwise fall back to the host
         // text clipboard (#1756). A FormatList wholly replaces the previous, so
         // the two offers are mutually exclusive — most recent action wins.
         match self.build_local_file_offer() {
@@ -2214,8 +2240,11 @@ mod tests {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         // Empty host-clipboard reader keeps these #1778 tests deterministic; the
         // #1779 tests below inject their own reader.
-        let (backend, rx) =
+        let (mut backend, rx) =
             SidecarClipboardBackend::with_host_clip_reader(Some(root), view_only, Vec::new);
+        // A ready channel: the offers these tests drive happen after the
+        // initialization handshake (see `defers_the_file_offer_until_ready`).
+        backend.on_ready();
         (backend, rx, dir)
     }
 
@@ -2323,6 +2352,59 @@ mod tests {
             }
             other => panic!("expected AdvertiseFiles, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn defers_the_file_offer_until_ready() {
+        // #4086: IronRDP refuses `initiate_file_copy` before the server acks the
+        // first FormatList, so the initialization request completes the
+        // handshake with text and the files follow once the channel is ready.
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("doc.txt"), b"hello").unwrap();
+        let (mut backend, rx) =
+            SidecarClipboardBackend::with_host_clip_reader(Some(root), false, Vec::new);
+
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+        assert!(
+            rx.try_recv().is_err(),
+            "no file offer before the channel is ready"
+        );
+
+        backend.on_ready();
+        match next_event(&rx) {
+            ClipboardEvent::AdvertiseFiles(files) => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].name, "doc.txt");
+            }
+            other => panic!("expected AdvertiseFiles once ready, got {other:?}"),
+        }
+        // Readiness is one-shot: nothing more is queued.
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn ready_without_files_or_serving_offers_nothing_more() {
+        // An empty share: the handshake's text advertisement stands, no second
+        // FormatList follows.
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let (mut backend, rx) =
+            SidecarClipboardBackend::with_host_clip_reader(Some(root.clone()), false, Vec::new);
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+        backend.on_ready();
+        assert!(rx.try_recv().is_err(), "an empty share offers no files");
+
+        // View-only: never defers (or sends) a file offer at all.
+        std::fs::write(root.join("secret.txt"), b"nope").unwrap();
+        let (mut backend, rx) =
+            SidecarClipboardBackend::with_host_clip_reader(Some(root), true, Vec::new);
+        backend.on_request_format_list();
+        assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
+        backend.on_ready();
+        assert!(rx.try_recv().is_err(), "view-only offers no files");
     }
 
     #[test]
@@ -2549,6 +2631,7 @@ mod tests {
                 paths.clone()
             });
         backend.set_serve_host_clipboard(true);
+        backend.on_ready();
         (backend, rx, dir)
     }
 
@@ -2562,6 +2645,7 @@ mod tests {
         let (mut backend, rx) =
             SidecarClipboardBackend::with_host_clip_reader(None, view_only, move || paths.clone());
         backend.set_serve_host_clipboard(true);
+        backend.on_ready();
         (backend, rx)
     }
 
