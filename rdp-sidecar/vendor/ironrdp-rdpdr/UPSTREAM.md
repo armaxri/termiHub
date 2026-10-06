@@ -18,9 +18,11 @@ fork can be retired (termiHub #4125). Nothing has been submitted yet: a maintain
   reports that Windows then exposes a drive named `RDPILOT` only as `\\tsclient\R`, and that
   UTF-8 restores the full name. So a plain upgrade to the next release could fix xrdp and break
   Windows. The fork takes only `for_drive` and keeps 0.7.0's UTF-8 `DeviceData`.
-- **Verified:** with the fork, xrdp 0.10 (termiHub's `rdp-server` fixture) mounts a drive
-  announced as `th12345` at `~/thinclient_drives/th12345` (termiHub `core/tests/rdp.rs`, RDP-15).
-  The patch below applies cleanly to the 0.7.0 package (`git apply --check`).
+- **Verified (2026-10-06):** with the fork, xrdp 0.10 (termiHub's `rdp-server` fixture) mounts a
+  drive announced as `th<pid>` at `~/thinclient_drives/th<pid>` (termiHub `core/tests/rdp.rs`,
+  RDP-15). With the sidecar built against crates.io 0.7.0 instead, the same test fails: the drive
+  is mounted as `ignored`. The patch below applies cleanly to the 0.7.0 package
+  (`git apply --check`).
 
 The best upstream outcome is a release that has `for_drive` and a `DeviceData` encoding that
 works on Windows. The text below asks for that and adds the xrdp data point to #2075, so the
