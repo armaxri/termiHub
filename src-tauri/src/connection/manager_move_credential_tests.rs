@@ -514,3 +514,56 @@ fn an_encrypted_import_does_not_clobber_a_skipped_connections_password() {
     assert_eq!(dst_store.value("b", PW).as_deref(), Some("B"));
     assert_eq!(result.credentials_imported, 1);
 }
+
+/// Re-importing an export into the store that wrote it adds nothing, so it
+/// must report nothing imported — not every connection in the file (#4210).
+#[test]
+fn re_importing_an_export_into_the_same_store_reports_nothing_imported() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::default());
+    let (mgr, _r) = manager(dir.path(), store.clone());
+    mgr.save_connection(with_password(ssh("a", "a", None), "A"))
+        .unwrap();
+    mgr.save_connection(with_password(ssh("b", "b", None), "B"))
+        .unwrap();
+    let json = mgr.export_encrypted_json(Some("export-pw"), None).unwrap();
+
+    let result = mgr.import_encrypted_json(&json, Some("export-pw")).unwrap();
+
+    assert_eq!(result.connections_imported, 0);
+    assert_eq!(result.credentials_imported, 0);
+    assert_eq!(main_ids(&mgr), vec!["a", "b"]);
+}
+
+/// A partial overlap counts only the connections actually added (#4210).
+#[test]
+fn an_encrypted_import_counts_only_the_connections_it_added() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    src.save_connection(ssh("a", "a", None)).unwrap();
+    src.save_connection(ssh("b", "b", None)).unwrap();
+    src.save_connection(ssh("c", "c", None)).unwrap();
+    let json = src.export_encrypted_json(None, None).unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let (dst, _r) = manager(dst_dir.path(), Arc::new(RecordingStore::default()));
+    dst.save_connection(ssh("a", "a", None)).unwrap();
+
+    let result = dst.import_encrypted_json(&json, None).unwrap();
+
+    assert_eq!(result.connections_imported, 2);
+    assert_eq!(main_ids(&dst), vec!["a", "b", "c"]);
+}
+
+/// The plain (unencrypted) import path counts only added connections too (#4210).
+#[test]
+fn a_plain_re_import_reports_nothing_imported() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mgr, _r) = manager(dir.path(), Arc::new(RecordingStore::default()));
+    mgr.save_connection(ssh("a", "a", None)).unwrap();
+    mgr.save_connection(ssh("b", "b", None)).unwrap();
+    let json = mgr.export_json().unwrap();
+
+    assert_eq!(mgr.import_json(&json).unwrap(), 0);
+    assert_eq!(main_ids(&mgr), vec!["a", "b"]);
+}
