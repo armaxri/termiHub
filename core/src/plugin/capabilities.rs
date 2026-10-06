@@ -391,6 +391,11 @@ pub(crate) fn guarded_read(
 
 /// `read_file`, one chunk: up to `max` bytes at `offset` of an in-scope file,
 /// plus whether the file ends there. The path is re-resolved for every chunk.
+/// Used by the out-of-process bridge service only.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "no Windows runner transport yet")
+)]
 pub(crate) fn guarded_read_chunk(
     permissions: &PermissionSet,
     path: &str,
