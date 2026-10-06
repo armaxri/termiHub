@@ -74,15 +74,14 @@ doubled every budget, which hid genuinely slow operations and made a real hang
 take twice as long to fail (audit finding WA-CI-006, tracked together with
 WA-CI-005).
 
-| Deadline                 | Value         | Applies to                                                                        |
-| ------------------------ | ------------- | --------------------------------------------------------------------------------- |
-| `APP_CONNECT`            | 35 s          | `Bridge.wait_for_app`: a launched app's bridge client dialling in                 |
-| `COMMAND`                | 10 s          | one bridge command round trip (`Driver` default)                                  |
-| `LIVE_COMMAND`           | 60 s          | commands of the live-connect / SFTP suites (#2460)                                |
-| `UI_WAIT`                | 20 s          | default `SystemTest.wait` poll budget (call sites pass their own)                 |
-| `DIAGNOSTIC_PROBE`       | 60 s          | failure-artifact probes, which must outlive `LIVE_COMMAND`                        |
-| `CONTENDED_OP_DEADLINES` | per op        | named ops on a macOS/Windows process that is one of >1 xdist workers (see below)  |
-| `CONTENDED_UI_FACTOR`    | 2× (fallback) | only poll loops that record no timing line (file-browser row wait, host-key loop) |
+| Deadline                 | Value  | Applies to                                                                       |
+| ------------------------ | ------ | -------------------------------------------------------------------------------- |
+| `APP_CONNECT`            | 35 s   | `Bridge.wait_for_app`: a launched app's bridge client dialling in                |
+| `COMMAND`                | 10 s   | one bridge command round trip (`Driver` default)                                 |
+| `LIVE_COMMAND`           | 60 s   | commands of the live-connect / SFTP suites (#2460)                               |
+| `UI_WAIT`                | 20 s   | default `SystemTest.wait` poll budget (call sites pass their own)                |
+| `DIAGNOSTIC_PROBE`       | 60 s   | failure-artifact probes, which must outlive `LIVE_COMMAND`                       |
+| `CONTENDED_OP_DEADLINES` | per op | named ops on a macOS/Windows process that is one of >1 xdist workers (see below) |
 
 - **Headroom rule.** A deadline is at least `HEADROOM` (2) × the largest duration
   observed for that operation in CI, rounded up to 5 s, and never below its
@@ -130,6 +129,16 @@ WA-CI-005).
   `APP_CONNECT` has no slow category: the slowest app connect was 16.0 s (serial
   Windows display lane; 15.1 s macOS / 13.6 s Windows contended, 3.3 s Linux),
   so 2 × 16.0 → 35 s on every OS.
+
+- **No blanket factor (#4216).** The old 2× `CONTENDED_UI_FACTOR` is gone and
+  `ui_budget` requires an op name. Its last two users — the file-browser row
+  wait (`wait:file row '…'`) and the SSH host-key prompt loop
+  (`wait:the SSH host-key prompt`), which poll on their own rather than through
+  `SystemTest.wait` — now record their own timing lines. With no contended data
+  yet, each has a _provisional_ entry in `PROVISIONAL_CONTENDED_OP_DEADLINES`
+  (40 s, i.e. 2 × their 20 s default — the same budget the factor gave them).
+  Re-size them by the headroom rule, or drop them if contended max × 2 fits
+  20 s, once ≥10 macOS and ≥10 Windows integration-lane jobs carry their lines.
 
 - **Timing lines.** The harness records every app-connect, bridge command
   (`command:<action>`) and `wait` (`wait:<what>`, dynamic parts collapsed) and,

@@ -30,9 +30,13 @@ because the feature is broken are left at their serial budget, not raised:
   :data:`CONTENDED_OP_DEADLINES` with the max they were sized from. Most are
   Windows shell starts and PTY round trips (ConPTY under two WebView2 apps);
   the same waits take ≤ 8.6 s on the serial Windows display lane.
-- ``CONTENDED_UI_FACTOR`` (2×) survives only for poll loops that record no
-  timing line (``op=None``: the file-browser row wait and the SSH host-key
-  prompt loop), since there is no data to drop it on.
+- The two poll loops that bypass ``SystemTest.wait`` — the file-browser row
+  wait (:data:`FILE_ROW_OP`) and the SSH host-key prompt loop
+  (:data:`HOST_KEY_PROMPT_OP`) — record their own timing lines since #4216.
+  They have no contended data yet, so they carry a *provisional* named
+  deadline (:data:`PROVISIONAL_CONTENDED_OP_DEADLINES`) equal to the budget the
+  retired 2× ``CONTENDED_UI_FACTOR`` gave them; re-size them from data once
+  ≥10 macOS and ≥10 Windows integration-lane jobs carry their lines.
 
 **Local debugging override.** ``TERMIHUB_WAIT_SCALE`` still multiplies every
 budget, but only outside CI — e.g. ``0.5`` to make a suspected hang fail fast,
@@ -63,6 +67,23 @@ UI_WAIT = 20.0
 #: captured from a slow (not hung) webview (#2460).
 DIAGNOSTIC_PROBE = 60.0
 
+#: Op name of ``FilesUi.wait_for_file_row`` (its own poll loop, #4216). Matches
+#: its ``timed out waiting for file row '<name>'`` message once normalised.
+FILE_ROW_OP = "wait:file row '…'"
+#: Op name of ``PasswordPromptUi.accept_host_key_prompt`` (its own poll loop, #4216).
+HOST_KEY_PROMPT_OP = "wait:the SSH host-key prompt"
+
+#: Provisional contended deadlines (seconds) for ops that record timing lines but
+#: have **no contended samples yet** (#4216). Each is 2 × the call site's 20 s
+#: default — exactly the budget the retired blanket ``CONTENDED_UI_FACTOR`` gave
+#: it, so dropping the factor changes no effective budget. Re-size each from its
+#: contended max × ``HEADROOM`` (or delete it if that fits the serial budget) once
+#: ≥10 macOS and ≥10 Windows integration-lane jobs carry its timing lines.
+PROVISIONAL_CONTENDED_OP_DEADLINES: dict[str, float] = {
+    FILE_ROW_OP: 40.0,
+    HOST_KEY_PROMPT_OP: 40.0,
+}
+
 #: Contended deadlines per op (seconds): the budget an op gets on a parallel
 #: macOS/Windows worker, never below the call site's own serial budget. Each value
 #: is the op's slowest completed contended sample × ``HEADROOM``, rounded up to
@@ -91,11 +112,10 @@ CONTENDED_OP_DEADLINES: dict[str, float] = {
     "command:getState": 20.0,  # macOS max 8.6 s
     "command:click": 15.0,  # macOS max 5.3 s
     "command:screenshot": 15.0,  # macOS max 5.2 s
+    # Unmeasured so far — see PROVISIONAL_CONTENDED_OP_DEADLINES.
+    **PROVISIONAL_CONTENDED_OP_DEADLINES,
 }
 
-#: Legacy slow category, kept only for poll loops that record no timing line
-#: (``ui_budget(..., op=None)``) — without data there is nothing to drop it on.
-CONTENDED_UI_FACTOR = 2.0
 CONTENDED_OS = ("darwin", "win32")
 
 _DEBUG_ENV = "TERMIHUB_WAIT_SCALE"
@@ -141,8 +161,6 @@ def debug_scale(environ: dict | None = None) -> float:
 #: Resolved once at import (see :func:`debug_scale` / :func:`contended`).
 DEBUG_SCALE = debug_scale()
 CONTENDED = contended()
-#: Factor for unmeasured (``op=None``) poll loops only.
-UI_FACTOR = CONTENDED_UI_FACTOR if CONTENDED else 1.0
 
 
 def app_connect(seconds: float = APP_CONNECT) -> float:
@@ -150,16 +168,14 @@ def app_connect(seconds: float = APP_CONNECT) -> float:
     return seconds * DEBUG_SCALE
 
 
-def ui_budget(seconds: float, op: str | None = None) -> float:
+def ui_budget(seconds: float, op: str) -> float:
     """Effective budget of a webview-bound op: a bridge command or a UI poll loop.
 
-    ``op`` is the op's timing name (``command:<action>`` / ``wait:<label>``). On a
-    contended worker a listed op gets ``max(seconds, CONTENDED_OP_DEADLINES[op])``;
-    an unlisted op keeps ``seconds``. ``op=None`` marks a loop that records no
-    timing line, which keeps the legacy ``CONTENDED_UI_FACTOR``.
+    ``op`` is the op's timing name (``command:<action>`` / ``wait:<label>``) — every
+    caller records one, so there is no unnamed fallback (#4216). On a contended
+    worker a listed op gets ``max(seconds, CONTENDED_OP_DEADLINES[op])``; an
+    unlisted op keeps ``seconds``.
     """
-    if op is None:
-        return seconds * UI_FACTOR * DEBUG_SCALE
     if CONTENDED:
         seconds = max(seconds, CONTENDED_OP_DEADLINES.get(op, 0.0))
     return seconds * DEBUG_SCALE
