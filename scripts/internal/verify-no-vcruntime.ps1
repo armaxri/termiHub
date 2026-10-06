@@ -33,6 +33,10 @@
     The PE parsing is plain .NET, so -Dir and -Exe also run on macOS and Linux
     with pwsh; -Msi and -Nsis need Windows (msiexec) or 7-Zip.
 
+    Always ends with an explicit exit code: 0 when every check passed, 1 on any
+    failure, so a caller can test $LASTEXITCODE (#4207). msiexec's 3010
+    (success, reboot required) counts as success.
+
 .PARAMETER Msi
     MSI to check.
 
@@ -54,6 +58,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
+# Any terminating error is a failed check with an explicit exit code, never a
+# thrown exception that leaves the caller's $LASTEXITCODE as it was (#4207).
+trap {
+    Write-Output "::error::$($_.Exception.Message)"
+    exit 1
+}
 
 $Exe = @($Exe | Where-Object { $_ })
 $modes = @($Msi, $Nsis, $Dir | Where-Object { $_ }).Count + [int]($Exe.Count -gt 0)
@@ -132,8 +142,12 @@ function Get-PeImportedDlls {
     return , $names
 }
 
+# msiexec exit codes that mean success: 0, and 3010 (ERROR_SUCCESS_REBOOT_REQUIRED).
+$msiexecOk = @(0, 3010)
+
 $extract = $null
 $files = @()
+$failed = 0
 try {
     if ($Msi -or $Nsis) {
         $extract = Join-Path ([System.IO.Path]::GetTempPath()) ("bundle-" + [System.Guid]::NewGuid().ToString('N'))
@@ -141,16 +155,19 @@ try {
         if ($Msi) {
             $source = [System.IO.Path]::GetFullPath($Msi)
             $log = Join-Path $extract 'admin-extract.log'
+            # Start-Process does not set $LASTEXITCODE; read the code off the process.
             $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
                 '/a', "`"$source`"", '/qn', "TARGETDIR=`"$extract`"", '/l*v', "`"$log`""
             )
             $code = $p.ExitCode
+            $ok = $null -ne $code -and $msiexecOk -contains $code
         } else {
             $source = [System.IO.Path]::GetFullPath($Nsis)
             & 7z x -y "-o$extract" $source | Out-Null
             $code = $LASTEXITCODE
+            $ok = $code -eq 0
         }
-        if ($code -ne 0) {
+        if (-not $ok) {
             Write-Output "::error::extracting $source failed with exit code $code"
             exit 1
         }
@@ -177,7 +194,6 @@ try {
     }
 
     Write-Output "Checking $($files.Count) PE file(s) for a Visual C++ runtime dependency"
-    $failed = 0
     foreach ($f in $files) {
         try {
             $imports = Get-PeImportedDlls -Path $f.FullName
@@ -194,8 +210,14 @@ try {
             Write-Output "  ok  $($f.Name)  ($($imports.Count) imported DLLs, no VC++ runtime)"
         }
     }
-    if ($failed -gt 0) { exit 1 }
-    Write-Output 'No shipped binary depends on the Visual C++ redistributable.'
 } finally {
     if ($extract) { Remove-Item -LiteralPath $extract -Recurse -Force -ErrorAction SilentlyContinue }
 }
+
+if ($failed -gt 0) { exit 1 }
+Write-Output 'No shipped binary depends on the Visual C++ redistributable.'
+# Always end with an explicit exit code (#4207): a script that just falls off the
+# end leaves the caller's $LASTEXITCODE untouched -- $null in a fresh pwsh step
+# (Start-Process and the pure-.NET PE parsing set none), and `$null -ne 0` is
+# true, so the workflow's `if ($LASTEXITCODE -ne 0) { exit 1 }` failed a passing check.
+exit 0
