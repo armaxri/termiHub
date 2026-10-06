@@ -71,7 +71,7 @@ impl RangedTransferError {
 /// Fold a `modified` timestamp string into a stable `u64` (FNV-1a), so a
 /// backend reporting its mtime only as text still yields a fingerprint that
 /// changes when the file is rewritten. Pure.
-fn mtime_token(modified: &str) -> Option<u64> {
+pub(super) fn mtime_token(modified: &str) -> Option<u64> {
     if modified.is_empty() {
         return None;
     }

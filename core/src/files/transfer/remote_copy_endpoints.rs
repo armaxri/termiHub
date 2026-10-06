@@ -15,6 +15,7 @@ pub(super) use sftp::SftpEndpoint;
 #[cfg(feature = "docker")]
 pub(super) use docker::DockerEndpoint;
 
+#[cfg(feature = "local-transfer")]
 pub(super) use ranged::RangedEndpoint;
 
 #[cfg(feature = "ssh")]
@@ -296,6 +297,7 @@ mod docker {
 ///
 /// [`RangedFileAccess`]: crate::files::RangedFileAccess
 /// [`MAX_RANGE_BYTES`]: crate::files::MAX_RANGE_BYTES
+#[cfg(feature = "local-transfer")]
 mod ranged {
     use std::future::Future;
     use std::pin::Pin;

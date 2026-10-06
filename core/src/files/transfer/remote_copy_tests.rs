@@ -343,6 +343,16 @@ impl Run {
         start_offset: u64,
         seed: Option<(u64, u64)>,
     ) -> Self {
+        Self::start_ends(src.clone(), dst.clone(), start_offset, seed)
+    }
+
+    /// [`Run::start`] over any two endpoints (a ranged end, #4115).
+    fn start_ends(
+        src: Arc<dyn CopyEndpoint>,
+        dst: Arc<dyn CopyEndpoint>,
+        start_offset: u64,
+        seed: Option<(u64, u64)>,
+    ) -> Self {
         let registry = TransferRegistry::new();
         let total = seed.map(|(total, _)| total).unwrap_or(0);
         let handle = registry.enqueue(ID, "dst", TransferDirection::Upload, "data.bin", DST, total);
@@ -355,8 +365,8 @@ impl Run {
             recorder.lock().expect("events").push(p.clone());
         });
         let task = tokio::spawn(run_copy(
-            src.clone(),
-            dst.clone(),
+            src,
+            dst,
             SRC.to_string(),
             DST.to_string(),
             handle.clone(),
@@ -728,3 +738,7 @@ impl Run {
         messages
     }
 }
+
+#[cfg(feature = "local-transfer")]
+#[path = "remote_copy_ranged_tests.rs"]
+mod ranged;

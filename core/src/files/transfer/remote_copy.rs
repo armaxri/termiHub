@@ -40,6 +40,7 @@ use super::attempt::{
     rehydrate_start_offset, settle_attempt, stop_reason, AttemptOutcome, AttemptsResult,
     ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
+#[cfg(feature = "local-transfer")]
 use super::ranged::RangedTransferTarget;
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -88,6 +89,7 @@ pub enum RemoteCopyEndpoint {
     /// A session reached through offset-addressed slices — an agent-hosted
     /// session whose agent serves `fileRanges` (#4115): one 256 KiB
     /// `read_range` / `write_range` request per chunk.
+    #[cfg(feature = "local-transfer")]
     Ranged(Arc<dyn RangedTransferTarget>),
 }
 
@@ -98,6 +100,7 @@ impl RemoteCopyEndpoint {
             RemoteCopyEndpoint::Sftp(browser) => Arc::new(endpoints::SftpEndpoint::new(browser)),
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => Arc::new(endpoints::DockerEndpoint::new(target)),
+            #[cfg(feature = "local-transfer")]
             RemoteCopyEndpoint::Ranged(target) => Arc::new(endpoints::RangedEndpoint::new(target)),
         }
     }
@@ -110,6 +113,7 @@ impl std::fmt::Debug for RemoteCopyEndpoint {
             RemoteCopyEndpoint::Sftp(_) => f.write_str("Sftp"),
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => f.debug_tuple("Docker").field(target).finish(),
+            #[cfg(feature = "local-transfer")]
             RemoteCopyEndpoint::Ranged(_) => f.write_str("Ranged"),
         }
     }
