@@ -6,7 +6,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xxs);
-  padding: var(--spacing-xs) 6px;
+  padding: var(--spacing-xs) var(--spacing-xs-sm);
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);

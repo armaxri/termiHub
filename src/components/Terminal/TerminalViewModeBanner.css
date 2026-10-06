@@ -7,7 +7,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: 3px var(--spacing-md);
+  padding: var(--spacing-xxs) var(--spacing-md);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
   border-top: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   font-family: var(--font-mono);

@@ -188,7 +188,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   border-radius: var(--radius-md);
   background-color: var(--bg-tertiary);
   transition: background-color var(--transition-fast);
@@ -225,7 +225,7 @@
 .settings-panel__badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px 5px;
+  padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
   background-color: var(--color-warning);
   color: var(--bg-primary);
@@ -301,7 +301,7 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent-color);
-  padding: 1px 6px;
+  padding: 1px var(--spacing-xs-sm);
   border: 1px solid var(--accent-color);
   border-radius: var(--radius-sm);
 }

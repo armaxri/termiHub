@@ -125,7 +125,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   width: 100%;
-  padding: 5px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   margin: 1px var(--spacing-xs);
   width: calc(100% - 8px);
   font-size: var(--font-size-sm);

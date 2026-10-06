@@ -33,7 +33,7 @@
 }
 
 .status-bar__item {
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   white-space: nowrap;
 }
 
@@ -43,7 +43,7 @@
   border: none;
   color: inherit;
   font: inherit;
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
 }
 
@@ -93,7 +93,7 @@
 .indent-menu__item {
   display: flex;
   align-items: center;
-  padding: 5px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   margin: 1px var(--spacing-xs);
   width: calc(100% - 8px);
   border-radius: var(--radius-md);
@@ -142,7 +142,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   margin: 1px var(--spacing-xs);
   width: calc(100% - 8px);
   border-radius: var(--radius-md);
@@ -403,7 +403,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 5px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   margin: 1px var(--spacing-xs);
   width: calc(100% - 8px);
   border-radius: var(--radius-md);
@@ -476,7 +476,7 @@
 
 .update-indicator__develop-badge {
   display: inline-block;
-  margin-left: 5px;
+  margin-left: var(--spacing-xs);
   padding: 0 var(--spacing-xs);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-2xs);
@@ -567,7 +567,7 @@
 .process-kill-signal {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .process-kill-signal__hint,

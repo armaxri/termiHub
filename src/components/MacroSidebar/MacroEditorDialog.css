@@ -30,7 +30,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) 6px;
+  padding: var(--spacing-xs) var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
 }
 

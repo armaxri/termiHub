@@ -8,7 +8,7 @@
 /* --- Quick-connect bar --- */
 .recent-sessions__quick-connect {
   position: relative;
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -82,7 +82,7 @@
 
 /* --- Toolbar + search --- */
 .recent-sessions__search {
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -102,7 +102,7 @@
 .recent-sessions__item-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
@@ -114,7 +114,7 @@
 .recent-sessions__item-saved {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   color: var(--accent-color);
 }
 
@@ -148,7 +148,7 @@
 }
 
 .recent-sessions__save-fields-legend {
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }

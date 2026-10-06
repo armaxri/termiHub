@@ -59,7 +59,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   width: 100%;
-  padding: 6px var(--spacing-md);
+  padding: var(--spacing-xs-sm) var(--spacing-md);
   border: none;
   background: none;
   color: var(--text-primary);
@@ -124,7 +124,7 @@
   flex: 1 1 auto;
   overflow: auto;
   height: 100%;
-  padding: 18px 20px;
+  padding: var(--spacing-lg);
   background: var(--bg-primary);
   color: var(--text-primary);
 }
@@ -133,7 +133,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-md);
-  padding-bottom: 14px;
+  padding-bottom: var(--spacing-md);
   border-bottom: 1px solid var(--border-secondary);
 }
 
@@ -174,7 +174,7 @@
 .plugin-detail__desc {
   color: var(--text-primary);
   font-size: var(--font-size-md);
-  margin: 14px 0 18px;
+  margin: var(--spacing-md) 0 var(--spacing-lg);
   max-width: 560px;
 }
 
@@ -188,13 +188,13 @@
 }
 
 .plugin-detail__block {
-  margin-bottom: 18px;
+  margin-bottom: var(--spacing-lg);
 }
 
 .plugin-detail__list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   margin: 0;
   padding: 0;
   max-width: 560px;
@@ -204,7 +204,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 7px 10px;
+  padding: var(--spacing-sm) var(--spacing-sm-md);
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
@@ -237,7 +237,7 @@
 .plugin-detail__status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   font-size: var(--font-size-xs);
   font-weight: 600;
   padding: var(--spacing-xxs) var(--spacing-sm);
@@ -263,8 +263,8 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
-  margin: 14px 0 18px;
+  padding: var(--spacing-sm-md) var(--spacing-md);
+  margin: var(--spacing-md) 0 var(--spacing-lg);
   border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--border-secondary));
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
@@ -284,7 +284,7 @@
 .plugin-detail__actions {
   display: flex;
   gap: var(--spacing-sm);
-  margin-top: 6px;
+  margin-top: var(--spacing-xs-sm);
   flex-wrap: wrap;
 }
 
@@ -303,7 +303,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
+  padding: var(--spacing-sm-md) var(--spacing-md);
   margin-bottom: var(--spacing-md);
   border: 1px solid var(--banner-tone);
   border-left-width: 3px;
@@ -347,7 +347,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  margin-top: 10px;
+  margin-top: var(--spacing-sm-md);
   cursor: pointer;
 }
 
@@ -362,7 +362,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  padding: 10px var(--spacing-md);
+  padding: var(--spacing-sm-md) var(--spacing-md);
   margin-bottom: var(--spacing-md);
   border: 1px solid var(--color-warning);
   border-left-width: 3px;
@@ -393,7 +393,7 @@
 .plugin-install__meta {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   padding-bottom: var(--spacing-md);
   margin-bottom: var(--spacing-md);
   border-bottom: 1px solid var(--border-secondary);
@@ -414,7 +414,7 @@
 .plugin-install__file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   font-family: var(--font-mono);
   color: var(--text-accent);
   font-size: var(--font-size-sm);
@@ -445,7 +445,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--spacing-sm);
-  padding: 6px 0;
+  padding: var(--spacing-xs-sm) 0;
   font-size: var(--font-size-sm);
 }
 
@@ -474,9 +474,9 @@
 .plugin-signer-change__keys {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px var(--spacing-md);
+  gap: var(--spacing-xs) var(--spacing-md);
   align-items: baseline;
-  padding: 10px var(--spacing-md);
+  padding: var(--spacing-sm-md) var(--spacing-md);
   margin-bottom: var(--spacing-md);
   border: 1px solid var(--color-error);
   border-left-width: 3px;
@@ -491,7 +491,7 @@
 }
 
 .plugin-signer-change__version {
-  padding: 10px var(--spacing-md);
+  padding: var(--spacing-sm-md) var(--spacing-md);
   margin-bottom: var(--spacing-md);
   border: 1px solid var(--color-warning);
   border-left-width: 3px;
@@ -558,7 +558,7 @@
 .plugin-platforms {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--spacing-xs);
   margin: 0 0 var(--spacing-md);
   padding: 0;
   list-style: none;
@@ -569,7 +569,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 5px 10px;
+  padding: var(--spacing-xs) var(--spacing-sm-md);
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);

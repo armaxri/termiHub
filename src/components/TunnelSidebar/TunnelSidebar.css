@@ -86,7 +86,7 @@
 .tunnel-item__host {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   color: var(--text-secondary);
 }
 

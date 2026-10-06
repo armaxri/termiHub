@@ -46,11 +46,11 @@
   flex-direction: column;
   gap: var(--spacing-xs);
   margin: 0;
-  padding-left: 20px;
+  padding-left: var(--spacing-lg);
 }
 
 .local-process-auth__args code {
-  padding: var(--spacing-xxs) 6px;
+  padding: var(--spacing-xxs) var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   word-break: break-all;

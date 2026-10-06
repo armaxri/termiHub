@@ -76,7 +76,7 @@
 .bulk-ssh-import__selectall {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--spacing-sm-md);
   padding: var(--spacing-xs) var(--spacing-xxs);
   border-bottom: 1px solid var(--border-primary);
 }
@@ -89,9 +89,9 @@
 .bulk-ssh-import__row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--spacing-sm-md);
   width: 100%;
-  padding: var(--spacing-sm) 10px;
+  padding: var(--spacing-sm) var(--spacing-sm-md);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;

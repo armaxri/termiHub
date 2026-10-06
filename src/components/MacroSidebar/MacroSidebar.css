@@ -8,7 +8,7 @@
 .macro-sidebar__search {
   display: flex;
   align-items: center;
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -71,7 +71,7 @@
 }
 
 .macro-item__tag {
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
   color: var(--text-secondary);

@@ -15,11 +15,11 @@
 .workflow-editor__steps {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   max-height: 340px;
   overflow-y: auto;
   margin: 0 0 var(--spacing-sm);
-  padding: 6px;
+  padding: var(--spacing-xs-sm);
   list-style: none;
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -36,8 +36,8 @@
 .workflow-step {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
 }
@@ -87,7 +87,7 @@
 .workflow-step__body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   /* Geometry, not spacing: indents the body past the step's grip + index
      column (#3170). */
   --workflow-step-body-indent: 26px;
@@ -98,13 +98,13 @@
 .workflow-step__args {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   align-items: flex-start;
 }
 
 .workflow-step__arg-row {
   display: flex;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   align-items: center;
   width: 100%;
 }
@@ -122,14 +122,14 @@
 .workflow-step__policy {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border-primary);
 }
 
 .workflow-step__retry {
   display: flex;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   align-items: flex-start;
   flex-wrap: wrap;
 }
@@ -148,7 +148,7 @@
 
 .workflow-step__condition {
   display: flex;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   align-items: flex-end;
   flex-wrap: wrap;
 }
@@ -162,7 +162,7 @@
 .workflow-step__branch {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding: var(--spacing-sm);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -176,7 +176,7 @@
 .workflow-step__substeps {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -185,7 +185,7 @@
 .workflow-step__substep {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding: var(--spacing-xs);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -200,7 +200,7 @@
 .workflow-step__substep-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
 }
 
 /* ── Triggers ───────────────────────────────────────────────────────── */
@@ -213,14 +213,14 @@
 .workflow-triggers__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
 }
 
 .workflow-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: var(--spacing-xxs) 10px;
+  padding: var(--spacing-xxs) var(--spacing-sm-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-full);
   background: var(--bg-input);
@@ -246,7 +246,7 @@
 .workflow-triggers__detail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding: var(--spacing-sm);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);

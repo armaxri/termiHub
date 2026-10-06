@@ -172,7 +172,7 @@
 }
 
 .network-panel__table td {
-  padding: 3px var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm);
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-secondary);
   font-family: var(--font-mono);
@@ -235,7 +235,7 @@
 .network-panel__stats {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   color: var(--text-primary);
@@ -260,7 +260,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 3px 0;
+  padding: var(--spacing-xxs) 0;
 }
 
 .wol-device-row__name {
@@ -283,7 +283,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 3px 0;
+  padding: var(--spacing-xxs) 0;
 }
 
 .http-monitor-row__url {
@@ -342,7 +342,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: 3px var(--spacing-md);
+  padding: var(--spacing-xxs) var(--spacing-md);
 }
 
 .network-sidebar__monitor-info {
@@ -467,7 +467,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 2px 0;
+  padding: var(--spacing-xxs) 0;
   font-size: var(--font-size-sm);
   border-bottom: 1px solid var(--border-secondary);
 }

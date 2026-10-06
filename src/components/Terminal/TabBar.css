@@ -98,7 +98,7 @@
   font-size: var(--font-size-2xl);
   line-height: 1;
   flex-shrink: 0;
-  margin-left: 3px;
+  margin-left: var(--spacing-xxs);
   opacity: 1;
   font-style: normal;
   position: relative;

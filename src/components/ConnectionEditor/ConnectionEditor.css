@@ -323,7 +323,7 @@
 .jump-host__toggle-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   text-transform: none;
   letter-spacing: normal;
   font-size: var(--font-size-sm);
@@ -354,7 +354,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-xxs);
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
@@ -382,7 +382,7 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background-color: var(--bg-tertiary);
-  padding: 10px;
+  padding: var(--spacing-sm-md);
   margin-bottom: var(--spacing-md);
 }
 
@@ -451,7 +451,7 @@
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--spacing-xs);
   background: none;
   border: none;
   color: var(--text-accent, var(--focus-border));
@@ -469,7 +469,7 @@
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--spacing-xs);
   background: none;
   border: none;
   color: var(--text-accent, var(--focus-border));
@@ -485,8 +485,8 @@
 .jump-host__errors {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: var(--spacing-sm) 10px;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-sm) var(--spacing-sm-md);
   margin-bottom: var(--spacing-md);
   color: var(--color-error);
   background-color: color-mix(in srgb, var(--color-error) 12%, transparent);
@@ -651,13 +651,13 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background-color: var(--bg-tertiary);
-  padding: var(--spacing-sm) 10px;
+  padding: var(--spacing-sm) var(--spacing-sm-md);
 }
 
 .port-forwarding__info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   min-width: 0;
 }
 
