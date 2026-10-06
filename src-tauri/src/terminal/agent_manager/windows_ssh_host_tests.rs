@@ -734,12 +734,21 @@ async fn spaced_path_probe_and_launch(fixture: &Fixture, installed: &str) {
 }
 
 /// The whole MT-AGENT-18/19 → 20 → 24 walkthrough for one `DefaultShell`.
+/// A configured environment variable for the terminal session (#4147). The
+/// host's sshd accepts no such name via `AcceptEnv`, so it reaches the shell
+/// only through the typed fallback — `set` / `$env:` in the shell's syntax.
+const FIRST_ENV: (&str, &str) = ("TH_4147_VAR", "it's-4147");
+
 /// The first command typed into a terminal session and the text only its
-/// execution (not its keystroke echo) prints, in `shell`'s syntax.
+/// execution (not its keystroke echo) prints, in `shell`'s syntax. It reads
+/// [`FIRST_ENV`], so it also proves the env fallback reached the shell.
 fn first_command(shell: WindowsShell) -> (&'static str, &'static str) {
     match shell {
-        WindowsShell::Cmd => ("echo FIRST-%OS%-4143\r", "FIRST-Windows_NT-4143"),
-        WindowsShell::PowerShell => ("'FIRST-' + 'OK-4143'\r", "FIRST-OK-4143"),
+        WindowsShell::Cmd => (
+            "echo FIRST-%OS%-%TH_4147_VAR%\r",
+            "FIRST-Windows_NT-it's-4147",
+        ),
+        WindowsShell::PowerShell => ("'FIRST-' + $env:TH_4147_VAR\r", "FIRST-it's-4147"),
     }
 }
 
@@ -748,7 +757,8 @@ fn first_command(shell: WindowsShell) -> (&'static str, &'static str) {
 /// the first typed command. The POSIX setup line used to be injected into every
 /// host; under a PowerShell `DefaultShell` its LF left PSReadLine in a
 /// continuation and swallowed that command. Now PowerShell gets its own setup
-/// (so its prompt emits OSC 7) and cmd.exe gets none.
+/// (so its prompt emits OSC 7) and cmd.exe gets none. The session also carries
+/// a configured env var (#4147), typed as `$env:` / `set` — never `export`.
 async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, shell: WindowsShell) {
     use termihub_core::connection::ConnectionType;
 
@@ -760,6 +770,7 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
         "authMethod": "key",
         "keyPath": fixture.key,
         "shellIntegration": true,
+        "env": { FIRST_ENV.0: FIRST_ENV.1 },
     }))
     .await
     .unwrap_or_else(|e| panic!("SSH terminal session to the Windows host failed: {e}"));
@@ -797,7 +808,9 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
         strip_ansi(&text)
     );
     assert!(
-        !text.contains("PROMPT_COMMAND") && !text.contains("ParserError"),
+        !text.contains("PROMPT_COMMAND")
+            && !text.contains("ParserError")
+            && !text.contains("export "),
         "{shell:?}: the POSIX setup reached the Windows shell — output: {:?}",
         strip_ansi(&text)
     );
