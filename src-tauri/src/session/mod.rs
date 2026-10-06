@@ -5,6 +5,7 @@ pub mod graphical_file_channel;
 pub mod graphical_held_input;
 pub mod graphical_manager;
 pub mod graphical_supervisor;
+pub mod graphical_upload;
 pub mod line_ending;
 pub mod manager;
 mod monitoring_controller;

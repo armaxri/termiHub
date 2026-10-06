@@ -39,6 +39,10 @@ use crate::session::graphical_file_channel::{AgentFiles, RemoteDesktopFileChanne
 use crate::session::graphical_manager::{
     GraphicalEventSink, GraphicalSessionManager, RemoteDesktopCertPromptEvent,
 };
+use crate::session::graphical_upload::{
+    place, plan_local, resolve_dest_dir, start_uploads, AgentHostFiles, AgentRequests,
+    RemoteDesktopUploadStarted, UploadCarrier,
+};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
@@ -247,6 +251,114 @@ pub async fn remote_desktop_file_channel(
 ) -> Result<RemoteDesktopFileChannel, TerminalError> {
     let agents: Arc<dyn AgentFiles> = Arc::new(agent_manager.inner().clone());
     manager.file_channel(&session_id, Some(agents)).await
+}
+
+/// Upload local files and folders to a graphical session's file side channel
+/// (#4192, concept `vnc-clipboard-file-transfer` phase 2) — the drop overlay's
+/// and the Files popover's action.
+///
+/// Resolves the route like [`remote_desktop_file_channel`] and refuses unless
+/// it is `ready` (backend-enforced: off, view-only, no route or a degraded
+/// carrier never moves bytes). Then places every item in `dest` (default: the
+/// session's default folder) with "keep both" naming, creates dropped folders
+/// recursively without following links, and starts one Transfers-queue upload
+/// per file, keyed by the graphical session id. Returns immediately with what
+/// was queued; progress arrives as `transfer-progress` events.
+#[tauri::command]
+pub async fn remote_desktop_upload(
+    session_id: String,
+    local_paths: Vec<String>,
+    dest: Option<String>,
+    manager: State<'_, GraphicalSessionManager>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    registry: State<'_, crate::files::transfer::TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<RemoteDesktopUploadStarted, TerminalError> {
+    debug!(
+        session_id,
+        count = local_paths.len(),
+        "Remote desktop upload"
+    );
+    let rpc: Arc<dyn AgentRpcClient> = agent_manager.inner().clone();
+    let agents: Arc<dyn AgentFiles> = Arc::new(rpc.clone());
+    let (channel, ssh) = manager
+        .file_channel_with_session(&session_id, Some(agents))
+        .await?;
+    let requests: Arc<dyn AgentRequests> = Arc::new(rpc);
+    let (carrier, host, default_dir) = upload_carrier(channel, ssh, requests).await?;
+    let plan = tokio::task::spawn_blocking(move || plan_local(&local_paths))
+        .await
+        .map_err(|e| TerminalError::InternalError(format!("upload planning failed: {e}")))?;
+    let destination = carrier.destination();
+    let dest_dir = resolve_dest_dir(destination.as_ref(), dest.as_deref(), &default_dir)
+        .await
+        .map_err(|e| TerminalError::RemoteError(format!("Cannot upload to {host}: {e}")))?;
+    let placement = place(destination.as_ref(), &dest_dir, plan).await;
+    let sink = crate::files::transfer::app_progress_sink(app_handle);
+    let transfers = start_uploads(&carrier, &session_id, placement.files, &registry, &sink);
+    Ok(RemoteDesktopUploadStarted {
+        dest_dir,
+        host,
+        transfers,
+        folders: placement.folders,
+        skipped: placement.skipped,
+    })
+}
+
+/// The carrier, file host and default folder of a `ready` channel, or the
+/// user-facing reason uploads are refused.
+async fn upload_carrier(
+    channel: RemoteDesktopFileChannel,
+    ssh: Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
+    agents: Arc<dyn AgentRequests>,
+) -> Result<(UploadCarrier, String, String), TerminalError> {
+    let (channel, agent_id, default_dir) = match channel {
+        RemoteDesktopFileChannel::Ready {
+            channel,
+            agent_id,
+            default_dir,
+        } => (channel, agent_id, default_dir),
+        RemoteDesktopFileChannel::Degraded { message, .. } => {
+            return Err(TerminalError::RemoteError(message))
+        }
+        RemoteDesktopFileChannel::Unavailable { reason } => {
+            return Err(TerminalError::RemoteError(unavailable_message(reason)))
+        }
+    };
+    let carrier = match (channel.kind, agent_id, ssh) {
+        (termihub_core::connection::FileSideChannelKind::Agent, Some(agent_id), _) => {
+            UploadCarrier::Agent(Arc::new(AgentHostFiles::new(agent_id, agents)))
+        }
+        (termihub_core::connection::FileSideChannelKind::Ssh, _, Some(session)) => {
+            let browser = termihub_core::backends::ssh::SftpFileBrowser::from_session(session)
+                .await
+                .map_err(|e| {
+                    TerminalError::SftpError(format!(
+                        "SFTP is not enabled on {} ({e})",
+                        channel.host
+                    ))
+                })?;
+            UploadCarrier::Sftp(Arc::new(browser))
+        }
+        _ => {
+            return Err(TerminalError::RemoteError(format!(
+                "The file route to {} is not connected",
+                channel.host
+            )))
+        }
+    };
+    Ok((carrier, channel.host, default_dir))
+}
+
+/// Why uploads are refused for an `unavailable` channel.
+fn unavailable_message(reason: termihub_core::connection::FileChannelUnavailable) -> String {
+    use termihub_core::connection::FileChannelUnavailable as Reason;
+    match reason {
+        Reason::Disabled => "File transfer is turned off for this connection",
+        Reason::ViewOnly => "File transfer is not available in a view-only session",
+        Reason::NoRoute => "File transfer needs an SSH tunnel or an agent for this connection",
+    }
+    .to_string()
 }
 
 /// Request a new session resolution in pixels (Match Window / dynamic resize).
@@ -540,16 +652,28 @@ pub async fn remote_desktop_disconnect(
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
     window_manager: State<'_, WindowManager>,
+    registry: State<'_, crate::files::transfer::TransferRegistry>,
 ) -> Result<(), TerminalError> {
-    gated_disconnect(
+    let closed = gated_disconnect(
         &manager,
         &window_manager,
         window.label(),
         &session_id,
         app_handle,
     )
-    .await
-    .map(|_| ())
+    .await?;
+    if closed {
+        // Closing the session cancels its queued side-channel uploads (#4192).
+        let cancelled =
+            crate::session::graphical_upload::cancel_session_transfers(&registry, &session_id);
+        if cancelled > 0 {
+            debug!(
+                session_id,
+                cancelled, "Cancelled graphical session transfers"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The owner-gated body of [`remote_desktop_disconnect`] (#3401). Returns
