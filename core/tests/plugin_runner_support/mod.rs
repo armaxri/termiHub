@@ -107,12 +107,18 @@ pub fn install_echo(work: &Path) -> InstalledEcho {
 /// Package `lib` with `manifest`, install it through the manager and
 /// acknowledge it in the native trust store.
 pub fn install_plugin(work: &Path, lib: &Path, manifest: &str) -> InstalledEcho {
-    let src = work.join("plugin-src");
+    install_plugin_tagged(work, "", lib, manifest)
+}
+
+/// [`install_plugin`] with its own source and package dirs (`tag`), so
+/// several plugins can be installed under the same `<work>/plugins` root.
+pub fn install_plugin_tagged(work: &Path, tag: &str, lib: &Path, manifest: &str) -> InstalledEcho {
+    let src = work.join(format!("plugin-src{tag}"));
     let backend = src.join("backend");
     std::fs::create_dir_all(&backend).unwrap();
     std::fs::copy(lib, backend.join(lib.file_name().unwrap())).unwrap();
     std::fs::write(src.join("manifest.json"), manifest).unwrap();
-    let package = pack_plugin(&src, &work.join("dist")).expect("pack the plugin");
+    let package = pack_plugin(&src, &work.join(format!("dist{tag}"))).expect("pack the plugin");
 
     let root = work.join("plugins");
     let manager = PluginManager::new(&root);
