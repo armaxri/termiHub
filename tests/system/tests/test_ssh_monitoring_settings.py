@@ -18,6 +18,7 @@ from termihub_harness import (
     ConnectionsUi,
     MonitoringUi,
     PasswordPromptUi,
+    SETTINGS_REGION,
     SettingsUi,
     SftpUi,
     SidebarUi,
@@ -30,8 +31,12 @@ from termihub_harness import (
 
 pytestmark = pytest.mark.integration
 
-POWER = ("toggle-power-monitoring", "settings.powerMonitoringEnabled")
-FILES = ("toggle-file-browser", "settings.fileBrowserEnabled")
+#: (settings-editor toggle, ``AppSettings`` field) pairs. The fields are read off
+#: the projected ``settings`` region (region-authoritative since #2227): the old
+#: ``get_state("settings.…")`` path no longer resolves (``appStore`` has no
+#: ``settings`` slice).
+POWER = ("toggle-power-monitoring", "powerMonitoringEnabled")
+FILES = ("toggle-file-browser", "fileBrowserEnabled")
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
@@ -80,10 +85,15 @@ class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Pa
     def _set_setting(self, toggle: str, field: str, desired: bool) -> None:
         self.open_settings_category("external-files")
         self.wait(lambda: self.driver.exists(toggle), what=f"the {toggle} toggle")
-        if bool(self.driver.get_state(field)) != desired:
+        if self._setting(field) != desired:
             self.driver.click(toggle)
             self.wait(
-                lambda: bool(self.driver.get_state(field)) == desired,
+                lambda: self._setting(field) == desired,
                 what=f"{field} to become {desired}",
             )
         self.switch_to_connections_sidebar()
+
+    def _setting(self, field: str) -> bool:
+        # Both toggles default on, so a field the region has not carried yet reads
+        # as enabled (the frontend `DEFAULT_SETTINGS` value).
+        return bool(self.projection_region_cache(SETTINGS_REGION).get(field, True))

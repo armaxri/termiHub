@@ -147,6 +147,9 @@ class TestCredentialStore(
         # First connect: answer (and store) the password prompt, then land in a shell.
         self.connect_connection(name)
         self.handle_password_prompt()
+        # Every SSH connect in this one-app class may meet the fixture's host key
+        # untrusted (#1959): accept it, or the handshake hangs with no session.
+        self.accept_host_key_prompt()
         first = self.wait(lambda: self.find_tab(name), what="the first SSH tab")
         self.wait(self.has_terminal, what="the first SSH terminal session")
 
@@ -183,6 +186,7 @@ class TestCredentialStore(
         # With the store unlocked and no stored credential yet, the connect falls
         # through to the password prompt; answering it lands in a terminal.
         self.handle_password_prompt()
+        self.accept_host_key_prompt()
         self.wait(lambda: self.find_tab(name), what="the unlocked SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session after unlock")
 
@@ -204,6 +208,7 @@ class TestCredentialStore(
         # session fails to authenticate, leaving a (disconnected/error) tab.
         self.connect_connection(name)
         self.handle_password_prompt("definitely-the-wrong-password")
+        self.accept_host_key_prompt()
         bad = self.wait(lambda: self.find_tab(name), what="the failed SSH tab")
         self.close_tab(bad["id"])
         self.wait(lambda: self.find_tab(name) is None, what="the failed tab to close")
@@ -212,6 +217,7 @@ class TestCredentialStore(
         # the password prompt is raised again — answer it correctly this time.
         self.connect_connection(name)
         self.handle_password_prompt()
+        self.accept_host_key_prompt()
         self.wait(lambda: self.find_tab(name), what="the recovered SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session after recovery")
 
@@ -240,6 +246,7 @@ class TestCredentialStore(
         )
         self.driver.click("password-prompt-save-checkbox")  # default on → off
         self.handle_password_prompt()
+        self.accept_host_key_prompt()
         first = self.wait(lambda: self.find_tab(name), what="the first SSH tab")
         self.wait(self.has_terminal, what="the first SSH terminal session")
 

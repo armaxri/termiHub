@@ -26,6 +26,15 @@ NEW_TERMINAL = "terminal-view-new-terminal"
 #: the repo's POSIX-on-Windows shell (see ``tests/system/tests/test_windows_shells.py``).
 WINDOWS_POSIX_SHELL = "gitbash"
 
+#: Projection region of the session-lifecycle domain (twin of the frontend
+#: ``SESSION_LIFECYCLE_REGION`` in ``src/store/sessionBridge.ts``). Its view is
+#: ``{"sessions": {<tabId>: {status, exit, …}}}``.
+SESSION_LIFECYCLE_REGION = "session-lifecycle"
+
+#: Session statuses that mean the terminal has ended (twin of the frontend
+#: ``regionExited`` in ``src/store/sessionBridge.ts``).
+_EXITED_STATUSES = frozenset({"disconnected", "failed", "sessionLost"})
+
 
 class TerminalUi(HarnessMixin):
     """Create a terminal, send commands, and poll its output."""
@@ -71,6 +80,21 @@ class TerminalUi(HarnessMixin):
         self.switch_to_connections_sidebar()
         self.create_local_connection(unique_name("posix-shell"), shell=shell, connect=True)
         self.wait(self.has_terminal, what="the Git Bash POSIX shell to be readable")
+
+    def terminal_session_exited(self, tab_id: str) -> bool:
+        """Whether the terminal session of tab ``tab_id`` has ended.
+
+        Region-authoritative since #2625: the per-client ``terminalExitedTabs``
+        slice was deleted, so the exited flag is read off the
+        ``session-lifecycle`` region. A tab is exited when its lifecycle reports
+        a terminal status or carries an ``exit``; a missing entry (never
+        connected) reads as not exited.
+        """
+        sessions = self.projection_region_cache(SESSION_LIFECYCLE_REGION).get("sessions")
+        life = sessions.get(tab_id) if isinstance(sessions, dict) else None
+        if not isinstance(life, dict):
+            return False
+        return life.get("status") in _EXITED_STATUSES or life.get("exit") is not None
 
     def has_terminal(self) -> bool:
         """Whether the **active** tab is a readable terminal.

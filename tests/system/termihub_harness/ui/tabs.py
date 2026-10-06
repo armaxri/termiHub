@@ -88,7 +88,7 @@ class TabsUi(HarnessMixin):
     def close_tab(self, tab_id: str) -> None:
         """Close the tab with the given id, confirming any close dialog.
 
-        Up to three dialogs can intercept a close, and they can chain:
+        Up to four dialogs can intercept a close, and they can chain:
 
         * the keyboard-shortcut confirm (``confirm-close-tab-confirm``);
         * the unsaved-changes dialog a dirty editor/connection/settings tab
@@ -96,7 +96,11 @@ class TabsUi(HarnessMixin):
         * the live-session confirm a tab holding a live terminal session raises
           (``confirm-session-close-dialog``, whose confirm button is
           ``ConfirmDialog``'s ``confirm-dialog-confirm``). This is on by default
-          — ``settings.confirmCloseLiveSession`` defaults to ``true`` (#1654).
+          — ``settings.confirmCloseLiveSession`` defaults to ``true`` (#1654);
+        * the one-time detach notice a tab attached to a persistent agent session
+          raises (``confirm-detach-tab-dialog``, confirm button
+          ``confirm-detach-tab-confirm``) — on by default via
+          ``settings.confirmCloseAttachedTab``.
 
         Dismissing the unsaved-changes dialog can in turn surface the
         live-session dialog (``finishCloseTab`` runs only after the unsaved gate
@@ -111,6 +115,8 @@ class TabsUi(HarnessMixin):
             time.sleep(0.3)
         if self.driver.exists("confirm-session-close-dialog"):
             self.driver.click("confirm-dialog-confirm")
+        if self.driver.exists("confirm-detach-tab-dialog"):
+            self.driver.click("confirm-detach-tab-confirm")
 
     def close_all_tabs(self) -> None:
         """Close every open tab (e.g. between reconnect checks).
