@@ -468,6 +468,7 @@ fn an_encrypted_export_round_trips_a_saved_password() {
     let result = dst.import_encrypted_json(&json, Some("export-pw")).unwrap();
 
     assert_eq!(result.connections_imported, 1);
+    assert_eq!(result.connections_skipped, 0);
     assert_eq!(result.credentials_imported, 1);
     assert_eq!(main_ids(&dst), vec!["a"]);
     assert_eq!(dst_store.value("a", PW).as_deref(), Some("s3cret"));
@@ -513,6 +514,8 @@ fn an_encrypted_import_does_not_clobber_a_skipped_connections_password() {
     assert_eq!(dst_store.value("a", PW).as_deref(), Some("LOCAL"));
     assert_eq!(dst_store.value("b", PW).as_deref(), Some("B"));
     assert_eq!(result.credentials_imported, 1);
+    assert_eq!(result.connections_imported, 1);
+    assert_eq!(result.connections_skipped, 1);
 }
 
 /// Re-importing an export into the store that wrote it adds nothing, so it
@@ -531,6 +534,7 @@ fn re_importing_an_export_into_the_same_store_reports_nothing_imported() {
     let result = mgr.import_encrypted_json(&json, Some("export-pw")).unwrap();
 
     assert_eq!(result.connections_imported, 0);
+    assert_eq!(result.connections_skipped, 2);
     assert_eq!(result.credentials_imported, 0);
     assert_eq!(main_ids(&mgr), vec!["a", "b"]);
 }
@@ -552,6 +556,7 @@ fn an_encrypted_import_counts_only_the_connections_it_added() {
     let result = dst.import_encrypted_json(&json, None).unwrap();
 
     assert_eq!(result.connections_imported, 2);
+    assert_eq!(result.connections_skipped, 1);
     assert_eq!(main_ids(&dst), vec!["a", "b", "c"]);
 }
 

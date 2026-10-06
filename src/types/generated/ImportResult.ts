@@ -3,4 +3,13 @@
 /**
  * Result of a completed import operation.
  */
-export type ImportResult = { connectionsImported: number, credentialsImported: number, };
+export type ImportResult = { 
+/**
+ * Connections actually added to the store.
+ */
+connectionsImported: number, 
+/**
+ * Connections in the file skipped because the store already holds them
+ * (#3689, #4210).
+ */
+connectionsSkipped: number, credentialsImported: number, };
