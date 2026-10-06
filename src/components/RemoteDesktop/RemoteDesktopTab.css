@@ -243,3 +243,158 @@
   flex-wrap: wrap;
   gap: var(--spacing-xs);
 }
+
+/* ── File transfer via the side channel (#4192) ─────────────────────── */
+
+/* Toolbar Files button + its warning dot (route refused, VNC keeps running). */
+.rd-toolbar__files {
+  position: relative;
+  display: inline-flex;
+}
+
+.rd-toolbar__dot {
+  position: absolute;
+  top: var(--spacing-xxs);
+  right: var(--spacing-xxs);
+  width: var(--spacing-xs-sm);
+  height: var(--spacing-xs-sm);
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
+  pointer-events: none;
+}
+
+/* Dashed drop target shown while OS files are dragged over the canvas. */
+.rd-drop {
+  position: absolute;
+  inset: var(--spacing-2xl) var(--spacing-sm-md) var(--spacing-sm-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+  border: 2px dashed var(--accent-color);
+  border-radius: var(--radius-md);
+  background: var(--overlay-bg);
+  color: var(--text-primary);
+  text-align: center;
+  pointer-events: none;
+  z-index: var(--z-float);
+}
+
+.rd-drop--off {
+  border-color: var(--text-disabled);
+}
+
+.rd-drop__icon {
+  color: var(--accent-color);
+}
+
+.rd-drop--off .rd-drop__icon {
+  color: var(--text-disabled);
+}
+
+.rd-drop__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.rd-drop__sub {
+  max-width: 420px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.rd-drop__sub--warn {
+  color: var(--color-warning);
+}
+
+.rd-drop__sub code,
+.rd-files__route code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+/* Files popover under the toolbar. */
+.rd-files {
+  position: absolute;
+  top: var(--spacing-2xl);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  max-width: calc(100% - var(--spacing-lg));
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  z-index: var(--z-layer);
+}
+
+.rd-files__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: var(--font-weight-semibold);
+}
+
+.rd-files__route {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-xs-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.rd-files__route > svg {
+  flex: none;
+  color: var(--color-success);
+}
+
+.rd-files__route--warn {
+  background: var(--bg-warning);
+  border: 1px solid var(--border-warning);
+}
+
+.rd-files__route--warn > svg {
+  color: var(--color-warning);
+}
+
+.rd-files__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.rd-files__actions .ui-btn {
+  justify-content: flex-start;
+}
+
+.rd-files__label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.rd-files__hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.rd-files__transfers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-height: 160px;
+  overflow-y: auto;
+  padding-top: var(--spacing-xs-sm);
+  border-top: 1px solid var(--border-primary);
+}

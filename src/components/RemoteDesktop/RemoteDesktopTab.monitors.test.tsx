@@ -39,6 +39,9 @@ vi.mock("@/services/api", () => ({
   claimSession: vi.fn(() => Promise.resolve(null)),
   releaseSession: vi.fn(() => Promise.resolve(true)),
   remoteDesktopGetClipboard: vi.fn(() => Promise.resolve(null)),
+  remoteDesktopFileChannel: vi.fn(() =>
+    Promise.resolve({ status: "unavailable", reason: "noRoute" })
+  ),
   remoteDesktopMonitorLayout: vi.fn(() => Promise.resolve(hoisted.monitors)),
 }));
 
