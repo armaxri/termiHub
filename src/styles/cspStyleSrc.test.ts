@@ -3,67 +3,83 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { CSP_PLATFORMS, effectiveCsp, effectiveSecurity } from "@/test/tauriCsp";
+import { BOOT_STYLE_ID } from "@/security/styleNonce";
 
 /**
- * CSP style-src regression guard (#2083/#2084/#2085).
+ * CSP style guard (#2083/#2084/#2085, tightened in #3115).
  *
- * The app ships a restrictive production CSP (#2048/PR #2058). The terminal
- * (xterm's DOM renderer), the toast hub (sonner) and other libraries inject
- * their stylesheets into the document as runtime `<style>` elements, so the
- * policy MUST keep `style-src 'unsafe-inline'` effective for them.
+ * xterm.js, Monaco, sonner, `react-remove-scroll` and `react-colorful` inject
+ * their stylesheets as runtime `<style>` elements. Until #3115 the policy kept
+ * `style-src 'unsafe-inline'` for them and told Tauri not to touch `style-src`
+ * (`dangerousDisableAssetCspModification`), because the nonce Tauri appends for
+ * `index.html`'s inline `<style>` cancels `'unsafe-inline'` under CSP Level 3
+ * and silently blocked every runtime stylesheet.
  *
- * The trap this guards against: `index.html` contains an inline `<style>`, so at
- * build time Tauri hashes it and appends that hash to `style-src`. Per CSP Level
- * 3, once a hash (or nonce) source is present the browser **ignores**
- * `'unsafe-inline'` — which silently blocks every runtime-injected stylesheet,
- * leaving the terminal monochrome/blank, the toasts flowing inline instead of as
- * a corner overlay, and the cursor invisible. `dangerousDisableAssetCspModification`
- * listing `"style-src"` tells Tauri NOT to touch that directive, so
- * `'unsafe-inline'` stays effective. `script-src` is deliberately NOT listed, so
- * it stays hardened (no `'unsafe-inline'`) — the actual XSS surface #2048 closed.
+ * Now the nonce is the mechanism: Tauri stamps the boot `<style>` with a
+ * per-load nonce and appends it to `style-src`; `src/security/styleNonce.ts`
+ * reads it and stamps every script-created `<style>` with it. Elements get no
+ * `'unsafe-inline'`. Inline style **attributes** (Monaco's and xterm's generated
+ * markup) cannot be nonced, so `style-src-attr` alone keeps `'unsafe-inline'`.
  *
- * This test fails if any of those invariants regress.
+ * Every invariant below is load-bearing — a regression silently unstyles the
+ * terminal, editor or toasts, which only the nightly `test_csp.py` would see.
  */
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const INDEX_HTML = join(REPO_ROOT, "index.html");
+const INDEX_HTML = readFileSync(join(REPO_ROOT, "index.html"), "utf8");
+const MAIN_TSX = readFileSync(join(REPO_ROOT, "src", "main.tsx"), "utf8");
 
-describe.each(CSP_PLATFORMS)(
-  "production CSP keeps runtime-injected styles working on %s",
-  (platform) => {
-    const security = effectiveSecurity(platform);
+describe.each(CSP_PLATFORMS)("production CSP style directives on %s", (platform) => {
+  const security = effectiveSecurity(platform);
+  const csp = effectiveCsp(platform);
 
-    it("still ships a restrictive CSP (not null) — #2048 hardening intact", () => {
-      expect(security.csp).toBeTruthy();
-      expect(Object.keys(effectiveCsp(platform))).toContain("default-src");
-    });
+  it("still ships a restrictive CSP (not null) — #2048 hardening intact", () => {
+    expect(security.csp).toBeTruthy();
+    expect(Object.keys(csp)).toContain("default-src");
+  });
 
-    it("keeps style-src 'unsafe-inline' for xterm/sonner runtime stylesheets", () => {
-      const directives = effectiveCsp(platform);
-      expect(directives["style-src"]).toContain("'unsafe-inline'");
-    });
+  it("allows <style> elements only from 'self' (plus Tauri's runtime nonce)", () => {
+    expect(csp["style-src"]).toEqual(["'self'"]);
+  });
 
-    it("keeps script-src hardened — no 'unsafe-inline' (the #2048 XSS surface)", () => {
-      const directives = effectiveCsp(platform);
-      expect(directives["script-src"]).toBeDefined();
-      expect(directives["script-src"]).not.toContain("'unsafe-inline'");
-    });
+  it("keeps 'unsafe-inline' only for style attributes", () => {
+    expect(csp["style-src-attr"]).toEqual(["'unsafe-inline'"]);
+  });
 
-    it("disables Tauri's style-src modification so 'unsafe-inline' is not nullified", () => {
-      // Without this, Tauri appends index.html's inline-<style> hash to style-src,
-      // and CSP3 then makes the browser ignore 'unsafe-inline' — the #2083/#2084/#2085
-      // regression. script-src must NOT be disabled (it must stay Tauri-hardened).
-      const disabled = security.dangerousDisableAssetCspModification;
-      expect(Array.isArray(disabled)).toBe(true);
-      expect(disabled as string[]).toContain("style-src");
-      expect(disabled as string[]).not.toContain("script-src");
-    });
+  it("declares no style-src-elem — Tauri appends its nonce to style-src only", () => {
+    // A style-src-elem directive would take precedence over style-src for
+    // <style> elements without the nonce Tauri adds, blocking every stylesheet.
+    expect(csp["style-src-elem"]).toBeUndefined();
+  });
 
-    it("documents the trigger: index.html carries an inline <style>", () => {
-      // If this ever stops being true the guard above is still safe to keep, but the
-      // reason it exists changes — hence this canary rather than a silent assumption.
-      const html = readFileSync(INDEX_HTML, "utf8");
-      expect(html).toMatch(/<style[\s>]/i);
-    });
-  }
-);
+  it("lets Tauri add its style nonce (no style-src opt-out)", () => {
+    const disabled = security.dangerousDisableAssetCspModification;
+    if (disabled === undefined || disabled === false) return;
+    expect(disabled, "Tauri must keep appending the style nonce").not.toBe(true);
+    expect(disabled as string[]).not.toContain("style-src");
+    expect(disabled as string[]).not.toContain("script-src");
+  });
+
+  it("keeps script-src hardened — no 'unsafe-inline' (the #2048 XSS surface)", () => {
+    expect(csp["script-src"]).toBeDefined();
+    expect(csp["script-src"]).not.toContain("'unsafe-inline'");
+  });
+});
+
+describe("the style nonce reaches the runtime stylesheets", () => {
+  it("index.html carries the boot <style> the nonce is read from", () => {
+    // Tauri stamps every <style> in index.html with a nonce; this one is the
+    // element styleNonce.ts reads it from.
+    expect(INDEX_HTML).toMatch(new RegExp(`<style id="${BOOT_STYLE_ID}">`));
+  });
+
+  it("main.tsx installs the nonce before React, the app and any library", () => {
+    const imports = [...MAIN_TSX.matchAll(/^import\s+(?:[^"']+from\s+)?["']([^"']+)["'];/gm)].map(
+      (m) => m[1]
+    );
+    const at = imports.indexOf("./security/installStyleNonce");
+    expect(at, "main.tsx must import ./security/installStyleNonce").toBeGreaterThanOrEqual(0);
+    // Only side-effect bootstrap modules (locale sanitiser) may precede it.
+    expect(imports.slice(0, at)).toEqual(["./utils/ensureValidLocale"]);
+  });
+});
