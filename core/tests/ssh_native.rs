@@ -214,7 +214,7 @@ async fn native_05_interactive_shell_session_round_trips() {
 
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
-    // No OSC 7 hook: it is POSIX-shell syntax, and cmd.exe would echo it back.
+    // Integration off: the plain shell path. `native_05c` covers it on (#4143).
     settings["shellIntegration"] = serde_json::Value::Bool(false);
     ssh.connect(settings).await.expect("shell session connects");
     let mut rx = ssh.subscribe_output();
