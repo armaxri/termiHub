@@ -2498,6 +2498,19 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   (`files/transfer/relaunch_auto.rs`).
   The secret lives only in the relaunch's in-memory settings, never in
   `transfers.json`.
+  An **agent-hosted** (ranged) transfer keeps `agent` instead (#4114): the
+  agent id, the agent-side session id and the saved agent definition the
+  session was opened from — ids only; the session's credentials stay with the
+  agent. A relaunch looks for a live agent session by that identity: the same
+  agent-side session, or one opened from the same definition on the same
+  agent (never another agent's, never another definition's, so a partial is
+  never resumed into a different file system), checks it with the zero-length
+  ranged probe, and runs `run_ranged_transfer` from the persisted offset
+  behind the usual resume gate. Before the agent is reconnected the row stays
+  **paused** with "Agent session unavailable — reconnect the agent and open
+  the connection to resume", and resumes by itself once a matching agent
+  session opens (the same in-memory wait list, triggered from
+  `create_connection`; `files/transfer/relaunch_agent.rs`).
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
   `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
   `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses

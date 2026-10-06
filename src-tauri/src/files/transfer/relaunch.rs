@@ -56,6 +56,10 @@
 //! their persisted full container id instead (the session id does not survive a
 //! restart): see [`super::relaunch_docker`] for how the container is re-attached
 //! by identity and why a same-name recreated container is never resumed into.
+//! **Agent-hosted** transfers (#4114) relaunch through their persisted agent
+//! session identity — the same agent-side session, or one reopened from the
+//! same saved definition on the same agent — and wait, paused, until the agent
+//! is reconnected: see [`super::relaunch_agent`].
 //! Queued **local-disk copies** (PARITY-004, #3567) need no session
 //! and always relaunch from their temp file.
 //!
@@ -179,7 +183,9 @@ pub(crate) enum ResumeDecision {
 ///
 /// A download or upload persists a `local_path` (the local endpoint) and is
 /// relaunchable as an SFTP or FTP session transfer — or, when it carries a
-/// persisted container identity, as a Docker session transfer (#3585). A record
+/// persisted container identity, as a Docker session transfer (#3585), and when
+/// it carries a persisted agent session identity, as an agent-hosted ranged
+/// transfer (#4114). A record
 /// under the reserved local session id is a queued local-disk copy (#3567) and
 /// relaunches with no session at all. A remote-to-remote copy persists no local
 /// endpoint (`local_path == None`); it relaunches from its persisted source
