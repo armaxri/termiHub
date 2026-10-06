@@ -153,10 +153,14 @@ tests:
     tags: [os-native, dnd]
 
   # --- IME composition ---
+  # Automated (#3059): test_ime_composition.py replays the composition DOM event
+  # sequence in each OS webview (terminal + editor) and asserts the commit lands
+  # exactly once; composition.test.ts pins it per PR. Only the native preedit /
+  # candidate window and the real IME's key order stay manual.
 
   - id: MT-NIN-10
     release_gate: true
-    manual_reason: "macOS input method (IMK) owns the preedit and candidate window; the bridge cannot compose"
+    manual_reason: "macOS IMK draws the preedit and candidate window natively and owns the Enter order; commit-once is automated (test_ime_composition.py)"
     name: "macOS — Japanese IME composition in the terminal"
     platforms: [macos]
     prerequisites:
@@ -177,7 +181,7 @@ tests:
 
   - id: MT-NIN-11
     release_gate: true
-    manual_reason: "Windows input method (TSF) owns the preedit and candidate window; the bridge cannot compose"
+    manual_reason: "Windows TSF draws the preedit and candidate window natively and owns the Enter order; commit-once is automated (test_ime_composition.py)"
     name: "Windows — Japanese IME composition in the terminal"
     platforms: [windows]
     prerequisites:
@@ -198,7 +202,7 @@ tests:
 
   - id: MT-NIN-12
     release_gate: true
-    manual_reason: "Linux IME frameworks (IBus / Fcitx5 via GTK) differ per display server; needs a real desktop session"
+    manual_reason: "IBus / Fcitx5 candidate windows are native and differ per display server; needs a real desktop session (commit-once is automated)"
     name: "Linux — IME composition in the terminal under Wayland and X11"
     platforms: [linux]
     prerequisites:
@@ -220,7 +224,7 @@ tests:
 
   - id: MT-NIN-13
     release_gate: true
-    manual_reason: "real OS input method in the Monaco editor's native edit context; the bridge cannot compose"
+    manual_reason: "native preedit/candidate window at the Monaco caret and the real IME save/Enter order; commit-once is automated (test_ime_composition.py)"
     name: "IME composition in the file editor"
     platforms: [all]
     prerequisites:
