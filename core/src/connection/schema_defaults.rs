@@ -70,10 +70,7 @@ pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
     let primary = match &condition.same_host_as {
         // Two-field host comparison: the outcome must equal `equals`.
         Some(other) => {
-            let same = hosts_compare_same(
-                settings.get(&condition.field),
-                settings.get(other),
-            );
+            let same = hosts_compare_same(settings.get(&condition.field), settings.get(other));
             condition.equals == Value::Bool(same)
         }
         // A missing referenced field is `undefined` in the TS original, which

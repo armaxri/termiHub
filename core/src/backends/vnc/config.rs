@@ -1230,7 +1230,10 @@ mod tests {
         ));
         let shown = |settings: serde_json::Value| {
             let map = settings.as_object().unwrap().clone();
-            (is_field_visible(info, &map), is_field_visible(warning, &map))
+            (
+                is_field_visible(info, &map),
+                is_field_visible(warning, &map),
+            )
         };
         let gateway = serde_json::json!({
             "fileTransfer": true, "useSshTunnel": true,
