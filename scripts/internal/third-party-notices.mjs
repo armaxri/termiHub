@@ -15,8 +15,9 @@
 //     pure function of the lockfiles + the pinned cargo-about version.
 //   - npm: `pnpm licenses list --prod --json` (production deps only — what ships
 //     in the frontend bundle), with each package's own LICENSE/NOTICE files.
-//   - External programs: THIRD_PARTY_LICENSES.md (the X servers termiHub
-//     installs but does not bundle) plus their texts under licenses/.
+//   - External programs and bundled native binaries: THIRD_PARTY_LICENSES.md
+//     (the X servers termiHub installs but does not bundle, and the Windows
+//     ConPTY host it bundles) plus their texts under licenses/.
 //
 // Identical license texts are printed once and referenced by number.
 //
@@ -64,7 +65,7 @@ export const RUST_COMPONENTS = [
 /** Lockfile roots that must be fetched before running cargo-about `--frozen`. */
 const CARGO_FETCH_MANIFESTS = ["Cargo.toml", "rdp-sidecar/Cargo.toml"];
 
-/** License texts of the external programs documented in THIRD_PARTY_LICENSES.md. */
+/** License texts of the external programs / bundled binaries documented in THIRD_PARTY_LICENSES.md. */
 export const EXTERNAL_TEXTS = [
   {
     file: "licenses/GPL-3.0.txt",
@@ -72,6 +73,11 @@ export const EXTERNAL_TEXTS = [
     users: ["VcXsrv (installed separately)"],
   },
   { file: "licenses/APSL-2.0.txt", id: "APSL-2.0", users: ["XQuartz (installed separately)"] },
+  {
+    file: "licenses/MIT-microsoft-terminal.txt",
+    id: "MIT",
+    users: ["Microsoft ConPTY host - conpty.dll, OpenConsole.exe (Windows installer, #4121)"],
+  },
 ];
 
 /** File names treated as a package's license / notice files. */

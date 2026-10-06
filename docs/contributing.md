@@ -158,6 +158,12 @@ The `scripts/` directory has cross-platform helpers (`.sh` + `.cmd`) for all com
 
 See [scripts/README.md](../scripts/README.md) for the full list. On Windows, use the `.cmd` variants (e.g., `scripts\dev.cmd`).
 
+On Windows, `scripts\build.cmd` bundles Microsoft's ConPTY host (`conpty.dll` +
+`OpenConsole.exe`, downloaded and checksum-verified at build time) next to
+`termihub.exe`, so local terminals show inline images (#4121). `scripts\dev.cmd` uses
+it too once you have run `scripts\internal\fetch-conpty.cmd`; until then, dev builds
+run on the ConPTY built into Windows, which drops SIXEL images.
+
 ### Reproducing CI locally
 
 `./scripts/ci-local.sh` runs the same checks as the per-PR **Code Quality** workflow
