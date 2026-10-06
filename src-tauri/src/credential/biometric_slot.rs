@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use zeroize::Zeroizing;
 
+use super::keyring_thread::off_runtime;
+
 // The keyring slot is only constructed by production builds (tests use
 // `MemorySlot`), hence the test-only dead-code expectations below.
 /// OS credential-store service name for the wrapping key. Distinct from the
@@ -79,9 +81,13 @@ impl KeyringSlot {
     }
 }
 
+// Every keyring call runs through `off_runtime`: these are reached from async
+// commands (change master password, store switch, reset), and on Linux a
+// keyring call on a Tokio worker panics (see `keyring_thread`).
 impl SecretSlot for KeyringSlot {
     fn read(&self) -> Result<Option<Zeroizing<String>>> {
-        match self.entry()?.get_password() {
+        let entry = self.entry()?;
+        match off_runtime(|| entry.get_password()) {
             Ok(value) => Ok(Some(Zeroizing::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e).context("Failed to read the biometric unlock key"),
@@ -89,13 +95,14 @@ impl SecretSlot for KeyringSlot {
     }
 
     fn write(&self, value: &str) -> Result<()> {
-        self.entry()?
-            .set_password(value)
+        let entry = self.entry()?;
+        off_runtime(|| entry.set_password(value))
             .context("Failed to store the biometric unlock key")
     }
 
     fn delete(&self) -> Result<()> {
-        match self.entry()?.delete_credential() {
+        let entry = self.entry()?;
+        match off_runtime(|| entry.delete_credential()) {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e).context("Failed to delete the biometric unlock key"),
         }
