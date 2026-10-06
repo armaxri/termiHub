@@ -58,3 +58,8 @@ tempfile = "3"
 [target.'cfg(unix)'.dev-dependencies]
 # `dup2` / `fcntl` to hand the runner its channel as fd 3 in the process tests.
 libc = "0.2"
+
+# `serde_bytes` is only referenced from `#[serde(with = "serde_bytes")]`
+# attribute strings, which cargo-machete's name scan cannot see.
+[package.metadata.cargo-machete]
+ignored = ["serde_bytes"]
