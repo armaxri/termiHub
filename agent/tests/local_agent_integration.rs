@@ -77,9 +77,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::path::Path;
-#[cfg(unix)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -1475,6 +1473,24 @@ impl AgentClient {
         false
     }
 
+    /// Wait for `needle` in this connection's output, within [`ready_timeout`].
+    ///
+    /// On unix this is [`AgentClient::wait_for_output`]. On windows the match
+    /// runs over all output accumulated so far
+    /// ([`AgentClient::read_output_until`]): ConPTY chunks its output freely, so
+    /// a marker can arrive split over two notifications.
+    fn wait_for_marker(&mut self, needle: &str) -> bool {
+        #[cfg(windows)]
+        {
+            self.read_output_until(ready_timeout(), |t| t.contains(needle))
+                .0
+        }
+        #[cfg(not(windows))]
+        {
+            self.wait_for_output(needle)
+        }
+    }
+
     /// Accumulate `connection.output` and track the **highest** integer that
     /// follows `prefix` (e.g. `TICK=` → the max `N` in `TICK=N`). Returns as soon
     /// as `done(max)` is satisfied (with that max), or the running max seen when
@@ -1483,7 +1499,6 @@ impl AgentClient {
     /// Decoded output is appended to a single accumulator and re-parsed each round
     /// so a counter split across two output notifications (PTY chunking, or a big
     /// buffer replay arriving in pieces) is still recognised once both halves land.
-    #[cfg(unix)] // only the unix-gated daemon-recovery tests track counters
     fn track_counter(
         &mut self,
         prefix: &str,
@@ -1542,7 +1557,7 @@ impl AgentClient {
     /// buffer replay is delivered) or `overall` elapses. Occurrences are counted
     /// over one accumulator so a needle split across notifications still counts
     /// once, and only non-overlapping matches are counted.
-    #[cfg(unix)] // only the unix-gated replay tests count occurrences
+    #[cfg(unix)] // only the unix-only exactly-once replay test counts occurrences
     fn count_output_occurrences(
         &mut self,
         needle: &str,
@@ -1599,7 +1614,6 @@ impl AgentClient {
 /// in order of appearance. `counters_in("a TICK=1 b TICK=42", "TICK=")` →
 /// `[1, 42]`. A `prefix` occurrence not followed by a digit (e.g. the shell's
 /// echo of the literal loop command `echo TICK=$i`) contributes nothing.
-#[cfg(unix)] // helper of the unix-only `track_counter`
 fn counters_in(text: &str, prefix: &str) -> Vec<u64> {
     // `match_indices` yields each non-overlapping match start (a valid char
     // boundary), and `idx + prefix.len()` is also a boundary because `prefix` is
@@ -2344,10 +2358,127 @@ fn live_agent_tcp_windows_cmd_session_echo_resize_close_reaps_shell() {
 //
 // Run just these tests:
 //   cargo test -p termihub-agent --test local_agent_integration persistent_shell
+//
+// Windows (MT-AGENT-24, #3684): the same scaffold runs over a **named pipe**.
+// The daemon's endpoint is a unique `\\.\pipe\` name instead of a socket file
+// in the temp dir (see [`daemon_endpoint_in`]), its shell is `cmd.exe`
+// ([`DAEMON_SHELL_SETTINGS`]), and the tests type cmd syntax through the
+// helpers below. The one test that stays unix-only is the exactly-once replay
+// count — see its doc comment for why ConPTY cannot answer that question.
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/// Poll until the daemon's `path` socket appears, or panic on timeout.
+/// Connection settings the test daemons read from stdin: the platform default
+/// shell on unix, and `cmd.exe` on windows — the quickest windows shell to
+/// start, and the dialect the windows variants of the commands below use.
+#[cfg(unix)]
+const DAEMON_SHELL_SETTINGS: &str = "{}";
+#[cfg(windows)]
+const DAEMON_SHELL_SETTINGS: &str = r#"{"shell":"cmd"}"#;
+
+/// One typed command line: `cmd` plus the platform's Enter — `\n` on a unix
+/// PTY, `\r` (the byte a terminal sends for Enter) on ConPTY.
+fn shell_line(cmd: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!("{cmd}\r")
+    }
+    #[cfg(not(windows))]
+    {
+        format!("{cmd}\n")
+    }
+}
+
+/// List the working directory: output for a buffer replay to carry.
+#[cfg(unix)]
+const LIST_DIR: &str = "ls";
+#[cfg(windows)]
+const LIST_DIR: &str = "dir";
+
+/// Assign `value` to the shell variable `name`.
+fn set_var_line(name: &str, value: &str) -> String {
+    #[cfg(windows)]
+    {
+        shell_line(&format!("set {name}={value}"))
+    }
+    #[cfg(not(windows))]
+    {
+        shell_line(&format!("{name}={value}"))
+    }
+}
+
+/// Echo `<prefix><value of name><suffix>`. The composed text appears only when
+/// the shell expands the variable — never in the echo of the typed line, which
+/// shows `${name}` / `%name%` instead of the value.
+fn echo_var_line(prefix: &str, name: &str, suffix: &str) -> String {
+    #[cfg(windows)]
+    {
+        shell_line(&format!("echo {prefix}%{name}%{suffix}"))
+    }
+    #[cfg(not(windows))]
+    {
+        shell_line(&format!("echo {prefix}${{{name}}}{suffix}"))
+    }
+}
+
+/// A loop that prints `TICK=<n>` forever, `n` counting up from 0: every 0.2 s
+/// in POSIX sh; about once a second in cmd, whose only built-in sleep is a
+/// two-echo `ping` of the loopback address. The typed line's own echo holds
+/// `TICK=$i` / `TICK=%i` (no digit after `TICK=`), which [`counters_in`]
+/// ignores, so only executed output counts.
+#[cfg(unix)]
+const TICK_LOOP: &str = "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done";
+#[cfg(windows)]
+const TICK_LOOP: &str = "for /L %i in (0,1,1000000) do @(echo TICK=%i& ping -n 2 127.0.0.1 >nul)";
+
+/// How long the tick test leaves the session with no agent at all: several
+/// [`TICK_LOOP`] periods, so the loop provably runs while nobody watches.
+#[cfg(unix)]
+const DISCONNECTED_GAP: Duration = Duration::from_millis(1500);
+#[cfg(windows)]
+const DISCONNECTED_GAP: Duration = Duration::from_millis(3000);
+
+/// How long the tick test drains the replay after recovery: longer than one
+/// [`TICK_LOOP`] period, so at least one counter arrives in the window.
+#[cfg(unix)]
+const REPLAY_DRAIN: Duration = Duration::from_millis(600);
+#[cfg(windows)]
+const REPLAY_DRAIN: Duration = Duration::from_millis(2500);
+
+/// The endpoint for a test-spawned session daemon `session_id`.
+///
+/// On unix a socket file inside the test's temp `dir`, cleaned up with it. On
+/// windows the `\\.\pipe\` namespace is machine-global with no directory to
+/// scope it, so uniqueness lives in the name: the session id already carries
+/// the pid and a sub-second timestamp ([`test_session_id`]), and the
+/// `termihub-lai-` prefix keeps it apart from a real agent's
+/// `termihub-session-<id>` pipes.
+#[cfg(unix)]
+fn daemon_endpoint_in(dir: &Path, session_id: &str) -> PathBuf {
+    dir.join(format!("session-{session_id}.sock"))
+}
+
+#[cfg(windows)]
+fn daemon_endpoint_in(_dir: &Path, session_id: &str) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\termihub-lai-session-{session_id}"))
+}
+
+/// Whether the daemon endpoint exists, without connecting to it: the socket
+/// file on unix, the named pipe on windows
+/// ([`common::daemon_reaper::pipe_exists`] — a connect probe would be taken
+/// for a client by the daemon).
+fn endpoint_exists(endpoint: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        common::daemon_reaper::pipe_exists(endpoint)
+    }
+    #[cfg(not(windows))]
+    {
+        endpoint.exists()
+    }
+}
+
+/// Poll until the daemon's endpoint at `path` appears, or panic on timeout.
 ///
 /// Hardened the same way as [`wait_for_agent_ready`] (#1398): the previous
 /// version used a fixed non-overridable 5s budget, a flat 20ms spin, and threw
@@ -2355,12 +2486,11 @@ fn live_agent_tcp_windows_cmd_session_echo_resize_close_reaps_shell() {
 /// said nothing. Now it fails fast if the daemon process has already died
 /// (with its exit status + captured stderr), uses the shared exponential
 /// [`readiness_backoff`], and appends stderr on genuine timeout.
-#[cfg(unix)]
 fn wait_for_socket(child: &mut Child, path: &Path, stderr_path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     let mut backoff = readiness_backoff();
     loop {
-        if path.exists() {
+        if endpoint_exists(path) {
             return;
         }
         // A dead daemon will never create the socket — surface the crash now
@@ -2387,7 +2517,6 @@ fn wait_for_socket(child: &mut Child, path: &Path, stderr_path: &Path, timeout: 
 }
 
 /// Generate a test-unique session ID using PID + sub-second timestamp.
-#[cfg(unix)]
 fn test_session_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -2403,7 +2532,6 @@ fn test_session_id() -> String {
 /// Caller must call [`wait_for_socket`] before using it. Returns the child plus
 /// the [`NamedTempFile`] capturing its stderr, so a startup failure can be
 /// diagnosed from the daemon's own error output.
-#[cfg(unix)]
 fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child, NamedTempFile) {
     let stderr_file = NamedTempFile::new().expect("failed to create daemon stderr capture file");
     let stderr_handle = stderr_file
@@ -2432,7 +2560,7 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
         use std::io::Write;
         let mut stdin = child.stdin.take().expect("daemon stdin should be piped");
         stdin
-            .write_all(b"{}")
+            .write_all(DAEMON_SHELL_SETTINGS.as_bytes())
             .expect("failed to write daemon settings to stdin");
     }
     (child, stderr_file)
@@ -2440,7 +2568,6 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
 
 /// A TCP listener agent isolated from the developer's real config by setting
 /// `XDG_CONFIG_HOME` to a temporary directory.
-#[cfg(unix)]
 struct IsolatedAgent {
     process: Child,
     pub addr: String,
@@ -2453,7 +2580,6 @@ struct IsolatedAgent {
     _slot: AgentSlot,
 }
 
-#[cfg(unix)]
 impl IsolatedAgent {
     fn spawn(xdg_home: &std::path::Path) -> Self {
         // spawn_ready_listener waits until the accept loop is idle (after
@@ -2484,7 +2610,6 @@ impl IsolatedAgent {
     }
 }
 
-#[cfg(unix)]
 impl Drop for IsolatedAgent {
     fn drop(&mut self) {
         self.process.kill().ok();
@@ -2503,7 +2628,6 @@ impl Drop for IsolatedAgent {
 ///   agent → IsolatedAgent kills the TCP listener process
 ///   daemon → our Drop impl kills the daemon process
 ///   _tmp  → TempDir removes the temporary directory
-#[cfg(unix)]
 struct PersistentShellSetup {
     agent: IsolatedAgent,
     daemon: Child,
@@ -2514,13 +2638,12 @@ struct PersistentShellSetup {
     pub session_id: String,
 }
 
-#[cfg(unix)]
 impl PersistentShellSetup {
     fn new() -> Self {
         let tmp = TempDir::new().expect("failed to create temp dir");
         let tmp_path = tmp.path().to_path_buf();
         let session_id = test_session_id();
-        let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
+        let socket_path = daemon_endpoint_in(&tmp_path, &session_id);
 
         // Start daemon, wait for its socket to appear. Uses the shared
         // adaptive readiness budget so a loaded CI runner has headroom.
@@ -2572,7 +2695,6 @@ impl PersistentShellSetup {
     }
 }
 
-#[cfg(unix)]
 impl Drop for PersistentShellSetup {
     fn drop(&mut self) {
         // Stop the daemon explicitly before fields drop (before _tmp is deleted).
@@ -2589,7 +2711,6 @@ impl Drop for PersistentShellSetup {
 /// faithful SSH-transport drop preserves (the daemon reparents to PID 1 and lives
 /// on). See [`fresh_agent_recovers_daemon_session_from_dead_prior_agent`], which
 /// this generalises.
-#[cfg(unix)]
 struct RecoverableDaemon {
     _tmp: TempDir,
     tmp_path: PathBuf,
@@ -2600,13 +2721,12 @@ struct RecoverableDaemon {
     session_id: String,
 }
 
-#[cfg(unix)]
 impl RecoverableDaemon {
     fn new() -> Self {
         let tmp = TempDir::new().expect("failed to create temp dir");
         let tmp_path = tmp.path().to_path_buf();
         let session_id = test_session_id();
-        let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
+        let socket_path = daemon_endpoint_in(&tmp_path, &session_id);
 
         let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
         wait_for_socket(
@@ -2650,11 +2770,10 @@ impl RecoverableDaemon {
     /// it. A `false` here is the #2508 drop-harness signature (the daemon reaped
     /// with the agent).
     fn alive(&mut self) -> bool {
-        self.socket_path.exists() && matches!(self.daemon.try_wait(), Ok(None))
+        endpoint_exists(&self.socket_path) && matches!(self.daemon.try_wait(), Ok(None))
     }
 }
 
-#[cfg(unix)]
 impl Drop for RecoverableDaemon {
     fn drop(&mut self) {
         // Tests end with `connection.close`, so it may already be exiting (#3742).
@@ -2671,7 +2790,6 @@ impl Drop for RecoverableDaemon {
 /// without dropping the TCP connection to the agent.
 ///
 /// Flow: attach → run `ls`/`dir` → detach → attach → buffer replay contains output.
-#[cfg(unix)]
 #[test]
 fn live_agent_tcp_persistent_shell_buffer_replayed_on_same_connection_reattach() {
     let setup = PersistentShellSetup::new();
@@ -2696,12 +2814,16 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_on_same_connection_reattach()
     // Run ls (macOS/Linux) followed by a unique marker so we know exactly
     // what to search for in the buffer replay.
     let marker = "termihub-persistent-marker-42";
-    let cmd = format!("ls\necho {marker}\n");
+    let cmd = format!(
+        "{}{}",
+        shell_line(LIST_DIR),
+        shell_line(&format!("echo {marker}"))
+    );
 
     let wr = client.write_input(&setup.session_id, &cmd);
     assert!(wr["result"].is_object(), "write failed: {wr}");
     assert!(
-        client.wait_for_output(marker),
+        client.wait_for_marker(marker),
         "marker '{marker}' not received on first attach — shell not responding"
     );
 
@@ -2720,7 +2842,7 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_on_same_connection_reattach()
     assert!(ra["result"].is_object(), "re-attach failed: {ra}");
 
     assert!(
-        client.wait_for_output(marker),
+        client.wait_for_marker(marker),
         "buffer replay after re-attach did not contain '{marker}' — \
          persistent session ring buffer not working"
     );
@@ -2734,13 +2856,16 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_on_same_connection_reattach()
 ///
 /// Flow: attach → run `ls`/`dir` → TCP disconnect → TCP reconnect → attach →
 /// buffer replay contains previous output.
-#[cfg(unix)]
 #[test]
 fn live_agent_tcp_persistent_shell_buffer_replayed_after_tcp_reconnect() {
     let setup = PersistentShellSetup::new();
 
     let marker = "termihub-reconnect-marker-99";
-    let cmd = format!("ls\necho {marker}\n");
+    let cmd = format!(
+        "{}{}",
+        shell_line(LIST_DIR),
+        shell_line(&format!("echo {marker}"))
+    );
 
     // ── Connection 1: attach, run ls + marker, TCP disconnect ─────────────────
     {
@@ -2760,7 +2885,7 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_after_tcp_reconnect() {
         let wr = client.write_input(&setup.session_id, &cmd);
         assert!(wr["result"].is_object(), "write failed: {wr}");
         assert!(
-            client.wait_for_output(marker),
+            client.wait_for_marker(marker),
             "marker not received on first connection"
         );
         // Drop: TCP connection closes → agent calls detach_all() → DaemonClient
@@ -2798,7 +2923,7 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_after_tcp_reconnect() {
         assert!(ar["result"].is_object(), "re-attach failed: {ar}");
 
         assert!(
-            client.wait_for_output(marker),
+            client.wait_for_marker(marker),
             "buffer replay after TCP reconnect did not contain '{marker}' — \
              ring buffer may not have survived the disconnect"
         );
@@ -2831,7 +2956,6 @@ fn live_agent_tcp_persistent_shell_buffer_replayed_after_tcp_reconnect() {
 /// marker on re-attach. A regression that reaped the daemon with the agent (the
 /// #2508 drop-harness bug) fails here: agent B would find a dead endpoint, drop
 /// the session from state, and expose no session to re-attach.
-#[cfg(unix)]
 #[test]
 fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     // ── Shared, agent-independent state: a temp dir + a manually-spawned daemon.
@@ -2842,7 +2966,7 @@ fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let tmp_path = tmp.path().to_path_buf();
     let session_id = test_session_id();
-    let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
+    let socket_path = daemon_endpoint_in(&tmp_path, &session_id);
 
     let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
     wait_for_socket(
@@ -2892,10 +3016,10 @@ fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
         let ar = client.attach(&session_id);
         assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
 
-        let wr = client.write_input(&session_id, &format!("echo {marker}\n"));
+        let wr = client.write_input(&session_id, &shell_line(&format!("echo {marker}")));
         assert!(wr["result"].is_object(), "agent A write failed: {wr}");
         assert!(
-            client.wait_for_output(marker),
+            client.wait_for_marker(marker),
             "agent A never saw its marker echoed — precondition (a live daemon \
              session under the prior agent) not met"
         );
@@ -2910,7 +3034,7 @@ fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     // otherwise this would not exercise the "fresh agent recovers a *surviving*
     // daemon" case, and would instead be the #2508 false-failure it guards against.
     assert!(
-        socket_path.exists() && matches!(daemon.try_wait(), Ok(None)),
+        endpoint_exists(&socket_path) && matches!(daemon.try_wait(), Ok(None)),
         "session daemon did not survive agent A's death — cannot exercise \
          cross-agent recovery (this is the #2508 drop-harness bug's signature)"
     );
@@ -2947,7 +3071,7 @@ fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     let ar = client.attach(&session_id);
     assert!(ar["result"].is_object(), "agent B re-attach failed: {ar}");
     assert!(
-        client.wait_for_output(marker),
+        client.wait_for_marker(marker),
         "buffer replay after cross-agent recovery did not contain '{marker}' — \
          the fresh agent did not re-attach the original daemon session's state"
     );
@@ -2974,7 +3098,6 @@ fn live_agent_tcp_fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
 /// appears in the replayed keystroke echo of either command. If recovery had
 /// silently minted a fresh shell, `MYVAR` would be unset and the expansion would
 /// yield `VARWAS--END`, so the probe would never arrive.
-#[cfg(unix)]
 #[test]
 fn live_agent_tcp_recovered_shell_preserves_environment_variable_across_agent_swap() {
     let mut daemon = RecoverableDaemon::new();
@@ -2999,13 +3122,17 @@ fn live_agent_tcp_recovered_shell_preserves_environment_variable_across_agent_sw
         let ar = client.attach(&daemon.session_id);
         assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
 
-        // Set the variable, then echo a readiness marker so we know the shell has
-        // executed the assignment before agent A's process is killed.
-        client.write_input(&daemon.session_id, &format!("MYVAR={value}\n"));
-        let ready = "termihub-varset-ready";
-        client.write_input(&daemon.session_id, &format!("echo {ready}\n"));
+        // Set the variable, then echo it back through a composed readiness marker,
+        // so we know the shell has executed the assignment before agent A's
+        // process is killed (the typed line's echo cannot produce the marker).
+        client.write_input(&daemon.session_id, &set_var_line("MYVAR", value));
+        let ready = format!("termihub-varset-{value}");
+        client.write_input(
+            &daemon.session_id,
+            &echo_var_line("termihub-varset-", "MYVAR", ""),
+        );
         assert!(
-            client.wait_for_output(ready),
+            client.wait_for_marker(&ready),
             "agent A shell never echoed the readiness marker — the assignment may \
              not have been applied before the drop"
         );
@@ -3041,9 +3168,12 @@ fn live_agent_tcp_recovered_shell_preserves_environment_variable_across_agent_sw
     // Read the variable back through a composed token that cannot be satisfied by
     // the replayed keystroke echo — only by the live shell still holding MYVAR.
     let probe = format!("VARWAS-{value}-END");
-    client.write_input(&daemon.session_id, "echo VARWAS-${MYVAR}-END\n");
+    client.write_input(
+        &daemon.session_id,
+        &echo_var_line("VARWAS-", "MYVAR", "-END"),
+    );
     assert!(
-        client.wait_for_output(&probe),
+        client.wait_for_marker(&probe),
         "'{probe}' never arrived — MYVAR did not survive the agent-process swap, \
          so the recovered shell was NOT the same live process (it was restarted)"
     );
@@ -3055,7 +3185,8 @@ fn live_agent_tcp_recovered_shell_preserves_environment_variable_across_agent_sw
 /// executing while nothing is attached**, then continue after recovery — it never
 /// pauses or restarts across the disconnect (#2512).
 ///
-/// A self-incrementing loop (`TICK=$i`, +1 every 0.2 s) runs under agent A. Agent
+/// A self-incrementing loop ([`TICK_LOOP`]: `TICK=<n>`, +1 every 0.2 s in sh,
+/// about every second in cmd) runs under agent A. Agent
 /// A's process is killed (the daemon + loop survive), and the test waits a bounded
 /// "disconnected" gap during which no agent is attached at all. A fresh agent B
 /// then recovers the session; because the loop kept running through the gap, its
@@ -3065,7 +3196,6 @@ fn live_agent_tcp_recovered_shell_preserves_environment_variable_across_agent_sw
 /// live loop is still producing output post-recovery (not merely replaying old
 /// buffer). Both checks use bounded polling on the counter value, never fixed
 /// sleeps keyed to output timing, so they are deterministic under CI load.
-#[cfg(unix)]
 #[test]
 fn live_agent_tcp_daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
     let mut daemon = RecoverableDaemon::new();
@@ -3081,13 +3211,9 @@ fn live_agent_tcp_daemon_shell_keeps_running_during_disconnect_and_after_recover
         let ar = client.attach(&daemon.session_id);
         assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
 
-        // A POSIX loop that emits a monotonically increasing counter forever. Its
-        // keystroke echo contains `TICK=$i` (no digit after `TICK=`), which
-        // `counters_in` ignores, so only executed output contributes counters.
-        client.write_input(
-            &daemon.session_id,
-            "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done\n",
-        );
+        // A loop that emits a monotonically increasing counter forever (see
+        // [`TICK_LOOP`]; only executed output contributes counters).
+        client.write_input(&daemon.session_id, &shell_line(TICK_LOOP));
 
         before = client
             .track_counter(prefix, ready_timeout(), |m| m >= 3)
@@ -3107,8 +3233,8 @@ fn live_agent_tcp_daemon_shell_keeps_running_during_disconnect_and_after_recover
     );
 
     // Disconnected gap: NO agent is attached, yet the shell must keep ticking.
-    // ~0.2 s cadence over 1.5 s ⇒ several increments produced with nobody watching.
-    std::thread::sleep(Duration::from_millis(1500));
+    // Several loop periods ⇒ several increments produced with nobody watching.
+    std::thread::sleep(DISCONNECTED_GAP);
 
     // ── Agent B: recover + attach; the replay must carry gap-produced ticks ────
     let agent_b = IsolatedAgent::spawn(&daemon.tmp_path);
@@ -3134,7 +3260,7 @@ fn live_agent_tcp_daemon_shell_keeps_running_during_disconnect_and_after_recover
     // then require a further strictly-greater value: that can come only from NEW
     // output the still-running loop produces after recovery, not from the replay.
     let base = client
-        .track_counter(prefix, Duration::from_millis(600), |_| false)
+        .track_counter(prefix, REPLAY_DRAIN, |_| false)
         .expect("no output while draining the replay");
     let after_live = client
         .track_counter(prefix, ready_timeout(), |m| m > base)
@@ -3159,6 +3285,14 @@ fn live_agent_tcp_daemon_shell_keeps_running_during_disconnect_and_after_recover
 /// yields the composed `mark-<tag>-end` only in the executed output. A *fresh* TCP
 /// connection then re-attaches (it never saw the live output), so every occurrence
 /// it receives comes from the replay — and there must be exactly one.
+///
+/// Unix only, by design rather than for lack of a port: a unix PTY passes the
+/// shell's bytes through once, so a count over the stream is a count of the
+/// replay. ConPTY instead *renders* a screen and re-emits it whenever it
+/// repaints (a resize, a scroll, its own redraw), so on windows the token can
+/// legitimately reach the client twice with no agent-layer duplication at all —
+/// the count cannot tell the two apart. The windows replay path itself is
+/// covered by the other daemon-backed tests above.
 #[cfg(unix)]
 #[test]
 fn live_agent_tcp_recovered_session_buffer_replayed_exactly_once_on_reattach() {

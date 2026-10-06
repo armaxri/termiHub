@@ -690,7 +690,7 @@ The portable parts of those (key auth for every key type, exec/stdin, SFTP
 round trips, local forwarding) are exactly what `ssh_native.rs` re-covers on
 all three OSes.
 
-### Windows SSH host: agent deploy, connect and reattach (#3684)
+### Windows SSH host: agent deploy, connect, reattach and backends (#3684)
 
 The same Windows native sshd fixture doubles as a **Windows remote-agent
 host**. [`windows_ssh_host_tests.rs`](../src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs)
@@ -714,13 +714,44 @@ check) needs a Tauri `AppHandle`. The test therefore uploads a locally built
 `<cmd|powershell>` builds the agent and sets
 `HKLM\SOFTWARE\OpenSSH\DefaultShell`. It then brings the fixture up
 (`--agent-binary`) and runs that shell's test with
-`TERMIHUB_REQUIRE_WINDOWS_SSH=1`. It fails when the test skipped or did not
-run. On exit it tears the fixture down and restores the previous `DefaultShell`.
+`TERMIHUB_REQUIRE_WINDOWS_SSH=1`, then the agent-side suite below. It fails
+when an expected test skipped or did not run. On exit it removes the key from
+the `ssh-agent` service and restores the service, tears the fixture down and
+restores the previous `DefaultShell`.
 The script needs an elevated Git Bash on Windows.
 
+A second phase covers what a Windows-hosted agent opens from that host:
+[`agent/tests/native_sshd_agent_backends.rs`](../agent/tests/native_sshd_agent_backends.rs)
+drives a real `--stdio` agent against the same fixture.
+
+1. **SSH session through the agent (MT-AGENT-26).** I/O round-trips, a resize
+   keeps the session alive, and closing it ends the session daemon process.
+2. **The agent host's credentials (MT-AGENT-27).** Key auth with the default
+   path `~/.ssh/id_rsa`, resolved under the agent's `%USERPROFILE%`, and
+   `authMethod = agent` through the Windows `ssh-agent` service, which the
+   recipe starts with the fixture key loaded.
+3. **Docker engine over its named pipe (MT-AGENT-28, engine half).**
+   `docker.list_containers` reaches the runner's engine with no `DOCKER_HOST`.
+   A container session stays manual: the Docker backend needs a Linux image,
+   and hosted Windows runners run only Windows containers. The recipe skips
+   this one test, with a warning, when no engine answers.
+
+The same SSH tests run against the macOS/Linux native sshd too (`eval` the
+fixture's exports, then `cargo test -p termihub-agent --test
+native_sshd_agent_backends`); there the agent-auth test starts its own
+`ssh-agent`.
+
+The daemon-recovery tests in
+[`agent/tests/local_agent_integration.rs`](../agent/tests/local_agent_integration.rs)
+(buffer replay after a reattach or reconnect, a fresh agent recovering a dead
+agent's session, shell state and a running loop surviving the swap) run on
+Windows over named pipes as well, in the per-PR `Agent Live Tests (Windows,
+serial)` job. Only the exactly-once replay count stays unix-only, because
+ConPTY repaints its screen.
+
 The [`windows-ssh-host.yml`](../.github/workflows/windows-ssh-host.yml) lane
-runs it once per shell: nightly, on manual dispatch, and on PRs that touch the
-deploy/connect paths. Like the other nightly lanes, its schedule only starts
+runs the recipe once per shell: nightly, on manual dispatch, and on PRs that
+touch the deploy/connect paths. Like the other nightly lanes, its schedule only starts
 once the workflow is on `main`. Off Windows, or without
 `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL`, the tests print `SKIPPED:` and pass.
 
@@ -1944,11 +1975,11 @@ whose `--check` step also fails if a doc reintroduces a committed count block.
 | MT-AGENT-21     | Windows agent binary ships with releases                                                | Automated (already)   | .github/workflows/release-windows-smoke.yml (downloads + verifies the Windows agent)                                                |
 | MT-AGENT-22     | PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)         | Automated (#3685)     | agent `live_agent_tcp_windows_powershell_session_echo_resize_close_reaps_shell`                                                     |
 | MT-AGENT-23     | cmd.exe session through the Windows agent (ConPTY spawn / resize / teardown)            | Automated (already)   | core local_shell.rs::windows_cmd_spawn_echo_resize_teardown (Windows CI)                                                            |
-| MT-AGENT-24     | Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon) | Automated (#3684)     | windows_ssh_host_tests `*_deploy_install_connect_reattach` (reattach leg, both shells)                                              |
+| MT-AGENT-24     | Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon) | Automated (#3684)     | windows_ssh_host_tests reattach leg + local_agent_integration.rs daemon-recovery tests over named pipes                             |
 | MT-AGENT-25     | File browser through a Windows agent (local filesystem, forward-slash paths)            | Automated (#3685)     | core `files/local.rs` tilde list/stat tests + read/write round-trip (Windows CI)                                                    |
-| MT-AGENT-26     | SSH / Docker jump session originating from a Windows agent                              | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-27     | SSH jump-host backend from a Windows-hosted agent (default key / agent auth)            | Tracked issue         | #3684                                                                                                                               |
-| MT-AGENT-28     | Docker backend via named pipe from a Windows-hosted agent                               | Tracked issue         | #3684                                                                                                                               |
+| MT-AGENT-26     | SSH / Docker jump session originating from a Windows agent                              | Automated (#3684)     | `windows-ssh-host.yml` → native_sshd_agent_backends.rs `ssh_session_through_agent_round_trips_resizes_and_closes_cleanly`           |
+| MT-AGENT-27     | SSH jump-host backend from a Windows-hosted agent (default key / agent auth)            | Automated (#3684)     | native_sshd_agent_backends.rs `*_authenticates_with_the_default_key` / `*_authenticates_with_the_ssh_agent`                         |
+| MT-AGENT-28     | Docker backend via named pipe from a Windows-hosted agent                               | Release-gating manual | engine half automated (`docker_engine_is_reached_over_its_named_pipe`); a container session needs Docker Desktop                    |
 | MT-AGENT-29     | Cancel an in-progress agent setup aborts the upload and rolls back                      | Tracked issue         | #3686                                                                                                                               |
 | MT-AGENT-30     | Agent tab that drops while still spawning shows waiting/reconnecting feedback           | Tracked issue         | #3686                                                                                                                               |
 | MT-SER-01       | Powerline glyphs render in SSH with agnoster                                            | Guided-manual pytest  | test_visual_rendering.py::test_powerline_glyphs_render                                                                              |
