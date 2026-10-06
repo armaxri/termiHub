@@ -22,6 +22,10 @@ publish = false
 name = "termihub_plugin_runner"
 path = "src/lib.rs"
 
+[[bin]]
+name = "termihub-plugin-runner"
+path = "src/main.rs"
+
 [dependencies]
 # The stable ABI contract shared by the host and every plugin (#1990).
 termihub-plugin-api = { path = "../plugin-api" }
@@ -36,6 +40,10 @@ thiserror = { workspace = true }
 # SHA-256 of the pinned library handle (CORE-034), rendered as `sha256:<hex>`.
 sha2 = "0.10"
 hex = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+# `prctl(PR_SET_PDEATHSIG)` on Linux so the runner never outlives the host.
+libc = "0.2"
 
 [dev-dependencies]
 proptest = "1"

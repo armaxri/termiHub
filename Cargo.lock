@@ -7707,6 +7707,7 @@ name = "termihub-plugin-runner"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "libc",
  "libloading",
  "proptest",
  "rmp-serde",
