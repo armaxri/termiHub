@@ -17,21 +17,30 @@
 //! * [`SandboxedSession`] — the out-of-process counterpart of
 //!   `LoadedBackend` behind `PluginConnectionType`.
 //!
-//! **Phase 1 scope.** No OS confinement yet (Seatbelt / landlock + seccomp /
-//! LPAC are phases 4–5), the capability bridge refuses every request until
-//! bridge-over-IPC lands (phase 2), crash budgets and hang detection are phase
-//! 3, and Windows has no transport yet. The out-of-process path is therefore
+//! * The capability bridge is served by the host over the channel
+//!   ([`BridgeGrant`], phase 2, #4183): the runner forwards each bridge call,
+//!   the host runs the same permission / scope / policy guards as in process,
+//!   passes approved sockets to the runner (`SCM_RIGHTS`) or proxies them, and
+//!   records every refusal as a [`BridgeDenial`].
+//!
+//! **Scope so far.** No OS confinement yet (Seatbelt / landlock + seccomp /
+//! LPAC are phases 4–5), crash budgets and hang detection are phase 3, and
+//! Windows has no transport yet. The out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
 //! cut-over. See `docs/concepts/backlog/plugin-os-sandbox.html`.
 
+mod bridge;
 mod client;
 mod handle;
 mod peer;
+mod proxy;
 mod session;
 mod spawn;
+mod writer;
 
+pub use bridge::{BridgeDenial, BridgeGrant, DenialReason};
 pub use client::SandboxedPlugin;
 pub use handle::{PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
 pub use session::SandboxedSession;
