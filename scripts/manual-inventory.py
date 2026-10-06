@@ -12,8 +12,9 @@ this script renders the inventory on demand.
 Modes:
 
 - (no flag)  print the inventory as a Markdown table to stdout
-- ``--check``  CI: fail if the corpus is empty/unparseable or if a doc
-  reintroduces a committed inventory block; on success print the table and,
+- ``--check``  CI: fail if the corpus is empty/unparseable, if an item lacks a
+  required key (``REQUIRED_KEYS``, #4131), or if a doc reintroduces a
+  committed inventory block; on success print the table and,
   under GitHub Actions, append it to the job summary (``$GITHUB_STEP_SUMMARY``)
 - ``--write``  retired (#4070); kept only to tell stale instructions what to do
 
@@ -40,6 +41,14 @@ DOCS_DIR = REPO_ROOT / "docs"
 # committed counts that made every test-automation PR conflict (#4070).
 LEGACY_MARKER = "<!-- manual-inventory:start -->"
 SHOW_CMD = "python3 scripts/manual-inventory.py"
+
+# Keys every item must carry: ``scripts/test-manual.py`` reads them for every
+# item (``--list`` prints ``name``; a run shows ``instructions``/``expected``),
+# so a missing one crashed the runner with a bare KeyError (#4131).
+REQUIRED_KEYS = ("name", "instructions", "expected")
+# Plausible-but-wrong spellings seen in the corpus, mapped to the real key so
+# the error can say what to rename (MT-NET-16/21 used ``title``/``steps``).
+KEY_ALIASES = {"title": "name", "steps": "instructions", "expect": "expected"}
 
 _ID = re.compile(r"^  - id: *\"?([A-Za-z0-9-]+)\"?\s*$")
 _KEY = re.compile(r"^    ([a-z_]+): *(.*)$")
@@ -95,6 +104,19 @@ def load_items(manual_dir: Path | None = None) -> list[Item]:
         display = top["display_name"] or top["category"]
         items.extend(Item(path.name, i, top["category"], display, keys) for i, keys in found)
     return items
+
+
+def schema_errors(items: list[Item]) -> list[str]:
+    """Return one message per item that lacks a ``REQUIRED_KEYS`` entry."""
+    errors: list[str] = []
+    for it in items:
+        for key in REQUIRED_KEYS:
+            if key in it.keys:
+                continue
+            alias = next((a for a, real in KEY_ALIASES.items() if real == key and a in it.keys), None)
+            hint = f" (found '{alias}' -- rename it to '{key}')" if alias else ""
+            errors.append(f"{it.file}: {it.id}: missing required key '{key}'{hint}")
+    return errors
 
 
 def is_release_gate(item: Item) -> bool:
@@ -215,6 +237,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.check:
         print(table)
         return 0
+
+    errors = schema_errors(items)
+    if errors:
+        print(
+            "error: manual items are missing required keys "
+            f"({', '.join(REQUIRED_KEYS)}); scripts/test-manual.py needs them (#4131):",
+            file=sys.stderr,
+        )
+        for err in errors:
+            print(f"  {err}", file=sys.stderr)
+        return 1
 
     reintroduced = docs_with_committed_block()
     if reintroduced:

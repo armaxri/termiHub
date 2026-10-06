@@ -1947,7 +1947,8 @@ overlay. The effective policy on macOS and Linux is:
 ```text
 default-src 'self';
 script-src 'self' plugin://localhost 'wasm-unsafe-eval';
-style-src 'self' 'unsafe-inline';
+style-src 'self';
+style-src-attr 'unsafe-inline';
 img-src 'self' data: blob:;
 font-src 'self';
 connect-src 'self' ipc:;
@@ -1974,8 +1975,13 @@ it runs on, widened at startup by the test bridge (`relax_csp_if_test_bridge` in
 bundle can carry it. (A `--config` overlay cannot do this per platform: JSON merge patch replaces
 the whole `connect-src` array, and the Tauri CLI has no platform-plus-flavor file stacking.)
 
+At runtime Tauri appends a per-load `'nonce-<random>'` to `style-src` (see
+[the style relaxation](#the-deliberate-relaxations) below), so the header the webview receives
+carries `style-src 'self' 'nonce-…'`.
+
 The baseline is strict: `default-src 'self'`, **no** `unsafe-eval`, **no** inline or remote
-`script-src` hosts (only this platform's local plugin origin), `object-src 'none'`,
+`script-src` hosts (only this platform's local plugin origin), **no** `'unsafe-inline'` for
+`<style>` elements, `object-src 'none'`,
 `frame-src 'none'`, `base-uri 'self'`, and `form-action 'none'`. There is no path by which remote
 content can be loaded or arbitrary JavaScript evaluated.
 
@@ -2000,23 +2006,43 @@ the guard is a vitest suite, the PR change classifier runs the frontend suite fo
    and does **not** enable JavaScript `eval` or `new Function`. Removing it would mean switching
    Shiki to its JavaScript regex engine (less grammar-compatible) **and** dropping SIXEL support.
 
-2. **`style-src 'unsafe-inline'` + `dangerousDisableAssetCspModification: ["style-src"]` — forced by third-party runtime `<style>` injection.**
+2. **`style-src-attr 'unsafe-inline'` — inline style _attributes_ only; `<style>` elements are
+   nonce-gated (#3115).**
    Several bundled libraries create `<style>` elements at runtime (verified in the production
    bundle): xterm.js (the renderer's dimension and theme stylesheets), Monaco (per-editor and
-   decoration rules), sonner (its toast stylesheet), and `react-remove-scroll` under the Radix
-   dialogs. Their contents are dynamic, so they have no ahead-of-time hash, and sonner and xterm
-   offer no nonce hook. React `style` props additionally need inline style **attributes**.
-   Splitting the directive into `style-src-elem` / `style-src-attr` would still need
-   `'unsafe-inline'` in both, so it would not narrow anything. Tauri, by default, auto-appends a hash
-   for `index.html`'s inline styles to the `style-src` directive; per **CSP Level 3**, the presence
-   of a hash or nonce **cancels** `'unsafe-inline'`, which broke xterm/sonner styling (fixed in
-   commit `9f4594ab`). Setting `dangerousDisableAssetCspModification: ["style-src"]` disables that
-   auto-hash injection for `style-src` only, keeping `'unsafe-inline'` effective.
-   Note that termiHub's **own** theming does **not** rely on this: the theme engine writes CSS
-   custom properties through the CSSOM (`element.style.setProperty`, `src/themes/engine.ts`), which
-   is a scripted style mutation exempt from `style-src` entirely. Inline styles cannot run script,
-   so the residual risk is CSS-based UI redress after an HTML injection, which `script-src` already
-   limits.
+   decoration rules, plus a shadow-root sheet), sonner (its toast stylesheet, at module
+   evaluation), and `react-remove-scroll` / `react-colorful`. Their contents are dynamic, so they
+   have no ahead-of-time hash, and sonner and xterm offer no nonce hook. They are allowed by a
+   **nonce** instead of `'unsafe-inline'`:
+   - Tauri's build step stamps every `<style>` in `index.html` with a placeholder nonce; on each
+     page load its asset protocol replaces it with a fresh random value and appends
+     `'nonce-<value>'` to `style-src` in the CSP header (`tauri::manager::set_csp`).
+   - `src/security/styleNonce.ts` reads that nonce off the boot `<style id="termihub-boot-style">`
+     (through the `nonce` IDL property, which survives the browser's nonce hiding) and patches
+     `Document.prototype.createElement` / `createElementNS` so every **script-created** `<style>`
+     carries it. `main.tsx` imports it before the app, and Vite emits it as its own `csp-boot`
+     chunk so it evaluates before the vendor chunks that create stylesheets. `<style>` markup that
+     arrives through `innerHTML` or the HTML parser gets no nonce, so an HTML-injection stylesheet
+     (CSS attribute-selector exfiltration, UI redress) is blocked.
+   - **No `style-src-elem` directive**: Tauri appends the nonce to `style-src` only, and a
+     `style-src-elem` would override it for elements.
+
+   What still needs `'unsafe-inline'` is **attributes**: Monaco's view lines and xterm's DOM
+   markup carry `style="…"` attributes (via `innerHTML` and `setAttribute("style", …)`), and CSP
+   nonces and hashes cannot cover attributes (`'unsafe-hashes'` would need a hash per dynamic
+   value). That relaxation is confined to `style-src-attr`. An attribute style cannot use
+   selectors, load a stylesheet or run script; its residual risk is limited UI redress after an
+   HTML injection, which `script-src` already limits. Scripted CSSOM writes — `element.style.x`,
+   `setProperty` (termiHub's theme engine, `src/themes/engine.ts`), React `style` props,
+   `insertRule`, and the constructable stylesheet `react-resizable-panels` adopts — are exempt
+   from `style-src` and need nothing.
+
+   History: until #3115 the policy kept `style-src 'unsafe-inline'` and set
+   `dangerousDisableAssetCspModification: ["style-src"]`, because the nonce Tauri appends for
+   `index.html`'s inline `<style>` cancels `'unsafe-inline'` under CSP Level 3 and had blocked
+   the xterm/sonner stylesheets (commit `9f4594ab`). Using that nonce for the runtime stylesheets
+   turns the same mechanism into the fix. `style-src-attr` needs Safari/WebKit 15.4+ (WebKitGTK
+   2.36+) or Chromium 75+; every webview termiHub supports has it.
 
 #### Capability scoping: `fs` and `opener` (#3115)
 
@@ -2076,7 +2102,8 @@ Signed off in #3627 (and #3628 for the IPC origin) against the production bundle
 | `script-src 'wasm-unsafe-eval'`      | Keep                                  | Shiki's `onig.wasm` chunk and `@xterm/addon-image`'s SIXEL decoder instantiate WebAssembly                                                                                                                           |
 | `script-src plugin://localhost`      | Keep, **macOS/Linux only**            | WebKit form of the `plugin` URI scheme (`src-tauri/src/plugin_protocol.rs`); the frontend-plugin sandbox worker `importScripts` from it                                                                              |
 | `script-src http://plugin.localhost` | Keep, **Windows only** (was every OS) | WebView2 form of the same scheme. On WebKit it is an ordinary loopback URL, so listing it there trusted any local server on port 80                                                                                  |
-| `style-src 'unsafe-inline'`          | Keep (signed off)                     | Runtime `<style>` from xterm, Monaco, sonner and `react-remove-scroll`; React `style` attributes                                                                                                                     |
+| `style-src 'unsafe-inline'`          | **Removed** (#3115)                   | Runtime `<style>` from xterm, Monaco, sonner and `react-remove-scroll` now carry Tauri's per-load nonce (`src/security/styleNonce.ts`)                                                                               |
+| `style-src-attr 'unsafe-inline'`     | Keep (#3115)                          | `style="…"` attributes in Monaco's and xterm's generated markup; nonces and hashes cannot cover attributes                                                                                                           |
 | `img-src data:`                      | Keep                                  | Monaco's stylesheet embeds `data:` SVG/PNG backgrounds                                                                                                                                                               |
 | `img-src blob:`                      | Keep                                  | `@xterm/addon-image` shows inline images through blob URLs                                                                                                                                                           |
 | `font-src data:`                     | **Removed**                           | No shipped font is a `data:` URL; Geist, Meslo and codicon load as bundled files                                                                                                                                     |
@@ -2117,7 +2144,8 @@ pasteboard data_. Instead the webview only reaches four typed app commands
 termiHub is a local desktop terminal application; it does not load remote web content into its
 webview and has no server-side surface. Against that model, the residual risk from the three
 relaxations above is low: `'wasm-unsafe-eval'` does not enable JS `eval`, `'unsafe-inline'` applies
-only to `style-src` (styling, not script execution), and the unscoped filesystem/opener permissions
+only to inline style attributes (`style-src-attr` — styling, not script execution, and no
+selectors), and the unscoped filesystem/opener permissions
 are exercised only through explicit user actions (OS dialogs and app-level allowlists). Each is a
 deliberate, documented trade-off rather than an oversight, and each has a tracked path to future
 tightening.

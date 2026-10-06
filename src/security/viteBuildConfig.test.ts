@@ -33,3 +33,28 @@ describe("vite build never inlines scripts as data: URLs (#3632)", () => {
     expect(inline("/m/icon.svg", Buffer.alloc(10))).toBeUndefined();
   });
 });
+
+/**
+ * The CSP style-nonce bootstrap (#3115) must evaluate before the vendor chunks
+ * that create `<style>` elements, so it lives in its own `csp-boot` chunk rather
+ * than being inlined into the entry chunk (which runs after every vendor chunk).
+ */
+describe("vite build puts the CSP style-nonce bootstrap in its own chunk (#3115)", () => {
+  it("routes the bootstrap modules to the csp-boot chunk", async () => {
+    const configPath = "../../vite.config";
+    const { default: viteConfig } = (await import(/* @vite-ignore */ configPath)) as {
+      default: ViteConfigExport;
+    };
+    const resolved = await (typeof viteConfig === "function"
+      ? viteConfig({ command: "build", mode: "production" })
+      : viteConfig);
+    const output = resolved.build?.rollupOptions?.output;
+    const manualChunks = (Array.isArray(output) ? output[0] : output)?.manualChunks;
+    expect(typeof manualChunks).toBe("function");
+    const chunkOf = manualChunks as (id: string) => string | undefined;
+    expect(chunkOf("/repo/src/security/styleNonce.ts")).toBe("csp-boot");
+    expect(chunkOf("/repo/src/security/installStyleNonce.ts")).toBe("csp-boot");
+    expect(chunkOf("/repo/src/security/styleNonce.test.ts")).toBeUndefined();
+    expect(chunkOf("/repo/src/main.tsx")).toBeUndefined();
+  });
+});

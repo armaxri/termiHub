@@ -22,7 +22,16 @@ each:
   in this test sends the bytes over a **Telnet** session instead, which
   bypasses ConPTY and still feeds the same xterm image addon (#4076);
 - the **clock-widget** example JavaScript plugin (``examples/plugins``), whose
-  code the frontend-plugin sandbox worker loads from the ``plugin://`` origin.
+  code the frontend-plugin sandbox worker loads from the ``plugin://`` origin;
+- the tab **color picker**: a Radix modal (``react-remove-scroll`` injects a
+  ``<style>`` when it opens) around a ``react-colorful`` picker (which injects
+  its own ``<style>``).
+
+``style-src`` has no ``'unsafe-inline'`` (#3115): every runtime ``<style>`` —
+xterm's (the terminal tests), Monaco's (the editor test), sonner's (at boot) and
+the two above — is allowed only by the per-load nonce Tauri appends, which
+``src/security/styleNonce.ts`` stamps onto script-created ``<style>`` elements.
+A broken nonce hand-off shows up here as a ``style-src`` violation.
 
 Runs on every non-macOS integration leg (Linux/Windows). The bridge itself needs
 a loopback ``ws://`` that the production CSP forbids; the test-bridge build
@@ -251,6 +260,24 @@ class TestContentSecurityPolicy(
             self._assert_no_violations("a SIXEL image in the terminal")
         finally:
             self.remove_home(image)
+
+    def test_color_picker_modal_reports_no_violations(self):
+        # Opening the modal makes react-remove-scroll and react-colorful create
+        # their <style> elements, which need the CSP nonce (#3115).
+        self.ensure_terminal()
+        tab = self.tab_ids()[0]
+        self.driver.context_menu(f"tab-{tab}")
+        self.wait(lambda: self.driver.exists("tab-context-set-color"), what="the set-color item")
+        self.driver.click("tab-context-set-color")
+        self.wait(lambda: self.driver.exists("color-picker-apply"), what="the color picker")
+        try:
+            self._assert_no_violations("the color-picker modal open")
+        finally:
+            self.driver.press_key("Escape")
+            self.wait(
+                lambda: not self.driver.exists("color-picker-apply"),
+                what="the color picker to close",
+            )
 
     def test_clock_widget_plugin_reports_no_violations(self):
         assert CLOCK_PLUGIN_SRC.is_dir(), f"example plugin missing at {CLOCK_PLUGIN_SRC}"
