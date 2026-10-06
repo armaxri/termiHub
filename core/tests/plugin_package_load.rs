@@ -23,6 +23,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plugin_fixture;
+#[cfg(unix)]
+mod plugin_runner_support;
 use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionTypeRegistry};
@@ -118,10 +120,34 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
     trust.set_native_enabled(true).unwrap();
     trust.acknowledge(&id, hash).unwrap();
 
+    load_and_echo(&root, &installed, &backend.connection_type, None).await;
+    // The same load + session, unchanged, through the out-of-process plugin
+    // runner (#4182).
+    #[cfg(unix)]
+    load_and_echo(
+        &root,
+        &installed,
+        &backend.connection_type,
+        Some(termihub_core::plugin::sandbox::PluginRunnerConfig::new(
+            plugin_runner_support::runner_binary(),
+        )),
+    )
+    .await;
+}
+
+/// Load `installed` through a fresh [`PluginHost`] (in process, or through the
+/// runner) and echo through one session.
+async fn load_and_echo(
+    root: &Path,
+    installed: &termihub_core::plugin::InstalledPlugin,
+    connection_type: &str,
+    runner: Option<termihub_core::plugin::sandbox::PluginRunnerConfig>,
+) {
+    let id = installed.manifest.id.clone();
     // Load through the real host and run a session.
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(&root, Arc::clone(&registry));
-    host.load(&installed)
+    let host = PluginHost::new(root, Arc::clone(&registry)).with_runner(runner);
+    host.load(installed)
         .expect("the host loads the packaged plugin");
     assert!(host.is_loaded(&id));
     // ABI 1.1 (#3576): the host verified the plugin's build toolchain (it
@@ -133,7 +159,7 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
         "the host prepares a data directory for an ABI 1.1 plugin"
     );
 
-    let type_id = plugin_type_id(&id, &backend.connection_type);
+    let type_id = plugin_type_id(&id, connection_type);
     let mut conn = registry
         .lock()
         .unwrap()

@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plugin_fixture;
+#[cfg(unix)]
+mod plugin_runner_support;
 use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionType, ConnectionTypeRegistry};
@@ -74,7 +76,15 @@ fn expect_toolchain_refusal(
 async fn abi_1_1_end_to_end() {
     // One test, sequential scenarios: the toolchain overrides are process-wide.
     abi_1_1_plugin_toolchain_and_host_context_round_trip().await;
-    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged().await;
+    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(None).await;
+    // The same scenario, unchanged, through the out-of-process runner (#4182).
+    #[cfg(unix)]
+    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(Some(
+        termihub_core::plugin::sandbox::PluginRunnerConfig::new(
+            plugin_runner_support::runner_binary(),
+        ),
+    ))
+    .await;
 }
 
 async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
@@ -197,13 +207,18 @@ fn session(registry: &Arc<Mutex<ConnectionTypeRegistry>>, id: &str) -> Box<dyn C
         .expect("registered")
 }
 
-async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged() {
+async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(
+    runner: Option<termihub_core::plugin::sandbox::PluginRunnerConfig>,
+) {
+    let out_of_process = runner.is_some();
     let work = tempfile::TempDir::new().unwrap();
     let v1_1 = fixture_library(Variant::Default, work.path());
     let v1_0 = fixture_library(Variant::Abi10, work.path());
     let root = work.path().join("plugins");
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(&root, Arc::clone(&registry)).with_host_version("9.8.7");
+    let host = PluginHost::new(&root, Arc::clone(&registry))
+        .with_host_version("9.8.7")
+        .with_runner(runner);
 
     // --- ABI 1.1 through the real host: data dir, version, log, cancel. ---
     let new = install(&root, &v1_1, "echo-new", "1.1");
@@ -230,9 +245,21 @@ async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged() 
         "the plugin owns its dir"
     );
 
-    host.unload("echo-new");
-    conn.write(b"?cancelled").unwrap();
-    assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
+    if out_of_process {
+        // Out of process, unload ends the sessions (bounded stop); the
+        // plugin-wide cancellation it starts with is observable before that.
+        host.sandboxed_plugin("echo-new")
+            .expect("served by the runner")
+            .signal_shutdown();
+        conn.write(b"?cancelled").unwrap();
+        assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
+        host.unload("echo-new");
+        assert!(!conn.is_connected(), "unload stops the runner");
+    } else {
+        host.unload("echo-new");
+        conn.write(b"?cancelled").unwrap();
+        assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
+    }
     conn.disconnect().await.unwrap();
     drop(conn);
 
@@ -241,6 +268,14 @@ async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged() 
     trust(&root, "echo-old", false);
     match host.load(&old) {
         Err(HostError::UnverifiedToolchain { abi }) => assert_eq!(abi, AbiVersion::new(1, 0)),
+        // Out of process the runner's loader refuses it, with the same message.
+        Err(err @ HostError::RunnerLoad { .. }) if out_of_process => assert_eq!(
+            err.to_string(),
+            HostError::UnverifiedToolchain {
+                abi: AbiVersion::new(1, 0)
+            }
+            .to_string()
+        ),
         Err(other) => panic!("expected UnverifiedToolchain, got {other:?}"),
         Ok(()) => panic!("a 1.0 plugin must not load without the acceptance"),
     }
