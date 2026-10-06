@@ -36,20 +36,21 @@ resolve a version below the patched floor, the override is load-bearing.
 "Parent (declared range)" is what the override is overriding, measured when the entry was last
 reviewed. Every overridden package below is dev/build-time only.
 
-| Override                      | Pin            | Parent (declared range)                                                                             | Advisory                                                                                                            | Removal condition                                             |
-| ----------------------------- | -------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `markdown-it`                 | `>=14.3.1 <15` | markdownlint-cli2 0.22.1 (`14.1.1`, exact)                                                          | GHSA-6v5v-wf23-fmfq (smartquotes DoS), GHSA-253c-mchw-3w2r (linkify DoS)                                            | markdownlint-cli2 depends on markdown-it >=14.3.1             |
-| `js-yaml`                     | `>=4.3.2 <5`   | @eslint/eslintrc 3.3.7 (`^4.3.2`), cosmiconfig 9.0.1 (`^4.1.0`), markdownlint-cli2 0.22.1 (`4.1.1`) | GHSA-h67p-54hq-rp68, GHSA-5p4m-2wfm-xmqj, GHSA-2883-xcg3-v3hh                                                       | every parent's range starts at or above the floor             |
-| `flatted`                     | `>=3.4.2`      | flat-cache 4.0.1 (`^3.2.9`), via eslint                                                             | GHSA-rf6f-7fwh-wjgh, GHSA-25h7-pfq9-p65f                                                                            | flat-cache requires flatted >=3.4.2                           |
-| `fast-uri`                    | `>=3.1.6 <4`   | ajv 8.18.0 (`^3.0.1`), via commitlint                                                               | GHSA-f65p-4m7j-42xc, GHSA-fph4-wmhf-6fwf, GHSA-jqff-g426-hqxp and earlier                                           | ajv requires fast-uri >=3.1.6                                 |
-| `rollup`                      | `>=4.59.0`     | vite 6.4.3 (`^4.34.9`)                                                                              | GHSA-mw96-cpmx-2vgc (path-traversal file write)                                                                     | vite requires rollup >=4.59.0                                 |
-| `postcss`                     | `>=8.5.23`     | vite 6.4.3 (`^8.5.3`)                                                                               | GHSA-qx2v-qp2m-jg93, GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp                                                       | vite requires postcss >=8.5.23                                |
-| `undici`                      | `>=7.29.0 <8`  | jsdom 28.1.0 (`^7.21.0`)                                                                            | GHSA-4cwx-7wf7-3272, GHSA-8xcm-r25x-g524, GHSA-m8rv-5g2x-5cg5, GHSA-jr45-8vmc-qm54, GHSA-v3r7-h72x-cjcm and earlier | jsdom requires undici >=7.29.0                                |
-| `vite>picomatch`              | `>=4.0.4`      | vite 6.4.3 (`^4.0.2`)                                                                               | GHSA-c2c7-rcm5-vvqj (ReDoS), GHSA-3v7f-55p6-f55p                                                                    | vite requires picomatch >=4.0.4                               |
-| `vitest>picomatch`            | `>=4.0.4`      | vitest 4.1.11 (`^4.0.3`)                                                                            | GHSA-c2c7-rcm5-vvqj, GHSA-3v7f-55p6-f55p                                                                            | vitest requires picomatch >=4.0.4                             |
-| `micromatch>picomatch`        | `2.3.2`        | micromatch 4.0.8 (`^2.3.1`)                                                                         | GHSA-c2c7-rcm5-vvqj, GHSA-3v7f-55p6-f55p                                                                            | micromatch requires picomatch >=2.3.2                         |
-| `minimatch@3>brace-expansion` | `>=1.1.18 <2`  | minimatch 3.1.5 (`^1.1.7`), via eslint                                                              | GHSA-f886-m6hf-6m8v, GHSA-3jxr-9vmj-r5cp, GHSA-mh99-v99m-4gvg, GHSA-rgw5-rvv9-x895                                  | minimatch 3 requires brace-expansion >=1.1.18, or leaves tree |
-| `smol-toml`                   | `>=1.7.1 <2`   | markdownlint-cli2 0.22.1 (`1.6.1`, exact)                                                           | GHSA-7w5x-hrqm-74c2 (malformed-TOML DoS)                                                                            | markdownlint-cli2 depends on smol-toml >=1.7.1                |
+| Override                         | Pin              | Parent (declared range)                                                                             | Advisory                                                                                                            | Removal condition                                                |
+| -------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `markdown-it`                    | `>=14.3.1 <15`   | markdownlint-cli2 0.22.1 (`14.1.1`, exact)                                                          | GHSA-6v5v-wf23-fmfq (smartquotes DoS), GHSA-253c-mchw-3w2r (linkify DoS)                                            | markdownlint-cli2 depends on markdown-it >=14.3.1                |
+| `js-yaml`                        | `>=4.3.2 <5`     | @eslint/eslintrc 3.3.7 (`^4.3.2`), cosmiconfig 9.0.1 (`^4.1.0`), markdownlint-cli2 0.22.1 (`4.1.1`) | GHSA-h67p-54hq-rp68, GHSA-5p4m-2wfm-xmqj, GHSA-2883-xcg3-v3hh                                                       | every parent's range starts at or above the floor                |
+| `flatted`                        | `>=3.4.2`        | flat-cache 4.0.1 (`^3.2.9`), via eslint                                                             | GHSA-rf6f-7fwh-wjgh, GHSA-25h7-pfq9-p65f                                                                            | flat-cache requires flatted >=3.4.2                              |
+| `fast-uri`                       | `>=3.1.6 <4`     | ajv 8.18.0 (`^3.0.1`), via commitlint                                                               | GHSA-f65p-4m7j-42xc, GHSA-fph4-wmhf-6fwf, GHSA-jqff-g426-hqxp and earlier                                           | ajv requires fast-uri >=3.1.6                                    |
+| `rollup`                         | `>=4.59.0`       | vite 6.4.3 (`^4.34.9`)                                                                              | GHSA-mw96-cpmx-2vgc (path-traversal file write)                                                                     | vite requires rollup >=4.59.0                                    |
+| `postcss`                        | `>=8.5.23`       | vite 6.4.3 (`^8.5.3`)                                                                               | GHSA-qx2v-qp2m-jg93, GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp                                                       | vite requires postcss >=8.5.23                                   |
+| `undici`                         | `>=7.29.0 <8`    | jsdom 28.1.0 (`^7.21.0`)                                                                            | GHSA-4cwx-7wf7-3272, GHSA-8xcm-r25x-g524, GHSA-m8rv-5g2x-5cg5, GHSA-jr45-8vmc-qm54, GHSA-v3r7-h72x-cjcm and earlier | jsdom requires undici >=7.29.0                                   |
+| `vite>picomatch`                 | `>=4.0.4`        | vite 6.4.3 (`^4.0.2`)                                                                               | GHSA-c2c7-rcm5-vvqj (ReDoS), GHSA-3v7f-55p6-f55p                                                                    | vite requires picomatch >=4.0.4                                  |
+| `vitest>picomatch`               | `>=4.0.4`        | vitest 4.1.11 (`^4.0.3`)                                                                            | GHSA-c2c7-rcm5-vvqj, GHSA-3v7f-55p6-f55p                                                                            | vitest requires picomatch >=4.0.4                                |
+| `micromatch>picomatch`           | `2.3.2`          | micromatch 4.0.8 (`^2.3.1`)                                                                         | GHSA-c2c7-rcm5-vvqj, GHSA-3v7f-55p6-f55p                                                                            | micromatch requires picomatch >=2.3.2                            |
+| `minimatch@3>brace-expansion`    | `>=1.1.18 <2`    | minimatch 3.1.5 (`^1.1.7`), via eslint                                                              | GHSA-f886-m6hf-6m8v, GHSA-3jxr-9vmj-r5cp, GHSA-mh99-v99m-4gvg, GHSA-rgw5-rvv9-x895                                  | minimatch 3 requires brace-expansion >=1.1.18, or leaves tree    |
+| `smol-toml`                      | `>=1.7.1 <2`     | markdownlint-cli2 0.22.1 (`1.6.1`, exact)                                                           | GHSA-7w5x-hrqm-74c2 (malformed-TOML DoS)                                                                            | markdownlint-cli2 depends on smol-toml >=1.7.1                   |
+| `micromark-extension-math>katex` | `>=0.18.2 <0.19` | micromark-extension-math 3.1.0 (`^0.16.0`), via markdownlint 0.40.0                                 | GHSA-238p-pmpm-9mq7 (prototype pollution bypasses trust)                                                            | micromark-extension-math requires katex >=0.18.2, or leaves tree |
 
 Removed in #3477 because their target left the dependency tree entirely (the lockfile's
 resolved graph was unchanged by the removal): `serialize-javascript` (its mocha parent is gone),
@@ -84,7 +85,26 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
   #3755): take the fix by bumping the tool, running `pnpm update <pkg>`, or adding/raising an
   override (with a row above). If the fix truly cannot be taken yet, add the advisory's GHSA id
   to `pnpm.auditConfig.ignoreGhsas` in `package.json` and list it here with the reason and
-  what unblocks it. No GHSA id is accepted today.
+  what unblocks it.
+
+### Accepted advisories (`pnpm.auditConfig.ignoreGhsas`)
+
+| GHSA                  | Package (path)                               | Severity | Why accepted                                                                              | Unblocked by                                         |
+| --------------------- | -------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `GHSA-p98j-92pf-mc4p` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | IN_PLACE-only; Monaco never sets `IN_PLACE`, and the shipped copy is vendored (see below) | a monaco-editor release vendoring DOMPurify >=3.4.16 |
+| `GHSA-6688-9rhm-gjv2` | dompurify 3.4.15 (`monaco-editor>dompurify`) | low      | same as above                                                                             | a monaco-editor release vendoring DOMPurify >=3.4.16 |
+
+Why these are accepted rather than overridden (#4156): monaco-editor 0.57.0 declares
+`dompurify: 3.4.15` but never imports the npm package. It ships a **vendored, pre-bundled copy**
+at `monaco-editor/esm/vs/base/browser/dompurify/dompurify.js`, imported by `domSanitize.js`.
+A `monaco-editor>dompurify` override only swaps the unused `node_modules` copy: with
+`>=3.4.16 <4` the lockfile resolved 3.4.16, yet `pnpm build` still emitted
+`@license DOMPurify 3.4.15` in the Monaco chunk. It would silence the audit without changing a
+shipped byte. Both advisories need DOMPurify's `IN_PLACE` mode, and Monaco's `domSanitize.js`
+calls `sanitize` only with `RETURN_DOM_FRAGMENT` / `RETURN_TRUSTED_TYPE`, so the vendored copy
+is not reachable through them. Remove both ids when Monaco ships a release pinning
+DOMPurify >=3.4.16 (0.57.0 is the latest stable as of 2026-10-06), then bump monaco-editor.
+Earlier `dompurify` overrides (removed in #3482) had the same blind spot.
 
 ## Vendored forks
 
