@@ -334,7 +334,10 @@ async fn an_agent_to_agent_copy_resumes_when_the_source_returns_after_the_destin
     assert_eq!(due(&waits, &trigger, &registry), vec!["r2r"]);
     assert_eq!(
         relaunch_copy(&waits, &copy, &sessions).await,
-        Some(("agent-src/def-src".to_string(), "agent-dst/def-dst".to_string()))
+        Some((
+            "agent-src/def-src".to_string(),
+            "agent-dst/def-dst".to_string()
+        ))
     );
     assert!(!waits.contains("r2r"));
 }
