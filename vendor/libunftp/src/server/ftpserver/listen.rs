@@ -19,7 +19,8 @@ where
     User: UserDetail,
 {
     pub bind_address: SocketAddr,
-    // termiHub fork delta (armaxri/termiHub#4100): set by `Server::listen_with_listener`.
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // Set by `Server::listen_with_listener`.
     pub prebound: Option<TcpListener>,
     pub logger: slog::Logger,
     pub options: OptionsHolder<Storage, User>,

@@ -29,9 +29,9 @@ use std::{
 use unftp_core::auth::{Authenticator, DefaultUser, DefaultUserDetailProvider, UserDetail, UserDetailProvider};
 use unftp_core::storage::{Metadata, StorageBackend};
 
-/// termiHub fork delta (armaxri/termiHub#4100): decides, from the peer address of a freshly
-/// accepted TCP connection, whether a PROXY protocol mode listener serves it. See
-/// [`ServerBuilder::proxy_protocol_peer_filter`].
+// termiHub fork delta (armaxri/termiHub#4100).
+/// Decides, from the peer address of a freshly accepted TCP connection, whether a PROXY
+/// protocol mode listener serves it. See [`ServerBuilder::proxy_protocol_peer_filter`].
 pub(crate) type ProxyPeerFilter = Arc<dyn Fn(SocketAddr) -> bool + Send + Sync>;
 
 /// An instance of an FTP(S) server. It aggregates an [`Authenticator`](unftp_core::auth::Authenticator)
@@ -86,7 +86,8 @@ where
     connection_helper: Option<OsString>,
     connection_helper_args: Vec<OsString>,
     binder: Arc<std::sync::Mutex<Option<Box<dyn crate::options::Binder>>>>,
-    // termiHub fork delta (armaxri/termiHub#4100): see `ServerBuilder::proxy_protocol_peer_filter`.
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // See `ServerBuilder::proxy_protocol_peer_filter`.
     #[cfg_attr(not(feature = "proxy_protocol"), allow(dead_code))]
     proxy_peer_filter: Option<ProxyPeerFilter>,
 }
@@ -124,7 +125,8 @@ where
     connection_helper: Option<OsString>,
     connection_helper_args: Vec<OsString>,
     binder: Option<Box<dyn crate::options::Binder>>,
-    // termiHub fork delta (armaxri/termiHub#4100): see `ServerBuilder::proxy_protocol_peer_filter`.
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // See `ServerBuilder::proxy_protocol_peer_filter`.
     proxy_peer_filter: Option<ProxyPeerFilter>,
 }
 
@@ -737,7 +739,7 @@ where
         self
     }
 
-    // termiHub fork delta (armaxri/termiHub#4100): accept filter for PROXY protocol mode.
+    // termiHub fork delta (armaxri/termiHub#4100).
     /// Restricts which TCP peers the PROXY protocol mode listener serves.
     ///
     /// A PROXY protocol listener trusts the header each connection starts with, so anything
@@ -988,7 +990,7 @@ where
         self.listen_on(bind_address, None).await
     }
 
-    // termiHub fork delta (armaxri/termiHub#4100): serve on a listener the caller bound.
+    // termiHub fork delta (armaxri/termiHub#4100).
     /// Runs the server like [`listen`](Server::listen), but accepts control connections (and, in
     /// PROXY protocol mode, all connections) on a listener the caller has already bound.
     ///
@@ -1019,8 +1021,9 @@ where
         self.listen_on(bind_address, Some(listener)).await
     }
 
-    // termiHub fork delta (armaxri/termiHub#4100): the body of upstream's `listen`, which binds
-    // `bind_address` unless a `prebound` listener is passed (see `bind_control_listener`).
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // Shared body of `listen` and `listen_with_listener`: binds `bind_address` unless a
+    // `prebound` listener is passed (see `bind_control_listener`).
     async fn listen_on(self, bind_address: SocketAddr, prebound: Option<tokio::net::TcpListener>) -> std::result::Result<(), ServerError> {
         let logger = self.logger.clone();
         let shutdown_notifier = Arc::new(shutdown::Notifier::new());
@@ -1223,8 +1226,9 @@ where
     }
 }
 
-// termiHub fork delta (armaxri/termiHub#4100): every listener mode binds its control listener
-// through this, so `Server::listen_with_listener` can hand in one the caller already bound.
+// termiHub fork delta (armaxri/termiHub#4100).
+// Every listener mode binds its control listener through this, so
+// `Server::listen_with_listener` can hand in one the caller already bound.
 async fn bind_control_listener(prebound: Option<tokio::net::TcpListener>, bind_address: SocketAddr) -> std::io::Result<tokio::net::TcpListener> {
     match prebound {
         Some(listener) => Ok(listener),
@@ -1322,8 +1326,8 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("user_detail_provider"));
     }
 
-    // termiHub fork delta (armaxri/termiHub#4100): `listen_with_listener` and
-    // `proxy_protocol_peer_filter`.
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // Tests for `listen_with_listener` and `proxy_protocol_peer_filter`.
 
     /// Start a PROXY protocol server on a prebound loopback listener with `filter`, send one
     /// control connection with a PROXY header and return what the server answered.

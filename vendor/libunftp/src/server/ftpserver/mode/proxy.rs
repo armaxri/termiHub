@@ -14,6 +14,7 @@ where
     User: UserDetail + 'static,
 {
     pub async fn listen_proxy_protocol(mut self) -> std::result::Result<(), ServerError> {
+        // termiHub fork delta (armaxri/termiHub#4100).
         let listener = crate::server::ftpserver::bind_control_listener(self.prebound.take(), self.bind_address).await?;
 
         // all sessions use this callback to request for a passive listening port.
@@ -28,8 +29,9 @@ where
 
             tokio::select! {
                 Ok((tcp_stream, socket_addr)) = listener.accept() => {
-                    // termiHub fork delta (armaxri/termiHub#4100): refuse peers the filter does
-                    // not allow before reading anything, so their PROXY header is never trusted.
+                    // termiHub fork delta (armaxri/termiHub#4100).
+                    // Refuse peers the filter does not allow before reading anything, so their
+                    // PROXY header is never trusted.
                     if let Some(filter) = &self.peer_filter && !filter(socket_addr) {
                         slog::warn!(self.logger, "Refused proxy connection from {:?}: not allowed by the peer filter", socket_addr);
                         drop(tcp_stream);
