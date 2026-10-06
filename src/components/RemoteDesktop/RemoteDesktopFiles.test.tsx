@@ -36,8 +36,12 @@ function entry(id: string, sessionId: string): TransferEntry {
     path: `/home/arne/Desktop/${id}.bin`,
     state: "active",
     transferred: 10,
-    total: 100,
-  } as TransferEntry;
+    totalBytes: 100,
+    percent: 10,
+    speedBytesPerSec: null,
+    etaSeconds: null,
+    updatedAt: 0,
+  };
 }
 
 function render(files: RemoteDesktopFilesStatus, destDir: string | null = null) {
