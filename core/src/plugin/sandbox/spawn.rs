@@ -51,6 +51,11 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
     let (host_end, runner_end) =
         UnixStream::pair().map_err(|e| unavailable(format!("socketpair failed: {e}")))?;
     let runner_fd = runner_end.as_raw_fd();
+    // Larger socket buffers than the AF_UNIX defaults (8 KiB on macOS) let a
+    // whole 64 KiB output burst cross in one write; best effort.
+    for fd in [host_end.as_raw_fd(), runner_fd] {
+        set_socket_buffers(fd, SOCKET_BUFFER);
+    }
 
     let mut command = Command::new(runner);
     command
@@ -86,6 +91,28 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
         child,
         stream: host_end,
     })
+}
+
+/// Send/receive buffer size requested for each end of the channel.
+#[cfg(unix)]
+const SOCKET_BUFFER: libc::c_int = 1024 * 1024;
+
+/// Best-effort `SO_SNDBUF` / `SO_RCVBUF` on `fd` (the kernel may clamp it).
+#[cfg(unix)]
+fn set_socket_buffers(fd: std::os::fd::RawFd, size: libc::c_int) {
+    for option in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
+        // SAFETY: `fd` is an open socket we own; `size` outlives the call and
+        // its length is passed exactly.
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                option,
+                std::ptr::from_ref(&size).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+    }
 }
 
 /// No runner transport on this platform yet (Windows: next slice of #4182).

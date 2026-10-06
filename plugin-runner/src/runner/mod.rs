@@ -39,6 +39,9 @@ use shim::{SessionOutput, SessionServices};
 /// Largest plugin output chunk carried in one `Output` frame.
 pub(crate) const MAX_OUTPUT_CHUNK: usize = MAX_PAYLOAD_LEN - SESSION_ID_LEN;
 
+/// Read buffer of the runner's frame reader.
+const READ_BUFFER: usize = 64 * 1024;
+
 /// How often session liveness is re-polled to push `Alive` changes.
 const ALIVE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -69,7 +72,9 @@ type Sessions = Arc<Mutex<HashMap<u32, Session>>>;
 
 /// Run the runner over a connected channel; returns the process exit code.
 pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
-    let mut frames = FrameReader::new(reader);
+    // Buffered: a frame is three reads (length, kind, payload); the buffer
+    // turns a burst of small frames into one syscall.
+    let mut frames = FrameReader::new(std::io::BufReader::with_capacity(READ_BUFFER, reader));
     let hello = Message::Hello(Hello {
         runner_version: env!("CARGO_PKG_VERSION").to_owned(),
         protocol_version: PROTOCOL_VERSION,

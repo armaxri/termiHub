@@ -48,6 +48,9 @@ const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// bound, after lossy UTF-8 decoding (each invalid byte → 3-byte U+FFFD).
 const MAX_WIRE_LOG_BYTES: usize = MAX_LOG_MESSAGE_BYTES * 3;
 
+/// Read buffer of the host's frame reader.
+const READ_BUFFER: usize = 64 * 1024;
+
 /// What a host-side request (`CreateSession`, `Close`) waits for.
 #[derive(Debug)]
 pub(super) enum Reply {
@@ -399,7 +402,9 @@ fn handshake(
 
 impl Shared {
     fn read_loop<R: std::io::Read>(self: Arc<Self>, reader: R) {
-        let mut frames = FrameReader::new(reader);
+        // Buffered: a frame is three reads (length, kind, payload); the buffer
+        // turns a burst of small frames into one syscall.
+        let mut frames = FrameReader::new(std::io::BufReader::with_capacity(READ_BUFFER, reader));
         loop {
             match frames.read_frame() {
                 Ok(Some(frame)) => match Message::decode_from_peer(frame, Sender::Host) {
