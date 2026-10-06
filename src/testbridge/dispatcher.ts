@@ -4,11 +4,14 @@ import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./proj
 import type {
   BridgeCommand,
   BridgeResponse,
+  ComposeCommand,
   CoverageChunk,
+  TerminalCellRow,
   TerminalInspection,
   TerminalMeasurement,
 } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
+import { isComposableControl, replayComposition } from "./composition";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -57,6 +60,19 @@ export interface BridgeDeps {
    * the `inspectTerminal` verb fails with a clear "not available" error.
    */
   inspectTerminal?: (tabId: string) => TerminalInspection | undefined;
+  /**
+   * Read a terminal's buffer cell model (#3059) — every row containing
+   * `contains`, or the viewport rows when it is omitted — or `undefined` when no
+   * terminal is registered for `tabId`. Optional — absent, the
+   * `readTerminalCells` verb fails with a clear "not available" error.
+   */
+  readTerminalCells?: (tabId: string, contains?: string) => TerminalCellRow[] | undefined;
+  /**
+   * The hidden input textarea of the terminal in `tabId` (where a real IME
+   * composes), or `undefined` when no terminal is registered. Optional — absent,
+   * the `compose` verb can only target a `testId`.
+   */
+  getTerminalInputElement?: (tabId: string) => HTMLTextAreaElement | undefined;
   /**
    * Read a terminal's real render-path measurements (#2988), or `undefined`
    * when no terminal is registered for `tabId`. Optional — absent, the
@@ -472,6 +488,38 @@ const fail = (action: BridgeCommand["action"], error: string): BridgeResponse =>
   action,
   error,
 });
+
+/**
+ * The `compose` verb (#3059): replay an IME composition on the `testId` control,
+ * or on the input textarea of the terminal in `tabId` (the active tab).
+ */
+async function compose(command: ComposeCommand, deps: BridgeDeps): Promise<BridgeResponse> {
+  if (!Array.isArray(command.updates) || typeof command.commit !== "string") {
+    return fail("compose", "compose needs `updates` (string[]) and `commit` (string)");
+  }
+  let target: Element | undefined;
+  if (command.testId) {
+    target = findByTestId(deps.root, command.testId) ?? undefined;
+    if (!target) return fail("compose", `no element with data-testid="${command.testId}"`);
+  } else {
+    if (!deps.getTerminalInputElement) {
+      return fail("compose", "terminal composition is not available");
+    }
+    const tabId = command.tabId ?? deps.getActiveTabId();
+    if (!tabId) return fail("compose", "no active terminal to compose into");
+    target = deps.getTerminalInputElement(tabId);
+    if (!target) return fail("compose", `no terminal registered for tab "${tabId}"`);
+  }
+  if (!isComposableControl(target)) {
+    return fail("compose", "the composition target is not an input or textarea");
+  }
+  try {
+    await replayComposition(target, command.updates, command.commit);
+    return ok("compose");
+  } catch (error) {
+    return fail("compose", errorMessage(error));
+  }
+}
 
 /**
  * Execute a single {@link BridgeCommand} against the live app and return a
@@ -913,6 +961,23 @@ export async function dispatchCommand(
       }
       return ok("inspectTerminal", inspection);
     }
+
+    case "readTerminalCells": {
+      if (!deps.readTerminalCells) {
+        return fail("readTerminalCells", "terminal cell reads are not available");
+      }
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("readTerminalCells", "no active terminal to read");
+      // `??`: a remote client sends JSON `null` for an omitted filter.
+      const rows = deps.readTerminalCells(tabId, command.contains ?? undefined);
+      if (rows === undefined) {
+        return fail("readTerminalCells", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("readTerminalCells", rows);
+    }
+
+    case "compose":
+      return compose(command, deps);
 
     case "measureTerminal": {
       if (!deps.measureTerminal) {
