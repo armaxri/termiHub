@@ -1031,6 +1031,9 @@ impl DeviceAnnounceHeader {
     }
 
     fn new_drive(device_id: u32, name: String) -> Self {
+        // termiHub fork delta (#4125): derive the PreferredDosName before `name` is consumed below.
+        let preferred_dos_name = PreferredDosName::for_drive(&name);
+
         // The spec says Unicode but empirically this wants null terminated UTF-8.
         let mut device_data = name.into_bytes();
         device_data.push(0u8);
@@ -1044,7 +1047,11 @@ impl DeviceAnnounceHeader {
             // is ignored."
             //
             // Since we do support DRIVE_CAPABILITY_VERSION_02, we'll put the full name in the DeviceData field.
-            preferred_dos_name: PreferredDosName("ignored".to_owned()),
+            //
+            // termiHub fork delta (#4125): servers that read only PreferredDosName (xrdp's devredir)
+            // named every drive "ignored". Send the truncated drive name instead, as FreeRDP does and
+            // as upstream IronRDP 161409e18dd1 (#1566) does on master.
+            preferred_dos_name,
             device_data,
         }
     }
@@ -1208,6 +1215,36 @@ impl DeviceAnnounceHeader {
 struct PreferredDosName(String);
 
 impl PreferredDosName {
+    /// termiHub fork delta (#4125): the PreferredDosName for a drive called `name`, a port of
+    /// upstream IronRDP 161409e18dd1 (#1566). Keeps the leading run of characters that are valid
+    /// in the field (ASCII alphanumerics, space, `_`, `-`, `.`, and `:` only as the last
+    /// character), at most 7 of them so the 8-byte field stays null-terminated. Any other
+    /// character (including every non-ASCII one) ends the name. Falls back to `DRIVE` when
+    /// nothing valid is left. The result is pure ASCII, so `format` can never panic on it.
+    fn for_drive(name: &str) -> Self {
+        let mut preferred = String::with_capacity(7);
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '_' | '-' | '.') {
+                preferred.push(ch);
+            } else if ch == ':' && preferred.len() < 7 {
+                preferred.push(ch);
+                break;
+            } else {
+                break;
+            }
+
+            if preferred.len() == 7 {
+                break;
+            }
+        }
+
+        if preferred.is_empty() {
+            preferred.push_str("DRIVE");
+        }
+
+        Self(preferred)
+    }
+
     fn encode(&self, dst: &mut WriteCursor<'_>) -> EncodeResult<()> {
         write_string_to_cursor(dst, &self.format(), CharacterSet::Ansi, false)
     }
@@ -3794,5 +3831,77 @@ impl ServerDriveLockControlRequest {
         Ok(Self {
             device_io_request: dev_io_req,
         })
+    }
+}
+
+// termiHub fork delta (#4125): tests for the drive PreferredDosName.
+#[cfg(test)]
+mod termihub_fork_tests {
+    use super::*;
+
+    /// Encode a drive announce and split it into (PreferredDosName, DeviceData).
+    fn encoded_drive_announce(name: &str) -> ([u8; 8], Vec<u8>) {
+        let header = DeviceAnnounceHeader::new_drive(7, name.to_owned());
+        let mut buf = vec![0u8; header.size()];
+        let mut cursor = WriteCursor::new(&mut buf);
+        header.encode(&mut cursor).expect("encode the drive announce");
+        assert_eq!(cursor.pos(), buf.len(), "size() matches the encoded length");
+
+        // DeviceType (4) | DeviceId (4) | PreferredDosName (8) | DeviceDataLength (4) | DeviceData
+        assert_eq!(buf[0..4], 0x0000_0008u32.to_le_bytes(), "RDPDR_DTYP_FILESYSTEM");
+        assert_eq!(buf[4..8], 7u32.to_le_bytes(), "DeviceId");
+        let dos_name: [u8; 8] = buf[8..16].try_into().expect("8-byte field");
+        let data_len = u32::from_le_bytes(buf[16..20].try_into().expect("4-byte length"));
+        let data = buf[20..].to_vec();
+        assert_eq!(usize::try_from(data_len).expect("fits"), data.len(), "DeviceDataLength");
+        (dos_name, data)
+    }
+
+    #[test]
+    fn short_name_is_null_padded() {
+        let (dos_name, data) = encoded_drive_announce("share");
+        assert_eq!(&dos_name, b"share\0\0\0");
+        assert_eq!(data, b"share\0", "DeviceData keeps the full null-terminated name");
+    }
+
+    #[test]
+    fn long_name_is_truncated_to_seven_chars_and_null_terminated() {
+        let (dos_name, data) = encoded_drive_announce("termiHub");
+        assert_eq!(&dos_name, b"termiHu\0");
+        assert_eq!(data, b"termiHub\0", "DeviceData keeps the full name");
+    }
+
+    #[test]
+    fn exactly_seven_chars_fit() {
+        let (dos_name, _) = encoded_drive_announce("th12345");
+        assert_eq!(&dos_name, b"th12345\0");
+    }
+
+    #[test]
+    fn non_ascii_ends_the_name() {
+        let (dos_name, data) = encoded_drive_announce("Donn\u{e9}es");
+        assert_eq!(&dos_name, b"Donn\0\0\0\0");
+        assert_eq!(data, "Donn\u{e9}es\0".as_bytes(), "DeviceData keeps the UTF-8 name");
+    }
+
+    #[test]
+    fn invalid_ascii_ends_the_name() {
+        assert_eq!(&encoded_drive_announce("a|b").0, b"a\0\0\0\0\0\0\0");
+        assert_eq!(&encoded_drive_announce("my/dir").0, b"my\0\0\0\0\0\0");
+        assert_eq!(&encoded_drive_announce("C:x").0, b"C:\0\0\0\0\0\0", "colon only last");
+        assert_eq!(&encoded_drive_announce("a b-c_d.e").0, b"a b-c_d\0");
+    }
+
+    #[test]
+    fn nothing_valid_falls_back_to_drive() {
+        assert_eq!(&encoded_drive_announce("").0, b"DRIVE\0\0\0");
+        assert_eq!(&encoded_drive_announce("\u{424}\u{430}\u{439}\u{43b}").0, b"DRIVE\0\0\0");
+        assert_eq!(&encoded_drive_announce("<x>").0, b"DRIVE\0\0\0");
+    }
+
+    #[test]
+    fn never_sends_the_old_placeholder() {
+        let (dos_name, _) = encoded_drive_announce("termiHub");
+        assert_ne!(&dos_name, b"ignored\0");
     }
 }

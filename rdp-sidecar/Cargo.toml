@@ -222,3 +222,12 @@ ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }
 # `ironrdp-pdu = "0.9"`, so this patch redirects the whole graph to the fork. See
 # `vendor/ironrdp-pdu/README.md`.
 ironrdp-pdu = { path = "vendor/ironrdp-pdu" }
+# Vendored fork of ironrdp-rdpdr 0.7.0 (#4125): a redirected drive's Device
+# Announce carries its name in the 8-byte PreferredDosName (truncated to 7 valid
+# ASCII characters) instead of the literal "ignored". xrdp's devredir reads only
+# that field, so every drive was mounted as `~/thinclient_drives/ignored`. A port
+# of the unreleased upstream `PreferredDosName::for_drive` (Devolutions/IronRDP
+# 161409e18dd1, #1566); drop it once a released ironrdp-rdpdr carries it. `ironrdp`
+# re-exports the crate as `ironrdp::rdpdr`, so this patch redirects that re-export.
+# See `vendor/ironrdp-rdpdr/README.md`.
+ironrdp-rdpdr = { path = "vendor/ironrdp-rdpdr" }
