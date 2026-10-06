@@ -8,7 +8,8 @@
 //! through this registry:
 //!
 //! - the **SSH route** registers the SFTP channel on the VNC tunnel's own
-//!   authenticated SSH session ([`SftpFileBrowser`]), so listings, downloads
+//!   authenticated SSH session
+//!   ([`SftpFileBrowser`](termihub_core::backends::ssh::SftpFileBrowser)), so listings, downloads
 //!   (the queued SFTP executor) and every SFTP extra work as for an SSH tab;
 //! - the **agent route** registers the hosting agent's host-level
 //!   `connection.files.*` service ([`AgentHostFiles`], every request without a
@@ -24,7 +25,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 use serde::Serialize;
 use serde_json::Value;
 
-use termihub_core::backends::ssh::SftpFileBrowser;
 use termihub_core::errors::FileError;
 use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
 use termihub_core::protocol::methods::{
@@ -48,14 +48,6 @@ impl UploadCarrier {
         match self {
             Self::Sftp(browser) => browser.clone(),
             Self::Agent(files) => files.clone(),
-        }
-    }
-
-    /// The SFTP browser of the SSH route.
-    pub(crate) fn sftp(&self) -> Option<Arc<SftpFileBrowser>> {
-        match self {
-            Self::Sftp(browser) => Some(browser.clone()),
-            Self::Agent(_) => None,
         }
     }
 

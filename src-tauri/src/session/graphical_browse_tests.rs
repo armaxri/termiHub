@@ -253,7 +253,7 @@ fn side_channels_register_replace_and_remove() {
     assert!(side.get("rd-1").is_none());
     side.register("rd-1", agent_carrier(&host));
     assert!(side.get("rd-1").and_then(|c| c.agent()).is_some());
-    assert!(side.get("rd-1").and_then(|c| c.sftp()).is_none());
+    assert!(!matches!(side.get("rd-1"), Some(UploadCarrier::Sftp(_))));
     // Opening again replaces (a reconnect's new route).
     side.register("rd-1", agent_carrier(&host));
     assert!(side.remove("rd-1"));
