@@ -736,6 +736,13 @@ On Windows use `scripts\package-plugin.cmd … --sign acme.key`.
 | **Unsigned**                                    | The existing untrusted-source acknowledgement (unchanged). |
 | **Signature invalid** (tampered)                | **Blocked**, no override.                                  |
 
+First-party termiHub plugins are signed with a publisher key compiled into the
+app (a **bundled** publisher), so they verify without a prompt. That entry
+cannot be removed, and no other key can be pinned under its fingerprint. Until
+the maintainer generates that key, no bundled publisher exists and every
+publisher, first-party included, is trusted on first use (see ADR-18 in
+`docs/architecture.md`).
+
 Trust-on-first-use pinning is managed in **Settings → Plugins → Trusted
 Publishers**. Re-signing a package with a different key than a user pinned
 re-prompts them (a key rotation they must re-confirm), rather than trusting a
