@@ -239,6 +239,7 @@ impl TransferPersistenceManager {
             path: path.to_string(),
             saved_connection_id: saved_connection_id.map(str::to_string),
             container_id: None,
+            agent: None,
         });
         store.upsert(entry);
         self.schedule_write(&store);
@@ -257,6 +258,23 @@ impl TransferPersistenceManager {
             return;
         };
         source.container_id = Some(container_id.to_string());
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the agent-hosted session a remote-to-remote copy reads from
+    /// (#4115), so a relaunch finds that session once its agent is
+    /// reconnected. Ids only — never a secret. A no-op for an unknown id or
+    /// one without a recorded source (never fabricates a record).
+    pub fn record_remote_source_agent(&self, transfer_id: &str, agent: PersistedAgentTarget) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        let Some(source) = entry.remote_source.as_mut() else {
+            return;
+        };
+        source.agent = Some(agent);
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -706,10 +724,62 @@ mod tests {
                 path: "/src/data.csv".to_string(),
                 saved_connection_id: Some("conn-src".to_string()),
                 container_id: None,
+                agent: None,
             })
         );
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
         assert_eq!(rehydrated[0].source_mtime, Some(7));
+    }
+
+    /// The agent session a remote-to-remote copy reads from (#4115) is kept
+    /// with its source endpoint and survives rehydration, next to the
+    /// destination's agent identity; it is never attached to a record without
+    /// a recorded source.
+    #[test]
+    fn remote_source_agent_survives_rehydration() {
+        let (_d, m) = mgr();
+        for id in ["r2r", "plain"] {
+            m.record_registration(
+                id,
+                "sess-dst",
+                TransferDirection::Upload,
+                "data.csv",
+                "/dst/data.csv",
+                None,
+                0,
+            );
+        }
+        let agent = |id: &str| PersistedAgentTarget {
+            agent_id: id.to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: None,
+        };
+        m.record_remote_source("r2r", "sess-src", "/src/data.csv", None);
+        m.record_remote_source_agent("r2r", agent("src-agent"));
+        m.record_agent_target("r2r", agent("dst-agent"));
+        m.record_remote_source_agent("plain", agent("src-agent"));
+        m.record_remote_source_agent("ghost", agent("src-agent"));
+        for id in ["r2r", "plain"] {
+            m.note_progress(
+                id,
+                PersistedTransferStatus::Active,
+                CHECKPOINT_BYTES + 1,
+                2048,
+                false,
+                None,
+            );
+        }
+        let rehydrated = m.load_incomplete_as_paused();
+        let r2r = rehydrated.iter().find(|r| r.transfer_id == "r2r").unwrap();
+        let source = r2r.remote_source.as_ref().unwrap();
+        assert_eq!(source.agent, Some(agent("src-agent")));
+        assert_eq!(r2r.agent, Some(agent("dst-agent")));
+        let plain = rehydrated
+            .iter()
+            .find(|r| r.transfer_id == "plain")
+            .unwrap();
+        assert_eq!(plain.remote_source, None, "no source fabricated");
+        assert_eq!(rehydrated.len(), 2, "no record fabricated for `ghost`");
     }
 
     /// The saved connection a session transfer was started on (#3876) survives

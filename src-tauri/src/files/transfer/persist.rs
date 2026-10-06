@@ -155,8 +155,10 @@ pub struct PersistedTransfer {
     /// connection's existing store key. The id only — never a secret.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saved_connection_id: Option<String>,
-    /// The agent-hosted session a ranged transfer runs over (#4114) — absent
-    /// for every other backend and for records written before it existed.
+    /// The agent-hosted session a ranged transfer runs over (#4114) — or, for
+    /// a remote-to-remote copy, the session its destination is written to
+    /// (#4115). Absent for every other backend and for records written before
+    /// it existed.
     /// Identities only, never a secret: the owning desktop session id does
     /// not survive a restart, so a relaunch finds the reconnected session by
     /// these.
@@ -203,6 +205,11 @@ pub struct PersistedRemoteSource {
     /// (see [`PersistedDockerTarget`]). Absent for an SFTP source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    /// The agent-hosted session the source is read from when it is a ranged
+    /// end (#4115), so a relaunch finds that session again (see
+    /// [`PersistedAgentTarget`]). Absent for an SFTP or Docker source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<PersistedAgentTarget>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -577,6 +584,7 @@ mod tests {
             path: "/src/data.csv".to_string(),
             saved_connection_id: None,
             container_id: None,
+            agent: None,
         });
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""remoteSource":{"sessionId":"sess-src","path":"/src/data.csv"}"#));
@@ -643,6 +651,7 @@ mod tests {
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some("Work/source".to_string()),
             container_id: None,
+            agent: None,
         });
         // The saved-connection reference (#3876) is an id, never its secret.
         entry.saved_connection_id = Some("Work/files".to_string());
