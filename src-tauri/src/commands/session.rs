@@ -1631,11 +1631,23 @@ pub async fn get_agent_session_buffer(
 #[cfg(test)]
 mod tests {
     use super::{
-        container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
-        killed_disconnect_tab_id, parse_container_runtime,
+        agent_definition_id, container_list_error, decode_file_bytes, encode_file_bytes,
+        initial_connect_tab_id, killed_disconnect_tab_id, parse_container_runtime,
     };
     use termihub_core::config::ContainerRuntime;
     use termihub_core::errors::SessionError;
+
+    /// The saved agent definition an agent session is opened from is read
+    /// where the frontend places it — at the top level or under `config` —
+    /// so the transfers waiting for that session resume (#4114).
+    #[test]
+    fn agent_definition_id_is_read_from_the_settings() {
+        let top = serde_json::json!({ "definitionId": "def-a", "shell": "bash" });
+        assert_eq!(agent_definition_id(&top).as_deref(), Some("def-a"));
+        let nested = serde_json::json!({ "config": { "definition_id": "def-b" } });
+        assert_eq!(agent_definition_id(&nested).as_deref(), Some("def-b"));
+        assert_eq!(agent_definition_id(&serde_json::json!({})), None);
+    }
 
     #[test]
     fn container_runtime_parses_like_the_backend() {

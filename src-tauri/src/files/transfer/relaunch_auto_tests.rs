@@ -171,6 +171,81 @@ fn a_transfer_without_a_saved_connection_does_not_wait() {
     assert!(!waits.contains("t1"));
 }
 
+// --- agent-hosted transfers waiting for their agent session (#4114) ------------
+
+fn agent_record(id: &str, definition: Option<&str>) -> PersistedTransfer {
+    PersistedTransfer {
+        agent: Some(crate::files::transfer::persist::PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-old".to_string(),
+            definition_id: definition.map(str::to_string),
+        }),
+        ..record(id, None)
+    }
+}
+
+fn agent_opened(agent: &str, definition: Option<&str>) -> WaitTrigger {
+    WaitTrigger::AgentSessionOpened {
+        agent_id: agent.to_string(),
+        definition_id: definition.map(str::to_string),
+    }
+}
+
+/// An agent-hosted transfer whose session is not live waits for a session on
+/// its agent from its definition, and resumes once one opens.
+#[test]
+fn an_agent_transfer_resumes_when_its_agent_session_opens() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    note_blocked(
+        &waits,
+        &agent_record("t1", Some("def-a")),
+        &RelaunchBlocked::AgentSessionUnavailable,
+    );
+    assert!(waits.contains("t1"));
+
+    // Neither another agent, another definition, a saved connection opening
+    // nor the store unlocking resumes it.
+    assert!(due(&waits, &agent_opened("agent-2", Some("def-a")), &registry).is_empty());
+    assert!(due(&waits, &agent_opened("agent-1", Some("def-b")), &registry).is_empty());
+    assert!(due(&waits, &opened("def-a"), &registry).is_empty());
+    assert!(due(&waits, &WaitTrigger::StoreUnlocked, &registry).is_empty());
+
+    assert_eq!(
+        due(&waits, &agent_opened("agent-1", Some("def-a")), &registry),
+        vec!["t1"]
+    );
+    assert!(!waits.contains("t1"));
+}
+
+/// An ad-hoc agent session can only come back as itself, so any session on
+/// its agent retries it (the relaunch's identity check decides).
+#[test]
+fn an_ad_hoc_agent_transfer_retries_on_any_session_of_its_agent() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    note_blocked(
+        &waits,
+        &agent_record("t1", None),
+        &RelaunchBlocked::AgentSessionUnavailable,
+    );
+    assert!(due(&waits, &agent_opened("agent-2", None), &registry).is_empty());
+    assert_eq!(
+        due(&waits, &agent_opened("agent-1", Some("def-x")), &registry),
+        vec!["t1"]
+    );
+}
+
+/// A credentials wait is not resumed by an agent session opening.
+#[test]
+fn a_credentials_wait_ignores_agent_sessions() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    waiting(&waits, &record("t1", Some("conn-a")));
+    assert!(due(&waits, &agent_opened("agent-1", Some("conn-a")), &registry).is_empty());
+    assert!(waits.contains("t1"));
+}
+
 /// The user pausing the row takes it off the wait list: nothing resumes it.
 #[test]
 fn a_transfer_the_user_paused_is_never_resumed() {

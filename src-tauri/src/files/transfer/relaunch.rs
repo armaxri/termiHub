@@ -902,6 +902,65 @@ mod tests {
         );
     }
 
+    /// An agent-hosted record (#4114) relaunches by its agent session
+    /// identity — not through the SFTP/FTP session path — from the persisted
+    /// checkpoint.
+    #[test]
+    fn plan_for_an_agent_transfer_reattaches_by_agent_identity() {
+        let agent = crate::files::transfer::persist::PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: Some("def-a".to_string()),
+        };
+        let mut rec = record("t1", Some("/home/user/data.csv"));
+        rec.agent = Some(agent.clone());
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::Agent {
+                session_id: "sess-a".to_string(),
+                agent,
+                direction: TransferDirection::Download,
+                remote_path: "/remote/data.csv".to_string(),
+                local_path: "/home/user/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
+    }
+
+    /// An agent-hosted record keeps its identity through the persisted queue,
+    /// so a resume after a restart plans an agent relaunch.
+    #[test]
+    fn decide_resume_relaunches_a_rehydrated_agent_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = TransferRegistry::new();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist.record_registration(
+            "agent-t",
+            "sess-a",
+            TransferDirection::Download,
+            "data.csv",
+            "/remote/data.csv",
+            Some("/home/user/data.csv".to_string()),
+            8192,
+        );
+        persist.record_agent_target(
+            "agent-t",
+            crate::files::transfer::persist::PersistedAgentTarget {
+                agent_id: "agent-1".to_string(),
+                remote_session_id: "remote-1".to_string(),
+                definition_id: None,
+            },
+        );
+        match decide_resume("agent-t", &registry, &persist) {
+            ResumeDecision::Relaunch(rec) => assert!(matches!(
+                plan_from_record(&rec),
+                RelaunchPlan::Agent { ref agent, .. } if agent.agent_id == "agent-1"
+            )),
+            other => panic!("expected Relaunch, got {other:?}"),
+        }
+    }
+
     /// A local folder file (#3613) plans its relaunch with its cancel group.
     #[test]
     fn plan_for_a_grouped_local_copy_carries_its_group() {

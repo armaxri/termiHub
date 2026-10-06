@@ -738,6 +738,34 @@ mod tests {
         );
     }
 
+    /// The agent session identity of an agent-hosted transfer (#4114) survives
+    /// progress checkpoints and rehydration; attaching it to an unknown id
+    /// never fabricates a record.
+    #[test]
+    fn agent_target_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        let agent = PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: Some("def-a".to_string()),
+        };
+        m.record_agent_target("t1", agent.clone());
+        m.record_agent_target("ghost", agent.clone());
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+            None,
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(rehydrated[0].agent, Some(agent));
+        assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
+    }
+
     #[test]
     fn progress_advances_status_and_offset_is_preserved_through_rehydration() {
         let (_d, m) = mgr();

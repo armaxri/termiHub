@@ -4239,6 +4239,9 @@ mod tests {
     /// Ranged slices and queued transfers of agent-hosted sessions (#3587).
     mod ranged_tests;
 
+    /// Relaunching agent-hosted queued transfers after a restart (#4114).
+    mod relaunch_tests;
+
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.
     #[test]

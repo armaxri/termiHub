@@ -497,6 +497,29 @@ mod tests {
         assert_eq!(parsed.saved_connection_id, None);
     }
 
+    /// The agent session identity (#4114) round-trips as ids only, and a
+    /// record written before it existed still loads (with none).
+    #[test]
+    fn agent_target_round_trips_and_old_records_still_load() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.agent = Some(PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: Some("def-a".to_string()),
+        });
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(
+            "\"agent\":{\"agentId\":\"agent-1\",\"remoteSessionId\":\"remote-1\",\"definitionId\":\"def-a\"}"
+        ));
+        let parsed: PersistedTransfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+
+        let legacy = serde_json::to_string(&sample("t2", PersistedTransferStatus::Paused)).unwrap();
+        assert!(!legacy.contains("\"agent\""), "absent field is not written");
+        let parsed: PersistedTransfer = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(parsed.agent, None);
+    }
+
     #[test]
     fn store_default_is_empty_v1() {
         let store = PersistedTransferStore::default();
