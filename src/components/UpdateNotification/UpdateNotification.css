@@ -20,14 +20,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px var(--spacing-md) var(--spacing-sm);
+  padding: var(--spacing-sm-md) var(--spacing-md) var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
 .update-notification__title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   min-width: 0;
 }
 
@@ -63,7 +63,7 @@
 }
 
 .update-notification__body {
-  padding: 10px var(--spacing-md);
+  padding: var(--spacing-sm-md) var(--spacing-md);
 }
 
 .update-notification__message {
@@ -95,8 +95,8 @@
 .update-notification__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: var(--spacing-sm) var(--spacing-md) 10px;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-sm-md);
   border-top: 1px solid var(--border-primary);
   flex-wrap: wrap;
 }

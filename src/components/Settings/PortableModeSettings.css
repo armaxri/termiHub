@@ -76,7 +76,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 5px var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
 }
@@ -145,7 +145,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 3px 0;
+  padding: var(--spacing-xxs) 0;
   font-size: var(--font-size-sm);
   cursor: pointer;
 }

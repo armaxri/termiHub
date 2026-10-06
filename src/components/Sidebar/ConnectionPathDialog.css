@@ -5,11 +5,11 @@
 .connection-path-dialog__title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
 }
 
 .connection-path-dialog__subtitle {
-  margin: 0 0 14px 0;
+  margin: 0 0 var(--spacing-md) 0;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
@@ -31,7 +31,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   width: 100%;
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-sm);
@@ -91,12 +91,16 @@
 }
 
 .connection-path-dialog__error {
-  margin: var(--spacing-xxs) 0 0 30px;
+  /* Geometry, not spacing: aligns the error under the hop label (#3170). */
+  --connection-path-error-indent: 30px;
+  margin: var(--spacing-xxs) 0 0 var(--connection-path-error-indent);
   color: var(--color-error);
   font-size: var(--font-size-xs);
 }
 
 .connection-path-dialog__arrow {
   color: var(--text-secondary);
-  margin: var(--spacing-xxs) 0 var(--spacing-xxs) 14px;
+  /* Geometry, not spacing: centres the arrow under the hop status icon (#3170). */
+  --connection-path-arrow-indent: 14px;
+  margin: var(--spacing-xxs) 0 var(--spacing-xxs) var(--connection-path-arrow-indent);
 }

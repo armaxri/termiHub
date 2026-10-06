@@ -12,7 +12,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 7px var(--spacing-sm);
+  padding: var(--spacing-sm);
   margin: 1px var(--spacing-xs);
   border: none;
   border-radius: var(--radius-md);
@@ -61,7 +61,7 @@
   margin: 0;
   width: auto;
   border-bottom: 2px solid transparent;
-  padding: 6px var(--spacing-md);
+  padding: var(--spacing-xs-sm) var(--spacing-md);
   transition:
     color var(--transition-fast),
     background-color var(--transition-fast),

@@ -31,11 +31,11 @@
 .file-editor__remote-badge {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--spacing-xxs);
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   color: var(--accent-color);
-  padding: 1px 6px;
+  padding: 1px var(--spacing-xs-sm);
   border: 1px solid var(--accent-color);
   border-radius: var(--radius-sm);
 }

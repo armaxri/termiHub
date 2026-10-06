@@ -1179,6 +1179,9 @@
 /* -------------------------------------------------------------------------- */
 
 .ui-search-input {
+  /* Geometry, not spacing: the 18px leading-icon / clear-button footprint the
+     input text must clear (UI-009 calc-nudge exception, #3170). */
+  --search-input-icon-space: 18px;
   position: relative;
   display: flex;
   align-items: center;
@@ -1196,11 +1199,11 @@
 /* Room for the leading icon; extra room on the right when the clear button is
    present so the query text never slides under it. */
 .ui-search-input .ui-input {
-  padding-left: calc(var(--spacing-sm) + 18px);
+  padding-left: calc(var(--spacing-sm) + var(--search-input-icon-space));
 }
 
 .ui-search-input--clearable .ui-input {
-  padding-right: calc(var(--spacing-sm) + 18px);
+  padding-right: calc(var(--spacing-sm) + var(--search-input-icon-space));
 }
 
 /* Suppress the browser's native search decorations in favour of our own. */

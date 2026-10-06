@@ -39,7 +39,7 @@
   color: var(--text-muted);
   background: var(--bg-tertiary);
   border-radius: var(--radius-full);
-  padding: 1px 7px;
+  padding: 1px var(--spacing-sm);
 }
 
 /* Row */
@@ -97,7 +97,7 @@
 
 .oc-row__badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 6px;
+  padding: 1px var(--spacing-xs-sm);
   border-radius: var(--radius-full);
   font-weight: 500;
   flex-shrink: 0;

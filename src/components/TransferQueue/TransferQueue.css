@@ -32,7 +32,7 @@
 .transfer-queue__header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   height: 26px;
   padding: 0 var(--spacing-sm);
   background: var(--bg-tertiary);
@@ -227,7 +227,7 @@
 .transfer-queue__footer {
   display: flex;
   gap: var(--spacing-sm);
-  padding: 6px var(--spacing-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
   justify-content: flex-end;
 }
 

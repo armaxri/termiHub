@@ -5,7 +5,7 @@
 .sidebar-list-item {
   display: flex;
   flex-direction: column;
-  padding: 6px var(--spacing-md);
+  padding: var(--spacing-xs-sm) var(--spacing-md);
   cursor: pointer;
   user-select: none;
 }
@@ -23,7 +23,7 @@
 .sidebar-list-item__header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
 }
 
 /* The leading status dot now comes from the shared StatusDot primitive
@@ -65,7 +65,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xxs);
-  padding: var(--spacing-xxs) 0 0 14px;
+  padding: var(--spacing-xxs) 0 0 var(--spacing-md);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }

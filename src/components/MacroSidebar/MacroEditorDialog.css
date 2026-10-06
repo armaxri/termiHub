@@ -13,6 +13,9 @@
 }
 
 .macro-editor__steps {
+  /* Geometry, not spacing: step-number column width, shared by the index and
+     the error line that aligns under the step data (#3170). */
+  --macro-step-index-width: 20px;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs);
@@ -27,7 +30,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) 6px;
+  padding: var(--spacing-xs) var(--spacing-xs-sm);
   border-radius: var(--radius-sm);
 }
 
@@ -37,7 +40,7 @@
 
 .macro-editor__step-index {
   flex-shrink: 0;
-  width: 20px;
+  width: var(--macro-step-index-width);
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   text-align: right;
@@ -57,7 +60,8 @@
 
 .macro-editor__step-error {
   margin: 0 0 var(--spacing-xxs);
-  padding-left: calc(20px + var(--spacing-sm) + 6px);
+  /* Step padding + index column + row gap, so the error sits under the step data. */
+  padding-left: calc(var(--spacing-xs-sm) + var(--macro-step-index-width) + var(--spacing-sm));
   color: var(--color-error);
   font-size: var(--font-size-xs);
 }

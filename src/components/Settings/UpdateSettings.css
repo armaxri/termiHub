@@ -27,7 +27,7 @@
 .update-settings__available {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   color: var(--text-primary);
 }
 
@@ -36,7 +36,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 1px 5px;
+  padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--color-error);
   color: var(--text-on-accent);

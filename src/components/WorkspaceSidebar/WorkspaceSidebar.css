@@ -57,14 +57,14 @@
 .save-workspace-dialog__radio-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   margin-top: var(--spacing-xxs);
 }
 
 .save-workspace-dialog__radio-label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;

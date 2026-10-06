@@ -596,69 +596,25 @@ describe("type scale (UI-005)", () => {
 });
 
 /**
- * Spacing-scale guard (UI-009, #2898).
+ * Spacing-scale guard (UI-009, #2898, #3170).
  *
  * The `--spacing-*` scale in variables.css
- * (xxs 2 · xs 4 · sm 8 · md 12 · lg 16 · xl 24 · 2xl 32) is the single source of
- * spacing truth. #2897 tokenized every `padding`/`margin`/`gap` px that EXACTLY
- * matched a token (behaviour-preserving — no rounding), and this change swept the
- * two exact-match stragglers it missed. This guard is the ratchet that keeps NEW
- * off-scale spacing px from creeping back in.
+ * (xxs 2 · xs 4 · xs-sm 6 · sm 8 · sm-md 10 · md 12 · lg 16 · xl 24 · 2xl 32) is
+ * the single source of spacing truth. #2897 tokenized every exact-match
+ * `padding`/`margin`/`gap` px; #3170 reconciled the rest (maintainer option B):
+ * 6px/10px gained the half-step tiers `--spacing-xs-sm` / `--spacing-sm-md`, the
+ * other residuals snapped to the nearest tier (ties round down), and true
+ * geometry — icon clearance, indent alignment, calc() nudges — moved into named
+ * component custom properties (e.g. `--password-toggle-space`), whose
+ * declarations this guard does not scan.
  *
- * SPACING_PX_ALLOWLIST is a shrinking ratchet: files that still carry off-scale
- * spacing px (`6px`, `10px`, `3px`, …) whose reconciliation is a genuine
- * layout/density decision — snap onto the nearest tier vs. add an intermediate
- * 6/10/20 tier, deferred to the maintainer (#2898's remaining scope, see the
- * follow-up). It is deliberately over-permissive, is never asserted to be free of
- * stale entries, and MUST shrink toward empty: as each file's residuals are
- * reconciled, its entry is removed. A currently-clean file (one not in the list)
- * that introduces a new off-scale spacing px FAILS.
+ * SPACING_PX_ALLOWLIST is the ratchet and is now EMPTY: any component CSS file
+ * that introduces an off-scale raw spacing px FAILS. Do not re-grow it — use a
+ * token, or a named custom property with a comment explaining the geometry.
  *
  * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
  */
-const SPACING_PX_ALLOWLIST: string[] = [
-  "components/ActivityBar/ActivityBar.css",
-  "components/AgentVersionBadge/AgentVersionBadge.css",
-  "components/ConnectionEditor/ConnectionEditor.css",
-  "components/ConnectionEditor/SshConfigImportDialog.css",
-  "components/EmbeddedServerSidebar/EmbeddedServerSidebar.css",
-  "components/FileEditor/FileEditor.css",
-  "components/KeyboardShortcuts/ShortcutsOverlay.css",
-  "components/MacroSidebar/MacroEditorDialog.css",
-  "components/MacroSidebar/MacroSidebar.css",
-  "components/NetworkTools/NetworkTools.css",
-  "components/OpenConnections/OpenConnectionsModal.css",
-  "components/PasswordInput/PasswordInput.css",
-  "components/Plugins/Plugins.css",
-  "components/RecentSessionsSidebar/RecentSessionsSidebar.css",
-  "components/RemoteDesktop/RemoteDesktopTab.css",
-  "components/Settings/PortableModeSettings.css",
-  "components/Settings/SettingsNav.css",
-  "components/Settings/SettingsPanel.css",
-  "components/Settings/UpdateSettings.css",
-  "components/Sidebar/BulkSshImportDialog.css",
-  "components/Sidebar/ConnectionList.css",
-  "components/Sidebar/ConnectionPathDialog.css",
-  "components/Sidebar/FleetOnboardDialog.css",
-  "components/SidebarListItem/SidebarListItem.css",
-  "components/SplitView/PanelErrorBoundary.css",
-  "components/StatusBar/StatusBar.css",
-  "components/Terminal/TabBar.css",
-  "components/Terminal/TabGroupChips.css",
-  "components/Terminal/TerminalSearchBar.css",
-  "components/Terminal/TerminalViewModeBanner.css",
-  "components/TransferQueue/TransferQueue.css",
-  "components/TunnelEditor/TunnelEditor.css",
-  "components/TunnelSidebar/TunnelSidebar.css",
-  "components/UpdateNotification/UpdateNotification.css",
-  "components/WorkflowSidebar/LocalProcessAuthDialog.css",
-  "components/WorkflowSidebar/WorkflowEditorDialog.css",
-  "components/WorkflowSidebar/WorkflowRunOutput.css",
-  "components/WorkflowSidebar/WorkflowSidebar.css",
-  "components/WorkspaceEditor/WorkspaceEditor.css",
-  "components/WorkspaceSidebar/WorkspaceSidebar.css",
-  "components/ui/ui.css",
-];
+const SPACING_PX_ALLOWLIST: string[] = [];
 
 describe("spacing scale (UI-009)", () => {
   it("defines the full spacing tier scale in variables.css", () => {
@@ -666,7 +622,9 @@ describe("spacing scale (UI-009)", () => {
     for (const tok of [
       "--spacing-xxs",
       "--spacing-xs",
+      "--spacing-xs-sm",
       "--spacing-sm",
+      "--spacing-sm-md",
       "--spacing-md",
       "--spacing-lg",
       "--spacing-xl",
@@ -687,6 +645,10 @@ describe("spacing scale (UI-009)", () => {
       "Reference a --spacing-* token from src/styles/variables.css instead of a raw px " +
         `padding/margin/gap value in: ${offenders.join(", ")}`
     ).toEqual([]);
+  });
+
+  it("keeps the spacing allowlist empty (the #3170 reconciliation is complete)", () => {
+    expect(SPACING_PX_ALLOWLIST).toEqual([]);
   });
 });
 
@@ -714,6 +676,15 @@ describe("off-scale spacing detection (UI-009)", () => {
   it("exempts 1px hairlines/nudges", () => {
     expect(hasOffScaleSpacingPx(".a {\n  padding: 1px var(--spacing-xs);\n}")).toBe(false);
     expect(hasOffScaleSpacingPx(".a {\n  margin-bottom: -1px;\n}")).toBe(false);
+  });
+
+  it("does not scan named geometry custom properties (the #3170 exception)", () => {
+    expect(
+      hasOffScaleSpacingPx(
+        ".a {\n  --password-toggle-space: 30px;\n  padding-right: var(--password-toggle-space);\n}"
+      )
+    ).toBe(false);
+    expect(hasOffScaleSpacingPx(".a {\n  --icon-gap: 18px;\n}")).toBe(false);
   });
 
   it("does not scan positional offsets (top/left/inset are not spacing steps)", () => {

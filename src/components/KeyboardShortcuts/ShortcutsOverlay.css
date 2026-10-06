@@ -60,7 +60,7 @@
 
 .shortcuts-overlay__binding kbd {
   display: inline-block;
-  padding: 1px 6px;
+  padding: 1px var(--spacing-xs-sm);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background-color: var(--bg-tertiary);

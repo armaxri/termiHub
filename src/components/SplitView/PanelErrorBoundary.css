@@ -2,9 +2,9 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--spacing-sm-md);
   height: 100%;
-  padding: 20px;
+  padding: var(--spacing-lg);
   overflow: auto;
   background: var(--bg-primary);
   color: var(--color-error);
@@ -28,8 +28,8 @@
 .panel-error__retry {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-xs-sm) var(--spacing-md);
   border: none;
   border-radius: var(--radius-sm);
   background: var(--accent-color);

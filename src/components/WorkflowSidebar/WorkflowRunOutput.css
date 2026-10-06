@@ -27,7 +27,7 @@
 .workflow-run-output__status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary);
@@ -64,7 +64,7 @@
 .workflow-run-output__command {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding: var(--spacing-xs) var(--spacing-sm);
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-primary);

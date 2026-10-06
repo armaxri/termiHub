@@ -115,10 +115,15 @@
   --scrollbar-thumb-hover: rgba(100, 100, 100, 0.7);
   --scrollbar-width: 8px;
 
-  /* Spacing */
+  /* Spacing (UI-009). Two half-step tiers (#3170) sit between xs/sm and sm/md:
+     the 6px/10px rhythm is common enough in dense rows/chips to earn a token.
+     Anything else snaps to the nearest tier; true geometry (icon clearance,
+     indent alignment) lives in a named component custom property instead. */
   --spacing-xxs: 2px;
   --spacing-xs: 4px;
+  --spacing-xs-sm: 6px;
   --spacing-sm: 8px;
+  --spacing-sm-md: 10px;
   --spacing-md: 12px;
   --spacing-lg: 16px;
   --spacing-xl: 24px;

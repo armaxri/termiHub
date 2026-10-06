@@ -56,7 +56,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   height: 30px;
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -82,13 +82,13 @@
 .rd-toolbar__host {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 6px;
+  gap: var(--spacing-xs-sm);
+  padding: 0 var(--spacing-xs-sm);
   color: var(--text-primary);
 }
 
 .rd-toolbar__res {
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   border-left: 1px solid var(--border-primary);
   white-space: nowrap;
 }
@@ -97,7 +97,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: 0 6px;
+  padding: 0 var(--spacing-xs-sm);
   border-left: 1px solid var(--border-primary);
   color: var(--color-warning);
 }
@@ -163,7 +163,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  padding: 10px;
+  padding: var(--spacing-sm-md);
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-primary);
   box-shadow: var(--shadow-overlay);
@@ -182,7 +182,7 @@
 .rd-clipboard__text {
   flex: 1 1 auto;
   resize: none;
-  padding: 6px;
+  padding: var(--spacing-xs-sm);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -194,7 +194,7 @@
 .rd-clipboard__files {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border-primary);
 }
@@ -218,7 +218,7 @@
 .rd-clipboard__file {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--spacing-xs-sm);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
