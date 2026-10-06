@@ -561,6 +561,27 @@ export interface ExitAppCommand {
   action: "exitApp";
 }
 
+/**
+ * Pre-program the next native open or save dialog's result (test bridge only,
+ * #4122), so a flow behind an OS file dialog runs without an operator.
+ *
+ * The next `open` / `save` from `@/services/nativeDialog` returns `path`
+ * without showing a dialog, or `null` (a cancel) when `path` is absent. For a
+ * path, the verb first asks the test-bridge-only `test_allow_dialog_path`
+ * command for the fs-scope grant a real pick makes, so the app's following
+ * `writeTextFile` / `readTextFile` works. One stub per kind is pending at a
+ * time; a newer one replaces it. Resolves against an injected
+ * `stubNativeDialog` dep; outside the harness the verb fails with "not
+ * available".
+ */
+export interface StubNativeDialogCommand {
+  action: "stubNativeDialog";
+  /** Which dialog the stub answers. A folder picker is an `open` dialog. */
+  kind: "open" | "save";
+  /** Absolute path the dialog returns; absent = the operator cancelled. */
+  path?: string;
+}
+
 /** Read a subscription's current recorded frames + cache state by id. */
 export interface ProjectionStateCommand {
   action: "projectionState";
@@ -696,6 +717,7 @@ export type BridgeCommand =
   | ListWindowsCommand
   | ReadCoverageCommand
   | ExitAppCommand
+  | StubNativeDialogCommand
   | ProjectionSubscribeCommand
   | ProjectionDispatchCommand
   | ProjectionStateCommand

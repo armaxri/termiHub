@@ -19,6 +19,7 @@ import base64
 import binascii
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import websockets
@@ -611,6 +612,27 @@ class Driver:
             self._call(
                 {"action": "severAgentTransport", "agentId": agent_id}, timeout=timeout
             )
+        )
+
+    def stub_native_dialog(self, kind: str, path: Optional[str | Path] = None) -> None:
+        """Pre-program the next native ``kind`` dialog's result (#4122).
+
+        ``kind`` is ``"open"`` (a file or folder picker) or ``"save"``. The next
+        such dialog the app opens returns ``path`` without showing anything, or
+        reports a cancel when ``path`` is ``None``. Call it *before* the click
+        that opens the dialog. A path must be absolute; it is granted to the fs
+        scope first (the test-bridge-only ``test_allow_dialog_path`` command),
+        exactly as a real pick would, so the app can then read or write it. One
+        stub per kind is pending at a time; a newer one replaces it.
+        """
+        # A ``None`` path is dropped by `_call`, so the wire form omits the key,
+        # which the app reads as a cancel.
+        self._call(
+            {
+                "action": "stubNativeDialog",
+                "kind": kind,
+                "path": None if path is None else str(path),
+            }
         )
 
     # ── Projection substrate (#2149 / harness #2164) ─────────────────────────

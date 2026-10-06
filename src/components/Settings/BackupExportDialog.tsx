@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { exportBackup, isVaultError, listBackupSections } from "@/services/api";
 import { useAppStore } from "@/store/appStore";

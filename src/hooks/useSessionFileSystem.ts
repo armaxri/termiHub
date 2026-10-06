@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -216,7 +216,7 @@ export function useSessionFileSystem() {
     async (sessionId: string, remotePath: string, folderName: string) => {
       const label = `Download "${folderName}"`;
       const targetDir = await pickPathOrReport(label, async () => {
-        const { open } = await import("@tauri-apps/plugin-dialog");
+        const { open } = await import("@/services/nativeDialog");
         return open({
           title: `Download folder "${folderName}" to...`,
           directory: true,
@@ -298,7 +298,7 @@ export function useSessionFileSystem() {
   const uploadFile = useCallback(async () => {
     if (!sessionFileBrowserId) return;
     const localPath = await pickPathOrReport("Upload", async () => {
-      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { open } = await import("@/services/nativeDialog");
       return open({ title: "Select file to upload", multiple: false });
     });
     if (!localPath) return;

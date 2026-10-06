@@ -6,8 +6,7 @@ display_name: "App"
 
 tests:
   - id: MT-APP-01
-    release_gate: true
-    manual_reason: "OS-native save/open dialog"
+    automation_issue: 4127
     name: "Backup and restore through native file dialogs with restart"
     pr: 3509
     platforms: [all]

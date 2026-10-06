@@ -38,6 +38,10 @@ pub mod shell_integration;
 pub mod spawn;
 pub mod ssh_config_import;
 pub mod ssh_host_key;
+// Test-bridge-only fs grant for stubbed native dialogs (#4122). Gated
+// (SEC-005) so release builds have no command that widens the fs scope.
+#[cfg(feature = "test-bridge")]
+pub mod test_dialog;
 #[cfg(test)]
 mod test_http_server;
 pub mod transfer;

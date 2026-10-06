@@ -268,13 +268,13 @@ mod tests {
     /// If the config changes, this constant must change too — the drift guard
     /// below enforces it, so the relaxation tests widen the *current* production
     /// directive, not a stale one.
-    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc:; worker-src 'self'; child-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
+    const PROD_CSP: &str = "default-src 'self'; script-src 'self' plugin://localhost 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc:; worker-src 'self'; child-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
 
     /// The production CSP on Windows: `tauri.conf.json` patched by
     /// `tauri.windows.conf.json`, which swaps the WebKit custom-scheme origins
     /// for their WebView2 forms in `script-src` (#3627) and `connect-src`
     /// (#3628). Drift-guarded like [`PROD_CSP`].
-    const PROD_CSP_WINDOWS: &str = "default-src 'self'; script-src 'self' http://plugin.localhost 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://ipc.localhost; worker-src 'self'; child-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
+    const PROD_CSP_WINDOWS: &str = "default-src 'self'; script-src 'self' http://plugin.localhost 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://ipc.localhost; worker-src 'self'; child-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'";
 
     #[test]
     fn relax_csp_adds_ws_sources_to_connect_src() {

@@ -1,6 +1,9 @@
 pub mod auto_lock;
+pub mod biometric_slot;
+pub mod biometric_types;
 pub mod biometric_unlock;
 pub mod crypto;
+pub mod hw_key;
 pub mod keychain_index;
 pub mod manager;
 pub mod master_password;
