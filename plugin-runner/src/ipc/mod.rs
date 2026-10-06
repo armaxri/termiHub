@@ -27,7 +27,8 @@ pub use codec::{
 };
 pub use messages::{
     Alive, Cancel, Configure, CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize,
-    SandboxReport, SessionError, SessionFailed, SessionRef, WireError, WireToolchain,
+    ResourceLimits, SandboxReport, SessionError, SessionFailed, SessionRef, WireError,
+    WireToolchain,
 };
 
 /// The protocol version. The runner announces it in [`Hello`]; the host refuses

@@ -5,6 +5,7 @@
 //! runner → host  Hello
 //! host → runner  Configure
 //! runner → host  SandboxReport      (phase 1: nothing enforced yet)
+//! runner         resource limits     (setrlimit, #4184)
 //! runner         load_plugin_library (digest pin, ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)
 //! ...            CreateSession / Input / Resize / Close / Cancel / Ping
@@ -16,6 +17,7 @@
 //! writes `Output` frames from whatever thread the plugin calls it on.
 
 mod channel;
+mod limits;
 mod shim;
 
 use std::collections::HashMap;
@@ -96,6 +98,10 @@ pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
         .is_err()
     {
         return exit::PROTOCOL;
+    }
+    // Resource limits (#4184) bind the plugin from its first mapped byte.
+    for (limit, error) in limits::apply(&configure.limits) {
+        eprintln!("termihub-plugin-runner: could not apply {limit}: {error}");
     }
     let library = match load(&configure) {
         Ok(library) => library,
