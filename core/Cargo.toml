@@ -274,6 +274,15 @@ serial_test = "3"
 # CI gate then fails on stale output. Matches the version wired for `src-tauri`.
 ts-rs = "12"
 
+[target.'cfg(windows)'.dev-dependencies]
+# `tests/sideloaded_conpty.rs` (#4130): preload the staged `conpty.dll` by full
+# path (`LoadLibraryW`) and turn on VT output in its PTY child (console APIs).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+] }
+
 [features]
 default = []
 # Structured logging for the always-compiled core modules that emit diagnostics
