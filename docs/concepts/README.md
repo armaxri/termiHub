@@ -111,6 +111,7 @@ Not started yet — realistic and planned for the near to medium term.
 | [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — a custom icon already ships, but not the concept's design; app-icon direction is an open maintainer call (UI-icon family still unbuilt) |
 | [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                                      |
 | [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                 |
+| [vnc-clipboard-file-transfer.html](backlog/vnc-clipboard-file-transfer.html)                               | VNC file transfer over the connection's SSH-tunnel SFTP / agent side channel instead of an RFB extension (#3770)                                                         |
 
 ---
 

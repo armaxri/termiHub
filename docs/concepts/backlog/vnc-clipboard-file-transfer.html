@@ -1,0 +1,1842 @@
+<!doctype html>
+<!--
+  Single-file concept: VNC clipboard / file transfer (#3770).
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.html.
+
+  Decision recorded here: do NOT implement an RFB file-transfer extension; move
+  files over the connection's existing SSH tunnel (SFTP) or agent side channel.
+
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/backlog/vnc-clipboard-file-transfer.html
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VNC File Transfer via Side Channel (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Shared remote-desktop mockup styles, copied from
+         implemented/remote-desktop-sessions.html (theme vars only). */
+      /* Mockup-only structural styles for the shared graphical remote-desktop
+         surface, floating toolbar, and connecting/reconnect/view-only overlays.
+         Theme vars only — no new colors. These map to the real shared components
+         (RemoteDesktopCanvas / RemoteDesktopToolbar), NOT to a per-protocol one. */
+      .rd-surface {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #05070b; /* plain dark remote-desktop region — NOT a screenshot */
+        background-image:
+          linear-gradient(0deg, transparent 23px, rgba(255, 255, 255, 0.018) 24px),
+          linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.018) 24px);
+        background-size: 24px 24px;
+        overflow: hidden;
+      }
+      .rd-surface__label {
+        color: var(--text-disabled);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        user-select: none;
+      }
+      .rd-bar {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 6px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        color: var(--text-secondary);
+        font-size: 12px;
+        z-index: 3;
+      }
+      .rd-bar__host {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+        color: var(--text-primary);
+      }
+      .rd-bar__res {
+        padding: 0 6px;
+        border-left: 1px solid var(--border-primary);
+        white-space: nowrap;
+      }
+      .rd-bar__btn {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .rd-bar__btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .rd-bar__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 6px;
+        border-left: 1px solid var(--border-primary);
+        color: var(--color-warning);
+      }
+      .rd-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: rgba(15, 17, 23, 0.82);
+        color: var(--text-primary);
+        z-index: 4;
+        text-align: center;
+      }
+      .rd-overlay__icon .li {
+        width: 30px;
+        height: 30px;
+        color: var(--accent-color);
+      }
+      .rd-overlay__title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .rd-overlay__sub {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .spin {
+        animation: rdspin 1.1s linear infinite;
+        transform-origin: 50% 50%;
+      }
+      @keyframes rdspin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      /* Schema-driven editor mockup (real form is DynamicForm). Layout altitude
+         only, theme vars only — shows the shared field base + protocol rows. */
+      .editor {
+        width: 560px;
+        max-width: 100%;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+      }
+      .editor__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        font-weight: 600;
+      }
+      .editor__body {
+        padding: 14px;
+      }
+      .form-group {
+        margin: 0 0 16px;
+      }
+      .form-group__title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        padding-bottom: 4px;
+        margin: 0 0 10px;
+      }
+      .form-group__title .tag {
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 600;
+        color: var(--accent-color);
+      }
+      .field {
+        display: grid;
+        grid-template-columns: 130px 1fr;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 8px;
+      }
+      .field__label {
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .input,
+      .select {
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .input--mono {
+        font-family: var(--font-mono);
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        color: var(--text-primary);
+        font-size: 12px;
+      }
+      .check-row .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 14px;
+      }
+      .check-row--on .check {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .check-row .check .li {
+        width: 10px;
+        height: 10px;
+        stroke-width: 3;
+      }
+      .warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--color-warning);
+        font-size: 11px;
+      }
+      .caret .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+      .supersedes {
+        border-left: 3px solid var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+      }
+      /* ── New for this concept: drop target, Files popover, clipboard panel ── */
+      .rd-bar__host {
+        white-space: nowrap;
+      }
+      .rd-drop {
+        position: absolute;
+        inset: 42px 10px 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 2px dashed var(--accent-color);
+        border-radius: var(--radius-md);
+        background: color-mix(in srgb, var(--accent-color) 12%, rgba(15, 17, 23, 0.8));
+        color: var(--text-primary);
+        z-index: 4;
+        text-align: center;
+      }
+      .rd-drop--off {
+        border-color: var(--text-disabled);
+        background: rgba(15, 17, 23, 0.85);
+      }
+      .rd-drop .li {
+        width: 28px;
+        height: 28px;
+        color: var(--accent-color);
+      }
+      .rd-drop--off .li {
+        color: var(--text-disabled);
+      }
+      .rd-drop__title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .rd-drop__sub {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .rd-drop__sub code {
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+      }
+      .rd-bar__btn--active {
+        color: var(--text-primary);
+        background: var(--bg-hover);
+      }
+      .rd-pop {
+        position: absolute;
+        top: 40px;
+        left: 50%;
+        transform: translateX(10px);
+        width: 280px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        padding: 8px;
+        font-size: 12px;
+        color: var(--text-primary);
+        z-index: 5;
+      }
+      .rd-pop__title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-weight: 600;
+        margin: 0 0 6px;
+      }
+      .rd-pop__route {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px;
+        margin: 0 0 8px;
+        border-radius: var(--radius-sm);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      .rd-pop__route .li {
+        width: 14px;
+        height: 14px;
+        color: var(--color-success, var(--accent-color));
+        flex: 0 0 14px;
+      }
+      .rd-pop__route code {
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+      }
+      .rd-pop__row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 6px;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      .rd-pop__row:hover {
+        background: var(--bg-hover);
+      }
+      .rd-pop__row .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+      .rd-pop__row .hint {
+        margin-left: auto;
+        color: var(--text-disabled);
+        font-size: 11px;
+      }
+      .rd-pop__sep {
+        height: 1px;
+        background: var(--border-secondary);
+        margin: 6px 0;
+      }
+      .rd-xfer {
+        display: grid;
+        grid-template-columns: 14px 1fr auto;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .rd-xfer .li {
+        width: 12px;
+        height: 12px;
+      }
+      .rd-xfer__bar {
+        grid-column: 2 / 4;
+        height: 3px;
+        border-radius: 2px;
+        background: var(--bg-tertiary);
+        overflow: hidden;
+      }
+      .rd-xfer__bar span {
+        display: block;
+        height: 100%;
+        background: var(--accent-color);
+      }
+      .rd-tip {
+        position: absolute;
+        top: 40px;
+        left: 50%;
+        transform: translateX(10px);
+        max-width: 300px;
+        padding: 6px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        box-shadow: var(--shadow-overlay);
+        color: var(--text-primary);
+        font-size: 11px;
+        z-index: 5;
+      }
+      .rd-bar__btn--disabled {
+        color: var(--text-disabled);
+        cursor: not-allowed;
+      }
+      .field__hint {
+        grid-column: 2;
+        margin-top: -4px;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 0 6px;
+        border-radius: 8px;
+        font-size: 11px;
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+      }
+      .pill--yes {
+        color: var(--color-success, #4ec9b0);
+      }
+      .pill--no {
+        color: var(--color-error, #f48771);
+      }
+      .pill--part {
+        color: var(--color-warning);
+      }
+      .recommend {
+        border-left: 3px solid var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+        padding: 10px 14px;
+        border-radius: 4px;
+        margin: 12px 0;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-maximize" viewBox="0 0 24 24">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      </symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24">
+        <path d="M10 8h.01" />
+        <path d="M12 12h.01" />
+        <path d="M14 8h.01" />
+        <path d="M16 12h.01" />
+        <path d="M18 8h.01" />
+        <path d="M6 8h.01" />
+        <path d="M7 16h10" />
+        <path d="M8 12h.01" />
+        <rect width="20" height="16" x="2" y="4" rx="2" />
+      </symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24">
+        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24">
+        <path
+          d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"
+        />
+        <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+        <path
+          d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"
+        />
+        <path d="m2 2 20 20" />
+      </symbol>
+      <symbol id="i-scaling" viewBox="0 0 24 24">
+        <path d="M12 3H5a2 2 0 0 0-2 2v14" />
+        <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+        <path d="M21 14v5a2 2 0 0 1-2 2h-5" />
+        <path d="M3 21 21 3" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path d="M12 3v12" />
+        <path d="m17 8-5-5-5 5" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      </symbol>
+      <symbol id="i-shield-check" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <polyline points="4 17 10 11 4 5" />
+        <line x1="12" x2="20" y1="19" y2="19" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>VNC File Transfer via the Connection's Side Channel</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/3770">#3770</a> (follow-up to
+            <a href="https://github.com/armaxri/termiHub/issues/3472">#3472</a>)</span
+          >
+          <span><code>docs/concepts/backlog/vnc-clipboard-file-transfer.html</code></span>
+        </div>
+      </header>
+
+      <div class="recommend">
+        <p>
+          <strong>Recommendation — option (b): no RFB file-transfer extension.</strong> Move files
+          over the side channel the VNC connection <em>already has</em>: the
+          <strong>SSH tunnel</strong> (open an SFTP subsystem on the same authenticated SSH session)
+          or the <strong>agent</strong> (its <code>connection.files.*</code> service on the agent
+          host). Drag files onto the VNC canvas to upload; a toolbar <strong>Files</strong> button
+          uploads or opens the existing file browser on that host for downloads. Off by default,
+          per-connection opt-in, never in view-only sessions. Direct VNC connections with neither an
+          SSH tunnel nor an agent get no file transfer (a later phase may let them link a saved SSH
+          connection).
+        </p>
+      </div>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#survey">Survey: what VNC servers actually ship</a></li>
+          <li><a href="#options">Options considered &amp; decision</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#risks">Risks</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          RDP sessions can move files through the clipboard (CLIPRDR
+          <code>FileGroupDescriptorW</code>, #1765 / #1778 / #1779 / #1793). VNC cannot: #3472
+          implemented the RFB <em>Extended Clipboard</em> for UTF-8 text and
+          <code>dib</code> images, but its <code>files</code> format bit is, in the community
+          specification's own words, <em>"Currently reserved but not defined"</em> — no file list,
+          no names, no sizes, no chunking. No server sends or accepts it. #3770 asks which mechanism
+          VNC should use instead, or whether to support none.
+        </p>
+        <p>
+          The survey below shows that every RFB-level file-transfer mechanism is either vendor
+          proprietary and closed (RealVNC, Apple), or limited to one Windows server family with an
+          undocumented, CVE-laden message set (UltraVNC, TightVNC — and their two TightVNC
+          generations are mutually incompatible). The servers termiHub users most often reach —
+          TigerVNC, x11vnc as shipped, wayvnc, GNOME/KDE, macOS Screen Sharing — expose
+          <strong>none</strong> of them to a third-party viewer. What those hosts almost always do
+          have is <strong>SSH</strong>, and termiHub's VNC connections already ride SSH (the
+          editor's <em>SSH Tunnel</em> group) or an agent (<a
+            href="https://github.com/armaxri/termiHub/issues/3241"
+            >#3241</a
+          >, port-forward tunnel). So the file path should be that side channel, not RFB.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Drag-and-drop a local file onto a VNC session and have it land on the remote desktop
+            host, with progress, when the connection has an SSH tunnel or an agent.
+          </li>
+          <li>
+            Fetch files from that host back to the local machine using the existing file browser and
+            transfer queue — no second implementation of browsing, progress or cancel.
+          </li>
+          <li>
+            Keep the RDP bounds philosophy: opt-in and off by default, never in view-only sessions,
+            remote-chosen names never trusted, bytes move only on an explicit user gesture,
+            streaming (no whole-file buffering).
+          </li>
+          <li>Zero new untrusted parser surface in the RFB client (<code>vendor/vnc-rs</code>).</li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Implementing UltraVNC <code>rfbFileTransfer</code>, either TightVNC file-transfer
+            protocol, RealVNC or Apple extensions, or inventing a <code>files</code> layout for the
+            Extended Clipboard.
+          </li>
+          <li>
+            True <em>clipboard</em> semantics for files (copy in the remote file manager, paste
+            locally). RFB gives no signal that the remote copied files; the remote-side gesture is
+            "pick in the browser" instead.
+          </li>
+          <li>
+            File transfer for direct VNC connections without SSH tunnel or agent in the first phases
+            (see Phase 4 for an optional linked-SSH-connection route).
+          </li>
+          <li>Changing the RDP clipboard file transfer.</li>
+        </ul>
+      </section>
+
+      <!-- ── Survey ─────────────────────────────────────────────────── -->
+      <section>
+        <h2 id="survey">
+          Survey: what VNC servers actually ship <a class="anchor" href="#survey">#</a>
+        </h2>
+        <p>Researched 2026-10 (sources at the end of this section).</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Server</th>
+                <th>Typical termiHub target</th>
+                <th>RFB file transfer offered to third-party viewers</th>
+                <th>SSH usually available?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>TigerVNC</strong> (Xvnc, x0vncserver, winvnc)</td>
+                <td>Linux desktops, VMs, containers — the most common case</td>
+                <td>
+                  <span class="pill pill--no">None</span> File transfer was dropped long ago;
+                  request TigerVNC#419 closed as duplicate, never implemented. Extended Clipboard:
+                  text/rtf/html/dib only.
+                </td>
+                <td><span class="pill pill--yes">Yes</span> (Linux)</td>
+              </tr>
+              <tr>
+                <td><strong>x11vnc</strong> / libvncserver</td>
+                <td>Sharing a real X display, Raspberry Pi, embedded</td>
+                <td>
+                  <span class="pill pill--part">Opt-in, either/or</span>
+                  <code>-ultrafilexfer</code> (forces RFB 3.6 + <code>-permitfiletransfer</code>)
+                  <em>or</em> <code>-tightfilexfer</code> — not both. Off by default; as root it
+                  grants viewers root file access. libvncserver's FT code had heap overflows
+                  (CVE-2018-15127, earlier stack overflows).
+                </td>
+                <td><span class="pill pill--yes">Yes</span></td>
+              </tr>
+              <tr>
+                <td><strong>wayvnc</strong>, GNOME Remote Desktop (VNC), KRFB</td>
+                <td>Wayland desktops</td>
+                <td><span class="pill pill--no">None</span></td>
+                <td><span class="pill pill--yes">Yes</span></td>
+              </tr>
+              <tr>
+                <td><strong>macOS Screen Sharing</strong></td>
+                <td>Macs</td>
+                <td>
+                  <span class="pill pill--no">Apple-only</span> drag-and-drop works only between
+                  Apple's Screen Sharing / ARD clients over undocumented extensions.
+                </td>
+                <td><span class="pill pill--part">Often</span> (Remote Login)</td>
+              </tr>
+              <tr>
+                <td><strong>RealVNC</strong> Server / Connect</td>
+                <td>Raspberry Pi OS (historically), corporate Windows/macOS</td>
+                <td>
+                  <span class="pill pill--no">Proprietary</span> closed-spec RFB 6 features, only
+                  between RealVNC products; third-party viewers get a lower protocol version without
+                  premium features.
+                </td>
+                <td><span class="pill pill--part">Varies</span></td>
+              </tr>
+              <tr>
+                <td><strong>UltraVNC</strong></td>
+                <td>Windows PCs, industrial/HMI boxes</td>
+                <td>
+                  <span class="pill pill--part">Yes, vendor-specific</span> message type 7
+                  <code>rfbFileTransfer</code> family (dir listing, header, packets, offer,
+                  <code>rfbCommand</code> delete/rename/mkdir). Defined only by source code;
+                  server-supplied Windows paths; heap overflows CVE-2019-8271/8273/8274.
+                </td>
+                <td><span class="pill pill--part">Sometimes</span> (Windows OpenSSH)</td>
+              </tr>
+              <tr>
+                <td><strong>TightVNC</strong></td>
+                <td>Windows PCs</td>
+                <td>
+                  <span class="pill pill--part">Yes, two incompatible versions</span> 1.3.x uses the
+                  "Tight" capability messages (<code>FTC_LSRQ</code>, <code>FTS_LSDT</code>, … codes
+                  130–136, registered but no layout in the spec); 2.x uses a different, incompatible
+                  protocol.
+                </td>
+                <td><span class="pill pill--part">Sometimes</span> (Windows OpenSSH)</td>
+              </tr>
+              <tr>
+                <td>Extended Clipboard <code>files</code></td>
+                <td>—</td>
+                <td>
+                  <span class="pill pill--no">Undefined</span> "Currently reserved but not defined"
+                  in rfbproto; no vendor layout found.
+                </td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Reading:</strong> an RFB mechanism would cover UltraVNC and some TightVNC hosts on
+          Windows (plus x11vnc only if its operator turned it on), and nothing on the Linux and
+          macOS servers that make up the bulk of SSH-centric termiHub use. The side channel covers
+          every host that runs sshd or a termiHub agent — including those Windows boxes once OpenSSH
+          is enabled.
+        </p>
+        <p class="mockup-note">
+          Sources:
+          <a href="https://github.com/rfbproto/rfbproto/blob/master/rfbproto.rst"
+            >rfbproto (Extended Clipboard, message-type registry)</a
+          >, <a href="https://github.com/TigerVNC/tigervnc/issues/419">TigerVNC#419</a>,
+          <a href="https://linux.die.net/man/1/x11vnc">x11vnc(1)</a>,
+          <a
+            href="https://www.keysight.com/us/en/strikes/exploits/vnc/cve_2018_15127_libvnc_file_transfer_heap_overflow.xml"
+            >CVE-2018-15127</a
+          >,
+          <a
+            href="https://ics-cert.kaspersky.com/vulnerabilities/klcert-19-018-ultravnc-heap-based-buffer-overflow/"
+            >UltraVNC FT overflows (KLCERT-19-018…021)</a
+          >,
+          <a
+            href="https://help.realvnc.com/hc/en-us/articles/36060594862365-Connecting-to-Third-Party-VNC-Servers"
+            >RealVNC third-party servers</a
+          >, <a href="https://www.tightvnc.com/announce-2.0beta2.php">TightVNC 2.0 (new FT)</a>,
+          <a href="https://github.com/novnc/noVNC/issues/169">noVNC#169 (open since 2012)</a>.
+        </p>
+      </section>
+
+      <!-- ── Options ────────────────────────────────────────────────── -->
+      <section>
+        <h2 id="options">
+          Options considered &amp; decision <a class="anchor" href="#options">#</a>
+        </h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Coverage</th>
+                <th>Security / cost</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>(a1) UltraVNC <code>rfbFileTransfer</code></td>
+                <td>UltraVNC servers; x11vnc only with <code>-ultrafilexfer</code></td>
+                <td>
+                  Spec is source code; server-chosen paths and names, server-driven dir listings,
+                  remote <code>rfbCommand</code> semantics; both ends have FT CVE history; new
+                  message loop in the <code>vnc-rs</code> fork plus forcing RFB 3.6 on x11vnc.
+                </td>
+                <td>Rejected</td>
+              </tr>
+              <tr>
+                <td>(a2) TightVNC file transfer</td>
+                <td>
+                  TightVNC 1.3 <em>or</em> 2.x (incompatible), x11vnc with
+                  <code>-tightfilexfer</code>
+                </td>
+                <td>
+                  Two protocols to support for one vendor; requires Tight security-type capability
+                  negotiation the fork does not do.
+                </td>
+                <td>Rejected</td>
+              </tr>
+              <tr>
+                <td>(a3) RealVNC / (a4) Apple</td>
+                <td>Own clients only</td>
+                <td>Closed, undocumented; would need reverse engineering.</td>
+                <td>Infeasible</td>
+              </tr>
+              <tr>
+                <td>(a5) Define our own Extended Clipboard <code>files</code> layout</td>
+                <td>No server</td>
+                <td>Interoperates with nothing.</td>
+                <td>Rejected</td>
+              </tr>
+              <tr class="supersedes">
+                <td><strong>(b) SSH-tunnel SFTP / agent side channel</strong></td>
+                <td>
+                  Every VNC connection with the SSH Tunnel enabled or hosted under an agent —
+                  independent of the VNC server brand
+                </td>
+                <td>
+                  Reuses audited code: SSH auth + host-key trust, SFTP ops, agent
+                  <code>connection.files.*</code>, the transfer queue. No new RFB parsing.
+                </td>
+                <td><strong>Chosen</strong></td>
+              </tr>
+              <tr>
+                <td>(c) Won't-do</td>
+                <td>—</td>
+                <td>
+                  Cheapest, but drag-to-upload is a common remote-desktop expectation and (b) is
+                  mostly wiring of parts that exist.
+                </td>
+                <td>Fallback if (b) is declined</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Why the side channel wins: coverage by route</span>
+          <pre class="mermaid">
+flowchart LR
+    U[User drops a file on a VNC tab] --> R{How does this VNC<br/>connection reach the host?}
+    R -->|SSH Tunnel group enabled| S[SFTP on the tunnel's SSH session<br/>works with ANY VNC server]
+    R -->|Hosted under an agent| A[Agent connection.files.*<br/>works with ANY VNC server]
+    R -->|Direct TCP| D[No side channel<br/>feature unavailable]
+    D -.->|Phase 4, optional| L[Linked saved SSH connection]
+    X[RFB extensions] -.->|rejected| XU[UltraVNC / TightVNC only<br/>Windows, CVE history]
+          </pre>
+        </div>
+        <p>
+          <strong>Revisit trigger for (a1):</strong> if users report a real need for Windows
+          UltraVNC hosts that cannot run OpenSSH or an agent (industrial HMIs are the plausible
+          case), reopen as a separate concept scoped to UltraVNC only, receive-only, with the
+          RDP-style sanitiser and caps. Not before.
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          File transfer adds <strong>three</strong> surfaces to the shared remote-desktop view
+          (<code>RemoteDesktopTab</code> / <code>RemoteDesktopToolbar</code>) and one setting to the
+          VNC connection editor. Nothing changes in the Clipboard panel: its text/image behaviour
+          (#3472) stays as is, and its "Remote files" block remains RDP-only because it is driven by
+          a real remote clipboard copy, which VNC cannot observe.
+        </p>
+        <ol>
+          <li>
+            <strong>Drop target on the canvas.</strong> Dragging files from the OS over a VNC tab
+            shows a dashed overlay naming the exact destination (folder, host, route). Dropping
+            uploads; the overlay never appears for in-app drags (tabs, panels).
+          </li>
+          <li>
+            <strong>Files button in the floating toolbar</strong> (lucide <code>folder-open</code>,
+            after Clipboard). Opens a small popover: route line, <em>Upload files…</em>,
+            <em>Upload to folder…</em>, <em>Browse remote files</em>, and the session's in-flight
+            transfers.
+          </li>
+          <li>
+            <strong>Browse remote files</strong> opens the existing File Browser sidebar rooted at
+            the destination folder on the side-channel host — downloads, uploads, cancel and
+            progress all reuse the file browser and the Transfers queue.
+          </li>
+        </ol>
+
+        <div class="mockup-section">
+          <h3>Mockup — drag-over states on a VNC tab</h3>
+          <div class="mockup-note">
+            Shown while OS files are dragged over the canvas. The route decides the copy; the
+            disabled state explains why and where to enable it, and a drop there is ignored.
+          </div>
+          <div class="states">
+            <div>
+              <div class="state-label">1 · Via SSH tunnel (same host)</div>
+              <div class="app" style="height: 300px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">VNC: tiger-box :1</span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-bar">
+                            <span class="rd-bar__host">
+                              <svg class="li"><use href="#i-monitor" /></svg> tiger-box
+                            </span>
+                            <span class="rd-bar__res">1920×1080</span>
+                            <button class="rd-bar__btn" title="Send Ctrl+Alt+Del">
+                              <svg class="li"><use href="#i-keyboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Clipboard">
+                              <svg class="li"><use href="#i-clipboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Files">
+                              <svg class="li"><use href="#i-folder-open" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Scaling">
+                              <svg class="li"><use href="#i-scaling" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Fullscreen">
+                              <svg class="li"><use href="#i-maximize" /></svg>
+                            </button>
+                          </div>
+                          <div class="rd-drop">
+                            <svg class="li"><use href="#i-upload" /></svg>
+                            <span class="rd-drop__title">Drop to upload 2 files</span>
+                            <span class="rd-drop__sub"
+                              >to <code>~/Desktop</code> on <code>tiger-box</code></span
+                            >
+                            <span class="rd-drop__sub">
+                              via SFTP over the SSH tunnel (arne@tiger-box)
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> tiger-box:5901 · via SSH
+                    </span>
+                  </div>
+                  <div class="status-bar__section status-bar__section--right">
+                    <span class="status-bar__item">VNC</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="state-label">2 · Via agent</div>
+              <div class="app" style="height: 300px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">VNC: lab-pi</span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-bar">
+                            <span class="rd-bar__host">
+                              <svg class="li"><use href="#i-monitor" /></svg> lab-pi
+                            </span>
+                            <span class="rd-bar__res">1920×1080</span>
+                            <button class="rd-bar__btn" title="Send Ctrl+Alt+Del">
+                              <svg class="li"><use href="#i-keyboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Clipboard">
+                              <svg class="li"><use href="#i-clipboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Files">
+                              <svg class="li"><use href="#i-folder-open" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Scaling">
+                              <svg class="li"><use href="#i-scaling" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Fullscreen">
+                              <svg class="li"><use href="#i-maximize" /></svg>
+                            </button>
+                          </div>
+                          <div class="rd-drop">
+                            <svg class="li"><use href="#i-upload" /></svg>
+                            <span class="rd-drop__title">Drop to upload report.pdf</span>
+                            <span class="rd-drop__sub"
+                              >to <code>~/Desktop</code> on <code>lab-pi</code></span
+                            >
+                            <span class="rd-drop__sub">via the termiHub agent on lab-pi</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> localhost:5900 via agent
+                      lab-pi
+                    </span>
+                  </div>
+                  <div class="status-bar__section status-bar__section--right">
+                    <span class="status-bar__item">VNC</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="state-label">3 · Unavailable (direct VNC / off / view-only)</div>
+              <div class="app" style="height: 300px">
+                <div class="app__body">
+                  <div class="terminal-view">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">VNC: win-hmi</span>
+                        <span class="tab__close"
+                          ><svg class="li"><use href="#i-x" /></svg
+                        ></span>
+                      </div>
+                    </div>
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="rd-surface">
+                          <div class="rd-bar">
+                            <span class="rd-bar__host">
+                              <svg class="li"><use href="#i-monitor" /></svg> win-hmi
+                            </span>
+                            <span class="rd-bar__res">1920×1080</span>
+                            <button class="rd-bar__btn" title="Send Ctrl+Alt+Del">
+                              <svg class="li"><use href="#i-keyboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Clipboard">
+                              <svg class="li"><use href="#i-clipboard" /></svg>
+                            </button>
+                            <button class="rd-bar__btn rd-bar__btn--disabled" title="Files">
+                              <svg class="li"><use href="#i-folder-open" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Scaling">
+                              <svg class="li"><use href="#i-scaling" /></svg>
+                            </button>
+                            <button class="rd-bar__btn" title="Fullscreen">
+                              <svg class="li"><use href="#i-maximize" /></svg>
+                            </button>
+                          </div>
+                          <div class="rd-drop rd-drop--off">
+                            <svg class="li"><use href="#i-info" /></svg>
+                            <span class="rd-drop__title">File transfer isn't available here</span>
+                            <span class="rd-drop__sub">
+                              VNC has no portable file transfer. Enable the SSH Tunnel (or host this
+                              connection under an agent) and turn on File Transfer in the connection
+                              settings.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">
+                      <svg class="li"><use href="#i-monitor" /></svg> win-hmi:5900
+                    </span>
+                  </div>
+                  <div class="status-bar__section status-bar__section--right">
+                    <span class="status-bar__item">VNC</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                The destination line is always the <em>actual</em> host the bytes go to — if the SSH
+                host is not the desktop host (state 1 with a non-loopback VNC target), it names the
+                SSH host, never the desktop.
+              </li>
+              <li>
+                In view-only sessions the overlay uses state 3 with the reason "View-only session"
+                and the Files button is hidden.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — Files popover with in-flight transfers</h3>
+          <div class="mockup-note">
+            Clicking the toolbar's Files button. The route line is the trust statement; transfers
+            mirror the global Transfers queue filtered to this session.
+          </div>
+          <div class="app" style="height: 360px">
+            <div class="app__body">
+              <div class="terminal-view">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">VNC: tiger-box :1</span>
+                    <span class="tab__close"
+                      ><svg class="li"><use href="#i-x" /></svg
+                    ></span>
+                  </div>
+                </div>
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="rd-surface">
+                      <div class="rd-bar">
+                        <span class="rd-bar__host">
+                          <svg class="li"><use href="#i-monitor" /></svg> tiger-box
+                        </span>
+                        <span class="rd-bar__res">1920×1080</span>
+                        <button class="rd-bar__btn" title="Send Ctrl+Alt+Del">
+                          <svg class="li"><use href="#i-keyboard" /></svg>
+                        </button>
+                        <button class="rd-bar__btn" title="Clipboard">
+                          <svg class="li"><use href="#i-clipboard" /></svg>
+                        </button>
+                        <button class="rd-bar__btn rd-bar__btn--active" title="Files">
+                          <svg class="li"><use href="#i-folder-open" /></svg>
+                        </button>
+                        <button class="rd-bar__btn" title="Scaling">
+                          <svg class="li"><use href="#i-scaling" /></svg>
+                        </button>
+                        <button class="rd-bar__btn" title="Fullscreen">
+                          <svg class="li"><use href="#i-maximize" /></svg>
+                        </button>
+                      </div>
+                      <div class="rd-pop">
+                        <div class="rd-pop__title">
+                          <span>Files</span>
+                          <svg class="li" style="width: 14px; height: 14px">
+                            <use href="#i-x" />
+                          </svg>
+                        </div>
+                        <div class="rd-pop__route">
+                          <svg class="li"><use href="#i-shield-check" /></svg>
+                          <span
+                            ><code>~/Desktop</code> on <code>tiger-box</code> · SFTP via SSH tunnel
+                            (host key verified)</span
+                          >
+                        </div>
+                        <div class="rd-pop__row">
+                          <svg class="li"><use href="#i-upload" /></svg> Upload files…
+                          <span class="hint">or drop on screen</span>
+                        </div>
+                        <div class="rd-pop__row">
+                          <svg class="li"><use href="#i-folder-open" /></svg> Upload to folder…
+                        </div>
+                        <div class="rd-pop__row">
+                          <svg class="li"><use href="#i-download" /></svg> Browse remote files
+                          <span class="hint">download</span>
+                        </div>
+                        <div class="rd-pop__sep"></div>
+                        <div class="rd-xfer">
+                          <svg class="li"><use href="#i-upload" /></svg>
+                          <span>dataset.tar.gz</span><span>62% · 1.2 / 1.9 GB</span>
+                          <div class="rd-xfer__bar"><span style="width: 62%"></span></div>
+                        </div>
+                        <div class="rd-xfer">
+                          <svg class="li"><use href="#i-file" /></svg>
+                          <span>notes (1).md</span><span>done</span>
+                          <div class="rd-xfer__bar"><span style="width: 100%"></span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-monitor" /></svg> tiger-box:5901 · via SSH
+                </span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item"
+                  ><svg class="li"><use href="#i-upload" /></svg> 1 transfer</span
+                >
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <strong>Upload to folder…</strong> opens the remote folder picker (the file
+                browser's directory chooser) and remembers the choice per connection for the
+                session.
+              </li>
+              <li>
+                <strong>Browse remote files</strong> reveals the File Browser sidebar on the same
+                side channel; downloading there uses the existing download-to-local flow.
+              </li>
+              <li>
+                The status-bar transfer item is the existing Transfers indicator, not a new one.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — connection editor: File Transfer setting (VNC)</h3>
+          <div class="mockup-note">
+            A new group in the VNC schema, below SSH Tunnel. Off by default. The hint line is
+            computed from the route and turns into a warning when files would land on a host other
+            than the desktop.
+          </div>
+          <div class="states">
+            <div>
+              <div class="state-label">Tunnel to the same host</div>
+              <div class="editor">
+                <div class="editor__header">
+                  <svg class="li"><use href="#i-monitor" /></svg> VNC — tiger-box
+                </div>
+                <div class="editor__body">
+                  <div class="form-group">
+                    <div class="form-group__title">SSH Tunnel</div>
+                    <div class="check-row check-row--on">
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
+                      Connect through SSH tunnel
+                    </div>
+                    <div class="field">
+                      <span class="field__label">SSH Host</span
+                      ><span class="input input--mono">tiger-box</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">VNC Host (from SSH)</span
+                      ><span class="input input--mono">localhost</span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">File Transfer <span class="tag">new</span></div>
+                    <div class="check-row check-row--on">
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
+                      Allow file transfer over the side channel
+                    </div>
+                    <div class="field">
+                      <span class="field__label">Default folder</span
+                      ><span class="input input--mono">~/Desktop</span>
+                    </div>
+                    <div class="field__hint">
+                      Files go to tiger-box via SFTP on the tunnel's SSH session. Not available in
+                      view-only sessions.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="state-label">Tunnel through a gateway</div>
+              <div class="editor">
+                <div class="editor__header">
+                  <svg class="li"><use href="#i-monitor" /></svg> VNC — office-pc
+                </div>
+                <div class="editor__body">
+                  <div class="form-group">
+                    <div class="form-group__title">SSH Tunnel</div>
+                    <div class="check-row check-row--on">
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
+                      Connect through SSH tunnel
+                    </div>
+                    <div class="field">
+                      <span class="field__label">SSH Host</span
+                      ><span class="input input--mono">bastion.corp</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">VNC Host (from SSH)</span
+                      ><span class="input input--mono">10.0.4.17</span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">File Transfer <span class="tag">new</span></div>
+                    <div class="check-row">
+                      <span class="check"></span>
+                      Allow file transfer over the side channel
+                    </div>
+                    <div class="field__hint" style="grid-column: auto">
+                      <span class="warn"
+                        ><svg class="li"><use href="#i-triangle-alert" /></svg> Files would go to
+                        bastion.corp, not to the desktop host 10.0.4.17.</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Route resolution (once per session start / reconnect)</h3>
+        <ul>
+          <li>
+            <strong>SSH tunnel route</strong> — the VNC config has <code>use_ssh_tunnel</code>.
+            Files travel on an SFTP subsystem channel opened on the <em>same</em> authenticated SSH
+            session the tunnel already holds: no second login, no new credential, and the host key
+            was already verified by the tunnel's trust flow. The file host is the SSH host.
+          </li>
+          <li>
+            <strong>Agent route</strong> — the connection carries <code>agentId</code> (#3241
+            port-forward). Files travel through the agent's host-level
+            <code>connection.files.*</code> RPCs (list/stat/read_range/write_range/mkdir, no
+            <code>connection_id</code>), the same service the file browser uses for agent hosts. The
+            file host is the agent host.
+          </li>
+          <li>
+            <strong>Same-host check</strong> — the route's file host is "the desktop host" when the
+            VNC target as seen from it is loopback (<code>localhost</code>,
+            <code>127.0.0.0/8</code>, <code>::1</code>) or equal to the SSH/agent host name. If not,
+            the feature still works when enabled, but every label names the real file host, and the
+            editor warns when the box is ticked.
+          </li>
+          <li>
+            <strong>No route</strong> — direct VNC: the Files button is disabled with a tooltip and
+            drops show the "unavailable" overlay. (Phase 4: optional linked SSH connection.)
+          </li>
+          <li>
+            Precedence if both exist (agent-hosted <em>and</em> SSH tunnel): agent, because the
+            tunnel then runs from the agent host and the agent already owns the file service.
+          </li>
+        </ul>
+
+        <h3>Upload (drop or "Upload files…")</h3>
+        <ol>
+          <li>
+            Resolve the destination folder: per-session choice → connection's Default folder (if
+            set) → <code>~/Desktop</code> if it exists → <code>~</code>. Resolved with SFTP
+            <code>realpath</code> / agent <code>stat</code>.
+          </li>
+          <li>
+            For each dropped item (files and folders, recursive; symlinks are not followed —
+            matching #1779), enqueue an upload in the existing Transfers queue keyed by this session
+            id. Bytes stream in the queue's existing chunk size; nothing is buffered whole.
+          </li>
+          <li>
+            Name collisions at the destination: <strong>keep both</strong> —
+            <code>name (1).ext</code>, mirroring RDP's dedupe; never overwrite silently.
+          </li>
+          <li>
+            Completion toast: "Uploaded 2 files to ~/Desktop on tiger-box" with
+            <em>Reveal</em> (opens Browse remote files there).
+          </li>
+        </ol>
+
+        <h3>Download ("Browse remote files")</h3>
+        <ol>
+          <li>
+            Open the File Browser sidebar on the side-channel host, rooted at the destination
+            folder. The user picks files and uses the browser's existing Download action.
+          </li>
+          <li>
+            The local destination is chosen by the user (save dialog / Downloads); the remote
+            supplies only <em>names inside a listing the user browsed</em>, and the existing
+            local-path sanitiser applies (no <code>..</code>, absolute paths, drive letters,
+            reserved device names).
+          </li>
+        </ol>
+
+        <h3>Bounds — RDP clipboard-file philosophy mapped to the side channel</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>RDP rule (#1765/#1778/#1793)</th>
+                <th>VNC side-channel equivalent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Off by default, per-connection opt-in</td>
+                <td>"Allow file transfer" in the VNC editor, default off; no global switch.</td>
+              </tr>
+              <tr>
+                <td>View-only never pushes local data</td>
+                <td>
+                  View-only hides the Files button and refuses drops — both directions, because the
+                  remote file browser can also mutate the host (rename/delete).
+                </td>
+              </tr>
+              <tr>
+                <td>Server-chosen names sanitised</td>
+                <td>
+                  Remote names only reach local paths through the existing download sanitiser; the
+                  remote never pushes files unsolicited (there is no remote-initiated direction at
+                  all).
+                </td>
+              </tr>
+              <tr>
+                <td>Sizes capped / streamed in bounded chunks</td>
+                <td>
+                  Transfers stream through the queue's chunked, cancellable path; the size is shown
+                  before and during transfer. No in-memory payload exists to cap.
+                </td>
+              </tr>
+              <tr>
+                <td>Delayed fetch — bytes move only on a paste gesture</td>
+                <td>
+                  Bytes move only on drop, Upload, or Download — an explicit gesture each time.
+                </td>
+              </tr>
+              <tr>
+                <td>Remote selects an index, never a path</td>
+                <td>
+                  Moot: paths are chosen by the local user in a picker; the remote is never asked
+                  which file to serve.
+                </td>
+              </tr>
+              <tr>
+                <td>Received files confined to one shared folder</td>
+                <td>
+                  Uploads go only where the user points (default folder shown on the overlay before
+                  drop). Downloads go only to a user-chosen local folder.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>SFTP subsystem disabled</strong> on the SSH server → first use fails with "SFTP
+            is not enabled on tiger-box"; the Files button shows a warning dot, VNC keeps running.
+          </li>
+          <li>
+            <strong>Permission denied / disk full</strong> on the destination → the transfer row
+            fails with the server's message; other queued items continue.
+          </li>
+          <li>
+            <strong>Tunnel or agent drops mid-transfer</strong> → in-flight transfers fail
+            (resumable only if the queue's relaunch logic already supports the route); VNC reconnect
+            re-resolves the route; nothing auto-retries uploads.
+          </li>
+          <li>
+            <strong>Desktop user ≠ SSH user</strong> (VNC session owned by another account) → files
+            land in the SSH user's home; the route line shows <code>user@host</code> so this is
+            visible.
+          </li>
+          <li>
+            <strong>Windows host via OpenSSH</strong> → <code>~/Desktop</code> resolves to the user
+            profile's Desktop; paths are shown as the SFTP server reports them.
+          </li>
+          <li>
+            <strong>Session closed</strong> → its queued transfers are cancelled with the session
+            (same rule as SFTP sessions keyed by session id).
+          </li>
+          <li>
+            <strong>Drag of an in-app object</strong> (tab, file-browser row) over the canvas → no
+            overlay; only OS file drags qualify. A file-browser row dragged onto the canvas is a
+            later nicety, not in scope.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">File-transfer availability for a VNC session</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Resolving: session Active
+    Resolving --> Unavailable: setting off / view-only / no route
+    Resolving --> Ready: route found (SSH or agent)
+    Ready --> Transferring: drop / Upload / Download
+    Transferring --> Ready: queue drained
+    Transferring --> Ready: item failed (others continue)
+    Ready --> Degraded: SFTP refused / agent files error
+    Degraded --> Ready: retry succeeds
+    Ready --> Resolving: VNC reconnect
+    Degraded --> Resolving: VNC reconnect
+    Unavailable --> [*]
+    Ready --> [*]: session closed (cancel queue)
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Drop-to-upload over the SSH tunnel route</span>
+          <pre class="mermaid">
+sequenceDiagram
+    actor U as User
+    participant T as RemoteDesktopTab
+    participant G as GraphicalSessionManager
+    participant V as VNC backend (tunnel)
+    participant Q as Transfers queue
+    participant H as SSH host (sshd)
+    U->>T: drag OS files over canvas
+    T->>G: remote_desktop_file_channel(session)
+    G->>V: file_side_channel()
+    V-->>G: Ssh { host, user, same_host }
+    G-->>T: route + default folder
+    T-->>U: overlay "to ~/Desktop on tiger-box"
+    U->>T: drop
+    T->>Q: enqueue uploads (session id, route, dest)
+    Q->>V: open SFTP subsystem on tunnel session
+    V->>H: channel + subsystem "sftp"
+    loop per file, per chunk
+        Q->>H: write range
+        Q-->>T: progress
+    end
+    Q-->>T: done → toast "Uploaded 2 files"
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Agent route (#3241): same UI, different carrier</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant Q as Transfers queue
+    participant A as AgentRpcClient
+    participant AG as Agent on lab-pi
+    Q->>A: connection.files.stat ~/Desktop
+    A->>AG: JSON-RPC (no connection_id = agent host fs)
+    AG-->>Q: exists, dir
+    loop chunks
+        Q->>A: connection.files.write_range
+        A->>AG: relay
+    end
+    AG-->>Q: ok
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on <code>develop</code> at concept creation (2026-10). The RFB client
+          (<code>vendor/vnc-rs</code>) is <strong>not</strong> touched; the Extended Clipboard keeps
+          skipping a <code>files</code> provide within its decompression budget (#3472).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/src/backends/vnc/config.rs</code></td>
+                <td>
+                  <strong>New fields</strong> <code>file_transfer: bool</code> (default false),
+                  <code>file_transfer_dir: Option&lt;String&gt;</code>; schema group "File Transfer"
+                  after SSH Tunnel.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/backends/vnc/tunnel.rs</code></td>
+                <td>
+                  Keep the authenticated SSH session handle reachable from the backend (today it
+                  lives only inside the forwarder task) so an SFTP channel can be opened on it via
+                  <code>ssh::sftp::open_sftp_subsystem</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/connection/graphical.rs</code></td>
+                <td>
+                  <strong>New</strong>
+                  <code
+                    >GraphicalBackend::file_side_channel() -&gt; Option&lt;FileSideChannel&gt;</code
+                  >
+                  (default <code>None</code>);
+                  <code>FileSideChannel { kind: Ssh | Agent, host, user, same_host }</code>
+                  (ts-rs exported).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/session/agent_port_forward.rs</code></td>
+                <td>
+                  Expose the agent id + target-is-loopback so the manager can build the
+                  <code>Agent</code> channel for agent-routed graphical sessions.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/session/graphical_manager.rs</code>,
+                  <code>src-tauri/src/commands/remote_desktop.rs</code>
+                </td>
+                <td>
+                  <strong>New</strong> <code>remote_desktop_file_channel(session_id)</code> and
+                  <code>remote_desktop_upload(session_id, local_paths, dest?)</code>; refuse when
+                  view-only or the setting is off (backend-enforced, not just UI).
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/files/transfer/</code>, <code>transfers_projection/</code>
+                </td>
+                <td>
+                  Accept a graphical session's side channel as a transfer endpoint (SFTP channel or
+                  agent files), keyed by the graphical session id; collision "keep both" naming.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/RemoteDesktop/RemoteDesktopTab.tsx</code>,
+                  <code>RemoteDesktopToolbar.tsx</code>, new <code>RemoteDesktopFiles.tsx</code>
+                </td>
+                <td>
+                  Drop overlay (OS file drags only, via Tauri drag-drop events), Files button +
+                  popover, "Browse remote files" → open File Browser on the channel.
+                </td>
+              </tr>
+              <tr>
+                <td>File Browser sidebar</td>
+                <td>
+                  Accept "graphical session side channel" as a source (SFTP on the tunnel session or
+                  agent host fs) so browse/download reuse it unchanged.
+                </td>
+              </tr>
+              <tr>
+                <td><code>docs/</code> user guide (remote desktop)</td>
+                <td>Document routes, the setting, and why direct VNC has no file transfer.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Phased issue breakdown</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Scope</th>
+                <th>Done when</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>1 · Backend route</strong></td>
+                <td>
+                  Config fields + schema group; <code>FileSideChannel</code> on the trait; VNC
+                  tunnel keeps its session and opens SFTP; agent-routed sessions resolve the agent
+                  channel; same-host detection; view-only/off enforcement; command
+                  <code>remote_desktop_file_channel</code>.
+                </td>
+                <td>
+                  Unit tests for route resolution (tunnel loopback / gateway / agent / direct /
+                  view-only) and an SFTP-on-tunnel integration test against the test sshd.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>2 · Drop-to-upload</strong></td>
+                <td>
+                  Upload command into the Transfers queue for both routes; drop overlay states;
+                  Files button + popover (Upload files…, Upload to folder…); toast; keep-both
+                  naming.
+                </td>
+                <td>
+                  Component tests for overlay states and view-only; queue tests for both carriers;
+                  dropping a file on a tunnelled TigerVNC session lands it in
+                  <code>~/Desktop</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>3 · Browse &amp; download</strong></td>
+                <td>
+                  "Browse remote files" opens the File Browser on the session's side channel;
+                  downloads via the existing flow; route line in the browser header.
+                </td>
+                <td>
+                  Download from both routes works with progress/cancel; sanitiser tests reused.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>4 · Linked SSH connection</strong> (optional)</td>
+                <td>
+                  For direct VNC: "File transfer via" picker linking a saved SSH connection; host
+                  mismatch warning.
+                </td>
+                <td>Only if users ask; decide after Phases 1–3 ship.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Phases 1→2→3 are sequential (each builds on the previous). Phase 2's frontend half and
+          Phase 1's backend half can be split across two PRs once the command contract is fixed.
+        </p>
+      </section>
+
+      <!-- ── Risks ──────────────────────────────────────────────────── -->
+      <section>
+        <h2 id="risks">Risks <a class="anchor" href="#risks">#</a></h2>
+        <ul>
+          <li>
+            <strong>Expectation gap</strong>: users coming from UltraVNC/TightVNC viewers expect
+            file transfer on direct connections to Windows hosts. Mitigation: the unavailable
+            overlay explains how to get it (SSH tunnel / agent); revisit trigger for (a1).
+          </li>
+          <li>
+            <strong>Wrong-host confusion</strong> with gateway tunnels. Mitigation: route line and
+            overlay always name the real file host; editor warning; same-host detection.
+          </li>
+          <li>
+            <strong>Different account</strong>: files land in the SSH user's home, which may not be
+            the VNC desktop owner's. Mitigation: <code>user@host</code> in the route line;
+            configurable default folder.
+          </li>
+          <li>
+            <strong>Tunnel refactor</strong>: keeping the SSH session reachable from
+            <code>tunnel.rs</code> touches reconnect/teardown. Mitigation: SFTP channel lifetime
+            bound to the tunnel's cancellation token; covered by Phase 1 tests.
+          </li>
+          <li>
+            <strong>Scope creep</strong> into clipboard semantics for files. Mitigation: explicitly
+            a non-goal; RFB cannot signal a remote file copy.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept vnc-clipboard-file-transfer</code>. Records the last
+            commit at which the concept and code were reconciled, plus open divergences. The concept
+            is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>VNC file transfer over SSH-tunnel SFTP / agent side channel</td>
+                <td>Not implemented; Extended Clipboard skips <code>files</code> (#3472)</td>
+                <td>Missing</td>
+                <td>Implement Phases 1–3, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
