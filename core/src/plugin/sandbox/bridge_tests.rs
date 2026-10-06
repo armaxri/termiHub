@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use termihub_plugin_api::{PluginStatus, CURRENT_PLUGIN_ABI_VERSION};
 use termihub_plugin_runner::ipc::{
-    BridgeOp, BridgeRequest, BridgeResult, ConnRef, FrameReader, Message, Sender, StreamAck,
-    StreamChunk, StreamTransport,
+    BridgeOp, BridgeReply, BridgeRequest, BridgeResult, ConnRef, FrameReader, Message, Sender,
+    StreamAck, StreamChunk, StreamTransport,
 };
 
 use super::*;
@@ -608,4 +608,69 @@ fn an_approved_connection_passes_the_socket_over_the_channel() {
     assert_eq!(&got, b"hello");
     // The slot stays reserved until the runner releases it.
     assert_eq!(shared.bridge.open_connections(), 1);
+}
+
+/// Concatenate encoded frames into one byte stream, as the runner would send
+/// them before exiting.
+fn stream_of(frames: &[Vec<u8>]) -> Vec<u8> {
+    frames.concat()
+}
+
+fn stat_frame(request_id: u64, session_id: u32, path: &str) -> Vec<u8> {
+    Message::BridgeRequest(BridgeRequest {
+        request_id,
+        session_id,
+        op: BridgeOp::Stat { path: path.into() },
+    })
+    .encode()
+    .unwrap()
+}
+
+#[test]
+fn a_malformed_bridge_request_kills_the_runner_before_anything_else_is_served() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let dir = path_str(tmp.path());
+
+    // Control: two valid requests are both answered.
+    let mut ok = Harness::new();
+    let id = ok.session(fs_perms(tmp.path()));
+    let input = stream_of(&[stat_frame(1, id, &dir), stat_frame(2, id, &dir)]);
+    Arc::clone(&ok.shared).read_loop(input.as_slice());
+    let first = ok.next_frame();
+    let second = ok.next_frame();
+    for frame in [first, second] {
+        assert!(matches!(
+            frame,
+            Message::BridgeReply(BridgeReply {
+                result: BridgeResult::Metadata { is_dir: true, .. },
+                ..
+            })
+        ));
+    }
+
+    // A BridgeRequest whose payload does not decode, then a valid one: the
+    // runner is killed at the first, so the second is never served.
+    let bad = Harness::new();
+    let id = bad.session(fs_perms(tmp.path()));
+    let mut malformed = termihub_plugin_runner::ipc::encode_frame(
+        termihub_plugin_runner::ipc::FrameKind::BridgeRequest as u8,
+        &[&[0xC1, 0x00]],
+    )
+    .unwrap();
+    malformed.extend(stat_frame(2, id, &dir));
+    Arc::clone(&bad.shared).read_loop(malformed.as_slice());
+    assert!(bad.shared.dead.load(Ordering::SeqCst));
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(bad.out.0.lock().unwrap().is_empty(), "nothing was served");
+
+    // Same for a well-formed request naming a session that never existed.
+    let hostile = Harness::new();
+    let id = hostile.session(fs_perms(tmp.path()));
+    let input = stream_of(&[stat_frame(1, id + 7, &dir), stat_frame(2, id, &dir)]);
+    Arc::clone(&hostile.shared).read_loop(input.as_slice());
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        hostile.out.0.lock().unwrap().is_empty(),
+        "nothing was served"
+    );
 }
