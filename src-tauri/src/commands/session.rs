@@ -706,6 +706,52 @@ pub async fn session_write_file(
     manager.write_file(&session_id, &path, &bytes).await
 }
 
+/// Copy a local file to a session through its file browser capability.
+///
+/// The byte-based (remote agent) upload leg of the local ↔ session copy engine
+/// (`src/services/paneTransfer.ts`). The backend reads the local file itself,
+/// so the bytes never cross IPC and the webview needs no fs-plugin access to
+/// arbitrary local paths (#3115).
+#[tauri::command]
+pub async fn session_upload_local_file(
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(
+        session_id,
+        local_path, remote_path, "Session upload from local file"
+    );
+    let path = local_path.clone();
+    let bytes = tokio::task::spawn_blocking(move || crate::files::local::read_file_bytes(&path))
+        .await
+        .map_err(|e| TerminalError::InternalError(e.to_string()))??;
+    manager.write_file(&session_id, &remote_path, &bytes).await
+}
+
+/// Copy a session file to the local disk through its file browser capability.
+///
+/// The byte-based (remote agent) download leg of the local ↔ session copy
+/// engine; the backend writes the local file itself (see
+/// [`session_upload_local_file`], #3115).
+#[tauri::command]
+pub async fn session_download_to_local_file(
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(
+        session_id,
+        remote_path, local_path, "Session download to local file"
+    );
+    let bytes = manager.read_file(&session_id, &remote_path).await?;
+    tokio::task::spawn_blocking(move || crate::files::local::write_file_bytes(&local_path, &bytes))
+        .await
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?
+}
+
 /// Delete a file via a session's file browser capability.
 #[tauri::command]
 pub async fn session_delete_file(

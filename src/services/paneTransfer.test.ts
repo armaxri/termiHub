@@ -1,7 +1,7 @@
 /**
  * Dual-pane transfer engine (PROD-007, #3558): local ↔ remote copies run
  * through the transfer queue when the session supports it (seeding a queue row
- * per file) and fall back to a byte-based round-trip otherwise; folders are
+ * per file) and fall back to a backend byte copy otherwise; folders are
  * recreated and copied recursively.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -10,8 +10,8 @@ import type { FileEntry } from "@/types/connection";
 const api = vi.hoisted(() => ({
   sessionUpload: vi.fn(),
   sessionDownload: vi.fn(),
-  sessionReadFile: vi.fn(),
-  sessionWriteFile: vi.fn(),
+  sessionUploadLocalFile: vi.fn(),
+  sessionDownloadToLocalFile: vi.fn(),
   sessionMkdir: vi.fn(),
   sessionListFiles: vi.fn(),
   localMkdir: vi.fn(),
@@ -20,8 +20,12 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("@/services/api", () => api);
 
-const fs = vi.hoisted(() => ({ readFile: vi.fn(), writeFile: vi.fn() }));
-vi.mock("@tauri-apps/plugin-fs", () => fs);
+// The engine never touches the fs plugin: a byte-based leg is copied by the
+// backend (#3115). Any import of it here would fail at runtime under the
+// capability, so the mock throws to prove it is not reached.
+vi.mock("@tauri-apps/plugin-fs", () => {
+  throw new Error("paneTransfer must not use the fs plugin (#3115)");
+});
 
 const feedback = vi.hoisted(() => ({
   seedTransferQueueRow: vi.fn(),
@@ -109,23 +113,21 @@ describe("copyBetweenPanes", () => {
     );
   });
 
-  it("falls back to a byte round-trip when the session has no transfer queue", async () => {
-    fs.readFile.mockResolvedValue(new Uint8Array([1]));
-    api.sessionReadFile.mockResolvedValue(new Uint8Array([2]));
+  it("falls back to a backend byte copy when the session has no transfer queue", async () => {
     await copyBetweenPanes({
       from: "local",
       entries: [file("/l/a")],
       destDir: "/r",
       remote: byteBased,
     });
-    expect(api.sessionWriteFile).toHaveBeenCalledWith("s1", "/r/a", new Uint8Array([1]));
+    expect(api.sessionUploadLocalFile).toHaveBeenCalledWith("s1", "/l/a", "/r/a");
     await copyBetweenPanes({
       from: "remote",
       entries: [file("/r/b")],
       destDir: "/l",
       remote: byteBased,
     });
-    expect(fs.writeFile).toHaveBeenCalledWith("/l/b", new Uint8Array([2]));
+    expect(api.sessionDownloadToLocalFile).toHaveBeenCalledWith("s1", "/r/b", "/l/b");
     expect(api.sessionUpload).not.toHaveBeenCalled();
     expect(api.sessionDownload).not.toHaveBeenCalled();
   });
@@ -197,11 +199,10 @@ describe("shared per-leg helpers (#3563)", () => {
     expect(onRegistered).toHaveBeenCalledWith("t-up");
   });
 
-  it("uploadLocalFile falls back to a byte write and reports it untracked", async () => {
-    fs.readFile.mockResolvedValue(new Uint8Array([3]));
+  it("uploadLocalFile falls back to a backend byte copy and reports it untracked", async () => {
     const tracked = await uploadLocalFile(byteBased, "/l/a", "/r/a");
     expect(tracked).toBe(false);
-    expect(api.sessionWriteFile).toHaveBeenCalledWith("s1", "/r/a", new Uint8Array([3]));
+    expect(api.sessionUploadLocalFile).toHaveBeenCalledWith("s1", "/l/a", "/r/a");
   });
 
   it("downloadToLocal seeds a download row on a queue-capable session", async () => {

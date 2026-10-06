@@ -13,8 +13,10 @@
  *   an agent with ranged file slices, #3587) registers a tracked transfer with
  *   `session_upload` / `session_download` and seeds its Transfer Queue row, so
  *   the file shows progress and can be paused, cancelled and retried;
- * - a **byte-based** session (an older agent) falls back to a blocking
- *   read/write round-trip, as the sidebar browser does.
+ * - a **byte-based** session (an older agent) falls back to a blocking copy the
+ *   backend does itself (`session_upload_local_file` /
+ *   `session_download_to_local_file`), so the webview never touches the local
+ *   file (#3115).
  *
  * A folder is recreated at the destination (an existing one is merged into)
  * and its tree copied file by file.
@@ -24,12 +26,12 @@ import {
   localListDir,
   localMkdir,
   sessionDownload,
+  sessionDownloadToLocalFile,
   sessionListFiles,
   sessionMkdir,
-  sessionReadFile,
   sessionSupportsTransferQueue,
   sessionUpload,
-  sessionWriteFile,
+  sessionUploadLocalFile,
 } from "@/services/api";
 import { runMaybeTrackedTransfer, seedTransferQueueRow } from "@/hooks/transferFeedback";
 import type { FileEntry } from "@/types/connection";
@@ -91,7 +93,7 @@ export function startQueuedDownload(
 
 /**
  * Copy one local file to a session: a queued upload on a queue-capable
- * session, a byte round-trip otherwise. Resolves to whether the leg is tracked
+ * session, a backend-side byte copy otherwise. Resolves to whether the leg is tracked
  * by the transfer queue (whose event path then owns the success toast).
  */
 export async function uploadLocalFile(
@@ -104,14 +106,13 @@ export async function uploadLocalFile(
     await startQueuedUpload(remote.sessionId, localPath, remotePath, onRegistered);
     return true;
   }
-  const { readFile } = await import("@tauri-apps/plugin-fs");
-  await sessionWriteFile(remote.sessionId, remotePath, await readFile(localPath));
+  await sessionUploadLocalFile(remote.sessionId, localPath, remotePath);
   return false;
 }
 
 /**
  * Copy one session file to the local disk: a queued download on a
- * queue-capable session, a byte round-trip otherwise. Resolves to whether the
+ * queue-capable session, a backend-side byte copy otherwise. Resolves to whether the
  * leg is tracked by the transfer queue.
  */
 export async function downloadToLocal(
@@ -125,9 +126,7 @@ export async function downloadToLocal(
     await startQueuedDownload(sessionId, remotePath, localPath, onRegistered);
     return true;
   }
-  const data = await sessionReadFile(sessionId, remotePath);
-  const { writeFile } = await import("@tauri-apps/plugin-fs");
-  await writeFile(localPath, data);
+  await sessionDownloadToLocalFile(sessionId, remotePath, localPath);
   return false;
 }
 

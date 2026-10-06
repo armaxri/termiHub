@@ -45,6 +45,8 @@ vi.mock("@/services/api", () => ({
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
   sessionWriteFile: vi.fn(() => Promise.resolve()),
+  sessionUploadLocalFile: vi.fn(() => Promise.resolve()),
+  sessionDownloadToLocalFile: vi.fn(() => Promise.resolve()),
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionMkdir: vi.fn(() => Promise.resolve()),
@@ -97,10 +99,11 @@ vi.mock("@/components/ui", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/plugin-fs", () => ({
-  readFile: vi.fn(() => Promise.resolve(new Uint8Array())),
-  writeFile: vi.fn(() => Promise.resolve()),
-}));
+// Byte-based local legs are copied by the backend (#3115); the hook must never
+// reach for the fs plugin, so importing it fails the test.
+vi.mock("@tauri-apps/plugin-fs", () => {
+  throw new Error("useSessionFileSystem must not use the fs plugin (#3115)");
+});
 
 // The Transfer Queue seed goes through the transfers bridge (see
 // transferFeedback.seedTransferQueueRow), so this is the seam that proves a
@@ -172,7 +175,11 @@ describe("useSessionFileSystem — path construction", () => {
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { sessionWriteFile } from "@/services/api";
+import {
+  sessionDownloadToLocalFile,
+  sessionUploadLocalFile,
+  sessionWriteFile,
+} from "@/services/api";
 import { useSessionFileSystem } from "./useSessionFileSystem";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
@@ -197,7 +204,7 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
     container.remove();
   });
 
-  it("calls sessionWriteFile with the correct remote path", async () => {
+  it("calls sessionUploadLocalFile with the correct remote path", async () => {
     useAppStore.setState({ sessionFileBrowserId: "sess-1" });
     seedFileBrowsers({
       session: { path: "/remote/dir", entries: [], loading: false, error: null },
@@ -218,14 +225,14 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("/local/data.csv");
     });
 
-    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
       "sess-1",
-      "/remote/dir/data.csv",
-      expect.any(Uint8Array)
+      "/local/data.csv",
+      "/remote/dir/data.csv"
     );
   });
 
-  it("calls sessionWriteFile with root-level path when sessionCurrentPath is /", async () => {
+  it("calls sessionUploadLocalFile with root-level path when sessionCurrentPath is /", async () => {
     useAppStore.setState({ sessionFileBrowserId: "sess-1" });
     seedFileBrowsers({ session: { path: "/", entries: [], loading: false, error: null } });
 
@@ -244,10 +251,10 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("/local/config.json");
     });
 
-    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
       "sess-1",
-      "/config.json",
-      expect.any(Uint8Array)
+      "/local/config.json",
+      "/config.json"
     );
   });
 
@@ -272,7 +279,7 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("/local/file.txt");
     });
 
-    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionUploadLocalFile)).not.toHaveBeenCalled();
   });
 });
 
@@ -556,12 +563,16 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     return api!;
   }
 
-  it("falls back to session_read_file for downloadFile (no dedicated channel)", async () => {
+  it("falls back to a backend byte copy for downloadFile (no dedicated channel)", async () => {
     const api = await mountHook();
     await act(async () => {
       await api.downloadFile("/remote/dir/file.txt", "file.txt");
     });
-    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("docker-1", "/remote/dir/file.txt");
+    expect(vi.mocked(sessionDownloadToLocalFile)).toHaveBeenCalledWith(
+      "docker-1",
+      "/remote/dir/file.txt",
+      "/local/save.txt"
+    );
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
   });
 
@@ -578,7 +589,7 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   });
 
   it("surfaces an error toast when a byte-based download fails", async () => {
-    vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("permission denied"));
+    vi.mocked(sessionDownloadToLocalFile).mockRejectedValueOnce(new Error("permission denied"));
     const api = await mountHook();
     await act(async () => {
       await api.downloadFile("/remote/dir/file.txt", "file.txt");
@@ -604,10 +615,10 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     await act(async () => {
       await api.uploadFileFromPath("/local/data.csv");
     });
-    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
       "docker-1",
-      "/remote/dir/data.csv",
-      expect.any(Uint8Array)
+      "/local/data.csv",
+      "/remote/dir/data.csv"
     );
     expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(toast.success).mock.calls[0][0])).toContain("data.csv");
@@ -615,7 +626,7 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   });
 
   it("surfaces an error toast when a byte-based upload fails", async () => {
-    vi.mocked(sessionWriteFile).mockRejectedValueOnce(new Error("disk full"));
+    vi.mocked(sessionUploadLocalFile).mockRejectedValueOnce(new Error("disk full"));
     const api = await mountHook();
     await act(async () => {
       await api.uploadFileFromPath("/local/data.csv");
@@ -738,7 +749,7 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
       await expect(api.uploadFile()).resolves.toBeUndefined();
     });
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Upload failed: dialog unavailable");
-    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionUploadLocalFile)).not.toHaveBeenCalled();
   });
 
   // #2469: a byte-based backend has no dedicated transfer channel, so a
@@ -1695,13 +1706,15 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
 
   describe("byte-based session", () => {
     it("download: writes the bytes locally with its own success toast", async () => {
-      const { writeFile } = await import("@tauri-apps/plugin-fs");
       const api = await mountHook(false);
       await act(async () => {
         await api.downloadFile("/remote/dir/file.txt", "file.txt");
       });
-      expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("sess-9", "/remote/dir/file.txt");
-      expect(vi.mocked(writeFile)).toHaveBeenCalledWith("/local/save.txt", expect.any(Uint8Array));
+      expect(vi.mocked(sessionDownloadToLocalFile)).toHaveBeenCalledWith(
+        "sess-9",
+        "/remote/dir/file.txt",
+        "/local/save.txt"
+      );
       expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Downloading file.txt…");
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Downloaded file.txt", {
         id: "toast-1",
@@ -1710,7 +1723,7 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
     });
 
     it("download: a failure names the file in the error toast", async () => {
-      vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("permission denied"));
+      vi.mocked(sessionDownloadToLocalFile).mockRejectedValueOnce(new Error("permission denied"));
       const api = await mountHook(false);
       await act(async () => {
         await api.downloadFile("/remote/dir/file.txt", "file.txt");
@@ -1727,10 +1740,10 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
       await act(async () => {
         await api.uploadFile();
       });
-      expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
         "sess-9",
-        "/remote/dir/data.csv",
-        expect.any(Uint8Array)
+        "/local/data.csv",
+        "/remote/dir/data.csv"
       );
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded data.csv", {
         id: "toast-1",
@@ -1740,7 +1753,7 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
 
     it("upload button: a failure names the file and does not refresh", async () => {
       await pickForUpload("/local/data.csv");
-      vi.mocked(sessionWriteFile).mockRejectedValueOnce(new Error("read-only"));
+      vi.mocked(sessionUploadLocalFile).mockRejectedValueOnce(new Error("read-only"));
       const api = await mountHook(false);
       await act(async () => {
         await api.uploadFile();
@@ -1756,10 +1769,10 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
       await act(async () => {
         await api.uploadFileFromPath("/local/data.csv");
       });
-      expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
         "sess-9",
-        "/remote/dir/data.csv",
-        expect.any(Uint8Array)
+        "/local/data.csv",
+        "/remote/dir/data.csv"
       );
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded data.csv", {
         id: "toast-1",
@@ -1883,17 +1896,20 @@ describe("useSessionFileSystem — folder in a Download selection (#3944)", () =
   });
 
   it("byte-based: writes every file of the folder locally with its own success toast", async () => {
-    const { writeFile } = await import("@tauri-apps/plugin-fs");
     await pickTargetFolder("/local/target");
     const api = await mountHook(false);
     await act(async () => {
       await api.downloadFile("/remote/dir/sub", "sub", true);
     });
-    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalledWith("sess-9", "/remote/dir/sub");
-    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("sess-9", "/remote/dir/sub/notes.txt");
-    expect(vi.mocked(writeFile)).toHaveBeenCalledWith(
-      "/local/target/sub/notes.txt",
-      expect.any(Uint8Array)
+    expect(vi.mocked(sessionDownloadToLocalFile)).not.toHaveBeenCalledWith(
+      "sess-9",
+      "/remote/dir/sub",
+      expect.anything()
+    );
+    expect(vi.mocked(sessionDownloadToLocalFile)).toHaveBeenCalledWith(
+      "sess-9",
+      "/remote/dir/sub/notes.txt",
+      "/local/target/sub/notes.txt"
     );
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Downloaded sub", { id: "toast-1" });
   });
@@ -2086,16 +2102,16 @@ describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
     await act(async () => {
       await api.uploadFileFromPath("/local/photos");
     });
-    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalledWith(
+    expect(vi.mocked(sessionUploadLocalFile)).not.toHaveBeenCalledWith(
       "sess-7",
-      "/remote/dir/photos",
+      "/local/photos",
       expect.anything()
     );
     expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("sess-7", "/remote/dir/photos");
-    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(sessionUploadLocalFile)).toHaveBeenCalledWith(
       "sess-7",
-      "/remote/dir/photos/a.jpg",
-      expect.any(Uint8Array)
+      "/local/photos/a.jpg",
+      "/remote/dir/photos/a.jpg"
     );
     expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Uploaded photos", { id: "toast-1" });
@@ -2114,7 +2130,7 @@ describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
       { id: "toast-1" }
     );
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
-    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionUploadLocalFile)).not.toHaveBeenCalled();
   });
 
   it("a dropped file still takes the single-file upload", async () => {

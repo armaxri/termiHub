@@ -47,6 +47,8 @@ vi.mock("@/services/api", () => ({
   sessionMkdir: vi.fn(() => Promise.resolve()),
   sessionUpload: vi.fn(() => Promise.resolve(1)),
   sessionWriteFile: vi.fn(() => Promise.resolve()),
+  sessionUploadLocalFile: vi.fn(() => Promise.resolve()),
+  sessionDownloadToLocalFile: vi.fn(() => Promise.resolve()),
   // A session → local folder paste is recorded in the interrupted-paste manifest (#3912).
   folderPasteBegin: vi.fn(() => Promise.resolve("paste-1")),
   folderPasteEnd: vi.fn(() => Promise.resolve()),
@@ -57,9 +59,6 @@ vi.mock("@/services/api", () => ({
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionSupportsRemoteCopy: vi.fn(() => Promise.resolve(false)),
 }));
-
-const fsMock = vi.hoisted(() => ({ readFile: vi.fn(), writeFile: vi.fn(() => Promise.resolve()) }));
-vi.mock("@tauri-apps/plugin-fs", () => fsMock);
 
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
@@ -321,7 +320,7 @@ import {
   sessionDeleteFile,
   sessionDownload,
   sessionListFiles,
-  sessionReadFile,
+  sessionDownloadToLocalFile,
   sessionSupportsTransferQueue,
   vscodeOpenLocal,
 } from "@/services/api";
@@ -868,7 +867,7 @@ describe("useLocalFileSystem — action wiring", () => {
       expect(currentFileBrowsersView().clipboard?.entries[0].name).toBe("a.log");
     });
 
-    it("falls back to a byte round-trip for a session without a transfer queue", async () => {
+    it("falls back to a backend byte copy for a session without a transfer queue", async () => {
       vi.mocked(sessionSupportsTransferQueue).mockResolvedValueOnce(false);
       const api = await mountHook("/home/user");
       setRemoteClipboard([remoteFile("b.txt")]);
@@ -876,8 +875,11 @@ describe("useLocalFileSystem — action wiring", () => {
         await api.pasteEntry();
       });
       expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
-      expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("ssh-1", "/srv/b.txt");
-      expect(fsMock.writeFile).toHaveBeenCalledWith("/home/user/b.txt", new Uint8Array([7]));
+      expect(vi.mocked(sessionDownloadToLocalFile)).toHaveBeenCalledWith(
+        "ssh-1",
+        "/srv/b.txt",
+        "/home/user/b.txt"
+      );
       expect(toastMock.success).toHaveBeenCalledWith('Pasted "b.txt"', { id: "toast-id" });
     });
 

@@ -53,10 +53,10 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-const fsWriteFile = vi.fn((_path: string, _data: Uint8Array) => Promise.resolve());
-vi.mock("@tauri-apps/plugin-fs", () => ({
-  writeFile: (path: string, data: Uint8Array) => fsWriteFile(path, data),
-}));
+// A byte-based paste is written by the backend (#3115), never the fs plugin.
+vi.mock("@tauri-apps/plugin-fs", () => {
+  throw new Error("a paste must not use the fs plugin (#3115)");
+});
 
 vi.mock("@/services/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/events")>()),
@@ -276,7 +276,6 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
       }
       // A byte-based (agent) session: the paste owns its success toast.
       if (cmd === "session_supports_transfer_queue") return Promise.resolve(false);
-      if (cmd === "session_read_file") return Promise.resolve("AQID");
       return Promise.resolve(undefined);
     });
     act(() => {
@@ -299,8 +298,9 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
       });
     });
     await clickPaste();
-    expect(calls("session_read_file")).toEqual([{ sessionId: "ssh-1", path: "/srv/r.txt" }]);
-    expect(fsWriteFile).toHaveBeenCalledWith("/home/r.txt", new Uint8Array([1, 2, 3]));
+    expect(calls("session_download_to_local_file")).toEqual([
+      { sessionId: "ssh-1", remotePath: "/srv/r.txt", localPath: "/home/r.txt" },
+    ]);
     expect(toastError).not.toHaveBeenCalled();
     expect(toastSuccess).toHaveBeenCalledWith(
       'Pasted "r.txt" to /home',
