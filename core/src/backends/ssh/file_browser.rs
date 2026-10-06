@@ -30,8 +30,9 @@ use super::sftp_ops::{self, ElevatedWriteResult, Writability};
 struct SftpState {
     /// The SSH session carrying this SFTP channel. Kept alive for the session
     /// lifetime, and used as the exec channel for the privilege-elevated write
-    /// path exposed via [`SftpAdvancedOps`].
-    session: SshSession,
+    /// path exposed via [`SftpAdvancedOps`]. Shared (`Arc`) so a browser can ride
+    /// a session another owner holds — a VNC SSH tunnel's (#4191).
+    session: Arc<SshSession>,
     /// Pooled gateway hold for a jump-host connection (`None` when direct); kept
     /// alive so the bastion session carrying this SFTP session stays open (#939).
     _gateway: Option<GatewayHold>,
@@ -70,6 +71,27 @@ impl SftpFileBrowser {
             config,
             state: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Ride an **already-authenticated** SSH session another owner holds (a VNC
+    /// SSH tunnel's, #4191): opens one SFTP subsystem channel on it now, with no
+    /// second login and no new host-key check.
+    ///
+    /// The browser never reconnects on its own — it has no config to dial with —
+    /// so once the owner disconnects the session (e.g. the tunnel is torn down),
+    /// every operation fails rather than silently logging in again.
+    pub async fn from_session(session: Arc<SshSession>) -> Result<Self, FileError> {
+        let sftp = sftp::open_sftp_subsystem(&session)
+            .await
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        Ok(Self {
+            config: SshConfig::default(),
+            state: Arc::new(Mutex::new(Some(SftpState {
+                session,
+                _gateway: None,
+                sftp,
+            }))),
+        })
     }
 
     /// Eagerly open the SFTP session, surfacing any connection/auth failure now
@@ -167,7 +189,7 @@ impl SftpFileBrowser {
             .map_err(|e| FileError::OperationFailed(e.to_string()))?;
 
         *guard = Some(SftpState {
-            session,
+            session: Arc::new(session),
             _gateway: gateway,
             sftp,
         });

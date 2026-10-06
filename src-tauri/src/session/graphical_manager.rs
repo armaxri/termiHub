@@ -38,6 +38,10 @@ use crate::session::agent_port_forward::{
     ForwardTransport,
 };
 use crate::session::frame_guard::{CursorGuard, FrameGuard, FrameVerdict};
+use crate::session::graphical_file_channel::{
+    resolve_file_channel, AgentFileRoute, AgentFiles, BackendSideChannel, FileChannelContext,
+    RemoteDesktopFileChannel,
+};
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
@@ -224,6 +228,8 @@ struct GraphicalSession {
     /// routed through an agent (#3241). Held for the session's lifetime and
     /// dropped with it, which closes the tunnel.
     _forward: Option<AgentPortForward>,
+    /// What file-transfer route resolution needs from the settings (#4191).
+    file_channel: FileChannelContext,
 }
 
 /// What an agent-routed connect hands the shared connect path (#3241).
@@ -232,6 +238,8 @@ struct Routed {
     /// The real target host, keying the RDP certificate trust store (the
     /// backend itself dials `127.0.0.1`).
     trust_host: String,
+    /// The agent route, for the file-transfer side channel (#4191).
+    file_route: AgentFileRoute,
 }
 
 /// Manages live graphical remote-desktop sessions.
@@ -348,6 +356,7 @@ impl GraphicalSessionManager {
         let dial = rewrite_for_forward(type_id, &settings, forward.local_port());
         let routed = Routed {
             forward,
+            file_route: route.file_route(),
             trust_host: route.target_host,
         };
         self.connect_inner(type_id, dial, Some(routed), sink).await
@@ -398,6 +407,8 @@ impl GraphicalSessionManager {
                 .to_string(),
         };
         let forward_error = routed.as_ref().map(|r| r.forward.error_slot());
+        let file_channel =
+            FileChannelContext::new(&settings, routed.as_ref().map(|r| r.file_route.clone()));
 
         // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
         // so a session that never re-dials does not retain its credentials.
@@ -485,6 +496,7 @@ impl GraphicalSessionManager {
             pending_cert,
             held,
             _forward: routed.map(|r| r.forward),
+            file_channel,
         };
         self.sessions
             .lock()
@@ -492,6 +504,35 @@ impl GraphicalSessionManager {
             .insert(session_id.clone(), session);
 
         Ok(session_id)
+    }
+
+    /// Resolve a session's file-transfer side channel (#4191): the route
+    /// (agent over SSH tunnel), `user@host`, and the default folder — or why
+    /// there is none (setting off, view-only, no route). Re-resolved on every
+    /// call against the session's current backend, so a VNC reconnect (a new
+    /// backend and tunnel) is picked up without extra bookkeeping.
+    pub async fn file_channel(
+        &self,
+        session_id: &str,
+        agents: Option<Arc<dyn AgentFiles>>,
+    ) -> Result<RemoteDesktopFileChannel, TerminalError> {
+        let (ctx, connection) = {
+            let sessions = self.sessions.lock().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            (session.file_channel.clone(), session.connection.clone())
+        };
+        let backend = {
+            let conn = connection.lock().await;
+            conn.graphical()
+                .map(|g| BackendSideChannel {
+                    channel: g.file_side_channel(),
+                    session: g.file_side_channel_ssh_session(),
+                })
+                .unwrap_or_default()
+        };
+        Ok(resolve_file_channel(&ctx, backend, agents).await)
     }
 
     /// Deliver the user's verdict for a pending certificate prompt (#1767).
