@@ -843,7 +843,10 @@ mod tests {
     async fn the_probe_confirms_a_server_with_rest_stream() {
         let (server, browser) = mock(MockFtpOptions::default()).await;
         let ranged = browser.ranged().expect("offered while unknown");
-        ranged.probe().await.expect("binary + REST STREAM serves slices");
+        ranged
+            .probe()
+            .await
+            .expect("binary + REST STREAM serves slices");
         assert!(browser.ranged().is_some(), "still offered once known");
         assert_eq!(server.rest_commands(), 0, "the probe moves no data");
         assert!(server.transfers().is_empty());

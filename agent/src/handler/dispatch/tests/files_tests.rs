@@ -639,7 +639,11 @@ async fn a_zero_length_read_probes_without_io() {
     )
     .await;
     assert_eq!(r["result"]["data"], "", "{r}");
-    assert_eq!(*wsl.range_calls.lock().unwrap(), [("probe", 0)], "no slice read");
+    assert_eq!(
+        *wsl.range_calls.lock().unwrap(),
+        [("probe", 0)],
+        "no slice read"
+    );
 }
 
 /// The probe asks the live backend (#4146): one that offered slices up front
@@ -660,7 +664,11 @@ async fn a_backend_that_learns_it_cannot_serve_slices_fails_the_probe() {
         2,
     )
     .await;
-    assert_eq!(r["error"]["code"], errors::FILE_BROWSING_NOT_SUPPORTED, "{r}");
+    assert_eq!(
+        r["error"]["code"],
+        errors::FILE_BROWSING_NOT_SUPPORTED,
+        "{r}"
+    );
     assert_eq!(*ftp.range_calls.lock().unwrap(), [("probe", 0)]);
 }
 
