@@ -56,6 +56,10 @@
 //! their persisted full container id instead (the session id does not survive a
 //! restart): see [`super::relaunch_docker`] for how the container is re-attached
 //! by identity and why a same-name recreated container is never resumed into.
+//! **Agent-hosted** transfers (#4114) relaunch through their persisted agent
+//! session identity — the same agent-side session, or one reopened from the
+//! same saved definition on the same agent — and wait, paused, until the agent
+//! is reconnected: see [`super::relaunch_agent`].
 //! Queued **local-disk copies** (PARITY-004, #3567) need no session
 //! and always relaunch from their temp file.
 //!
@@ -83,7 +87,7 @@ use tauri::{AppHandle, Manager};
 
 use std::sync::Arc;
 
-use super::persist::PersistedTransfer;
+use super::persist::{PersistedAgentTarget, PersistedTransfer};
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
 use super::relaunch_credentials::RelaunchBlocked;
@@ -114,6 +118,19 @@ pub(crate) enum RelaunchPlan {
     Docker {
         session_id: String,
         container_id: String,
+        direction: TransferDirection,
+        remote_path: String,
+        local_path: String,
+        offset: u64,
+        total: u64,
+    },
+    /// An agent-hosted session download/upload (#4114): relaunchable over the
+    /// live agent session matching the persisted identity — the same
+    /// agent-side session, or one reopened from the same saved definition on
+    /// the same agent. Carries ids, paths and progress only.
+    Agent {
+        session_id: String,
+        agent: PersistedAgentTarget,
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
@@ -166,13 +183,30 @@ pub(crate) enum ResumeDecision {
 ///
 /// A download or upload persists a `local_path` (the local endpoint) and is
 /// relaunchable as an SFTP or FTP session transfer — or, when it carries a
-/// persisted container identity, as a Docker session transfer (#3585). A record
+/// persisted container identity, as a Docker session transfer (#3585), and when
+/// it carries a persisted agent session identity, as an agent-hosted ranged
+/// transfer (#4114). A record
 /// under the reserved local session id is a queued local-disk copy (#3567) and
 /// relaunches with no session at all. A remote-to-remote copy persists no local
 /// endpoint (`local_path == None`); it relaunches from its persisted source
 /// endpoint (#3206), and one persisted before that (no source) cannot be
 /// relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
+    // An agent-hosted download/upload (#4114) re-attaches by its session
+    // identity, not through the SFTP/FTP session path.
+    if let (Some(local_path), None, Some(agent)) =
+        (&record.local_path, &record.docker, &record.agent)
+    {
+        return RelaunchPlan::Agent {
+            session_id: record.session_id.clone(),
+            agent: agent.clone(),
+            direction: record.direction,
+            remote_path: record.remote_path.clone(),
+            local_path: local_path.clone(),
+            offset: record.resume_offset,
+            total: record.total,
+        };
+    }
     match (&record.local_path, &record.docker) {
         (Some(dest_path), None) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
             RelaunchPlan::Local {
@@ -427,6 +461,50 @@ async fn relaunch_record(
                 }
                 Err(message) => {
                     fail_row(app_handle, &record, message);
+                    true
+                }
+            }
+        }
+        RelaunchPlan::Agent {
+            session_id: _,
+            agent,
+            direction,
+            remote_path,
+            local_path,
+            offset,
+            total,
+        } => {
+            // Find the live agent session by the persisted identity (the
+            // desktop session id did not survive the restart). None yet keeps
+            // the row paused until the agent is reconnected (#4114).
+            match super::relaunch_agent::resolve_live_agent_target(manager, &agent).await {
+                Ok(proxy) => {
+                    let (spawn_remote, spawn_local) = (remote_path.clone(), local_path);
+                    spawn_relaunch(
+                        &record,
+                        direction,
+                        &remote_path,
+                        total,
+                        registry,
+                        app_handle,
+                        move |handle, registry, sink| async move {
+                            termihub_core::files::transfer::ranged::run_ranged_transfer(
+                                proxy,
+                                direction,
+                                spawn_remote,
+                                spawn_local,
+                                handle,
+                                registry,
+                                sink,
+                                offset,
+                            )
+                            .await;
+                        },
+                    );
+                    true
+                }
+                Err(blocked) => {
+                    block_row(app_handle, &record, blocked);
                     true
                 }
             }
@@ -721,9 +799,10 @@ fn sources<'a>(
 /// with the message. The persisted record is left intact either way.
 fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: RelaunchBlocked) {
     match blocked {
-        RelaunchBlocked::NeedsCredentials => {
+        RelaunchBlocked::NeedsCredentials | RelaunchBlocked::AgentSessionUnavailable => {
             // Resume by itself once the connection opens or the store unlocks
-            // (#3883).
+            // (#3883) — or, for an agent-hosted transfer, once a matching
+            // agent session opens (#4114).
             if let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() {
                 super::relaunch_auto::note_blocked(persist.credential_waits(), record, &blocked);
             }
@@ -776,6 +855,7 @@ mod tests {
             source_mtime: None,
             remote_source: None,
             saved_connection_id: None,
+            agent: None,
         }
     }
 
@@ -826,6 +906,65 @@ mod tests {
                 total: 8192,
             }
         );
+    }
+
+    /// An agent-hosted record (#4114) relaunches by its agent session
+    /// identity — not through the SFTP/FTP session path — from the persisted
+    /// checkpoint.
+    #[test]
+    fn plan_for_an_agent_transfer_reattaches_by_agent_identity() {
+        let agent = crate::files::transfer::persist::PersistedAgentTarget {
+            agent_id: "agent-1".to_string(),
+            remote_session_id: "remote-1".to_string(),
+            definition_id: Some("def-a".to_string()),
+        };
+        let mut rec = record("t1", Some("/home/user/data.csv"));
+        rec.agent = Some(agent.clone());
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::Agent {
+                session_id: "sess-a".to_string(),
+                agent,
+                direction: TransferDirection::Download,
+                remote_path: "/remote/data.csv".to_string(),
+                local_path: "/home/user/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
+    }
+
+    /// An agent-hosted record keeps its identity through the persisted queue,
+    /// so a resume after a restart plans an agent relaunch.
+    #[test]
+    fn decide_resume_relaunches_a_rehydrated_agent_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = TransferRegistry::new();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist.record_registration(
+            "agent-t",
+            "sess-a",
+            TransferDirection::Download,
+            "data.csv",
+            "/remote/data.csv",
+            Some("/home/user/data.csv".to_string()),
+            8192,
+        );
+        persist.record_agent_target(
+            "agent-t",
+            crate::files::transfer::persist::PersistedAgentTarget {
+                agent_id: "agent-1".to_string(),
+                remote_session_id: "remote-1".to_string(),
+                definition_id: None,
+            },
+        );
+        match decide_resume("agent-t", &registry, &persist) {
+            ResumeDecision::Relaunch(rec) => assert!(matches!(
+                plan_from_record(&rec),
+                RelaunchPlan::Agent { ref agent, .. } if agent.agent_id == "agent-1"
+            )),
+            other => panic!("expected Relaunch, got {other:?}"),
+        }
     }
 
     /// A local folder file (#3613) plans its relaunch with its cancel group.
