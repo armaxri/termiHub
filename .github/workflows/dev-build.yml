@@ -203,6 +203,26 @@ jobs:
           ./scripts/internal/verify-conpty-bundle.ps1 -Dir "target/$env:RUST_TARGET/release"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Release builds link the Visual C++ runtime statically (#4172), so users
+      # install termiHub without the VC++ redistributable. Fail the build if any
+      # .exe/.dll in the installer imports VCRUNTIME*/MSVCP*.dll after all (a
+      # toolchain or dependency change, or a build outside the release profile).
+      - name: Verify no Visual C++ runtime dependency in the Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          $bundle = "target/$env:RUST_TARGET/release/bundle"
+          $msi = Get-ChildItem "$bundle/msi" -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { Write-Output "::error::no MSI built"; exit 1 }
+          ./scripts/internal/verify-no-vcruntime.ps1 -Msi $msi.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $nsis = Get-ChildItem "$bundle/nsis" -Filter *-setup.exe | Select-Object -First 1
+          if (-not $nsis) { Write-Output "::error::no NSIS setup.exe built"; exit 1 }
+          ./scripts/internal/verify-no-vcruntime.ps1 -Nsis $nsis.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
       # (inner components signed in the wrong order), which Gatekeeper classifies as
       # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc

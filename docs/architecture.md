@@ -1134,6 +1134,19 @@ test binaries, `scripts/dev.cmd` before a fetch, a portable copy that leaves the
 files behind — fall back to the inbox host, so the PTY code
 (`core/src/backends/local_shell.rs`, `conpty_cursor.rs`) supports both.
 
+**Windows Visual C++ runtime (#4172).** Release builds link the Visual C++ runtime
+statically, so the installers need no VC++ Redistributable; only the Universal CRT
+(`ucrtbase.dll`, part of Windows 10+) stays dynamic. `termihub.exe` gets it from
+tauri-build's static mode, enabled in `src-tauri/build.rs` for the release profile
+only: that mode writes a stub `msvcrt.lib` into the crate's `OUT_DIR` and adds it
+to the link search path, which cargo also hands to rustdoc for the doc tests of the
+other workspace crates, where the stub breaks linking (#4170). Debug and test builds
+therefore keep the dynamic runtime. The RDP helper builds with
+`-C target-feature=+crt-static` (`scripts/build-rdp-sidecar.*` with a
+`*-windows-msvc` `--target`). `release.yml` / `dev-build.yml` fail when any
+`.exe`/`.dll` in the MSI (and dev NSIS) imports `VCRUNTIME*.dll` or `MSVCP*.dll`
+(`scripts/internal/verify-no-vcruntime.ps1`).
+
 ### CI/CD Pipeline
 
 Three GitHub Actions workflows handle the build and release pipeline. See `.github/workflows/` for details.

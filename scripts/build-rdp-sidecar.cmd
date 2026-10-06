@@ -117,6 +117,13 @@ if defined TARGET (
     set "LABEL=%PROFILE%"
 )
 
+REM Windows MSVC: link the Visual C++ runtime statically (#4172), so the helper
+REM shipped in the installer needs no VC++ redistributable, like termihub.exe
+REM (src-tauri\build.rs). With an explicit --target, RUSTFLAGS reach only the
+REM target's crates, never build scripts or proc macros, and `cc`-built C code
+REM follows the crt-static target feature to /MT.
+if defined TARGET if not "!TARGET:-windows-msvc=!"=="!TARGET!" set "RUSTFLAGS=!RUSTFLAGS! -C target-feature=+crt-static"
+
 echo === Building RDP sidecar (%LABEL%) ===
 REM `call` so a cargo.cmd/.bat shim on PATH returns here instead of ending this script.
 call cargo build --manifest-path rdp-sidecar\Cargo.toml %CARGO_FLAGS%
