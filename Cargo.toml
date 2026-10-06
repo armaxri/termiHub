@@ -23,7 +23,11 @@ members = [
 # below). It is excluded rather than a member: its upstream rustfmt.toml uses
 # unstable options and its `doc-cfg` feature needs nightly, so it cannot sit
 # under the workspace-wide `cargo fmt --all` / `clippy --all-features` gates.
-exclude = ["rdp-sidecar", "vendor/serial2"]
+#
+# `vendor/libunftp` is a [patch.crates-io] fork too (#4099), excluded for the
+# same reason: it keeps upstream's own rustfmt.toml and lint table, so its
+# sources stay byte-comparable with upstream.
+exclude = ["rdp-sidecar", "vendor/serial2", "vendor/libunftp"]
 resolver = "2"
 
 # Minimum supported Rust version (SUP-011), inherited by every first-party member
@@ -101,5 +105,11 @@ bollard = "0.18"
 # `serial2-tokio` (which depends on `serial2` from crates.io) picks it up too.
 # Delta: on macOS, fall back to a termios speed when the IOSSIOSPEED ioctl is
 # rejected (pseudo-terminals, drivers without custom-speed support), #3701.
+#
+# In-tree fork of `libunftp` (same register). Delta: the PROXY v1 header reader
+# returns an error at EOF instead of spinning on a connection closed before its
+# header (#4099). Retire once an upstream release carries the fix, see
+# vendor/libunftp/UPSTREAM.md.
 [patch.crates-io]
 serial2 = { path = "vendor/serial2" }
+libunftp = { path = "vendor/libunftp" }

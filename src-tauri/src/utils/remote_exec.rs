@@ -368,8 +368,6 @@ async fn upload_bytes_async(
     stall: Duration,
     cancel: Option<&CancellationToken>,
 ) -> Result<u64, TerminalError> {
-    use tokio::io::AsyncWriteExt;
-
     let sftp = cancellable_step(
         cancel,
         stall,
@@ -385,18 +383,51 @@ async fn upload_bytes_async(
     })
     .await?;
 
-    if let Err(e) = write_chunks(&mut remote, data, stall, cancel).await {
+    write_and_close(&mut remote, data, stall, cancel).await?;
+    Ok(data.len() as u64)
+}
+
+/// Write `data` through [`write_chunks`], then close the remote handle.
+///
+/// The close is what makes the upload real: an SFTP write is only *queued*
+/// (`russh_sftp` pipelines it), and dropping the handle sends a close without
+/// waiting for the queued writes to be acknowledged. Reporting success before
+/// that let a deploy move and run a truncated, still-open agent binary
+/// ("not a valid Win32 application" on Windows OpenSSH, #3587). `shutdown`
+/// drains every acknowledgement and closes the handle, bounded by `stall` and
+/// raced against `cancel` like every other step.
+///
+/// On a cancel the partial handle is still closed (best-effort, bounded), so
+/// the caller can remove it — Windows OpenSSH refuses to delete an open file.
+async fn write_and_close<W>(
+    remote: &mut W,
+    data: &[u8],
+    stall: Duration,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), TerminalError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    if let Err(e) = write_chunks(remote, data, stall, cancel).await {
         if matches!(e, TerminalError::Cancelled) {
-            debug!(
-                remote_path,
-                "SFTP upload cancelled; closing partial remote file"
-            );
+            debug!("SFTP upload cancelled; closing partial remote file");
             let _ = tokio::time::timeout(CLOSE_GRACE, remote.shutdown()).await;
         }
         return Err(e);
     }
-
-    Ok(data.len() as u64)
+    let closed = cancellable_step(cancel, stall, "Finishing the SFTP upload", async {
+        remote
+            .shutdown()
+            .await
+            .map_err(|e| TerminalError::SshError(format!("closing the remote file failed: {e}")))
+    })
+    .await;
+    if matches!(closed, Err(TerminalError::Cancelled)) {
+        let _ = tokio::time::timeout(CLOSE_GRACE, remote.shutdown()).await;
+    }
+    closed
 }
 
 /// Remove a remote file over SFTP (best-effort rollback of a partial upload).
@@ -947,6 +978,87 @@ mod tests {
             tokio::time::sleep(delay).await;
             token.cancel();
         });
+    }
+
+    /// A writer modelled on `russh_sftp`'s `File`: a write is only *queued*
+    /// (accepted, not yet acknowledged by the server). Bytes count as landed
+    /// only once a flush or shutdown drains the queue, and only a shutdown
+    /// closes the handle. Dropping it with writes still queued loses them —
+    /// what truncated the Windows agent binary upload (#3587).
+    #[derive(Default)]
+    struct PipelinedWriter {
+        queued: Vec<u8>,
+        landed: Arc<std::sync::Mutex<Vec<u8>>>,
+        closed: Arc<AtomicBool>,
+    }
+
+    impl tokio::io::AsyncWrite for PipelinedWriter {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            self.queued.extend_from_slice(buf);
+            std::task::Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let queued = std::mem::take(&mut self.queued);
+            self.landed.lock().unwrap().extend_from_slice(&queued);
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let this = self.get_mut();
+            let flushed = std::pin::Pin::new(&mut *this).poll_flush(cx);
+            this.closed.store(true, Ordering::SeqCst);
+            flushed
+        }
+    }
+
+    /// A successful upload only reports success once every queued write was
+    /// acknowledged and the remote handle closed — otherwise the caller moves
+    /// and runs a truncated, still-open file (#3587: "not a valid Win32
+    /// application" on the Windows SSH-host lane).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_and_close_lands_every_byte_and_closes_the_handle() {
+        let writer = PipelinedWriter::default();
+        let (landed, closed) = (writer.landed.clone(), writer.closed.clone());
+        let mut writer = writer;
+        let data: Vec<u8> = (0..(SFTP_UPLOAD_CHUNK * 3 + 5))
+            .map(|i| (i % 251) as u8)
+            .collect();
+
+        write_and_close(&mut writer, &data, LONG_STALL, None)
+            .await
+            .expect("upload succeeds");
+        drop(writer);
+
+        assert_eq!(*landed.lock().unwrap(), data, "every byte acknowledged");
+        assert!(closed.load(Ordering::SeqCst), "remote handle closed");
+    }
+
+    /// A cancelled upload still closes the partial handle (so Windows OpenSSH
+    /// lets the caller delete it) and reports Cancelled.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_and_close_closes_the_handle_on_cancel() {
+        let writer = PipelinedWriter::default();
+        let closed = writer.closed.clone();
+        let mut writer = writer;
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = write_and_close(&mut writer, &[1u8; 1024], LONG_STALL, Some(&token)).await;
+        assert!(
+            matches!(result, Err(TerminalError::Cancelled)),
+            "{result:?}"
+        );
+        assert!(closed.load(Ordering::SeqCst), "partial handle closed");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

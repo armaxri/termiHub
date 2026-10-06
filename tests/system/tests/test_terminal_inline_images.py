@@ -16,8 +16,15 @@ The image bytes are written as files in the home directory on disk (#4025) and
 ``cat`` prints them, so no escape sequence is typed into the shell. The decode
 and store wiring is also proven locally against the real addon in
 ``src/components/Terminal/inlineImages.real-addon.test.ts``; this suite adds the
-real webview (canvas, ``createImageBitmap``) and the whole app path. POSIX
-shells only (``cat``), so the suite is skipped on Windows.
+real webview (canvas, ``createImageBitmap``) and the whole app path.
+
+On Windows ``cat`` is PowerShell's ``Get-Content`` alias in the default local
+shell, and the bytes pass through ConPTY. The inbox ConPTY strips the SIXEL DCS
+string, so the app ships Microsoft's ``conpty.dll`` + ``OpenConsole.exe`` next
+to ``termihub.exe`` (#4121), and this suite proves that host carries the images
+through. It fails up front, rather than on a missing image, when the app under
+test was built without them (build it with
+``scripts/internal/build-system-test-app.sh``).
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from typing import Any
 
 import pytest
 
+from termihub_harness import orchestrator
 from termihub_harness import (
     SETTINGS_REGION,
     ConnectionsUi,
@@ -40,10 +48,10 @@ from termihub_harness import (
     unique_name,
 )
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(sys.platform.startswith("win"), reason="drives `cat` in a POSIX shell"),
-]
+pytestmark = pytest.mark.integration
+
+#: The sideloaded ConPTY host that must sit next to termihub.exe (#4121).
+SIDELOADED_CONPTY = ("conpty.dll", "OpenConsole.exe")
 
 #: A 4x6 px red SIXEL image (DCS q … ST).
 SIXEL = b"\x1bPq#0;2;100;0;0#0~~~~-\x1b\\"
@@ -76,6 +84,28 @@ ESCAPE_NOISE = (
 
 INLINE_IMAGES_TOGGLE = "settings-terminal-inline-images"
 RECONNECT = "terminal-disconnect-reconnect-btn"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _sideloaded_conpty_on_windows():
+    """On Windows, insist the app under test carries the sideloaded ConPTY host.
+
+    Without it local shells run on the inbox ConPTY, which drops SIXEL; the
+    tests would then fail on a missing image with no hint why.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        app_dir = orchestrator.app_binary_path().parent
+    except FileNotFoundError:
+        return  # no app built: the integration fixtures skip the suite
+    missing = [name for name in SIDELOADED_CONPTY if not (app_dir / name).is_file()]
+    if missing:
+        pytest.fail(
+            f"{', '.join(missing)} missing next to {app_dir / 'termihub.exe'}: build the app "
+            "with scripts/internal/build-system-test-app.sh so it bundles the sideloaded "
+            "ConPTY host (#4121)"
+        )
 
 
 class TestTerminalInlineImages(

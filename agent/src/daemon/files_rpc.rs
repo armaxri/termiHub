@@ -47,7 +47,9 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::debug;
 
 use termihub_core::errors::FileError;
-use termihub_core::files::{FileBrowser, FileEntry, MAX_REMOTE_READ_BYTES};
+use termihub_core::files::{
+    FileBrowser, FileEntry, RangedFileAccess, MAX_RANGE_BYTES, MAX_REMOTE_READ_BYTES,
+};
 
 use super::client::{write_frame_timed, DaemonWriterHandle};
 use super::protocol::{
@@ -145,6 +147,22 @@ pub enum FileOp {
         src: String,
         dest: String,
     },
+    /// Read at most `length` bytes from `offset` (#3587); the bytes follow in
+    /// [`MSG_FILE_READ_DATA`] frames. Sent only to a daemon that advertised
+    /// [`CAP_FILE_RANGES`](super::protocol::CAP_FILE_RANGES).
+    ReadRange {
+        path: String,
+        offset: u64,
+        length: u32,
+    },
+    /// Write `size` bytes at `offset` (#3587), sent next in
+    /// [`MSG_FILE_WRITE_DATA`] frames. Sent only to a daemon that advertised
+    /// [`CAP_FILE_RANGES`](super::protocol::CAP_FILE_RANGES).
+    WriteRange {
+        path: String,
+        offset: u64,
+        size: u64,
+    },
 }
 
 impl FileOp {
@@ -153,8 +171,21 @@ impl FileOp {
     pub fn is_transfer(&self) -> bool {
         matches!(
             self,
-            Self::Read { .. } | Self::Write { .. } | Self::Copy { .. }
+            Self::Read { .. }
+                | Self::Write { .. }
+                | Self::Copy { .. }
+                | Self::ReadRange { .. }
+                | Self::WriteRange { .. }
         )
+    }
+
+    /// The announced size of a write's data frames, for the operations that
+    /// carry any.
+    pub fn upload_size(&self) -> Option<u64> {
+        match self {
+            Self::Write { size, .. } | Self::WriteRange { size, .. } => Some(*size),
+            _ => None,
+        }
     }
 }
 
@@ -395,6 +426,30 @@ pub async fn serve(
             run!(browser.create_symlink(&target, &link_path), done)
         }
         FileOp::Copy { src, dest } => run!(browser.copy(&src, &dest), done),
+        FileOp::ReadRange {
+            path,
+            offset,
+            length,
+        } => {
+            let Some(ranged) = browser.ranged() else {
+                return (failed(FileError::NotSupported), None);
+            };
+            let length = length.min(MAX_RANGE_BYTES);
+            match tokio::time::timeout(limit, ranged.read_range(&path, offset, length)).await {
+                Ok(Ok(bytes)) => (
+                    FileOutcome::Read {
+                        size: bytes.len() as u64,
+                    },
+                    Some(bytes),
+                ),
+                Ok(Err(e)) => (failed(e), None),
+                Err(_) => (timed_out(), None),
+            }
+        }
+        FileOp::WriteRange { path, offset, .. } => match browser.ranged() {
+            Some(ranged) => run!(ranged.write_range(&path, offset, &data), done),
+            None => (failed(FileError::NotSupported), None),
+        },
     }
 }
 
@@ -431,10 +486,11 @@ pub struct Uploads {
 }
 
 impl Uploads {
-    /// Start collecting the write `request` (a [`FileOp::Write`]) from the
+    /// Start collecting the write `request` (a [`FileOp::Write`] or
+    /// [`FileOp::WriteRange`]) from the
     /// connection of generation `gen`.
     pub fn begin(&mut self, gen: u64, request: FileRequest) -> UploadStep {
-        let FileOp::Write { size, .. } = request.op else {
+        let Some(size) = request.op.upload_size() else {
             return UploadStep::Complete(FileJob {
                 gen,
                 request,
@@ -541,6 +597,9 @@ struct Pending {
 pub struct FileChannel {
     /// Whether the connected daemon advertised file support.
     supported: AtomicBool,
+    /// Whether the connected daemon also serves ranged reads and writes
+    /// (#3587).
+    ranges: AtomicBool,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, Pending>>,
 }
@@ -563,6 +622,16 @@ impl FileChannel {
     /// Record the connected daemon's advertised support.
     pub fn set_supported(&self, supported: bool) {
         self.supported.store(supported, Ordering::SeqCst);
+    }
+
+    /// Whether the connected daemon serves ranged reads and writes (#3587).
+    pub fn ranges_supported(&self) -> bool {
+        self.ranges.load(Ordering::SeqCst)
+    }
+
+    /// Record the connected daemon's advertised ranged-access support.
+    pub fn set_ranges_supported(&self, supported: bool) {
+        self.ranges.store(supported, Ordering::SeqCst);
     }
 
     /// Reserve a request id and the receiver its reply is delivered to.
@@ -826,6 +895,49 @@ impl FileBrowser for DaemonFileBrowser {
             dest: dest.into(),
         })
         .await
+    }
+
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        // A daemon from before #3587 would drop the unknown request and leave
+        // the call waiting for its timeout, so ask only one that advertised it.
+        self.channel
+            .ranges_supported()
+            .then_some(self as &dyn RangedFileAccess)
+    }
+}
+
+/// Ranged reads and writes through the session daemon (#3587): each slice is
+/// one request, its bytes in data frames like any read or write.
+#[async_trait::async_trait]
+impl RangedFileAccess for DaemonFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let op = FileOp::ReadRange {
+            path: path.into(),
+            offset,
+            length: len,
+        };
+        match self.call(op, &[]).await {
+            Ok((FileOutcome::Read { size }, data)) if data.len() as u64 == size => Ok(data),
+            Ok((FileOutcome::Read { size }, data)) => Err(FileError::OperationFailed(format!(
+                "incomplete read from the session daemon: {} of {size} bytes",
+                data.len()
+            ))),
+            Ok((other, _)) => Err(unexpected(other)),
+            Err(message) => Err(FileError::OperationFailed(message)),
+        }
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let op = FileOp::WriteRange {
+            path: path.into(),
+            offset,
+            size: data.len() as u64,
+        };
+        match self.call(op, data).await {
+            Ok((FileOutcome::Done, _)) => Ok(()),
+            Ok((other, _)) => Err(unexpected(other)),
+            Err(message) => Err(FileError::OperationFailed(message)),
+        }
     }
 }
 

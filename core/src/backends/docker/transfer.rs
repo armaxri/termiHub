@@ -56,6 +56,11 @@ const READ_FROM_SCRIPT: &str = r#"exec tail -c "+$2" < "$1""#;
 const WRITE_SCRIPT: &str = r#"exec cat > "$1""#;
 /// Append stdin to the existing file.
 const APPEND_SCRIPT: &str = r#"exec cat >> "$1""#;
+/// Print at most `$3` bytes of the file from 1-based byte `$2` (#3587). `head`
+/// bounds the slice, so the producer stops at the slice's end instead of
+/// streaming the rest of the file into a closed pipe.
+const READ_SLICE_SCRIPT: &str = r#"if [ "$2" = 1 ]; then exec head -c "$3" < "$1"; fi
+tail -c "+$2" < "$1" | head -c "$3""#;
 /// Print the file's size in bytes.
 const SIZE_SCRIPT: &str = r#"exec wc -c < "$1""#;
 
@@ -118,6 +123,20 @@ fn read_argv(path: &str, offset: u64) -> Vec<String> {
             offset.saturating_add(1).to_string(),
         ]
     }
+}
+
+/// Argv printing at most `len` bytes of `path` from byte `offset`. Pure.
+fn read_slice_argv(path: &str, offset: u64, len: u32) -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        READ_SLICE_SCRIPT.into(),
+        "sh".into(),
+        path.into(),
+        // `tail -c +N` is 1-based: `+N` starts at byte N, skipping N-1 bytes.
+        offset.saturating_add(1).to_string(),
+        len.to_string(),
+    ]
 }
 
 /// Argv for writing stdin to `path` (append or create/truncate). Pure.
@@ -512,6 +531,85 @@ impl DockerTransferTarget {
     }
 }
 
+// ── Offset-addressed access (#3587) ────────────────────────────────
+
+impl DockerTransferTarget {
+    /// Read at most `len` bytes of `path` from `offset` through one bounded
+    /// exec (`head -c`, after `tail -c +N` past byte zero). A pipeline's exit
+    /// status is only `head`'s, so a short slice — which claims the end of the
+    /// file — is confirmed against the file's size: a killed `tail`, a missing
+    /// file or a missing tool fails instead of looking like the end.
+    pub async fn read_range(
+        &self,
+        path: &str,
+        offset: u64,
+        len: u32,
+    ) -> Result<Vec<u8>, FileError> {
+        use tokio::io::AsyncReadExt;
+        let argv = read_slice_argv(path, offset, len);
+        let (exec_id, output, _input) = self.start(as_strs(&argv), false).await?;
+        let mut reader = ExecReader::new(self.client.clone(), exec_id, output);
+        let mut data = Vec::with_capacity(len as usize);
+        (&mut reader)
+            .take(u64::from(len))
+            .read_to_end(&mut data)
+            .await
+            .map_err(|e| op_err("Failed to read container file", e))?;
+        reader.finish().await?;
+        if data.len() < len as usize {
+            let end = offset + data.len() as u64;
+            match self.file_size(path).await {
+                Some(size) if size == end => {}
+                Some(size) => {
+                    return Err(FileError::OperationFailed(format!(
+                        "{path}: short read at {end} of {size} bytes"
+                    )))
+                }
+                None => {
+                    return Err(FileError::OperationFailed(format!(
+                        "{path}: cannot read the container file"
+                    )))
+                }
+            }
+        }
+        Ok(data)
+    }
+
+    /// Write `data` to `path` at `offset`: create/truncate at zero, otherwise
+    /// append once `wc -c` confirms the file holds exactly `offset` bytes.
+    pub async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        if offset > 0 {
+            let present = self.file_size(path).await.ok_or_else(|| {
+                FileError::OperationFailed(format!(
+                    "{path}: cannot measure the destination to append at {offset}"
+                ))
+            })?;
+            if present != offset {
+                return Err(crate::files::ranged::offset_mismatch(path, present, offset));
+            }
+        }
+        let mut writer = self.open_write(path, offset > 0).await?;
+        writer
+            .write_all(data)
+            .await
+            .map_err(|e| op_err("Failed to write container file", e))?;
+        writer.finish().await
+    }
+}
+
+/// The Docker browser's offset-addressed access (#3587): what an agent-hosted
+/// Docker session's queued transfer moves through, one exec per slice.
+#[async_trait::async_trait]
+impl crate::files::RangedFileAccess for DockerFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        self.transfer_target().read_range(path, offset, len).await
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        self.transfer_target().write_range(path, offset, data).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +671,8 @@ mod tests {
         for argv in [
             read_argv(HOSTILE, 0),
             read_argv(HOSTILE, 7),
+            read_slice_argv(HOSTILE, 0, 16),
+            read_slice_argv(HOSTILE, 9, 16),
             write_argv(HOSTILE, false),
             write_argv(HOSTILE, true),
             size_argv(HOSTILE),
@@ -599,15 +699,25 @@ mod tests {
             WRITE_SCRIPT,
             APPEND_SCRIPT,
             SIZE_SCRIPT,
+            READ_SLICE_SCRIPT,
         ] {
-            // Every `$` is a quoted positional (`"$1"` / `"+$2"`), so no path
-            // byte is ever word-split, globbed, or evaluated.
+            // Every `$` is a quoted positional (`"$1"` / `"+$2"` / `"$3"`), so
+            // no path byte is ever word-split, globbed, or evaluated.
             for (i, _) in script.match_indices('$') {
                 let next = &script[i + 1..i + 2];
-                assert!(next == "1" || next == "2", "{script}");
+                assert!(next == "1" || next == "2" || next == "3", "{script}");
                 assert_eq!(&script[i + 2..i + 3], "\"", "{script}");
             }
         }
+    }
+
+    #[test]
+    fn a_slice_reads_from_a_one_based_offset_for_a_bounded_length() {
+        let argv = read_slice_argv("/f", 0, 4096);
+        assert_eq!(argv[5..], ["1", "4096"]);
+        let argv = read_slice_argv("/f", 262_144, 4096);
+        assert_eq!(argv[5..], ["262145", "4096"]);
+        assert!(READ_SLICE_SCRIPT.contains(r#"head -c "$3""#));
     }
 
     #[test]

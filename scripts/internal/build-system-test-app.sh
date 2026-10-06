@@ -31,6 +31,12 @@
 #       It links ALSA, so it is built only where libasound2-dev is installed,
 #       and a failed sidecar build only warns: the RDP suite then skips, while
 #       the rest of the lane still runs. TERMIHUB_SKIP_RDP_HELPER=1 skips it.
+#   The sideloaded ConPTY host (Windows only, #4121): the inbox ConPTY strips
+#       SIXEL/inline-image sequences, so the app bundles Microsoft's
+#       conpty.dll + OpenConsole.exe (tauri.conpty.conf.json). tauri-build
+#       copies them next to target/<profile>/termihub.exe, where portable-pty
+#       looks, so the harness drives the same ConPTY host users get. Fetched at
+#       the pinned version and SHA-256-verified; a failure stops the build.
 set -euo pipefail
 
 PROFILE_FLAGS=()
@@ -63,5 +69,12 @@ if [ "$(uname -s)" = "Linux" ] && [ "${TERMIHUB_SKIP_RDP_HELPER:-}" != "1" ]; th
         echo "::warning::RDP sidecar build failed: the RDP suite will skip"
     fi
 fi
+CONFIG_FLAGS=()
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*)
+    ./scripts/internal/fetch-conpty.sh
+    CONFIG_FLAGS=(--config src-tauri/tauri.conpty.conf.json)
+    ;;
+esac
 VITE_TEST_BRIDGE=1 pnpm tauri build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} \
-    --features "mock-remote-desktop test-bridge"
+    ${CONFIG_FLAGS[@]+"${CONFIG_FLAGS[@]}"} --features "mock-remote-desktop test-bridge"

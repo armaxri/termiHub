@@ -430,6 +430,31 @@ impl FileBrowser for WslFileBrowser {
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
     }
+
+    fn ranged(&self) -> Option<&dyn crate::files::RangedFileAccess> {
+        Some(self)
+    }
+}
+
+/// Offset-addressed access through the `\\wsl$` UNC share (#3587): what an
+/// agent-hosted WSL session's queued transfer reads and writes through.
+#[async_trait::async_trait]
+impl crate::files::RangedFileAccess for WslFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let unc_path = self.to_unc_path(path);
+        crate::files::ranged::fs_read_range(unc_path.into(), path.to_string(), offset, len).await
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let unc_path = self.to_unc_path(path);
+        crate::files::ranged::fs_write_range(
+            unc_path.into(),
+            path.to_string(),
+            offset,
+            data.to_vec(),
+        )
+        .await
+    }
 }
 
 /// Convert a Windows absolute path to its WSL `/mnt/` equivalent.

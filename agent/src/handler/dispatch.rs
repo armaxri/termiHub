@@ -161,7 +161,12 @@ use termihub_core::monitoring::{
 /// (#4081): an agent-hosted SSH session whose host refused the shell but serves
 /// SFTP stays up for files. An older desktop ignores it; an older agent never
 /// sends it, and its session ends as before.
-const AGENT_PROTOCOL_VERSION: &str = "0.25.0";
+/// Bumped to 0.26.0 for the additive `connection.files.read_range` /
+/// `connection.files.write_range` methods and the matching
+/// `capabilities.fileRanges` flag (#3587): offset-addressed slices for queued,
+/// resumable transfers. The desktop calls them only on an agent that
+/// advertises the flag; an older desktop ignores it.
+const AGENT_PROTOCOL_VERSION: &str = "0.26.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -791,6 +796,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_files_set_owner(module)?;
     register_files_create_symlink(module)?;
     register_files_copy(module)?;
+    file_ranges::register(module)?;
     register_monitoring_subscribe(module)?;
     register_monitoring_unsubscribe(module)?;
     register_processes_list(module)?;
@@ -990,6 +996,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 session_monitoring: true,
                 session_files: true,
                 unattended_connect: true,
+                file_ranges: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -1640,6 +1647,8 @@ fn register_connections_folders_delete(
 }
 
 // ── connection.files.* ────────────────────────────────────────────
+
+mod file_ranges;
 
 /// Resolve the [`FileBrowser`] capability for a `connection.files.*` request.
 ///
@@ -3786,10 +3795,12 @@ mod tests {
     /// its `unattendedConnect` capability (#3877).
     ///
     /// 0.24.0 made the `initialize` result envelope camelCase (#3051), and
-    /// 0.25.0 added the `connection.filesOnly` notification (#4081).
+    /// 0.25.0 added the `connection.filesOnly` notification (#4081), and
+    /// 0.26.0 the ranged `connection.files.*` methods with their `fileRanges`
+    /// capability (#3587).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.25.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.26.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

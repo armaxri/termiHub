@@ -163,7 +163,10 @@ pub use termihub_plugin_api::{
     AbiIncompatibility, AbiVersion, PanicStrategy, Toolchain, ToolchainIncompatibility, ABI_1_1,
     CURRENT_PLUGIN_ABI_VERSION,
 };
-pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
+pub use trust_store::{
+    first_party_trust_anchor_configured, TrustSource, TrustStore, TrustStoreError,
+    TrustedPublisher, FIRST_PARTY_KEY_PLACEHOLDER_MARKER, FIRST_PARTY_PUBLISHER_LABEL,
+};
 pub use update_check::{
     evaluate_update, parse_update_document, validate_https_url, verify_package_sha256,
     UpdateCheckError, UpdateCheckOutcome, UpdateDocument, UpdateStatus, MAX_UPDATE_DOCUMENT_BYTES,

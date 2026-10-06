@@ -67,6 +67,9 @@ ALLOWLIST=(
   # by the Plugin Index Signature workflow on Ubuntu, and a one-time maintainer tool.
   "scripts/internal/plugin-index-signing.sh"            # CI sign/verify/check-key helper
   "scripts/internal/setup-plugin-index-signing-key.sh"  # one-time maintainer key setup
+  # First-party plugin publisher key (#3980): one-time maintainer tool around
+  # OpenSSL 3 + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
+  "scripts/internal/setup-plugin-publisher-key.sh"  # one-time maintainer key setup
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json
