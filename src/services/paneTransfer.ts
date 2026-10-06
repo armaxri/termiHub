@@ -9,10 +9,11 @@
  *
  * Each file leg goes through the existing transfer machinery:
  *
- * - a **queue-capable** session (SFTP / FTP / Docker) registers a tracked transfer with
+ * - a **queue-capable** session (SFTP / FTP / Docker, or an agent-hosted session on
+ *   an agent with ranged file slices, #3587) registers a tracked transfer with
  *   `session_upload` / `session_download` and seeds its Transfer Queue row, so
  *   the file shows progress and can be paused, cancelled and retried;
- * - a **byte-based** session (remote agent) falls back to a blocking copy the
+ * - a **byte-based** session (an older agent) falls back to a blocking copy the
  *   backend does itself (`session_upload_local_file` /
  *   `session_download_to_local_file`), so the webview never touches the local
  *   file (#3115).

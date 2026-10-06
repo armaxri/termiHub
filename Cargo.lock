@@ -3787,8 +3787,6 @@ dependencies = [
 [[package]]
 name = "libunftp"
 version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dc54288ecbf8beefa5cab3a9921ab03bf1f18a3a0872cbcdb5313fc0baebaeb"
 dependencies = [
  "async-trait",
  "bitflags 2.13.2",
@@ -7522,11 +7520,13 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "chrono",
+ "core-foundation 0.10.1",
  "csv",
  "dirs 6.0.0",
  "drag",
  "gtk",
  "hex",
+ "hkdf 0.12.4",
  "if-addrs",
  "json-patch",
  "keyring",
@@ -7544,6 +7544,8 @@ dependencies = [
  "rfd",
  "russh",
  "russh-sftp",
+ "security-framework 3.7.0",
+ "security-framework-sys",
  "semver",
  "serde",
  "serde_json",

@@ -13,10 +13,12 @@ termiHub's third-party attribution has two parts:
    installer bundles that file — it is what the in-app **About → Third-Party
    Licenses** viewer shows — and each release publishes it as
    `termiHub-<version>-THIRD_PARTY_NOTICES.txt` next to the agent binaries.
-2. **External programs — this file.** The sections below document third-party
-   programs that termiHub **installs and invokes** (but does **not** bundle or
-   redistribute), together with their license texts and upstream source
-   pointers. This content is also copied into the generated notices.
+2. **External programs and bundled native binaries — this file.** The sections
+   below document third-party programs that termiHub **installs and invokes**
+   (but does **not** bundle or redistribute), and the prebuilt native binaries
+   it **does** bundle that do not come from a lockfile (the Windows ConPTY
+   host), together with their license texts and upstream source pointers.
+   This content is also copied into the generated notices.
 
 > **Scope note.** The external programs are the X servers used for SSH X11
 > forwarding (see the
@@ -28,6 +30,26 @@ termiHub's third-party attribution has two parts:
 See [`docs/licensing.md`](docs/licensing.md) for the process-boundary rationale
 (why bundling these GPL/APSL programs does **not** change termiHub's own MIT
 license) and the compliance checklist.
+
+---
+
+## Microsoft ConPTY host (Windows, bundled)
+
+- **Component:** `conpty.dll` + `OpenConsole.exe` from the
+  [`Microsoft.Windows.Console.ConPTY`](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY)
+  NuGet package
+- **Version:** 1.24.261001001 — pinned, with SHA-256 checksums of the package and
+  of both files, in `src-tauri/packaging/windows/conpty.env`
+- **Upstream / source:** <https://github.com/microsoft/terminal>
+- **License:** MIT, © Microsoft Corporation
+- **License text:** [`licenses/MIT-microsoft-terminal.txt`](licenses/MIT-microsoft-terminal.txt)
+- **How termiHub uses it:** The Windows installer ships both files, unmodified
+  and Microsoft-signed, next to `termihub.exe` (#4121). Local terminals load this
+  `conpty.dll`, which starts the bundled `OpenConsole.exe` as the console host,
+  instead of the inbox Windows ConPTY, because the inbox host strips SIXEL and
+  other inline-image sequences. The files are downloaded and checksum-verified at
+  build time (`scripts/internal/fetch-conpty.sh`); they are not stored in this
+  repository.
 
 ---
 
@@ -87,6 +109,9 @@ The winget install command termiHub runs is defined by
 ---
 
 ## Maintenance
+
+When the pinned ConPTY version changes, update the version above together with
+the pins in `src-tauri/packaging/windows/conpty.env` (that file lists the steps).
 
 When the install command or upstream source for any X server changes:
 

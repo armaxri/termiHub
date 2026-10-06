@@ -23,6 +23,7 @@ on:
       - 'core/build.rs'
       - 'examples/plugins/**'
       - 'scripts/package-plugin.*'
+      - 'plugins/keys/first-party-publisher.pub.pem'
       - '.github/workflows/plugin-packaging.yml'
   push:
     branches: [ main, develop ]
@@ -200,6 +201,48 @@ jobs:
           echo "--- actual (merged package)"; cat target/actual.txt
           diff -u target/expected.txt target/actual.txt
 
+      # First-party signing (#3980). The fat package is the shippable artifact,
+      # so it is the one signed (merging rebuilds the archive, so per-OS
+      # signatures would not survive). A no-op with a notice while
+      # plugins/keys/first-party-publisher.pub.pem is the placeholder or the
+      # FIRST_PARTY_PLUGIN_SIGNING_KEY secret is unavailable (fork PR / not set
+      # yet); the load below then runs on the unsigned package as before. Once
+      # both exist, the secret's key must be the compiled-in one, so the signed
+      # package verifies as first-party with no user pin. The key file lives in
+      # a 0600 file in RUNNER_TEMP only for the signing call; it is never echoed.
+      - name: Sign the first-party package with the bundled publisher key
+        shell: bash
+        env:
+          FIRST_PARTY_PLUGIN_SIGNING_KEY: ${{ secrets.FIRST_PARTY_PLUGIN_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          pub=plugins/keys/first-party-publisher.pub.pem
+          if ! grep -q -- '-----BEGIN PUBLIC KEY-----' "$pub"; then
+            echo "::notice title=First-party plugin signing not configured::$pub is still the placeholder, so first-party plugins ship unsigned and desktops have no bundled publisher. Maintainer: run scripts/internal/setup-plugin-publisher-key.sh (docs/contributing.md -> 'First-party plugin publisher key')."
+            exit 0
+          fi
+          if [ -z "${FIRST_PARTY_PLUGIN_SIGNING_KEY}" ]; then
+            echo "::notice::FIRST_PARTY_PLUGIN_SIGNING_KEY is not available to this run (fork PR or secret unset); the package is left unsigned."
+            exit 0
+          fi
+          key="$RUNNER_TEMP/first-party-plugin.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$FIRST_PARTY_PLUGIN_SIGNING_KEY" >"$key")
+          # Every compiled-in key id, derived exactly as the desktop does:
+          # sha256 of the raw 32-byte Ed25519 key (the SPKI DER's tail).
+          trusted="$(awk '/-----BEGIN PUBLIC KEY-----/{b="";k=1;next}
+            /-----END PUBLIC KEY-----/{print b;k=0;next} k{b=b $0}' "$pub" |
+            while read -r b64; do
+              printf '%s' "$b64" | openssl base64 -d -A | tail -c 32 | sha256sum | cut -c1-64
+            done)"
+          signer="$(jq -r .keyId "$key")"
+          if ! grep -qx "${signer#sha256:}" <<<"$trusted"; then
+            echo "::error title=First-party signing key mismatch::FIRST_PARTY_PLUGIN_SIGNING_KEY ($signer) is not a key in $pub, so the package would not verify as first-party. Re-run scripts/internal/setup-plugin-publisher-key.sh --force and commit the key file."
+            exit 1
+          fi
+          cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-sign -- \
+            --key "$key" target/plugin-fat/echo-backend-1.0.0.termihub-plugin
+
       - name: Load the fat package on Linux (selects its own entry)
         shell: bash
         run: |
@@ -210,3 +253,11 @@ jobs:
           TERMIHUB_PLUGIN_PACKAGE="$PWD/target/plugin-fat/echo-backend-1.0.0.termihub-plugin" \
           TERMIHUB_PLUGIN_LIBRARY_SHA256="$sum" \
             cargo test -p termihub-core --features plugin --test plugin_package_load -- --nocapture
+
+      - name: Upload the multi-platform package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-package-multi-platform
+          path: target/plugin-fat/echo-backend-1.0.0.termihub-plugin
+          retention-days: 7
+          if-no-files-found: error

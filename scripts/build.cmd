@@ -39,7 +39,17 @@ if errorlevel 1 (
     set "NOTICES_CONFIG=--config src-tauri/tauri.notices.conf.json"
 )
 
+REM Sideloaded ConPTY host (#4121): bundled next to termihub.exe via
+REM tauri.conpty.conf.json, because the inbox ConPTY strips inline images.
+REM Fetched at the pinned version and SHA-256-verified; a mismatch or failed
+REM download stops the build.
+call "%~dp0internal\fetch-conpty.cmd"
+if errorlevel 1 (
+    echo ERROR: sideloaded ConPTY fetch failed; not building the installer without it.
+    exit /b 1
+)
+
 echo Building termiHub for production...
-call pnpm tauri build --config src-tauri/tauri.sidecar.conf.json %NOTICES_CONFIG%
+call pnpm tauri build --config src-tauri/tauri.sidecar.conf.json %NOTICES_CONFIG% --config src-tauri/tauri.conpty.conf.json
 if errorlevel 1 exit /b 1
 exit /b 0

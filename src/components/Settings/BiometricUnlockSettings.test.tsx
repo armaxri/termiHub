@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { BiometricUnlockSettings, enableErrorMessage } from "./BiometricUnlockSettings";
+import {
+  BiometricUnlockSettings,
+  enableErrorMessage,
+  protectionNote,
+} from "./BiometricUnlockSettings";
 import {
   OS_AUTH_AVAILABLE,
   OS_AUTH_BIOMETRIC_ENABLED,
@@ -132,6 +136,7 @@ describe("BiometricUnlockSettings", () => {
   it("turns off by deleting the stored key", async () => {
     mockedInfo.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
     await renderLoaded();
+    expect(query("biometric-unlock-protection")?.textContent).toMatch(/^OS-enforced: no/);
     mockedDisable.mockResolvedValue(OS_AUTH_AVAILABLE.biometricUnlock);
     mockedInfo.mockResolvedValue(OS_AUTH_AVAILABLE);
     await click("biometric-unlock-toggle");
@@ -154,5 +159,28 @@ describe("BiometricUnlockSettings", () => {
     expect(enableErrorMessage({ kind: "authFailed", message: "locked out" }, "Touch ID")).toBe(
       "locked out"
     );
+  });
+
+  it("reports whether the key is OS-enforced", () => {
+    const base = OS_AUTH_AVAILABLE.biometricUnlock;
+    expect(protectionNote(base)).toMatch(/^OS-enforced: no/);
+    expect(protectionNote({ ...base, osEnforcedAvailable: true })).toMatch(/^OS-enforced: yes/);
+    expect(
+      protectionNote({
+        ...base,
+        enabled: true,
+        protection: "osEnforced",
+        osEnforcedAvailable: true,
+      })
+    ).toMatch(/^OS-enforced: yes/);
+    const legacy = protectionNote({
+      ...base,
+      enabled: true,
+      protection: "app",
+      osEnforcedAvailable: true,
+    });
+    expect(legacy).toMatch(/^OS-enforced: no/);
+    expect(legacy).toContain("upgraded");
+    expect(protectionNote({ ...base, enabled: true, protection: "app" })).not.toContain("upgraded");
   });
 });

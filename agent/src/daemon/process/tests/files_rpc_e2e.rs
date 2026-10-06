@@ -19,7 +19,7 @@ use crate::daemon::transport::{self, DaemonListener};
 use crate::io::transport::NotificationSender;
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{FileError, SessionError};
-use termihub_core::files::{FileBrowser, FileEntry};
+use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 /// An in-memory file tree standing in for the session backend's browser (an
 /// SFTP channel, a `docker exec`, an FTP control connection).
@@ -27,6 +27,36 @@ use termihub_core::files::{FileBrowser, FileEntry};
 struct FakeFiles {
     files: StdMutex<HashMap<String, Vec<u8>>>,
     dirs: StdMutex<Vec<String>>,
+    /// Whether the backend offers ranged access (#3587).
+    ranges: bool,
+}
+
+#[async_trait::async_trait]
+impl RangedFileAccess for FakeFiles {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let files = self.files.lock().unwrap();
+        let data = files
+            .get(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        let start = (offset as usize).min(data.len());
+        let end = (start + len as usize).min(data.len());
+        Ok(data[start..end].to_vec())
+    }
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let mut files = self.files.lock().unwrap();
+        let file = files.entry(path.into()).or_default();
+        if offset == 0 {
+            file.clear();
+        } else if file.len() as u64 != offset {
+            return Err(termihub_core::files::ranged::offset_mismatch(
+                path,
+                file.len() as u64,
+                offset,
+            ));
+        }
+        file.extend_from_slice(data);
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -116,6 +146,9 @@ impl FileBrowser for FakeFiles {
     }
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
+    }
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        self.ranges.then_some(self as &dyn RangedFileAccess)
     }
 }
 
@@ -424,4 +457,97 @@ async fn an_evicted_worker_loses_file_access() {
 
     let browser = client_b.file_browser().expect("the new holder does");
     assert_eq!(browser.read_file("/secret").await.unwrap(), b"s3cret");
+}
+
+/// Ranged slices (#3587) cross the daemon link in both directions — a slice
+/// larger than one data frame too — and a misplaced write comes back typed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_ranged_backend_serves_slices_through_the_daemon() {
+    let endpoint = unique_endpoint("ranges");
+    let files = Arc::new(FakeFiles {
+        ranges: true,
+        ..FakeFiles::default()
+    });
+    let _out = spawn_daemon(&endpoint, Some(files.clone())).await;
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("file capability");
+    let ranged = browser
+        .ranged()
+        .expect("the daemon advertises ranged access");
+
+    let first = contents(CHUNK_SIZE * 2 + 7);
+    ranged.write_range("/up.bin", 0, &first).await.unwrap();
+    ranged
+        .write_range("/up.bin", first.len() as u64, b"tail")
+        .await
+        .unwrap();
+    let mut expected = first.clone();
+    expected.extend_from_slice(b"tail");
+    assert_eq!(files.files.lock().unwrap()["/up.bin"], expected);
+
+    assert!(matches!(
+        ranged.write_range("/up.bin", 3, b"X").await,
+        Err(FileError::OperationFailed(m)) if m.contains("expected 3")
+    ));
+
+    let slice = ranged
+        .read_range("/up.bin", 5, (CHUNK_SIZE * 2) as u32)
+        .await
+        .unwrap();
+    assert_eq!(slice, expected[5..5 + CHUNK_SIZE * 2]);
+    let tail = ranged
+        .read_range("/up.bin", expected.len() as u64 - 2, 64)
+        .await
+        .unwrap();
+    assert_eq!(tail, b"il");
+    assert!(matches!(
+        ranged.read_range("/missing", 0, 4).await,
+        Err(FileError::NotFound(_))
+    ));
+}
+
+/// A backend whose browser has no ranged access is not advertised as having
+/// it, so the worker never asks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_backend_without_ranges_is_not_advertised() {
+    let endpoint = unique_endpoint("no-ranges");
+    let _out = spawn_daemon(&endpoint, Some(Arc::new(FakeFiles::default()))).await;
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("file capability");
+    assert!(browser.ranged().is_none());
+}
+
+/// A daemon from before #3587 advertises files but not ranges: its browser
+/// offers no ranged access, so no request it would drop is ever sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_ranges_daemon_offers_files_without_ranges() {
+    let endpoint = unique_endpoint("pre-ranges");
+    let mut listener = DaemonListener::bind(&endpoint).await.expect("bind");
+    tokio::spawn(async move {
+        let (mut reader, mut writer) = listener.accept().await.expect("accept");
+        let intent = protocol::read_frame_async(&mut reader).await;
+        assert!(matches!(intent, Ok(Some(f)) if f.msg_type == MSG_ATTACH_INTENT));
+        protocol::write_frame_async(
+            &mut writer,
+            protocol::MSG_CAPABILITIES,
+            &[protocol::CAP_FILES],
+        )
+        .await
+        .unwrap();
+        protocol::write_frame_async(&mut writer, MSG_READY, &[])
+            .await
+            .unwrap();
+        while let Ok(Some(_)) = protocol::read_frame_async(&mut reader).await {}
+        listener.cleanup();
+    });
+
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("files advertised");
+    assert!(browser.ranged().is_none());
 }

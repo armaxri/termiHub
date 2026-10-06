@@ -1114,6 +1114,25 @@ graph TB
 No AppImage is built for Linux ARM64: `linuxdeploy`, the AppImage tool, is
 x86_64-only, so the native ARM64 release runner produces `.deb` and `.rpm` only.
 
+**Windows ConPTY host (#4121).** The Windows installers ship Microsoft's
+`conpty.dll` + `OpenConsole.exe` (from the `Microsoft.Windows.Console.ConPTY`
+NuGet package, MIT) next to `termihub.exe`. `portable-pty` loads a `conpty.dll`
+from the executable's directory in preference to the inbox `kernel32` ConPTY,
+and that DLL starts the `OpenConsole.exe` beside it as the console host. The
+inbox host re-renders the child's output and drops DCS strings such as SIXEL;
+the packaged host forwards the child's VT verbatim, so inline images work in
+local terminals. The files are never committed: `scripts/internal/fetch-conpty.sh`
+(`.cmd`/`.ps1` twin) downloads the version pinned in
+`src-tauri/packaging/windows/conpty.env`, refuses it unless the package and both
+files match their SHA-256 pins, and stages them for the bundle-only config
+fragment `src-tauri/tauri.conpty.conf.json`, which maps them to the install root.
+`release.yml` / `dev-build.yml` then fail unless the built MSI (and dev NSIS)
+carries both files next to `termihub.exe`, pinned and Microsoft-signed
+(`scripts/internal/verify-conpty-bundle.ps1`). Builds without the fragment — `cargo`
+test binaries, `scripts/dev.cmd` before a fetch, a portable copy that leaves the
+files behind — fall back to the inbox host, so the PTY code
+(`core/src/backends/local_shell.rs`, `conpty_cursor.rs`) supports both.
+
 ### CI/CD Pipeline
 
 Three GitHub Actions workflows handle the build and release pipeline. See `.github/workflows/` for details.
@@ -1696,50 +1715,89 @@ sequenceDiagram
     participant F as biometric-unlock.json
     participant V as credentials.enc
     UI->>M: unlock_credential_store_biometric
-    M->>F: read bindings, compare salt fingerprint with V (no prompt yet)
-    M->>OS: verify(BiometricUnlock)
-    OS-->>M: ok + enrollment fingerprint
-    M->>M: fingerprint == enrolled? (else delete enrollment)
-    M->>KC: read wrapping key
-    M->>M: AES-GCM unwrap vault key (AAD = salt fp + enrollment fp)
+    M->>F: read bindings + protection, compare salt fingerprint with V (no prompt yet)
+    alt OS-enforced (#3534)
+        M->>KC: release key (Secure Enclave Touch ID sheet / Hello sign)
+        KC-->>M: wrapping key (only after the OS verified the user)
+    else App-enforced (fallback / legacy)
+        M->>OS: verify(BiometricUnlock)
+        OS-->>M: ok + enrollment fingerprint
+        M->>M: fingerprint == enrolled? (else delete enrollment)
+        M->>KC: read wrapping key
+    end
+    M->>M: AES-GCM unwrap vault key (AAD = protection + salt fp + enrollment fp)
     M->>V: unlock_with_key (AEAD-authenticated)
+    opt was app-enforced and OS-enforced is available
+        M->>KC: create OS-enforced key, re-wrap, delete app-enforced key
+    end
 ```
 
 **Key protection.** On opt-in (master password re-verified **and** a successful OS verification)
-termiHub generates a random 256-bit _wrapping key_, stores it in the OS credential store (macOS
-Keychain / Windows Credential Manager, service `termiHub-biometric-unlock`), and seals a copy of
-the already-derived vault key with AES-256-GCM under it into `biometric-unlock.json` next to
-`credentials.enc`. The AEAD associated data binds the ciphertext to the vault's salt fingerprint and
-the enrollment fingerprint, so editing the file cannot re-bind it. Neither half alone reveals the
-key; the file never contains the vault key or the wrapping key.
+termiHub seals a copy of the already-derived vault key with AES-256-GCM under a 256-bit _wrapping
+key_ into `biometric-unlock.json` next to `credentials.enc`. The AEAD associated data binds the
+ciphertext to the vault's salt fingerprint, the enrollment fingerprint and the protection kind, so
+editing the file cannot re-bind it. Neither half alone reveals the key; the file never contains the
+vault key or the wrapping key. The wrapping key is held in one of two ways
+([#3534](https://github.com/armaxri/termiHub/issues/3534)), chosen at runtime by
+`credential/hw_key/` (`HardwareKeyProtector::probe`, which never prompts):
+
+| Protection                          | macOS                                                                                                                                                                                                                                                                                                                                      | Windows                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **OS-enforced** (preferred)         | Random key in the **data-protection keychain** with `SecAccessControl(.biometryCurrentSet)`, `WhenPasscodeSetThisDeviceOnly`. Reading it makes the Secure Enclave require Touch ID of a currently enrolled finger; an enrollment change makes the item unreadable. Needs a code-signed build with the `keychain-access-groups` entitlement | Windows Hello `KeyCredentialManager` key (`termiHub-biometric-unlock-v2`). Wrapping key = HKDF-SHA256 over the Hello signature of a fixed challenge, so it only exists after Hello verified the user. The key credential is created and signed **twice** on enable; differing signatures (a non-deterministic padding) fall back to app-enforced |
+| **App-enforced** (fallback, legacy) | Random key in the login Keychain (`termiHub-biometric-unlock`), read after termiHub's `LAContext` verification                                                                                                                                                                                                                             | Random key in Credential Manager (DPAPI), read after termiHub's `UserConsentVerifier` verification                                                                                                                                                                                                                                               |
+
+Runtime selection: on macOS the probe writes and removes a throwaway data-protection item without
+access control; `errSecMissingEntitlement` (every unsigned / ad-hoc build, including the v0.1.0
+beta) selects app-enforced. The entitlement is deliberately **not** added to unsigned builds —
+`keychain-access-groups` is restricted and needs a provisioning profile, without which macOS refuses
+to launch the app. On Windows, `KeyCredentialManager::IsSupportedAsync` decides. Settings shows
+"OS-enforced: yes / no" under the toggle (`BiometricUnlockStatus.protection` /
+`osEnforcedAvailable`).
+
+Prompts: an OS-enforced unlock shows **only** the OS's own prompt (the keychain's Touch ID sheet /
+the Hello dialog) — termiHub's separate verification is skipped. On enable, macOS verifies with
+`LAContext` first (creating the item does not prompt); on Windows the Hello prompts of creating and
+signing replace `UserConsentVerifier`. `KeyCredentialManager` has no HWND interop (unlike
+`UserConsentVerifier`), so while a Hello request is pending a helper thread finds the system
+`Credential Dialog Xaml Host` window and raises it with `SetForegroundWindow` (allowed because
+termiHub is the foreground process when the user clicked).
+
+**Migration.** Enrollments made before #3534 (metadata version 1, no `protection` field) and every
+app-enforced enrollment keep working. After the next **successful** biometric unlock, if
+OS-enforced protection is available, the vault key is transparently re-wrapped under a fresh
+OS-enforced key (metadata version 2) and the app-enforced key is deleted. On Windows this shows the
+Hello create/sign dialogs once. A cancelled or failed upgrade never fails the unlock: the old
+enrollment stays, and the upgrade is retried at most once per app run.
 
 **Invalidation.** Any mismatch **deletes both halves** and the user falls back to the master
 password (`invalidated`): the vault salt changed (master password changed, even behind termiHub's
-back), the biometric enrollment changed (macOS), the wrapping key is missing or wrong, the file is
-unreadable, or the unwrapped key no longer opens the vault. The enrollment is also deleted on a
-master-password change, a store reset, a switch away from master-password mode, and on opt-out. A
-cancelled or failed prompt does **not** delete it. Auto-lock applies unchanged — biometric unlock
-passes the same auto-lock fail-safe gate (WA-RS-004) as a password unlock.
+back), the biometric enrollment changed (macOS: fingerprint mismatch, or the OS-enforced item is
+gone), the wrapping key is missing or wrong, the OS-enforced key can no longer be used by this
+build / device, the file is unreadable, or the unwrapped key no longer opens the vault. The
+enrollment is also deleted on a master-password change, a store reset, a switch away from
+master-password mode, and on opt-out. A cancelled or failed prompt does **not** delete it.
+Auto-lock applies unchanged — biometric unlock passes the same auto-lock fail-safe gate (WA-RS-004)
+as a password unlock.
 
 **Threat model.**
 
-| Threat                                                                   | Mitigation                                                                                                                                                                                                                                                                                        |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Someone at an unattended, unlocked session exports every keychain secret | OS verification is required for each export; cancel/failure refuses it; no verification window is cached                                                                                                                                                                                          |
-| Someone at an unattended session unlocks a locked master-password store  | Biometric unlock needs the enrolled finger/face (or Hello PIN on Windows); the master password still works                                                                                                                                                                                        |
-| A finger is enrolled later by someone who knows the login password       | macOS: enrollment fingerprint changes → enrollment deleted (`biometryCurrentSet` semantics). Windows: not detectable — documented limitation                                                                                                                                                      |
-| Master password changed or vault replaced                                | Salt fingerprint mismatch → enrollment deleted before any prompt                                                                                                                                                                                                                                  |
-| Metadata file tampered to re-bind the enrollment                         | Bindings are AEAD associated data; any edit fails authentication → enrollment deleted                                                                                                                                                                                                             |
-| Offline theft of the config directory                                    | Without biometric unlock: Argon2id(master password) as before. **With it: also bounded by the OS credential store** — the wrapping key is protected by the user's login (Keychain / DPAPI), not by the master password. This is the accepted trade-off of opting in, stated in the setting's hint |
-| Malware running as the logged-in user                                    | **Not in scope.** It can read the user's keychain items and termiHub's memory while unlocked (it can equally keylog the master password). The OS prompt is enforced by termiHub, not by the key store                                                                                             |
-| Unit tests popping real prompts or silently succeeding                   | Under `cfg(test)` the platform verifier is always the unavailable one and the wrapping-key slot is in-memory; tests inject a scripted `MockVerifier`                                                                                                                                              |
+| Threat                                                                   | Mitigation                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Someone at an unattended, unlocked session exports every keychain secret | OS verification is required for each export; cancel/failure refuses it; no verification window is cached                                                                                                                                                                                                                                                              |
+| Someone at an unattended session unlocks a locked master-password store  | Biometric unlock needs the enrolled finger/face (or Hello PIN on Windows); the master password still works                                                                                                                                                                                                                                                            |
+| A finger is enrolled later by someone who knows the login password       | macOS OS-enforced: the Secure Enclave invalidates the `.biometryCurrentSet` item → enrollment deleted. macOS app-enforced: enrollment fingerprint changes → enrollment deleted. Windows: not detectable (any Hello credential of the user, including the PIN, is accepted) — documented limitation                                                                    |
+| Master password changed or vault replaced                                | Salt fingerprint mismatch → enrollment deleted before any prompt                                                                                                                                                                                                                                                                                                      |
+| Metadata file tampered to re-bind the enrollment or downgrade protection | Bindings and the protection kind are AEAD associated data, and version-1 files are only accepted as app-enforced; any edit fails authentication → enrollment deleted                                                                                                                                                                                                  |
+| Offline theft of the config directory                                    | Without biometric unlock: Argon2id(master password) as before. With it, OS-enforced: the wrapping key never leaves the Secure Enclave-guarded keychain item / the Hello private key (TPM-backed where present). App-enforced: bounded by the user's login (Keychain / DPAPI), not by the master password — the accepted trade-off of opting in, stated in the setting |
+| Malware running as the logged-in user                                    | **OS-enforced:** cannot obtain the wrapping key without the OS showing its own Touch ID / Hello prompt; it can still read termiHub's memory while the store is unlocked, or keylog the master password. **App-enforced (unsigned builds, fallback):** not in scope — it can read the keychain item without a prompt; Settings says "OS-enforced: no"                  |
+| Unit tests popping real prompts or silently succeeding                   | Under `cfg(test)` the platform verifier and the OS-enforced protector are always the unavailable ones and the wrapping-key slot is in-memory; tests inject a scripted `MockVerifier` / `MockHwKey`                                                                                                                                                                    |
 
-**Known limitation.** The wrapping key is gated by termiHub's own OS verification, not by a
-hardware-bound access control. Binding it cryptographically (macOS `SecAccessControl`
-`.biometryCurrentSet` in the data-protection keychain, Windows Hello `KeyCredentialManager`
-signatures) needs a code-signed build with keychain entitlements and is tracked in
-[#3534](https://github.com/armaxri/termiHub/issues/3534); Linux support in
-[#3535](https://github.com/armaxri/termiHub/issues/3535).
+**Known limitations.** The v0.1.0 beta ships **unsigned**, so on macOS every build uses the
+app-enforced path ("OS-enforced: no") until Developer ID signing with the `keychain-access-groups`
+entitlement lands (pre-v1.0); signed builds then upgrade existing enrollments on their next unlock.
+Windows uses the OS-enforced Hello key wherever Hello key credentials are set up. Windows cannot
+detect a newly enrolled finger. Linux has no biometric unlock (polkit export only,
+[#3535](https://github.com/armaxri/termiHub/issues/3535)).
 
 #### Scheduled workflows and macros
 
@@ -2399,6 +2457,20 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   as a rehydrated paused row — cancels the folder's rest. The rows stay
   individual queue rows; the folder-level result the paste awaited does not
   survive the restart, so each row reports its own outcome afterwards.
+  An **agent-hosted session** (local, SSH, Docker or WSL on a remote agent)
+  uses the queue too (#3587), through `core/src/files/transfer/ranged.rs`. Its
+  backend lives on the agent host, so the desktop moves the file in
+  offset-addressed slices over `connection.files.read_range` /
+  `write_range` (protocol 0.26.0), one 256 KiB request per chunk. A slice write
+  names the offset it expects and the far side refuses it unless the file holds
+  exactly that many bytes, so a retried or resumed upload can never splice at
+  the wrong place. This was chosen over running the core executors on the agent:
+  the local end of the copy is on the desktop, so the bytes cross the RPC
+  either way, and stateless slices need no long-lived stream to pause, resume
+  or abandon. `session_supports_transfer_queue` reports an agent session as
+  queue-capable only when the agent advertises `fileRanges` and a zero-length
+  probe read succeeds; a backend without ranged access (FTP), or a session
+  started by an older session daemon, stays on the byte-based path.
   A **session folder paste** (local → session, session → session, session →
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
@@ -3233,6 +3305,49 @@ forbids it from fetching remote content, so any network access has to happen in 
 - A custom index URL is the user's choice of trust. Because the client runs on the user's own
   machine, server-side SSRF concerns do not apply, and the size, timeout and redirect limits
   bound what a hostile index can make the app do.
+
+### ADR-18: Compiled-In First-Party Plugin Publisher Trust Anchor
+
+**Status:** Accepted (#3980) — mechanism live; activates when the maintainer runs the key setup
+
+**Context:** Since #2796 the plugin host re-checks at load that a signed plugin's key is in the
+publisher trust store and that its backend still matches the digest recorded at install. Both
+files (`trust-store.json`, `plugin-state.json`) are ordinary app-data files. With no bundled key,
+every trusted publisher is a trust-on-first-use (TOFU) user pin, so an attacker who can write the
+app-data directory can pin their own key and rewrite the install record. Only a key compiled
+into the binary gives a root a local filesystem attacker cannot forge.
+
+**Decision:** Embed the first-party publisher key the same way as the agent-update (#3213) and
+plugin-index (#3716) keys — a **separate** Ed25519 key in PEM SubjectPublicKeyInfo form,
+`plugins/keys/first-party-publisher.pub.pem`, compiled in via `include_str!` and parsed once into
+`BUNDLED_PUBLISHERS` (`core/src/plugin/trust_store.rs`):
+
+- Each key block becomes a `bundled` publisher whose `keyId` is the `sha256:` fingerprint of the
+  raw key — exactly what package signatures carry. It is seeded on every load, so a first-party
+  plugin verifies as **Verified** with no user pin.
+- It cannot be revoked, a `trust-store.json` entry claiming its id is ignored (the compiled-in
+  key wins), and pinning a different key under its id is refused (`BundledKeyConflict`).
+- The private half exists only as the `FIRST_PARTY_PLUGIN_SIGNING_KEY` GitHub Actions secret
+  (a `termihub-plugin-keygen` key file). The **Plugin Packaging** workflow signs the
+  multi-platform first-party package with it, after checking the secret's key id is one of the
+  compiled-in keys.
+- More than one block is accepted, for a rotation overlap.
+
+**Placeholder:** until `scripts/internal/setup-plugin-publisher-key.sh` runs, the committed file
+is a marked placeholder with no key block. `BUNDLED_PUBLISHERS` is then empty and behaviour is
+exactly the pre-#3980 TOFU posture. The host logs that no first-party key is compiled in, and
+the packaging workflow leaves the package unsigned with a notice. Unlike the agent-update key,
+the placeholder does not fail closed: the bundled anchor only _adds_ trust, and every package
+still passes its own signature and acknowledgement gates.
+
+**Consequences:**
+
+- Once configured, rewriting app data can no longer remove or replace first-party trust, and
+  official plugins never regress to an unknown-publisher prompt.
+- Third-party publishers are unchanged: they remain TOFU pins, with the #2796 limitation that a
+  filesystem attacker can forge a pin for _their_ key.
+- Losing or leaking the private key needs a new key and new desktop builds (`--force`); plugins
+  signed with the old key then verify as first-party only in desktops that still carry it.
 
 ---
 

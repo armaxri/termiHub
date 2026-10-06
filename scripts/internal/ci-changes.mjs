@@ -177,6 +177,10 @@ function locationAreas(path) {
   if (/^src-tauri\/tauri(\.[a-z]+)?\.conf\.json$/.test(path)) return ["rust", "frontend"];
   if (/^src-tauri\/capabilities\/[^/]+\.json$/.test(path)) return ["rust", "frontend"];
 
+  // The sideloaded ConPTY pins (#4121): the Windows cmd Script Smoke job
+  // fetches the pinned package for real and checks it against them.
+  if (path === "src-tauri/packaging/windows/conpty.env") return ["rust", "scripts"];
+
   if (
     startsWithAny(path, RUST_ROOTS) ||
     RUST_FILES.has(path) ||

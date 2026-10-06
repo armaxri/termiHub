@@ -119,11 +119,12 @@ tests:
     manual_reason: "canvas-rendered pixels"
     name: "Inline SIXEL/iTerm2 images draw correctly"
     pr: 3442
-    platforms: [macos]
+    platforms: [macos, windows]
     prerequisites:
       - app: true
     instructions:
       - "In a local shell run img2sixel on a PNG, then imgcat on a PNG."
+      - "On Windows (installed MSI, sideloaded ConPTY host #4121), print a .six file and an iTerm2 image file with `cat` in the default PowerShell tab."
       - "Scroll the image out of view and back."
       - "Repeat with the DOM renderer."
     expected:

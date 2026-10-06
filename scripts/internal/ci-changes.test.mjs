@@ -91,6 +91,13 @@ describe("classify", () => {
     ]);
   });
 
+  it("runs the script smoke (real ConPTY fetch) when the ConPTY pins change (#4121)", () => {
+    expect(classify(["src-tauri/packaging/windows/conpty.env"])).toMatchObject({
+      rust: true,
+      scripts: true,
+    });
+  });
+
   it("flags lockfile and manifest changes as deps", () => {
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true });
     expect(classify(["core/Cargo.toml"])).toMatchObject({ rust: true, deps: true });

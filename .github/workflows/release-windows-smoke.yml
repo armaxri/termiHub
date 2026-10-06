@@ -9,8 +9,9 @@ name: Release Windows Smoke
 #   2. installs it silently (`msiexec /i … /qn /l*v`), exactly as an unattended
 #      deployment would,
 #   3. asserts the "Add/Remove Programs" uninstall entry exists with the release
-#      version and that the install directory holds termihub.exe and the bundled
-#      RDP helper,
+#      version and that the install directory holds termihub.exe, the bundled
+#      RDP helper and the sideloaded ConPTY host (conpty.dll + OpenConsole.exe,
+#      pinned and Microsoft-signed, #4121),
 #   4. runs `termihub.exe --version` (headless pre-init path, #2655),
 #   5. launches the app, waits for the frontend's first IPC call to reach the
 #      backend (logged to the durable app log), asserts it stays alive, then
@@ -104,10 +105,13 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011).
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011) and
+        # verify-conpty-bundle.ps1 with its pins (#4121).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          sparse-checkout: scripts/internal
+          sparse-checkout: |
+            scripts/internal
+            src-tauri/packaging/windows
 
       - name: Download MSI and agent binary
         id: download
@@ -223,6 +227,11 @@ jobs:
             Write-Output "::error::bundled RDP helper not found at $helper"
             exit 1
           }
+          # The sideloaded ConPTY host (#4121) must sit next to termihub.exe
+          # (where portable-pty looks), match its pins and be Microsoft-signed,
+          # or local terminals fall back to the inbox ConPTY and lose images.
+          ./scripts/internal/verify-conpty-bundle.ps1 -Dir $dir
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
           # The uninstall key of an MSI install is named after its ProductCode.
           $productCode = $entry.PSChildName
@@ -390,6 +399,11 @@ jobs:
           }
           if (Test-Path -LiteralPath $env:EXE) {
             Write-Output "::error::$env:EXE still present after uninstall"
+            exit 1
+          }
+          $conpty = Join-Path (Split-Path -Parent $env:EXE) 'conpty.dll'
+          if (Test-Path -LiteralPath $conpty) {
+            Write-Output "::error::$conpty still present after uninstall"
             exit 1
           }
           Write-Output "uninstall removed the registry entry and the binaries"
