@@ -360,6 +360,24 @@ class AgentUi(HarnessMixin):
         """
         return self.driver.exists(self.SETUP_ARCH)
 
+    def wait_setup_ready(self, *, timeout: float = 40.0) -> None:
+        """Wait until the setup wizard finished arch detection, accepting host keys.
+
+        Detection opens an SSH session to the agent host, so the first meeting of
+        a fresh test app with that host raises the host-key trust prompt (#1959)
+        after the password prompt, mid-handshake. Unanswered, detection hangs and
+        the form never appears; any such prompt seen while waiting is accepted
+        with "Accept for host", like :meth:`wait_agent_connected` does.
+        """
+
+        def ready() -> bool:
+            if self.driver.exists(self.HOSTKEY_PROMPT):
+                self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+                return False
+            return self.setup_ready()
+
+        self.wait(ready, what="the agent-setup form after arch detection", timeout=timeout)
+
     def start_local_agent_setup(self, binary_path: str) -> None:
         """From the ready setup form, pick a local binary and click Start Setup.
 

@@ -260,6 +260,4 @@ class TestAgentFileBrowserRemoteToLocal(
         # The agent-hosted shell's browser opens on the agent user's home dir
         # (``~``, resolved by the agent) — the same dir the seed ran in.
         self.switch_to_files_sidebar()
-        self.wait(
-            lambda: self.file_browser_path() or None, what="the agent file-browser path"
-        )
+        self.wait_file_browser_settled()

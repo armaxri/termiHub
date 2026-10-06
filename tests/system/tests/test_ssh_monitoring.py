@@ -31,6 +31,13 @@ pytestmark = pytest.mark.integration
 
 HOST = "127.0.0.1"
 
+#: Projection region of the monitoring domain (twin of the frontend
+#: ``SYSTEM_MONITORS_REGION`` in ``src/store/systemMonitorBridge.ts``). The monitor
+#: state is region-authoritative since #2224: the old ``appStore`` monitoring
+#: singleton (and its ``monitoringSessionId``) is gone, and each monitor lives at
+#: ``monitors[<terminal session id>]``.
+SYSTEM_MONITORS_REGION = "system-monitors"
+
 
 @pytest.mark.usefixtures("ssh_fixtures")
 class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, MonitoringUi, SettingsUi, SystemTest):
@@ -56,6 +63,9 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
             key_path=str(SSH_KEY_PATH),
             connect=True,
         )
+        # A different host (port) than the first tab: its key is not trusted yet,
+        # so the handshake blocks on the #1959 trust prompt until accepted.
+        self.accept_host_key_prompt()
         self.wait(self.has_terminal, what="the second SSH terminal")
         self.wait_for_monitoring_stats()
 
@@ -72,19 +82,48 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
         # deterministic, observable proof that the Disconnect control fired.
         # (The original "stays disconnected" / "returns to Monitor button"
         # assertions are not portable: auto-connect never lets that state settle.)
-        self.connect_ssh_password(unique_name("ssh-mon-disc"))
-        before = self.wait_for_monitoring_stats() and self.driver.get_state(
-            "monitoringSessionId"
+        #
+        # The monitor is keyed by the terminal session id, so a reconnect keeps
+        # its key (and its `monitorSessionId`, which equals the key). What marks
+        # the fresh session is its sample counter: every (re)connect restarts
+        # `sampleCount` at 0 (`SystemMonitorStore::open`). So let a few samples
+        # accumulate, disconnect, and wait for the count to drop below that mark.
+        name = unique_name("ssh-mon-disc")
+        self.connect_ssh_password(name)
+        self.wait_for_monitoring_stats()
+        # Earlier tests in this class leave their SSH tabs (and monitors) open,
+        # so read this tab's monitor by its key: the terminal session id.
+        key = self.wait(
+            lambda: (self.find_tab(name) or {}).get("sessionId"),
+            what="the SSH tab's session id",
+        )
+        before = self.wait(
+            lambda: (lambda n: n if n is not None and n >= 3 else None)(self._sample_count(key)),
+            timeout=30.0,
+            what="the monitor to collect a few samples",
         )
         self.monitoring_disconnect()
-        new_sid = self.wait(
-            lambda: (lambda s: s if (s and s != before) else None)(
-                self.driver.get_state("monitoringSessionId")
-            ),
+        self.wait(
+            lambda: (lambda n: n is None or n < before)(self._sample_count(key)),
+            timeout=30.0,
+            what="monitoring to drop the old session",
+        )
+        self.wait(
+            lambda: self._live_monitor(key) is not None,
             timeout=30.0,
             what="monitoring to reconnect with a new session",
         )
-        assert new_sid and new_sid != before
+
+    def _live_monitor(self, key: str):
+        """The monitor entry for ``key`` once it is live (has a backend session)."""
+        monitors = self.projection_region_cache(SYSTEM_MONITORS_REGION).get("monitors")
+        entry = monitors.get(key) if isinstance(monitors, dict) else None
+        return entry if isinstance(entry, dict) and entry.get("monitorSessionId") else None
+
+    def _sample_count(self, key: str):
+        """``sampleCount`` of the live monitor for ``key``, or ``None`` while not live."""
+        monitor = self._live_monitor(key)
+        return monitor.get("sampleCount") if monitor is not None else None
 
     # ── Status bar ────────────────────────────────────────────────────────────
     def test_displays_cpu_mem_disk(self):

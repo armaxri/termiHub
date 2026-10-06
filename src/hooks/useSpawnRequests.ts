@@ -6,11 +6,15 @@ import {
   rememberSpawnChoice,
   resolveContainerSpawn,
   resolveShellSpawn,
+  storeCredential,
   takePendingSpawn,
 } from "@/services/api";
+import { currentConnectionsView } from "@/store/connectionsBridge";
+import type { ShellSpawn } from "@/types/generated/ShellSpawn";
 import type { ContainerRuntime, SpawnChoice } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 
 /** Auto-dismiss duration (ms) for the spawn confirmation toast (#1365). */
 const SPAWN_TOAST_DURATION_MS = 3000;
@@ -92,6 +96,49 @@ export function applySpawnChoice(
 }
 
 /**
+ * Resolve the password / key passphrase a spawned SSH session needs before its
+ * tab opens, the way a sidebar connect does: the stored credential of the saved
+ * connection (behind the credential-store unlock gate), else the password
+ * prompt. A spawn carries only the saved connection's settings, which never hold
+ * the secret, so without this step the connect sent an empty password and the
+ * tab landed in "authentication failed".
+ *
+ * Returns the spawn with the secret spliced into its settings, the spawn
+ * unchanged when it needs none (not SSH, key without a passphrase, a password
+ * already present), or `null` when the user dismissed the unlock dialog or the
+ * prompt. A prompt-entered secret is stored when the prompt's Save box is
+ * ticked. The secret is never logged.
+ */
+export async function resolveSpawnSecret(
+  spawn: ShellSpawn,
+  connectionRef: string | undefined
+): Promise<ShellSpawn | null> {
+  const store = useAppStore.getState();
+  const schema = store.connectionTypes.find((ct) => ct.typeId === "ssh")?.schema;
+  // The spawn's `--connection` names the saved connection; the credential
+  // store keys its secret by that connection's id and source file.
+  const saved = connectionRef
+    ? currentConnectionsView().connections.find((c) => c.id === connectionRef)
+    : undefined;
+  const sourceFile = saved?.sourceFile ?? null;
+  const secret = await resolveConnectSecret({
+    schema,
+    settings: spawn.settings,
+    connectionId: saved?.id ?? null,
+    sourceFile,
+    requestPassword: store.requestPassword,
+  });
+  if (secret.status === "canceled") return null;
+  if (secret.status === "none") return spawn;
+  if (secret.source === "prompt" && saved && useAppStore.getState().passwordPromptShouldSave) {
+    await storeCredential(saved.id, secret.credentialType, secret.secret, sourceFile).catch(
+      (err: unknown) => frontendLog("spawn", `Failed to store credential: ${errorMessage(err)}`)
+    );
+  }
+  return { ...spawn, settings: { ...spawn.settings, [secret.passwordKey]: secret.secret } };
+}
+
+/**
  * Handle a single resolved spawn request, whether it arrived over the live
  * `spawn-request` event or was drained from the cold-start pending slot.
  *
@@ -141,8 +188,18 @@ async function handleSpawnRequest(
       req.kind,
       picked.shell
     );
-    open.openSpawnedShell(spawn);
-    if (spawn.missing) {
+    // An SSH spawn may need its password before it can connect. Skipped when no
+    // SSH schema is registered (nothing could decide what the connect needs).
+    const needsSecretStep =
+      spawn.type === "ssh" &&
+      useAppStore.getState().connectionTypes.some((ct) => ct.typeId === "ssh");
+    const ready = needsSecretStep ? await resolveSpawnSecret(spawn, req.connection) : spawn;
+    if (ready === null) {
+      toast.info("Connect canceled");
+      return;
+    }
+    open.openSpawnedShell(ready);
+    if (ready.missing) {
       toast.info(`Path not found — opened a shell in your home directory instead`, {
         duration: SPAWN_TOAST_DURATION_MS,
         testId: "spawn-toast-missing",

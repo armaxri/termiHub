@@ -84,6 +84,7 @@ describe("inspectTerminal (real registries)", () => {
     return {
       setEnabled: () => {},
       isActive: () => active,
+      isLoading: () => false,
       storageUsage: () => usage,
       dispose: () => {},
     };

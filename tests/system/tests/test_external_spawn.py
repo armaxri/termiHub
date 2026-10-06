@@ -249,8 +249,12 @@ class TestExternalSshSpawn(SpawnUi, ConnectionsUi, PasswordPromptUi, SystemTest)
 
         before = self.spawned_ids()
         self.spawn_cli("--kind", "ssh", "--connection", str(conn["id"]), "--location", "/tmp")
-        self.handle_password_prompt()
+        # A spawned tab carries no saved-connection id, so nothing resolves the
+        # password before the connect: the handshake runs first and raises the
+        # host-key trust prompt (#1959), and only the rejected empty-password
+        # auth then raises the password prompt. Answer them in that order.
         self.accept_host_key_prompt()
+        self.handle_password_prompt()
 
         tab = self.wait_new_spawned_tab(before)
         assert tab.get("title") == f"{name} (Spawned)"

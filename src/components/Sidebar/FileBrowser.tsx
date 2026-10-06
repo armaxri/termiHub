@@ -48,6 +48,8 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { sessionPaneShowsOtherSession } from "@/store/slices/fileBrowsersSlice";
+import { findAgentConnectionType } from "@/utils/agentSessionType";
 import { Button, Tooltip, Input, SearchInput, Spinner, EmptyState, toast } from "@/components/ui";
 import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -809,9 +811,8 @@ function useFileBrowserSync() {
       if (agentId) {
         const agent = remoteAgents.find((a) => a.id === agentId);
         const agentConnectionTypes = agent?.capabilities?.connectionTypes ?? [];
-        const agentTypeInfo = agentConnectionTypes.find(
-          (ct: ConnectionTypeInfo) => ct.typeId === sessionType
-        );
+        // Alias-aware: an agent shell tab says `shell`, the registry `local`.
+        const agentTypeInfo = findAgentConnectionType(agentConnectionTypes, sessionType);
         const agentSupportsFileBrowser = agentTypeInfo?.capabilities?.fileBrowser ?? false;
         if (agentSupportsFileBrowser && globalFileBrowserEnabled) {
           setSessionFileBrowserId(activeTab.sessionId);
@@ -925,11 +926,19 @@ function useFileBrowserSync() {
     }
   }, [fileBrowserMode, navigateLocal, cwd, wslDistro]);
 
-  // Auto-navigate when entering session mode with no entries loaded yet.
+  // Auto-navigate when entering session mode with no entries loaded yet — or
+  // when the shared session pane still shows another session's directory. The
+  // pane is one view across sessions, so after switching to a session that never
+  // reports a cwd (an SFTP-only or FTP host has no shell, hence no OSC 7) its
+  // leftover entries must not count as "already loaded": they belong to the
+  // previous session, and browsing, refreshing or uploading would act on that
+  // session's path in this one.
   useEffect(() => {
     if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
     const sessionFileEntries = currentFileBrowsersView().session.entries;
-    if (sessionFileEntries.length > 0) return; // Already loaded
+    if (sessionFileEntries.length > 0 && !sessionPaneShowsOtherSession(sessionFileBrowserId)) {
+      return; // Already loaded for this session
+    }
     // Fall back to "~" so the agent resolves the home directory instead of "/".
     navigateSession(sessionFileBrowserId, cwd ?? "~");
   }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
@@ -1789,6 +1798,7 @@ export function FileBrowser() {
                 }
                 onClick={refresh}
                 aria-label="Refresh file list"
+                aria-busy={isLoading}
                 data-testid="file-browser-refresh"
               >
                 {isLoading && reducedMotion ? "Refreshing…" : undefined}

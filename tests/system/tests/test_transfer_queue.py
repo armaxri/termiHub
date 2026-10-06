@@ -187,17 +187,17 @@ class TestTransferQueueLiveTransfer(
         # ``handle_password_prompt`` then tolerates it closing under us (#1593).
         if self.password_prompt_open():
             self.handle_password_prompt()
-        return self.wait(lambda: self.file_browser_path() or False, what="the remote path")
+        return self.wait_file_browser_settled()
 
     def test_real_sftp_paste_populates_the_transfer_queue(self):
-        """A real copy/paste drives rows to `completed`, carrying the remote path.
+        """A real copy/paste drives its row to `completed`, carrying the remote path.
 
-        The paste is one user action but two backend transfers — a download of
-        the source to a local temp file and an upload to the destination — so the
-        queue ends with two rows. Both must carry the remote path (#1531): the
-        download's is the source path, the upload's is the destination path.
-        Both must also be named for the file the user pasted, never for the
-        internal temp copy the upload actually reads from (#1573).
+        A paste within one remote session is a single server-side remote-to-remote
+        copy (``session_remote_to_remote_copy``): one backend transfer, so the
+        queue ends with one row. It is registered under the destination session
+        and named/pathed for the destination — the file the user pasted, never an
+        internal temp copy (#1531, #1573). (The pre-#4116 paste was a download to a
+        local temp file plus an upload, i.e. two rows.)
         """
         name = f"payload-{unique_name('tq')}.bin"
         dest = f"destdir-{unique_name('tq')}"
@@ -256,46 +256,38 @@ class TestTransferQueueLiveTransfer(
             what="the transfer queue to register the first transfer",
         )
 
-        # Download + upload = two rows, both settling at `completed`.
+        # One remote-to-remote copy = one row, settling at `completed`.
         entries = self.wait(
             lambda: (
                 self.queue_entries()
-                if len(self.queue_entries()) == 2
+                if len(self.queue_entries()) == 1
                 and all(e["state"] == "completed" for e in self.queue_entries())
                 else False
             ),
-            what="both paste transfers to complete",
+            what="the paste transfer to complete",
             timeout=120.0,
         )
+        (entry,) = entries
 
-        by_direction = {e["direction"]: e for e in entries}
-        assert set(by_direction) == {"download", "upload"}, entries
+        # The copy is registered as an upload into the destination session.
+        assert entry["direction"] == "upload", entries
+        assert entry["percent"] == 100
 
-        # Every row reaches 100%.
-        assert [e["percent"] for e in entries] == [100, 100]
+        # The row names the file the user knows (#1573) — the backend derives
+        # `file_name` from the destination path — never an internal temp name.
+        assert entry["name"] == name
+        assert not entry["name"].startswith("termihub-paste-")
 
-        # Both rows name the file the user knows (#1573). The backend derives
-        # `file_name` from the remote path in both directions
-        # (`commands/files.rs::file_name_of`), so the name always agrees with
-        # the `path` cell in the same row. A paste uploads from a local temp
-        # copy (`/tmp/termihub-paste-<ts>-<name>`), and that internal name must
-        # never surface.
-        assert by_direction["download"]["name"] == name
-        assert by_direction["upload"]["name"] == name
-        assert not by_direction["upload"]["name"].startswith("termihub-paste-")
-
-        # The remote path from #1531 (PR #1543) reaches both rows: the download
-        # reports the source path, the upload the destination path. Without the
-        # backend emitting `path`, the entries carry no path at all and this
-        # fails (`.get` so that reads as an assertion, not a KeyError).
+        # The remote path from #1531 (PR #1543) reaches the row: the destination
+        # path the file landed at (`.get` so a missing path reads as an
+        # assertion, not a KeyError).
         base = source_dir.rstrip("/")
-        assert by_direction["download"].get("path") == f"{base}/{name}"
-        assert by_direction["upload"].get("path") == f"{base}/{dest}/{name}"
+        assert entry.get("path") == f"{base}/{dest}/{name}"
 
-        # The panel renders the completed rows and summarises them.
+        # The panel renders the completed row and summarises it.
         assert self.driver.exists(ROW)
         assert self.driver.get_text(ROW_STATUS) == "done"
-        assert "2 done" in self.driver.get_text(QUEUE_SUMMARY)
+        assert "1 done" in self.driver.get_text(QUEUE_SUMMARY)
 
         # A completed row offers Remove only — no pause/cancel/retry.
         assert self.driver.exists(REMOVE)
@@ -303,30 +295,21 @@ class TestTransferQueueLiveTransfer(
         assert not self.driver.exists(CANCEL)
 
         # The pasted file really landed in the destination directory at full
-        # size: the transfer moved bytes, it did not merely emit events. Read the
-        # session file browser's slice (`sessionFileEntries`), not the SFTP-only
-        # `fileEntries`: since the SFTP convergence (#2421) an SSH file browser is
-        # a *session* browser, so its listing lives on the session slice — the
-        # same mode split `FileBrowserPathReads` documents for `currentPath`.
+        # size: the transfer moved bytes, it did not merely emit events. The
+        # browser lists it, and the remote shell (still in the source directory)
+        # reports its byte size. The listing itself lives in the per-client
+        # `file-browser@<clientId>` region now, not in an `appStore` slice, so the
+        # size is read where it is authoritative: on the host.
         self.wait_for_file_row(name)
-        entry = self.wait(
-            lambda: next(
-                (
-                    f
-                    for f in (self.driver.get_state("sessionFileEntries") or [])
-                    if f["name"] == name
-                ),
-                False,
-            ),
-            what="the pasted file to list in the destination",
-        )
-        assert entry["size"] == self.FILE_MB * 1024 * 1024
+        size = self.FILE_MB * 1024 * 1024
+        self.run_command(f"stat -c 'TQ_SIZE:%s:' {dest}/{name}")
+        self.wait_for_output(f"TQ_SIZE:{size}:")
 
     def test_clear_completed_empties_the_panel_after_a_real_transfer(self):
         """Clear Completed drops the settled rows, and the panel unmounts."""
         # Runs after the paste test in the same suite (one app per class), so the
-        # queue still holds its two completed rows.
-        self.wait_for_queue_size(2)
+        # queue still holds its completed row.
+        self.wait_for_queue_size(1)
 
         self.driver.click(CLEAR_COMPLETED)
 
