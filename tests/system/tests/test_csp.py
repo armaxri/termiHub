@@ -15,12 +15,14 @@ each:
   Shiki's TextMate engine (Oniguruma WASM, needs ``'wasm-unsafe-eval'``) and whose
   language services run in bundled Monaco workers (``worker-src``);
 - a **SIXEL** inline image printed in a terminal (decoded to a canvas through
-  ``createImageBitmap``). On Linux the local shell ``cat``-s the bytes from a
-  file. On Windows a local shell cannot carry them: the inbox ConPTY
-  (``CreatePseudoConsole``) drops a SIXEL DCS string before it reaches the app,
-  so no PowerShell command could ever deliver the image. A loopback TCP server
-  in this test sends the bytes over a **Telnet** session instead, which
-  bypasses ConPTY and still feeds the same xterm image addon (#4076);
+  ``createImageBitmap``), twice: a **local shell** ``cat``-s the bytes from a
+  file, and a loopback TCP server sends them over a **Telnet** session (the
+  remote path, which bypasses the PTY but feeds the same xterm image addon,
+  #4076). On Windows the local shell is PowerShell on the sideloaded ConPTY host
+  (``conpty.dll`` + ``OpenConsole.exe`` next to ``termihub.exe``, #4121): the
+  inbox host drops a SIXEL DCS string before it reaches the app, so the local
+  variant fails up front when the app under test was built without that host
+  (#4129);
 - the **clock-widget** example JavaScript plugin (``examples/plugins``), whose
   code the frontend-plugin sandbox worker loads from the ``plugin://`` origin;
 - the tab **color picker**: a Radix modal (``react-remove-scroll`` injects a
@@ -44,7 +46,6 @@ production, so a broken shipped CSP still fails here.
 import json
 import shutil
 import socket
-import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -53,6 +54,7 @@ from typing import Iterator
 
 import pytest
 
+from termihub_harness import orchestrator
 from termihub_harness import (
     ConnectionsUi,
     EditorUi,
@@ -236,30 +238,38 @@ class TestContentSecurityPolicy(
         )
 
     def test_sixel_inline_image_reports_no_violations(self):
+        # On Windows only the sideloaded ConPTY host carries the DCS string from
+        # a local shell (#4121); without it, fail with the reason, not on a
+        # missing image.
+        missing_host = orchestrator.missing_sideloaded_conpty_message()
+        if missing_host:
+            pytest.fail(missing_host)
         # A restart gives the image a fresh, empty terminal to be stored in.
         self.restart_app()
-        if sys.platform.startswith("win"):
-            # The inbox ConPTY drops the DCS string, so a local PowerShell can
-            # never deliver it; a Telnet session to a loopback server can.
-            with _sixel_telnet_server() as port:
-                self.create_telnet_connection(
-                    unique_name("csp-sixel"), host="127.0.0.1", port=port, connect=True
-                )
-                self.wait(self.has_terminal, what="the Telnet terminal session")
-                self._wait_for_stored_sixel()
-                self._assert_no_violations("a SIXEL image in the terminal")
-            return
-        # The image bytes are a file on disk that `cat` prints, so no escape
-        # sequence is typed into the shell (#4025).
+        # The image bytes are a file on disk that `cat` prints (PowerShell's
+        # Get-Content alias on Windows), so no escape sequence is typed into the
+        # shell (#4025).
         image = f"th_csp_sixel_{unique_name('i')}.txt"
         self.write_home_bytes(image, SIXEL_BEFORE + b"\n" + SIXEL + SIXEL_AFTER + b"\n")
         try:
             self.ensure_terminal()
             self.run_command(f"cat ~/{image}")
             self._wait_for_stored_sixel()
-            self._assert_no_violations("a SIXEL image in the terminal")
+            self._assert_no_violations("a SIXEL image in a local shell")
         finally:
             self.remove_home(image)
+
+    def test_sixel_over_telnet_reports_no_violations(self):
+        # The remote path: the bytes arrive over a Telnet session to a loopback
+        # server, with no PTY in between (#4076).
+        self.restart_app()
+        with _sixel_telnet_server() as port:
+            self.create_telnet_connection(
+                unique_name("csp-sixel"), host="127.0.0.1", port=port, connect=True
+            )
+            self.wait(self.has_terminal, what="the Telnet terminal session")
+            self._wait_for_stored_sixel()
+            self._assert_no_violations("a SIXEL image in a Telnet session")
 
     def test_color_picker_modal_reports_no_violations(self):
         # Opening the modal makes react-remove-scroll and react-colorful create
