@@ -54,6 +54,9 @@ usage() {
 HEAVY_FILTERS=(
   # PTY shell sessions: spawn a real shell per test (#2498).
   "backends::local_shell::"
+  # Real PTY on the sideloaded ConPTY host, asserts a startup-time budget
+  # (core/tests/sideloaded_conpty.rs, Windows only, #4130).
+  "sideloaded_conpty_"
   # Remote-forward relays over real sockets, stats asserted after relay (#2395).
   "tunnel::remote_forward::"
   # Reconnect redrive through the session projection, timing-sensitive

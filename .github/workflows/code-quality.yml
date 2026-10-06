@@ -1051,6 +1051,20 @@ jobs:
             xvfb \
             xclip
 
+      # Stage the sideloaded ConPTY host (#4121) for core/tests/sideloaded_conpty.rs
+      # (#4130): the pinned conpty.dll + OpenConsole.exe, SHA-256-verified against
+      # src-tauri/packaging/windows/conpty.env (~1.7 MB). The test preloads them from
+      # TERMIHUB_TEST_CONPTY_DIR and runs a real PTY session on that host; on a
+      # GitHub runner it fails, never skips, when the variable is missing.
+      - name: Stage the sideloaded ConPTY host for the Rust tests (Windows)
+        if: matrix.os == 'windows-latest' && needs.changes.outputs.rust != 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="$(cygpath -u "$RUNNER_TEMP")/conpty-test-host"
+          ./scripts/internal/fetch-conpty.sh --arch x64 --dest "$dest"
+          echo "TERMIHUB_TEST_CONPTY_DIR=$(cygpath -w "$dest")" >>"$GITHUB_ENV"
+
       # Split Rust test run (CI-013, #3350). A plain `cargo test --workspace`
       # ran the contention-sensitive suites (PTY shells, embedded russh server,
       # reconnect redrive, remote-forward relays) alongside ~4800 other tests —
