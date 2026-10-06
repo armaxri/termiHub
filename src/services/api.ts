@@ -2180,8 +2180,9 @@ export async function sessionSupportsTransferQueue(sessionId: string): Promise<b
 /**
  * Report whether a session can be either end of a streamed session-to-session
  * copy ({@link sessionCopyRemote}): `true` for an SFTP- or Docker-backed
- * session, `false` for FTP, remote-agent or unknown sessions, which keep the
- * byte-based read/write fallback (#3586).
+ * session and for an agent-hosted session whose agent serves ranged slices
+ * (#4115), `false` for FTP, agents without `fileRanges` or unknown sessions,
+ * which keep the byte-based read/write fallback (#3586).
  */
 export async function sessionSupportsRemoteCopy(sessionId: string): Promise<boolean> {
   return await invoke<boolean>("session_supports_remote_copy", { sessionId });
@@ -2239,8 +2240,8 @@ export async function sessionUpload(
  * local staging file (PROD-0013; Docker ends since #3586).
  *
  * Registers ONE background transfer on the rich queue model — reading the source
- * session (a dedicated SFTP channel, or a streaming `docker exec`) and writing
- * the destination session the same way — and resolves with the bytes
+ * session (a dedicated SFTP channel, a streaming `docker exec`, or an agent's
+ * 256 KiB ranged slices, #4115) and writing the destination session the same way — and resolves with the bytes
  * transferred once it completes. Replaces the whole-file read/write round trip
  * for every pair of streamable sessions; pause/resume/retry and byte-verified
  * offset resume all work as for {@link sessionDownload}/{@link sessionUpload}.

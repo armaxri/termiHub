@@ -2508,13 +2508,18 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   a resume is checked against the size only. A **remote-to-remote** copy
   streams between two sessions with no local staging file
   (`core/src/files/transfer/remote_copy.rs`); either end may be SFTP (a
-  dedicated channel per attempt) or Docker (a streaming `docker exec` per
-  attempt, #3586), while an FTP or agent end keeps the frontend's byte-based
+  dedicated channel per attempt), Docker (a streaming `docker exec` per
+  attempt, #3586) or an agent-hosted session that passes the ranged probe
+  (one 256 KiB `read_range` / `write_range` request per chunk, each write
+  stating the offset the destination must already hold, #4115), while an FTP
+  end or an agent without `fileRanges` keeps the frontend's byte-based
   read/write fallback. It persists its source endpoint (`remoteSource`:
-  session reference + path, plus `containerId` for a Docker source; a Docker
-  destination keeps `docker`) and relaunches by re-attaching both ends — a
-  Docker end by its exact container id; the source is checked against the
-  persisted size and mtime like any other relaunch.
+  session reference + path, plus `containerId` for a Docker source or `agent`
+  for an agent-hosted one; a Docker destination keeps `docker`, an
+  agent-hosted one `agent`) and relaunches by re-attaching both ends — a
+  Docker end by its exact container id, an agent end by its session identity
+  (see below); the source is checked against the persisted size and mtime
+  like any other relaunch.
   After a restart the original session id is gone, so each SFTP/FTP record
   (and each end of a remote-to-remote copy) also keeps `savedConnectionId`: the
   id of the saved connection its session was opened for, which the frontend
