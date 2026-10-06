@@ -6,6 +6,8 @@ import type {
   BridgeResponse,
   ComposeCommand,
   CoverageChunk,
+  DragModifiers,
+  DragObservations,
   TerminalCellRow,
   TerminalInspection,
   TerminalMeasurement,
@@ -250,13 +252,47 @@ const DRAG_OVERLAP_SETTLE_FRAMES = 30;
 /** Durable log target for the bridge's own drag diagnostics (#4110). */
 const DRAG_LOG_TARGET = "test_bridge";
 
+/** The `*Key` flags of a pointer/mouse event for a held {@link DragModifiers} set. */
+function modifierInit(modifiers?: DragModifiers): EventModifierInit {
+  return {
+    altKey: modifiers?.alt === true,
+    ctrlKey: modifiers?.ctrl === true,
+    shiftKey: modifiers?.shift === true,
+    metaKey: modifiers?.meta === true,
+  };
+}
+
+/**
+ * Snapshot the elements a `dragTo` was asked to `observe` while its pointer is
+ * still held over the target: the mid-drag UI (drop-target highlight, drag
+ * chip) disappears with the release, so it can only be read from inside the
+ * gesture.
+ */
+function observeElements(root: ParentNode, testIds: string[]): DragObservations {
+  const observed: DragObservations = {};
+  for (const testId of testIds) {
+    const el = findByTestId(root, testId);
+    observed[testId] = el
+      ? {
+          exists: true,
+          text: el.textContent,
+          attributes: Object.fromEntries(
+            el.getAttributeNames().map((name) => [name, el.getAttribute(name) ?? ""])
+          ),
+        }
+      : { exists: false, text: null, attributes: {} };
+  }
+  return observed;
+}
+
 /** Dispatch a bubbling pointer event (falls back to MouseEvent where unavailable). */
 function dispatchPointer(
   target: EventTarget,
   type: string,
   clientX: number,
   clientY: number,
-  buttons?: number
+  buttons?: number,
+  modifiers?: DragModifiers
 ): void {
   const Ctor = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
   target.dispatchEvent(
@@ -265,6 +301,7 @@ function dispatchPointer(
       cancelable: true,
       button: 0,
       ...(buttons !== undefined ? { buttons } : {}),
+      ...modifierInit(modifiers),
       clientX,
       clientY,
       // `pointerType: "mouse"`: a real mouse gesture. Left empty, Radix's
@@ -737,9 +774,22 @@ export async function dispatchCommand(
       // synchronous task gives that cycle no chance to run, so collision
       // detection sees no rects, `over` stays null, and the drop reorders
       // nothing — hence the yield after every move. See docs/test-bridge.md.
+      const mods = command.modifiers;
       const moveTo = async (x: number, y: number): Promise<void> => {
-        dispatchPointer(doc, "pointermove", x, y);
+        dispatchPointer(doc, "pointermove", x, y, undefined, mods);
         await nextFrame();
+      };
+      // Release over the target. When asked to `observe`, first let the last
+      // move's render land, then snapshot the mid-drag UI the release removes.
+      const release = async (x: number, y: number): Promise<BridgeResponse> => {
+        let observed: DragObservations | undefined;
+        if (command.observe) {
+          await nextFrame();
+          observed = observeElements(deps.root, command.observe);
+        }
+        dispatchPointer(doc, "pointerup", x, y, undefined, mods);
+        await settleAfterDrag();
+        return ok("dragTo", observed);
       };
 
       // Some drop targets — the `PanelDropZone` edge/center overlays (#2583) —
@@ -752,8 +802,15 @@ export async function dispatchCommand(
       // direction. Give the layout a bounded number of frames to separate them —
       // then log the geometry durably either way, so a failure artifact shows
       // where the bridge pressed and where it aimed.
+      // A drag onto *itself* (a folder dropped on its own row — the refused
+      // self-drop) is deliberate: there is nothing to wait for.
       let overlapFrames = 0;
-      while (to && centersCoincide(from, to) && overlapFrames < DRAG_OVERLAP_SETTLE_FRAMES) {
+      while (
+        to &&
+        to !== from &&
+        centersCoincide(from, to) &&
+        overlapFrames < DRAG_OVERLAP_SETTLE_FRAMES
+      ) {
         await nextFrame();
         overlapFrames++;
         to = findByTestId(deps.root, command.toTestId);
@@ -769,6 +826,7 @@ export async function dispatchCommand(
           DRAG_LOG_TARGET,
           `dragTo ${command.fromTestId} [${describeRect(source)}] -> ${command.toTestId} ` +
             `[${describeRect(target)}]` +
+            (mods && Object.values(mods).some(Boolean) ? ` holding ${JSON.stringify(mods)}` : "") +
             (overlapFrames > 0
               ? overlap
                 ? ` — target still on top of the source after ${overlapFrames} frame(s); ` +
@@ -777,7 +835,7 @@ export async function dispatchCommand(
               : "")
         );
       }
-      dispatchPointer(from, "pointerdown", start.x, start.y);
+      dispatchPointer(from, "pointerdown", start.x, start.y, undefined, mods);
 
       if (!to) {
         // Nudge past the activation distance in a fixed direction — the only
@@ -801,7 +859,7 @@ export async function dispatchCommand(
         }
         if (!to) {
           // Release so no drag is left dangling, then report the miss.
-          dispatchPointer(doc, "pointerup", wakeX, start.y);
+          dispatchPointer(doc, "pointerup", wakeX, start.y, undefined, mods);
           return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
         }
         const end = centerOf(to);
@@ -810,9 +868,7 @@ export async function dispatchCommand(
         for (let i = 1; i <= STEPS; i++) {
           await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
         }
-        dispatchPointer(doc, "pointerup", end.x, end.y);
-        await settleAfterDrag();
-        return ok("dragTo");
+        return release(end.x, end.y);
       }
 
       // Target already present: wake toward it, step to it, then release once the
@@ -835,9 +891,7 @@ export async function dispatchCommand(
       for (let i = 1; i <= STEPS; i++) {
         await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
       }
-      dispatchPointer(doc, "pointerup", end.x, end.y);
-      await settleAfterDrag();
-      return ok("dragTo");
+      return release(end.x, end.y);
     }
 
     case "type": {
