@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Trash2, Pause, Play, Save, ClipboardCopy, FileDown } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
 import { Button, SearchInput } from "@/components/ui";

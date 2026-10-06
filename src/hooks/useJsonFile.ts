@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { save, open } from "@/services/nativeDialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";

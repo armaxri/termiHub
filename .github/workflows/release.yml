@@ -429,6 +429,17 @@ jobs:
           ./scripts/internal/verify-conpty-bundle.ps1 -Dir "target/$env:RUST_TARGET/release"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # Never ship a build with the test bridge compiled in (SEC-005): it carries
+      # test-only commands such as the native-dialog fs grant (#4122). The release
+      # build above passes no --features, so this guards a future workflow edit.
+      - name: Assert the app binary has no test-bridge code
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.rust_target }}/release/termihub"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
+          scripts/internal/assert-no-test-bridge.sh "$BIN"
+
       # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
       # (inner components signed in the wrong order), which Gatekeeper classifies as
       # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc

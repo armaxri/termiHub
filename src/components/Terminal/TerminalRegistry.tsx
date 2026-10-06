@@ -15,7 +15,7 @@ import {
   type ISearchDecorationOptions,
   type ISearchResultChangeEvent,
 } from "@xterm/addon-search";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   readText as readClipboard,

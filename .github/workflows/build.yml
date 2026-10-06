@@ -123,6 +123,17 @@ jobs:
       - name: Build Tauri app (compile only, no installers)
         run: pnpm tauri build --no-bundle --target ${{ matrix.rust_target }}
 
+      # The release binary must carry no test-bridge code (SEC-005), e.g. the
+      # native-dialog fs grant of #4122. Same guard as release.yml, so a
+      # default-feature regression reds the PR rather than the release.
+      - name: Assert the release binary has no test-bridge code
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.rust_target }}/release/termihub"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
+          scripts/internal/assert-no-test-bridge.sh "$BIN"
+
       # Shell-integration CLI smoke (#4010, SI-5/6/7): the release binary's
       # pre-init `install-shell-integration` / `uninstall-shell-integration`
       # must exit 0 as an unprivileged user, never reach for sudo/pkexec, and

@@ -112,7 +112,7 @@ function view(
 }
 
 function indexResult(entries: PluginIndexEntryView[]): PluginIndexResult {
-  return { url: "https://idx", isDefault: true, entries };
+  return { url: "https://idx", isDefault: true, signature: "verified", entries };
 }
 
 describe("pluginUpdateStore", () => {

@@ -7,9 +7,9 @@
  * - MT-KB-05  — a single-target paste above 5000 characters asks first; at the
  *   threshold it pastes straight away.
  *
- * The native dialog itself stays covered by the guided-manual
- * `tests/system/tests/test_native_dialogs.py`; these tests lock the app-side
- * decisions around it.
+ * The end-to-end save (dialog result → file on disk) is covered by
+ * `tests/system/tests/test_native_dialogs.py` with a stubbed dialog (#4122);
+ * these tests lock the app-side decisions around it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";

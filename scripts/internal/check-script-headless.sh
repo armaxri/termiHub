@@ -27,6 +27,9 @@
 # `--dry-run` / temp-file mode (#3329): initial setup, --rotate, --switch-over and
 # `agent-update-signing.sh select-key`, all with THROWAWAY keys in a mktemp dir.
 # It needs only OpenSSL 3, uploads nothing and never touches the repo key file.
+# The same section runs the plugin-index signing key setup (#3716) in --dry-run
+# and proves a signed index verifies, a tampered one and a foreign key do not,
+# and that the repo key file and plugins/index.json are left untouched.
 #
 # A third section runs build-agents.sh's REAL checksum sidecar writer
 # (`write_checksum`) and its post-build gate (`verify_checksum_sidecars`) on a
@@ -44,6 +47,9 @@
 # FAIL on stubs that skip the clean-exit line or let a second instance keep
 # running, so the gate is proven to bite before a release ever depends on it.
 #
+# A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
+# must pass one without the test-bridge build marker and fail on one with it.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -60,15 +66,18 @@ SCRIPTS=(
   "scripts/build-agents.sh"
   "scripts/internal/agent-update-signing.sh"
   "scripts/internal/apply-branch-protection.sh"
+  "scripts/internal/assert-no-test-bridge.sh"
   "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/fetch-conpty.sh"
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
+  "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
+  "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
@@ -201,6 +210,41 @@ lc_refuse "select-key during the overlap without the old key" \
   bash "$SIGNING" --pub "$LC/overlap.pem" select-key \
   AGENT_UPDATE_SIGNING_KEY AGENT_UPDATE_SIGNING_KEY_NEXT
 
+# --- Plugin-index signing key setup, dry-run (#3716) ---
+PI_SETUP="scripts/internal/setup-plugin-index-signing-key.sh"
+PI_SIGNING="scripts/internal/plugin-index-signing.sh"
+PI_REPO_KEY="plugins/keys/index-signing.pub.pem"
+PI_INDEX="plugins/index.json"
+pi_key_before="$(cat "$PI_REPO_KEY")"
+pi_index_before="$(cat "$PI_INDEX")"
+pi_sig_before="$(cat "$PI_INDEX.sig" 2>/dev/null || true)"
+mkdir -p "$LC/pi"
+printf '{"schemaVersion":1,"plugins":[]}\n' >"$LC/pi/index.json"
+lc_step "plugin index: setup --dry-run on the repo index (temp copies)" bash "$PI_SETUP" --dry-run
+lc_step "plugin index: setup --dry-run signs a given index" \
+  bash "$PI_SETUP" --dry-run --pub-file "$LC/pi/pub.pem" --index "$LC/pi/index.json"
+lc_refuse "plugin index: setup over a real key without --force" \
+  bash "$PI_SETUP" --dry-run --pub-file "$LC/pi/pub.pem" --index "$LC/pi/index.json"
+# The dry run signed a temp COPY of the given index; sign the original for real
+# with a throwaway key to exercise sign/verify end to end.
+openssl genpkey -algorithm ed25519 -out "$LC/pi/k.pem" 2>/dev/null
+openssl pkey -in "$LC/pi/k.pem" -pubout -out "$LC/pi/k.pub"
+lc_step "plugin index: sign + verify" \
+  bash "$PI_SIGNING" --pub "$LC/pi/k.pub" sign --key "$LC/pi/k.pem" "$LC/pi/index.json"
+printf ' ' >>"$LC/pi/index.json"
+lc_refuse "plugin index: verify a tampered index" \
+  bash "$PI_SIGNING" --pub "$LC/pi/k.pub" verify "$LC/pi/index.json"
+lc_refuse "plugin index: sign with a key that is not trusted" \
+  bash "$PI_SIGNING" --pub "$LC/pi/pub.pem" sign --key "$LC/pi/k.pem" "$LC/pi/index.json"
+if [ "$(cat "$PI_REPO_KEY")" = "$pi_key_before" ] &&
+  [ "$(cat "$PI_INDEX")" = "$pi_index_before" ] &&
+  [ "$(cat "$PI_INDEX.sig" 2>/dev/null || true)" = "$pi_sig_before" ]; then
+  echo "ok    signing lifecycle: $PI_REPO_KEY and $PI_INDEX left untouched"
+else
+  echo "::error::signing lifecycle: a plugin-index dry run modified the repo tree"
+  failures=$((failures + 1))
+fi
+
 lifecycle_failures=$((failures - help_failures))
 
 # --- build-agents.sh checksum sidecar writer, on a dummy binary (#1350) ---
@@ -301,7 +345,9 @@ primary=true
 if [ -z "${STUB_NO_SINGLE:-}" ] && ! mkdir "$STUB_LOCK" 2>/dev/null; then
   primary=false
 fi
-if [ "$primary" != true ]; then
+if [ "$primary" = true ]; then
+  mkdir -p "$STUB_LOCK" && echo "$$" >"$STUB_LOCK/pid"
+else
   printf '%s\n' "$@" >"$STUB_LOCK/req.$$.tmp"
   mv "$STUB_LOCK/req.$$.tmp" "$STUB_LOCK/req.$$"
   exit 0
@@ -331,18 +377,62 @@ done
 STUB
 chmod +x "$LS/stub-app"
 
+# The macOS close path (#4076) needs osascript; this fake stands in for it. A
+# click on the Quit menu item through System Events, and a Quit AppleEvent,
+# each SIGTERM the stub (its breadcrumb then follows). FAKE_NO_MENU /
+# FAKE_NO_APPLEEVENT make one refuse the way macOS does without the grant.
+mkdir -p "$LS/fakebin"
+cat >"$LS/fakebin/osascript" <<'FAKE'
+#!/usr/bin/env bash
+set -u
+pid="$(cat "$STUB_LOCK/pid" 2>/dev/null || true)"
+case "$*" in
+  *'"System Events"'*)
+    if [ -n "${FAKE_NO_MENU:-}" ]; then
+      echo "execution error: osascript is not allowed assistive access. (-1719)" >&2
+      exit 1
+    fi
+    if [ "${!#}" != "$pid" ]; then
+      echo "menu click aimed at pid ${!#}, the app is pid $pid" >&2
+      exit 1
+    fi
+    kill -TERM "$pid"
+    echo "Quit termiHub"
+    ;;
+  *' to quit'*)
+    if [ -n "${FAKE_NO_APPLEEVENT:-}" ]; then
+      echo "execution error: Not authorized to send Apple events to termiHub. (-1743)" >&2
+      exit 1
+    fi
+    kill -TERM "$pid"
+    ;;
+  *)
+    echo "fake osascript: unexpected script: $*" >&2
+    exit 1
+    ;;
+esac
+FAKE
+chmod +x "$LS/fakebin/osascript"
+
 # The bash smoke and its PowerShell twin (the Windows release smoke), the latter
-# only where pwsh is installed (GitHub's ubuntu runners have it).
-lifecycle_cmd() { # <sh|ps1>: the smoke command line for the stub
+# only where pwsh is installed (GitHub's ubuntu runners have it). `applevent` is
+# the bash smoke with the macOS close path, against the fake osascript.
+lifecycle_cmd() { # <sh|applevent|ps1>: the smoke command line for the stub
   if [ "$1" = sh ]; then
     echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
       --log "$LS/termihub.log" --version 9.8.7 --close sigterm --out "$LS/out"
+  elif [ "$1" = applevent ]; then
+    echo bash scripts/internal/release-smoke-app-lifecycle.sh --exe "$LS/stub-app" \
+      --log "$LS/termihub.log" --version 9.8.7 --close applevent \
+      --bundle-id com.termihub.app --out "$LS/out"
   else
     echo pwsh -NoProfile -File scripts/internal/release-smoke-app-lifecycle.ps1 -Exe "$LS/stub-app" \
       -Log "$LS/termihub.log" -Version 9.8.7 -Close signal -OutDir "$LS/out"
   fi
 }
-# lifecycle_run <sh|ps1> <label> <expect: pass|fail> [VAR=value...]: run the smoke on the stub.
+# lifecycle_run <kind> <label> <expect: pass|skip|fail> [VAR=value...]: run the
+# smoke on the stub. `pass` is exit 0 with no skipped check, `skip` is exit 0
+# with one reported as skipped, `fail` is exit 1.
 lifecycle_run() {
   local kind="$1" label="$2" expect="$3" out rc=0
   local -a cmd
@@ -350,9 +440,14 @@ lifecycle_run() {
   read -r -a cmd <<<"$(lifecycle_cmd "$kind")"
   label="(${kind}) ${label}"
   rm -rf "$LS/lock" "$LS/termihub.log"
-  out="$(env STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" STUB_VERSION=9.8.7 \
-    SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 "$@" "${cmd[@]}" 2>&1)" || rc=$?
-  if { [ "$expect" = pass ] && [ "$rc" -eq 0 ]; } || { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
+  out="$(env PATH="$LS/fakebin:$PATH" STUB_LOG="$LS/termihub.log" STUB_LOCK="$LS/lock" \
+    STUB_VERSION=9.8.7 SMOKE_IPC_TIMEOUT=20 SMOKE_EXIT_TIMEOUT=5 SMOKE_LOG_TIMEOUT=5 \
+    "$@" "${cmd[@]}" 2>&1)" || rc=$?
+  local skipped=false
+  if grep -qF 'skipped a check' <<<"$out"; then skipped=true; fi
+  if { [ "$expect" = pass ] && [ "$rc" -eq 0 ] && [ "$skipped" = false ]; } ||
+    { [ "$expect" = skip ] && [ "$rc" -eq 0 ] && [ "$skipped" = true ]; } ||
+    { [ "$expect" = fail ] && [ "$rc" -eq 1 ]; }; then
     echo "ok    app lifecycle smoke: ${label} (exit ${rc})"
   else
     echo "::error file=scripts/internal/release-smoke-app-lifecycle.sh::app lifecycle smoke:" \
@@ -372,17 +467,55 @@ for kind in "${lifecycle_kinds[@]}"; do
   lifecycle_run "$kind" "fails when the clean-exit line is missing" fail STUB_NO_CLEAN_EXIT=1
   lifecycle_run "$kind" "fails when a second instance keeps running" fail STUB_NO_SINGLE=1
 done
+lifecycle_run applevent "macOS Quit through the app's menu item" pass
+lifecycle_run applevent "falls back to a Quit AppleEvent when System Events refuses" pass \
+  FAKE_NO_MENU=1
+lifecycle_run applevent "reports the clean exit as skipped when no Quit is deliverable" skip \
+  FAKE_NO_MENU=1 FAKE_NO_APPLEEVENT=1
+lifecycle_run applevent "fails when a delivered Quit leaves no clean-exit line" fail \
+  STUB_NO_CLEAN_EXIT=1
 rm -rf "$LS/lock"
+app_lifecycle_and_earlier_failures="$failures"
+
+# --- Release test-bridge guard (#4122) ---
+# assert-no-test-bridge.sh must pass a binary without the test-bridge build
+# marker and fail (exit 1) on one that carries it, so the release gate is proven
+# to bite before a release depends on it. The dummy binaries hold NUL bytes like
+# a real one; the marker is read from its Rust definition, as the guard does.
+GUARD="scripts/internal/assert-no-test-bridge.sh"
+TB="$LC/test-bridge-guard"
+mkdir -p "$TB"
+tb_marker="$(sed -n 's/^pub const TEST_BRIDGE_BUILD_MARKER: &str = "\(.*\)";$/\1/p' \
+  src-tauri/src/utils/test_bridge.rs)"
+printf 'release\0binary\0' >"$TB/release-app"
+printf 'test\0%s\0binary' "$tb_marker" >"$TB/test-bridge-app"
+guard_run() { # <label> <expected exit> <binary...>
+  local label="$1" want="$2" out rc=0
+  shift 2
+  out="$(bash "$GUARD" "$@" 2>&1)" || rc=$?
+  if [ -n "$tb_marker" ] && [ "$rc" -eq "$want" ]; then
+    echo "ok    test-bridge guard: ${label} (exit ${rc})"
+  else
+    echo "::error file=${GUARD}::test-bridge guard: ${label}: expected exit ${want}, got ${rc}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+guard_run "passes a binary without the marker" 0 "$TB/release-app"
+guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
+guard_run "refuses a missing binary" 2 "$TB/missing"
 
 echo ""
 if [ "$failures" -gt 0 ]; then
   echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
     "${lifecycle_failures} signing-lifecycle check(s) failed," \
     "$((sidecar_and_earlier_failures - help_failures - lifecycle_failures)) checksum-sidecar" \
-    "check(s) failed, $((failures - sidecar_and_earlier_failures)) app-lifecycle-smoke check(s)" \
-    "failed."
+    "check(s) failed," \
+    "$((app_lifecycle_and_earlier_failures - sidecar_and_earlier_failures)) app-lifecycle-smoke" \
+    "check(s) failed, $((failures - app_lifecycle_and_earlier_failures)) test-bridge-guard" \
+    "check(s) failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
-  "the signing-key dry-run lifecycle, the checksum sidecar writer and the app lifecycle" \
-  "smoke (on a stub app) passed."
+  "the signing-key dry-run lifecycle, the checksum sidecar writer, the app lifecycle" \
+  "smoke (on a stub app) and the release test-bridge guard passed."
