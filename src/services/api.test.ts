@@ -53,6 +53,9 @@ import {
   localRename,
   localReadFile,
   localWriteFile,
+  localOpenFolder,
+  sessionUploadLocalFile,
+  sessionDownloadToLocalFile,
   sessionRealpath,
   sessionCheckWritable,
   sessionWriteFileElevated,
@@ -742,6 +745,38 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("local_write_file", {
         path: "/home/file.txt",
         content: "new content",
+      });
+    });
+
+    it("localOpenFolder invokes the validated backend command (#3115)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await localOpenFolder("/home/projects");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("local_open_folder", { path: "/home/projects" });
+    });
+
+    it("sessionUploadLocalFile sends only paths, never file bytes (#3115)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionUploadLocalFile("s1", "/home/a.bin", "/srv/a.bin");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_upload_local_file", {
+        sessionId: "s1",
+        localPath: "/home/a.bin",
+        remotePath: "/srv/a.bin",
+      });
+    });
+
+    it("sessionDownloadToLocalFile sends only paths, never file bytes (#3115)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionDownloadToLocalFile("s1", "/srv/b.bin", "/home/b.bin");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_download_to_local_file", {
+        sessionId: "s1",
+        remotePath: "/srv/b.bin",
+        localPath: "/home/b.bin",
       });
     });
   });

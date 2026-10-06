@@ -434,6 +434,12 @@ pub async fn serve(
             let Some(ranged) = browser.ranged() else {
                 return (failed(FileError::NotSupported), None);
             };
+            if length == 0 {
+                // The per-session capability probe (#4146): ask the live
+                // browser, which may only learn on connect that it cannot
+                // serve slices (FTP without `REST STREAM`).
+                return run!(ranged.probe(), |()| FileOutcome::Read { size: 0 });
+            }
             let length = length.min(MAX_RANGE_BYTES);
             match tokio::time::timeout(limit, ranged.read_range(&path, offset, length)).await {
                 Ok(Ok(bytes)) => (
@@ -922,6 +928,22 @@ impl RangedFileAccess for DaemonFileBrowser {
                 "incomplete read from the session daemon: {} of {size} bytes",
                 data.len()
             ))),
+            Ok((other, _)) => Err(unexpected(other)),
+            Err(message) => Err(FileError::OperationFailed(message)),
+        }
+    }
+
+    /// Forward the probe as a zero-length `read_range` (#4146), which the
+    /// daemon answers from its live browser. A daemon from before #4146 reads
+    /// nothing and answers an empty read — supported, as it always did.
+    async fn probe(&self) -> Result<(), FileError> {
+        let op = FileOp::ReadRange {
+            path: String::new(),
+            offset: 0,
+            length: 0,
+        };
+        match self.call(op, &[]).await {
+            Ok((FileOutcome::Read { .. }, _)) => Ok(()),
             Ok((other, _)) => Err(unexpected(other)),
             Err(message) => Err(FileError::OperationFailed(message)),
         }

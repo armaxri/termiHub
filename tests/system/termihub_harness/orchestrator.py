@@ -30,6 +30,7 @@ import psutil
 
 from . import coverage
 from . import portable as portable_staging
+from .relaunch import find_relaunched_app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -363,6 +364,11 @@ class AppInstance:
         #: teardown can reap only this instance's msedgewebview2.exe children.
         self._webview2_data_dir = self._scratch_dir / "webview2-user-data"
         self._process: Optional[subprocess.Popen] = None
+        #: The process the app started when it restarted itself (#4127), once
+        #: :meth:`adopt_self_restart` found it; ``None`` otherwise.
+        self._relaunched: Optional[psutil.Process] = None
+        #: Wall-clock time of the last :meth:`start` (finds a relaunch).
+        self._started_at = 0.0
         self._bridge_port: Optional[int] = None
         #: Captured app stdout/stderr — copied into the failure-artifact bundle.
         self._log_path = self._scratch_dir / "app.log"
@@ -505,6 +511,8 @@ class AppInstance:
         pid=<P>`` line to the durable file log, so a test can anchor its reads of
         that shared, cross-instance log to *this* instance's pid.
         """
+        if self._relaunched is not None:
+            return self._relaunched.pid
         return self._process.pid if self._process is not None else None
 
     def read_log(self) -> str:
@@ -521,6 +529,13 @@ class AppInstance:
         from a *hang* (process alive but the in-app bridge never connected) — the
         two shapes behind a ``wait_for_app`` timeout in #2646.
         """
+        if self._relaunched is not None:
+            try:
+                return self._relaunched.is_running() and (
+                    self._relaunched.status() != psutil.STATUS_ZOMBIE
+                )
+            except psutil.Error:
+                return False
         return self._process is not None and self._process.poll() is None
 
     @property
@@ -540,9 +555,11 @@ class AppInstance:
         the failure-artifact bundle) while still being echoed live, so ``-s`` runs
         keep showing the app booting and the failure bundle has the logs too.
         """
-        if self._process is not None and self._process.poll() is None:
+        if self.is_running():
             raise RuntimeError("app is already running")
         self._bridge_port = bridge_port
+        self._relaunched = None
+        self._started_at = time.time()
         env = self.launch_env()
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.
@@ -617,6 +634,8 @@ class AppInstance:
         coverage.unregister_app(self)
         if children:
             _terminate_procs([c for c in children if c.is_running()], timeout=2.0)
+        if self._relaunched is not None:
+            self._terminate_relaunched()
         if self._process is not None:
             _terminate_tree(self._process)
             # WebView2 hosts live outside the app's process tree; reap the ones
@@ -638,6 +657,55 @@ class AppInstance:
             except OSError:
                 pass
             self._log_file = None
+
+    def adopt_self_restart(self, timeout: float = 60.0) -> None:
+        """Track the process the app started when it restarted itself (#4127).
+
+        A flow such as a backup restore ends in ``AppHandle::request_restart``:
+        the app spawns its own binary again and exits. Call this right after
+        triggering it. It waits up to ``timeout`` for the launched process to
+        exit, then for the relaunched one to appear (see
+        :func:`~termihub_harness.relaunch.find_relaunched_app`), and tracks it so
+        :attr:`pid`, :meth:`is_running` and :meth:`stop` act on it. The
+        relaunched app still writes to the inherited output pipe, so its log
+        keeps landing in :attr:`log_path`.
+
+        Raises :class:`AssertionError` if the app does not exit, or no
+        relaunched process shows up in time.
+        """
+        if self._process is None or self._bridge_port is None:
+            raise RuntimeError("app was never started")
+        deadline = time.monotonic() + timeout
+        old_pid = self._process.pid
+        if not self.wait_exited(timeout):
+            raise AssertionError(f"the app (pid {old_pid}) did not exit to restart itself")
+        while True:
+            found = find_relaunched_app(
+                self._binary,
+                self._bridge_port,
+                exclude_pid=old_pid,
+                not_before=self._started_at,
+            )
+            if found is not None:
+                self._relaunched = found
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"the app (pid {old_pid}) exited but no relaunched app appeared "
+                    f"within {timeout}s"
+                )
+            time.sleep(0.2)
+
+    def _terminate_relaunched(self) -> None:
+        """Kill the self-relaunched app and its process tree (see ``adopt_self_restart``)."""
+        proc, self._relaunched = self._relaunched, None
+        if proc is None:
+            return
+        try:
+            victims = proc.children(recursive=True) + [proc]
+        except psutil.Error:
+            victims = [proc]
+        _terminate_procs(victims)
 
     def restart(
         self,
@@ -661,10 +729,6 @@ class AppInstance:
         if between is not None:
             between()
         self.start(port, args)
-
-    @property
-    def pid(self) -> Optional[int]:
-        return self._process.pid if self._process is not None else None
 
     def kill_hard(self) -> None:
         """SIGKILL the app tree without a graceful terminate, then tidy up.

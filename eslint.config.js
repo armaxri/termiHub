@@ -67,6 +67,7 @@ export default tseslint.config(
     // where the test-bridge harness pre-programs a dialog's result. A direct
     // plugin import would bypass it and bring back an operator-only dialog in
     // the system tests. The wrapper itself is the one legitimate importer.
+    // The fs / opener plugins are limited to what the capability grants (#3115).
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/services/nativeDialog.ts", "src/**/*.test.{ts,tsx}", "src/test/**"],
     rules: {
@@ -79,6 +80,22 @@ export default tseslint.config(
               importNames: ["open", "save"],
               message:
                 "Import open/save from @/services/nativeDialog so the test bridge can stub the dialog (#4122).",
+            },
+            // The capability grants the webview only the fs plugin's text
+            // read/write — on dialog-picked paths — and no path opener (#3115).
+            // Anything else would fail at runtime; local files go through the
+            // backend's validated commands in @/services/api instead.
+            {
+              name: "@tauri-apps/plugin-fs",
+              allowImportNames: ["readTextFile", "writeTextFile"],
+              message:
+                "Only readTextFile/writeTextFile on a native-dialog pick are granted (#3115); use the local_* commands in @/services/api.",
+            },
+            {
+              name: "@tauri-apps/plugin-opener",
+              allowImportNames: ["openUrl"],
+              message:
+                "Only openUrl (http/https/mailto) is granted (#3115); open a folder with localOpenFolder from @/services/api.",
             },
           ],
         },

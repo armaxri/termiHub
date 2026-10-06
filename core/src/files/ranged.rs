@@ -43,6 +43,20 @@ pub trait RangedFileAccess: Send + Sync {
 
     /// Write `data` to `path` at `offset` (see the trait docs for the rules).
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError>;
+
+    /// Confirm that this backend can serve slices on its live connection,
+    /// without moving any file data (#4146).
+    ///
+    /// [`FileBrowser::ranged`](super::FileBrowser::ranged) answers from what
+    /// is known up front; a backend that only learns its capability on
+    /// connect (FTP's `REST STREAM`) overrides this to connect if needed and
+    /// answer [`FileError::NotSupported`] when slices turn out impossible. It
+    /// backs the zero-length `read_range` probe, so an unsupported session
+    /// falls back to whole-file transfers before its first slice instead of
+    /// failing on it. The default reports support.
+    async fn probe(&self) -> Result<(), FileError> {
+        Ok(())
+    }
 }
 
 /// The error a [`RangedFileAccess::write_range`] reports when the file does not

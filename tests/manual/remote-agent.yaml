@@ -2,58 +2,26 @@ category: remote-agent
 display_name: "Remote Agent"
 
 tests:
-  # --- Jump connections from a Windows agent (#770) ---
-
-  - id: MT-AGENT-26
-    automation_issue: 3684
-    name: "SSH / Docker jump session originating from a Windows agent"
-    pr: 770
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Connect to a Windows host that already has the agent installed"
-      - "Through that Windows agent, open an SSH jump session to a reachable Linux host (and/or a Docker container session if Docker is available on the Windows host)"
-      - "Run a command in the jumped session and confirm output, then resize the pane"
-      - "Close the tab"
-    expected:
-      - "The SSH (and/or Docker) session is established from the Windows agent and reaches the connected state"
-      - "Input/output echo normally and resize does not crash the session"
-      - "Closing the tab tears the jump session down cleanly on the Windows host (no orphaned process)"
-    verification: manual
-
-  # --- Windows agent secondary backends: SSH key auth + Docker named pipe (#768) ---
-
-  - id: MT-AGENT-27
-    automation_issue: 3684
-    name: "SSH jump-host backend from a Windows-hosted agent (default key / agent auth)"
-    pr: 768
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "On the Windows agent host, place an SSH key at `%USERPROFILE%\\.ssh\\id_rsa` (or id_ed25519) authorized on a reachable SSH server"
-      - "Through the Windows agent, open an SSH session to that server using key auth and leave the key path empty (default)"
-      - "Repeat with `auth_method = agent` after starting the OpenSSH agent service (`Start-Service ssh-agent`) and adding the key"
-    expected:
-      - "Default key auth resolves the key under `%USERPROFILE%\\.ssh` and authenticates"
-      - "Agent auth connects via the `\\\\.\\pipe\\openssh-ssh-agent` named pipe and authenticates"
-      - "The remote shell is interactive and the SSH session closes cleanly"
-    verification: manual
+  # --- Docker container session from a Windows-hosted agent (#768, #770) ---
+  # The SSH half of the old MT-AGENT-26 and all of MT-AGENT-27 are automated in
+  # agent/tests/native_sshd_agent_backends.rs (Windows SSH Host lane, #3684), as
+  # is the engine half of this item (docker.list_containers over the named pipe).
 
   - id: MT-AGENT-28
-    automation_issue: 3684
-    name: "Docker backend via named pipe from a Windows-hosted agent"
+    release_gate: true
+    manual_reason: "needs Docker Desktop with Linux containers on a Windows host; hosted Windows runners run only Windows containers"
+    name: "Docker container session via named pipe from a Windows-hosted agent"
     pr: 768
     platforms: [all]
     prerequisites:
       - app: true
     instructions:
-      - "On the Windows agent host, ensure Docker Desktop (or Podman machine) is running"
+      - "On the Windows agent host, ensure Docker Desktop (Linux containers) or a Podman machine is running"
       - "Through the Windows agent, open a Docker session against a small image (e.g. `alpine`) with runtime left on `Auto`"
-      - "Run a command in the container and open the in-container file browser"
+      - "Run a command in the container, resize the pane, and open the in-container file browser"
+      - "Close the tab"
     expected:
-      - "The backend connects to the local engine via the Windows named pipe without a TCP port"
-      - "The container shell is interactive and command output appears"
-      - "In-container file browsing lists directories; the container is removed on disconnect (when Remove on Exit is set)"
+      - "The container shell is interactive, command output appears and resize does not crash the session"
+      - "In-container file browsing lists directories"
+      - "Closing the tab tears the session down; the container is removed (when Remove on Exit is set)"
     verification: manual

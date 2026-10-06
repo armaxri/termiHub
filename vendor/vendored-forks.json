@@ -178,6 +178,32 @@
         "osv_ecosystem": "crates.io"
       },
       "acknowledged_advisories": []
+    },
+    {
+      "path": "vendor/libunftp",
+      "crate": "libunftp",
+      "consumed_by": "Cargo.toml [patch.crates-io] (excluded from the workspace)",
+      "parses": "PROXY protocol v1 headers and FTP control/data traffic on the embedded FTP server's per-session loopback listeners",
+      "upstream_repo": "https://github.com/bolcom/libunftp",
+      "upstream_branch": "master",
+      "upstream_path": "",
+      "base_version": "0.23.1",
+      "base_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
+      "base_commit_note": "upstream tag libunftp-0.23.1 (also the tip of master on 2026-10-06)",
+      "reviewed_version": "0.23.1",
+      "reviewed_commit": "8d3f28c20c53acdd3c9a939957e4727e18e18af0",
+      "deltas": [
+        {
+          "summary": "read_proxy_header returns UnexpectedEof when peek yields Ok(0), instead of spinning forever (one CPU core per connection) on a connection closed before its PROXY header",
+          "upstream_status": "Not yet reported upstream (no upstream issue/PR covers it); bug report, patch and PR text prepared in vendor/libunftp/UPSTREAM.md for a maintainer to submit",
+          "refs": ["https://github.com/armaxri/termiHub/issues/4099"]
+        }
+      ],
+      "watch": {
+        "crates_io": "libunftp",
+        "osv_ecosystem": "crates.io"
+      },
+      "acknowledged_advisories": []
     }
   ]
 }

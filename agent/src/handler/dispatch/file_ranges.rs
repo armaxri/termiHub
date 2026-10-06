@@ -10,8 +10,13 @@
 //! A backend without it, or a session started by an older session daemon,
 //! answers `-32013` (file browsing not supported).
 //!
-//! A read of `length: 0` performs no I/O: it only answers whether the target
-//! supports ranged access, which is the desktop's per-session capability probe.
+//! A read of `length: 0` moves no file data: it only answers whether the
+//! target supports ranged access, which is the desktop's per-session
+//! capability probe. It asks the live backend
+//! ([`RangedFileAccess::probe`]) — forwarded to the session daemon for a
+//! persistent session — so a backend that learns on connect that it cannot
+//! serve slices (FTP without `REST STREAM`) refuses the probe and the desktop
+//! falls back to whole-file transfers (#4146).
 
 use base64::Engine;
 use jsonrpsee::core::server::RpcModule;
@@ -72,7 +77,10 @@ fn register_read_range(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
             let access = ranged(browser.as_ref())?;
             if p.length == 0 {
-                // The capability probe: supported, nothing read.
+                // The capability probe: nothing is read, but the backend —
+                // the session daemon's live browser for a persistent session
+                // — confirms it can serve slices on its connection (#4146).
+                access.probe().await.map_err(map_file_error)?;
                 return to_result_value(&FilesReadRangeResult {
                     data: String::new(),
                     eof: false,

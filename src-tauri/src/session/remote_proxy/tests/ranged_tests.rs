@@ -37,7 +37,7 @@ fn types_reply(type_id: &str) -> serde_json::Value {
 }
 
 /// Mock agent with the given `sessionFiles` / `fileRanges` flags.
-fn mock_agent(session_files: bool, file_ranges: bool) -> MockAgentRpcClient {
+pub(super) fn mock_agent(session_files: bool, file_ranges: bool) -> MockAgentRpcClient {
     let mut mock = MockAgentRpcClient::with_capabilities(types_reply("docker"));
     mock.session_files = Some(session_files);
     mock.file_ranges = Some(file_ranges);
@@ -54,7 +54,7 @@ async fn connected_proxy(mock: Arc<MockAgentRpcClient>) -> RemoteProxy {
 }
 
 /// The proxy behind a connected session's file browser, owned.
-fn owned_proxy(proxy: &RemoteProxy) -> Arc<RemoteFileBrowserProxy> {
+pub(super) fn owned_proxy(proxy: &RemoteProxy) -> Arc<RemoteFileBrowserProxy> {
     let browser = proxy.file_browser().expect("file browser");
     Arc::new(
         browser
@@ -67,7 +67,7 @@ fn owned_proxy(proxy: &RemoteProxy) -> Arc<RemoteFileBrowserProxy> {
 
 /// An agent double serving ranged slices, `stat` and `delete` from `files`
 /// with the protocol's rules (a write must land at the current size).
-fn serve_files(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Box<Responder> {
+pub(super) fn serve_files(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Box<Responder> {
     Box::new(move |method, params| {
         let path = params["path"].as_str().unwrap_or_default().to_string();
         let mut files = files.lock().unwrap();
@@ -119,7 +119,7 @@ fn serve_files(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> Box<Responder> {
     })
 }
 
-fn contents(len: usize) -> Vec<u8> {
+pub(super) fn contents(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 

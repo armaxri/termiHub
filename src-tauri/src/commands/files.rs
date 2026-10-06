@@ -126,6 +126,29 @@ pub fn local_write_file(path: String, content: String) -> Result<(), TerminalErr
     crate::files::local::write_file_content(&path, &content)
 }
 
+/// Open a local folder in the OS file manager (Finder / Explorer / …).
+///
+/// Backs the file browser's "Open in File Manager" action (#2656). Only an
+/// existing, absolute local **directory** is accepted — never a file — so the
+/// webview cannot use it to launch a program; a launching bundle such as
+/// `Foo.app` is revealed in its parent folder instead. This replaces the
+/// blanket `opener:allow-open-path` capability (#3115); see
+/// [`crate::files::open_folder`].
+#[tauri::command]
+pub fn local_open_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    path: String,
+) -> Result<(), TerminalError> {
+    use crate::files::open_folder::{resolve_folder_target, FolderTarget};
+    use tauri_plugin_opener::OpenerExt;
+
+    let opened = match resolve_folder_target(&path)? {
+        FolderTarget::Open(dir) => app.opener().open_path(dir.to_string_lossy(), None::<&str>),
+        FolderTarget::Reveal(entry) => app.opener().reveal_item_in_dir(entry),
+    };
+    opened.map_err(|e| TerminalError::EditorError(format!("could not open the folder: {e}")))
+}
+
 /// Start watching a local file for external on-disk changes (#1620).
 ///
 /// `watch_id` is an opaque per-editor-instance key the frontend also matches the

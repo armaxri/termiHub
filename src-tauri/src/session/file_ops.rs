@@ -328,6 +328,36 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         Ok(std::sync::Arc::new(proxy))
     }
 
+    /// Every live agent-hosted session whose file browser serves ranged
+    /// slices, with its identity (#4114) — the candidates a relaunched
+    /// agent-hosted transfer picks its session from after a restart. The
+    /// proxies are cloned out of the sessions lock and not probed here.
+    pub(super) async fn agent_ranged_sessions(
+        &self,
+    ) -> Vec<(
+        crate::files::transfer::relaunch_agent::AgentSessionIdentity,
+        std::sync::Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>,
+    )> {
+        use crate::session::remote_proxy::RemoteFileBrowserProxy;
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .filter_map(|entry| entry.connection.file_browser())
+            .filter_map(|browser| {
+                browser
+                    .as_any()
+                    .and_then(|any| any.downcast_ref::<RemoteFileBrowserProxy>())
+            })
+            .filter(|proxy| proxy.ranged().is_some())
+            .map(|proxy| {
+                (
+                    proxy.agent_session_identity(),
+                    std::sync::Arc::new(proxy.clone()),
+                )
+            })
+            .collect()
+    }
+
     /// Find a live Docker session streaming into exactly `container_id` and
     /// return its transfer target (#3585).
     ///

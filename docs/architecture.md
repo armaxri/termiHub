@@ -2102,17 +2102,53 @@ the guard is a vitest suite, the PR change classifier runs the frontend suite fo
    turns the same mechanism into the fix. `style-src-attr` needs Safari/WebKit 15.4+ (WebKitGTK
    2.36+) or Chromium 75+; every webview termiHub supports has it.
 
-3. **Unscoped `fs` / `opener` capabilities — because they back user-driven, dialog-picked paths.**
-   `capabilities/default.json` grants `fs:allow-read-text-file` / `fs:allow-write-text-file` and
-   `opener:allow-open-path` without a static `fs:scope`. These back **user-initiated** flows where
-   the user chooses an arbitrary location through the OS **save/open dialog**: exporting and
-   importing config, themes, logs, and connection definitions, and "open / reveal in OS" actions on
-   file-browser entries. A static path scope is a poor fit for locations the user picks at runtime.
-   External **URL** opening is a separate concern and is already **application-level allowlisted** —
-   `src/utils/safeOpenExternal.ts` restricts schemes to `http`/`https`/`mailto` before handing off
-   to the opener. Scoping the **app-owned** (non-dialog) paths — config, logs, and the portable
-   `data/` directory — while keeping user-dialog exports working is a possible future refinement and
-   is deferred.
+#### Capability scoping: `fs` and `opener` (#3115)
+
+The fs and opener plugins were the capability set's one broad grant (`fs:default`, unscoped
+text read/write, `opener:allow-open-path`). They are now cut down to what the frontend actually
+uses, and everything else goes through typed backend commands:
+
+| Permission                                                  | What it allows                                                        |
+| ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| `fs:allow-read-text-file`                                   | `readTextFile` — command only, **no static scope**                    |
+| `fs:allow-write-text-file`                                  | `writeTextFile` — command only, **no static scope**                   |
+| `fs:deny-default`                                           | Denies the webview-data folders even if a pick lands in them          |
+| `opener:allow-open-url` scoped to `http`, `https`, `mailto` | `openUrl` for external links; matches `src/utils/safeOpenExternal.ts` |
+
+- **Dialog-picked paths (imports / exports).** Every native open/save dialog goes through
+  `src/services/nativeDialog.ts`. A real pick makes the dialog plugin add that one path to the fs
+  plugin's **runtime** scope, so the follow-up `readTextFile` / `writeTextFile` is allowed — and
+  nothing else is. This covers all the flows that read or write a user-chosen file from the
+  webview: connection, backup, credential-vault, theme, grammar, macro / workflow / workspace,
+  network-tool result, terminal-output, log and cheat-sheet export / import. In the test-bridge
+  build the dialog is stubbed and the test-bridge-only `test_allow_dialog_path` command makes the
+  same grant (`src-tauri/src/commands/test_dialog.rs`); a release build has no command that widens
+  the fs scope.
+- **App-owned paths (config, logs, data, the portable `data/` directory).** The webview gets
+  **no** fs-plugin access to them at all — no `$APPCONFIG` / `$APPDATA` / `$APPLOG` scope and no
+  portable-directory grant. The backend owns those files and the frontend reaches them only through
+  typed commands, so a static scope would be pure excess (the removed `fs:default` let the webview
+  read the app's config and data folders recursively). Portable mode therefore needs no special
+  case.
+- **Local files in the file browser.** These were never the fs plugin's job: listing, reading,
+  writing, copying and renaming go through the `local_*` commands. The byte-based (remote agent)
+  copy legs of the local ↔ session engine now copy in the backend too
+  (`session_upload_local_file` / `session_download_to_local_file`) instead of reading and writing
+  the local file in the webview.
+- **"Open in File Manager".** The webview no longer has `opener:allow-open-path` (which opens
+  _any_ path with its default handler — an executable, a script, an app bundle) or the unscoped
+  `reveal_item_in_dir`. The file browser calls `local_open_folder`
+  (`src-tauri/src/files/open_folder.rs`), which accepts only an existing, absolute local
+  **directory** (symlinks judged by their target) and reveals a launching bundle such as
+  `Foo.app` or a Windows `name.{CLSID}` shell folder in its parent instead of opening it.
+
+**Guard.** `src/security/capabilityConfig.test.ts` fails on any permission that is not on its
+reviewed allow-list, on any static fs scope, on `opener:allow-open-path` / `default` / reveal, and on
+an `openUrl` scope other than `http` / `https` / `mailto`; it also rejects a dynamic import of
+either plugin. ESLint (`no-restricted-imports` in `eslint.config.js`) allows only `readTextFile` /
+`writeTextFile` from the fs plugin and `openUrl` from the opener. The nightly
+`tests/system/tests/test_native_dialogs.py` exercises the export / import flows end to end under
+this capability.
 
 #### CSP relaxation review (WA-CI-035)
 
@@ -2433,8 +2469,16 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   either way, and stateless slices need no long-lived stream to pause, resume
   or abandon. `session_supports_transfer_queue` reports an agent session as
   queue-capable only when the agent advertises `fileRanges` and a zero-length
-  probe read succeeds; a backend without ranged access (FTP), or a session
+  probe read succeeds; a backend without ranged access, or a session
   started by an older session daemon, stays on the byte-based path.
+  FTP serves slices too (#4113, `core/src/backends/ftp/file_browser.rs`):
+  a read is `REST <offset>` + `RETR` with the data connection closed once the
+  slice is in (not `ABOR`, whose extra reply varies by server and would
+  desynchronise the control connection), a write is `STOR` at offset 0 and a
+  `SIZE` that must equal the offset followed by `APPE` beyond it. It is offered
+  only for binary transfers on a server that advertises `REST STREAM` (learned
+  from `FEAT` on every connect); before the first connect the server is unknown,
+  so the probe succeeds and a slice call on a server without it is refused.
   A **session folder paste** (local → session, session → session, session →
   local (#3912), or a byte-based backend) is still copied file by file from
   the frontend (`src/hooks/sessionFolderPaste.ts`), so it records a
@@ -2490,6 +2534,19 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   (`files/transfer/relaunch_auto.rs`).
   The secret lives only in the relaunch's in-memory settings, never in
   `transfers.json`.
+  An **agent-hosted** (ranged) transfer keeps `agent` instead (#4114): the
+  agent id, the agent-side session id and the saved agent definition the
+  session was opened from — ids only; the session's credentials stay with the
+  agent. A relaunch looks for a live agent session by that identity: the same
+  agent-side session, or one opened from the same definition on the same
+  agent (never another agent's, never another definition's, so a partial is
+  never resumed into a different file system), checks it with the zero-length
+  ranged probe, and runs `run_ranged_transfer` from the persisted offset
+  behind the usual resume gate. Before the agent is reconnected the row stays
+  **paused** with "Agent session unavailable — reconnect the agent and open
+  the connection to resume", and resumes by itself once a matching agent
+  session opens (the same in-memory wait list, triggered from
+  `create_connection`; `files/transfer/relaunch_agent.rs`).
 - **Desktop and agent** — the `ftp` cargo feature (on by default) registers the backend in both
   `src-tauri/src/session/registry.rs::build_desktop_registry()` and the agent's
   `agent/src/registry.rs::build_registry()` (PARITY-003), so an agent-hosted FTP connection uses
