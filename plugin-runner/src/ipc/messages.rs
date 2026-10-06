@@ -63,7 +63,7 @@ pub struct ResourceLimits {
     /// Forbid starting child processes. Enforced with `RLIMIT_NPROC = 0` on
     /// macOS, where it counts processes only. On Linux `RLIMIT_NPROC` also
     /// counts threads (which plugins need), so it is left to the seccomp
-    /// filter of the Linux sandbox phase.
+    /// filter of the Linux sandbox phase (#4185).
     #[serde(default)]
     pub forbid_child_processes: bool,
 }
