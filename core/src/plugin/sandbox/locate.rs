@@ -188,14 +188,15 @@ fn pin(runner: &Path, expected: &str) -> Result<PinnedLibrary, HostError> {
     Ok(second)
 }
 
-/// Whether `pinned` would be exec'd through the runner's channel descriptor.
+/// Whether `pinned` would be exec'd through the runner's channel descriptor
+/// (only Linux / Android exec through a descriptor).
 fn occupies_channel_fd(pinned: &PinnedLibrary) -> bool {
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let channel = format!("/proc/self/fd/{}", termihub_plugin_runner::ipc::IPC_FD);
         pinned.load_path().is_ok_and(|p| p == Path::new(&channel))
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = pinned;
         false
