@@ -12,6 +12,8 @@ test uses a tiny Python "app" that respawns itself the way Tauri's
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 import psutil
@@ -138,3 +140,85 @@ def test_adopt_self_restart_needs_a_started_app(tmp_path, monkeypatch):
     instance = orchestrator.AppInstance(config_dir=tmp_path, echo_logs=False)
     with pytest.raises(RuntimeError, match="never started"):
         instance.adopt_self_restart(timeout=1)
+
+
+def _stop_within(instance, seconds: float) -> float:
+    """Run ``instance.stop()`` on a thread; fail if it is still blocked after ``seconds``."""
+    done = threading.Event()
+    started = time.monotonic()
+
+    def run():
+        instance.stop()
+        done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    assert done.wait(seconds), f"stop() still blocked after {seconds}s"
+    return time.monotonic() - started
+
+
+def test_stop_reaps_an_unadopted_self_restart_without_hanging(tmp_path, monkeypatch):
+    """The 2026-10-06 macOS hang (#4017): the app restarted itself, nobody adopted
+    the relaunch, and teardown's pipe close waited forever on the relaunch, which
+    still held the app's output pipe. stop() must find it, kill it, and return."""
+    interpreter = Path(psutil.Process().exe())
+    if not interpreter.exists():
+        pytest.skip("cannot resolve this interpreter's binary")
+    monkeypatch.setattr(orchestrator, "app_binary_path", lambda: interpreter)
+    instance = orchestrator.AppInstance(config_dir=tmp_path, echo_logs=False)
+    instance.start(orchestrator.free_port(), ["-c", _SELF_RESTARTING_APP])
+    launched = instance._process.pid
+    assert instance.wait_exited(30)
+    relaunched = None
+    deadline = time.monotonic() + 30
+    while relaunched is None and time.monotonic() < deadline:
+        relaunched = find_relaunched_app(
+            interpreter, instance._bridge_port, exclude_pid=launched, not_before=0
+        )
+        time.sleep(0.1)
+    assert relaunched is not None, "the stand-in app did not relaunch itself"
+    try:
+        _stop_within(instance, 20)
+    finally:
+        if relaunched.is_running():
+            relaunched.kill()
+    assert not psutil.pid_exists(relaunched.pid) or (
+        relaunched.status() == psutil.STATUS_ZOMBIE
+    ), "stop() left the unadopted relaunch running"
+
+
+#: A stand-in app that leaves a stray process of ANOTHER binary holding its output
+#: pipe (inherited stdout), prints that process's pid, and exits.
+_STRAY_WRITER_APP = (
+    "import subprocess, sys\n"
+    "p = subprocess.Popen(['/bin/sh', '-c', 'sleep 60'])\n"
+    "print('stray-pid', p.pid, flush=True)\n"
+    "sys.exit(0)\n"
+)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uses /bin/sh")
+def test_stop_does_not_block_on_a_stray_pipe_writer(tmp_path, monkeypatch):
+    """A writer the harness cannot attribute must not wedge teardown either."""
+    interpreter = Path(psutil.Process().exe())
+    if not interpreter.exists():
+        pytest.skip("cannot resolve this interpreter's binary")
+    monkeypatch.setattr(orchestrator, "app_binary_path", lambda: interpreter)
+    instance = orchestrator.AppInstance(config_dir=tmp_path, echo_logs=False)
+    instance.start(orchestrator.free_port(), ["-c", _STRAY_WRITER_APP])
+    assert instance.wait_exited(30)
+    stray_pid = None
+    deadline = time.monotonic() + 10
+    while stray_pid is None and time.monotonic() < deadline:
+        for line in instance.read_log().splitlines():
+            if line.startswith("stray-pid "):
+                stray_pid = int(line.split()[1])
+        time.sleep(0.1)
+    try:
+        elapsed = _stop_within(instance, 20)
+        assert elapsed < 15
+    finally:
+        if stray_pid is not None:
+            try:
+                psutil.Process(stray_pid).kill()
+            except psutil.Error:
+                pass

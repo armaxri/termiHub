@@ -588,8 +588,8 @@ class AppInstance:
     def _pump_output(self) -> None:
         """Tee the child's merged output to the log file and to live stdout.
 
-        Runs on a daemon thread for the process's lifetime; ``stop()`` closes the
-        pipe (EOF) and joins it. All writes are guarded so a closed pytest capture
+        Runs on a daemon thread until the pipe reaches EOF (every writer gone);
+        ``stop()`` joins it, then closes the pipe (see ``_close_output``). All writes are guarded so a closed pytest capture
         buffer on teardown can never crash the run.
         """
         process = self._process
@@ -634,6 +634,12 @@ class AppInstance:
         coverage.unregister_app(self)
         if children:
             _terminate_procs([c for c in children if c.is_running()], timeout=2.0)
+        if self._relaunched is None:
+            # An app that already exited on its own may have restarted itself
+            # without anyone adopting the relaunch (a failed or skipped
+            # adopt_self_restart). Find it now: it would otherwise outlive the
+            # suite AND hold this instance's output pipe open (#4017).
+            self._find_unadopted_relaunch()
         if self._relaunched is not None:
             self._terminate_relaunched()
         if self._process is not None:
@@ -642,11 +648,7 @@ class AppInstance:
             # pinned to this instance so they don't pile up (issue #1022).
             _terminate_webview2_children(self._webview2_data_dir)
             _wait_webview2_unlocked(self._webview2_data_dir)
-            if self._process.stdout is not None:
-                try:
-                    self._process.stdout.close()  # EOF so the pump thread exits
-                except OSError:
-                    pass
+            self._close_output()
             self._process = None
         if self._pump is not None:
             self._pump.join(timeout=2.0)
@@ -657,6 +659,55 @@ class AppInstance:
             except OSError:
                 pass
             self._log_file = None
+
+    def _find_unadopted_relaunch(self) -> None:
+        """Track a self-relaunch nobody adopted, if the launched app has exited.
+
+        A no-op while the launched process is still running (the normal stop)
+        or before any start.
+        """
+        process = self._process
+        if process is None or self._bridge_port is None or process.poll() is None:
+            return
+        try:
+            self._relaunched = find_relaunched_app(
+                self._binary,
+                self._bridge_port,
+                exclude_pid=process.pid,
+                not_before=self._started_at,
+            )
+        except psutil.Error:
+            self._relaunched = None
+
+    def _close_output(self) -> None:
+        """Close the app's output pipe without ever blocking teardown (#4017).
+
+        The pump thread reads that pipe until EOF, which arrives once every
+        process holding its write end is gone. ``close()`` on the pipe while the
+        pump is still blocked in a read does **not** interrupt it: it waits for
+        the reader's buffer lock, i.e. for that EOF. With a stray writer left
+        over (a self-relaunched app nobody tracked, a re-parented child) it waits
+        forever — that froze the macOS lane in a class teardown on 2026-10-06.
+        So join the pump first, and only close the pipe once it has exited; if a
+        writer outlives the join, leave the (daemon) pump and the pipe behind.
+        """
+        process = self._process
+        pump = self._pump
+        if pump is not None:
+            pump.join(timeout=5.0)
+        if process is None or process.stdout is None:
+            return
+        if pump is not None and pump.is_alive():
+            print(
+                "[termihub-harness] app output pipe still held open by a process "
+                "outside the app tree after stop; leaving it unclosed (#4017)",
+                file=sys.stderr,
+            )
+            return
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
 
     def adopt_self_restart(self, timeout: float = 60.0) -> None:
         """Track the process the app started when it restarted itself (#4127).
