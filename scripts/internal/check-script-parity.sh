@@ -94,6 +94,7 @@ ALLOWLIST=(
   # Release test-bridge guard (#4122): CI-only gate run by release.yml on every
   # desktop build (Windows leg via `shell: bash`); never run by hand.
   "scripts/internal/assert-no-test-bridge.sh" # CI-only binary grep (bash on every runner)
+  "scripts/internal/verify-plugin-runner-bundle.sh" # CI bundle check (bash on every runner; release-check.cmd inlines it)
 )
 
 in_allowlist() {

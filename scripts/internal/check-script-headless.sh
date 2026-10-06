@@ -50,6 +50,10 @@
 # A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
 # must pass one without the test-bridge build marker and fail on one with it.
 #
+# The same section runs verify-plugin-runner-bundle.sh (#4202) on a stub app and
+# runner: it must pass a runner that answers with its usage code and whose
+# SHA-256 the app embeds, and fail a missing, mis-answering or unembedded one.
+#
 # A sixth section runs test-verify-bundle-scripts.ps1 (#4207) where pwsh is
 # installed: the Windows bundle checks verify-conpty-bundle.ps1 and
 # verify-no-vcruntime.ps1, run verbatim behind the workflow's
@@ -86,7 +90,9 @@ SCRIPTS=(
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
+  "scripts/internal/verify-plugin-runner-bundle.sh"
   "scripts/build-rdp-sidecar.sh"
+  "scripts/build-plugin-runner.sh"
   "scripts/ci-local.sh"
   "scripts/package-plugin.sh"
   "scripts/release-check.sh"
@@ -537,6 +543,51 @@ guard_run() { # <label> <expected exit> <binary...>
 guard_run "passes a binary without the marker" 0 "$TB/release-app"
 guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
 guard_run "refuses a missing binary" 2 "$TB/missing"
+
+# --- Bundled plugin runner check (#4202) ---
+# The stub runner answers like the real one: exit 64 (usage) to a wrong
+# --protocol. The stub app embeds the runner's SHA-256 between NUL bytes, as
+# core/build.rs embeds it into the real binary's read-only data.
+PRB="scripts/internal/verify-plugin-runner-bundle.sh"
+PR="$LC/plugin-runner-bundle"
+mkdir -p "$PR/ok" "$PR/norun" "$PR/bare"
+usage_src="$(sed -n 's/^ *pub const USAGE: i32 = \([0-9]*\);$/\1/p' plugin-runner/src/runner/mod.rs)"
+printf "#!/bin/sh\n[ \"\$1 \$2\" = '--protocol 0' ] && exit %s\nexit 0\n" "$usage_src" \
+  >"$PR/ok/termihub-plugin-runner"
+printf '#!/bin/sh\nexit 0\n' >"$PR/norun/termihub-plugin-runner"
+chmod +x "$PR/ok/termihub-plugin-runner" "$PR/norun/termihub-plugin-runner"
+pr_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64
+}
+printf 'app\0%s\0binary' "$(pr_digest "$PR/ok/termihub-plugin-runner")" >"$PR/ok/termihub"
+printf 'app\0%s\0binary' "$(pr_digest "$PR/norun/termihub-plugin-runner")" >"$PR/norun/termihub"
+printf 'app\0no digest\0binary' >"$PR/bare/termihub"
+cp "$PR/ok/termihub-plugin-runner" "$PR/bare/"
+prb_run() { # <label> <expected exit> <args...>
+  local label="$1" want="$2" out rc=0
+  shift 2
+  out="$(bash "$PRB" "$@" 2>&1)" || rc=$?
+  if [ "$usage_src" = 64 ] && [ "$rc" -eq "$want" ]; then
+    echo "ok    plugin runner bundle check: ${label} (exit ${rc})"
+  else
+    echo "::error file=${PRB}::plugin runner bundle check: ${label}: expected exit ${want}," \
+      "got ${rc} (runner usage code in source: '${usage_src}', script expects 64)"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+prb_run "passes a bundled runner the app embeds" 0 "$PR/ok/termihub"
+prb_run "fails a runner that does not answer with its usage code" 1 "$PR/norun/termihub"
+prb_run "--no-run skips the start check, not the digest" 0 --no-run "$PR/norun/termihub"
+prb_run "fails a runner whose digest the app does not embed" 1 "$PR/bare/termihub"
+prb_run "--runner checks a runner kept elsewhere" 0 --runner "$PR/ok/termihub-plugin-runner" \
+  "$PR/ok/termihub"
+prb_run "--runner still requires the app to embed its digest" 1 \
+  --runner "$PR/norun/termihub-plugin-runner" --no-run "$PR/ok/termihub"
+rm "$PR/bare/termihub-plugin-runner"
+prb_run "fails a missing runner" 1 "$PR/bare/termihub"
+prb_run "fails a missing app binary" 1 "$PR/missing/termihub"
+prb_run "refuses no app binary" 2
 test_bridge_and_earlier_failures="$failures"
 
 # --- Windows bundle check exit codes (#4207) ---
@@ -565,11 +616,12 @@ if [ "$failures" -gt 0 ]; then
     "$((app_lifecycle_and_earlier_failures - sidecar_and_earlier_failures)) app-lifecycle-smoke" \
     "check(s) failed," \
     "$((test_bridge_and_earlier_failures - app_lifecycle_and_earlier_failures)) test-bridge-guard" \
-    "check(s) failed, $((failures - test_bridge_and_earlier_failures)) bundle-check exit-code" \
+    "or plugin-runner-bundle check(s) failed, $((failures - test_bridge_and_earlier_failures)) bundle-check exit-code" \
     "test(s) failed."
   exit 1
 fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
   "the signing-key dry-run lifecycle, the checksum sidecar writer, the app lifecycle" \
-  "smoke (on a stub app), the release test-bridge guard and the Windows bundle check" \
+  "smoke (on a stub app), the release test-bridge guard, the plugin runner bundle check" \
+  "and the Windows bundle check" \
   "exit codes passed."
