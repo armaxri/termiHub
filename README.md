@@ -282,6 +282,14 @@ them. Folders upload recursively, symbolic links are skipped, and a name clash k
 bastion), every label names the SSH host, because that is where the files go. When the SSH server
 refuses SFTP, the Files button shows a warning dot and VNC keeps running.
 
+To fetch files back, use **Files → Browse remote files**: the regular File Browser opens on the
+same SSH or agent host, at the upload folder, with a line at the top naming the account, host and
+carrier. Download works as in any File Browser: you pick the local folder, the file runs in the
+Transfers queue, and remote names are sanitised before they touch your disk. **Upload to folder…**
+lets you browse that host's folders instead of typing a path, and the upload summary's **Reveal**
+opens the browser at the destination. The browser closes with the session; view-only sessions
+have no entry point.
+
 ### Terminal Tabs
 
 Open terminals appear as tabs with type-specific icons and optional colored borders. Actions:

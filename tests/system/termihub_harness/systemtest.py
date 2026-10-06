@@ -243,12 +243,12 @@ class SystemTest:
         a read right after an action usually needs polling. A ``BridgeError``
         (e.g. "no active terminal" before one exists) counts as "not ready yet".
 
-        ``timeout`` is the op's serial budget; ``deadlines.ui_budget`` applies the
-        contended-webview slow category on parallel macOS/Windows workers only
-        (#3660). Each wait is recorded as a ``wait:<what>`` timing sample.
+        ``timeout`` is the op's serial budget; ``deadlines.ui_budget`` raises it to
+        the op's own contended deadline on parallel macOS/Windows workers only
+        (#3660/#3663). Each wait is recorded as a ``wait:<what>`` timing sample.
         """
-        budget = deadlines.ui_budget(timeout)
         op = timing.wait_label(what)
+        budget = deadlines.ui_budget(timeout, op)
         started = time.monotonic()
         deadline = started + budget
         last_error: Optional[BridgeError] = None

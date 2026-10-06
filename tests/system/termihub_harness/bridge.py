@@ -284,10 +284,10 @@ class Driver:
         # A per-call ``timeout`` overrides the Driver's default — used by the
         # failure-artifact probes, which must outlive the live path's own timeout
         # to capture evidence from a slow (not-yet-hung) webview (issue #2460).
-        # ``ui_budget`` applies the contended-webview slow category on parallel
-        # macOS/Windows workers only (#3660; see deadlines.py for the data).
-        effective_timeout = deadlines.ui_budget(self._timeout if timeout is None else timeout)
+        # ``ui_budget`` raises the op to its own contended deadline on parallel
+        # macOS/Windows workers only (#3660/#3663; see deadlines.py for the data).
         op = f"command:{command.get('action', '')}"
+        effective_timeout = deadlines.ui_budget(self._timeout if timeout is None else timeout, op)
         started = time.monotonic()
         cfut = asyncio.run_coroutine_threadsafe(
             self._conn.send(command, effective_timeout), self._loop
@@ -833,9 +833,8 @@ class Bridge:
         """
         if self._loop is None or self._conn_queue is None:
             raise RuntimeError("bridge is not started")
-        # The connect budget is an absolute, data-sized deadline (#3660): under
-        # xdist several apps boot at once, and a serial Linux run was observed at
-        # 28 s against the old 30 s budget — see deadlines.APP_CONNECT.
+        # The connect budget is an absolute, data-sized deadline (#3660/#3663):
+        # under xdist several apps boot at once — see deadlines.APP_CONNECT.
         timeout = deadlines.app_connect(timeout)
         started = time.monotonic()
         cfut = asyncio.run_coroutine_threadsafe(

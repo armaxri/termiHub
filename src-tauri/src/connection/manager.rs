@@ -853,15 +853,16 @@ impl ConnectionManager {
     }
 
     /// Import connections and folders from a JSON string.
-    /// Returns the number of connections imported.
+    /// Returns the number of connections actually added — a connection whose id
+    /// the store already holds is skipped and not counted (#4210).
     pub fn import_json(&self, json: &str) -> Result<usize> {
         self.migrate_credential_scopes();
         let imported: ConnectionStore =
             serde_json::from_str(json).context("Failed to parse import data")?;
 
         let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
-        let count = imported_conns.len();
         self.migrate_imported_type_ids(&mut imported_conns);
+        let mut count = 0;
 
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
@@ -876,6 +877,7 @@ impl ConnectionManager {
         // Merge: add imported connections that don't already exist (strip passwords)
         for conn in imported_conns {
             if !store.connections.iter().any(|c| c.id == conn.id) {
+                count += 1;
                 store
                     .connections
                     .push(prepare_for_storage(conn, None, &*self.credential_store)?);
@@ -1180,8 +1182,11 @@ impl ConnectionManager {
 
         // Flatten the imported tree
         let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
-        let connections_imported = imported_conns.len();
         self.migrate_imported_type_ids(&mut imported_conns);
+        // Only connections actually added count as imported; ones the store
+        // already holds are skipped and reported separately (#4210).
+        let mut connections_imported = 0;
+        let mut connections_skipped = 0;
 
         // Merge connections, folders, and agents
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -1198,8 +1203,11 @@ impl ConnectionManager {
         let mut added_ids: HashSet<String> = HashSet::new();
 
         for conn in imported_conns {
-            if !store.connections.iter().any(|c| c.id == conn.id) {
+            if store.connections.iter().any(|c| c.id == conn.id) {
+                connections_skipped += 1;
+            } else {
                 added_ids.insert(conn.id.clone());
+                connections_imported += 1;
                 store
                     .connections
                     .push(prepare_for_storage(conn, None, &*self.credential_store)?);
@@ -1238,6 +1246,7 @@ impl ConnectionManager {
 
         Ok(ImportResult {
             connections_imported,
+            connections_skipped,
             credentials_imported,
         })
     }

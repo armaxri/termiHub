@@ -5,6 +5,7 @@ pub mod biometric_unlock;
 pub mod crypto;
 pub mod hw_key;
 pub mod keychain_index;
+mod keyring_thread;
 pub mod manager;
 pub mod master_password;
 pub mod named;

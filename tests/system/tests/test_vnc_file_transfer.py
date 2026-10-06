@@ -1,4 +1,4 @@
-"""VNC file transfer over the SSH-tunnel side channel, through the app (#4192).
+"""VNC file transfer over the SSH-tunnel side channel, through the app (#4192, #4193).
 
 Concept ``vnc-clipboard-file-transfer`` phase 2: a VNC connection that rides an
 SSH tunnel and opts into **File Transfer** uploads local files over an SFTP
@@ -12,6 +12,11 @@ route line names the SSH host the bytes land on, and uploads a file with
 drag-and-drop cannot be synthesised). The bytes are then read back inside the
 SSH container, and a second upload of the same name proves the "keep both"
 rule (``name (1).ext``, never an overwrite).
+
+Phase 3 (#4193): **Browse remote files** opens the ordinary File Browser on the
+same side channel — its route line names the SSH host and carrier — and the
+browser's own Download (Save dialog stubbed) brings a file seeded in the SSH
+container back to the local disk through the Transfers queue.
 
 Integration-only (``-m integration``): it needs the Docker ``vnc`` profile and
 the SSH fixture, so it runs in the nightly lane and skips cleanly without a
@@ -35,6 +40,7 @@ from termihub_harness import (
     VNC_PASSWORD,
     ConnectionsUi,
     ContainerControl,
+    FilesUi,
     PasswordPromptUi,
     RemoteDesktopUi,
     SettingsUi,
@@ -60,13 +66,24 @@ FILES_BTN = "remote-desktop-files-btn"
 FILES_ROUTE = "remote-desktop-files-route"
 FILES_UPLOAD = "remote-desktop-files-upload"
 UPLOAD_TOAST = "remote-desktop-upload-toast"
+FILES_BROWSE = "remote-desktop-files-browse"
+BROWSE_ROUTE = "remote-desktop-browse-route"
+#: Budget for a small download to land on the local disk.
+DOWNLOAD_TIMEOUT = 60.0
 
 
 @pytest.mark.usefixtures("vnc_fixtures", "ssh_password_fixtures")
 class TestVncFileTransferOverSshTunnel(
-    RemoteDesktopUi, PasswordPromptUi, SettingsUi, SidebarUi, TabsUi, ConnectionsUi, SystemTest
+    RemoteDesktopUi,
+    PasswordPromptUi,
+    SettingsUi,
+    FilesUi,
+    SidebarUi,
+    TabsUi,
+    ConnectionsUi,
+    SystemTest,
 ):
-    """VNC-FT-UI-01: Upload files… lands the file on the SSH host, keep-both on a clash."""
+    """VNC-FT-UI-01/02: upload to the SSH host (keep-both), browse and download back."""
 
     request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
@@ -154,3 +171,39 @@ class TestVncFileTransferOverSshTunnel(
         assert ssh.exec("cat", f"{DEST_DIR}/{stem}.txt") == "first upload\n"
         assert ssh.exec("cat", f"{DEST_DIR}/{stem} (1).txt") == "second upload\n"
         ssh.exec("rm", "-f", f"{DEST_DIR}/{stem}.txt", f"{DEST_DIR}/{stem} (1).txt")
+
+    def test_browse_remote_files_downloads_from_the_ssh_host(self, tmp_path: Path):
+        """VNC-FT-UI-02 (#4193): Browse remote files → File Browser → Download."""
+        ssh = ContainerControl(SSH_PASSWORD_SERVICE)
+        name = f"vnc-ft-dl-{uuid.uuid4().hex[:8]}.txt"
+        ssh.exec("sh", "-c", f"printf 'from the desktop host\\n' > {DEST_DIR}/{name}")
+        try:
+            self._open_session()
+            self.wait(lambda: self.driver.exists(FILES_BTN), what="the toolbar Files button")
+            self.wait(
+                lambda: f"on {SSH_HOST}" in self._route_text(),
+                timeout=CONNECT_TIMEOUT,
+                what="the Files popover route line",
+            )
+            self.driver.click(FILES_BROWSE)
+
+            # The File Browser opens on the side channel, at the upload folder.
+            route = self.wait(
+                lambda: self.driver.exists(BROWSE_ROUTE) and self.driver.get_text(BROWSE_ROUTE),
+                what="the File Browser's route line",
+            )
+            assert SSH_HOST in route and "SFTP via SSH tunnel" in route, route
+            self.wait_for_file_row(name)
+
+            target = tmp_path / name
+            self.open_file_menu(name)
+            self.driver.stub_native_dialog("save", target)
+            self.driver.click("context-file-download")
+            text = self.wait(
+                lambda: target.exists() and target.read_text(encoding="utf-8"),
+                timeout=DOWNLOAD_TIMEOUT,
+                what=f"the download to land at {target}",
+            )
+            assert text == "from the desktop host\n", text
+        finally:
+            ssh.exec("rm", "-f", f"{DEST_DIR}/{name}")

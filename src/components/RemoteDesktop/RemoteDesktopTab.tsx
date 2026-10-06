@@ -7,6 +7,7 @@ import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { useWindowEviction } from "@/hooks/useWindowEviction";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import { useRemoteDesktopBrowse } from "@/hooks/useRemoteDesktopBrowse";
 import {
   useRemoteDesktopFiles,
   type RemoteDesktopFilesStatus,
@@ -103,8 +104,13 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   // File transfer over the connection's side channel (#4192): OS files
   // dragged over the surface show the drop overlay; a drop uploads only when
   // the route is ready (the backend enforces the same rules).
-  const remoteFiles = useRemoteDesktopFiles(session.sessionId, session.state);
   const sessionLive = session.state === "active" || session.state === "resizing";
+  // "Browse remote files" opens the File Browser on the same side channel; an
+  // upload's Reveal opens it at the destination (#4193).
+  const browseRemote = useRemoteDesktopBrowse(tabId, session.sessionId, sessionLive);
+  const remoteFiles = useRemoteDesktopFiles(session.sessionId, session.state, (dir) => {
+    void browseRemote(dir);
+  });
   const handleOsDrop = useCallback(
     (paths: string[]) => {
       if (!sessionLive || evicted || session.viewOnly) return;
@@ -351,6 +357,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             files={remoteFiles.files}
             destDir={remoteFiles.destDir}
             onUpload={remoteFiles.pickAndUpload}
+            onBrowse={() => {
+              setFilesOpen(false);
+              void browseRemote(remoteFiles.destDir ?? undefined);
+            }}
             onRetry={remoteFiles.refresh}
             onClose={() => setFilesOpen(false)}
           />

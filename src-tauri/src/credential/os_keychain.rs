@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 use zeroize::Zeroize;
 
 use super::keychain_index::KeychainKeyIndex;
+use super::keyring_thread::off_runtime;
 use super::types::{CredentialKey, CredentialStoreStatus, CredentialType};
 use super::CredentialStore;
 
@@ -33,6 +34,10 @@ const SERVICE_NAME: &str = "termiHub";
 /// is required for the `keyring` `mock` backend (it keeps state per `Entry`
 /// rather than globally by service/account) and is harmless for the real
 /// platform backends, where an `Entry` is just a lightweight handle.
+///
+/// Each keyring call runs through `off_runtime`, since the store is also used
+/// from async commands and a keyring call on a Tokio worker panics on Linux
+/// (see `keyring_thread`).
 ///
 /// The native stores cannot be enumerated, so the store keeps a
 /// [`KeychainKeyIndex`] of the key **names** it has written (never values):
@@ -114,7 +119,7 @@ impl OsKeychainStore {
 impl CredentialStore for OsKeychainStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
         let entry = self.entry(key)?;
-        match entry.get_password() {
+        match off_runtime(|| entry.get_password()) {
             Ok(value) => Ok(Some(value)),
             Err(KeyringError::NoEntry) => {
                 // Drift: the item was deleted outside termiHub. Prune it, so
@@ -133,8 +138,7 @@ impl CredentialStore for OsKeychainStore {
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         let entry = self.entry(key)?;
-        entry
-            .set_password(value)
+        off_runtime(|| entry.set_password(value))
             .with_context(|| format!("Failed to write OS keychain entry for {key}"))?;
         // The secret is stored; failing to record its name must not fail the
         // write. The in-memory index keeps it for the next successful persist.
@@ -146,7 +150,7 @@ impl CredentialStore for OsKeychainStore {
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
         let entry = self.entry(key)?;
-        match entry.delete_credential() {
+        match off_runtime(|| entry.delete_credential()) {
             Ok(()) | Err(KeyringError::NoEntry) => {}
             Err(e) => {
                 // The item may still be there: keep it indexed.

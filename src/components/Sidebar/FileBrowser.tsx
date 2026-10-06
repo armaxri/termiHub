@@ -48,6 +48,8 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { sessionPaneShowsOtherSession } from "@/store/slices/fileBrowsersSlice";
+import { findAgentConnectionType } from "@/utils/agentSessionType";
 import { Button, Tooltip, Input, SearchInput, Spinner, EmptyState, toast } from "@/components/ui";
 import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -88,6 +90,8 @@ import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
 import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
+import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
+import { RemoteDesktopBrowseRoute } from "@/components/RemoteDesktop/RemoteDesktopBrowseRoute";
 import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
@@ -771,6 +775,12 @@ function useFileBrowserSync() {
       : activeTabConnectionType === "local";
 
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
+  // A remote-desktop tab's side-channel browser, once "Browse remote files"
+  // opened it (#4193).
+  const remoteDesktopSource = useRemoteDesktopBrowseStore((s) =>
+    activeTabId ? (s.sources[activeTabId] ?? null) : null
+  );
+  const remoteDesktopSessionId = remoteDesktopSource?.sessionId ?? null;
 
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabConfigForShell = activeTab?.config;
@@ -800,6 +810,18 @@ function useFileBrowserSync() {
       }
       return;
     }
+    if (activeTabContentType === "remote-desktop") {
+      // A VNC tab browses its session's file side channel once the user asked
+      // for it ("Browse remote files", #4193); the backend serves the
+      // graphical session id through the session layer.
+      if (remoteDesktopSessionId) {
+        setSessionFileBrowserId(remoteDesktopSessionId);
+        setFileBrowserMode("session");
+      } else {
+        setFileBrowserMode("none");
+      }
+      return;
+    }
     if (activeTabConnectionType === "local" || activeTabConnectionType === "wsl") {
       setFileBrowserMode("local");
     } else if (activeTabConnectionType === "remote-session") {
@@ -809,9 +831,8 @@ function useFileBrowserSync() {
       if (agentId) {
         const agent = remoteAgents.find((a) => a.id === agentId);
         const agentConnectionTypes = agent?.capabilities?.connectionTypes ?? [];
-        const agentTypeInfo = agentConnectionTypes.find(
-          (ct: ConnectionTypeInfo) => ct.typeId === sessionType
-        );
+        // Alias-aware: an agent shell tab says `shell`, the registry `local`.
+        const agentTypeInfo = findAgentConnectionType(agentConnectionTypes, sessionType);
         const agentSupportsFileBrowser = agentTypeInfo?.capabilities?.fileBrowser ?? false;
         if (agentSupportsFileBrowser && globalFileBrowserEnabled) {
           setSessionFileBrowserId(activeTab.sessionId);
@@ -862,6 +883,22 @@ function useFileBrowserSync() {
     connectionTypes,
     remoteAgents,
     globalFileBrowserEnabled,
+    remoteDesktopSessionId,
+  ]);
+
+  // Open a remote-desktop side channel at the folder Browse / Reveal asked for
+  // (#4193), again on every open and when its tab becomes active.
+  const remoteDesktopDir = remoteDesktopSource?.dir ?? null;
+  const remoteDesktopOpenCount = remoteDesktopSource?.openCount ?? 0;
+  useEffect(() => {
+    if (sidebarView !== "files" || !remoteDesktopSessionId || !remoteDesktopDir) return;
+    navigateSession(remoteDesktopSessionId, remoteDesktopDir);
+  }, [
+    sidebarView,
+    remoteDesktopSessionId,
+    remoteDesktopDir,
+    remoteDesktopOpenCount,
+    navigateSession,
   ]);
 
   // Auto-navigate on tab switch or CWD change
@@ -925,14 +962,24 @@ function useFileBrowserSync() {
     }
   }, [fileBrowserMode, navigateLocal, cwd, wslDistro]);
 
-  // Auto-navigate when entering session mode with no entries loaded yet.
+  // Auto-navigate when entering session mode with no entries loaded yet — or
+  // when the shared session pane still shows another session's directory. The
+  // pane is one view across sessions, so after switching to a session that never
+  // reports a cwd (an SFTP-only or FTP host has no shell, hence no OSC 7) its
+  // leftover entries must not count as "already loaded": they belong to the
+  // previous session, and browsing, refreshing or uploading would act on that
+  // session's path in this one.
   useEffect(() => {
     if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
+    // A remote-desktop side channel opens at its own folder (effect above).
+    if (remoteDesktopSessionId) return;
     const sessionFileEntries = currentFileBrowsersView().session.entries;
-    if (sessionFileEntries.length > 0) return; // Already loaded
+    if (sessionFileEntries.length > 0 && !sessionPaneShowsOtherSession(sessionFileBrowserId)) {
+      return; // Already loaded for this session
+    }
     // Fall back to "~" so the agent resolves the home directory instead of "/".
     navigateSession(sessionFileBrowserId, cwd ?? "~");
-  }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
+  }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd, remoteDesktopSessionId]);
 
   // (Removed in #2421 / #2422) The SSH-specific standalone SFTP browser and its
   // auto-connect effect. SSH now browses through the session layer (mode
@@ -1733,6 +1780,7 @@ export function FileBrowser() {
             <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
           </div>
         )}
+        {mode === "session" && <RemoteDesktopBrowseRoute sessionId={sessionFileBrowserId} />}
         <div className="file-browser__toolbar">
           <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
           <div className="file-browser__actions">
@@ -1789,6 +1837,7 @@ export function FileBrowser() {
                 }
                 onClick={refresh}
                 aria-label="Refresh file list"
+                aria-busy={isLoading}
                 data-testid="file-browser-refresh"
               >
                 {isLoading && reducedMotion ? "Refreshing…" : undefined}

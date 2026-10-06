@@ -48,7 +48,6 @@ class SftpUi(FileBrowserPathReads):
         # then tolerates it closing under us (#1593).
         if self.password_prompt_open():
             self.handle_password_prompt(password)
-        return self.wait(
-            lambda: self.file_browser_path() or None,
-            what="the file-browser path",
-        )
+        # Not just "a path is shown": the pane can briefly show the idle root or a
+        # previous session's directory before this session's listing lands.
+        return self.wait_file_browser_settled()
