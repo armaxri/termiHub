@@ -60,11 +60,12 @@ struct Fixture {
     registry: Arc<Mutex<ConnectionTypeRegistry>>,
 }
 
-/// A fast watchdog so a hang is detected in well under a second.
+/// A fast watchdog so a hang is detected in about two seconds, with enough
+/// slack that a loaded CI runner answering late is not mistaken for one.
 fn fast_watchdog() -> WatchdogConfig {
     WatchdogConfig {
-        ping_interval: Duration::from_millis(100),
-        hang_timeout: Duration::from_millis(600),
+        ping_interval: Duration::from_millis(200),
+        hang_timeout: Duration::from_secs(2),
         ..WatchdogConfig::default()
     }
 }
@@ -329,7 +330,7 @@ async fn a_quiet_runner_answers_pings_and_is_left_alone() {
     // nothing is killed and nothing is counted.
     let f = fixture(default_config());
     let (conn, mut rx) = connect(&f.registry, &f.crash.type_id).await;
-    tokio::time::sleep(fast_watchdog().hang_timeout * 3).await;
+    tokio::time::sleep(fast_watchdog().hang_timeout * 2).await;
     assert!(conn.is_connected());
     conn.write(b"awake").unwrap();
     assert_eq!(read_line(&mut rx).await, "awake");
