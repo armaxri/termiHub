@@ -42,6 +42,16 @@ if not exist node_modules (
 REM Kill any process occupying the Vite dev server port (leftover from a previous run)
 node scripts\internal\kill-port.cjs %DEV_PORT%
 
+REM Sideloaded ConPTY host (#4121): when scripts\internal\fetch-conpty.cmd has
+REM staged it, merge tauri.conpty.conf.json so tauri-build copies conpty.dll +
+REM OpenConsole.exe next to target\debug\termihub.exe and local terminals get
+REM the same host (and inline images) as the installer. Not staged: the app
+REM falls back to the inbox ConPTY, as before.
+set "CONPTY_CONFIG="
+if exist "src-tauri\binaries\conpty\conpty.dll" if exist "src-tauri\binaries\conpty\OpenConsole.exe" (
+    set "CONPTY_CONFIG=--config src-tauri/tauri.conpty.conf.json"
+)
+
 echo Starting termiHub in dev mode (port %DEV_PORT%)...
 set TERMIHUB_DEV_PORT=%DEV_PORT%
-call pnpm tauri dev --config "{\"build\":{\"devUrl\":\"http://localhost:%DEV_PORT%\"}}"
+call pnpm tauri dev --config "{\"build\":{\"devUrl\":\"http://localhost:%DEV_PORT%\"}}" %CONPTY_CONFIG%

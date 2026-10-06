@@ -6,7 +6,8 @@ portable mode works. A *portable* launch instead:
 
 1. copies the built app into a fresh temp **portable root**: on macOS the whole
    ``termiHub.app`` bundle (the marker sits next to the bundle), elsewhere the
-   bare executable;
+   bare executable plus the files a Windows build ships beside it
+   (:data:`BESIDE_EXE`);
 2. adds the portable trigger next to it: an empty ``portable.marker`` file
    (:data:`MARKER`) or a ``data/`` directory (:data:`DATA_DIR`);
 3. launches it **without** ``TERMIHUB_CONFIG_DIR``, so the app itself must find
@@ -49,6 +50,11 @@ DATA_DIR_NAME = "data"
 APP_IDENTIFIER = "com.termihub.app"
 #: The OS lock file the app keeps inside ``data/`` while it runs (#3100).
 LOCK_FILE_NAME = ".termihub.lock"
+#: Files a Windows build ships next to the executable that a portable copy
+#: needs too: the sideloaded ConPTY host portable-pty loads from the exe's
+#: directory (#4121). Copied when present; without them the app falls back to
+#: the inbox ConPTY.
+BESIDE_EXE = ("conpty.dll", "OpenConsole.exe")
 
 
 def app_bundle_of(binary: Path) -> Optional[Path]:
@@ -90,7 +96,8 @@ def stage_portable_app(binary: Path, root: Path, flavor: str) -> Path:
     """Stage ``binary`` into ``root`` as a portable install; return the new binary.
 
     On macOS the enclosing ``.app`` bundle is copied (the trigger must sit next
-    to the bundle, not inside it). Elsewhere just the executable is copied. Then
+    to the bundle, not inside it). Elsewhere the executable is copied, with any
+    :data:`BESIDE_EXE` companions found next to it. Then
     the ``flavor`` trigger is created in ``root``.
     """
     if flavor not in FLAVORS:
@@ -104,6 +111,10 @@ def stage_portable_app(binary: Path, root: Path, flavor: str) -> Path:
     else:
         staged = root / binary.name
         _link_or_copy(str(binary), str(staged))
+        for name in BESIDE_EXE:
+            companion = binary.parent / name
+            if companion.is_file():
+                _link_or_copy(str(companion), str(root / name))
     if flavor == MARKER:
         (root / MARKER_FILE).write_bytes(b"")
     else:

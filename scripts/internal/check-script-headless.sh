@@ -70,6 +70,7 @@ SCRIPTS=(
   "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
   "scripts/internal/ci-rust-tests.sh"
+  "scripts/internal/fetch-conpty.sh"
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"

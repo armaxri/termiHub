@@ -132,8 +132,10 @@ flowchart LR
 - **npm:** production dependencies only, each with its own `LICENSE`/`NOTICE` files. A
   package that ships no license file gets the standard text of its SPDX license and is
   marked as such.
-- **External programs:** the content of `THIRD_PARTY_LICENSES.md` plus the texts under
-  `licenses/`.
+- **External programs and bundled native binaries:** the content of
+  `THIRD_PARTY_LICENSES.md` plus the texts under `licenses/` — the X servers termiHub
+  installs but does not bundle, and the Microsoft ConPTY host (`conpty.dll` +
+  `OpenConsole.exe`, MIT) the Windows installer bundles (#4121).
 
 Identical texts are printed once and cross-referenced by number. The output is a pure
 function of the lockfiles and the pinned cargo-about version (about 1.1 MB).

@@ -35,6 +35,16 @@ else
     echo "  (install: cargo install cargo-about --locked --version 0.9.2)"
 fi
 
+# Windows (Git Bash): bundle the sideloaded ConPTY host next to termihub.exe
+# (#4121) -- the inbox ConPTY strips inline images. Fetched at the pinned
+# version and SHA-256-verified; a mismatch or failed download stops the build.
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*)
+    "$(dirname "$0")/internal/fetch-conpty.sh"
+    tauri_configs+=(--config src-tauri/tauri.conpty.conf.json)
+    ;;
+esac
+
 echo "Building termiHub for production..."
 pnpm tauri build "${tauri_configs[@]}"
 
