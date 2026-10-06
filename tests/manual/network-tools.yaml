@@ -10,9 +10,9 @@ tests:
   - id: MT-NET-16
     release_gate: true
     manual_reason: "traceroute needs raw ICMP (root); hop rendering is unit-tested"
-    title: Traceroute — hops stream in
+    name: Traceroute — hops stream in
     automated_by: null
-    steps:
+    instructions:
       - Click "Traceroute…" to open the Traceroute panel
       - Enter `8.8.8.8` in Host
       - Click Run
@@ -24,10 +24,10 @@ tests:
   - id: MT-NET-21
     release_gate: true
     manual_reason: "chart stroke/hover readability is visual; data in latencyChartData.test.ts"
-    title: Ping / HTTP Monitor — readable latency chart (uPlot)
+    name: Ping / HTTP Monitor — readable latency chart (uPlot)
     automated_by: null
     pr: 790
-    steps:
+    instructions:
       - Open the Ping panel, enter a reachable host (e.g. a LAN device or `8.8.8.8`), set Interval to `1000`, and click Start
       - Let several replies stream in, then hover the latency chart
       - Stop, then start an HTTP Monitor for `https://example.com` and observe its Response Time chart
