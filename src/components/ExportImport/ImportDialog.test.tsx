@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { ImportDialog } from "./ImportDialog";
+import { ImportDialog, importSummary } from "./ImportDialog";
 
 vi.mock("@/services/api", async (importOriginal) => {
   // Keep the real `isImportError` guard so the dialog classifies rejections the
@@ -81,6 +81,7 @@ describe("ImportDialog", () => {
     });
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 1,
+      connectionsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 0,
       warnings: [],
@@ -106,6 +107,7 @@ describe("ImportDialog", () => {
     });
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 2,
+      connectionsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 1,
       warnings: ['Shared credential "Bastion" was imported as "Bastion (imported)".'],
@@ -130,6 +132,7 @@ describe("ImportDialog", () => {
     });
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 1,
+      connectionsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 0,
       warnings: [],
@@ -201,5 +204,63 @@ describe("ImportDialog", () => {
 
     expect(document.body.textContent).toContain("Failed to parse import data");
     expect(document.body.textContent).not.toContain("Wrong password. Please try again.");
+  });
+});
+
+describe("importSummary", () => {
+  const base = {
+    connectionsImported: 0,
+    connectionsSkipped: 0,
+    credentialsImported: 0,
+    sharedCredentialsImported: 0,
+    warnings: [],
+  };
+
+  it("reports added connections and credentials", () => {
+    expect(importSummary({ ...base, connectionsImported: 1, credentialsImported: 1 })).toBe(
+      "Imported 1 connection and 1 credential"
+    );
+  });
+
+  it("reports skipped connections separately from added ones (#4210)", () => {
+    expect(importSummary({ ...base, connectionsImported: 2, connectionsSkipped: 4 })).toBe(
+      "Imported 2 connections, skipped 4 that already exist"
+    );
+    expect(importSummary({ ...base, connectionsImported: 3, connectionsSkipped: 1 })).toBe(
+      "Imported 3 connections, skipped 1 that already exists"
+    );
+  });
+
+  it("says nothing was imported when every connection already exists (#4210)", () => {
+    expect(importSummary({ ...base, connectionsSkipped: 6 })).toBe(
+      "Nothing imported — all 6 connections already exist"
+    );
+    expect(importSummary({ ...base, connectionsSkipped: 1 })).toBe(
+      "Nothing imported — the connection already exists"
+    );
+  });
+
+  it("still reports shared credentials when every connection was skipped", () => {
+    expect(importSummary({ ...base, connectionsSkipped: 2, sharedCredentialsImported: 1 })).toBe(
+      "Imported 1 shared credential, skipped 2 connections that already exist"
+    );
+  });
+
+  it("reports an empty file", () => {
+    expect(importSummary(base)).toBe("Nothing imported — the file contains no connections");
+  });
+
+  it("lists shared credentials alongside added connections", () => {
+    expect(
+      importSummary({
+        ...base,
+        connectionsImported: 2,
+        connectionsSkipped: 1,
+        credentialsImported: 2,
+        sharedCredentialsImported: 1,
+      })
+    ).toBe(
+      "Imported 2 connections and 2 credentials, 1 shared credential, skipped 1 that already exists"
+    );
   });
 });

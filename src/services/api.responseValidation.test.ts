@@ -139,6 +139,7 @@ describe("api response-validation (TFE-004)", () => {
     it("returns the ImportResult on success with the right arg shape", async () => {
       const importResult = {
         connectionsImported: 3,
+        connectionsSkipped: 0,
         credentialsImported: 2,
         sharedCredentialsImported: 1,
         warnings: [],
@@ -172,6 +173,7 @@ describe("api response-validation (TFE-004)", () => {
     it("forwards a null import password (no-decrypt import)", async () => {
       mockedInvoke.mockResolvedValue({
         connectionsImported: 1,
+        connectionsSkipped: 0,
         credentialsImported: 0,
         sharedCredentialsImported: 0,
         warnings: [],
