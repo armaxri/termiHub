@@ -77,6 +77,7 @@ SCRIPTS=(
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/internal/setup-plugin-index-signing-key.sh"
+  "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
@@ -241,6 +242,32 @@ if [ "$(cat "$PI_REPO_KEY")" = "$pi_key_before" ] &&
   echo "ok    signing lifecycle: $PI_REPO_KEY and $PI_INDEX left untouched"
 else
   echo "::error::signing lifecycle: a plugin-index dry run modified the repo tree"
+  failures=$((failures + 1))
+fi
+
+# --- First-party plugin publisher key setup, dry-run (#3980) ---
+FP_SETUP="scripts/internal/setup-plugin-publisher-key.sh"
+FP_REPO_KEY="plugins/keys/first-party-publisher.pub.pem"
+fp_key_before="$(cat "$FP_REPO_KEY")"
+mkdir -p "$LC/fp"
+lc_step "first-party publisher: setup --dry-run (temp key file)" bash "$FP_SETUP" --dry-run
+lc_step "first-party publisher: setup --dry-run writes a given key file" \
+  bash "$FP_SETUP" --dry-run --pub-file "$LC/fp/pub.pem"
+if grep -q -- "-----BEGIN PUBLIC KEY-----" "$LC/fp/pub.pem" &&
+  ! grep -q "PRIVATE KEY" "$LC/fp/pub.pem"; then
+  echo "ok    signing lifecycle: first-party key file holds only a public key"
+else
+  echo "::error::signing lifecycle: first-party key file is missing its public key or leaks private material"
+  failures=$((failures + 1))
+fi
+lc_refuse "first-party publisher: setup over a real key without --force" \
+  bash "$FP_SETUP" --dry-run --pub-file "$LC/fp/pub.pem"
+lc_step "first-party publisher: setup --force over a real key" \
+  bash "$FP_SETUP" --dry-run --force --pub-file "$LC/fp/pub.pem"
+if [ "$(cat "$FP_REPO_KEY")" = "$fp_key_before" ]; then
+  echo "ok    signing lifecycle: $FP_REPO_KEY left untouched"
+else
+  echo "::error::signing lifecycle: a first-party publisher dry run modified the repo tree"
   failures=$((failures + 1))
 fi
 

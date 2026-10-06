@@ -1758,6 +1758,51 @@ flowchart LR
   signature. Desktops built with the old key reject the newly signed default index until they
   update, so prefer a rotation (two public-key blocks are accepted; the verifier trusts any).
 
+### First-Party Plugin Publisher Key
+
+First-party plugins are signed with the termiHub first-party publisher key, whose public half is
+compiled into every desktop as an immutable **bundled** publisher
+([#3980](https://github.com/armaxri/termiHub/issues/3980), ADR-18 in
+[architecture.md](architecture.md)). Same scheme and PEM format as the two keys above, with a
+**separate** key: the public half lives in
+[`plugins/keys/first-party-publisher.pub.pem`](../plugins/keys/first-party-publisher.pub.pem);
+the private half exists **only** as the `FIRST_PARTY_PLUGIN_SIGNING_KEY` GitHub Actions secret.
+
+```mermaid
+flowchart LR
+    K["setup-plugin-publisher-key.sh<br/>(maintainer, once)"] -->|public key| P[plugins/keys/first-party-publisher.pub.pem]
+    K -->|private key file, stdin| S[(secret FIRST_PARTY_PLUGIN_SIGNING_KEY)]
+    S --> W[Plugin Packaging workflow]
+    W -->|signs| F[multi-platform first-party package]
+    P -->|include_str! via termihub-core| D[desktop: bundled publisher, no TOFU]
+    F --> D
+```
+
+- **What it does:** a package signed with this key verifies as **Verified** without any user
+  pin. The bundled entry cannot be revoked, a `trust-store.json` entry claiming its key id is
+  ignored, and pinning a different key under that id is refused.
+- **Placeholder:** until the key is generated, the committed file is a marked placeholder. No
+  bundled publisher is compiled in, so trust stays TOFU-only (unchanged); the host logs this,
+  and the Plugin Packaging workflow reports a notice and leaves the package unsigned.
+- **Activation (maintainer, once):** run
+
+  ```bash
+  ./scripts/internal/setup-plugin-publisher-key.sh
+  ```
+
+  It generates the keypair with OpenSSL 3, writes the public key file, and pipes the private key
+  (as a `termihub-plugin-keygen` JSON key file) to `gh secret set FIRST_PARTY_PLUGIN_SIGNING_KEY`
+  (never echoed; shredded on exit; no backup). Then commit the key file in one PR into `develop`,
+  as the script prints. `--dry-run` does everything except the `gh` call and writes to a temp dir
+  (the `Shell Script Quality` job runs it via `scripts/internal/check-script-headless.sh`).
+
+- **CI signing:** the Plugin Packaging merge job signs the multi-platform package when the key
+  file holds a key and the secret is available (not on fork PRs), and fails if the secret's key
+  id is not one of the compiled-in keys.
+- **Loss or compromise:** re-run the setup script with `--force` and commit the new key file.
+  Prefer a rotation (two public-key blocks are accepted) so desktops that still carry only the
+  old key keep verifying plugins signed with it until they update.
+
 ### Hotfix Process
 
 For urgent bug fixes on a released version:

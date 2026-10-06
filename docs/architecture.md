@@ -3251,6 +3251,49 @@ forbids it from fetching remote content, so any network access has to happen in 
   machine, server-side SSRF concerns do not apply, and the size, timeout and redirect limits
   bound what a hostile index can make the app do.
 
+### ADR-18: Compiled-In First-Party Plugin Publisher Trust Anchor
+
+**Status:** Accepted (#3980) — mechanism live; activates when the maintainer runs the key setup
+
+**Context:** Since #2796 the plugin host re-checks at load that a signed plugin's key is in the
+publisher trust store and that its backend still matches the digest recorded at install. Both
+files (`trust-store.json`, `plugin-state.json`) are ordinary app-data files. With no bundled key,
+every trusted publisher is a trust-on-first-use (TOFU) user pin, so an attacker who can write the
+app-data directory can pin their own key and rewrite the install record. Only a key compiled
+into the binary gives a root a local filesystem attacker cannot forge.
+
+**Decision:** Embed the first-party publisher key the same way as the agent-update (#3213) and
+plugin-index (#3716) keys — a **separate** Ed25519 key in PEM SubjectPublicKeyInfo form,
+`plugins/keys/first-party-publisher.pub.pem`, compiled in via `include_str!` and parsed once into
+`BUNDLED_PUBLISHERS` (`core/src/plugin/trust_store.rs`):
+
+- Each key block becomes a `bundled` publisher whose `keyId` is the `sha256:` fingerprint of the
+  raw key — exactly what package signatures carry. It is seeded on every load, so a first-party
+  plugin verifies as **Verified** with no user pin.
+- It cannot be revoked, a `trust-store.json` entry claiming its id is ignored (the compiled-in
+  key wins), and pinning a different key under its id is refused (`BundledKeyConflict`).
+- The private half exists only as the `FIRST_PARTY_PLUGIN_SIGNING_KEY` GitHub Actions secret
+  (a `termihub-plugin-keygen` key file). The **Plugin Packaging** workflow signs the
+  multi-platform first-party package with it, after checking the secret's key id is one of the
+  compiled-in keys.
+- More than one block is accepted, for a rotation overlap.
+
+**Placeholder:** until `scripts/internal/setup-plugin-publisher-key.sh` runs, the committed file
+is a marked placeholder with no key block. `BUNDLED_PUBLISHERS` is then empty and behaviour is
+exactly the pre-#3980 TOFU posture. The host logs that no first-party key is compiled in, and
+the packaging workflow leaves the package unsigned with a notice. Unlike the agent-update key,
+the placeholder does not fail closed: the bundled anchor only _adds_ trust, and every package
+still passes its own signature and acknowledgement gates.
+
+**Consequences:**
+
+- Once configured, rewriting app data can no longer remove or replace first-party trust, and
+  official plugins never regress to an unknown-publisher prompt.
+- Third-party publishers are unchanged: they remain TOFU pins, with the #2796 limitation that a
+  filesystem attacker can forge a pin for _their_ key.
+- Losing or leaking the private key needs a new key and new desktop builds (`--force`); plugins
+  signed with the old key then verify as first-party only in desktops that still carry it.
+
 ---
 
 ## 10. Quality Requirements
