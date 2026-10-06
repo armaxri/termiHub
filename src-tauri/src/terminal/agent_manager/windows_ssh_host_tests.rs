@@ -4,6 +4,10 @@
 //! The unit tests in `agent_install` prove the per-shell command strings; these
 //! drive the real thing end to end, once per OpenSSH `DefaultShell`:
 //!
+//! 0. **SSH terminal with shell integration (#4143)** — before the deploy, open
+//!    a plain SSH terminal session (the core backend) with shell integration
+//!    on and prove the first typed command runs: PowerShell gets its own setup
+//!    (its prompt then emits OSC 7), cmd.exe none, and neither the POSIX one.
 //! 1. **Deploy + install (MT-AGENT-18 cmd.exe / MT-AGENT-19 PowerShell)** — SSH
 //!    in, detect a Windows host, detect the `DefaultShell` flavour, then run the
 //!    production [`install_agent_bytes`] (SFTP upload to the SFTP home, the
@@ -730,6 +734,76 @@ async fn spaced_path_probe_and_launch(fixture: &Fixture, installed: &str) {
 }
 
 /// The whole MT-AGENT-18/19 → 20 → 24 walkthrough for one `DefaultShell`.
+/// The first command typed into a terminal session and the text only its
+/// execution (not its keystroke echo) prints, in `shell`'s syntax.
+fn first_command(shell: WindowsShell) -> (&'static str, &'static str) {
+    match shell {
+        WindowsShell::Cmd => ("echo FIRST-%OS%-4143\r", "FIRST-Windows_NT-4143"),
+        WindowsShell::PowerShell => ("'FIRST-' + 'OK-4143'\r", "FIRST-OK-4143"),
+    }
+}
+
+/// #4143: a plain SSH terminal session (the core SSH backend the desktop and
+/// the agent both run) with **shell integration on** — the default — must run
+/// the first typed command. The POSIX setup line used to be injected into every
+/// host; under a PowerShell `DefaultShell` its LF left PSReadLine in a
+/// continuation and swallowed that command. Now PowerShell gets its own setup
+/// (so its prompt emits OSC 7) and cmd.exe gets none.
+async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, shell: WindowsShell) {
+    use termihub_core::connection::ConnectionType;
+
+    let mut ssh = termihub_core::backends::ssh::Ssh::new();
+    ssh.connect(serde_json::json!({
+        "host": FIXTURE_HOST,
+        "port": fixture.port,
+        "username": fixture.user,
+        "authMethod": "key",
+        "keyPath": fixture.key,
+        "shellIntegration": true,
+    }))
+    .await
+    .unwrap_or_else(|e| panic!("SSH terminal session to the Windows host failed: {e}"));
+    let mut rx = ssh.subscribe_output();
+    let (line, expect) = first_command(shell);
+    ssh.write(line.as_bytes())
+        .expect("type the first command into the SSH session");
+
+    let want_osc7 = shell == WindowsShell::PowerShell;
+    let mut raw = Vec::new();
+    let done = tokio::time::timeout(LIVE_CEILING, async {
+        while let Some(chunk) = rx.recv().await {
+            raw.extend_from_slice(&chunk);
+            let text = String::from_utf8_lossy(&raw);
+            if strip_ansi(&text).contains(expect)
+                && (!want_osc7 || text.contains("\u{1b}]7;file://"))
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let _ = ssh.disconnect().await;
+    assert!(
+        done,
+        "{shell:?}: the first command did not run with shell integration on{} — output: {:?}",
+        if want_osc7 {
+            " (or no OSC 7 followed)"
+        } else {
+            ""
+        },
+        strip_ansi(&text)
+    );
+    assert!(
+        !text.contains("PROMPT_COMMAND") && !text.contains("ParserError"),
+        "{shell:?}: the POSIX setup reached the Windows shell — output: {:?}",
+        strip_ansi(&text)
+    );
+    eprintln!("SSH terminal with shell integration ran the first command via {shell:?}");
+}
+
 async fn deploy_install_connect_reattach(want: WindowsShell) {
     let Some(fixture) = live_fixture() else {
         return;
@@ -743,6 +817,9 @@ async fn deploy_install_connect_reattach(want: WindowsShell) {
         return;
     }
     trust_all_host_keys();
+
+    // ── #4143: an SSH terminal with shell integration on runs the first command.
+    ssh_terminal_first_command_with_shell_integration(&fixture, want).await;
 
     // ── MT-AGENT-18/19: deploy + install through the configured DefaultShell.
     let deploy_fixture = fixture.clone();
@@ -990,6 +1067,18 @@ fn parse_required_and_default_shell_values() {
     assert_eq!(parse_default_shell("cmd.exe"), Some(WindowsShell::Cmd));
     assert_eq!(parse_default_shell("pwsh"), Some(WindowsShell::PowerShell));
     assert_eq!(parse_default_shell(""), None);
+}
+
+#[test]
+fn first_command_output_differs_from_its_echo() {
+    for shell in [WindowsShell::Cmd, WindowsShell::PowerShell] {
+        let (line, expect) = first_command(shell);
+        assert!(line.ends_with('\r'), "Enter under ConPTY is CR");
+        assert!(
+            !line.contains(expect),
+            "{shell:?}: the echo alone would match"
+        );
+    }
 }
 
 #[test]
