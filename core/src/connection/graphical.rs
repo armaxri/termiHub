@@ -1031,6 +1031,36 @@ pub trait GraphicalBackend: Send + Sync {
     fn fatal_error(&self) -> Option<SessionError> {
         None
     }
+
+    /// The side channel this backend's own transport offers for file transfer
+    /// (#4191): VNC's SSH tunnel resolves to a
+    /// [`FileSideChannelKind::Ssh`](super::FileSideChannelKind::Ssh) channel on
+    /// the SSH host.
+    ///
+    /// `None` (the default) when the transport has no side channel, the
+    /// connection did not opt into file transfer, or the session is view-only.
+    /// An agent route is not visible here — the backend dials a loopback port
+    /// forward — so the desktop's graphical session manager resolves that one
+    /// and gives it precedence
+    /// ([`resolve_file_side_channel`](super::graphical_files::resolve_file_side_channel)).
+    fn file_side_channel(&self) -> Option<super::FileSideChannel> {
+        None
+    }
+
+    /// The authenticated SSH session carrying this backend's transport, for
+    /// opening an SFTP subsystem channel on it (#4191) — no second login, and the
+    /// host key was already verified when the tunnel connected.
+    ///
+    /// Returned only when [`file_side_channel`](Self::file_side_channel) is an
+    /// SSH channel, and only while the tunnel is up: the session is disconnected
+    /// when the tunnel is torn down (its cancellation token fires), which ends
+    /// every SFTP channel opened on it. `None` by default.
+    #[cfg(feature = "ssh")]
+    fn file_side_channel_ssh_session(
+        &self,
+    ) -> Option<std::sync::Arc<crate::backends::ssh::handler::SshSession>> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -39,12 +39,15 @@ use vnc::{
     VncError, VncEvent, VncVersion, X11Event,
 };
 
+use crate::backends::ssh::handler::SshSession;
 use crate::connection::clipboard_dib::image_to_dib;
+use crate::connection::graphical_files::is_same_host;
 use crate::connection::{
     AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorShape,
     CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
     InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, SettingsSchema,
 };
+use crate::connection::{FileChannelPolicy, FileSideChannel, FileSideChannelKind};
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
@@ -155,7 +158,10 @@ struct VncRuntime {
     shared: Arc<VncShared>,
     cancel: CancellationToken,
     /// SSH tunnel kept alive for the session lifetime, if the transport uses one.
-    _tunnel: Option<tunnel::SshTunnel>,
+    tunnel: Option<tunnel::SshTunnel>,
+    /// The file-transfer side channel the tunnel offers (#4191): `Some` only
+    /// with a tunnel, the connection's File Transfer opt-in, and not view-only.
+    file_channel: Option<FileSideChannel>,
 }
 
 /// VNC/RFB graphical remote-desktop connection.
@@ -322,6 +328,26 @@ impl Vnc {
 ///
 /// For the `"ca"` mode the PEM bundle is read from disk here so a bad path fails
 /// with an actionable [`SessionError`] before the connection is attempted.
+/// The SSH file side channel a connected VNC session offers (#4191): only with
+/// an SSH tunnel up, the File Transfer opt-in on, and not view-only. The file
+/// host is the SSH host; it is the desktop host when the VNC target, as seen
+/// from the SSH host, is loopback or the SSH host itself.
+fn tunnel_file_channel(cfg: &VncConfig, has_tunnel: bool) -> Option<FileSideChannel> {
+    let policy = FileChannelPolicy {
+        file_transfer: cfg.file_transfer,
+        view_only: cfg.view_only,
+    };
+    if !has_tunnel || policy.refusal().is_some() {
+        return None;
+    }
+    Some(FileSideChannel {
+        kind: FileSideChannelKind::Ssh,
+        host: cfg.ssh_host.clone(),
+        user: cfg.ssh_username.clone(),
+        same_host: is_same_host(&cfg.host, &cfg.ssh_host),
+    })
+}
+
 async fn build_vencrypt_config(cfg: &VncConfig) -> Result<VencryptConfig, SessionError> {
     let verify = match cfg.tls_verify_mode() {
         "insecure" => TlsVerify::Insecure,
@@ -803,7 +829,8 @@ impl ConnectionType for Vnc {
             client,
             shared,
             cancel,
-            _tunnel: tunnel,
+            file_channel: tunnel_file_channel(&cfg, tunnel.is_some()),
+            tunnel,
         }));
         self.task = Some(task);
         Ok(())
@@ -1038,12 +1065,69 @@ impl GraphicalBackend for Vnc {
     fn fatal_error(&self) -> Option<SessionError> {
         self.runtime.as_ref()?.shared.fatal_error()
     }
+
+    /// The SSH tunnel's file side channel when the connection opted in (#4191).
+    fn file_side_channel(&self) -> Option<FileSideChannel> {
+        self.runtime.as_ref()?.file_channel.clone()
+    }
+
+    /// The tunnel's SSH session, only alongside an opted-in SSH side channel.
+    fn file_side_channel_ssh_session(&self) -> Option<Arc<SshSession>> {
+        let rt = self.runtime.as_ref()?;
+        rt.file_channel.as_ref()?;
+        rt.tunnel.as_ref()?.ssh_session()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use vnc::{PixelFormat, Rect};
+
+    #[test]
+    fn tunnel_file_channel_needs_tunnel_opt_in_and_not_view_only() {
+        let cfg = VncConfig {
+            host: "localhost".to_string(),
+            use_ssh_tunnel: true,
+            ssh_host: "tiger-box".to_string(),
+            ssh_username: "arne".to_string(),
+            file_transfer: true,
+            ..VncConfig::default()
+        };
+        let channel = tunnel_file_channel(&cfg, true).unwrap();
+        assert_eq!(channel.kind, FileSideChannelKind::Ssh);
+        assert_eq!(channel.host, "tiger-box");
+        assert_eq!(channel.user, "arne");
+        assert!(channel.same_host);
+
+        let gateway = VncConfig {
+            host: "10.0.4.17".to_string(),
+            ..cfg.clone()
+        };
+        assert!(!tunnel_file_channel(&gateway, true).unwrap().same_host);
+
+        assert!(
+            tunnel_file_channel(&cfg, false).is_none(),
+            "direct: no route"
+        );
+        let off = VncConfig {
+            file_transfer: false,
+            ..cfg.clone()
+        };
+        assert!(tunnel_file_channel(&off, true).is_none(), "off by default");
+        let view_only = VncConfig {
+            view_only: true,
+            ..cfg
+        };
+        assert!(tunnel_file_channel(&view_only, true).is_none());
+    }
+
+    #[test]
+    fn disconnected_backend_has_no_file_side_channel() {
+        let v = Vnc::new();
+        assert!(GraphicalBackend::file_side_channel(&v).is_none());
+        assert!(v.file_side_channel_ssh_session().is_none());
+    }
 
     #[test]
     fn metadata_and_capabilities() {
@@ -1067,7 +1151,14 @@ mod tests {
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["connection", "display", "features", "vnc", "sshTunnel"]
+            vec![
+                "connection",
+                "display",
+                "features",
+                "vnc",
+                "sshTunnel",
+                "fileTransfer"
+            ]
         );
     }
 
