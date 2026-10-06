@@ -74,24 +74,96 @@ def test_debug_scale_is_ignored_in_ci():
 
 def test_budgets_apply_only_their_own_category(monkeypatch):
     monkeypatch.setattr(deadlines, "DEBUG_SCALE", 1.0)
+    monkeypatch.setattr(deadlines, "CONTENDED", False)
     monkeypatch.setattr(deadlines, "UI_FACTOR", 1.0)
     assert deadlines.ui_budget(20.0) == 20.0
+    assert deadlines.ui_budget(20.0, "wait:the shell prompt") == 20.0  # serial: no raise
     assert deadlines.app_connect() == deadlines.APP_CONNECT
-    # Contended worker: UI ops get the slow category, app-connect does not.
+    # Contended worker: a listed op gets its own deadline, app-connect does not.
+    monkeypatch.setattr(deadlines, "CONTENDED", True)
     monkeypatch.setattr(deadlines, "UI_FACTOR", deadlines.CONTENDED_UI_FACTOR)
-    assert deadlines.ui_budget(20.0) == 20.0 * deadlines.CONTENDED_UI_FACTOR
+    assert deadlines.ui_budget(20.0, "wait:the shell prompt") == 70.0
     assert deadlines.app_connect() == deadlines.APP_CONNECT
     # The local override multiplies everything.
     monkeypatch.setattr(deadlines, "DEBUG_SCALE", 0.5)
     assert deadlines.app_connect() == deadlines.APP_CONNECT * 0.5
+    assert deadlines.ui_budget(20.0, "wait:the shell prompt") == 35.0
+
+
+def test_contended_worker_drops_the_blanket_factor_for_measured_ops(monkeypatch):
+    # #3663: an op whose contended max x HEADROOM fits its serial budget keeps it.
+    monkeypatch.setattr(deadlines, "DEBUG_SCALE", 1.0)
+    monkeypatch.setattr(deadlines, "CONTENDED", True)
+    monkeypatch.setattr(deadlines, "UI_FACTOR", deadlines.CONTENDED_UI_FACTOR)
+    assert deadlines.ui_budget(10.0, "command:exists") == 10.0
+    assert deadlines.ui_budget(20.0, "wait:a terminal with a shell prompt") == 20.0
+    # A listed op never lowers a call site's larger serial budget.
+    assert deadlines.ui_budget(60.0, "command:getState") == 60.0
+    assert deadlines.ui_budget(10.0, "command:getState") == 20.0
+    # Unmeasured poll loops (no timing line) keep the legacy factor.
+    assert deadlines.ui_budget(20.0) == 20.0 * deadlines.CONTENDED_UI_FACTOR
+
+
+def test_contended_op_names_are_timing_op_names():
+    # Keys must match what the harness records, or the lookup silently misses.
+    for op in deadlines.CONTENDED_OP_DEADLINES:
+        kind, _, label = op.partition(":")
+        assert kind in ("wait", "command"), op
+        if kind == "wait":
+            assert timing.wait_label(label) == op, op
+
+
+# Slowest completed contended (macOS/Windows, 2 xdist workers) sample per op,
+# 2026-09-30 → 2026-10-06 (#3663). Every listed deadline must clear HEADROOM x it.
+OBSERVED_CONTENDED_MAX = {
+    "wait:'…' in terminal output": 39.11,
+    "wait:the shell prompt": 34.39,
+    "wait:the terminal to report it exited": 33.98,
+    "wait:the '…' row in the terminal buffer": 33.27,
+    "wait:the active terminal's shell prompt": 32.22,
+    "wait:the shell's echo of the composed line": 27.45,
+    "wait:the PTY to report N rows x N cols": 25.94,
+    "wait:the PTYSZN stty answer": 25.92,
+    "wait:the DOM renderer to paint '…'": 24.64,
+    "wait:the new terminal's shell prompt": 15.25,
+    "wait:the restored terminals to reach a shell prompt": 10.23,
+    "wait:connection '…'": 19.16,
+    "wait:'…' in window '…'": 13.17,
+    "wait:the editor status to populate": 10.06,
+    "command:projectionSubscribe": 18.89,
+    "command:getState": 8.61,
+    "command:click": 5.31,
+    "command:screenshot": 5.18,
+}
 
 
 def test_deadlines_respect_the_headroom_rule():
     # Observed maxima behind the current values (see deadlines.py). A deadline
     # must never be tighter than HEADROOM x the slowest observation.
-    observed_max = {"APP_CONNECT": 28.3}
+    observed_max = {"APP_CONNECT": 15.95}  # serial Windows display lane
     for name, seconds in observed_max.items():
         assert getattr(deadlines, name) >= deadlines.HEADROOM * seconds
+    assert set(OBSERVED_CONTENDED_MAX) == set(deadlines.CONTENDED_OP_DEADLINES)
+    for op, seconds in OBSERVED_CONTENDED_MAX.items():
+        budget = deadlines.CONTENDED_OP_DEADLINES[op]
+        assert budget >= deadlines.HEADROOM * seconds, op
+        assert budget % 5 == 0, op  # rounded up to 5 s
+
+
+def test_every_deadline_trips_before_the_hang_guard():
+    # A bounded wait must fail with its own message long before the per-phase
+    # hang guard (#4017/#4173) kills the worker without one.
+    from termihub_harness import hang_guard
+
+    shortest_phase = min(hang_guard.DEFAULT_BUDGETS.values())
+    budgets = [
+        deadlines.APP_CONNECT,
+        deadlines.LIVE_COMMAND,
+        deadlines.DIAGNOSTIC_PROBE,
+        deadlines.UI_WAIT * deadlines.CONTENDED_UI_FACTOR,
+        *deadlines.CONTENDED_OP_DEADLINES.values(),
+    ]
+    assert max(budgets) * deadlines.HEADROOM < shortest_phase
 
 
 # ── Timing recorder ──────────────────────────────────────────────────────────
@@ -182,6 +254,7 @@ def test_bridge_round_trip_records_app_connect_and_commands(bridge):
 
 
 def test_systemtest_wait_records_success_and_timeout(monkeypatch):
+    monkeypatch.setattr(deadlines, "CONTENDED", False)
     monkeypatch.setattr(deadlines, "UI_FACTOR", 1.0)
     monkeypatch.setattr(deadlines, "DEBUG_SCALE", 1.0)
     suite = SystemTest()

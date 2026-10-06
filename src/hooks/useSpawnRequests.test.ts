@@ -19,6 +19,12 @@ vi.mock("@/services/events", () => ({
   }),
 }));
 
+const resolveConnectSecret = vi.fn();
+vi.mock("@/utils/resolveConnectSecret", () => ({
+  resolveConnectSecret: (opts: unknown) => resolveConnectSecret(opts),
+}));
+
+const storeCredential = vi.fn();
 const resolveContainerSpawn = vi.fn();
 const resolveShellSpawn = vi.fn();
 const takePendingSpawn = vi.fn();
@@ -40,6 +46,7 @@ vi.mock("@/services/api", () => ({
   ) => resolveShellSpawn(location, connection, entryId, kind, shell),
   takePendingSpawn: () => takePendingSpawn(),
   rememberSpawnChoice: (entryId: string, target: unknown) => rememberSpawnChoice(entryId, target),
+  storeCredential: (...args: unknown[]) => storeCredential(...args),
 }));
 
 vi.mock("@/components/ui", () => ({
@@ -611,6 +618,73 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
     // SSH has no start cwd → cd runs after connect via the tab's initialCommand.
     expect(tab?.initialCommand).toBe("cd '/srv/app'");
     expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the spawned SSH password (#4017)", () => {
+    const SSH_TYPE = {
+      typeId: "ssh",
+      displayName: "SSH",
+      icon: "ssh",
+      schema: { groups: [] },
+      capabilities: { monitoring: true, fileBrowser: true, resize: true, persistent: false },
+    };
+    const PASSWORD_SPAWN: ShellSpawn = {
+      ...SSH_SPAWN,
+      settings: { ...SSH_SPAWN.settings, authMethod: "password" },
+    };
+
+    beforeEach(() => {
+      resolveConnectSecret.mockReset();
+      storeCredential.mockReset();
+      useAppStore.setState({ connectionTypes: [SSH_TYPE] as never });
+    });
+
+    async function spawnSsh(): Promise<void> {
+      resolveShellSpawn.mockResolvedValue(PASSWORD_SPAWN);
+      await mountHook();
+      await act(async () => {
+        emit!({ location: "/srv/app", connection: "conn-1", kind: "ssh" });
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+    }
+
+    it("resolves the password before the tab connects", async () => {
+      // Regression: a spawn carries only the saved settings (never the secret),
+      // so the session connected with an empty password and failed auth instead
+      // of prompting like a sidebar connect.
+      resolveConnectSecret.mockResolvedValue({
+        status: "resolved",
+        passwordKey: "password",
+        secret: "s3cret",
+        source: "prompt",
+        credentialType: "password",
+      });
+      await spawnSsh();
+
+      expect(resolveConnectSecret).toHaveBeenCalledTimes(1);
+      const opts = resolveConnectSecret.mock.calls[0][0] as { settings: unknown };
+      expect(opts.settings).toEqual(PASSWORD_SPAWN.settings);
+      const tab = allTabs().find((t) => t.spawned);
+      expect(tab?.config.config).toEqual({ ...PASSWORD_SPAWN.settings, password: "s3cret" });
+      // No saved connection matched `conn-1`, so nothing is stored.
+      expect(storeCredential).not.toHaveBeenCalled();
+    });
+
+    it("opens no tab when the prompt is dismissed", async () => {
+      resolveConnectSecret.mockResolvedValue({ status: "canceled" });
+      await spawnSsh();
+
+      expect(allTabs().some((t) => t.spawned)).toBe(false);
+      expect(vi.mocked(toast.info)).toHaveBeenCalledWith("Connect canceled");
+    });
+
+    it("opens the tab unchanged when no secret is needed", async () => {
+      resolveConnectSecret.mockResolvedValue({ status: "none" });
+      await spawnSsh();
+
+      const tab = allTabs().find((t) => t.spawned);
+      expect(tab?.config.config).toEqual(PASSWORD_SPAWN.settings);
+    });
   });
 
   it("surfaces an error toast when SSH resolution fails (unknown connection)", async () => {

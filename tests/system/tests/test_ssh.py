@@ -75,6 +75,9 @@ class TestSshPasswordAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, S
             connect=True,
         )
         self.handle_password_prompt()
+        # The fresh app does not trust the fixture's host key yet (#1959):
+        # unanswered, the handshake hangs and no session is ever created.
+        self.accept_host_key_prompt()
         self.wait(lambda: self.find_tab(name), what="the SSH tab")
         # Replaces the old `.xterm` DOM check: a readable terminal session is the
         # bridge-world signal that the terminal rendered and is live.
@@ -195,6 +198,9 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
             connect=True,
         )
         self.handle_password_prompt()
+        # The fresh app does not trust the fixture's host key yet (#1959):
+        # unanswered, the handshake hangs and no session is ever created.
+        self.accept_host_key_prompt()
         self.wait(self.has_terminal, what="the SSH terminal session")
 
         marker = "SYS_SSH_OUTPUT_OK"
@@ -216,6 +222,9 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
             connect=True,
         )
         self.handle_password_prompt()
+        # The fresh app does not trust the fixture's host key yet (#1959):
+        # unanswered, the handshake hangs and no session is ever created.
+        self.accept_host_key_prompt()
         ssh_tab = self.wait(lambda: self.find_tab(ssh_name), what="the SSH tab")
 
         # Monitoring is shown while the SSH tab is active.
@@ -312,7 +321,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         # The client must surface the disconnect: the tab's session is marked
         # exited and the disconnect overlay (offering a reconnect) appears.
         self.wait(
-            lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is True,
+            lambda: self.terminal_session_exited(tab_id),
             what="the SSH tab to be marked disconnected",
         )
         self.wait(
@@ -392,7 +401,7 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
             if self.password_prompt_open():
                 self.handle_password_prompt()
             return (
-                self.driver.get_state("terminalExitedTabs").get(tab_id) is not True
+                not self.terminal_session_exited(tab_id)
                 and not self.driver.exists("terminal-reconnect-prompt")
                 and not self.driver.exists("terminal-view-mode-banner")
             )

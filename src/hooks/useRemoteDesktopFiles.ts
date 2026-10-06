@@ -38,10 +38,12 @@ function isLive(state: GraphicalSessionState): boolean {
  * The file side channel of one graphical session: resolved when the session
  * becomes Active and again after every reconnect (a new tunnel), plus the
  * upload actions. "Upload to folder…" choices are remembered for the session.
+ * `onReveal` backs the upload summary's **Reveal** action (#4193).
  */
 export function useRemoteDesktopFiles(
   sessionId: string | null,
-  state: GraphicalSessionState
+  state: GraphicalSessionState,
+  onReveal?: (dir: string) => void
 ): RemoteDesktopFiles {
   const [files, setFiles] = useState<RemoteDesktopFilesStatus>({ status: "resolving" });
   const [chosenDir, setChosenDir] = useState<string | null>(null);
@@ -49,6 +51,8 @@ export function useRemoteDesktopFiles(
   const live = sessionId !== null && isLive(state);
   const sessionRef = useRef(sessionId);
   sessionRef.current = sessionId;
+  const revealRef = useRef(onReveal);
+  revealRef.current = onReveal;
 
   // A new session starts with no remembered folder.
   useEffect(() => setChosenDir(null), [sessionId]);
@@ -83,7 +87,13 @@ export function useRemoteDesktopFiles(
     async (paths: string[], dest?: string) => {
       const id = sessionRef.current;
       if (!id || paths.length === 0) return;
-      const started = await uploadToRemoteDesktop(id, paths, dest ?? chosenDir ?? undefined);
+      const reveal = revealRef.current;
+      const started = await uploadToRemoteDesktop(
+        id,
+        paths,
+        dest ?? chosenDir ?? undefined,
+        reveal ? (dir) => reveal(dir) : undefined
+      );
       // Remember an explicitly chosen folder once the backend accepted it.
       if (started && dest !== undefined) setChosenDir(started.destDir);
     },

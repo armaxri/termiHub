@@ -292,7 +292,8 @@ pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<Strin
     manager.export_json().map_err(config_error)
 }
 
-/// Import connections from a JSON string. Returns the number imported.
+/// Import connections from a JSON string. Returns the number actually added
+/// (connections the store already holds are skipped and not counted).
 #[tauri::command]
 pub fn import_connections<R: Runtime>(
     json: String,
@@ -562,7 +563,11 @@ impl ImportError {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionImportResult {
+    /// Connections actually added to the store.
     pub connections_imported: usize,
+    /// Connections in the file skipped because the store already holds them
+    /// (#3689, #4210).
+    pub connections_skipped: usize,
     pub credentials_imported: usize,
     /// Shared credentials created, or given their missing secret.
     pub shared_credentials_imported: usize,
@@ -613,6 +618,7 @@ pub async fn import_connections_with_credentials<R: Runtime>(
     })?;
     Ok(ConnectionImportResult {
         connections_imported: result.connections_imported,
+        connections_skipped: result.connections_skipped,
         credentials_imported: result.credentials_imported,
         shared_credentials_imported: prepared.imported_count,
         warnings: prepared.warnings,

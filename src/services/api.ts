@@ -13,6 +13,7 @@ import {
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFileChannel";
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
+import type { RemoteDesktopFileBrowser } from "@/types/generated/RemoteDesktopFileBrowser";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
@@ -964,6 +965,28 @@ export async function remoteDesktopUpload(
     localPaths,
     dest: dest ?? null,
   });
+}
+
+/**
+ * Open the File Browser source of a graphical session's side channel (#4193):
+ * the backend registers the route under `sessionId`, so the `session_*` file
+ * commands (list, download, …) work on it. Refused unless the route is ready
+ * (never view-only). Opens at `dir` (a leading `~` is the account's home; it
+ * must exist) or the session's default folder.
+ */
+export async function remoteDesktopOpenFileBrowser(
+  sessionId: SessionId,
+  dir?: string
+): Promise<RemoteDesktopFileBrowser> {
+  return await invoke<RemoteDesktopFileBrowser>("remote_desktop_open_file_browser", {
+    sessionId,
+    dir: dir ?? null,
+  });
+}
+
+/** Close a graphical session's File Browser source (#4193); a no-op when none is open. */
+export async function remoteDesktopCloseFileBrowser(sessionId: SessionId): Promise<void> {
+  await invoke("remote_desktop_close_file_browser", { sessionId });
 }
 
 /** Disconnect a graphical remote-desktop session. */

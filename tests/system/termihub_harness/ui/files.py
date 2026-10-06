@@ -54,12 +54,44 @@ class FileBrowserPathReads(HarnessMixin):
     """
 
     CURRENT_PATH = "file-browser-current-path"
+    #: The toolbar Refresh button; its ``aria-busy`` mirrors the pane's loading flag.
+    REFRESH_CONTROL = "file-browser-refresh"
 
     def file_browser_path(self) -> str:
         """The path currently shown in the file browser (empty if none)."""
         if not self.driver.exists(self.CURRENT_PATH):
             return ""
         return self.driver.get_attribute(self.CURRENT_PATH, "title") or ""
+
+    def file_browser_busy(self) -> bool:
+        """Whether a directory listing is in flight (the Refresh control's ``aria-busy``)."""
+        return self.driver.get_attribute(self.REFRESH_CONTROL, "aria-busy") == "true"
+
+    def wait_file_browser_settled(self, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
+        """Wait until the browser shows a path with no listing in flight; return it.
+
+        A freshly shown browser can first render a path that is not its own — the
+        pane's idle ``/`` or, right after the active session changed, the previous
+        session's directory — before its first listing lands. So "a path is shown"
+        is not a readiness signal: wait until no listing is in flight and the same
+        path reads back on two polls ``0.5s`` apart (which spans the moment between
+        the session switch rendering and its first listing starting).
+        """
+        last: dict[str, str] = {}
+
+        def settled():
+            if not self.driver.exists(self.REFRESH_CONTROL) or self.file_browser_busy():
+                last.clear()
+                return None
+            path = self.file_browser_path()
+            if path and last.get("path") == path:
+                return path
+            last["path"] = path
+            return None
+
+        return self.wait(
+            settled, timeout=timeout, interval=0.5, what="the file browser to settle on a path"
+        )
 
     def wait_for_path_contains(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
         """Poll until the displayed path contains ``needle``; return the full path."""

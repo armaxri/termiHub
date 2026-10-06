@@ -978,6 +978,10 @@ enum SessionTransferTarget {
     /// `connection.files.read_range` / `write_range`, one request per chunk
     /// (#3587).
     Ranged(std::sync::Arc<crate::session::remote_proxy::RemoteFileBrowserProxy>),
+    /// A graphical session's agent side channel (#4193): offset-addressed
+    /// slices over the hosting agent's host-level `connection.files.*` (no
+    /// `connectionId`).
+    AgentHost(std::sync::Arc<crate::session::graphical_upload::AgentHostFiles>),
 }
 
 /// Resolve how a session's queued transfer should run: SFTP (dedicated channel),
@@ -1005,6 +1009,15 @@ async fn resolve_session_transfer_target(
     }
     if let Ok(target) = manager.docker_transfer_target(session_id).await {
         return Ok(SessionTransferTarget::Docker(target));
+    }
+    // A graphical session's agent side channel opened for browsing (#4193);
+    // its SSH side channel already resolved as SFTP above.
+    if let Some(files) = manager
+        .side_channels
+        .get(session_id)
+        .and_then(|carrier| carrier.agent())
+    {
+        return Ok(SessionTransferTarget::AgentHost(files));
     }
     match manager.ranged_transfer_target(session_id).await {
         Ok(proxy) => Ok(SessionTransferTarget::Ranged(proxy)),
@@ -1078,6 +1091,21 @@ fn spawn_session_transfer(
                 .await;
             });
         }
+        SessionTransferTarget::AgentHost(files) => {
+            tauri::async_runtime::spawn(async move {
+                termihub_core::files::transfer::ranged::run_ranged_transfer(
+                    files,
+                    direction,
+                    remote_path,
+                    local_path,
+                    handle,
+                    registry,
+                    sink,
+                    0,
+                )
+                .await;
+            });
+        }
         SessionTransferTarget::Docker(target) => {
             tauri::async_runtime::spawn(async move {
                 transfer::docker::run_docker_transfer(
@@ -1140,9 +1168,12 @@ async fn start_session_transfer(
         direction == TransferDirection::Download,
         &local_path,
     );
+    // Nor is a graphical session's side-channel transfer (#4193): its tunnel
+    // or agent route dies with the session, so the row could not be resumed.
+    let side_channel = manager.side_channels.get(&session_id).is_some();
     if let Some(pm) = app_handle
         .try_state::<TransferPersistenceManager>()
-        .filter(|_| !staging)
+        .filter(|_| !staging && !side_channel)
     {
         pm.record_registration(
             &transfer_id,

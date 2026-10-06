@@ -433,7 +433,11 @@ pub struct ImportPreview {
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
+    /// Connections actually added to the store.
     pub connections_imported: usize,
+    /// Connections in the file skipped because the store already holds them
+    /// (#3689, #4210).
+    pub connections_skipped: usize,
     pub credentials_imported: usize,
 }
 
