@@ -11,6 +11,9 @@ REM   --dest   Where to stage conpty.dll + OpenConsole.exe
 REM            (default: src-tauri\binaries\conpty, gitignored).
 setlocal
 
+REM Capture the script dir FIRST: `shift` (no /n) shifts %0 too, so after the
+REM flag loop %~dp0 would name the directory of an argument (e.g. --dest's).
+set "SCRIPT_DIR=%~dp0"
 set "ARCH=x64"
 set "DEST="
 
@@ -54,8 +57,11 @@ REM fail to autoload cmdlets (#4029); unset, Windows PowerShell rebuilds its
 REM own default. setlocal scopes this.
 set "PSModulePath="
 if defined DEST (
-    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0fetch-conpty.ps1" -Arch "%ARCH%" -Dest "%DEST%"
+    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%SCRIPT_DIR%fetch-conpty.ps1" -Arch "%ARCH%" -Dest "%DEST%"
 ) else (
-    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0fetch-conpty.ps1" -Arch "%ARCH%"
+    powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%SCRIPT_DIR%fetch-conpty.ps1" -Arch "%ARCH%"
 )
-exit /b %ERRORLEVEL%
+REM Normalise to 0/1: a PowerShell launch failure exits negative (e.g.
+REM -196608), which `if errorlevel 1` in callers would treat as success.
+if not "%ERRORLEVEL%"=="0" exit /b 1
+exit /b 0
