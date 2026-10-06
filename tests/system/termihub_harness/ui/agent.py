@@ -192,19 +192,37 @@ class AgentUi(HarnessMixin):
         agent = self.find_agent(name)
         return agent.get("connectionState") if agent else None
 
-    def wait_agent_connected(self, name: str, *, timeout: float = 40.0) -> dict[str, Any]:
+    #: The global SSH host-key trust prompt (#1959) and its "Accept for host"
+    #: button (see ``PasswordPromptUi.accept_host_key_prompt``).
+    HOSTKEY_PROMPT = "ssh-hostkey-prompt"
+    HOSTKEY_ACCEPT_REMEMBER = "ssh-hostkey-accept-remember"
+
+    def wait_agent_connected(
+        self, name: str, *, timeout: float = 40.0, accept_host_keys: bool = True
+    ) -> dict[str, Any]:
         """Wait until an agent reaches the ``connected`` state and return it.
 
         A live connect runs an SSH handshake and an agent handshake, so this is
         slower than a plain store update — hence the generous default timeout.
+
+        The agent's SSH transport raises the host-key trust prompt (#1959) the
+        first time a fresh test app meets the agent host — after the password
+        prompt, mid-handshake. Unanswered, the connect hangs until the wait
+        times out (the 2026-10-06 nightly: every live-agent suite stalled on
+        it). With ``accept_host_keys`` (the default) any such prompt seen while
+        waiting is accepted with "Accept for host", so later connects in the
+        same app are not re-prompted.
         """
+
+        def connected():
+            if accept_host_keys and self.driver.exists(self.HOSTKEY_PROMPT):
+                self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+                return None
+            agent = self.find_agent(name)
+            return agent if agent and agent.get("connectionState") == "connected" else None
+
         return self.wait(
-            lambda: (
-                agent
-                if (agent := self.find_agent(name))
-                and agent.get("connectionState") == "connected"
-                else None
-            ),
+            connected,
             what=f"agent {name!r} to reach the connected state",
             timeout=timeout,
         )
