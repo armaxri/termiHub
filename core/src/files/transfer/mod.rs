@@ -53,6 +53,9 @@ pub mod ftp;
 pub mod local;
 #[cfg(feature = "local-transfer")]
 pub mod local_folder;
+// Chunked transfers over offset-addressed slices — agent-hosted sessions (#3587).
+#[cfg(feature = "local-transfer")]
+pub mod ranged;
 // Remote→remote copies between SFTP and/or Docker sessions (PROD-0013, #3586).
 #[cfg(any(feature = "ssh", feature = "docker"))]
 pub mod remote_copy;

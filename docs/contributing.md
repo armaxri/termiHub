@@ -158,6 +158,12 @@ The `scripts/` directory has cross-platform helpers (`.sh` + `.cmd`) for all com
 
 See [scripts/README.md](../scripts/README.md) for the full list. On Windows, use the `.cmd` variants (e.g., `scripts\dev.cmd`).
 
+On Windows, `scripts\build.cmd` bundles Microsoft's ConPTY host (`conpty.dll` +
+`OpenConsole.exe`, downloaded and checksum-verified at build time) next to
+`termihub.exe`, so local terminals show inline images (#4121). `scripts\dev.cmd` uses
+it too once you have run `scripts\internal\fetch-conpty.cmd`; until then, dev builds
+run on the ConPTY built into Windows, which drops SIXEL images.
+
 ### Reproducing CI locally
 
 `./scripts/ci-local.sh` runs the same checks as the per-PR **Code Quality** workflow
@@ -263,31 +269,45 @@ dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
-Audit (also daily on both branches), Coverage, Bundle Size, Rustdoc, the full Agent
-matrix and Dev Build. The newest commit's run is the
-one to read (it covers all earlier merges). **Watch `develop`'s own runs after
-merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
-that caused it was not gated on it. The nightly system-integration and Docker
+Audit (also daily on both branches), Bundle Size, Rustdoc, the full Agent matrix
+and Dev Build. **Coverage** (the blocking unit-coverage ratchet) runs nightly on
+`develop`, on every push to `main` and on demand — not per merge (#4119; see
+[Coverage Goals](testing.md#coverage-goals)). On `develop` a newer push cancels the
+in-progress run of an older one (see the concurrency rule below), so **a develop
+run grades a batch of merges**: the newest commit's run is the one to read (it
+covers all earlier merges), and when it fails, the culprit is any PR merged since
+the last green run on `develop` — read the commit range, not just the head PR.
+**Watch `develop`'s own runs after merging**: a failure there is a real
+regression (or a new advisory) and needs a follow-up fix, since the PR that
+caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged, and a release additionally requires them green on the exact
 release commit (see [Release integration gate](#release-integration-gate)). The nightly **WSL Live (Windows)** lane ([`wsl-live.yml`](../.github/workflows/wsl-live.yml), #4008) runs the live WSL tests against a real distribution; PRs touching the WSL code paths run it too. The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
-**Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
-but whether a newer run cancels an in-progress one depends on what the run is for:
+**Concurrency rule (#3588, #4119).** Every workflow sets a per-ref `concurrency`
+group, but whether a newer run cancels an in-progress one depends on what the run
+is for:
 
-- **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging,
-  Vendored Forks, Coverage (a blocking ratchet since #3740) — use `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
-  A superseded **PR** run is cancelled, but a push to `develop`/`main` always
-  runs to completion. The post-merge lane is the only place these checks run on
-  every platform, so cancelling on push would leave `develop` ungated: under
-  frequent merges, no Code Quality run ever finished. GitHub still keeps only
-  the newest _queued_ run per group, so merges that land mid-run are covered by
-  the next completed run.
+- **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging
+  and Vendored Forks — use the group `<name>-${{ github.event_name }}-${{ github.ref }}`
+  with `cancel-in-progress` true only for a `pull_request` or a `push` to
+  `develop`. A superseded PR run, or the run of an older `develop` commit, is
+  cancelled, so a merge burst fully tests only its newest commit (which contains
+  every earlier merge) instead of running each superseded commit to completion.
+  Pushes to `main`, tag/release pushes, schedules and `workflow_dispatch` are
+  **never** cancelled, and because the event name is part of the group a push
+  can never cancel a scheduled or dispatched run. Trade-off: a develop failure
+  may point at a batch of merges, and under a non-stop merge stream a develop
+  run finishes only once merges pause (#3588 had made every push run complete
+  for that reason; it cost ~440 develop push runs a week).
+- **Coverage** (a blocking ratchet since #3740) runs only on `main` pushes, the
+  nightly develop dispatch and manual dispatch, so it never cancels in progress.
 - **Advisory, heavy or publish-only workflows** — Dev Build,
   Build (PR-only), and the scheduled/manual lanes — keep
   `cancel-in-progress: true`. Only the newest commit's result matters for them.
 
-A new workflow that gates correctness post-merge must use the PR-only form.
+A new workflow that gates correctness post-merge must use the correctness-gate
+form above (never cancel on `main`, tags, schedules or dispatch).
 
 ### Required checks per branch
 
@@ -1689,6 +1709,105 @@ other slot (`gh secret delete AGENT_UPDATE_SIGNING_KEY_NEXT`) if it holds a key.
 still embed only the leaked key can no longer be updated automatically — redeploy them from
 a desktop built with the new key (the immediate-deploy path installs over SSH and does not
 depend on the old agent's check; the desktop verifies against its own compiled-in key).
+
+### Plugin Index Signing Key
+
+Release desktops only accept the default plugin index
+([`plugins/index.json`](../plugins/index.json) on `main`) when
+`plugins/index.json.sig` is a valid Ed25519 signature from the termiHub plugin-index key
+([#3716](https://github.com/armaxri/termiHub/issues/3716), ADR-17 in
+[architecture.md](architecture.md)). It reuses the agent update signing scheme and PEM format,
+with a **separate** key: the public half is compiled into the desktop from
+[`plugins/keys/index-signing.pub.pem`](../plugins/keys/index-signing.pub.pem); the private half
+exists **only** as the `PLUGIN_INDEX_SIGNING_KEY` GitHub Actions secret.
+
+```mermaid
+flowchart LR
+    K["setup-plugin-index-signing-key.sh<br/>(maintainer, once)"] -->|public key| P[plugins/keys/index-signing.pub.pem]
+    K -->|signs current index| G[plugins/index.json.sig]
+    K -->|private key, stdin| S[(secret PLUGIN_INDEX_SIGNING_KEY)]
+    S --> W[Plugin Index Signature workflow]
+    W -->|fresh .sig on index change| G
+    P -->|include_str! via termihub-core| D[desktop verifies before parsing]
+    G --> D
+```
+
+- **What is signed:** `Ed25519(b"termihub-plugin-index-v1\0" || SHA-256(index bytes))`, base64,
+  one line. See `core/src/plugin/index_signature.rs` and
+  `scripts/internal/plugin-index-signing.sh` (`status`, `check-key`, `sign`, `verify`).
+- **Placeholder:** until the key is generated, the committed key file is a marked placeholder.
+  Desktops then load the index without checking and Browse says "Signature not checked"
+  (deliberately not fail-closed, unlike the agent key: the index is a discovery aid and every
+  package still passes its own trust gates). The workflow reports a notice and passes.
+- **Activation (maintainer, once):** run
+
+  ```bash
+  ./scripts/internal/setup-plugin-index-signing-key.sh
+  ```
+
+  It generates the keypair with OpenSSL 3, writes the public key, signs the current
+  `plugins/index.json` into `plugins/index.json.sig`, and pipes the private key to
+  `gh secret set PLUGIN_INDEX_SIGNING_KEY` (never echoed; shredded on exit; no backup). Then commit
+  both files in one PR into `develop`, as the script prints. Release desktops built after that
+  require the signature; dev/branch builds tolerate a missing one until it reaches `main`.
+  `--dry-run` does everything except the `gh` call, on temp copies (the `Shell Script Quality`
+  job runs it via `scripts/internal/check-script-headless.sh`).
+
+- **Changing the index:** every PR that touches `plugins/index.json` must also carry a fresh
+  `plugins/index.json.sig`. The `Plugin Index Signature` check fails on a stale one and, when
+  the secret is available (not on fork PRs), puts the fresh signature in its job summary and in
+  the `plugin-index-signature` artifact
+  (`gh run download <run-id> -n plugin-index-signature -D plugins/`). Commit it to the PR. For a
+  fork PR, run the workflow on a maintainer branch via `workflow_dispatch`. CI never commits the
+  signature itself because `main` and `develop` require PRs.
+- **Loss or compromise:** re-run the setup script with `--force` and commit the new key and
+  signature. Desktops built with the old key reject the newly signed default index until they
+  update, so prefer a rotation (two public-key blocks are accepted; the verifier trusts any).
+
+### First-Party Plugin Publisher Key
+
+First-party plugins are signed with the termiHub first-party publisher key, whose public half is
+compiled into every desktop as an immutable **bundled** publisher
+([#3980](https://github.com/armaxri/termiHub/issues/3980), ADR-18 in
+[architecture.md](architecture.md)). Same scheme and PEM format as the two keys above, with a
+**separate** key: the public half lives in
+[`plugins/keys/first-party-publisher.pub.pem`](../plugins/keys/first-party-publisher.pub.pem);
+the private half exists **only** as the `FIRST_PARTY_PLUGIN_SIGNING_KEY` GitHub Actions secret.
+
+```mermaid
+flowchart LR
+    K["setup-plugin-publisher-key.sh<br/>(maintainer, once)"] -->|public key| P[plugins/keys/first-party-publisher.pub.pem]
+    K -->|private key file, stdin| S[(secret FIRST_PARTY_PLUGIN_SIGNING_KEY)]
+    S --> W[Plugin Packaging workflow]
+    W -->|signs| F[multi-platform first-party package]
+    P -->|include_str! via termihub-core| D[desktop: bundled publisher, no TOFU]
+    F --> D
+```
+
+- **What it does:** a package signed with this key verifies as **Verified** without any user
+  pin. The bundled entry cannot be revoked, a `trust-store.json` entry claiming its key id is
+  ignored, and pinning a different key under that id is refused.
+- **Placeholder:** until the key is generated, the committed file is a marked placeholder. No
+  bundled publisher is compiled in, so trust stays TOFU-only (unchanged); the host logs this,
+  and the Plugin Packaging workflow reports a notice and leaves the package unsigned.
+- **Activation (maintainer, once):** run
+
+  ```bash
+  ./scripts/internal/setup-plugin-publisher-key.sh
+  ```
+
+  It generates the keypair with OpenSSL 3, writes the public key file, and pipes the private key
+  (as a `termihub-plugin-keygen` JSON key file) to `gh secret set FIRST_PARTY_PLUGIN_SIGNING_KEY`
+  (never echoed; shredded on exit; no backup). Then commit the key file in one PR into `develop`,
+  as the script prints. `--dry-run` does everything except the `gh` call and writes to a temp dir
+  (the `Shell Script Quality` job runs it via `scripts/internal/check-script-headless.sh`).
+
+- **CI signing:** the Plugin Packaging merge job signs the multi-platform package when the key
+  file holds a key and the secret is available (not on fork PRs), and fails if the secret's key
+  id is not one of the compiled-in keys.
+- **Loss or compromise:** re-run the setup script with `--force` and commit the new key file.
+  Prefer a rotation (two public-key blocks are accepted) so desktops that still carry only the
+  old key keep verifying plugins signed with it until they update.
 
 ### Hotfix Process
 

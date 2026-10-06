@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open } from "@/services/nativeDialog";
 import { CheckCircle2, XCircle, HardDrive, Info } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";

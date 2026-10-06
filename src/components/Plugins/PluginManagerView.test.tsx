@@ -81,7 +81,12 @@ describe("PluginManagerView (#1997)", () => {
     });
     checkUpdatesMock.mockReset();
     fetchIndexMock.mockReset();
-    fetchIndexMock.mockResolvedValue({ url: "https://idx", isDefault: true, entries: [] });
+    fetchIndexMock.mockResolvedValue({
+      url: "https://idx",
+      isDefault: true,
+      signature: "verified",
+      entries: [],
+    });
     openMock.mockReset();
     validateMock.mockReset();
     assessTrustMock.mockReset();
@@ -296,6 +301,7 @@ describe("PluginManagerView (#1997)", () => {
       fetchIndexMock.mockResolvedValue({
         url: "https://idx",
         isDefault: true,
+        signature: "verified",
         entries: [
           {
             entry: {

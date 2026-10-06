@@ -127,3 +127,120 @@ async fn unknown_session_reports_not_found() {
     assert!(mgr.send_clipboard_image("nope", image()).await.is_err());
     mgr.disconnect(&sid, Sink).await.expect("disconnect");
 }
+
+/// The send command's body (#4088): an over-cap **host** image — within the
+/// per-side cap but over the 32 MiB decoded-size cap — is refused with the cap
+/// error the panel toasts, and nothing reaches the session.
+#[tokio::test]
+async fn an_over_cap_host_image_returns_the_cap_error_and_sends_nothing() {
+    use termihub_core::connection::MAX_CLIPBOARD_IMAGE_BYTES;
+
+    let (mgr, sid) = connected().await;
+    let wm = WindowManager::new();
+    wm.claim(&sid, "main");
+    // 4097 x 2048 x 4 bytes = 33_562_624 > 32 MiB, a genuine host-sized buffer.
+    let (width, height) = (4097_u32, 2048_u32);
+    let bytes = u64::from(width) * u64::from(height) * 4;
+    assert!(bytes > MAX_CLIPBOARD_IMAGE_BYTES);
+    let rgba = vec![0_u8; usize::try_from(bytes).expect("fits in usize")];
+
+    let err = send_host_clipboard_image(
+        &mgr,
+        &wm,
+        "main",
+        &sid,
+        Some(HostClipboardImage {
+            width,
+            height,
+            rgba: &rgba,
+        }),
+    )
+    .await
+    .expect_err("an over-cap host image is refused");
+    assert!(matches!(err, TerminalError::InvalidParams(_)), "{err:?}");
+    let message = err.to_string();
+    assert!(
+        message.contains("local clipboard image rejected")
+            && message.contains(&format!("exceeds the {MAX_CLIPBOARD_IMAGE_BYTES}-byte cap")),
+        "unexpected cap error: {message}"
+    );
+    assert_eq!(
+        mgr.get_clipboard_image(&sid).await.expect("read"),
+        None,
+        "the refused image never reached the backend"
+    );
+    mgr.disconnect(&sid, Sink).await.expect("disconnect");
+}
+
+/// An image over the per-side cap is refused the same way, before its pixels
+/// are copied.
+#[tokio::test]
+async fn an_over_dimension_host_image_returns_the_cap_error_and_sends_nothing() {
+    use termihub_core::connection::MAX_CLIPBOARD_IMAGE_DIMENSION;
+
+    let (mgr, sid) = connected().await;
+    let wm = WindowManager::new();
+    wm.claim(&sid, "main");
+    let width = MAX_CLIPBOARD_IMAGE_DIMENSION + 1;
+    let rgba = vec![0_u8; usize::try_from(width).expect("fits") * 4];
+
+    let err = send_host_clipboard_image(
+        &mgr,
+        &wm,
+        "main",
+        &sid,
+        Some(HostClipboardImage {
+            width,
+            height: 1,
+            rgba: &rgba,
+        }),
+    )
+    .await
+    .expect_err("an over-dimension host image is refused");
+    assert!(matches!(err, TerminalError::InvalidParams(_)), "{err:?}");
+    assert!(err.to_string().contains("cap"), "unexpected error: {err}");
+    assert_eq!(mgr.get_clipboard_image(&sid).await.expect("read"), None);
+    mgr.disconnect(&sid, Sink).await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn a_host_image_within_the_caps_is_sent_and_an_empty_clipboard_sends_nothing() {
+    let (mgr, sid) = connected().await;
+    let wm = WindowManager::new();
+    wm.claim(&sid, "main");
+
+    assert_eq!(
+        send_host_clipboard_image(&mgr, &wm, "main", &sid, None)
+            .await
+            .expect("empty host clipboard"),
+        None
+    );
+    assert_eq!(mgr.get_clipboard_image(&sid).await.expect("read"), None);
+
+    let rgba = [9_u8; 8];
+    let host = HostClipboardImage {
+        width: 2,
+        height: 1,
+        rgba: &rgba,
+    };
+    assert_eq!(
+        send_host_clipboard_image(&mgr, &wm, "win-1", &sid, Some(host))
+            .await
+            .expect("non-owner send"),
+        None,
+        "a non-owning window sends nothing"
+    );
+    assert_eq!(mgr.get_clipboard_image(&sid).await.expect("read"), None);
+
+    assert_eq!(
+        send_host_clipboard_image(&mgr, &wm, "main", &sid, Some(host))
+            .await
+            .expect("owner send"),
+        Some(image().info())
+    );
+    assert_eq!(
+        mgr.get_clipboard_image(&sid).await.expect("read"),
+        Some(image())
+    );
+    mgr.disconnect(&sid, Sink).await.expect("disconnect");
+}

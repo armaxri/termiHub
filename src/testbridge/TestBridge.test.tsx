@@ -4,6 +4,8 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalPortalProvider } from "@/components/Terminal/TerminalRegistry";
+import { open as pluginOpen, save as pluginSave } from "@tauri-apps/plugin-dialog";
+import { clearNativeDialogStubs, open, save } from "@/services/nativeDialog";
 import { TestBridge } from "./TestBridge";
 import { TEST_BRIDGE_GLOBAL_KEY, TEST_BRIDGE_PORT_GLOBAL_KEY } from "./testMode";
 
@@ -38,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearNativeDialogStubs();
   act(() => root?.unmount());
   container?.remove();
   delete window.__termihubTestBridge;
@@ -142,6 +145,58 @@ describe("TestBridge", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("grants the stubbed path, then answers the next save dialog with it (#4122)", async () => {
+      vi.mocked(invoke).mockClear();
+      vi.mocked(invoke).mockResolvedValue(undefined);
+      vi.mocked(pluginSave).mockClear();
+      mount();
+
+      const res = await window.__termihubTestBridge!.dispatch({
+        action: "stubNativeDialog",
+        kind: "save",
+        path: "/tmp/thub-export/connections.json",
+      });
+
+      expect(res).toEqual({ ok: true, action: "stubNativeDialog" });
+      expect(invoke).toHaveBeenCalledWith("test_allow_dialog_path", {
+        path: "/tmp/thub-export/connections.json",
+      });
+      await expect(save()).resolves.toBe("/tmp/thub-export/connections.json");
+      expect(pluginSave).not.toHaveBeenCalled();
+    });
+
+    it("stubs a cancel without any fs grant (#4122)", async () => {
+      vi.mocked(invoke).mockClear();
+      vi.mocked(pluginOpen).mockClear();
+      mount();
+
+      const res = await window.__termihubTestBridge!.dispatch({
+        action: "stubNativeDialog",
+        kind: "open",
+      });
+
+      expect(res).toEqual({ ok: true, action: "stubNativeDialog" });
+      expect(invoke).not.toHaveBeenCalledWith("test_allow_dialog_path", expect.anything());
+      await expect(open()).resolves.toBeNull();
+      expect(pluginOpen).not.toHaveBeenCalled();
+    });
+
+    it("queues no stub when the backend refuses the fs grant (#4122)", async () => {
+      vi.mocked(invoke).mockRejectedValueOnce({ code: "x", message: "grant refused" });
+      vi.mocked(pluginSave).mockResolvedValue("/real.json");
+      mount();
+
+      const res = await window.__termihubTestBridge!.dispatch({
+        action: "stubNativeDialog",
+        kind: "save",
+        path: "/tmp/refused.json",
+      });
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("grant refused");
+      await expect(save()).resolves.toBe("/real.json");
     });
 
     it("reads window.__coverage__ through readCoverage (#3657)", async () => {

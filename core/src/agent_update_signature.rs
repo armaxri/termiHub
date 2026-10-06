@@ -83,13 +83,6 @@ pub const SIGNING_DOMAIN: &[u8] = b"termihub-agent-update-v1\0";
 /// so the agent and the desktop trust exactly the same key set.
 const EMBEDDED_PUBLIC_KEYS_PEM: &str = include_str!("../../agent/keys/update-signing.pub.pem");
 
-/// DER prefix of an Ed25519 SubjectPublicKeyInfo (RFC 8410): SEQUENCE {
-/// SEQUENCE { OID 1.3.101.112 }, BIT STRING (32 bytes) }. The 32 raw key bytes
-/// follow it.
-const ED25519_SPKI_PREFIX: [u8; 12] = [
-    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-];
-
 /// Why an update's signature was refused. Every variant is a **fail-closed**
 /// rejection; the typed shape lets the RPC layer surface a dedicated error code
 /// (`UPDATE_SIGNATURE_REJECTED`) to the desktop.
@@ -266,38 +259,7 @@ pub fn parse_signature(signature_b64: &str) -> Result<Signature, UpdateSignature
     Ok(Signature::from_bytes(&bytes))
 }
 
-/// Extract every Ed25519 key from the PEM `PUBLIC KEY` blocks in `pem`.
-///
-/// Blocks that are not valid Ed25519 SubjectPublicKeyInfo are skipped (a
-/// garbled block can never *add* trust), and text outside blocks — comments,
-/// the placeholder marker — is ignored. The placeholder file therefore yields an
-/// empty list.
-pub fn parse_public_keys_pem(pem: &str) -> Vec<VerifyingKey> {
-    let mut keys = Vec::new();
-    let mut body: Option<String> = None;
-    for line in pem.lines() {
-        let line = line.trim();
-        if line == "-----BEGIN PUBLIC KEY-----" {
-            body = Some(String::new());
-        } else if line == "-----END PUBLIC KEY-----" {
-            if let Some(b64) = body.take() {
-                if let Some(key) = decode_spki(&b64) {
-                    keys.push(key);
-                }
-            }
-        } else if let Some(b64) = body.as_mut() {
-            b64.push_str(line);
-        }
-    }
-    keys
-}
-
-fn decode_spki(b64: &str) -> Option<VerifyingKey> {
-    let der = BASE64.decode(b64).ok()?;
-    let raw = der.strip_prefix(&ED25519_SPKI_PREFIX[..])?;
-    let raw: [u8; 32] = raw.try_into().ok()?;
-    VerifyingKey::from_bytes(&raw).ok()
-}
+pub use crate::ed25519_pem::parse_public_keys_pem;
 
 /// Return the path of the `.sig` signature sidecar for a binary path.
 pub fn signature_sidecar_path(binary_path: &Path) -> PathBuf {
@@ -359,12 +321,7 @@ pub mod test_support {
 
     /// The PEM SPKI encoding of `key`'s public half, as the setup script writes it.
     pub fn public_key_pem(key: &SigningKey) -> String {
-        let mut der = ED25519_SPKI_PREFIX.to_vec();
-        der.extend_from_slice(key.verifying_key().as_bytes());
-        format!(
-            "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
-            BASE64.encode(der)
-        )
+        crate::ed25519_pem::public_key_pem(&key.verifying_key())
     }
 }
 

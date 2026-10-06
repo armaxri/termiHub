@@ -431,3 +431,109 @@ def test_ensure_skips_on_a_windows_container_daemon_even_on_ci(monkeypatch):
     monkeypatch.setattr(fx.ComposeFixture, "_run_compose", staticmethod(no_compose))
     with pytest.raises(ContainerRuntimeUnavailable, match="windows containers"):
         fx.ComposeFixture().ensure("ssh-keys")
+
+
+# ── Deployed-agent binary staging (#4092) ──────────────────────────────────────
+
+
+def _test_key_body() -> bytes:
+    return b"\n".join(fx._test_only_key_lines())
+
+
+@pytest.fixture
+def agent_tree(tmp_path, monkeypatch):
+    """A fake repo root for :func:`stage_remote_agent_binary`: a Linux docker
+    runtime, an x86_64 musl target, and a recorder in place of the build."""
+    monkeypatch.setattr(fx, "REPO_ROOT", tmp_path)
+    context = tmp_path / "context"
+    context.mkdir()
+    monkeypatch.setattr(fx, "_REMOTE_AGENT_BUILD_CONTEXT", context)
+    monkeypatch.setattr(fx, "_agent_build_verified", set())
+    monkeypatch.setattr(fx, "container_runtime", lambda: "docker")
+    monkeypatch.setattr(fx, "_docker_os_type", lambda _runtime: "linux")
+    monkeypatch.setattr(fx, "_container_musl_target", lambda: "x86_64-unknown-linux-musl")
+    built = tmp_path / "target" / "x86_64-unknown-linux-musl" / "release" / "termihub-agent"
+    built.parent.mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def build(cmd, **_kwargs):
+        calls.append(list(cmd))
+        built.write_bytes(b"\x7fELF fresh " + _test_key_body())
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", build)
+    return SimpleNamespace(built=built, calls=calls, context=context)
+
+
+def test_embeds_test_signing_key_detects_a_test_hooks_build(tmp_path):
+    with_key = tmp_path / "with"
+    with_key.write_bytes(b"\x00\x01prefix" + _test_key_body() + b"suffix\xff")
+    without = tmp_path / "without"
+    without.write_bytes(b"\x00\x01a release agent with only the real key\xff")
+    assert fx.embeds_test_signing_key(with_key)
+    assert not fx.embeds_test_signing_key(without)
+
+
+def test_stale_build_without_the_test_key_is_rebuilt_off_ci(agent_tree, monkeypatch):
+    """The #4092 stale-binary case: a reused non-test-hooks build would fail the
+    real swap at AGT-005, so it is rebuilt instead."""
+    monkeypatch.delenv("CI", raising=False)
+    agent_tree.built.write_bytes(b"\x7fELF stale release build")
+    staged = fx.stage_remote_agent_binary()
+    assert len(agent_tree.calls) == 1
+    assert "--install-cross" not in agent_tree.calls[0]
+    assert fx.embeds_test_signing_key(staged)
+
+
+def test_test_hooks_build_is_reused_off_ci(agent_tree, monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    agent_tree.built.write_bytes(b"\x7fELF earlier test build " + _test_key_body())
+    fx.stage_remote_agent_binary()
+    assert agent_tree.calls == []
+
+
+def test_ci_builds_once_per_run_and_may_install_cross(agent_tree, monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    agent_tree.built.write_bytes(b"\x7fELF cached " + _test_key_body())
+    fx.stage_remote_agent_binary()
+    fx.stage_remote_agent_binary()
+    assert len(agent_tree.calls) == 1, "cargo decides freshness once; later calls reuse"
+    assert "--install-cross" in agent_tree.calls[0]
+
+
+def test_build_failure_on_ci_errors_instead_of_skipping(agent_tree, monkeypatch):
+    """Before #4092 a missing `cross` skipped every deployed-agent suite on the
+    integration lane without turning anything red."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(
+        subprocess, "run", _failing_run("ERROR: cross-rs not found.\n", returncode=1)
+    )
+    with pytest.raises(fx.ComposeFixtureFailed, match="cross-rs not found"):
+        fx.stage_remote_agent_binary()
+
+
+def test_build_failure_off_ci_still_skips(agent_tree, monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr(
+        subprocess, "run", _failing_run("ERROR: cross-rs not found.\n", returncode=1)
+    )
+    with pytest.raises(ContainerRuntimeUnavailable, match="cross-rs not found"):
+        fx.stage_remote_agent_binary()
+
+
+@pytest.mark.parametrize(
+    ("runtime", "os_type", "reason"),
+    [(None, None, "no container runtime"), ("docker", "windows", "windows containers")],
+    ids=["no-runtime-macos-runner", "windows-daemon"],
+)
+def test_no_linux_runtime_skips_before_building_even_on_ci(
+    agent_tree, monkeypatch, runtime, os_type, reason
+):
+    """The macOS/Windows CI legs cannot host the Linux containers: skip with that
+    reason up front rather than attempting (and blaming) the cross-build."""
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(fx, "container_runtime", lambda: runtime)
+    monkeypatch.setattr(fx, "_docker_os_type", lambda _runtime: os_type)
+    with pytest.raises(ContainerRuntimeUnavailable, match=reason):
+        fx.stage_remote_agent_binary()
+    assert agent_tree.calls == []

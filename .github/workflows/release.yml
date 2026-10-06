@@ -304,6 +304,8 @@ jobs:
             rust_target: 'x86_64-pc-windows-msvc'
             file_ext: '.msi'
             bundle_path: 'msi'
+            # Sideloaded ConPTY host next to termihub.exe (#4121).
+            extra_config: '--config src-tauri/tauri.conpty.conf.json'
 
           # Linux x64
           - platform: 'linux-x64'
@@ -384,6 +386,18 @@ jobs:
           name: third-party-notices
           path: src-tauri/resources/
 
+      # Windows local shells need the sideloaded ConPTY host (#4121): the inbox
+      # ConPTY strips SIXEL/inline-image sequences. Fetch Microsoft's
+      # conpty.dll + OpenConsole.exe at the pinned version, SHA-256-verified
+      # against src-tauri/packaging/windows/conpty.env (a mismatch fails the job),
+      # and stage them for the bundle-only fragment tauri.conpty.conf.json, which
+      # the Windows matrix entry merges via extra_config below. tauri-build
+      # rejects a missing resource, so this must run first.
+      - name: Fetch sideloaded ConPTY (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./scripts/internal/fetch-conpty.sh --arch x64
+
       - name: Build Tauri app for release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
@@ -394,7 +408,37 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
+          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ matrix.extra_args }}
+
+      # Fail the build, not the user, if the sideloaded ConPTY host (#4121) is
+      # missing from the installer, misplaced (it must sit next to termihub.exe,
+      # where portable-pty looks), altered, or not Microsoft-signed. The MSI is
+      # administrative-extracted (no install); the target dir is what the
+      # unbundled exe uses.
+      - name: Verify the sideloaded ConPTY host in the Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+        run: |
+          $bundle = "target/$env:RUST_TARGET/release/bundle"
+          $msi = Get-ChildItem "$bundle/msi" -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { Write-Output "::error::no MSI built"; exit 1 }
+          ./scripts/internal/verify-conpty-bundle.ps1 -Msi $msi.FullName
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ./scripts/internal/verify-conpty-bundle.ps1 -Dir "target/$env:RUST_TARGET/release"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Never ship a build with the test bridge compiled in (SEC-005): it carries
+      # test-only commands such as the native-dialog fs grant (#4122). The release
+      # build above passes no --features, so this guards a future workflow edit.
+      - name: Assert the app binary has no test-bridge code
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.rust_target }}/release/termihub"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
+          scripts/internal/assert-no-test-bridge.sh "$BIN"
 
       # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
       # (inner components signed in the wrong order), which Gatekeeper classifies as

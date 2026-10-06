@@ -8,6 +8,45 @@ use std::sync::Mutex as StdMutex;
 #[derive(Default)]
 struct MemBrowser {
     files: StdMutex<HashMap<String, Vec<u8>>>,
+    /// Whether it offers ranged access (#3587).
+    ranges: bool,
+}
+
+impl MemBrowser {
+    fn ranged() -> Self {
+        Self {
+            ranges: true,
+            ..Self::default()
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RangedFileAccess for MemBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let files = self.files.lock().unwrap();
+        let data = files
+            .get(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        let start = (offset as usize).min(data.len());
+        let end = (start + len as usize).min(data.len());
+        Ok(data[start..end].to_vec())
+    }
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let mut files = self.files.lock().unwrap();
+        let file = files.entry(path.into()).or_default();
+        if offset == 0 {
+            file.clear();
+        } else if file.len() as u64 != offset {
+            return Err(termihub_core::files::ranged::offset_mismatch(
+                path,
+                file.len() as u64,
+                offset,
+            ));
+        }
+        file.extend_from_slice(data);
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -82,6 +121,9 @@ impl FileBrowser for MemBrowser {
     }
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
+    }
+    fn ranged(&self) -> Option<&dyn RangedFileAccess> {
+        self.ranges.then_some(self as &dyn RangedFileAccess)
     }
 }
 
@@ -541,4 +583,156 @@ fn only_content_operations_are_transfers() {
     .is_transfer());
     assert!(!FileOp::List { path: "/".into() }.is_transfer());
     assert!(!FileOp::Mkdir { path: "/".into() }.is_transfer());
+}
+
+// ── Ranged requests (#3587) ─────────────────────────────────────────
+
+#[test]
+fn range_requests_serialize_as_flat_tagged_json() {
+    let read = FileRequest {
+        id: 4,
+        op: FileOp::ReadRange {
+            path: "/f".into(),
+            offset: 9,
+            length: 3,
+        },
+    };
+    let v = serde_json::to_value(&read).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({"id": 4, "op": "read_range", "path": "/f", "offset": 9, "length": 3})
+    );
+    assert_eq!(serde_json::from_value::<FileRequest>(v).unwrap(), read);
+
+    let write = FileRequest {
+        id: 5,
+        op: FileOp::WriteRange {
+            path: "/f".into(),
+            offset: 9,
+            size: 2,
+        },
+    };
+    let v = serde_json::to_value(&write).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({"id": 5, "op": "write_range", "path": "/f", "offset": 9, "size": 2})
+    );
+    assert_eq!(serde_json::from_value::<FileRequest>(v).unwrap(), write);
+}
+
+#[tokio::test]
+async fn serve_runs_ranged_slices_through_the_browsers_ranged_access() {
+    let browser = MemBrowser::ranged();
+    let write = |offset, size| FileOp::WriteRange {
+        path: "/f".into(),
+        offset,
+        size,
+    };
+    let (outcome, _) = serve(&browser, write(0, 3), b"abc".to_vec()).await;
+    assert!(matches!(outcome, FileOutcome::Done), "{outcome:?}");
+    let (outcome, _) = serve(&browser, write(3, 3), b"def".to_vec()).await;
+    assert!(matches!(outcome, FileOutcome::Done), "{outcome:?}");
+    // A slice that would not land at the end is refused, typed.
+    let (outcome, _) = serve(&browser, write(2, 1), b"X".to_vec()).await;
+    assert!(matches!(
+        outcome,
+        FileOutcome::Failed {
+            error: WireFileError::OperationFailed { .. }
+        }
+    ));
+
+    let read = |offset, length| FileOp::ReadRange {
+        path: "/f".into(),
+        offset,
+        length,
+    };
+    let (outcome, data) = serve(&browser, read(2, 3), Vec::new()).await;
+    assert!(matches!(outcome, FileOutcome::Read { size: 3 }));
+    assert_eq!(data.as_deref(), Some(&b"cde"[..]));
+    let (outcome, data) = serve(&browser, read(5, 9), Vec::new()).await;
+    assert!(matches!(outcome, FileOutcome::Read { size: 1 }));
+    assert_eq!(data.as_deref(), Some(&b"f"[..]));
+}
+
+#[tokio::test]
+async fn serve_refuses_ranged_slices_on_a_backend_without_them() {
+    let browser = MemBrowser::default();
+    let (outcome, data) = serve(
+        &browser,
+        FileOp::ReadRange {
+            path: "/f".into(),
+            offset: 0,
+            length: 4,
+        },
+        Vec::new(),
+    )
+    .await;
+    assert!(matches!(
+        outcome,
+        FileOutcome::Failed {
+            error: WireFileError::NotSupported
+        }
+    ));
+    assert!(data.is_none());
+    let (outcome, _) = serve(
+        &browser,
+        FileOp::WriteRange {
+            path: "/f".into(),
+            offset: 0,
+            size: 1,
+        },
+        b"x".to_vec(),
+    )
+    .await;
+    assert!(matches!(
+        outcome,
+        FileOutcome::Failed {
+            error: WireFileError::NotSupported
+        }
+    ));
+    assert!(browser.files.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_ranged_write_collects_its_data_like_a_write() {
+    let mut uploads = Uploads::default();
+    let request = FileRequest {
+        id: 8,
+        op: FileOp::WriteRange {
+            path: "/f".into(),
+            offset: 100,
+            size: 4,
+        },
+    };
+    assert!(matches!(uploads.begin(1, request), UploadStep::Pending));
+    match uploads.append(&encode_chunk(8, b"data")) {
+        UploadStep::Complete(job) => assert_eq!(job.data, b"data"),
+        other => panic!("expected completion, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_channel_tracks_ranged_support_separately() {
+    let channel = FileChannel::default();
+    assert!(!channel.ranges_supported());
+    channel.set_ranges_supported(true);
+    assert!(channel.ranges_supported());
+    channel.set_ranges_supported(false);
+    assert!(!channel.ranges_supported());
+}
+
+#[test]
+fn ranged_operations_are_transfers() {
+    assert!(FileOp::ReadRange {
+        path: "/".into(),
+        offset: 0,
+        length: 1
+    }
+    .is_transfer());
+    assert!(FileOp::WriteRange {
+        path: "/".into(),
+        offset: 0,
+        size: 1
+    }
+    .is_transfer());
 }

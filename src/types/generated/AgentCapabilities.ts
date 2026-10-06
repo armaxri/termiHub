@@ -57,6 +57,14 @@ sessionFiles?: boolean,
  */
 unattendedConnect?: boolean, 
 /**
+ * Whether the agent serves offset-addressed file slices
+ * (`connection.files.read_range` / `write_range`, protocol 0.26.0,
+ * #3587), letting an agent-hosted session run queued, resumable
+ * transfers. `false` for older agents, whose sessions keep whole-file
+ * transfers.
+ */
+fileRanges?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

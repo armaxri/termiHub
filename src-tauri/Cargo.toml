@@ -112,6 +112,9 @@ percent-encoding = "2"
 # SHA-256 hashing: agent-binary integrity verification (all platforms) and
 # Windows VcXsrv checksum validation.
 sha2 = "0.10"
+# HKDF-SHA256: derives the Windows Hello biometric-unlock wrapping key from a
+# key-credential signature (#3534). Same RustCrypto family as sha2/aes-gcm.
+hkdf = "0.12"
 # CSV / inventory parsing for bulk host onboarding (#1961) — quoting and
 # delimiter handling delegated to the maintained crate rather than hand-rolled.
 csv = "1"
@@ -213,6 +216,12 @@ objc2-local-authentication = { version = "0.3", default-features = false, featur
     "LABiometryType",
 ] }
 block2 = "0.6"
+# OS-enforced biometric-unlock key (#3534): data-protection keychain item with
+# `SecAccessControl(.biometryCurrentSet)`. Already in the tree via `keyring`'s
+# apple-native backend; `OSX_10_15` exposes `kSecUseDataProtectionKeychain`.
+security-framework = { version = "3", features = ["OSX_10_15"] }
+security-framework-sys = { version = "2.17", features = ["OSX_10_15"] }
+core-foundation = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -224,6 +233,12 @@ windows = { version = "0.58", features = [
     "Foundation",
     "Security_Credentials_UI",
     "Win32_System_WinRT",
+    # Windows Hello key credentials (`KeyCredentialManager`) for the
+    # OS-enforced biometric-unlock key (#3534); `CryptographicBuffer` +
+    # `IBuffer` carry the challenge and signature.
+    "Security_Credentials",
+    "Security_Cryptography",
+    "Storage_Streams",
 ] }
 # Low-level Win32 for the remote-clipboard delayed-render binding (#1814): a
 # message-only owner window that offers CF_HDROP with a NULL handle and renders
@@ -308,7 +323,7 @@ zbus = "5"
 [dev-dependencies]
 # Deterministic test signing helpers for the agent-binary signature tests (#3330),
 # and the in-process SSH test server for the app-log secrecy test (#4011).
-termihub-core = { path = "../core", features = ["agent-update-signing-test-support", "ssh-test-support"] }
+termihub-core = { path = "../core", features = ["agent-update-signing-test-support", "plugin-index-signing-test-support", "ssh-test-support"] }
 # Paused-clock time control (`tokio::test(start_paused)`) for deterministic
 # timeout tests — the owned-task shutdown bounded-timeout path (ARCH-007) is
 # verified without a wall-clock sleep. Dev-only: absent from the release binary.

@@ -13,16 +13,20 @@ on:
   push:
     branches: [ main, develop ]
 
-# Cancel superseded PR runs (a force-push or a newer commit on the PR) so we
-# don't burn runner minutes finishing checks for stale commits.
-# Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
-# correctness gate the slim PR lane (#3326) relies on. Cancelling on push left
-# develop's gate dark under frequent merges (no run ever finished). A push run now
-# always completes; GitHub still keeps only the newest *queued* run per group, so
-# merges landing mid-run are covered by the next completed run.
+# Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
+# to develop, cancels the in-flight run for the older commit, so a merge burst
+# fully tests only its newest develop commit (develop's tip includes every
+# earlier merge). A develop failure may therefore point at a batch of merges —
+# see docs/contributing.md → "What a green PR proves". Never cancelled: pushes
+# to main, tag/release pushes, schedules and workflow_dispatch. The event name
+# is part of the group, so a push can never cancel a scheduled or dispatched run.
+# (#3588 had made every push run complete; under constant merges that ran each
+# superseded commit to completion — ~440 develop push runs/week.)
 concurrency:
-  group: code-quality-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: code-quality-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' ||
+    (github.event_name == 'push' && github.ref == 'refs/heads/develop') }}
 
 # Least-privilege token (CI-010). Every job here only checks out, builds, tests,
 # and lints the tree — none comment on the PR, publish check runs, push, or
@@ -432,7 +436,8 @@ jobs:
 
       # Manual-test counts are NOT committed to the docs (#4070, after #3721):
       # any committed total row made every pair of test-automation PRs conflict.
-      # This validates the tests/manual/*.yaml corpus, fails if a doc
+      # This validates the tests/manual/*.yaml corpus (incl. that every item has
+      # the name/instructions/expected keys the runner needs, #4131), fails if a doc
       # reintroduces a committed count block, and publishes the per-category
       # table as the job summary. Stdlib-only Python, no venv.
       - name: Manual-test inventory (job summary)
@@ -889,6 +894,75 @@ jobs:
             od -c "$bad.sha256"
             exit 1
           fi
+
+      # fetch-conpty.cmd (#4121): the flag parser, then REAL fetches of the
+      # pinned Microsoft.Windows.Console.ConPTY package through the PowerShell
+      # twin, from cmd AND from pwsh (#4029), each checked against the pins in
+      # src-tauri/packaging/windows/conpty.env. A run with a tampered package
+      # pin must fail and stage nothing.
+      - name: fetch-conpty.cmd --help and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\internal\fetch-conpty.cmd --help
+          if errorlevel 1 exit /b 1
+          call scripts\internal\fetch-conpty.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          call scripts\internal\fetch-conpty.cmd --arch
+          if not errorlevel 1 (echo expected failure: --arch without a value& exit /b 1)
+          call scripts\internal\fetch-conpty.cmd --arch riscv
+          if not errorlevel 1 (echo expected failure: unsupported arch& exit /b 1)
+          echo fetch-conpty.cmd fail-fast smoke OK
+          exit /b 0
+
+      - name: fetch-conpty.cmd fetches and verifies the pinned package (cmd)
+        shell: cmd
+        run: |
+          call scripts\internal\fetch-conpty.cmd --dest "%RUNNER_TEMP%\conpty-cmd"
+          if errorlevel 1 exit /b 1
+          call scripts\internal\fetch-conpty.cmd --arch arm64 --dest "%RUNNER_TEMP%\conpty-arm64"
+          if errorlevel 1 exit /b 1
+
+      - name: fetch-conpty.cmd fetches and verifies the pinned package (pwsh)
+        shell: pwsh
+        run: |
+          & scripts\internal\fetch-conpty.cmd --dest "$env:RUNNER_TEMP\conpty-pwsh"
+          if ($LASTEXITCODE -ne 0) { Write-Error "fetch-conpty.cmd exited $LASTEXITCODE"; exit 1 }
+
+      - name: Staged ConPTY files match the pins; a tampered pin fails
+        shell: bash
+        run: |
+          set -euo pipefail
+          pins=src-tauri/packaging/windows/conpty.env
+          pin() { sed -n "s/^$1=//p" "$pins" | tr -d '\r'; }
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          check() { echo "$(pin "$2")  $1" | sha256sum -c -; }
+          for d in conpty-cmd conpty-pwsh; do
+            check "$tmp/$d/conpty.dll" CONPTY_DLL_X64_SHA256
+            check "$tmp/$d/OpenConsole.exe" OPENCONSOLE_X64_SHA256
+          done
+          check "$tmp/conpty-arm64/conpty.dll" CONPTY_DLL_ARM64_SHA256
+          check "$tmp/conpty-arm64/OpenConsole.exe" OPENCONSOLE_ARM64_SHA256
+          # The bash twin must stage the same bytes as the PowerShell one.
+          scripts/internal/fetch-conpty.sh --dest "$tmp/conpty-bash"
+          cmp "$tmp/conpty-bash/conpty.dll" "$tmp/conpty-cmd/conpty.dll"
+          cmp "$tmp/conpty-bash/OpenConsole.exe" "$tmp/conpty-cmd/OpenConsole.exe"
+          # Tampered package pin: both twins must refuse and stage nothing.
+          cp "$pins" "$tmp/conpty.env.orig"
+          sed -i 's/^CONPTY_NUPKG_SHA256=./CONPTY_NUPKG_SHA256=x/' "$pins"
+          sh_rc=0
+          ps_rc=0
+          scripts/internal/fetch-conpty.sh --dest "$tmp/conpty-bad-sh" || sh_rc=$?
+          powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File scripts/internal/fetch-conpty.ps1 -Dest "$(cygpath -w "$tmp/conpty-bad-ps")" ||
+            ps_rc=$?
+          cp "$tmp/conpty.env.orig" "$pins"
+          [ "$sh_rc" -ne 0 ] || { echo "::error::fetch-conpty.sh accepted a tampered pin"; exit 1; }
+          [ "$ps_rc" -ne 0 ] || { echo "::error::fetch-conpty.ps1 accepted a tampered pin"; exit 1; }
+          if [ -e "$tmp/conpty-bad-sh" ] || [ -e "$tmp/conpty-bad-ps" ]; then
+            echo "::error::a tampered package left files staged"
+            exit 1
+          fi
+          echo "fetch-conpty smoke OK"
 
 
   # Run tests

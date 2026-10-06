@@ -25,7 +25,8 @@
       "csp": {
         "default-src": ["'self'"],
         "script-src": ["'self'", "plugin://localhost", "'wasm-unsafe-eval'"],
-        "style-src": ["'self'", "'unsafe-inline'"],
+        "style-src": ["'self'"],
+        "style-src-attr": ["'unsafe-inline'"],
         "img-src": ["'self'", "data:", "blob:"],
         "font-src": ["'self'"],
         "connect-src": ["'self'", "ipc:"],
@@ -35,8 +36,7 @@
         "frame-src": ["'none'"],
         "base-uri": ["'self'"],
         "form-action": ["'none'"]
-      },
-      "dangerousDisableAssetCspModification": ["style-src"]
+      }
     }
   },
   "plugins": {

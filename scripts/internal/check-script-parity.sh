@@ -57,11 +57,19 @@ ALLOWLIST=(
   "scripts/internal/check-script-headless.sh" # headless-exec checker (CI-only bash gate)
   "scripts/internal/ci-rust-tests.sh"         # CI test runner (bash on every runner, CI-013)
   "scripts/internal/build-system-test-app.sh" # test-app build recipe (bash on every runner; Windows via test-system-py.cmd -> Git Bash, #3664)
+  "scripts/internal/build-system-test-agent.sh" # musl test agent for the Linux deployed-agent fixtures (harness/nightly, #4092)
   "scripts/internal/harness-coverage.sh"      # harness coverage env/report (nightly Linux leg, #3657)
   # Agent update signing (AGT-005, #3213): OpenSSL-3 pipelines run by release CI
   # on Ubuntu, and a one-time maintainer tool (Git Bash works on Windows).
   "scripts/internal/agent-update-signing.sh"     # CI-only sign/verify/check-key helper
   "scripts/internal/setup-agent-signing-key.sh"  # one-time maintainer key setup
+  # Plugin index signing (#3716): same shape -- an OpenSSL-3 sign/verify helper run
+  # by the Plugin Index Signature workflow on Ubuntu, and a one-time maintainer tool.
+  "scripts/internal/plugin-index-signing.sh"            # CI sign/verify/check-key helper
+  "scripts/internal/setup-plugin-index-signing-key.sh"  # one-time maintainer key setup
+  # First-party plugin publisher key (#3980): one-time maintainer tool around
+  # OpenSSL 3 + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
+  "scripts/internal/setup-plugin-publisher-key.sh"  # one-time maintainer key setup
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json
@@ -83,6 +91,9 @@ ALLOWLIST=(
   # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
   # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
   "scripts/internal/assert-no-test-signing-key.sh" # CI-only binary grep (bash on every runner)
+  # Release test-bridge guard (#4122): CI-only gate run by release.yml on every
+  # desktop build (Windows leg via `shell: bash`); never run by hand.
+  "scripts/internal/assert-no-test-bridge.sh" # CI-only binary grep (bash on every runner)
 )
 
 in_allowlist() {

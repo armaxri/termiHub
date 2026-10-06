@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -84,14 +84,16 @@ function runButtonLeg(
  *   background transfer that keeps the listing live and feeds the Transfer Queue
  *   with progress/ETA/pause/resume/retry. The backend resolves the executor from
  *   the live session, so FTP credentials never cross into the frontend (PROD-010).
- * - A **byte-based** backend (remote-agent) cannot drive the queue, so
+ * - An agent-hosted session drives the same queue when its agent serves ranged
+ *   file slices (`fileRanges`, #3587), one `connection.files.*` request per chunk.
+ * - A **byte-based** backend (an older agent) cannot drive the queue, so
  *   transfers fall back to a blocking `session_read_file` / `session_write_file`
  *   round-trip.
  *
  * Two capability signals gate this:
  *
  * - {@link transferQueueCapable} — from the `session_supports_transfer_queue`
- *   probe (`true` for SFTP, FTP or Docker) — routes download/upload/local-paste-upload
+ *   probe (`true` for SFTP, FTP, Docker or a ranged agent session) — routes download/upload/local-paste-upload
  *   through the queue engine vs the byte-based fallback.
  * - {@link sftpCapable} — from the `session_has_exec_capability` probe, which
  *   **resolves** only for an SFTP-backed session — gates the SFTP-only features:
@@ -206,7 +208,8 @@ export function useSessionFileSystem() {
   // The Upload / Download buttons and the OS-drop upload copy through the
   // shared pane transfer engine (#3913): a queued transfer with a seeded
   // Transfer Queue row on a queue-capable session (SFTP / FTP / Docker —
-  // progress, pause, cancel, retry), a byte round-trip on an agent session.
+  // progress, pause, cancel, retry; also an agent session with ranged slices),
+  // a byte round-trip otherwise.
   //
   // A folder (only reachable from a multi-select Download) is never handed to a
   // single-file `session_download` (#3944): the user picks a target folder and
@@ -216,7 +219,7 @@ export function useSessionFileSystem() {
     async (sessionId: string, remotePath: string, folderName: string) => {
       const label = `Download "${folderName}"`;
       const targetDir = await pickPathOrReport(label, async () => {
-        const { open } = await import("@tauri-apps/plugin-dialog");
+        const { open } = await import("@/services/nativeDialog");
         return open({
           title: `Download folder "${folderName}" to...`,
           directory: true,
@@ -298,7 +301,7 @@ export function useSessionFileSystem() {
   const uploadFile = useCallback(async () => {
     if (!sessionFileBrowserId) return;
     const localPath = await pickPathOrReport("Upload", async () => {
-      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { open } = await import("@/services/nativeDialog");
       return open({ title: "Select file to upload", multiple: false });
     });
     if (!localPath) return;

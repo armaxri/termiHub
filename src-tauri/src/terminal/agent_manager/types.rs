@@ -87,6 +87,14 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub unattended_connect: bool,
+    /// Whether the agent serves offset-addressed file slices
+    /// (`connection.files.read_range` / `write_range`, protocol 0.26.0,
+    /// #3587), letting an agent-hosted session run queued, resumable
+    /// transfers. `false` for older agents, whose sessions keep whole-file
+    /// transfers.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub file_ranges: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

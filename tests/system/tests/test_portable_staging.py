@@ -51,6 +51,27 @@ def test_data_flavor_creates_the_data_dir_without_a_marker(tmp_path):
     assert not (root / "portable.marker").exists()
 
 
+def test_sideloaded_conpty_host_is_copied_beside_the_binary(tmp_path):
+    # Windows: portable-pty loads the conpty.dll next to the exe (#4121); a
+    # portable copy without it would silently run on the inbox ConPTY.
+    binary = _fake_binary(tmp_path)
+    for name in portable.BESIDE_EXE:
+        (binary.parent / name).write_bytes(name.encode())
+    root = tmp_path / "root"
+    portable.stage_portable_app(binary, root, portable.MARKER)
+
+    for name in portable.BESIDE_EXE:
+        assert (root / name).read_bytes() == name.encode()
+
+
+def test_missing_sideloaded_files_are_not_required(tmp_path):
+    root = tmp_path / "root"
+    portable.stage_portable_app(_fake_binary(tmp_path), root, portable.MARKER)
+
+    for name in portable.BESIDE_EXE:
+        assert not (root / name).exists()
+
+
 def test_macos_bundle_is_copied_whole_with_the_trigger_beside_it(tmp_path):
     root = tmp_path / "root"
     staged = portable.stage_portable_app(_fake_bundle(tmp_path), root, portable.MARKER)
@@ -195,3 +216,20 @@ def test_normal_launch_still_pins_the_config_dir(tmp_path, monkeypatch):
     assert instance.portable_root is None
     assert instance.launch_env()["TERMIHUB_CONFIG_DIR"] == str(tmp_path / "cfg")
     assert instance.log_path == tmp_path / "cfg" / "app.log"
+
+
+# ── link vs. copy (macOS current_exe of a hard link is unreliable) ───────────
+def test_macos_staging_copies_instead_of_hard_linking(tmp_path, monkeypatch):
+    monkeypatch.setattr(portable.platform, "system", lambda: "Darwin")
+    binary = _fake_binary(tmp_path)
+    staged = portable.stage_portable_app(binary, tmp_path / "root", portable.MARKER)
+    assert staged.read_bytes() == binary.read_bytes()
+    # A distinct inode: macOS would otherwise report a sibling link's path.
+    assert staged.stat().st_ino != binary.stat().st_ino
+
+
+def test_linux_staging_hard_links_when_possible(tmp_path, monkeypatch):
+    monkeypatch.setattr(portable.platform, "system", lambda: "Linux")
+    binary = _fake_binary(tmp_path)
+    staged = portable.stage_portable_app(binary, tmp_path / "root", portable.MARKER)
+    assert staged.stat().st_ino == binary.stat().st_ino

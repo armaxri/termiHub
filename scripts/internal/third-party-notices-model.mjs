@@ -275,7 +275,7 @@ export class NoticesBuilder {
       "Contents",
       `  1. Rust crates (${this.crates.size}) - desktop app, agent, RDP sidecar`,
       `  2. npm packages (${this.npm.size}) - desktop app frontend`,
-      "  3. External programs (not bundled)",
+      "  3. External programs and bundled native binaries",
       `  4. License texts (${ordered.length})`,
       ""
     );
@@ -300,7 +300,7 @@ export class NoticesBuilder {
     }
     out.push("");
 
-    out.push(rule, "3. EXTERNAL PROGRAMS (NOT BUNDLED)", rule, "");
+    out.push(rule, "3. EXTERNAL PROGRAMS AND BUNDLED NATIVE BINARIES", rule, "");
     out.push(normalizeText(externalNotice), "");
 
     out.push(rule, "4. LICENSE TEXTS", rule, "");

@@ -736,6 +736,13 @@ On Windows use `scripts\package-plugin.cmd … --sign acme.key`.
 | **Unsigned**                                    | The existing untrusted-source acknowledgement (unchanged). |
 | **Signature invalid** (tampered)                | **Blocked**, no override.                                  |
 
+First-party termiHub plugins are signed with a publisher key compiled into the
+app (a **bundled** publisher), so they verify without a prompt. That entry
+cannot be removed, and no other key can be pinned under its fingerprint. Until
+the maintainer generates that key, no bundled publisher exists and every
+publisher, first-party included, is trusted on first use (see ADR-18 in
+`docs/architecture.md`).
+
 Trust-on-first-use pinning is managed in **Settings → Plugins → Trusted
 Publishers**. Re-signing a package with a different key than a user pinned
 re-prompts them (a key rotation they must re-confirm), rather than trusting a
@@ -929,9 +936,16 @@ What users see and what termiHub guarantees:
   signature/trust banner, permissions, native-trust acknowledgement and the
   version/signer-change confirmations all apply. Native plugins stay off
   until the user enables native plugins and trusts yours.
-- The index itself is not signed in 0.1; it is trusted as far as HTTPS and the
-  reviewed repository go (see ADR-17 in `docs/architecture.md`). **Sign your
-  package** so users see who built it.
+- The default index is **signed** with the termiHub plugin-index key
+  (`plugins/index.json.sig`, see ADR-17 in `docs/architecture.md`): release
+  builds only accept it when the signature verifies over the exact bytes, and
+  Browse shows **Signature verified**. Index signing does not replace package
+  signing — **sign your package** so users see who built it.
+
+Changing `plugins/index.json` invalidates `plugins/index.json.sig`. You do not
+need the signing key: the **Plugin Index Signature** check on your PR fails,
+and a maintainer commits the fresh signature it produces (job summary or the
+`plugin-index-signature` artifact) to your PR before merging.
 
 When you publish a new version, open a PR that updates `version`, `url` and
 `sha256` (and `toolchain` if it changed). Users with an older version then see
@@ -939,7 +953,11 @@ When you publish a new version, open a PR that updates `version`, `url` and
 works independently of the index.
 
 Users can point **Settings → Plugins → Plugin Index URL** at another HTTPS
-index in the same format (for example an internal company index).
+index in the same format (for example an internal company index). A custom
+index may be unsigned — Browse then shows an **Unsigned index** notice. termiHub
+looks for `<index URL>.sig` (`.sig` appended to the URL path): if one is
+served it must be a valid signature from the termiHub plugin-index key, or the
+index is rejected, so do **not** publish a `.sig` made with your own key.
 
 ### Settings across versions
 

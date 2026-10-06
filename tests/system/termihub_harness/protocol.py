@@ -67,6 +67,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "scrollTerminal",
         "select",
         "severAgentTransport",
+        "stubNativeDialog",
         "terminalInput",
         "type",
     }

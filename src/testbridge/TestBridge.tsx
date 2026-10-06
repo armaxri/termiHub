@@ -4,6 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { listWindows } from "@/services/api";
+import { setNativeDialogStub } from "@/services/nativeDialog";
 import { getActiveTab, getComposedLayout, useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
@@ -181,6 +182,15 @@ export function TestBridge() {
             frontendLog("test_bridge", `exitApp failed: ${errorMessage(err)}`)
           );
         }, CLOSE_WINDOW_DEFER_MS);
+      },
+      // Answer the next native open/save dialog from the harness (#4122). The
+      // fs grant comes first, so the stubbed path is usable by the time the app
+      // reads or writes it. The Tauri command also refuses unless the test
+      // bridge is enabled, and the stub itself is ignored outside test mode.
+      stubNativeDialog: async (kind, path) => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        if (path !== null) await invoke("test_allow_dialog_path", { path });
+        setNativeDialogStub(kind, path);
       },
       // The backend window registry (#1900): the authoritative set of native
       // windows, independent of which ones have a bridge socket open.

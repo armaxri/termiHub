@@ -6,8 +6,7 @@ display_name: "Editor"
 
 tests:
   - id: MT-EDIT-01
-    release_gate: true
-    manual_reason: "native OS save dialog"
+    automation_issue: 4128
     name: "Download a read-only SFTP file via the native save dialog"
     pr: 1330
     platforms: [all]

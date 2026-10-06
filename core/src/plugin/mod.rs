@@ -65,6 +65,7 @@ mod connection;
 mod fat_pack;
 mod host;
 mod host_context;
+mod index_signature;
 mod library_pin;
 mod log_rate_limit;
 mod manager;
@@ -101,6 +102,13 @@ pub use host::{
 pub use host_context::{
     prepare_plugin_data_dir, remove_plugin_data_dir, PluginDataDirError, PLUGIN_DATA_DIR_NAME,
     PLUGIN_LOG_TARGET,
+};
+#[cfg(feature = "plugin-index-signing-test-support")]
+pub use index_signature::test_support as index_signature_test_support;
+pub use index_signature::{
+    embedded_index_keys, index_signed_message, IndexSignatureError, IndexSignaturePolicy,
+    IndexSignatureStatus, INDEX_KEY_PLACEHOLDER_MARKER, INDEX_SIGNATURE_EXT, INDEX_SIGNING_DOMAIN,
+    MAX_INDEX_SIGNATURE_BYTES,
 };
 pub use manager::{
     installed_backend_types, read_stored_settings, resolve_plugin_settings,
@@ -155,7 +163,10 @@ pub use termihub_plugin_api::{
     AbiIncompatibility, AbiVersion, PanicStrategy, Toolchain, ToolchainIncompatibility, ABI_1_1,
     CURRENT_PLUGIN_ABI_VERSION,
 };
-pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
+pub use trust_store::{
+    first_party_trust_anchor_configured, TrustSource, TrustStore, TrustStoreError,
+    TrustedPublisher, FIRST_PARTY_KEY_PLACEHOLDER_MARKER, FIRST_PARTY_PUBLISHER_LABEL,
+};
 pub use update_check::{
     evaluate_update, parse_update_document, validate_https_url, verify_package_sha256,
     UpdateCheckError, UpdateCheckOutcome, UpdateDocument, UpdateStatus, MAX_UPDATE_DOCUMENT_BYTES,

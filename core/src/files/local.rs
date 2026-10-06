@@ -512,6 +512,25 @@ impl super::browser::FileBrowser for LocalFileBrowser {
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
+
+    fn ranged(&self) -> Option<&dyn super::RangedFileAccess> {
+        Some(self)
+    }
+}
+
+/// Offset-addressed access to the local filesystem (#3587): what an
+/// agent-hosted local session's queued transfer reads and writes through.
+#[async_trait::async_trait]
+impl super::RangedFileAccess for LocalFileBrowser {
+    async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let path = expand_tilde_only(path);
+        super::ranged::fs_read_range(path.clone().into(), path, offset, len).await
+    }
+
+    async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let path = expand_tilde_only(path);
+        super::ranged::fs_write_range(path.clone().into(), path, offset, data.to_vec()).await
+    }
 }
 
 /// Apply Unix permission bits to a local path (Unix only).

@@ -308,7 +308,9 @@ class ComposeFixtureFailed(RuntimeError):
     not catch it, so the test *errors* instead of skipping. Only raised in strict
     mode (``CI`` set, see :func:`_strict_fixtures`); a misconfiguration that once
     skipped ~100 Linux suites for days without turning anything red (#4103) must
-    red the lane. Off CI the same failure still degrades to a skip.
+    red the lane. Off CI the same failure still degrades to a skip. Also raised
+    for a failed deployed-agent build on a host that can run the containers
+    (:func:`stage_remote_agent_binary`, #4092).
     """
 
 
@@ -751,36 +753,122 @@ def _container_musl_target() -> str:
     return target
 
 
-def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
+#: The TEST-ONLY update-signing public key a ``test-hooks`` agent compiles in
+#: (``include_str!``, #4083). Its base64 body appearing in a binary is the probe
+#: for "built with ``--features test-hooks``" — the same check
+#: ``scripts/internal/assert-no-test-signing-key.sh`` runs (inverted) on shipped
+#: binaries.
+_TEST_SIGNING_PUB = (
+    REPO_ROOT / "agent" / "keys" / "test-only" / "update-signing-TEST-ONLY.pub.pem"
+)
+
+#: Process-once guard for :func:`stage_remote_agent_binary` on CI: the first call
+#: always runs the build (cargo makes it a no-op when the binary is fresh), later
+#: calls in the same run reuse what it produced.
+_agent_build_verified: set[str] = set()
+
+
+def embeds_test_signing_key(binary: Path) -> bool:
+    """Whether ``binary`` embeds the TEST-ONLY update-signing key, i.e. was built
+    with ``--features test-hooks`` (#4092).
+
+    A musl agent built without the feature (or before #4083) does not trust the
+    key the real-swap container signs its staged update with, so the apply fails
+    at AGT-005; it also lacks the pending-update hook the armed containers drive.
+    """
+    needles = _test_only_key_lines()
+    data = binary.read_bytes()
+    return all(needle in data for needle in needles)
+
+
+def _test_only_key_lines() -> list[bytes]:
+    """The base64 body line(s) of the TEST-ONLY public key's PEM block — exactly
+    what ``include_str!`` embeds (the file's ``#`` header lines are excluded)."""
+    lines: list[bytes] = []
+    inside = False
+    for raw in _TEST_SIGNING_PUB.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("-----BEGIN"):
+            inside = True
+        elif line.startswith("-----END"):
+            inside = False
+        elif inside and line:
+            lines.append(line.encode("ascii"))
+    if not lines:
+        raise RuntimeError(f"no key body found in {_TEST_SIGNING_PUB}")
+    return lines
+
+
+def _require_linux_container_runtime() -> None:
+    """Skip early (before a slow cross-build) when no runtime can host the
+    Linux deployed-agent containers.
+
+    The GitHub-hosted macOS runners ship no Docker and the Windows runner's
+    daemon runs Windows containers, so the deployed-agent suites cannot run
+    there at all (see the system-integration.yml header). Saying so names the
+    real reason instead of reporting a cross-build failure.
+    """
+    runtime = container_runtime()
+    if runtime is None:
+        raise ContainerRuntimeUnavailable(
+            "no container runtime (Docker/Podman) reachable — the deployed-agent "
+            "suites need one that runs Linux containers"
+        )
+    os_type = _docker_os_type(runtime)
+    if os_type is not None and os_type != "linux":
+        raise ContainerRuntimeUnavailable(
+            f"the {runtime} daemon runs {os_type} containers — the deployed-agent "
+            "suites need Linux containers"
+        )
+
+
+def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
     """Build (if needed) and stage the agent binary into the remote-agent context.
 
     Produces a static-musl ``termihub-agent`` for the container architecture via
-    ``scripts/build-agents.sh`` and copies it to
+    ``scripts/internal/build-system-test-agent.sh`` (the one recipe, shared with
+    the nightly workflow) and copies it to
     ``tests/docker/remote-agent/termihub-agent`` so the image ``COPY`` picks it
-    up. An existing per-target build is reused (a fresh musl cross-build is slow),
-    and the copy into the context is always refreshed so a stale image is rebuilt.
+    up. The copy into the context is always refreshed so a stale image is rebuilt.
 
     The build enables ``--features test-hooks`` so this release binary still
     carries the env-gated ``pending_update`` test hook that the armed
-    ``remote-agent-pending-update`` container drives (#1546). That hook is
-    compiled out of default release builds for security (audit finding AGT-008),
-    so a plain ``build-agents.sh`` would stage a binary the armed suite cannot
-    arm. The feature only *compiles the hook in*; it stays inert unless
-    ``TERMIHUB_AGENT_TEST_PENDING_UPDATE`` is set, which only the armed image
-    does — the shared ``remote-agent`` container is unaffected.
+    ``remote-agent-pending-update`` container drives (#1546) and trusts the
+    TEST-ONLY update-signing key the ``remote-agent-update-swap`` container signs
+    its staged update with (#4083). Both are compiled out of default release
+    builds for security (AGT-008, AGT-005). The hook stays inert unless
+    ``TERMIHUB_AGENT_TEST_PENDING_UPDATE`` is set, which only the armed images do.
+
+    Reuse (#4092): off CI an existing per-target build is reused (a musl
+    cross-build is slow) **only if it embeds the test key** — a stale build made
+    without the feature is rebuilt instead of failing the real swap at AGT-005.
+    On CI the build runs once per process regardless (a restored cache may hold a
+    binary from an older commit; cargo makes a fresh one a no-op), and a missing
+    ``cross`` is installed from the pinned release.
 
     Raises :class:`ContainerRuntimeUnavailable` — turned into a ``pytest.skip`` by
-    the fixture — when the arch is unmapped or the cross-build is unavailable
-    (e.g. ``cross``/Docker not set up on this host). This keeps the deployed-agent
-    suite skipping cleanly instead of failing where the toolchain is missing.
+    the fixture — when no runtime can host Linux containers (macOS/Windows CI
+    runners) or the arch is unmapped. A build failure also skips off CI (hosts
+    without the cross toolchain stay green) but raises
+    :class:`ComposeFixtureFailed` in strict mode (``CI`` set): on CI a skip here
+    hid every deployed-agent suite for weeks (#4092), so it must red the lane.
     """
+    _require_linux_container_runtime()
     target = _container_musl_target()
     built = REPO_ROOT / "target" / target / "release" / "termihub-agent"
-    if not built.exists():
-        script = REPO_ROOT / "scripts" / "build-agents.sh"
+    strict = _strict_fixtures()
+    if strict:
+        needs_build = target not in _agent_build_verified
+    else:
+        needs_build = not built.exists() or not embeds_test_signing_key(built)
+    if needs_build:
+        script = REPO_ROOT / "scripts" / "internal" / "build-system-test-agent.sh"
+        cmd = ["bash", str(script), "--target", target]
+        if strict:
+            cmd.append("--install-cross")
         try:
             subprocess.run(
-                ["bash", str(script), "--targets", target, "--features", "test-hooks"],
+                cmd,
                 check=True,
                 timeout=build_timeout,
                 capture_output=True,
@@ -792,16 +880,28 @@ def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
                 f"cannot build the agent binary: {exc}"
             ) from exc
         except subprocess.CalledProcessError as exc:
-            raise ContainerRuntimeUnavailable(
-                f"`build-agents.sh --targets {target}` failed (exit {exc.returncode}) — "
-                f"is the cross toolchain set up (`scripts/setup-agent-cross.sh`)?\n"
-                f"{_tail(exc.stderr or exc.stdout)}"
+            output = "\n".join(part for part in (exc.stdout, exc.stderr) if part)
+            detail = (
+                f"`build-system-test-agent.sh --target {target}` failed "
+                f"(exit {exc.returncode}) — is the cross toolchain set up "
+                f"(`scripts/setup-agent-cross.sh`)?\n{_tail(output)}"
+            )
+            if not strict:
+                raise ContainerRuntimeUnavailable(detail) from exc
+            raise ComposeFixtureFailed(
+                f"{detail}\n(the deployed-agent build failed on a host with a Linux "
+                "container runtime; failing instead of skipping because CI is set, "
+                "see #4092)"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise ContainerRuntimeUnavailable(
-                f"`build-agents.sh --targets {target}` timed out after {build_timeout}s:"
-                f"\n{_tail(exc.stderr)}"
-            ) from exc
+            detail = (
+                f"`build-system-test-agent.sh --target {target}` timed out after "
+                f"{build_timeout}s:\n{_tail(exc.stderr)}"
+            )
+            if not strict:
+                raise ContainerRuntimeUnavailable(detail) from exc
+            raise ComposeFixtureFailed(detail) from exc
+        _agent_build_verified.add(target)
     if not built.exists():
         raise ContainerRuntimeUnavailable(
             f"agent binary still missing after build: {built}"
@@ -887,6 +987,13 @@ class SshServerControl:
         """Whether ``path`` exists inside the container (e.g. a leftover upload)."""
         out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
         return out.strip() == "yes"
+
+    def file_size(self, path: str) -> int | None:
+        """The size of ``path`` in bytes inside the container, ``None`` if absent."""
+        out = self._exec(
+            ["sh", "-c", 'if [ -f "$1" ]; then wc -c < "$1"; else echo none; fi', "sh", path]
+        ).strip()
+        return None if out == "none" else int(out)
 
     def write_file(self, path: str, content: str, *, user: str) -> None:
         """Write ``content`` to ``path`` inside the container **as** ``user``.

@@ -12,11 +12,17 @@
 //! acknowledgement (#3296), ABI / toolchain / platform checks and version-change
 //! confirmation (#3383 / #3490). Nothing is installed, enabled or trusted here.
 //!
-//! Trust level (see `docs/architecture.md`, "Plugin discovery"): the index is
-//! fetched over HTTPS from a maintainer-controlled location and carries a
-//! SHA-256 per package; it is not separately signed in v0.1. The index is a
-//! discovery aid, not a trust anchor — trust decisions stay with the package's
-//! own signature and the explicit per-plugin acknowledgement.
+//! Trust level (see `docs/architecture.md`, ADR-17): the index is fetched over
+//! HTTPS from a maintainer-controlled location and carries a SHA-256 per
+//! package. Its detached Ed25519 signature (`<url>.sig`, #3716) is fetched and
+//! checked **before** the index is parsed, against the compiled-in plugin-index
+//! key ([`termihub_core::plugin::IndexSignaturePolicy`]): the default index is
+//! only accepted with a valid signature (release builds), a custom index may be
+//! unsigned (shown as such), and a signature that is present must always
+//! verify. While the committed key is still the placeholder, nothing can be
+//! verified and the index is shown as "signature not checked". The index stays
+//! a discovery aid, not a trust anchor — trust decisions stay with the
+//! package's own signature and the explicit per-plugin acknowledgement.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +32,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use termihub_core::plugin::{
     evaluate_index_entry, is_valid_plugin_id, is_valid_sha256_hex, parse_plugin_index, HostFacts,
-    PluginIndex, PluginIndexEntryView, PluginManager, MAX_INDEX_BYTES, MAX_PACKAGE_SIZE_BYTES,
+    IndexSignaturePolicy, IndexSignatureStatus, PluginIndex, PluginIndexEntryView, PluginManager,
+    INDEX_SIGNATURE_EXT, MAX_INDEX_BYTES, MAX_INDEX_SIGNATURE_BYTES, MAX_PACKAGE_SIZE_BYTES,
 };
 
 use super::plugin_fetch::{download_verified, fetch_capped, sanitize_file_component, FetchPolicy};
@@ -58,6 +65,13 @@ pub struct PluginIndexResult {
     pub url: String,
     /// Whether that is the built-in default index.
     pub is_default: bool,
+    /// How the index was authenticated (#3716): verified against the
+    /// termiHub plugin-index key, unsigned, or not checked (placeholder key).
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./PluginIndexSignatureStatus\").PluginIndexSignatureStatus")
+    )]
+    pub signature: IndexSignatureStatus,
     /// The listed plugins, in index order.
     #[cfg_attr(
         test,
@@ -74,12 +88,82 @@ fn resolve_index_url(configured: Option<&str>) -> String {
     }
 }
 
-/// Fetch and strictly parse the index at `url`.
-async fn load_index(url: &str, policy: FetchPolicy) -> Result<PluginIndex, String> {
+/// The signature policy for the index at `url`: the embedded plugin-index
+/// key, with a signature **required** only for the built-in default index in a
+/// release build. Custom indexes, and the default index in a dev/branch build
+/// (whose `main` index may not be signed with a key that only just landed on
+/// `develop`), tolerate a *missing* signature and are shown as unsigned — the
+/// same dev-build rule that relaxes agent update signatures (#3213).
+fn index_signature_policy(url: &str) -> IndexSignaturePolicy {
+    let release = !crate::terminal::agent_binary::is_dev_build(env!("CARGO_PKG_VERSION"));
+    IndexSignaturePolicy::embedded(url == DEFAULT_PLUGIN_INDEX_URL && release)
+}
+
+/// The URL of the detached signature of the index at `url`: `.sig` appended
+/// to the URL's path (any query string is kept after it).
+fn signature_url(url: &str) -> Result<String, String> {
+    let mut parsed =
+        reqwest::Url::parse(url).map_err(|e| format!("URL `{url}` is invalid: {e}"))?;
+    let path = format!("{}.{INDEX_SIGNATURE_EXT}", parsed.path());
+    parsed.set_path(&path);
+    Ok(parsed.into())
+}
+
+/// Fetch the index at `url`, check its signature against `trust` over the
+/// exact bytes, and only then strictly parse it.
+async fn load_index(
+    url: &str,
+    policy: FetchPolicy,
+    trust: &IndexSignaturePolicy,
+) -> Result<(PluginIndex, IndexSignatureStatus), String> {
     let bytes = fetch_capped(url, MAX_INDEX_BYTES, INDEX_TIMEOUT, policy, "plugin-index")
         .await
         .map_err(|e| format!("could not fetch the plugin index: {e}"))?;
-    parse_plugin_index(&bytes).map_err(|e| e.to_string())
+    let signature = if trust.has_trusted_keys() {
+        let sig_url = signature_url(url)?;
+        match fetch_capped(
+            &sig_url,
+            MAX_INDEX_SIGNATURE_BYTES,
+            INDEX_TIMEOUT,
+            policy,
+            "plugin-index-signature",
+        )
+        .await
+        {
+            Ok(sig) => Some(sig),
+            Err(e) if trust.requires_signature() => {
+                return Err(format!(
+                    "could not fetch the plugin index signature (required for the default \
+                     index): {e}"
+                ));
+            }
+            Err(e) => {
+                tracing::info!(%sig_url, error = %e, "no plugin index signature; treating as unsigned");
+                None
+            }
+        }
+    } else {
+        // Placeholder key: nothing can be verified, so don't fetch.
+        None
+    };
+    let status = trust
+        .check(&bytes, signature.as_deref())
+        .map_err(|e| e.to_string())?;
+    match status {
+        IndexSignatureStatus::Verified => {}
+        IndexSignatureStatus::Unsigned => {
+            tracing::warn!(%url, "loaded an UNSIGNED plugin index (not authenticated)");
+        }
+        IndexSignatureStatus::NotConfigured => {
+            tracing::info!(
+                %url,
+                "plugin index signature not checked: this build has no index signing key \
+                 (placeholder)"
+            );
+        }
+    }
+    let index = parse_plugin_index(&bytes).map_err(|e| e.to_string())?;
+    Ok((index, status))
 }
 
 /// Installed plugin versions by id.
@@ -96,14 +180,16 @@ fn installed_versions(manager: &PluginManager) -> Result<BTreeMap<String, String
 async fn browse(
     url: &str,
     policy: FetchPolicy,
+    trust: &IndexSignaturePolicy,
     manager: &PluginManager,
     host: &HostFacts,
 ) -> Result<PluginIndexResult, String> {
-    let index = load_index(url, policy).await?;
+    let (index, signature) = load_index(url, policy, trust).await?;
     let installed = installed_versions(manager)?;
     Ok(PluginIndexResult {
         url: url.to_string(),
         is_default: url == DEFAULT_PLUGIN_INDEX_URL,
+        signature,
         entries: index
             .plugins
             .iter()
@@ -121,7 +207,14 @@ pub async fn fetch_plugin_index(
     connections: State<'_, ConnectionManager>,
 ) -> Result<PluginIndexResult, String> {
     let url = resolve_index_url(connections.get_settings().plugin_index_url.as_deref());
-    let result = browse(&url, FetchPolicy::STRICT, &manager, &HostFacts::current()).await;
+    let result = browse(
+        &url,
+        FetchPolicy::STRICT,
+        &index_signature_policy(&url),
+        &manager,
+        &HostFacts::current(),
+    )
+    .await;
     if let Err(error) = &result {
         tracing::info!(%url, %error, "plugin index fetch failed");
     }
@@ -203,6 +296,7 @@ pub async fn download_plugin_from_index(
         &url,
         &plugin_id,
         FetchPolicy::STRICT,
+        &index_signature_policy(&url),
         &download_dir(&app)?,
         &manager,
         &HostFacts::current(),
@@ -212,12 +306,14 @@ pub async fn download_plugin_from_index(
     path_string(path)
 }
 
-/// Core of [`download_plugin_from_index`], with the fetch policy, target
-/// directory and host injectable for tests.
+/// Core of [`download_plugin_from_index`], with the fetch policy, signature
+/// policy, target directory and host injectable for tests. The index is
+/// re-fetched **and re-verified** — a download never trusts an earlier load.
 async fn download_index_entry(
     index_url: &str,
     plugin_id: &str,
     policy: FetchPolicy,
+    trust: &IndexSignaturePolicy,
     dir: &Path,
     manager: &PluginManager,
     host: &HostFacts,
@@ -225,7 +321,7 @@ async fn download_index_entry(
     if !is_valid_plugin_id(plugin_id) {
         return Err(format!("`{plugin_id}` is not a valid plugin id"));
     }
-    let index = load_index(index_url, policy).await?;
+    let (index, _) = load_index(index_url, policy, trust).await?;
     let entry = index
         .entry(plugin_id)
         .ok_or_else(|| format!("the plugin index no longer lists `{plugin_id}`"))?;

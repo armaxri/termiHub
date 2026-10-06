@@ -707,15 +707,19 @@ impl RemoteProxy {
                 // agent the file browser says to update the agent.
                 if parsed.file_browser {
                     let is_local = session_type == "local";
-                    let agent_browses_session = self
-                        .agent_manager
-                        .get_capabilities(self.agent_id())
-                        .is_some_and(|caps| caps.session_files);
+                    let agent_caps = self.agent_manager.get_capabilities(self.agent_id());
+                    let agent_browses_session =
+                        agent_caps.as_ref().is_some_and(|caps| caps.session_files);
+                    let agent_outdated = !is_local && !agent_browses_session;
+                    // Queued transfers (#3587) need ranged slices on top.
+                    let file_ranges =
+                        !agent_outdated && agent_caps.as_ref().is_some_and(|caps| caps.file_ranges);
                     self.file_browser_proxy = Some(RemoteFileBrowserProxy {
                         agent_id: self.agent_id.clone(),
                         remote_session_id: remote_sid.clone(),
                         agent_manager: self.agent_manager.clone(),
-                        agent_outdated: !is_local && !agent_browses_session,
+                        agent_outdated,
+                        file_ranges,
                     });
                 }
                 // Set up monitoring proxy if supported.
@@ -785,6 +789,7 @@ impl RemoteProxy {
 /// File browser proxy that forwards operations to a remote agent.
 ///
 /// Returned by `ConnectionType::file_browser()` on `RemoteProxy`.
+#[derive(Clone)]
 pub struct RemoteFileBrowserProxy {
     agent_id: String,
     remote_session_id: String,
@@ -793,7 +798,13 @@ pub struct RemoteFileBrowserProxy {
     /// operation fails with the `agent_outdated` code — the file browser says
     /// to update the agent — without a request the agent would only reject.
     agent_outdated: bool,
+    /// The agent serves offset-addressed slices (`fileRanges`, protocol
+    /// 0.26.0, #3587), so the session can run queued transfers (see
+    /// [`ranged`]).
+    file_ranges: bool,
 }
+
+mod ranged;
 
 /// Message of the `agent_outdated` file-browser failure (#3242).
 const FILES_AGENT_OUTDATED: &str =
@@ -1073,6 +1084,17 @@ impl FileBrowser for RemoteFileBrowserProxy {
         )
         .await?;
         Ok(())
+    }
+
+    /// Lets a session-scoped caller recover the proxy itself — how a queued
+    /// transfer gets an owned handle to it (#3587).
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn ranged(&self) -> Option<&dyn termihub_core::files::RangedFileAccess> {
+        self.file_ranges
+            .then_some(self as &dyn termihub_core::files::RangedFileAccess)
     }
 }
 
@@ -1749,6 +1771,12 @@ mod tests {
 
     // ── MockAgentRpcClient ────────────────────────────────────────────
 
+    /// A scripted answer to one agent request, or `None` to fall through to
+    /// the canned reply.
+    type Responder = dyn Fn(&str, &serde_json::Value) -> Option<Result<serde_json::Value, TerminalError>>
+        + Send
+        + Sync;
+
     /// Minimal in-memory mock of `AgentRpcClient` for unit tests.
     ///
     /// `create_session` records calls and returns a canned session.
@@ -1776,6 +1804,12 @@ mod tests {
         /// When set, `get_capabilities` reports an agent with this
         /// `unattended_connect` flag (#3877).
         unattended_connect: Option<bool>,
+        /// When set, `get_capabilities` reports an agent with this
+        /// `file_ranges` flag (#3587).
+        file_ranges: Option<bool>,
+        /// When set, answers `send_request` for the methods it handles
+        /// (returning `Some`) before the canned reply (#3587).
+        responder: Option<Box<Responder>>,
         /// The `unattended` flag of every owned create, in order (#3877).
         created_unattended: Mutex<Vec<bool>>,
         /// The agent manager's files-only routing (#4081), driven by the real
@@ -1795,6 +1829,8 @@ mod tests {
                 session_monitoring: None,
                 session_files: None,
                 unattended_connect: None,
+                file_ranges: None,
+                responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
             }
@@ -1811,6 +1847,8 @@ mod tests {
                 session_monitoring: None,
                 session_files: None,
                 unattended_connect: None,
+                file_ranges: None,
+                responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
             }
@@ -1839,6 +1877,7 @@ mod tests {
                     session_monitoring: false,
                     session_files: false,
                     unattended_connect: false,
+                    file_ranges: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1862,6 +1901,7 @@ mod tests {
                 && self.session_monitoring.is_none()
                 && self.session_files.is_none()
                 && self.unattended_connect.is_none()
+                && self.file_ranges.is_none()
             {
                 return None;
             }
@@ -1874,6 +1914,7 @@ mod tests {
             caps.session_monitoring = self.session_monitoring.unwrap_or(false);
             caps.session_files = self.session_files.unwrap_or(false);
             caps.unattended_connect = self.unattended_connect.unwrap_or(false);
+            caps.file_ranges = self.file_ranges.unwrap_or(false);
             Some(caps)
         }
 
@@ -1894,7 +1935,10 @@ mod tests {
             self.sent_requests
                 .lock()
                 .unwrap()
-                .push((method.to_string(), params));
+                .push((method.to_string(), params.clone()));
+            if let Some(reply) = self.responder.as_ref().and_then(|r| r(method, &params)) {
+                return reply;
+            }
             Ok(self
                 .send_request_result
                 .clone()
@@ -4186,6 +4230,9 @@ mod tests {
 
     /// Unattended connects of agent-hosted targets: routing + gating (#3877).
     mod unattended_tests;
+
+    /// Ranged slices and queued transfers of agent-hosted sessions (#3587).
+    mod ranged_tests;
 
     /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
     /// `AgentUnsupported`), never by message text.

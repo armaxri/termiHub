@@ -21,6 +21,12 @@ const devPort = resolveDevPort();
 // same startup bytes. Only add packages that are eager; a lazy-only package put
 // in an eager group would be pulled into startup.
 const VENDOR_CHUNKS: ReadonlyArray<readonly [string, RegExp]> = [
+  // The CSP style-nonce bootstrap (#3115) gets its own chunk so the entry
+  // imports it — and the browser evaluates it — ahead of the vendor chunks that
+  // create `<style>` elements (radix, xterm, …). Inlined into the entry chunk it
+  // would run only after every vendor chunk. (Rollup still hoists vendor-react
+  // first; React creates no stylesheet.)
+  ["csp-boot", /\/src\/security\/(installStyleNonce|styleNonce)\.ts$/],
   ["vendor-react", /\/node_modules\/(react|react-dom|scheduler)\//],
   // `@xterm/addon-image` is excluded: it is lazily imported (inlineImages.ts)
   // and must stay in its own on-demand chunk.

@@ -39,11 +39,15 @@ ALPHA = """\
         manual_reason: "real OS store"
         name: "first"
         platforms: [macos]
+        instructions: [do it]
+        expected: [it works]
 
       - id: MT-A-02
         automation_issue: 1234
         name: "second"
         platforms: [linux]
+        instructions: [do it]
+        expected: [it works]
     """
 
 BETA = """\
@@ -52,7 +56,10 @@ BETA = """\
     tests:
       - id: MT-B-01
         automation_issue: 99
+        name: "third"
         platforms: [all]
+        instructions: [do it]
+        expected: [it works]
     """
 
 
@@ -157,3 +164,63 @@ def test_live_docs_carry_no_committed_inventory_block():
     """What CI's ``--check`` enforces on the real tree (#4070)."""
     assert mod.docs_with_committed_block() == []
     assert mod.inventory(mod.load_items()), "live corpus must not be empty"
+
+
+# ---------------------------------------------------------------------------
+# Required-key schema check (#4131)
+# ---------------------------------------------------------------------------
+
+COMPLETE = """\
+    category: gamma
+
+    tests:
+      - id: MT-G-01
+        release_gate: true
+        manual_reason: "visual"
+        name: "complete"
+        instructions:
+          - do it
+        expected:
+          - it works
+    """
+
+# MT-NET-16/21 shipped with ``title``/``steps`` instead of ``name``/
+# ``instructions`` and crashed ``test-manual.py --list`` (#4131).
+MISSPELLED = """\
+    category: delta
+
+    tests:
+      - id: MT-D-01
+        release_gate: true
+        manual_reason: "visual"
+        title: "wrong key"
+        steps:
+          - do it
+        expected:
+          - it works
+    """
+
+
+def test_schema_errors_accepts_a_complete_item(tmp_path):
+    assert mod.schema_errors(mod.load_items(_corpus(tmp_path, gamma=COMPLETE))) == []
+
+
+def test_schema_errors_names_the_item_and_suggests_the_real_key(tmp_path):
+    errors = mod.schema_errors(mod.load_items(_corpus(tmp_path, delta=MISSPELLED)))
+    assert errors == [
+        "delta.yaml: MT-D-01: missing required key 'name' (found 'title' -- rename it to 'name')",
+        "delta.yaml: MT-D-01: missing required key 'instructions'"
+        " (found 'steps' -- rename it to 'instructions')",
+    ]
+
+
+def test_check_fails_on_a_missing_required_key(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(mod, "MANUAL_DIR", _corpus(tmp_path, gamma=COMPLETE, delta=MISSPELLED))
+    assert mod.main(["--check"]) == 1
+    err = capsys.readouterr().err
+    assert "MT-D-01: missing required key 'name'" in err
+    assert "MT-G-01" not in err
+
+
+def test_real_corpus_has_every_required_key():
+    assert mod.schema_errors(mod.load_items()) == []

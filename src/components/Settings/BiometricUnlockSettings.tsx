@@ -11,6 +11,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
+import type { BiometricUnlockStatus } from "@/types/credential";
 
 /** User-facing message for a failed enable attempt. */
 export function enableErrorMessage(err: unknown, methodLabel: string): string {
@@ -23,6 +24,26 @@ export function enableErrorMessage(err: unknown, methodLabel: string): string {
     default:
       return err.message;
   }
+}
+
+/**
+ * How the biometric-unlock key is (or would be) protected (#3534): by the OS
+ * itself (Secure Enclave access control / Windows Hello key credential) or by
+ * termiHub's own check of a key kept in the login keychain.
+ */
+export function protectionNote(biometric: BiometricUnlockStatus): string {
+  const label = biometric.methodLabel;
+  const osEnforced = biometric.enabled
+    ? biometric.protection === "osEnforced"
+    : biometric.osEnforcedAvailable;
+  if (osEnforced) {
+    return `OS-enforced: yes — the operating system itself requires ${label} before the unlock key can be used.`;
+  }
+  const base = `OS-enforced: no — the unlock key is kept in your login keychain and termiHub asks for ${label} before using it; programs running as you could read it without a prompt.`;
+  if (biometric.enabled && biometric.osEnforcedAvailable) {
+    return `${base} It is upgraded to OS-enforced protection the next time you unlock with ${label}.`;
+  }
+  return base;
 }
 
 /**
@@ -103,6 +124,9 @@ export function BiometricUnlockSettings() {
           data-testid="biometric-unlock-toggle"
         />
       </SettingsField>
+      <p className="settings-panel__description" data-testid="biometric-unlock-protection">
+        {protectionNote(biometric)}
+      </p>
       {enabling && !biometric.enabled && (
         <form className="settings-panel__inline-dialog" data-testid="biometric-unlock-enable-form">
           <h4 className="settings-panel__inline-dialog-title">Turn on unlock with {label}</h4>

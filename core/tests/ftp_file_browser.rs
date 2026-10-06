@@ -478,3 +478,217 @@ async fn ftp_07_follow_symlinks() {
 
     ftp.disconnect().await.expect("disconnect should succeed");
 }
+
+// ── FTP-08: ranged slices (#4113) ─────────────────────────────────────────────
+//
+// What an agent-hosted FTP session's queued transfer moves through: a file
+// written in uneven offset slices (`STOR` then `SIZE`-checked `APPE`) and read
+// back in slices (`REST` + `RETR`, cut short before the end of the file) is
+// byte-exact, the control connection stays usable after every cut-short read,
+// a misplaced write is refused without writing, and reads at/past the end and
+// of a missing file behave as the `RangedFileAccess` contract says.
+
+/// Deterministic content whose bytes differ by position, so a misplaced slice
+/// shows up as a mismatch (the seeded fixture files are zero-filled).
+fn pattern(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i * 7 % 251) as u8).collect()
+}
+
+#[tokio::test]
+async fn ftp_08_ranged_slices_round_trip() {
+    require_docker!(port_ftp());
+
+    let mut ftp = connect(ftpuser_settings()).await;
+    let browser = ftp.file_browser().expect("FTP exposes a file browser");
+    let ranged = browser
+        .ranged()
+        .expect("ProFTPD binary sessions offer ranged access");
+
+    let path = format!("/uploads/th_ranged_{}.bin", std::process::id());
+    let _ = browser.delete(&path).await;
+    let data = pattern(700_000);
+
+    // Write in uneven slices: STOR at 0, then APPE at the exact size.
+    let mut offset = 0usize;
+    for piece in data.chunks(200_000) {
+        ranged
+            .write_range(&path, offset as u64, piece)
+            .await
+            .unwrap_or_else(|e| panic!("write slice at {offset}: {e}"));
+        offset += piece.len();
+    }
+    assert_eq!(browser.read_file(&path).await.expect("read back"), data);
+
+    // A misplaced write (behind or past the end) is refused and changes nothing.
+    let err = ranged
+        .write_range(&path, 5, b"X")
+        .await
+        .expect_err("write behind the end");
+    assert!(err.to_string().contains("expected 5"), "{err}");
+    assert!(ranged.write_range(&path, 900_000, b"X").await.is_err());
+    assert_eq!(browser.stat(&path).await.expect("stat").size, 700_000);
+
+    // Read back in slices: every full slice is cut short mid-file.
+    let slice = 256 * 1024u32;
+    let mut read = Vec::new();
+    loop {
+        let chunk = ranged
+            .read_range(&path, read.len() as u64, slice)
+            .await
+            .expect("read slice");
+        let short = chunk.len() < slice as usize;
+        read.extend_from_slice(&chunk);
+        if short {
+            break;
+        }
+    }
+    assert_eq!(read, data, "slice reads reassemble the file");
+
+    // Small slices deep inside the file, then ordinary commands in step.
+    for at in [1usize, 4095, 333_333, 699_990] {
+        let chunk = ranged
+            .read_range(&path, at as u64, 16)
+            .await
+            .expect("small slice");
+        assert_eq!(chunk, &data[at..(at + 16).min(data.len())], "slice at {at}");
+    }
+    assert_eq!(browser.stat(&path).await.expect("stat").size, 700_000);
+    assert!(!list_by_name(browser, "/uploads").await.is_empty());
+
+    // At and past the end: no bytes. A missing file: an error, not EOF.
+    assert!(ranged
+        .read_range(&path, 700_000, 16)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(ranged
+        .read_range(&path, 900_000, 16)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(ranged
+        .read_range("/uploads/th_missing.bin", 0, 16)
+        .await
+        .is_err());
+    assert!(ranged
+        .read_range("/uploads/th_missing.bin", 9, 16)
+        .await
+        .is_err());
+
+    // A refused read at an offset must not leave a restart marker behind:
+    // a fresh STOR at 0 truncates instead of writing at that offset.
+    ranged
+        .write_range(&path, 0, b"fresh")
+        .await
+        .expect("truncate");
+    assert_eq!(browser.read_file(&path).await.expect("read"), b"fresh");
+
+    browser.delete(&path).await.expect("cleanup");
+    ftp.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── FTP-09: the queued-transfer executor over ranged FTP (#4113) ──────────────
+//
+// Drives the same `run_ranged_transfer` executor an agent-hosted session's
+// queued transfer runs, straight over the FTP browser's ranged access: an
+// upload and a download of a multi-chunk file complete byte-exact.
+
+#[cfg(feature = "local-transfer")]
+mod executor {
+    use super::*;
+    use std::sync::Arc;
+    use termihub_core::errors::FileError;
+    use termihub_core::files::transfer::ranged::{run_ranged_transfer, RangedTransferTarget};
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferRegistry, TransferStateTag,
+    };
+    use termihub_core::files::RangedFileAccess;
+
+    /// The connected FTP session as a ranged transfer target.
+    struct FtpTarget(Ftp);
+
+    impl FtpTarget {
+        fn browser(&self) -> &dyn FileBrowser {
+            self.0.file_browser().expect("FTP exposes a file browser")
+        }
+        fn ranged(&self) -> &dyn RangedFileAccess {
+            self.browser().ranged().expect("ranged access")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RangedFileAccess for FtpTarget {
+        async fn read_range(
+            &self,
+            path: &str,
+            offset: u64,
+            len: u32,
+        ) -> Result<Vec<u8>, FileError> {
+            self.ranged().read_range(path, offset, len).await
+        }
+        async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+            self.ranged().write_range(path, offset, data).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RangedTransferTarget for FtpTarget {
+        async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+            self.browser().stat(path).await
+        }
+        async fn remove_file(&self, path: &str) -> Result<(), FileError> {
+            self.browser().delete(path).await
+        }
+    }
+
+    async fn run(
+        target: &Arc<FtpTarget>,
+        id: &str,
+        direction: TransferDirection,
+        remote: &str,
+        local: &std::path::Path,
+    ) {
+        let reg = TransferRegistry::new();
+        let handle = reg.enqueue(id, "ftp-session", direction, "f.bin", remote, 0);
+        let sink: ProgressSink = Arc::new(|_| {});
+        run_ranged_transfer(
+            target.clone(),
+            direction,
+            remote.to_string(),
+            local.to_string_lossy().into_owned(),
+            handle.clone(),
+            reg,
+            sink,
+            0,
+        )
+        .await;
+        assert_eq!(
+            handle.state().tag(),
+            TransferStateTag::Completed,
+            "{direction:?} completes: {:?}",
+            handle.snapshot()
+        );
+    }
+
+    #[tokio::test]
+    async fn ftp_09_ranged_executor_upload_and_download() {
+        require_docker!(port_ftp());
+
+        let target = Arc::new(FtpTarget(connect(ftpuser_settings()).await));
+        let remote = format!("/uploads/th_queue_{}.bin", std::process::id());
+        let _ = target.browser().delete(&remote).await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let data = pattern(3 * 256 * 1024 + 4321);
+
+        let src = dir.path().join("src.bin");
+        std::fs::write(&src, &data).expect("write local");
+        run(&target, "ul", TransferDirection::Upload, &remote, &src).await;
+        assert_eq!(target.browser().read_file(&remote).await.unwrap(), data);
+
+        let dst = dir.path().join("dst.bin");
+        run(&target, "dl", TransferDirection::Download, &remote, &dst).await;
+        assert_eq!(std::fs::read(&dst).expect("read local"), data);
+
+        target.browser().delete(&remote).await.expect("cleanup");
+    }
+}

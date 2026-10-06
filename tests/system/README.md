@@ -514,6 +514,11 @@ class TestExport(ConnectionsUi, ManualUi, SystemTest):
         )
 ```
 
+A native file dialog alone no longer needs an operator: stub its result with
+`self.driver.stub_native_dialog("save", path)` before the click that opens it
+(#4122, see [docs/test-bridge.md](../../docs/test-bridge.md)). The example above
+is only an illustration of the operator verbs.
+
 Operator verbs on `ManualUi`:
 
 | Call                                   | Behavior                                                     |
@@ -527,7 +532,7 @@ Operator verbs on `ManualUi`:
 single guided test interactively (use `-s` so the prompts reach your console):
 
 ```sh
-./pytest.sh --manual -k native_dialog -s
+./pytest.sh --manual -k visual_rendering -s
 # select a different platform's platform-scoped items:
 ./pytest.sh --manual --manual-platform=windows -s
 ```
@@ -586,6 +591,14 @@ the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
   `termihub_harness.portable.snapshot()` / `changed_paths()` check that nothing
   is written there. `kill_hard()` SIGKILLs the tree (a `kill -9`). A suite opts
   in with the `portable_mode` class attribute; see `tests/test_portable_mode.py`.
+- `AppInstance(sandbox_profile=True)` — a normal launch whose installed-mode
+  profile is redirected the same way (Linux XDG only), for the app and for
+  `run_cli()`. A suite opts in with the `sandbox_profile` class attribute, so
+  per-user OS writes such as shell-integration launchers stay in the scratch
+  dir. `run_cli(args, binary=…)` runs another copy of the app against the same
+  config dir. `termihub_harness.moved_binary` stages such a copy and only allows
+  real registration on Linux or on CI; see `tests/test_shell_integration_moved.py`
+  (#3691, SI-5/6/7).
 - `AgentInstance(host?, port?)` — `start()`, `stop()`, `restart()` for a
   `termihub-agent --listen` process, with process-tree teardown via `psutil`.
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save } from "@/services/nativeDialog";
 import { Modal, Button, toast } from "@/components/ui";
 import {
   exportDiagnosticsBundle,

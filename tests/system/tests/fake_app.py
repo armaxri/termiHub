@@ -156,6 +156,7 @@ def dispatcher_like(
         "contextLosses": [],
         "events": [],
         "exits": [],
+        "dialogStubs": [],
     }
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
@@ -259,6 +260,17 @@ def dispatcher_like(
         if action == "exitApp":
             recorded["exits"].append(True)
             return {"ok": True, "action": "exitApp"}
+        if action == "stubNativeDialog":
+            if command.get("kind") not in ("open", "save"):
+                return {
+                    "ok": False,
+                    "action": "stubNativeDialog",
+                    "error": 'kind must be "open" or "save"',
+                }
+            recorded["dialogStubs"].append(
+                {"kind": command["kind"], "path": command.get("path")}
+            )
+            return {"ok": True, "action": "stubNativeDialog"}
         if action == "screenshot":
             if screenshot is None:
                 return {"ok": False, "action": "screenshot", "error": "capture unavailable"}
