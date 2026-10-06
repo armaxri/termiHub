@@ -1,27 +1,10 @@
 category: app
 display_name: "App"
 
-# App-level checks that need a native dialog, a real macOS WKWebView build, the real internet or OS window raise.
+# App-level checks that need a real macOS WKWebView build, the real internet or OS window raise.
 # Folded in from the per-feature walkthroughs in docs/testing.md (#3695).
 
 tests:
-  - id: MT-APP-01
-    automation_issue: 4127
-    name: "Backup and restore through native file dialogs with restart"
-    pr: 3509
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Back up everything... with a passphrase and save the file."
-      - "Delete a connection and change the theme."
-      - "Restore..., pick the file, enter the passphrase, Restore and restart."
-    expected:
-      - "Save and Open dialogs appear."
-      - "After the restart the connection and theme are back."
-    verification: manual
-    tags: [os-native]
-
   - id: MT-APP-02
     release_gate: true
     manual_reason: "no macOS WKWebView integration leg"
