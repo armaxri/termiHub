@@ -9,6 +9,7 @@ import type {
   TerminalMeasurement,
 } from "./protocol";
 import { errorMessage } from "@/utils/errorMessage";
+import { frontendDurableInfo } from "@/utils/frontendLog";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -198,6 +199,40 @@ function centerOf(el: Element): { x: number; y: number } {
   const rect = (el as HTMLElement).getBoundingClientRect();
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 }
+
+/** A rect as `left,top WxH`, rounded, for a diagnostic log line. */
+function describeRect(el: Element): string {
+  const r = (el as HTMLElement).getBoundingClientRect();
+  return `${Math.round(r.left)},${Math.round(r.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
+}
+
+/** Whether an element has a laid-out box (jsdom and detached nodes report 0x0). */
+function hasLayout(el: Element): boolean {
+  const r = (el as HTMLElement).getBoundingClientRect();
+  return r.width > 0 || r.height > 0;
+}
+
+/**
+ * The `dragTo` source and target are both laid out and their centers coincide —
+ * the target sits exactly on top of the source. A drag between them has no
+ * direction and no distance (#4110).
+ */
+function centersCoincide(from: Element, to: Element): boolean {
+  if (!hasLayout(from) || !hasLayout(to)) return false;
+  const a = centerOf(from);
+  const b = centerOf(to);
+  return Math.hypot(b.x - a.x, b.y - a.y) < 1;
+}
+
+/**
+ * How many frames `dragTo` waits for a source and target whose centers coincide
+ * to separate before it drags anyway. A virtualized list re-laying out (a filter
+ * just applied, a re-list landing) can briefly report two rows at the same spot.
+ */
+const DRAG_OVERLAP_SETTLE_FRAMES = 30;
+
+/** Durable log target for the bridge's own drag diagnostics (#4110). */
+const DRAG_LOG_TARGET = "test_bridge";
 
 /** Dispatch a bubbling pointer event (falls back to MouseEvent where unavailable). */
 function dispatchPointer(
@@ -639,7 +674,7 @@ export async function dispatchCommand(
     case "dragTo": {
       const from = findByTestId(deps.root, command.fromTestId);
       if (!from) return fail("dragTo", `no element with data-testid="${command.fromTestId}"`);
-      const start = centerOf(from);
+      let start = centerOf(from);
       const doc = ownerDocument(deps.root);
       // A nudge that comfortably clears the tab PointerSensor's activation
       // distance (`distance: 5` in SplitView.tsx) without reaching the target.
@@ -665,6 +700,35 @@ export async function dispatchCommand(
       // reorder, sidebar drops); otherwise press first, wake the sensor so the
       // drag-only zones mount, then resolve the now-present target.
       let to = findByTestId(deps.root, command.toTestId);
+      // A target laid out exactly on top of the source (#4110) gives the drag no
+      // direction. Give the layout a bounded number of frames to separate them —
+      // then log the geometry durably either way, so a failure artifact shows
+      // where the bridge pressed and where it aimed.
+      let overlapFrames = 0;
+      while (to && centersCoincide(from, to) && overlapFrames < DRAG_OVERLAP_SETTLE_FRAMES) {
+        await nextFrame();
+        overlapFrames++;
+        to = findByTestId(deps.root, command.toTestId);
+      }
+      if (to && overlapFrames > 0) {
+        start = centerOf(from);
+      }
+      if (to) {
+        const overlap = centersCoincide(from, to);
+        const source = from;
+        const target = to;
+        frontendDurableInfo(
+          DRAG_LOG_TARGET,
+          `dragTo ${command.fromTestId} [${describeRect(source)}] -> ${command.toTestId} ` +
+            `[${describeRect(target)}]` +
+            (overlapFrames > 0
+              ? overlap
+                ? ` — target still on top of the source after ${overlapFrames} frame(s); ` +
+                  `dragging anyway with a fixed-direction wake`
+                : ` — target separated from the source after ${overlapFrames} frame(s)`
+              : "")
+        );
+      }
       dispatchPointer(from, "pointerdown", start.x, start.y);
 
       if (!to) {
@@ -705,11 +769,21 @@ export async function dispatchCommand(
 
       // Target already present: wake toward it, step to it, then release once the
       // final position over the target has settled.
-      const end = centerOf(to);
+      const target = to;
+      const end = centerOf(target);
       const dx = end.x - start.x;
       const dy = end.y - start.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      await moveTo(start.x + (dx / dist) * WAKE_DISTANCE, start.y + (dy / dist) * WAKE_DISTANCE);
+      const dist = Math.hypot(dx, dy);
+      // The wake must always clear the activation distance. Toward the target
+      // when it is far enough away; otherwise (a target on top of the source,
+      // #4110) in a fixed direction — a wake of `dx / 1 * 12` with dx = 0 never
+      // moved the pointer at all, so dnd-kit stayed pending and the release
+      // aborted the press with no drag, no drop and no error.
+      if (dist >= WAKE_DISTANCE) {
+        await moveTo(start.x + (dx / dist) * WAKE_DISTANCE, start.y + (dy / dist) * WAKE_DISTANCE);
+      } else {
+        await moveTo(start.x + WAKE_DISTANCE, start.y);
+      }
       for (let i = 1; i <= STEPS; i++) {
         await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
       }
