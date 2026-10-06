@@ -432,7 +432,8 @@ impl SshConnector for RusshSshConnector {
             setup.push(("env", line));
         }
         if let Some(display_num) = x11_display {
-            for line in remote_shell::x11_setup_lines(remote_shell, display_num, x11_cookie.as_deref())
+            for line in
+                remote_shell::x11_setup_lines(remote_shell, display_num, x11_cookie.as_deref())
             {
                 setup.push(("x11", line));
             }
@@ -485,9 +486,9 @@ impl SshConnector for RusshSshConnector {
                     }
                 }
                 // Far in the future when the gate is open (the branch is off then).
-                let gate_check = gate
-                    .next_check()
-                    .unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(3600));
+                let gate_check = gate.next_check().unwrap_or_else(|| {
+                    std::time::Instant::now() + std::time::Duration::from_secs(3600)
+                });
                 tokio::select! {
                     biased;
                     // Outgoing commands (write / resize / close).

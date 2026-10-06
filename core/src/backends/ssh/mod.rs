@@ -2451,6 +2451,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unix_powershell_host_gets_the_powershell_setup_ended_with_cr() {
+        // #4148: pwsh as a Linux/macOS login shell gets the PowerShell setup
+        // too (the connector holds it until the first prompt is up).
+        let (writes, _) = writes_for_shell(remote_shell::RemoteShell::UnixPowerShell).await;
+        let (windows, _) = writes_for_shell(remote_shell::RemoteShell::PowerShell).await;
+        assert_eq!(writes, windows);
+    }
+
+    #[tokio::test]
     async fn cmd_and_unknown_hosts_get_no_setup() {
         for shell in [
             remote_shell::RemoteShell::Cmd,
