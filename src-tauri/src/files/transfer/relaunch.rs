@@ -149,16 +149,19 @@ pub(crate) enum RelaunchPlan {
     },
     /// A remote-to-remote copy (PROD-0013) that persisted its source endpoint
     /// (#3206): relaunchable given both ends. An end with a persisted container
-    /// id is a Docker session re-attached by that id (#3586); any other end is
-    /// an SFTP session.
+    /// id is a Docker session re-attached by that id (#3586), an end with a
+    /// persisted agent identity is the matching live agent-hosted session
+    /// (#4115); any other end is an SFTP session.
     RemoteCopy {
         src_session_id: String,
         src_saved_connection_id: Option<String>,
         src_container_id: Option<String>,
+        src_agent: Option<PersistedAgentTarget>,
         src_path: String,
         dst_session_id: String,
         dst_saved_connection_id: Option<String>,
         dst_container_id: Option<String>,
+        dst_agent: Option<PersistedAgentTarget>,
         dst_path: String,
         offset: u64,
         total: u64,
@@ -240,10 +243,12 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
                 src_session_id: source.session_id.clone(),
                 src_saved_connection_id: source.saved_connection_id.clone(),
                 src_container_id: source.container_id.clone(),
+                src_agent: source.agent.clone(),
                 src_path: source.path.clone(),
                 dst_session_id: record.session_id.clone(),
                 dst_saved_connection_id: record.saved_connection_id.clone(),
                 dst_container_id: record.docker.as_ref().map(|d| d.container_id.clone()),
+                dst_agent: record.agent.clone(),
                 dst_path: record.remote_path.clone(),
                 offset: record.resume_offset,
                 total: record.total,
@@ -513,10 +518,12 @@ async fn relaunch_record(
             src_session_id,
             src_saved_connection_id,
             src_container_id,
+            src_agent,
             src_path,
             dst_session_id,
             dst_saved_connection_id,
             dst_container_id,
+            dst_agent,
             dst_path,
             offset,
             total,
@@ -532,11 +539,13 @@ async fn relaunch_record(
                     session_id: &src_session_id,
                     saved_connection_id: src_saved_connection_id.as_deref(),
                     container_id: src_container_id.as_deref(),
+                    agent: src_agent.as_ref(),
                 },
                 CopyEnd {
                     session_id: &dst_session_id,
                     saved_connection_id: dst_saved_connection_id.as_deref(),
                     container_id: dst_container_id.as_deref(),
+                    agent: dst_agent.as_ref(),
                 },
             )
             .await
@@ -1043,6 +1052,7 @@ mod tests {
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some("conn-src".to_string()),
             container_id: None,
+            agent: None,
         });
         rec.saved_connection_id = Some("conn-dst".to_string());
         assert_eq!(
@@ -1051,15 +1061,54 @@ mod tests {
                 src_session_id: "sess-src".to_string(),
                 src_saved_connection_id: Some("conn-src".to_string()),
                 src_container_id: None,
+                src_agent: None,
                 src_path: "/src/data.csv".to_string(),
                 dst_session_id: "sess-dst".to_string(),
                 dst_saved_connection_id: Some("conn-dst".to_string()),
                 dst_container_id: None,
+                dst_agent: None,
                 dst_path: "/dst/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
             }
         );
+    }
+
+    /// A remote-to-remote copy with agent-hosted ends (#4115) keeps both
+    /// session identities in its plan — the destination's on the record, the
+    /// source's with its endpoint — and is never mistaken for an agent-hosted
+    /// download/upload (it has no local endpoint).
+    #[test]
+    fn plan_for_an_agent_remote_copy_carries_both_agent_identities() {
+        let agent = |id: &str| PersistedAgentTarget {
+            agent_id: id.to_string(),
+            remote_session_id: format!("{id}-session"),
+            definition_id: Some(format!("{id}-def")),
+        };
+        let mut rec = record("r2r", None);
+        rec.remote_path = "/dst/data.csv".to_string();
+        rec.agent = Some(agent("dst-agent"));
+        rec.remote_source = Some(crate::files::transfer::persist::PersistedRemoteSource {
+            session_id: "sess-src".to_string(),
+            path: "/src/data.csv".to_string(),
+            saved_connection_id: None,
+            container_id: None,
+            agent: Some(agent("src-agent")),
+        });
+        match plan_from_record(&rec) {
+            RelaunchPlan::RemoteCopy {
+                src_agent,
+                dst_agent,
+                src_container_id,
+                dst_container_id,
+                ..
+            } => {
+                assert_eq!(src_agent, Some(agent("src-agent")));
+                assert_eq!(dst_agent, Some(agent("dst-agent")));
+                assert_eq!((src_container_id, dst_container_id), (None, None));
+            }
+            other => panic!("expected RemoteCopy, got {other:?}"),
+        }
     }
 
     /// A remote-to-remote copy with Docker ends (#3586) keeps both container
@@ -1074,6 +1123,7 @@ mod tests {
             path: "/src/data.csv".to_string(),
             saved_connection_id: None,
             container_id: Some("src-container".to_string()),
+            agent: None,
         });
         match plan_from_record(&rec) {
             RelaunchPlan::RemoteCopy {

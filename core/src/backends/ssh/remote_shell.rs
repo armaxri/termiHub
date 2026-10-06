@@ -1,4 +1,5 @@
-//! Remote login-shell detection for SSH shell integration (#4143).
+//! Remote login-shell detection for the SSH session setup lines (#4143,
+//! #4147, #4148).
 //!
 //! Shell integration types a one-line setup command into the interactive
 //! shell. That line is shell-specific: the POSIX hook is a parse error in
@@ -23,10 +24,31 @@
 //! Anything else (exec refused, a timeout, a `csh` "Undefined variable" error,
 //! no markers) is [`RemoteShell::Unknown`], and nothing is injected for it: a
 //! missing CWD hook is a degradation, a corrupted first command is a bug.
+//!
+//! `%OS%` stays literal under PowerShell on every OS, so it cannot tell a
+//! Windows host from a Unix one there; `$PSHOME` can: it is an absolute POSIX
+//! path (`/opt/microsoft/powershell/7`) only on Linux/macOS, giving
+//! [`RemoteShell::UnixPowerShell`] (#4148).
+//!
+//! # Every typed setup line goes through here
+//!
+//! Besides shell integration, the connector types two more setup lines into
+//! the interactive shell (#4147): the fallback for the configured environment
+//! variables ([`env_setup_line`], for names the server's `AcceptEnv` rejects)
+//! and the X11 `DISPLAY` / `xauth` lines ([`x11_setup_lines`]). Each is built
+//! in the detected shell's syntax and line ending, or skipped (with a log
+//! line) when the shell has no safe equivalent.
+//!
+//! A PowerShell login shell on Linux/macOS needs one more thing (#4148): its
+//! setup is held back until the first prompt has printed ([`SetupGate`]).
+//! Typed earlier, it lands in the tty while it is still in cooked mode, whose
+//! `ICRNL` turns the CR into LF — a continuation for PSReadLine, which then
+//! merges the user's first command into the setup line.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::exec::ssh_exec_with_stdin_timeout;
 use super::handler::SshSession;
@@ -51,8 +73,10 @@ pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 pub enum RemoteShell {
     /// A POSIX-style shell (bash, zsh, sh, dash, fish, ...).
     Posix,
-    /// Windows PowerShell 5 or PowerShell 7 (`pwsh`), on any OS.
+    /// Windows PowerShell 5 or PowerShell 7 (`pwsh`) on a Windows host.
     PowerShell,
+    /// PowerShell 7 (`pwsh`) as the login shell of a Linux/macOS host (#4148).
+    UnixPowerShell,
     /// Windows `cmd.exe`.
     Cmd,
     /// Not detected (not probed, exec refused, timed out, unrecognised output).
@@ -81,8 +105,11 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
     match between {
         // `%OS%` untouched and `$PSHOME` expanded to nothing: a POSIX shell.
         ["%OS%"] => RemoteShell::Posix,
-        // `%OS%` untouched and `$PSHOME` expanded to PowerShell's home (which
-        // may contain spaces, e.g. `C:\Program Files\PowerShell\7`).
+        // `%OS%` untouched and `$PSHOME` expanded to PowerShell's home: an
+        // absolute POSIX path on Linux/macOS (#4148) ...
+        ["%OS%", home, ..] if home.starts_with('/') => RemoteShell::UnixPowerShell,
+        // ... a Windows path otherwise (which may contain spaces, e.g.
+        // `C:\Program Files\PowerShell\7`).
         ["%OS%", _, ..] => RemoteShell::PowerShell,
         // `%OS%` expanded (to `Windows_NT`) and `$PSHOME` left literal: cmd.exe.
         [os, "$PSHOME"] if os.eq_ignore_ascii_case("Windows_NT") => RemoteShell::Cmd,
@@ -116,15 +143,322 @@ pub async fn detect_remote_shell(session: &SshSession) -> RemoteShell {
 ///
 /// - POSIX: the bash/zsh OSC 7 hook, ended with LF — unchanged from before
 ///   detection existed.
-/// - PowerShell: the PowerShell OSC 7 / OSC 133 prompt override, ended with
-///   CR, which is Enter for PSReadLine under ConPTY (an LF would leave the line
-///   unsubmitted and merge it with the user's first command).
+/// - PowerShell (Windows or Unix): the PowerShell OSC 7 / OSC 133 prompt
+///   override, ended with CR, which is Enter for PSReadLine (an LF would leave
+///   the line unsubmitted and merge it with the user's first command). On a
+///   Unix host the connector holds it back until the first prompt
+///   ([`SetupGate`]), so the tty no longer maps that CR to LF.
 /// - cmd.exe and unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
         RemoteShell::Posix => osc7_setup_command("bash").map(|s| format!("{s}\n")),
-        RemoteShell::PowerShell => osc7_setup_command("powershell").map(|s| format!("{s}\r")),
+        RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
+            osc7_setup_command("powershell").map(|s| format!("{s}\r"))
+        }
         RemoteShell::Cmd | RemoteShell::Unknown => None,
+    }
+}
+
+/// The byte that submits a typed line in `shell`: LF for POSIX shells
+/// (unchanged from before detection), CR — the Enter key — for PowerShell and
+/// cmd.exe. `None` for an undetected shell, which gets no typed setup at all.
+pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
+    match shell {
+        RemoteShell::Posix => Some("\n"),
+        RemoteShell::PowerShell | RemoteShell::UnixPowerShell | RemoteShell::Cmd => Some("\r"),
+        RemoteShell::Unknown => None,
+    }
+}
+
+/// Whether the setup lines for `shell` must wait for its first prompt (see
+/// [`SetupGate`]): only a PowerShell login shell on Linux/macOS (#4148). On
+/// Windows, ConPTY delivers the CR as Enter whenever it arrives, and POSIX
+/// shells read the LF-ended lines fine from the cooked tty.
+pub fn defers_setup_until_prompt(shell: RemoteShell) -> bool {
+    shell == RemoteShell::UnixPowerShell
+}
+
+/// Whether `name` is safe to type as an environment variable name in every
+/// supported shell: `[A-Za-z_][A-Za-z0-9_]*`. Anything else (`;`, spaces, `$`,
+/// `=`...) could end the assignment and start a command.
+fn is_safe_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// Whether `value` can be typed into a terminal at all. A control character is
+/// interpreted by the remote tty / line editor before any quoting applies:
+/// `^U` erases the line typed so far, `^C` interrupts it, CR/LF submit it, Tab
+/// completes — so a hostile value could replace the assignment with a command
+/// of its own. Such variables are skipped (the SSH env request still carried
+/// them when the server's `AcceptEnv` allows the name).
+fn is_typeable_value(value: &str) -> bool {
+    !value.chars().any(char::is_control)
+}
+
+/// `value` as a POSIX single-quoted word: `'` becomes `'\''`.
+fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// `value` as a PowerShell single-quoted (verbatim) string. PowerShell also
+/// treats the typographic quotes U+2018..U+201B as single quotes, so every
+/// one of them is doubled too — a doubled quote is a literal quote.
+fn powershell_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for c in value.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+/// `NAME=value` as a cmd.exe `set "NAME=value"`, or `None` when cmd.exe cannot
+/// take the value literally: inside the quotes `& | < > ( ) ^` are literal,
+/// but `%` (and `!` under delayed expansion) still expand and a `"` would end
+/// the quoting — and an interactive cmd.exe has no reliable escape for them.
+fn cmd_set(name: &str, value: &str) -> Option<String> {
+    if value.contains(['"', '%', '!']) {
+        return None;
+    }
+    Some(format!("set \"{name}={value}\""))
+}
+
+/// The fallback line that sets the configured environment variables in the
+/// interactive shell, in `shell`'s syntax and ended with its [`line_ending`],
+/// or `None` when there is nothing (safe) to type.
+///
+/// # Why this exists (the `AcceptEnv` caveat)
+///
+/// Setting an environment variable on the SSH *client* does not make it appear
+/// on the server: the standard channel env request (`set_env`, RFC 4254 §6.4)
+/// is only honoured for names the server explicitly whitelists via sshd's
+/// `AcceptEnv`, which defaults to accepting little more than `LANG`/`LC_*`.
+/// So the backend requests each variable via `set_env` (clean, and present
+/// before the login shell's rc files run *when* the server accepts it) **and**
+/// types the line built here into the interactive shell after it starts —
+/// guaranteeing the variables take effect regardless of `AcceptEnv`. The line
+/// is briefly visible in the terminal, like the X11 `DISPLAY` line.
+///
+/// Per shell (keys sorted for a deterministic line):
+///
+/// - POSIX: `export A='1' B='it'\''s'` + LF — single quotes keep every
+///   character literal.
+/// - PowerShell: `$env:A='1'; $env:B='it''s'` + CR — verbatim strings.
+/// - cmd.exe: `set "A=1" & set "B=2"` + CR; a value cmd.exe cannot take
+///   literally (`"`, `%`, `!`) is skipped with a warning.
+/// - Unknown: nothing (warned) — no syntax is known to be safe.
+///
+/// In every shell a name outside `[A-Za-z_][A-Za-z0-9_]*` or a value with a
+/// control character is skipped with a warning: neither can be typed without
+/// risking a command injection. Values are never logged (they may be secrets).
+pub fn env_setup_line(shell: RemoteShell, env: &HashMap<String, String>) -> Option<String> {
+    if env.is_empty() {
+        return None;
+    }
+    let Some(eol) = line_ending(shell) else {
+        warn!(
+            count = env.len(),
+            "remote shell not detected; not typing the environment-variable fallback \
+             (variables apply only where the server's AcceptEnv allows them)"
+        );
+        return None;
+    };
+    let mut pairs: Vec<(&String, &String)> = env.iter().collect();
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut statements: Vec<String> = Vec::new();
+    for (name, value) in pairs {
+        if !is_safe_env_name(name) {
+            warn!(key = %name, "environment variable name is not typeable safely; skipped");
+            continue;
+        }
+        if !is_typeable_value(value) {
+            warn!(key = %name, "environment variable value has control characters; skipped");
+            continue;
+        }
+        let statement = match shell {
+            RemoteShell::Posix => Some(format!("{name}={}", posix_quote(value))),
+            RemoteShell::PowerShell | RemoteShell::UnixPowerShell => {
+                Some(format!("$env:{name}={}", powershell_quote(value)))
+            }
+            RemoteShell::Cmd => cmd_set(name, value),
+            RemoteShell::Unknown => None,
+        };
+        match statement {
+            Some(statement) => statements.push(statement),
+            None => warn!(
+                key = %name,
+                "environment variable value cannot be set literally in cmd.exe; skipped"
+            ),
+        }
+    }
+    if statements.is_empty() {
+        return None;
+    }
+    let line = match shell {
+        RemoteShell::Posix => format!("export {}", statements.join(" ")),
+        RemoteShell::Cmd => statements.join(" & "),
+        _ => statements.join("; "),
+    };
+    Some(format!("{line}{eol}"))
+}
+
+/// The lines that point X11 clients in the interactive shell at the forwarded
+/// display `localhost:<display>.0` and register its `MIT-MAGIC-COOKIE-1`, each
+/// ended with the shell's [`line_ending`].
+///
+/// - POSIX: `export DISPLAY=...` + `xauth add ... 2>/dev/null` — unchanged.
+/// - PowerShell on Linux/macOS: `$env:DISPLAY='...'` + the `xauth add`, only
+///   when `xauth` is on the `PATH` (it is a native command there too).
+/// - PowerShell / cmd.exe on Windows: the `DISPLAY` assignment only. Windows
+///   has no `xauth`, so the cookie line is skipped.
+/// - Unknown: nothing (warned).
+///
+/// A cookie that is not plain hex is never typed (it is generated locally, so
+/// that would be a bug, but it must not become a command either).
+pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str>) -> Vec<String> {
+    let Some(eol) = line_ending(shell) else {
+        warn!(
+            display_num,
+            "remote shell not detected; not typing the X11 DISPLAY / xauth setup"
+        );
+        return Vec::new();
+    };
+    let cookie = cookie.filter(|c| {
+        let ok = !c.is_empty() && c.chars().all(|ch| ch.is_ascii_hexdigit());
+        if !ok {
+            warn!(
+                display_num,
+                "X11 cookie is not hex; not typing the xauth line"
+            );
+        }
+        ok
+    });
+    let mut lines = Vec::new();
+    match shell {
+        RemoteShell::Posix => {
+            lines.push(format!("export DISPLAY=localhost:{display_num}.0{eol}"));
+            if let Some(cookie) = cookie {
+                lines.push(format!(
+                    "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null{eol}"
+                ));
+            }
+        }
+        RemoteShell::UnixPowerShell => {
+            lines.push(format!("$env:DISPLAY='localhost:{display_num}.0'{eol}"));
+            if let Some(cookie) = cookie {
+                lines.push(format!(
+                    "if(Get-Command xauth -ErrorAction Ignore){{xauth add localhost:{display_num} \
+                     MIT-MAGIC-COOKIE-1 {cookie} 2>$null}}{eol}"
+                ));
+            }
+        }
+        RemoteShell::PowerShell | RemoteShell::Cmd => {
+            lines.push(if shell == RemoteShell::Cmd {
+                format!("set \"DISPLAY=localhost:{display_num}.0\"{eol}")
+            } else {
+                format!("$env:DISPLAY='localhost:{display_num}.0'{eol}")
+            });
+            if cookie.is_some() {
+                debug!(
+                    display_num,
+                    "Windows host: no xauth, X11 cookie line skipped"
+                );
+            }
+        }
+        RemoteShell::Unknown => {}
+    }
+    lines
+}
+
+/// How long the shell's output must stay quiet after it printed something
+/// before a held-back setup is released ([`SetupGate`]).
+pub const SETUP_GATE_SETTLE: Duration = Duration::from_millis(300);
+
+/// Upper bound on holding the setup back, from the shell request on: a shell
+/// that prints nothing (or never stops printing) still gets its setup.
+pub const SETUP_GATE_CAP: Duration = Duration::from_secs(8);
+
+/// Holds the session's typed input back until the remote shell's first prompt
+/// has printed, for a PowerShell login shell on Linux/macOS (#4148).
+///
+/// Until PSReadLine owns the terminal the tty is in cooked mode, and its
+/// `ICRNL` turns the setup line's CR (Enter) into LF on arrival — a
+/// continuation for PSReadLine. Once the prompt is up the tty is raw and the
+/// CR reaches PSReadLine as Enter. "Prompt is up" is approximated as: output
+/// has arrived and then stayed quiet for [`SETUP_GATE_SETTLE`] (a login shell
+/// is idle exactly when it waits at its prompt), bounded by
+/// [`SETUP_GATE_CAP`].
+///
+/// Everything written while holding — the connector's own setup lines, the
+/// shell-integration line and any typeahead — is released in its original
+/// order, in one burst, so nothing can overtake the setup.
+#[derive(Debug)]
+pub struct SetupGate {
+    /// `Some` while holding: the writes queued so far, in order.
+    held: Option<Vec<Vec<u8>>>,
+    deadline: Instant,
+    last_output: Option<Instant>,
+}
+
+impl SetupGate {
+    /// A gate that holds when `hold` is set (see [`defers_setup_until_prompt`])
+    /// and is open — passing every write straight through — otherwise.
+    pub fn new(hold: bool, now: Instant) -> Self {
+        Self {
+            held: hold.then(Vec::new),
+            deadline: now + SETUP_GATE_CAP,
+            last_output: None,
+        }
+    }
+
+    /// Whether writes are still being held back.
+    pub fn is_holding(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// Queue `data` while holding, or hand it back to be sent right away.
+    pub fn write(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
+        match self.held.as_mut() {
+            Some(held) => {
+                held.push(data);
+                None
+            }
+            None => Some(data),
+        }
+    }
+
+    /// Note that the shell printed something at `now`.
+    pub fn on_output(&mut self, now: Instant) {
+        if self.held.is_some() {
+            self.last_output = Some(now);
+        }
+    }
+
+    /// When the gate should next be polled, while holding.
+    pub fn next_check(&self) -> Option<Instant> {
+        self.held.as_ref()?;
+        Some(match self.last_output {
+            Some(last) => (last + SETUP_GATE_SETTLE).min(self.deadline),
+            None => self.deadline,
+        })
+    }
+
+    /// Release the held writes (in order) once the prompt has settled or the
+    /// cap has passed; `None` while still holding or when already open.
+    pub fn poll(&mut self, now: Instant) -> Option<Vec<Vec<u8>>> {
+        let due = self.next_check()?;
+        if now >= due {
+            self.held.take()
+        } else {
+            None
+        }
     }
 }
 
@@ -155,7 +489,10 @@ mod tests {
         assert_eq!(classify_shell_probe(win), RemoteShell::PowerShell);
         let linux = "termihub_shell_probe\n%OS%\n/opt/microsoft/powershell/7\n\
                      termihub_shell_probe_end\n";
-        assert_eq!(classify_shell_probe(linux), RemoteShell::PowerShell);
+        assert_eq!(classify_shell_probe(linux), RemoteShell::UnixPowerShell);
+        let mac = "termihub_shell_probe\n%OS%\n/usr/local/microsoft/powershell/7\n\
+                   termihub_shell_probe_end\n";
+        assert_eq!(classify_shell_probe(mac), RemoteShell::UnixPowerShell);
     }
 
     #[test]
@@ -225,5 +562,393 @@ mod tests {
     fn cmd_and_unknown_get_no_setup() {
         assert_eq!(integration_setup_line(RemoteShell::Cmd), None);
         assert_eq!(integration_setup_line(RemoteShell::Unknown), None);
+    }
+
+    // ── Env-var fallback per shell (#4147) ──────────────────────────────
+
+    fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    const ALL_SHELLS: [RemoteShell; 5] = [
+        RemoteShell::Posix,
+        RemoteShell::PowerShell,
+        RemoteShell::UnixPowerShell,
+        RemoteShell::Cmd,
+        RemoteShell::Unknown,
+    ];
+
+    #[test]
+    fn env_line_is_none_when_empty_for_every_shell() {
+        for shell in ALL_SHELLS {
+            assert_eq!(env_setup_line(shell, &HashMap::new()), None, "{shell:?}");
+        }
+    }
+
+    #[test]
+    fn posix_env_line_is_unchanged() {
+        let e = env(&[("ZED", "1"), ("ALPHA", "2")]);
+        assert_eq!(
+            env_setup_line(RemoteShell::Posix, &e).as_deref(),
+            Some("export ALPHA='2' ZED='1'\n")
+        );
+        // Single quotes keep spaces, `$` and backticks literal; `'` is `'\''`.
+        let e = env(&[("MSG", "it's $HOME and `id`")]);
+        assert_eq!(
+            env_setup_line(RemoteShell::Posix, &e).as_deref(),
+            Some("export MSG='it'\\''s $HOME and `id`'\n")
+        );
+    }
+
+    #[test]
+    fn powershell_env_line_uses_verbatim_strings_ended_with_cr() {
+        for shell in [RemoteShell::PowerShell, RemoteShell::UnixPowerShell] {
+            let e = env(&[("ZED", "1"), ("ALPHA", "C:\\Program Files")]);
+            assert_eq!(
+                env_setup_line(shell, &e).as_deref(),
+                Some("$env:ALPHA='C:\\Program Files'; $env:ZED='1'\r")
+            );
+            // `$(...)`, `"`, backtick and `;` stay literal inside '...'.
+            let e = env(&[("X", "a\"$(Remove-Item ~)`;b")]);
+            assert_eq!(
+                env_setup_line(shell, &e).as_deref(),
+                Some("$env:X='a\"$(Remove-Item ~)`;b'\r")
+            );
+        }
+    }
+
+    #[test]
+    fn powershell_env_line_doubles_every_single_quote_kind() {
+        // PowerShell ends a '...' string at any of ' ‘ ’ ‚ ‛, so each is doubled.
+        let e = env(&[("X", "a'b\u{2018}c\u{2019}d\u{201A}e\u{201B}f")]);
+        assert_eq!(
+            env_setup_line(RemoteShell::PowerShell, &e).as_deref(),
+            Some(
+                "$env:X='a''b\u{2018}\u{2018}c\u{2019}\u{2019}d\u{201A}\u{201A}e\u{201B}\u{201B}f'\r"
+            )
+        );
+        // A value trying to close the string and run a command stays a value.
+        let e = env(&[("X", "'; Remove-Item -Recurse ~; '")]);
+        assert_eq!(
+            env_setup_line(RemoteShell::UnixPowerShell, &e).as_deref(),
+            Some("$env:X='''; Remove-Item -Recurse ~; '''\r")
+        );
+    }
+
+    /// Model PowerShell's verbatim-string scan: a quote character ends the
+    /// string unless the next one is a quote too, which makes it literal.
+    fn powershell_unquote(q: &str) -> Option<String> {
+        let is_q = |c: char| matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}');
+        let mut chars = q.chars().peekable();
+        if !is_q(chars.next()?) {
+            return None;
+        }
+        let mut out = String::new();
+        while let Some(c) = chars.next() {
+            if !is_q(c) {
+                out.push(c);
+                continue;
+            }
+            match chars.peek() {
+                Some(&n) if is_q(n) => {
+                    chars.next();
+                    out.push(n);
+                }
+                // The closing quote must be the very last character.
+                _ => return chars.next().is_none().then_some(out),
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn powershell_quote_round_trips_through_the_tokenizer_rules() {
+        for v in [
+            "",
+            "plain",
+            "'",
+            "''",
+            "a'b",
+            "\u{2019}x\u{2018}",
+            "'; evil; '",
+            "x\u{201B}",
+        ] {
+            assert_eq!(
+                powershell_unquote(&powershell_quote(v)).as_deref(),
+                Some(v),
+                "{v:?}"
+            );
+        }
+    }
+
+    /// Model POSIX single-quote parsing of a sequence of '...' and \' parts.
+    fn posix_unquote(q: &str) -> Option<String> {
+        let mut out = String::new();
+        let mut chars = q.chars();
+        loop {
+            match chars.next() {
+                None => return Some(out),
+                Some('\'') => loop {
+                    match chars.next()? {
+                        '\'' => break,
+                        c => out.push(c),
+                    }
+                },
+                Some('\\') => out.push(chars.next()?),
+                Some(_) => return None,
+            }
+        }
+    }
+
+    #[test]
+    fn posix_quote_round_trips() {
+        for v in ["", "a b", "'", "it's", "'\\''", "$(id)`x`;|&"] {
+            assert_eq!(posix_unquote(&posix_quote(v)).as_deref(), Some(v), "{v:?}");
+        }
+    }
+
+    #[test]
+    fn cmd_env_line_uses_quoted_set_and_skips_unsafe_values() {
+        let e = env(&[("B", "x & del *"), ("A", "1 | 2 (3) <4> ^5")]);
+        assert_eq!(
+            env_setup_line(RemoteShell::Cmd, &e).as_deref(),
+            Some("set \"A=1 | 2 (3) <4> ^5\" & set \"B=x & del *\"\r")
+        );
+        // `"` would close the quoting, `%`/`!` expand: those values are skipped.
+        let e = env(&[
+            ("OK", "fine"),
+            ("Q", "a\" & calc & \""),
+            ("P", "%PATH%"),
+            ("E", "!x!"),
+        ]);
+        assert_eq!(
+            env_setup_line(RemoteShell::Cmd, &e).as_deref(),
+            Some("set \"OK=fine\"\r")
+        );
+        assert_eq!(
+            env_setup_line(RemoteShell::Cmd, &env(&[("P", "50%")])),
+            None
+        );
+    }
+
+    #[test]
+    fn unknown_shell_gets_no_env_line() {
+        assert_eq!(
+            env_setup_line(RemoteShell::Unknown, &env(&[("A", "1")])),
+            None
+        );
+    }
+
+    #[test]
+    fn hostile_names_are_skipped_in_every_shell() {
+        for shell in ALL_SHELLS {
+            for name in ["A;id", "A B", "1A", "A=B", "$A", "A`B", "", "A-B", "Ä"] {
+                let e = env(&[(name, "v")]);
+                assert_eq!(env_setup_line(shell, &e), None, "{shell:?} {name:?}");
+            }
+            // A safe name next to a hostile one still gets through.
+            let e = env(&[("A;rm -rf ~", "v"), ("_OK9", "v")]);
+            let line = env_setup_line(shell, &e);
+            if shell != RemoteShell::Unknown {
+                let line = line.expect("the safe name");
+                assert!(line.contains("_OK9"), "{shell:?}: {line:?}");
+                assert!(!line.contains("rm -rf"), "{shell:?}: {line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn control_characters_in_values_are_never_typed() {
+        // ^U erases the typed line, CR/LF submit it, ^C interrupts, Tab
+        // completes, ESC starts a key sequence — each could turn the rest of
+        // the value into a command, whatever the quoting.
+        for shell in ALL_SHELLS {
+            for value in [
+                "x\u{15}rm -rf ~\n",
+                "a\nb",
+                "a\rb",
+                "a\u{3}b",
+                "a\tb",
+                "a\u{1b}[200~b",
+                "a\u{7f}b",
+                "a\u{9b}b",
+            ] {
+                let e = env(&[("A", value)]);
+                assert_eq!(env_setup_line(shell, &e), None, "{shell:?} {value:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_env_line_is_one_line_ended_by_the_shells_enter() {
+        let e = env(&[("A", "1"), ("B", "two words")]);
+        for shell in ALL_SHELLS {
+            let Some(line) = env_setup_line(shell, &e) else {
+                assert_eq!(shell, RemoteShell::Unknown);
+                continue;
+            };
+            let eol = line_ending(shell).unwrap();
+            assert!(line.ends_with(eol), "{shell:?}: {line:?}");
+            let body = &line[..line.len() - eol.len()];
+            assert!(!body.contains(['\r', '\n']), "{shell:?}: {line:?}");
+            // No POSIX syntax (nor its LF) may reach a non-POSIX shell.
+            if shell != RemoteShell::Posix {
+                assert!(!line.contains("export"), "{shell:?}: {line:?}");
+                assert!(!line.contains('\n'), "{shell:?}: {line:?}");
+            }
+        }
+    }
+
+    // ── X11 lines per shell (#4147) ─────────────────────────────────────
+
+    const COOKIE: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn posix_x11_lines_are_unchanged() {
+        assert_eq!(
+            x11_setup_lines(RemoteShell::Posix, 10, Some(COOKIE)),
+            vec![
+                "export DISPLAY=localhost:10.0\n".to_string(),
+                format!("xauth add localhost:10 MIT-MAGIC-COOKIE-1 {COOKIE} 2>/dev/null\n"),
+            ]
+        );
+        assert_eq!(
+            x11_setup_lines(RemoteShell::Posix, 11, None),
+            vec!["export DISPLAY=localhost:11.0\n".to_string()]
+        );
+    }
+
+    #[test]
+    fn unix_powershell_x11_sets_display_and_guards_xauth() {
+        assert_eq!(
+            x11_setup_lines(RemoteShell::UnixPowerShell, 10, Some(COOKIE)),
+            vec![
+                "$env:DISPLAY='localhost:10.0'\r".to_string(),
+                format!(
+                    "if(Get-Command xauth -ErrorAction Ignore){{xauth add localhost:10 \
+                     MIT-MAGIC-COOKIE-1 {COOKIE} 2>$null}}\r"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_shells_get_display_only_no_xauth() {
+        assert_eq!(
+            x11_setup_lines(RemoteShell::PowerShell, 10, Some(COOKIE)),
+            vec!["$env:DISPLAY='localhost:10.0'\r".to_string()]
+        );
+        assert_eq!(
+            x11_setup_lines(RemoteShell::Cmd, 10, Some(COOKIE)),
+            vec!["set \"DISPLAY=localhost:10.0\"\r".to_string()]
+        );
+    }
+
+    #[test]
+    fn unknown_shell_gets_no_x11_lines() {
+        assert!(x11_setup_lines(RemoteShell::Unknown, 10, Some(COOKIE)).is_empty());
+    }
+
+    #[test]
+    fn a_non_hex_cookie_is_never_typed() {
+        for shell in [RemoteShell::Posix, RemoteShell::UnixPowerShell] {
+            for cookie in ["", "ab; rm -rf ~", "abc\n", "zz"] {
+                let lines = x11_setup_lines(shell, 10, Some(cookie));
+                assert_eq!(lines.len(), 1, "{shell:?} {cookie:?}: {lines:?}");
+                assert!(lines[0].contains("DISPLAY"));
+            }
+        }
+    }
+
+    // ── Line endings + deferral (#4148) ────────────────────────────────
+
+    #[test]
+    fn line_endings_per_shell() {
+        assert_eq!(line_ending(RemoteShell::Posix), Some("\n"));
+        assert_eq!(line_ending(RemoteShell::PowerShell), Some("\r"));
+        assert_eq!(line_ending(RemoteShell::UnixPowerShell), Some("\r"));
+        assert_eq!(line_ending(RemoteShell::Cmd), Some("\r"));
+        assert_eq!(line_ending(RemoteShell::Unknown), None);
+    }
+
+    #[test]
+    fn only_unix_powershell_defers_its_setup() {
+        for shell in ALL_SHELLS {
+            assert_eq!(
+                defers_setup_until_prompt(shell),
+                shell == RemoteShell::UnixPowerShell,
+                "{shell:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unix_powershell_gets_the_powershell_integration_line() {
+        assert_eq!(
+            integration_setup_line(RemoteShell::UnixPowerShell),
+            integration_setup_line(RemoteShell::PowerShell)
+        );
+    }
+
+    #[test]
+    fn open_gate_passes_writes_through() {
+        let now = Instant::now();
+        let mut gate = SetupGate::new(false, now);
+        assert!(!gate.is_holding());
+        assert_eq!(gate.write(b"x".to_vec()), Some(b"x".to_vec()));
+        assert_eq!(gate.next_check(), None);
+        assert_eq!(gate.poll(now + SETUP_GATE_CAP * 2), None);
+    }
+
+    #[test]
+    fn gate_holds_until_output_settles_then_releases_in_order() {
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, t0);
+        assert_eq!(gate.write(b"env".to_vec()), None);
+        assert_eq!(gate.write(b"integration".to_vec()), None);
+        // No output yet: the next check is the cap.
+        assert_eq!(gate.next_check(), Some(t0 + SETUP_GATE_CAP));
+        assert_eq!(gate.poll(t0 + Duration::from_secs(1)), None);
+        // The banner prints, then (still busy) the prompt.
+        let banner = t0 + Duration::from_millis(500);
+        gate.on_output(banner);
+        assert_eq!(gate.poll(banner + Duration::from_millis(100)), None);
+        let prompt = banner + Duration::from_millis(200);
+        gate.on_output(prompt);
+        assert_eq!(gate.next_check(), Some(prompt + SETUP_GATE_SETTLE));
+        assert_eq!(gate.poll(prompt + SETUP_GATE_SETTLE / 2), None);
+        // Typeahead queues behind the setup.
+        assert_eq!(gate.write(b"ls".to_vec()), None);
+        assert_eq!(
+            gate.poll(prompt + SETUP_GATE_SETTLE),
+            Some(vec![
+                b"env".to_vec(),
+                b"integration".to_vec(),
+                b"ls".to_vec()
+            ])
+        );
+        assert!(!gate.is_holding());
+        assert_eq!(gate.write(b"pwd".to_vec()), Some(b"pwd".to_vec()));
+    }
+
+    #[test]
+    fn gate_releases_at_the_cap_for_a_silent_or_chatty_shell() {
+        let t0 = Instant::now();
+        let mut silent = SetupGate::new(true, t0);
+        silent.write(b"a".to_vec());
+        assert_eq!(silent.poll(t0 + SETUP_GATE_CAP), Some(vec![b"a".to_vec()]));
+
+        let mut chatty = SetupGate::new(true, t0);
+        chatty.write(b"b".to_vec());
+        let mut t = t0;
+        while t < t0 + SETUP_GATE_CAP {
+            chatty.on_output(t);
+            assert!(chatty.next_check().unwrap() <= t0 + SETUP_GATE_CAP);
+            t += Duration::from_millis(100);
+        }
+        assert_eq!(chatty.poll(t0 + SETUP_GATE_CAP), Some(vec![b"b".to_vec()]));
     }
 }

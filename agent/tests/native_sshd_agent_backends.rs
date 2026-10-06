@@ -158,12 +158,10 @@ impl Fixture {
             "authMethod": auth_method,
             "enableMonitoring": false,
             "enableFileBrowser": false,
-            // No shell-integration injection: these tests grade the session
-            // transport and auth, not OSC 7 / 133. The injected setup is POSIX
-            // shell sent with LF, which a PowerShell DefaultShell (PSReadLine)
-            // takes as a continuation line rather than a submit, so the probe
-            // typed next was merged into it and never ran (#4143).
-            "shellIntegration": false,
+            // Shell integration stays at its default (on): the backend probes
+            // the login shell and types only setup it can parse — PowerShell's
+            // own (CR-ended) or none for cmd.exe — so the probe typed next must
+            // still run (#4143, #4149).
         });
         if let Some(path) = key_path {
             config["keyPath"] = json!(path);
@@ -412,8 +410,9 @@ impl StdioAgent {
             .unwrap_or_default()
     }
 
-    /// Type `probe` into the session and wait for its output.
-    fn run_probe(&mut self, session_id: &str, probe: &ShellProbe) {
+    /// Type `probe` into the session and wait for its output; returns the
+    /// session output seen up to then.
+    fn run_probe(&mut self, session_id: &str, probe: &ShellProbe) -> String {
         let write = self.rpc(
             pm::CONNECTION_WRITE,
             json!({
@@ -422,13 +421,13 @@ impl StdioAgent {
             }),
         );
         assert!(write.get("error").is_none(), "write failed: {write}");
-        self.wait_for_output(session_id, &probe.expect);
+        self.wait_for_output(session_id, &probe.expect)
     }
 
     /// Accumulate this session's `connection.output` until it contains
     /// `needle` (matching across notification boundaries: a PTY, and ConPTY
     /// most of all, chunks its output freely).
-    fn wait_for_output(&mut self, session_id: &str, needle: &str) {
+    fn wait_for_output(&mut self, session_id: &str, needle: &str) -> String {
         let deadline = Instant::now() + STEP_TIMEOUT;
         let mut seen = String::new();
         // Output that arrived while waiting for an RPC response is stashed.
@@ -460,6 +459,7 @@ impl StdioAgent {
                 ),
             }
         }
+        seen
     }
 }
 
@@ -496,7 +496,15 @@ fn connect_and_round_trip(agent: &mut StdioAgent, config: Value, tag: &str) {
     });
     let attach = agent.rpc(pm::CONNECTION_ATTACH, json!({"session_id": session_id}));
     assert!(attach["result"].is_object(), "attach failed: {attach}");
-    agent.run_probe(&session_id, &shell_probe(tag));
+    let seen = agent.run_probe(&session_id, &shell_probe(tag));
+    // With shell integration on, no POSIX setup may reach a Windows shell
+    // (cmd.exe would echo it back, PowerShell would report a ParserError).
+    if cfg!(windows) {
+        assert!(
+            !seen.contains("PROMPT_COMMAND") && !seen.contains("ParserError"),
+            "the POSIX shell-integration setup reached the Windows shell: {seen:?}"
+        );
+    }
     let close = agent.rpc(pm::CONNECTION_CLOSE, json!({"session_id": session_id}));
     assert!(close.get("error").is_none(), "close failed: {close}");
 }

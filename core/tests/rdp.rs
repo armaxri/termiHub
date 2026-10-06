@@ -1706,6 +1706,27 @@ async fn rdp_16_shared_folder_files_are_served_to_the_server() {
                 uris.contains(&format!("file://{CLIPBOARD_FILES}/alpha.txt")),
                 "{label}: the server's paste lists the shared folder: {uris:?}"
             );
+            // chansrv fills `.clipboard` from the file list it fetched for that
+            // paste; wait until the view lists both files before reading them.
+            let listing = format!("ls -A '{CLIPBOARD_FILES}'");
+            let lists_both = |listed: &Result<String, String>| {
+                listed.as_deref().is_ok_and(|l| {
+                    ["alpha.txt", "big.txt"]
+                        .iter()
+                        .all(|f| l.lines().any(|n| n == *f))
+                })
+            };
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            let mut listed = fixture_user_sh(&listing);
+            while !lists_both(&listed) && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                listed = fixture_user_sh(&listing);
+            }
+            assert!(
+                lists_both(&listed),
+                "{label}: {CLIPBOARD_FILES} never listed alpha.txt + big.txt within 15 s: \
+                 {listed:?}\nuris: {uris:?}"
+            );
             let read = |path: &str| {
                 fixture_user_sh(&format!("cat '{CLIPBOARD_FILES}/{path}'")).unwrap_or_else(|e| {
                     let tree = fixture_user_sh(&format!("ls -laR '{CLIPBOARD_FILES}'"));

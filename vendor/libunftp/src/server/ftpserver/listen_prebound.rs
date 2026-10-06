@@ -28,9 +28,16 @@ where
     User: UserDetail,
 {
     pub bind_address: SocketAddr,
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // Set by `Server::listen_with_listener`.
+    pub prebound: Option<tokio::net::TcpListener>,
     pub logger: slog::Logger,
     #[cfg_attr(not(feature = "proxy_protocol"), allow(dead_code))]
     pub external_control_port: Option<u16>,
+    // termiHub fork delta (armaxri/termiHub#4100).
+    // See `ServerBuilder::proxy_protocol_peer_filter`.
+    #[cfg_attr(not(feature = "proxy_protocol"), allow(dead_code))]
+    pub peer_filter: Option<crate::server::ftpserver::ProxyPeerFilter>,
     pub options: OptionsHolder<Storage, User>,
     pub switchboard: Switchboard<Storage, User>,
     pub shutdown_topic: Arc<shutdown::Notifier>,

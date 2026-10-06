@@ -621,9 +621,12 @@ fn bash_osc7_command() -> &'static str {
 /// The snippet builds the file:// URI the way the frontend OSC 7 handler
 /// expects: backslashes are converted to forward slashes (`C:\foo` ->
 /// `C:/foo`), the path is URL-encoded via `[uri]::EscapeUriString` (so spaces
-/// and other specials form a valid URI), and `$env:COMPUTERNAME` is the
-/// authority. Works identically for Windows PowerShell 5 (`powershell.exe`)
-/// and PowerShell 7 (`pwsh`).
+/// and other specials form a valid URI) and gets one leading `/` (`/C:/foo`,
+/// while a Unix `/home/me` keeps its own — no `file:////home/me`), and
+/// `$env:COMPUTERNAME` is the authority — or `[Environment]::MachineName`
+/// where that is unset, as for `pwsh` on Linux/macOS (#4148), so the OSC 7
+/// never has an empty host. Works identically for Windows PowerShell 5
+/// (`powershell.exe`) and PowerShell 7 (`pwsh`) on any OS.
 ///
 /// It also emits **OSC 133** command marks (issue #3415, PROD-059): `D;<exit>`
 /// (derived from `$?` / `$LASTEXITCODE`, captured as the prompt's first
@@ -648,7 +651,9 @@ fn powershell_osc7_command() -> &'static str {
         r#"$c=if($__th_ok){0}elseif($__th_ec){$__th_ec}else{1};"#,
         r#"$p=$PWD.Path;"#,
         r#"$u=[uri]::EscapeUriString(($p -replace '\\','/'));"#,
-        r#"[Console]::Write($e+']133;D;'+$c+$b+$e+']7;file://'+$env:COMPUTERNAME+'/'+$u+$b+$e+']133;A'+$b);"#,
+        r#"if(-not $u.StartsWith('/')){$u='/'+$u};"#,
+        r#"$h=if($env:COMPUTERNAME){$env:COMPUTERNAME}else{[Environment]::MachineName};"#,
+        r#"[Console]::Write($e+']133;D;'+$c+$b+$e+']7;file://'+$h+$u+$b+$e+']133;A'+$b);"#,
         r#"$t=if($__th_op){& $__th_op}else{'PS '+$p+'> '};"#,
         r#"$global:LASTEXITCODE=$__th_ec;"#,
         r#""$t"+$e+']133;B'+$b"#,
@@ -2229,6 +2234,55 @@ mod tests {
             osc7_setup_command("fish")
         );
         assert_eq!(osc7_setup_command("/opt/myshell/bin/mysh"), None);
+    }
+
+    #[test]
+    fn powershell_osc7_host_falls_back_and_path_gets_one_leading_slash() {
+        let setup = powershell_osc7_command();
+        // #4148: `$env:COMPUTERNAME` is unset on Linux/macOS, so the host falls
+        // back to `[Environment]::MachineName`; Windows still uses COMPUTERNAME.
+        assert!(setup.contains("$h=if($env:COMPUTERNAME){$env:COMPUTERNAME}"));
+        assert!(setup.contains("[Environment]::MachineName"));
+        // A Unix path keeps its own leading `/`; `C:/x` gets one (`/C:/x`).
+        assert!(setup.contains("if(-not $u.StartsWith('/')){$u='/'+$u}"));
+        assert!(setup.contains("']7;file://'+$h+$u+"));
+        assert!(!setup.contains("+'/'+$u"), "no unconditional extra slash");
+    }
+
+    /// Run the PowerShell setup in a real `pwsh` (when one is installed) and
+    /// check the OSC 7 its prompt prints: a non-empty host and exactly one
+    /// slash before the path, on the OS the test runs on (#4148).
+    #[test]
+    fn powershell_osc7_prompt_is_well_formed_in_a_real_pwsh() {
+        let Ok(out) = std::process::Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!(
+                "{}; Set-Location ([System.IO.Path]::GetTempPath()); prompt",
+                powershell_osc7_command()
+            ))
+            .output()
+        else {
+            eprintln!("SKIPPED: pwsh is not installed");
+            return;
+        };
+        assert!(out.status.success(), "pwsh failed: {out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let start = text.find("\x1b]7;file://").expect("an OSC 7") + "\x1b]7;file://".len();
+        let end = start + text[start..].find('\x07').expect("BEL-terminated OSC 7");
+        let rest = &text[start..end];
+        let slash = rest.find('/').expect("a path after the host");
+        assert!(slash > 0, "empty OSC 7 host: {rest:?}");
+        let path = &rest[slash..];
+        assert!(
+            !path.starts_with("//"),
+            "doubled slash before the path: {rest:?}"
+        );
+        if cfg!(windows) {
+            assert!(
+                path.as_bytes().get(2) == Some(&b':'),
+                "/C:/... expected: {rest:?}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

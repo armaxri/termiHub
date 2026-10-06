@@ -190,6 +190,17 @@ jobs:
           # so short-lived PR caches don't evict the shared ones (10 GB limit).
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
+      # The sideloaded ConPTY host for core/tests/sideloaded_conpty.rs (#4130),
+      # staged exactly like code-quality.yml's Windows test leg does. On a GitHub
+      # runner that test fails, never skips, without TERMIHUB_TEST_CONPTY_DIR.
+      - name: Stage the sideloaded ConPTY host for the core tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="$(cygpath -u "$RUNNER_TEMP")/conpty-test-host"
+          ./scripts/internal/fetch-conpty.sh --arch x64 --dest "$dest"
+          echo "TERMIHUB_TEST_CONPTY_DIR=$(cygpath -w "$dest")" >>"$GITHUB_ENV"
+
       # Same bulk + capped-heavy split as code-quality.yml's test leg (CI-013,
       # #3350), so the PTY / remote-forward suites don't contend with the rest.
       # The live-agent-TCP tests are skipped here (CI_RUST_TESTS_SPLIT_SERIAL):

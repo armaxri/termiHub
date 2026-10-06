@@ -86,6 +86,35 @@ def app_binary_path() -> Path:
     )
 
 
+#: The sideloaded ConPTY host that must sit next to ``termihub.exe`` on Windows
+#: (#4121). Without it local shells run on the inbox ConPTY, which drops SIXEL.
+SIDELOADED_CONPTY = ("conpty.dll", "OpenConsole.exe")
+
+
+def missing_sideloaded_conpty_message() -> Optional[str]:
+    """Why the app under test lacks the sideloaded ConPTY host, or ``None``.
+
+    ``None`` off Windows, when both files sit next to the app binary, and when no
+    app is built at all (the integration fixtures skip the suite then). A test
+    that needs a local shell to carry SIXEL calls this and fails with the message
+    up front, instead of on a missing image with no hint why.
+    """
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        app_dir = app_binary_path().parent
+    except FileNotFoundError:
+        return None
+    missing = [name for name in SIDELOADED_CONPTY if not (app_dir / name).is_file()]
+    if not missing:
+        return None
+    return (
+        f"{', '.join(missing)} missing next to {app_dir / 'termihub.exe'}: build the app "
+        "with scripts/internal/build-system-test-app.sh so it bundles the sideloaded "
+        "ConPTY host (#4121)"
+    )
+
+
 #: Marker bytes present in an app binary only when it was built with the
 #: ``test-bridge`` feature. Mirrors ``TEST_BRIDGE_BUILD_MARKER`` in
 #: ``src-tauri/src/utils/test_bridge.rs`` (``test_orchestrator.py`` checks the

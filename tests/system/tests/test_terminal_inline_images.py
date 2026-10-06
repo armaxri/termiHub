@@ -30,7 +30,6 @@ test was built without them (build it with
 from __future__ import annotations
 
 import base64
-import sys
 from typing import Any
 
 import pytest
@@ -49,9 +48,6 @@ from termihub_harness import (
 )
 
 pytestmark = pytest.mark.integration
-
-#: The sideloaded ConPTY host that must sit next to termihub.exe (#4121).
-SIDELOADED_CONPTY = ("conpty.dll", "OpenConsole.exe")
 
 #: A 4x6 px red SIXEL image (DCS q … ST).
 SIXEL = b"\x1bPq#0;2;100;0;0#0~~~~-\x1b\\"
@@ -93,19 +89,9 @@ def _sideloaded_conpty_on_windows():
     Without it local shells run on the inbox ConPTY, which drops SIXEL; the
     tests would then fail on a missing image with no hint why.
     """
-    if not sys.platform.startswith("win"):
-        return
-    try:
-        app_dir = orchestrator.app_binary_path().parent
-    except FileNotFoundError:
-        return  # no app built: the integration fixtures skip the suite
-    missing = [name for name in SIDELOADED_CONPTY if not (app_dir / name).is_file()]
-    if missing:
-        pytest.fail(
-            f"{', '.join(missing)} missing next to {app_dir / 'termihub.exe'}: build the app "
-            "with scripts/internal/build-system-test-app.sh so it bundles the sideloaded "
-            "ConPTY host (#4121)"
-        )
+    message = orchestrator.missing_sideloaded_conpty_message()
+    if message:
+        pytest.fail(message)
 
 
 class TestTerminalInlineImages(

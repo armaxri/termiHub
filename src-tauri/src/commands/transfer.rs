@@ -10,7 +10,7 @@ use tauri::{Manager, State};
 use tracing::debug;
 
 use crate::files::transfer::persist::{
-    FolderPasteEndpoint, FolderPasteOperation, PersistedFolderPaste,
+    FolderPasteEndpoint, FolderPasteOperation, PersistedAgentTarget, PersistedFolderPaste,
 };
 use crate::files::transfer::remote_copy::RemoteCopyEndpoint;
 use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
@@ -119,27 +119,52 @@ pub async fn transfer_retry(
 }
 
 /// Resolve a session to the end of a remote-to-remote copy it can be: SFTP
-/// first, then Docker. A session that is neither (FTP, a remote agent, or an
-/// unknown session) surfaces the SFTP "not supported" error, so the caller
-/// keeps the byte-based fallback.
+/// first, then Docker, then an agent-hosted session that passes the ranged
+/// probe (#4115). A session that is none of them (FTP, an agent without
+/// `fileRanges`, or an unknown session) surfaces the SFTP "not supported"
+/// error, so the caller keeps the byte-based fallback.
 async fn resolve_copy_endpoint(
     manager: &SessionManager,
     session_id: &str,
-) -> Result<RemoteCopyEndpoint, TerminalError> {
+) -> Result<CopyEnd, TerminalError> {
     let sftp_err = match manager.sftp_transfer_browser(session_id).await {
-        Ok(browser) => return Ok(RemoteCopyEndpoint::Sftp(browser)),
+        Ok(browser) => return Ok(CopyEnd::plain(RemoteCopyEndpoint::Sftp(browser))),
         Err(e) => e,
     };
-    match manager.docker_transfer_target(session_id).await {
-        Ok(target) => Ok(RemoteCopyEndpoint::Docker(target)),
+    if let Ok(target) = manager.docker_transfer_target(session_id).await {
+        return Ok(CopyEnd::plain(RemoteCopyEndpoint::Docker(target)));
+    }
+    match manager.ranged_transfer_target(session_id).await {
+        Ok(proxy) => Ok(CopyEnd {
+            agent: Some(proxy.agent_session_identity().to_persisted()),
+            endpoint: RemoteCopyEndpoint::Ranged(proxy),
+        }),
         Err(_) => Err(sftp_err),
+    }
+}
+
+/// A resolved end of a remote-to-remote copy, with the identity of the
+/// agent-hosted session behind a ranged end (#4115) — what the persisted
+/// record keeps so a relaunch finds that session again.
+struct CopyEnd {
+    endpoint: RemoteCopyEndpoint,
+    agent: Option<PersistedAgentTarget>,
+}
+
+impl CopyEnd {
+    fn plain(endpoint: RemoteCopyEndpoint) -> Self {
+        Self {
+            endpoint,
+            agent: None,
+        }
     }
 }
 
 /// Report whether a session can be either end of a streamed remote-to-remote
 /// copy ([`session_copy_remote`]): `true` for an SFTP- or Docker-backed
-/// session, `false` otherwise (FTP, remote agents, unknown sessions), which
-/// keep the frontend's byte-based read/write fallback (#3586).
+/// session and for an agent-hosted session whose agent serves ranged slices
+/// (#4115), `false` otherwise (FTP, agents without `fileRanges`, unknown
+/// sessions), which keep the frontend's byte-based read/write fallback (#3586).
 #[tauri::command]
 pub async fn session_supports_remote_copy(
     session_id: String,
@@ -153,8 +178,9 @@ pub async fn session_supports_remote_copy(
 /// PROD-0013; Docker ends since #3586).
 ///
 /// Enqueues ONE rich transfer that reads from `src_session` and writes to
-/// `dst_session` — each an SFTP session (a dedicated channel per attempt) or a
-/// Docker session (a streaming `docker exec` per attempt) — so a remote→remote
+/// `dst_session` — each an SFTP session (a dedicated channel per attempt), a
+/// Docker session (a streaming `docker exec` per attempt) or an agent-hosted
+/// session moved in 256 KiB ranged slices (#4115) — so a remote→remote
 /// paste surfaces as a single Transfer Queue row instead of a whole-file
 /// in-memory round trip. Pause/resume, auto-retry and byte-verified offset
 /// resume all work; progress is measured on the write side and cancel removes
@@ -210,8 +236,8 @@ pub async fn session_copy_remote(
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
         transfer::remote_copy::run_remote_copy(
-            src,
-            dst,
+            src.endpoint,
+            dst.endpoint,
             src_path,
             dst_path,
             handle,
@@ -229,14 +255,15 @@ pub async fn session_copy_remote(
 /// only (references and paths, never credentials), so a restart rehydrates it
 /// as paused. It has no local endpoint, so `local_path` is None; its source
 /// session reference + path are kept so it can relaunch (#3206), with the saved
-/// connections behind SFTP ends (#3876) and the container ids of Docker ends
-/// (#3586), so each end re-attaches the way it connected.
+/// connections behind SFTP ends (#3876), the container ids of Docker ends
+/// (#3586) and the session identities of agent-hosted ends (#4115), so each
+/// end re-attaches the way it connected.
 fn record_remote_copy(
     pm: &TransferPersistenceManager,
     manager: &SessionManager,
     transfer_id: &str,
-    (src_session, src_path, src): (&str, &str, &RemoteCopyEndpoint),
-    (dst_session, dst_path, dst): (&str, &str, &RemoteCopyEndpoint),
+    (src_session, src_path, src): (&str, &str, &CopyEnd),
+    (dst_session, dst_path, dst): (&str, &str, &CopyEnd),
     file_name: &str,
 ) {
     use crate::files::transfer::TransferDirection;
@@ -255,14 +282,18 @@ fn record_remote_copy(
         src_path,
         manager.saved_connection_of(src_session).as_deref(),
     );
-    if let RemoteCopyEndpoint::Docker(target) = src {
+    if let RemoteCopyEndpoint::Docker(target) = &src.endpoint {
         pm.record_remote_source_container(transfer_id, target.container_id());
     }
-    match dst {
-        RemoteCopyEndpoint::Docker(target) => {
+    if let Some(agent) = &src.agent {
+        pm.record_remote_source_agent(transfer_id, agent.clone());
+    }
+    match (&dst.endpoint, &dst.agent) {
+        (RemoteCopyEndpoint::Docker(target), _) => {
             pm.record_docker_target(transfer_id, target.container_id());
         }
-        RemoteCopyEndpoint::Sftp(_) => {
+        (_, Some(agent)) => pm.record_agent_target(transfer_id, agent.clone()),
+        _ => {
             crate::files::transfer::relaunch_session::record_saved_connection(
                 pm,
                 manager,

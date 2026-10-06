@@ -14,7 +14,8 @@ where
     User: UserDetail + 'static,
 {
     pub async fn listen_proxy_protocol(mut self) -> std::result::Result<(), ServerError> {
-        let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
+        // termiHub fork delta (armaxri/termiHub#4100).
+        let listener = crate::server::ftpserver::bind_control_listener(self.prebound.take(), self.bind_address).await?;
 
         // all sessions use this callback to request for a passive listening port.
         let (switchboard_msg_tx, mut switchboard_msg_rx): (SwitchboardSender<Storage, User>, SwitchboardReceiver<Storage, User>) = channel(1);
@@ -27,7 +28,15 @@ where
             // - channel messages originating from PASV, to handle the passive listening port
 
             tokio::select! {
-                Ok((tcp_stream, _socket_addr)) = listener.accept() => {
+                Ok((tcp_stream, socket_addr)) = listener.accept() => {
+                    // termiHub fork delta (armaxri/termiHub#4100).
+                    // Refuse peers the filter does not allow before reading anything, so their
+                    // PROXY header is never trusted.
+                    if let Some(filter) = &self.peer_filter && !filter(socket_addr) {
+                        slog::warn!(self.logger, "Refused proxy connection from {:?}: not allowed by the peer filter", socket_addr);
+                        drop(tcp_stream);
+                        continue;
+                    }
                     let socket_addr = tcp_stream.peer_addr();
                     slog::info!(self.logger, "Incoming proxy connection from {:?}", socket_addr);
                     spawn_proxy_header_parsing(self.logger.clone(), tcp_stream, proxy_msg_tx.clone());

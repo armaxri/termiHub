@@ -212,7 +212,7 @@
       "path": "vendor/libunftp",
       "crate": "libunftp",
       "consumed_by": "Cargo.toml [patch.crates-io] (excluded from the workspace)",
-      "parses": "PROXY protocol v1 headers and FTP control/data traffic on the embedded FTP server's per-session loopback listeners",
+      "parses": "PROXY protocol v1 headers and FTP control/data traffic on the embedded FTP server's per-session loopback listeners (relay-opened connections only, #4100)",
       "upstream_repo": "https://github.com/bolcom/libunftp",
       "upstream_branch": "master",
       "upstream_path": "",
@@ -226,6 +226,11 @@
           "summary": "read_proxy_header returns UnexpectedEof when peek yields Ok(0), instead of spinning forever (one CPU core per connection) on a connection closed before its PROXY header",
           "upstream_status": "Not yet reported upstream (no upstream issue/PR covers it); bug report, patch and PR text prepared in vendor/libunftp/UPSTREAM.md for a maintainer to submit",
           "refs": ["https://github.com/armaxri/termiHub/issues/4099"]
+        },
+        {
+          "summary": "Server::listen_with_listener (serve on a caller-bound TcpListener, all listener modes) and ServerBuilder::proxy_protocol_peer_filter (PROXY-mode accept filter on the peer address, applied before the header is read), so termiHub's relay is the only process its loopback listener serves",
+          "upstream_status": "Not proposed upstream yet; API proposal (issue text + patch) prepared in vendor/libunftp/UPSTREAM.md for a maintainer to submit",
+          "refs": ["https://github.com/armaxri/termiHub/issues/4100"]
         }
       ],
       "watch": {

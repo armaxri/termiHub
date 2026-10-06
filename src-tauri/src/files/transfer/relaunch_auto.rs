@@ -13,7 +13,10 @@
 //! A relaunched **agent-hosted** transfer whose agent session is not live yet
 //! (#4114, [`super::relaunch_agent`]) waits the same way, for a session opened
 //! on its agent from its saved definition ([`WaitTrigger::AgentSessionOpened`],
-//! from `create_connection`).
+//! from `create_connection`). A remote-to-remote copy with **two** agent ends
+//! waits on both identities (#4158): a session opening for either end retries
+//! it, and the relaunch's resolution of both ends decides — if the other end
+//! is still not live, the row pauses again and keeps waiting on both.
 //!
 //! The resume goes through the normal resume path
 //! ([`super::relaunch::resume_or_relaunch`]) inside the unattended scope
@@ -34,7 +37,7 @@ use tauri::{AppHandle, Manager};
 use termihub_core::backends::ssh::unattended::run_unattended;
 use tracing::debug;
 
-use super::persist::PersistedTransfer;
+use super::persist::{PersistedAgentTarget, PersistedTransfer};
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
 use super::relaunch_credentials::RelaunchBlocked;
@@ -60,12 +63,35 @@ pub(crate) enum WaitTrigger {
 enum WaitFor {
     /// One of these saved connections opened, or the store unlocked.
     Connections(Vec<String>),
-    /// A session on this agent, for this definition when the transfer's
-    /// session had one (#4114).
-    AgentSession {
-        agent_id: String,
-        definition_id: Option<String>,
-    },
+    /// A session on one of these agent ends (#4114): one for an agent-hosted
+    /// transfer, one or two for a remote-to-remote copy (#4115, #4158).
+    AgentSession(Vec<AgentEnd>),
+}
+
+/// One agent end a waiting transfer needs: a session on this agent, for this
+/// definition when the transfer's session had one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentEnd {
+    agent_id: String,
+    definition_id: Option<String>,
+}
+
+impl AgentEnd {
+    fn from_persisted(agent: &PersistedAgentTarget) -> Self {
+        Self {
+            agent_id: agent.agent_id.clone(),
+            definition_id: agent.definition_id.clone(),
+        }
+    }
+
+    /// Whether a session opened on `agent_id` from `definition_id` may be
+    /// this end. An ad-hoc session (no definition) can only come back as
+    /// itself, so any session on its agent is worth a retry; the relaunch's
+    /// identity check still decides.
+    fn matches(&self, agent_id: &str, definition_id: &Option<String>) -> bool {
+        self.agent_id == agent_id
+            && (self.definition_id.is_none() || &self.definition_id == definition_id)
+    }
 }
 
 /// The transfers paused waiting to resume on their own, by transfer id, each
@@ -109,21 +135,12 @@ fn matches_trigger(wait: &WaitFor, trigger: &WaitTrigger) -> bool {
             connections.iter().any(|c| c == id)
         }
         (
-            WaitFor::AgentSession {
+            WaitFor::AgentSession(ends),
+            WaitTrigger::AgentSessionOpened {
                 agent_id,
                 definition_id,
             },
-            WaitTrigger::AgentSessionOpened {
-                agent_id: opened_agent,
-                definition_id: opened_definition,
-            },
-        ) => {
-            // An ad-hoc session (no definition) can only come back as itself,
-            // so any session on its agent is worth a retry; the relaunch's
-            // identity check still decides.
-            agent_id == opened_agent
-                && (definition_id.is_none() || definition_id == opened_definition)
-        }
+        ) => ends.iter().any(|end| end.matches(agent_id, definition_id)),
         _ => false,
     }
 }
@@ -163,13 +180,27 @@ pub(crate) fn note_blocked(
             }
             WaitFor::Connections(connections)
         }
-        RelaunchBlocked::AgentSessionUnavailable => match &record.agent {
-            Some(agent) => WaitFor::AgentSession {
-                agent_id: agent.agent_id.clone(),
-                definition_id: agent.definition_id.clone(),
-            },
-            None => return,
-        },
+        // A remote-to-remote copy may be waiting on its source's agent too
+        // (#4115). With two agent ends it waits on both (#4158): the relaunch
+        // does not say which end was missing, and whichever one opens, the
+        // retry re-resolves both and pauses again if the other is still down.
+        RelaunchBlocked::AgentSessionUnavailable => {
+            let source = record
+                .remote_source
+                .as_ref()
+                .and_then(|source| source.agent.as_ref());
+            let mut ends: Vec<AgentEnd> = record
+                .agent
+                .iter()
+                .chain(source)
+                .map(AgentEnd::from_persisted)
+                .collect();
+            ends.dedup();
+            if ends.is_empty() {
+                return;
+            }
+            WaitFor::AgentSession(ends)
+        }
         RelaunchBlocked::Failed(_) => return,
     };
     waits.lock().insert(record.transfer_id.clone(), wait);

@@ -34,6 +34,11 @@
 //! * **Data source check.** The relay itself only forwards a data connection
 //!   whose source IP matches the control connection's, and the PROXY header
 //!   lets libunftp's switchboard check it again.
+//! * **Relay-only backend.** libunftp serves on a loopback listener the
+//!   relay bound and hands over, and accepts only connections from a socket
+//!   the relay bound and recorded ([`BackendDialer`]). A local process that
+//!   connects to the loopback port directly is closed before its PROXY header
+//!   is read, and logged (#4100).
 //!
 //! The relay inspects plaintext. FTPS is not enabled today; enabling it later
 //! means terminating TLS in the relay (and re-originating plaintext, or TLS, to
@@ -41,15 +46,16 @@
 //! line boundaries the cap needs. See `docs/architecture.md`, "Embedded FTP Server
 //! Front Relay".
 
+use std::collections::HashSet;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::RangeInclusive;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::task::JoinSet;
 
 use super::activity::{AccessRecord, ServerActivity};
@@ -224,6 +230,88 @@ impl ReplyTracker {
     }
 }
 
+// ─── Relay-only backend connections ───────────────────────────────────────────
+
+/// Opens the relay's connections to one session's libunftp listener and tells
+/// that listener which connections are the relay's (#4100).
+///
+/// libunftp trusts the PROXY header each connection starts with, and its
+/// loopback port is reachable by every local process. So the relay binds each
+/// outbound socket itself, records the local address before connecting, and
+/// libunftp's peer filter ([`Self::peer_filter`]) serves only accepted
+/// connections from a recorded address — each one once. Every other
+/// connection is closed before libunftp reads a byte, so a local process
+/// cannot spoof a client IP or passive-data key, or skip the control-line cap.
+///
+/// The recorded address cannot be reused by another process while the relay's
+/// socket holds it: the socket is bound without `SO_REUSEADDR`/`SO_REUSEPORT`.
+#[derive(Clone)]
+pub(super) struct BackendDialer {
+    backend: SocketAddr,
+    expected: Arc<Mutex<HashSet<SocketAddr>>>,
+    activity: Arc<ServerActivity>,
+}
+
+impl BackendDialer {
+    pub(super) fn new(backend: SocketAddr, activity: Arc<ServerActivity>) -> Self {
+        Self {
+            backend,
+            expected: Arc::default(),
+            activity,
+        }
+    }
+
+    /// The libunftp listener this dialer connects to.
+    #[cfg(test)]
+    pub(super) fn backend(&self) -> SocketAddr {
+        self.backend
+    }
+
+    /// Connect to the backend from a socket the relay bound, after recording
+    /// its local address for [`Self::peer_filter`].
+    pub(super) async fn connect(&self) -> io::Result<TcpStream> {
+        let socket = if self.backend.is_ipv4() {
+            TcpSocket::new_v4()?
+        } else {
+            TcpSocket::new_v6()?
+        };
+        socket.bind(SocketAddr::new(self.backend.ip(), 0))?;
+        let local = socket.local_addr()?;
+        lock(&self.expected).insert(local);
+        let connected = socket.connect(self.backend).await;
+        if connected.is_err() {
+            lock(&self.expected).remove(&local);
+        }
+        connected
+    }
+
+    /// The accept filter for libunftp's PROXY-mode listener: allows a peer
+    /// once if the relay recorded it, and logs and refuses every other one.
+    pub(super) fn peer_filter(&self) -> impl Fn(SocketAddr) -> bool + Send + Sync + 'static {
+        let expected = Arc::clone(&self.expected);
+        let activity = Arc::clone(&self.activity);
+        move |peer| {
+            if lock(&expected).remove(&peer) {
+                return true;
+            }
+            tracing::warn!(%peer, "FTP backend connection not opened by the relay refused");
+            activity.record(
+                AccessRecord::new("CONTROL", "rejected", false)
+                    .client(peer.ip())
+                    .detail("loopback backend connection not opened by the relay"),
+            );
+            false
+        }
+    }
+}
+
+/// Lock the expected-peer set. Every critical section is a single set
+/// operation, so a poisoned lock still holds a consistent set.
+fn lock(set: &Mutex<HashSet<SocketAddr>>) -> std::sync::MutexGuard<'_, HashSet<SocketAddr>> {
+    set.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 // ─── Session relay ────────────────────────────────────────────────────────────
 
 /// One relayed FTP control connection and its passive data connections.
@@ -235,8 +323,8 @@ pub(super) struct RelaySession {
     pub peer: SocketAddr,
     /// A connection to the session's libunftp proxy-mode listener.
     pub upstream: TcpStream,
-    /// That libunftp listener, which data connections are forwarded to.
-    pub backend: SocketAddr,
+    /// Opens the data connections to that libunftp listener (#4100).
+    pub dialer: BackendDialer,
     /// The public control port (libunftp's `external_control_port`).
     pub public_port: u16,
     /// The range passive listeners are bound in.
@@ -264,7 +352,7 @@ impl RelaySession {
         let ctx = DataContext {
             client_ip: self.peer.ip().to_canonical(),
             local_ip: local.ip().to_canonical(),
-            backend: self.backend,
+            dialer: self.dialer,
             passive_ports: self.passive_ports,
         };
         let (mut client_rx, mut client_tx) = self.client.into_split();
@@ -341,10 +429,10 @@ impl RelaySession {
                 }
                 Some(joined) = listeners.join_next(), if !listeners.is_empty() => {
                     if let Ok(Some(accepted)) = joined {
-                        let backend = ctx.backend;
+                        let dialer = ctx.dialer.clone();
                         let local_ip = ctx.local_ip;
                         forwarders.spawn(async move {
-                            if let Err(e) = forward_data(accepted, local_ip, backend).await {
+                            if let Err(e) = forward_data(accepted, local_ip, &dialer).await {
                                 tracing::debug!(error = %e, "FTP data relay ended with an error");
                             }
                         });
@@ -362,7 +450,7 @@ impl RelaySession {
 struct DataContext {
     client_ip: IpAddr,
     local_ip: IpAddr,
-    backend: SocketAddr,
+    dialer: BackendDialer,
     passive_ports: RangeInclusive<u16>,
 }
 
@@ -454,14 +542,14 @@ async fn accept_data(
 async fn forward_data(
     accepted: AcceptedData,
     local_ip: IpAddr,
-    backend: SocketAddr,
+    dialer: &BackendDialer,
 ) -> io::Result<()> {
     let AcceptedData {
         mut stream,
         from,
         reserved_port,
     } = accepted;
-    let mut upstream = TcpStream::connect(backend).await?;
+    let mut upstream = dialer.connect().await?;
     let header = proxy_v1_header(from, SocketAddr::new(local_ip, reserved_port));
     upstream.write_all(header.as_bytes()).await?;
     tokio::io::copy_bidirectional(&mut stream, &mut upstream).await?;
