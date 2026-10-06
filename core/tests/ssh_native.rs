@@ -243,12 +243,30 @@ async fn native_05_interactive_shell_session_round_trips() {
 }
 
 /// The login shell the fixture runs: Win32-OpenSSH's default `cmd.exe` on
-/// Windows (the lane leaves `DefaultShell` unset), a POSIX shell elsewhere.
-const FIXTURE_SHELL: RemoteShell = if cfg!(windows) {
-    RemoteShell::Cmd
-} else {
-    RemoteShell::Posix
-};
+/// Windows (the lane leaves `DefaultShell` unset), a POSIX shell elsewhere —
+/// or `pwsh` when `TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=pwsh` says the fixture
+/// was set up with a PowerShell login shell (#4148; a local check, e.g. an
+/// sshd whose `ForceCommand` wraps `pwsh -l` — run only `native_05b..05d`).
+fn fixture_shell() -> RemoteShell {
+    if cfg!(windows) {
+        return RemoteShell::Cmd;
+    }
+    match std::env::var("TERMIHUB_NATIVE_SSHD_LOGIN_SHELL").as_deref() {
+        Ok("pwsh") => RemoteShell::UnixPowerShell,
+        _ => RemoteShell::Posix,
+    }
+}
+
+/// [`SHELL_LINE`] / [`SHELL_EXPECT`] in the fixture login shell's syntax.
+fn first_command(shell: RemoteShell) -> (&'static str, &'static str) {
+    match shell {
+        RemoteShell::UnixPowerShell => (
+            "Write-Output ('native-' + (40+2) + '-ok')\r",
+            "native-42-ok",
+        ),
+        _ => (SHELL_LINE, SHELL_EXPECT),
+    }
+}
 
 #[tokio::test]
 async fn native_05b_remote_shell_probe_detects_the_login_shell() {
@@ -257,32 +275,27 @@ async fn native_05b_remote_shell_probe_detects_the_login_shell() {
     let (session, _) = connect_and_authenticate(&sshd.key_config())
         .await
         .expect("key auth with the fixture client key should succeed");
-    assert_eq!(detect_remote_shell(&session).await, FIXTURE_SHELL);
+    assert_eq!(detect_remote_shell(&session).await, fixture_shell());
 }
 
-/// #4143: with shell integration ON (the default) the first typed command
-/// must run — the setup line may never swallow it — and the host's terminal
-/// shows only setup the shell understands.
-#[tokio::test]
-async fn native_05c_first_command_runs_with_shell_integration_on() {
-    let sshd = require_native_sshd!();
-
-    let mut ssh = Ssh::new();
-    let mut settings = sshd.key_settings();
-    settings["shellIntegration"] = serde_json::Value::Bool(true);
-    ssh.connect(settings).await.expect("shell session connects");
+/// Type `line` into `ssh` and collect its output until `done` holds for it
+/// (or 30 s pass); returns whether it did, and the output.
+///
+/// Plays the terminal's part for cursor-position queries (`ESC [6n`), as the
+/// app's xterm does: PSReadLine on Unix sends them and waits for the reply,
+/// so a pwsh login shell stalls without one. bash / zsh / cmd.exe never ask.
+async fn type_and_wait(ssh: &mut Ssh, line: &str, done: impl Fn(&str) -> bool) -> (bool, String) {
     let mut rx = ssh.subscribe_output();
-
-    ssh.write(SHELL_LINE.as_bytes())
-        .expect("write to the shell");
-    // POSIX: the OSC 7 hook is live once a prompt after the command prints it.
-    let want_osc7 = FIXTURE_SHELL == RemoteShell::Posix;
+    ssh.write(line.as_bytes()).expect("write to the shell");
     let mut seen = String::new();
-    let done = tokio::time::timeout(Duration::from_secs(30), async {
+    let ok = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(chunk) = rx.recv().await {
-            seen.push_str(&String::from_utf8_lossy(&chunk));
-            let ran = seen.contains(SHELL_EXPECT);
-            if ran && (!want_osc7 || seen.contains("\x1b]7;file://")) {
+            let text = String::from_utf8_lossy(&chunk);
+            for _ in 0..text.matches("\x1b[6n").count() {
+                let _ = ssh.write(b"\x1b[1;1R");
+            }
+            seen.push_str(&text);
+            if done(&seen) {
                 return true;
             }
         }
@@ -290,14 +303,97 @@ async fn native_05c_first_command_runs_with_shell_integration_on() {
     })
     .await
     .unwrap_or(false);
+    (ok, seen)
+}
+
+/// #4143 / #4148: with shell integration ON (the default) the first typed
+/// command must run — the setup line may never swallow it — and the host's
+/// terminal shows only setup the shell understands.
+#[tokio::test]
+async fn native_05c_first_command_runs_with_shell_integration_on() {
+    let sshd = require_native_sshd!();
+    let shell = fixture_shell();
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    ssh.connect(settings).await.expect("shell session connects");
+
+    // POSIX / pwsh: the OSC 7 hook is live once a prompt after the command
+    // prints it.
+    let want_osc7 = shell != RemoteShell::Cmd;
+    let (line, expect) = first_command(shell);
+    let (done, seen) = type_and_wait(&mut ssh, line, |seen| {
+        seen.contains(expect) && (!want_osc7 || seen.contains("\x1b]7;file://"))
+    })
+    .await;
     assert!(
         done,
         "the first command did not run (or no OSC 7 followed); output so far: {seen:?}"
     );
-    if FIXTURE_SHELL == RemoteShell::Cmd {
+    if shell != RemoteShell::Posix {
         assert!(
-            !seen.contains("PROMPT_COMMAND") && !seen.contains("[termiHub]"),
-            "cmd.exe must not be sent the POSIX setup; output: {seen:?}"
+            !seen.contains("PROMPT_COMMAND"),
+            "{shell:?} must not be sent the POSIX setup; output: {seen:?}"
+        );
+    }
+    if shell == RemoteShell::Cmd {
+        assert!(
+            !seen.contains("[termiHub]"),
+            "cmd.exe got a setup: {seen:?}"
+        );
+    }
+    if want_osc7 {
+        // #4148: pwsh on Unix once sent `file:////home/me` (no host, an extra
+        // slash). The POSIX hook sends `file:///path` (empty host, valid); the
+        // PowerShell one always names the host.
+        assert!(!seen.contains("file:////"), "malformed OSC 7: {seen:?}");
+        if shell == RemoteShell::UnixPowerShell {
+            let at = seen.find("\x1b]7;file://").unwrap() + "\x1b]7;file://".len();
+            assert!(
+                !seen[at..].starts_with('/'),
+                "OSC 7 without a host: {seen:?}"
+            );
+        }
+    }
+
+    ssh.disconnect().await.expect("disconnect cleanly");
+}
+
+/// #4147: configured environment variables reach the interactive shell
+/// through the typed fallback (the fixture's sshd accepts no `AcceptEnv`
+/// names), in the login shell's own syntax — and the first command after it
+/// still runs. The value carries quotes and `$` to prove the quoting.
+#[tokio::test]
+async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
+    let sshd = require_native_sshd!();
+    let shell = fixture_shell();
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    // Every shell takes this literally (cmd.exe would skip a `%` or `"`).
+    let value = "it's a $HOME value";
+    settings["env"] = serde_json::json!({ "TH_4147_VAR": value });
+    ssh.connect(settings).await.expect("shell session connects");
+
+    let line = match shell {
+        RemoteShell::Cmd => "echo [%TH_4147_VAR%]\r",
+        RemoteShell::UnixPowerShell => "Write-Output ('[' + $env:TH_4147_VAR + ']')\r",
+        _ => "echo \"[$TH_4147_VAR]\"\n",
+    };
+    // Neither the setup line's echo nor the command's echo contains this.
+    let expect = format!("[{value}]");
+    let (done, seen) = type_and_wait(&mut ssh, line, |seen| seen.contains(&expect)).await;
+    assert!(
+        done,
+        "{shell:?}: the env var did not reach the shell (or the command did not run); \
+         output so far: {seen:?}"
+    );
+    if shell != RemoteShell::Posix {
+        assert!(
+            !seen.contains("export "),
+            "{shell:?} got the POSIX export: {seen:?}"
         );
     }
 
