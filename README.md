@@ -33,7 +33,8 @@ Download the latest release for your platform from the [GitHub Releases page](ht
 ### Windows x64
 
 1. Download `termiHub-0.1.0-windows-x64.msi`.
-2. Run the installer and follow the prompts.
+2. Run the installer and follow the prompts. No Visual C++ Redistributable is
+   needed: the runtime is linked into the app.
 3. SmartScreen may warn about an unrecognized app. Click **More info → Run anyway** to continue.
 
 ### Linux x64
