@@ -988,6 +988,13 @@ class SshServerControl:
         out = self._exec(["sh", "-c", 'if [ -e "$1" ]; then echo yes; else echo no; fi', "sh", path])
         return out.strip() == "yes"
 
+    def file_size(self, path: str) -> int | None:
+        """The size of ``path`` in bytes inside the container, ``None`` if absent."""
+        out = self._exec(
+            ["sh", "-c", 'if [ -f "$1" ]; then wc -c < "$1"; else echo none; fi', "sh", path]
+        ).strip()
+        return None if out == "none" else int(out)
+
     def write_file(self, path: str, content: str, *, user: str) -> None:
         """Write ``content`` to ``path`` inside the container **as** ``user``.
 
