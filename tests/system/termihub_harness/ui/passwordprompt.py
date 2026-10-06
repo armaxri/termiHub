@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from .. import deadlines
+from .. import deadlines, timing
 from ..bridge import BridgeError
 from ..fixtures import SSH_PASSWORD
 from .base import HarnessMixin
@@ -50,20 +50,29 @@ class PasswordPromptUi(HarnessMixin):
         completed without a prompt). Returns ``True`` when it accepted one.
         """
         button = "ssh-hostkey-accept-remember" if remember else "ssh-hostkey-accept-once"
-        deadline = time.monotonic() + deadlines.ui_budget(timeout)  # UI poll loop (#3660)
+        # Its own UI poll loop (not SystemTest.wait), so it records its own timing
+        # sample under a named op and takes that op's deadline (#4216). Both
+        # outcomes (prompt accepted / connection already through) count as done.
+        op = deadlines.HOST_KEY_PROMPT_OP
+        budget = deadlines.ui_budget(timeout, op)
+        started = time.monotonic()
+        deadline = started + budget
         while time.monotonic() < deadline:
             try:
                 if self.driver.exists("ssh-hostkey-prompt"):
                     self.driver.click(button)
+                    timing.record(op, time.monotonic() - started, budget)
                     return True
                 # No prompt and the terminal already shows a shell prompt => the
                 # host was trusted, the handshake completed, nothing to accept.
                 if self.driver.read_terminal().strip():
+                    timing.record(op, time.monotonic() - started, budget)
                     return False
             except BridgeError:
                 # No active terminal yet / modal mounting — treat as "not ready".
                 pass
             time.sleep(0.25)
+        timing.record(op, time.monotonic() - started, budget, timed_out=True)
         return False
 
     def handle_password_prompt(self, password: str = SSH_PASSWORD) -> None:
