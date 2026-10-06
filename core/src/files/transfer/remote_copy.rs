@@ -2,9 +2,10 @@
 //! another **through the desktop**, with no local staging file, as ONE tracked
 //! transfer (product feature PROD-0013, generalised by #3586).
 //!
-//! Either end can be an SFTP session (a dedicated channel per attempt) or a
-//! Docker session (a streaming `docker exec` per attempt), so SFTP→SFTP,
-//! Docker→Docker, SFTP→Docker and Docker→SFTP all run the same way. The copy
+//! Either end can be an SFTP session (a dedicated channel per attempt), a
+//! Docker session (a streaming `docker exec` per attempt) or a ranged session
+//! (an agent-hosted session moved in 256 KiB offset-addressed slices, #4115),
+//! so any pairing of them — including agent→agent — runs the same way. The copy
 //! rides the shared attempt orchestration of the other offset-resuming
 //! executors (`super::attempt`): a per-session slot, throttled progress + ETA,
 //! pause/resume, cancel (which removes the partial destination), auto-retry
@@ -39,6 +40,7 @@ use super::attempt::{
     rehydrate_start_offset, settle_attempt, stop_reason, AttemptOutcome, AttemptsResult,
     ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
+use super::ranged::RangedTransferTarget;
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
 use super::{ProgressSink, SourceFingerprint, TransferPhase, CHUNK_SIZE};
@@ -83,6 +85,10 @@ pub enum RemoteCopyEndpoint {
     /// A Docker-backed session: each attempt streams through its own exec.
     #[cfg(feature = "docker")]
     Docker(DockerTransferTarget),
+    /// A session reached through offset-addressed slices — an agent-hosted
+    /// session whose agent serves `fileRanges` (#4115): one 256 KiB
+    /// `read_range` / `write_range` request per chunk.
+    Ranged(Arc<dyn RangedTransferTarget>),
 }
 
 impl RemoteCopyEndpoint {
@@ -92,6 +98,7 @@ impl RemoteCopyEndpoint {
             RemoteCopyEndpoint::Sftp(browser) => Arc::new(endpoints::SftpEndpoint::new(browser)),
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => Arc::new(endpoints::DockerEndpoint::new(target)),
+            RemoteCopyEndpoint::Ranged(target) => Arc::new(endpoints::RangedEndpoint::new(target)),
         }
     }
 }
@@ -103,6 +110,7 @@ impl std::fmt::Debug for RemoteCopyEndpoint {
             RemoteCopyEndpoint::Sftp(_) => f.write_str("Sftp"),
             #[cfg(feature = "docker")]
             RemoteCopyEndpoint::Docker(target) => f.debug_tuple("Docker").field(target).finish(),
+            RemoteCopyEndpoint::Ranged(_) => f.write_str("Ranged"),
         }
     }
 }
@@ -480,8 +488,8 @@ pub(crate) async fn run_copy(
 ///
 /// Streams `src_path` on `src` directly into `dst_path` on `dst` **through the
 /// desktop** — no local staging file — as ONE tracked transfer. Either end may
-/// be SFTP or Docker. It shares the slot orchestration, throttled progress +
-/// ETA, pause/resume, auto-retry with backoff, and byte-verified offset resume
+/// be SFTP, Docker or ranged (an agent-hosted session, #4115). It shares the
+/// slot orchestration, throttled progress + ETA, pause/resume, auto-retry with backoff, and byte-verified offset resume
 /// of the other executors, so the generic `transfer_pause` / `resume` /
 /// `retry` / `cancel` commands work for it too. Progress is measured on the
 /// write (destination) side; cancel removes the partial destination.

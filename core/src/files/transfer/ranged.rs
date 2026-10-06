@@ -83,8 +83,9 @@ fn mtime_token(modified: &str) -> Option<u64> {
     Some(hash)
 }
 
-/// Size + mtime of a remote file, or `None` when absent / un-stattable.
-async fn remote_fingerprint(
+/// Size + mtime of a remote file, or `None` when absent / un-stattable. Also
+/// fingerprints a ranged end of a remote→remote copy (#4115).
+pub(super) async fn remote_fingerprint(
     target: &dyn RangedTransferTarget,
     path: &str,
 ) -> Option<SourceFingerprint> {
