@@ -5,9 +5,12 @@
 //!   unanswered for [`WatchdogConfig::hang_timeout`] the runner is "not
 //!   responding" and is killed (counted as a crash). The runner answers pings
 //!   on the thread that runs every plugin call, so a plugin stuck in
-//!   `write_input` / `resize` / `close` stops the pongs. A request with its own
-//!   deadline (`CreateSession`, 30 s: a plugin may connect to a device first)
-//!   suspends the verdict until it completes.
+//!   `write_input` / `resize` / `close` stops the pongs. (The runner's reader
+//!   thread answers bridge traffic itself but queues pings to that request
+//!   thread on purpose, #4183.) A request with its own deadline
+//!   (`CreateSession`, 30 s: a plugin may connect to a device first; a bridge
+//!   request, the policy's connect timeout) suspends the verdict until it
+//!   completes.
 //! * **Memory:** with [`WatchdogConfig::rss_limit`] set, the runner's resident
 //!   size is polled every [`WatchdogConfig::rss_poll_interval`] and the runner
 //!   is killed past it (out of memory).
@@ -145,7 +148,10 @@ fn end(plugin: &SandboxedPlugin, cause: RunnerExitCause) {
 /// hang when the outstanding one is overdue and no call with its own deadline
 /// is in flight.
 fn heartbeat(shared: &Shared, now: Instant, next_ping: Instant, hang_timeout: Duration) -> Beat {
-    let calls_in_flight = shared.calls_in_flight.load(Ordering::SeqCst) > 0;
+    // A `CreateSession` or a bridge request has its own deadline; the plugin
+    // call behind it occupies the runner's request thread, which answers pings.
+    let calls_in_flight =
+        shared.calls_in_flight.load(Ordering::SeqCst) > 0 || shared.bridge.has_in_flight();
     let mut beat = shared.heartbeat.lock().unwrap_or_else(|e| e.into_inner());
     match beat.outstanding_since {
         // A call with its own deadline is running on the runner's request

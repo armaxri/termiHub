@@ -9,13 +9,22 @@
 //! runner         load_plugin_library (digest pin, ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)
 //! ...            CreateSession / Input / Resize / Close / Cancel / Ping
+//! runner ⇄ host  BridgeRequest / BridgeReply, Stream* (any time, any thread)
 //! host → runner  Shutdown            (or EOF: the host is gone)
 //! ```
 //!
 //! The plugin sees the unchanged synchronous ABI: every `Input` / `Resize`
 //! becomes a direct `write_input` / `resize` call, and its output callback
 //! writes `Output` frames from whatever thread the plugin calls it on.
+//!
+//! After the handshake a dedicated **reader thread** owns the channel's read
+//! half. It answers bridge traffic itself (a `BridgeReply` wakes the plugin
+//! thread blocked in the bridge call, `Stream*` frames feed proxied
+//! connections) and queues every other frame for the main loop. A plugin may
+//! therefore call the bridge from inside `create_backend` or `write_input`
+//! — on the main loop's own thread — without deadlocking it (#4183).
 
+mod bridge;
 mod channel;
 mod limits;
 mod shim;
@@ -24,6 +33,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,8 +45,11 @@ use termihub_plugin_runner::ipc::{
 };
 use termihub_plugin_runner::loader::{load_plugin_library, BackendLoadOptions, PluginLibrary};
 
+use bridge::BridgeClient;
 pub(crate) use channel::Channel;
 use shim::{SessionOutput, SessionServices};
+#[cfg(unix)]
+use termihub_plugin_runner::ipc::fd::FdQueue;
 
 /// Largest plugin output chunk carried in one `Output` frame.
 pub(crate) const MAX_OUTPUT_CHUNK: usize = MAX_PAYLOAD_LEN - SESSION_ID_LEN;
@@ -72,8 +85,21 @@ struct Session {
 
 type Sessions = Arc<Mutex<HashMap<u32, Session>>>;
 
+/// Descriptors the host passes along with frames (Unix handle passing).
+#[cfg(unix)]
+pub(crate) type PassedFds = Option<FdQueue>;
+/// No handle passing on this platform yet.
+#[cfg(not(unix))]
+pub(crate) type PassedFds = ();
+
 /// Run the runner over a connected channel; returns the process exit code.
-pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
+/// `fds` receives the sockets the host passes with bridge replies.
+pub(crate) fn run<R: Read + Send + 'static>(
+    reader: R,
+    channel: Arc<Channel>,
+    #[cfg_attr(not(unix), allow(unused_variables, reason = "no handle passing yet"))]
+    fds: PassedFds,
+) -> i32 {
     // Buffered: a frame is three reads (length, kind, payload); the buffer
     // turns a burst of small frames into one syscall.
     let mut frames = FrameReader::new(std::io::BufReader::with_capacity(READ_BUFFER, reader));
@@ -116,8 +142,65 @@ pub(crate) fn run<R: Read>(reader: R, channel: Arc<Channel>) -> i32 {
     {
         return exit::PROTOCOL;
     }
-    let server = Server::new(library, configure, Arc::clone(&channel));
-    server.serve(&mut frames)
+    #[cfg(unix)]
+    let bridge = BridgeClient::new(Arc::clone(&channel), fds);
+    #[cfg(not(unix))]
+    let bridge = BridgeClient::new(Arc::clone(&channel));
+    let host_frames = spawn_reader(frames, Arc::clone(&bridge));
+    let server = Server::new(library, configure, Arc::clone(&channel), bridge);
+    server.serve(&host_frames)
+}
+
+/// What the reader thread hands the main loop.
+enum Inbound {
+    /// A host frame for the main loop.
+    Message(Message),
+    /// The host closed the channel.
+    Eof,
+    /// A protocol violation or transport failure.
+    Violation,
+}
+
+/// Start the reader thread: bridge traffic is answered in place, everything
+/// else is queued for the main loop. The queue is unbounded so the reader can
+/// always reach the next `BridgeReply`, even while the main loop is blocked
+/// inside a plugin call that waits on it; host input is bounded upstream by the
+/// host's write deadline on a stalled runner.
+fn spawn_reader<R: Read + Send + 'static>(
+    mut frames: FrameReader<std::io::BufReader<R>>,
+    bridge: Arc<BridgeClient>,
+) -> Receiver<Inbound> {
+    let (tx, rx) = channel();
+    let spawned = std::thread::Builder::new()
+        .name("plugin-runner-reader".to_owned())
+        .spawn(move || {
+            let end = loop {
+                match next_message(&mut frames) {
+                    Ok(Some(Message::BridgeReply(reply))) => bridge.on_reply(reply),
+                    Ok(Some(Message::StreamData(chunk))) => bridge.on_stream_data(chunk),
+                    Ok(Some(Message::StreamClosed(conn))) => bridge.on_stream_closed(conn),
+                    Ok(Some(Message::StreamWriteAck(ack))) => bridge.on_write_ack(ack),
+                    Ok(Some(message)) => {
+                        if tx.send(Inbound::Message(message)).is_err() {
+                            break None;
+                        }
+                    }
+                    Ok(None) => break Some(Inbound::Eof),
+                    Err(()) => break Some(Inbound::Violation),
+                }
+            };
+            bridge.fail_all();
+            if let Some(end) = end {
+                let _ = tx.send(end);
+            }
+        });
+    if spawned.is_err() {
+        // No reader: report a transport failure so the runner winds down.
+        let (tx, rx) = channel();
+        let _ = tx.send(Inbound::Violation);
+        return rx;
+    }
+    rx
 }
 
 /// Read the next valid host frame: `Ok(None)` on a clean end of stream,
@@ -148,6 +231,7 @@ fn load(configure: &Configure) -> Result<PluginLibrary, LoadFailed> {
 struct Server {
     configure: Configure,
     channel: Arc<Channel>,
+    bridge: Arc<BridgeClient>,
     sessions: Sessions,
     /// Plugin-wide cancellation (a `Cancel` without a session, or shutdown).
     plugin_shutdown: Arc<AtomicBool>,
@@ -156,17 +240,23 @@ struct Server {
 }
 
 impl Server {
-    fn new(library: PluginLibrary, configure: Configure, channel: Arc<Channel>) -> Self {
+    fn new(
+        library: PluginLibrary,
+        configure: Configure,
+        channel: Arc<Channel>,
+        bridge: Arc<BridgeClient>,
+    ) -> Self {
         Self {
             configure,
             channel,
+            bridge,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             plugin_shutdown: Arc::new(AtomicBool::new(false)),
             library,
         }
     }
 
-    fn serve<R: Read>(self, frames: &mut FrameReader<R>) -> i32 {
+    fn serve(self, frames: &Receiver<Inbound>) -> i32 {
         let stop = Arc::new(AtomicBool::new(false));
         let poller = spawn_alive_poller(
             Arc::clone(&self.sessions),
@@ -174,11 +264,11 @@ impl Server {
             Arc::clone(&stop),
         );
         let code = loop {
-            let message = match next_message(frames) {
-                Ok(Some(message)) => message,
+            let message = match frames.recv() {
+                Ok(Inbound::Message(message)) => message,
                 // The host closed the channel (or died): wind down.
-                Ok(None) => break exit::OK,
-                Err(()) => break exit::PROTOCOL,
+                Ok(Inbound::Eof) | Err(_) => break exit::OK,
+                Ok(Inbound::Violation) => break exit::PROTOCOL,
             };
             if !self.handle(message) {
                 break exit::OK;
@@ -213,12 +303,16 @@ impl Server {
                 }
                 None => self.plugin_shutdown.store(true, Ordering::SeqCst),
             },
+            // Answered here, on the thread that runs every plugin call, not on
+            // the reader thread: a plugin stuck in a call must stop the pongs
+            // so the host's hang watchdog sees it (#4184).
             Message::Ping(Heartbeat { nonce }) => {
                 let _ = self.channel.send(&Message::Pong(Heartbeat { nonce }));
             }
             Message::Shutdown => return false,
-            // `decode_from_peer` already refused every runner-sent kind, and
-            // `Configure` is only valid once, during the handshake.
+            // `decode_from_peer` already refused every runner-sent kind,
+            // `Configure` is only valid once, during the handshake, and the
+            // reader thread consumed the bridge kinds.
             _ => {}
         }
         true
@@ -230,10 +324,16 @@ impl Server {
             config_json,
             settings_json,
             data_dir,
+            connect_deadline_ms,
         } = create;
         let output = SessionOutput::new(session_id, Arc::clone(&self.channel));
         let sender = shim::output_sender(&output);
-        let bridge = shim::deny_all_bridge();
+        let connect_deadline = if connect_deadline_ms == 0 {
+            bridge::DEFAULT_CONNECT_DEADLINE
+        } else {
+            Duration::from_millis(connect_deadline_ms)
+        };
+        let bridge = bridge::session_bridge(session_id, &self.bridge, connect_deadline);
         let (result, services) = if self.library.supports(ABI_1_1) {
             let state = SessionServices::new(
                 session_id,

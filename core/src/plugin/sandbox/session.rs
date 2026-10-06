@@ -20,6 +20,7 @@ use termihub_plugin_runner::ipc::{
 
 use crate::connection::OutputSender;
 
+use super::bridge::BridgeGrant;
 use super::client::{SandboxedPlugin, CREATE_TIMEOUT, REQUEST_TIMEOUT};
 use super::exit::RunnerExitCause;
 use super::peer::Reply;
@@ -47,21 +48,27 @@ impl std::fmt::Debug for SandboxedSession {
 impl SandboxedSession {
     /// Create a session in `plugin`'s runner, waiting (bounded) for the
     /// plugin's `create_backend` result. Output is delivered to whatever
-    /// sender `output` holds at the time.
+    /// sender `output` holds at the time; the session's capability-bridge
+    /// calls are answered under `grant`.
     pub(crate) fn create(
         plugin: Arc<SandboxedPlugin>,
         config_json: &str,
         settings_json: &str,
         data_dir: &str,
         output: Arc<Mutex<Option<OutputSender>>>,
+        grant: BridgeGrant,
     ) -> Result<Self, PluginError> {
         let alive = Arc::new(AtomicBool::new(true));
         let (id, reply) = plugin.register_session(output, Arc::clone(&alive));
+        let connect_deadline_ms =
+            u64::try_from(grant.connect_deadline().as_millis()).unwrap_or(u64::MAX);
+        plugin.grant_bridge(id, grant);
         let request = Message::CreateSession(CreateSession {
             session_id: id,
             config_json: config_json.to_owned(),
             settings_json: settings_json.to_owned(),
             data_dir: data_dir.to_owned(),
+            connect_deadline_ms,
         });
         // The create has its own (long) deadline; the hang verdict waits.
         let in_flight = plugin.call_in_flight();

@@ -24,6 +24,7 @@ use crate::connection::OutputSender;
 use crate::plugin::host_context::emit_runner_log;
 use crate::plugin::log_rate_limit::PluginLogLimiter;
 
+use super::bridge::BridgeHost;
 use super::client::EXIT_TIMEOUT;
 use super::exit::RunnerExitCause;
 
@@ -105,6 +106,8 @@ pub(super) struct Shared {
     out_of_memory: AtomicBool,
     /// The stderr forwarder is done (or there is none).
     stderr_done: AtomicBool,
+    /// The capability-bridge service answering this runner's requests (#4183).
+    pub(super) bridge: Arc<BridgeHost>,
 }
 
 impl Shared {
@@ -115,6 +118,7 @@ impl Shared {
         log_limiter: Arc<PluginLogLimiter>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            bridge: BridgeHost::new(plugin_id.clone()),
             plugin_id,
             sessions: Mutex::new(HashMap::new()),
             next_session: AtomicU32::new(1),
@@ -194,7 +198,7 @@ impl Shared {
     }
 
     /// Route one runner frame. `Err` is a protocol violation.
-    fn dispatch(&self, message: Message) -> Result<(), String> {
+    pub(super) fn dispatch(&self, message: Message) -> Result<(), String> {
         match message {
             Message::Output { session_id, data } => {
                 let mut subscriber = None;
@@ -256,6 +260,13 @@ impl Shared {
                 Ok(())
             }
             Message::Pong(beat) => self.pong(beat.nonce),
+            // The capability bridge over IPC (#4183).
+            Message::BridgeRequest(request) => {
+                self.bridge.request(request, |id| self.check_session_id(id))
+            }
+            Message::BridgeRelease(conn) => self.bridge.release(conn),
+            Message::StreamAck(ack) => self.bridge.stream_ack(ack),
+            Message::StreamWrite(chunk) => self.bridge.stream_write(chunk),
             other => Err(format!(
                 "unexpected {:?} frame after the handshake",
                 other.kind()
@@ -305,6 +316,7 @@ impl Shared {
     }
 
     pub(super) fn retire(&self, id: u32) {
+        self.bridge.close_session(id);
         let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = sessions.remove(&id) {
             slot.alive.store(false, Ordering::SeqCst);
@@ -434,6 +446,7 @@ impl Shared {
     /// and every waiter is released.
     pub(super) fn mark_dead(&self, _why: &str) {
         self.dead.store(true, Ordering::SeqCst);
+        self.bridge.shutdown();
         let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         for slot in sessions.values_mut() {
             slot.alive.store(false, Ordering::SeqCst);

@@ -1000,14 +1000,20 @@ plugin-side migration callback in 0.1.
   the ABI stay exactly the same. A **debug** build of termiHub runs plugins that
   way when started with `TERMIHUB_PLUGIN_OUT_OF_PROCESS=1` (build the runner
   first with `cargo build -p termihub-plugin-runner`; it lands next to the app
-  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Until the bridge moves over
-  the process boundary, every capability-bridge request is refused there with
-  `PermissionDenied`, and Windows is not supported yet.
+  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Windows is not supported
+  yet. The capability bridge works unchanged there: the runner forwards each
+  call to termiHub, which applies the same permission, path-scope and
+  connection-policy checks and, for an approved `open_connection`, connects
+  and hands your plugin the connected socket. Large `read_file` / `write_file`
+  calls are moved in 512 KiB pieces; a `write_file` larger than that is
+  therefore not atomic. Refusals still return `PermissionDenied` (or
+  `ResourceLimit`).
   [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
-  the echo example this way. Out of process, a crash, hang or runaway allocation
-  ends only your plugin's sessions: the runner is limited to 512 MiB of address
-  space on Linux (a 1 GiB resident-size cap on macOS), 256 open descriptors and,
-  on macOS, no child processes; it must answer the host's ping within 10 s, so do
-  not block `write_input` / `resize` / `close` for long. Three crashes are
-  restarted; the fourth within 10 minutes disables the plugin until the user
-  re-enables it.
+  the echo example this way, and
+  [`core/tests/plugin_runner_bridge.rs`](../core/tests/plugin_runner_bridge.rs)
+  the bridge. Out of process, a crash, hang or runaway allocation ends only your
+  plugin's sessions: the runner is limited to 512 MiB of address space on Linux
+  (a 1 GiB resident-size cap on macOS), 256 open descriptors and, on macOS, no
+  child processes; it must answer the host's ping within 10 s, so do not block
+  `write_input` / `resize` / `close` for long. Three crashes are restarted; the
+  fourth within 10 minutes disables the plugin until the user re-enables it.

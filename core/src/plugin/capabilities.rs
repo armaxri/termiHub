@@ -20,7 +20,7 @@
 
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,9 +142,8 @@ struct BridgeContext {
     permissions: PermissionSet,
     /// The session's connection policy (concurrency ceiling + connect timeout).
     policy: ConnectionPolicy,
-    /// Mediated connections currently open for this session. Shared with each
-    /// open connection's [`ConnectionGuard`], which decrements it on drop.
-    active_connections: Arc<AtomicUsize>,
+    /// Mediated connections currently open for this session.
+    slots: ConnectionSlots,
     /// The ABI version the plugin was built against. Every status a callback
     /// returns is downgraded for it (#3373): a plugin built for an older minor
     /// cannot decode a `PluginStatus` discriminant appended after it was
@@ -166,8 +165,8 @@ impl BridgeContext {
         Self {
             magic: BRIDGE_CONTEXT_MAGIC,
             permissions,
+            slots: ConnectionSlots::new(&policy),
             policy,
-            active_connections: Arc::new(AtomicUsize::new(0)),
             plugin_abi,
             status_for_peer,
         }
@@ -177,21 +176,41 @@ impl BridgeContext {
     fn status_for_plugin(&self, status: PluginStatus) -> PluginStatus {
         (self.status_for_peer)(status, self.plugin_abi)
     }
+}
+
+/// A session's live count of mediated connections against its
+/// [`ConnectionPolicy`] ceiling (#2028). Shared by the in-process bridge and
+/// the out-of-process bridge service (#4183), so both enforce one ceiling the
+/// same way.
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionSlots {
+    active: Arc<AtomicUsize>,
+    max: usize,
+}
+
+impl ConnectionSlots {
+    /// No connections held yet, bounded by `policy`'s ceiling.
+    pub(crate) fn new(policy: &ConnectionPolicy) -> Self {
+        Self {
+            active: Arc::new(AtomicUsize::new(0)),
+            max: policy.max_connections,
+        }
+    }
 
     /// Try to reserve one connection slot, returning a [`ConnectionGuard`] that
     /// releases it on drop, or `None` if the session is already at its
     /// concurrent-connection ceiling.
-    fn try_reserve_connection(&self) -> Option<ConnectionGuard> {
+    pub(crate) fn try_reserve(&self) -> Option<ConnectionGuard> {
         // Optimistically claim a slot, then roll back if that pushed the session
         // over its ceiling. A single atomic keeps the count correct across the
         // several threads a backend may drive the bridge from.
-        let prev = self.active_connections.fetch_add(1, Ordering::AcqRel);
-        if prev >= self.policy.max_connections {
-            self.active_connections.fetch_sub(1, Ordering::AcqRel);
+        let prev = self.active.fetch_add(1, Ordering::AcqRel);
+        if prev >= self.max {
+            self.active.fetch_sub(1, Ordering::AcqRel);
             None
         } else {
             Some(ConnectionGuard {
-                active_connections: Arc::clone(&self.active_connections),
+                active_connections: Arc::clone(&self.active),
             })
         }
     }
@@ -202,8 +221,10 @@ impl BridgeContext {
 /// Handed to the mediated stream as its
 /// [`StreamDropGuard`](termihub_plugin_api::StreamDropGuard), so a session's live
 /// connection count falls the instant the plugin drops a connection — freeing the
-/// slot for a later dial-out.
-struct ConnectionGuard {
+/// slot for a later dial-out. Out of process (#4183) the host keeps it until the
+/// runner reports the connection released.
+#[derive(Debug)]
+pub(crate) struct ConnectionGuard {
     active_connections: Arc<AtomicUsize>,
 }
 
@@ -314,6 +335,155 @@ fn scope_error_status(err: &PermissionError) -> PluginStatus {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The guarded operations
+//
+// One implementation of every mediated operation, called by the in-process
+// `extern "C"` callbacks below *and* by the out-of-process bridge service that
+// answers a plugin runner's `BridgeRequest` frames (#4183). Each one runs the
+// permission / scope / policy check before any I/O and reports a refusal as the
+// status the ABI returns.
+// ---------------------------------------------------------------------------
+
+/// Resolve `requested` inside the plugin's declared filesystem scope.
+fn scoped(permissions: &PermissionSet, requested: &str) -> Result<PathBuf, PluginStatus> {
+    permissions
+        .check_path(Path::new(requested))
+        .map_err(|e| scope_error_status(&e))
+}
+
+/// `open_connection`: require `network`, reserve a connection slot, then
+/// connect within the policy's timeout. The returned guard holds the slot until
+/// dropped.
+///
+/// A missing `network` permission is [`PluginStatus::PermissionDenied`]; a
+/// session at its concurrent-connection ceiling is
+/// [`PluginStatus::ResourceLimit`] (#2030); a failed dial-out is
+/// [`PluginStatus::Io`] (and frees the slot again).
+pub(crate) fn guarded_connect(
+    permissions: &PermissionSet,
+    policy: &ConnectionPolicy,
+    slots: &ConnectionSlots,
+    host: &str,
+    port: u16,
+) -> Result<(TcpStream, ConnectionGuard), PluginStatus> {
+    // Runtime enforcement: refuse before touching the network if the plugin
+    // never requested `network`.
+    permissions
+        .require(PluginPermission::Network)
+        .map_err(|_| PluginStatus::PermissionDenied)?;
+    // Resource enforcement, released when the guard drops (or right here, on
+    // connect failure).
+    let guard = slots.try_reserve().ok_or(PluginStatus::ResourceLimit)?;
+    let stream =
+        connect_with_timeout(host, port, policy.connect_timeout).map_err(|_| PluginStatus::Io)?;
+    Ok((stream, guard))
+}
+
+/// `read_file`: the whole file at an in-scope path.
+pub(crate) fn guarded_read(
+    permissions: &PermissionSet,
+    path: &str,
+) -> Result<Vec<u8>, PluginStatus> {
+    let resolved = scoped(permissions, path)?;
+    std::fs::read(resolved).map_err(|_| PluginStatus::Io)
+}
+
+/// `read_file`, one chunk: up to `max` bytes at `offset` of an in-scope file,
+/// plus whether the file ends there. The path is re-resolved for every chunk.
+/// Used by the out-of-process bridge service only.
+#[cfg_attr(
+    not(unix),
+    allow(dead_code, reason = "no Windows runner transport yet")
+)]
+pub(crate) fn guarded_read_chunk(
+    permissions: &PermissionSet,
+    path: &str,
+    offset: u64,
+    max: usize,
+) -> Result<(Vec<u8>, bool), PluginStatus> {
+    use std::io::{Read, Seek, SeekFrom};
+    let resolved = scoped(permissions, path)?;
+    let mut file = std::fs::File::open(resolved).map_err(|_| PluginStatus::Io)?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|_| PluginStatus::Io)?;
+    let mut buf = Vec::with_capacity(max.min(64 * 1024));
+    // `max + 1` bytes tell "exactly `max` left" apart from "more to come".
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    file.take(limit)
+        .read_to_end(&mut buf)
+        .map_err(|_| PluginStatus::Io)?;
+    let eof = buf.len() <= max;
+    buf.truncate(max);
+    Ok((buf, eof))
+}
+
+/// `write_file`: open an in-scope path per `mode` and write `data`. An
+/// out-of-scope or traversal path is rejected before any file is created or
+/// opened (#2024).
+pub(crate) fn guarded_write(
+    permissions: &PermissionSet,
+    path: &str,
+    data: &[u8],
+    mode: PluginWriteMode,
+) -> Result<(), PluginStatus> {
+    let resolved = scoped(permissions, path)?;
+    let mut options = std::fs::OpenOptions::new();
+    match mode {
+        PluginWriteMode::Truncate => options.create(true).write(true).truncate(true),
+        PluginWriteMode::Append => options.create(true).append(true),
+        PluginWriteMode::CreateNew => options.create_new(true).write(true),
+    };
+    options
+        .open(&resolved)
+        .and_then(|mut f| f.write_all(data))
+        .map_err(|_| PluginStatus::Io)
+}
+
+/// `stat_path`: metadata of an in-scope path; a missing one is
+/// [`PluginFileMetadata::absent`], not an error.
+pub(crate) fn guarded_stat(
+    permissions: &PermissionSet,
+    path: &str,
+) -> Result<PluginFileMetadata, PluginStatus> {
+    let resolved = scoped(permissions, path)?;
+    match std::fs::metadata(&resolved) {
+        Ok(m) => Ok(PluginFileMetadata {
+            exists: true,
+            is_dir: m.is_dir(),
+            len: m.len(),
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PluginFileMetadata::absent()),
+        Err(_) => Err(PluginStatus::Io),
+    }
+}
+
+/// `list_dir`: the entry names (lossy UTF-8) of an in-scope directory, in the
+/// host's directory order.
+pub(crate) fn guarded_list_dir(
+    permissions: &PermissionSet,
+    path: &str,
+) -> Result<Vec<String>, PluginStatus> {
+    let resolved = scoped(permissions, path)?;
+    let read_dir = std::fs::read_dir(&resolved).map_err(|_| PluginStatus::Io)?;
+    Ok(read_dir
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect())
+}
+
+/// Collapse a guarded operation's outcome into the status a callback returns,
+/// writing the success value through `write` first.
+fn finish<T>(result: Result<T, PluginStatus>, write: impl FnOnce(T)) -> PluginStatus {
+    match result {
+        Ok(value) => {
+            write(value);
+            PluginStatus::Ok
+        }
+        Err(status) => status,
+    }
+}
+
 /// Borrow the boxed [`BridgeContext`] behind a bridge `ctx`, for the duration of
 /// the current call only.
 ///
@@ -401,34 +571,16 @@ unsafe extern "C" fn bridge_open_connection(
     out_stream: *mut PluginTcpStream,
 ) -> PluginStatus {
     let body = |cx: &BridgeContext| {
-        // Runtime enforcement: refuse before touching the network if the plugin
-        // never requested `network`.
-        if cx.permissions.require(PluginPermission::Network).is_err() {
-            return PluginStatus::PermissionDenied;
-        }
-        // Resource enforcement: refuse if this session is already holding its
-        // maximum number of concurrent mediated connections. Reported as
-        // `ResourceLimit`, distinct from the `PermissionDenied` above, so the
-        // plugin can tell a ceiling refusal apart from a missing permission and
-        // back off/retry (#2030). The reservation is released when the returned
-        // stream is dropped (or below, on connect failure).
-        let Some(guard) = cx.try_reserve_connection() else {
-            return PluginStatus::ResourceLimit;
-        };
         // SAFETY: `host` is a valid borrowed `&str` for the call.
         let host_str = unsafe { host.as_str() };
-        match connect_with_timeout(host_str, port, cx.policy.connect_timeout) {
-            Ok(stream) => {
-                // The guard rides along with the mediated stream, so the slot is
-                // released the moment the plugin drops the connection.
-                let handle = PluginTcpStream::from_std_guarded(stream, Box::new(guard));
-                // SAFETY: `out_stream` is a valid, writable out-parameter.
-                unsafe { out_stream.write(handle) };
-                PluginStatus::Ok
-            }
-            // Dropping `guard` here frees the slot the failed dial-out reserved.
-            Err(_) => PluginStatus::Io,
-        }
+        let result = guarded_connect(&cx.permissions, &cx.policy, &cx.slots, host_str, port);
+        finish(result, |(stream, guard)| {
+            // The guard rides along with the mediated stream, so the slot is
+            // released the moment the plugin drops the connection.
+            let handle = PluginTcpStream::from_std_guarded(stream, Box::new(guard));
+            // SAFETY: `out_stream` is a valid, writable out-parameter.
+            unsafe { out_stream.write(handle) };
+        })
     };
     // SAFETY: upheld by this function's contract — `ctx` is the context the
     // host handed the plugin (or null / wrong-type, which is refused).
@@ -448,22 +600,12 @@ unsafe extern "C" fn bridge_read_file(
     out_bytes: *mut FfiOwnedBytes,
 ) -> PluginStatus {
     let body = |cx: &BridgeContext| {
-        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
-        // Runtime enforcement: reject a missing `filesystem` permission or a path
-        // outside the declared scope before any read happens.
-        match perms.check_path(Path::new(requested)) {
-            Ok(resolved) => match std::fs::read(&resolved) {
-                Ok(bytes) => {
-                    // SAFETY: `out_bytes` is a valid, writable out-parameter.
-                    unsafe { out_bytes.write(FfiOwnedBytes::from_vec(bytes)) };
-                    PluginStatus::Ok
-                }
-                Err(_) => PluginStatus::Io,
-            },
-            Err(e) => scope_error_status(&e),
-        }
+        finish(guarded_read(&cx.permissions, requested), |bytes| {
+            // SAFETY: `out_bytes` is a valid, writable out-parameter.
+            unsafe { out_bytes.write(FfiOwnedBytes::from_vec(bytes)) };
+        })
     };
     // SAFETY: upheld by this function's contract — `ctx` is the context the
     // host handed the plugin (or null / wrong-type, which is refused).
@@ -488,26 +630,13 @@ unsafe extern "C" fn bridge_write_file(
     mode: PluginWriteMode,
 ) -> PluginStatus {
     let body = |cx: &BridgeContext| {
-        let perms = &cx.permissions;
         // SAFETY: `path`/`data` are valid borrowed views for the call.
         let requested = unsafe { path.as_str() };
         let bytes = unsafe { data.as_slice() };
-        // Runtime enforcement: reject a missing `filesystem` permission or a path
-        // outside the declared scope before anything is written or created.
-        let resolved = match perms.check_path(Path::new(requested)) {
-            Ok(resolved) => resolved,
-            Err(e) => return scope_error_status(&e),
-        };
-        let mut options = std::fs::OpenOptions::new();
-        match mode {
-            PluginWriteMode::Truncate => options.create(true).write(true).truncate(true),
-            PluginWriteMode::Append => options.create(true).append(true),
-            PluginWriteMode::CreateNew => options.create_new(true).write(true),
-        };
-        match options.open(&resolved).and_then(|mut f| f.write_all(bytes)) {
-            Ok(()) => PluginStatus::Ok,
-            Err(_) => PluginStatus::Io,
-        }
+        finish(
+            guarded_write(&cx.permissions, requested, bytes, mode),
+            |()| {},
+        )
     };
     // SAFETY: upheld by this function's contract — `ctx` is the context the
     // host handed the plugin (or null / wrong-type, which is refused).
@@ -529,25 +658,12 @@ unsafe extern "C" fn bridge_stat_path(
     out_meta: *mut PluginFileMetadata,
 ) -> PluginStatus {
     let body = |cx: &BridgeContext| {
-        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
-        let resolved = match perms.check_path(Path::new(requested)) {
-            Ok(resolved) => resolved,
-            Err(e) => return scope_error_status(&e),
-        };
-        let meta = match std::fs::metadata(&resolved) {
-            Ok(m) => PluginFileMetadata {
-                exists: true,
-                is_dir: m.is_dir(),
-                len: m.len(),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PluginFileMetadata::absent(),
-            Err(_) => return PluginStatus::Io,
-        };
-        // SAFETY: `out_meta` is a valid, writable out-parameter.
-        unsafe { out_meta.write(meta) };
-        PluginStatus::Ok
+        finish(guarded_stat(&cx.permissions, requested), |meta| {
+            // SAFETY: `out_meta` is a valid, writable out-parameter.
+            unsafe { out_meta.write(meta) };
+        })
     };
     // SAFETY: upheld by this function's contract — `ctx` is the context the
     // host handed the plugin (or null / wrong-type, which is refused).
@@ -585,31 +701,14 @@ unsafe extern "C" fn bridge_list_dir(
     out_entries: *mut FfiOwnedBytes,
 ) -> PluginStatus {
     let body = |cx: &BridgeContext| {
-        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
-        let resolved = match perms.check_path(Path::new(requested)) {
-            Ok(resolved) => resolved,
-            Err(e) => return scope_error_status(&e),
-        };
-        let read_dir = match std::fs::read_dir(&resolved) {
-            Ok(rd) => rd,
-            Err(_) => return PluginStatus::Io,
-        };
-        let mut names: Vec<Vec<u8>> = Vec::new();
-        for entry in read_dir.flatten() {
-            names.push(
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-                    .into_bytes(),
-            );
-        }
-        let encoded = encode_dir_entries(&names);
-        // SAFETY: `out_entries` is a valid, writable out-parameter.
-        unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
-        PluginStatus::Ok
+        finish(guarded_list_dir(&cx.permissions, requested), |names| {
+            let names: Vec<Vec<u8>> = names.into_iter().map(String::into_bytes).collect();
+            let encoded = encode_dir_entries(&names);
+            // SAFETY: `out_entries` is a valid, writable out-parameter.
+            unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
+        })
     };
     // SAFETY: upheld by this function's contract — `ctx` is the context the
     // host handed the plugin (or null / wrong-type, which is refused).

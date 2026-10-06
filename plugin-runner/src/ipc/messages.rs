@@ -178,6 +178,11 @@ pub struct CreateSession {
     /// created by the host; empty when there is none (an ABI 1.0 plugin, whose
     /// ABI is only known after `Loaded`).
     pub data_dir: String,
+    /// How long the runner waits for the host's answer to one
+    /// `open_connection` bridge call, in milliseconds: the session's connect
+    /// timeout plus slack (#4183). `0` selects the runner's default.
+    #[serde(default)]
+    pub connect_deadline_ms: u64,
 }
 
 /// A plugin error as it crosses the wire: the ABI status code plus the text.
@@ -296,4 +301,173 @@ pub struct Log {
 pub struct Heartbeat {
     /// Echoed back unchanged.
     pub nonce: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Capability bridge over IPC (#4183, plugin OS-sandbox phase 2)
+// ---------------------------------------------------------------------------
+
+/// Runner → host: one capability-bridge call a plugin made through the 1.x
+/// `PluginHostBridge`. The host checks it against the session's permissions
+/// exactly as the in-process bridge does and answers with a [`BridgeReply`]
+/// carrying the same `request_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeRequest {
+    /// Runner-chosen id, unique among the runner's outstanding requests.
+    pub request_id: u64,
+    /// The session whose bridge the plugin called (its permission scope).
+    pub session_id: u32,
+    /// What the plugin asked for.
+    pub op: BridgeOp,
+}
+
+/// The bridge operations of the frozen 1.x ABI
+/// (`termihub_plugin_api::PluginHostBridgeVTable`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BridgeOp {
+    /// `open_connection(host, port)` — `network` permission + connection policy.
+    OpenConnection {
+        /// Host name or address, as the plugin passed it.
+        host: String,
+        /// TCP port.
+        port: u16,
+    },
+    /// `read_file(path)`, one chunk at `offset` (a file larger than one frame
+    /// is read in several requests; the runner reassembles it).
+    ReadFile {
+        /// The path, as the plugin passed it (resolved by the host scope).
+        path: String,
+        /// Byte offset of the chunk.
+        offset: u64,
+    },
+    /// `write_file(path, data, mode)`. A write larger than one frame is sent
+    /// as the requested `mode` followed by `Append` chunks.
+    WriteFile {
+        /// The path, as the plugin passed it (resolved by the host scope).
+        path: String,
+        /// The bytes to write.
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+        /// `termihub_plugin_api::PluginWriteMode` discriminant.
+        mode: i32,
+    },
+    /// `stat_path(path)`.
+    Stat {
+        /// The path, as the plugin passed it (resolved by the host scope).
+        path: String,
+    },
+    /// `list_dir(path)`.
+    ListDir {
+        /// The path, as the plugin passed it (resolved by the host scope).
+        path: String,
+    },
+}
+
+impl BridgeOp {
+    /// The ABI callback name, for logs and denial events.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            BridgeOp::OpenConnection { .. } => "open_connection",
+            BridgeOp::ReadFile { .. } => "read_file",
+            BridgeOp::WriteFile { .. } => "write_file",
+            BridgeOp::Stat { .. } => "stat_path",
+            BridgeOp::ListDir { .. } => "list_dir",
+        }
+    }
+}
+
+/// How the connection behind a [`BridgeResult::Connection`] reaches the
+/// runner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StreamTransport {
+    /// The host passed the connected socket itself along with the reply
+    /// (`SCM_RIGHTS` on Unix): the runner drives it directly.
+    HandlePassed,
+    /// The host keeps the socket and relays its bytes as `StreamData` /
+    /// `StreamWrite` frames (the fallback where a handle cannot be passed).
+    Proxy,
+}
+
+/// The outcome of one [`BridgeRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BridgeResult {
+    /// The call failed or was refused: a `PluginStatus` discriminant
+    /// (already downgraded for the plugin's ABI by the host).
+    Status {
+        /// `PluginStatus` discriminant.
+        status: i32,
+    },
+    /// `open_connection` succeeded.
+    Connection {
+        /// Host-assigned id, used by `BridgeRelease` and the stream frames.
+        conn_id: u64,
+        /// How the connection is delivered.
+        transport: StreamTransport,
+    },
+    /// One `read_file` chunk.
+    Data {
+        /// The chunk's bytes.
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+        /// Whether the file ends after this chunk.
+        eof: bool,
+    },
+    /// `write_file` succeeded.
+    Written,
+    /// `stat_path` succeeded.
+    Metadata {
+        /// Whether anything exists at the path.
+        exists: bool,
+        /// Whether it is a directory.
+        is_dir: bool,
+        /// File size in bytes.
+        len: u64,
+    },
+    /// `list_dir` succeeded: the entry names (lossy UTF-8), host order.
+    Entries {
+        /// The entry names.
+        names: Vec<String>,
+    },
+}
+
+/// Host → runner: the answer to a [`BridgeRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeReply {
+    /// The request this answers.
+    pub request_id: u64,
+    /// The outcome.
+    pub result: BridgeResult,
+}
+
+/// A frame that names one bridge connection (`BridgeRelease`, `StreamClosed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnRef {
+    /// The connection.
+    pub conn_id: u64,
+}
+
+/// Proxied connection bytes (`StreamData` host → runner, `StreamWrite`
+/// runner → host).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamChunk {
+    /// The connection.
+    pub conn_id: u64,
+    /// The bytes.
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+/// Flow-control credit for a proxied connection: `StreamAck` (runner → host,
+/// the plugin consumed `bytes` of `StreamData`) and `StreamWriteAck` (host →
+/// runner, `bytes` of `StreamWrite` reached the socket, or the write failed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamAck {
+    /// The connection.
+    pub conn_id: u64,
+    /// Bytes acknowledged.
+    pub bytes: u32,
+    /// `StreamWriteAck` only: the socket write failed; later writes fail too.
+    #[serde(default)]
+    pub failed: bool,
 }

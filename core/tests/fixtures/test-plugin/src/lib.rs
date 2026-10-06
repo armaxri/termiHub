@@ -31,7 +31,7 @@
 //!   purpose, for the out-of-process isolation tests (#4184): see
 //!   [`crash_command`].
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
@@ -251,13 +251,13 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct ProbeConfig {
-    /// One of `"network"`, `"connlimit"`, `"readfile"`, `"writefile"`,
+    /// One of `"network"`, `"netecho"`, `"connlimit"`, `"readfile"`, `"writefile"`,
     /// `"appendfile"`, `"createfile"`, `"statpath"`, `"listdir"`; empty means "no
     /// probe, just echo".
     probe: String,
     /// Target host for the `network` probe.
     probe_host: String,
-    /// Target port for the `network`/`connlimit` probe.
+    /// Target port for the `network`/`netecho`/`connlimit` probe.
     probe_port: u16,
     /// Number of connections the `connlimit` probe opens and holds concurrently.
     probe_count: u16,
@@ -278,6 +278,30 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
                     // Prove the mediated stream is usable, best-effort.
                     let _ = stream.write_all(b"ping");
                     b"NETWORK_OK".to_vec()
+                }
+                Err(PluginError::PermissionDenied) => b"NETWORK_DENIED".to_vec(),
+                Err(_) => b"NETWORK_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        "netecho" => {
+            // Prove the connection really reaches the peer and back: write
+            // `ping`, then read the 4 echoed bytes (the out-of-process bridge
+            // hands the plugin a passed or proxied socket, #4183).
+            let line = match bridge.open_connection(&cfg.probe_host, cfg.probe_port) {
+                Ok(mut stream) => {
+                    let mut echoed = [0u8; 4];
+                    match stream
+                        .write_all(b"ping")
+                        .and_then(|()| stream.read_exact(&mut echoed))
+                    {
+                        Ok(()) => {
+                            let mut line = b"NETECHO:".to_vec();
+                            line.extend_from_slice(&echoed);
+                            line
+                        }
+                        Err(_) => b"NETECHO_IO".to_vec(),
+                    }
                 }
                 Err(PluginError::PermissionDenied) => b"NETWORK_DENIED".to_vec(),
                 Err(_) => b"NETWORK_ERR".to_vec(),

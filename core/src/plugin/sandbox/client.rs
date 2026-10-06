@@ -11,6 +11,7 @@
 //! memory, and its stderr is forwarded through the host so an allocation
 //! failure under `RLIMIT_AS` is recognised as out of memory.
 
+#[cfg(unix)]
 use std::io::Write;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,10 +31,12 @@ use crate::connection::OutputSender;
 use crate::plugin::log_rate_limit::PluginLogLimiter;
 use crate::plugin::HostError;
 
+use super::bridge::{BridgeDenial, BridgeGrant};
 use super::exit::RunnerExitCause;
 use super::handle::PluginRunnerConfig;
 use super::peer::{ExitHook, Reply, SessionSlot, Shared};
 use super::spawn::{spawn_runner, Spawned};
+use super::writer::ChannelWriter;
 
 /// How long the runner may take to say `Hello` after spawn.
 #[cfg(unix)]
@@ -54,7 +57,7 @@ pub(super) const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// A running plugin runner, after a successful handshake.
 pub struct SandboxedPlugin {
     info: LoadedPluginInfo,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Arc<ChannelWriter>,
     shared: Arc<Shared>,
 }
 
@@ -115,6 +118,17 @@ impl SandboxedPlugin {
                     .try_clone()
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
                     .inspect_err(|_| shared.kill())?;
+                let writer = ChannelWriter::unix(stream)
+                    .map(Arc::new)
+                    .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
+                    .inspect_err(|_| shared.kill())?;
+                // The bridge service answers requests from the reader thread on,
+                // so it is wired up before that thread starts.
+                shared.bridge.attach(
+                    Arc::clone(&writer),
+                    info.abi_version,
+                    Arc::downgrade(&shared),
+                );
                 let reader_shared = Arc::clone(&shared);
                 std::thread::Builder::new()
                     .name(format!("plugin-runner-{}", configure.plugin_id))
@@ -123,7 +137,7 @@ impl SandboxedPlugin {
                     .inspect_err(|_| shared.kill())?;
                 let plugin = Arc::new(Self {
                     info,
-                    writer: Mutex::new(Box::new(stream)),
+                    writer,
                     shared,
                 });
                 super::watchdog::spawn(
@@ -225,10 +239,7 @@ impl SandboxedPlugin {
         if !self.is_alive() {
             return Err(PluginError::NotAlive);
         }
-        let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
-        let result = writer.write_all(frame).and_then(|()| writer.flush());
-        drop(writer);
-        result.map_err(|e| {
+        self.writer.write_frame(frame).map_err(|e| {
             if matches!(
                 e.kind(),
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
@@ -271,6 +282,33 @@ impl SandboxedPlugin {
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
         (id, rx)
+    }
+
+    /// Serve session `id`'s capability bridge with `grant` (#4183). Called
+    /// before `CreateSession`, since a plugin may use the bridge from inside
+    /// `create_backend`.
+    pub(super) fn grant_bridge(&self, id: u32, grant: BridgeGrant) {
+        self.shared.bridge.open_session(id, grant);
+    }
+
+    /// The capability-bridge requests this runner's plugin was refused (oldest
+    /// first, bounded) — what the UI phase turns into toasts.
+    #[must_use]
+    pub fn bridge_denials(&self) -> Vec<BridgeDenial> {
+        self.shared.bridge.denials()
+    }
+
+    /// Bridge connections currently handed to the plugin.
+    #[must_use]
+    pub fn bridge_connections(&self) -> usize {
+        self.shared.bridge.open_connections()
+    }
+
+    /// Relay every new bridge connection through the host (`StreamData`)
+    /// instead of passing the socket — the fallback path, forced for tests.
+    #[doc(hidden)]
+    pub fn force_stream_proxy(&self, on: bool) {
+        self.shared.bridge.set_force_proxy(on);
     }
 
     /// Arm a reply waiter on an existing session (for `Close`).

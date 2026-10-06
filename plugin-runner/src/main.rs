@@ -57,6 +57,7 @@ mod platform {
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
 
+    use termihub_plugin_runner::ipc::fd::FdReader;
     use termihub_plugin_runner::ipc::IPC_FD;
 
     use crate::runner::{self, Channel};
@@ -78,7 +79,11 @@ mod platform {
             Err(_) => return runner::exit::PROTOCOL,
         };
         let channel = Arc::new(Channel::new(Box::new(writer)));
-        runner::run(stream, channel)
+        // Read through `recvmsg` so sockets the host passes with bridge replies
+        // (`SCM_RIGHTS`) are collected rather than discarded (#4183).
+        let reader = FdReader::new(stream);
+        let fds = reader.fds();
+        runner::run(reader, channel, Some(fds))
     }
 
     /// Linux: get SIGKILLed when the host dies. Returns `false` if the parent
