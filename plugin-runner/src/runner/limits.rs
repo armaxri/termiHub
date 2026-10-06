@@ -19,6 +19,15 @@ pub(crate) fn apply(limits: &ResourceLimits) -> Vec<(&'static str, std::io::Erro
     // runner's resident size there instead.
     #[cfg(target_os = "linux")]
     if let Some(bytes) = limits.address_space_bytes {
+        // glibc reserves 64 MiB of address space per malloc arena and grows
+        // one arena per thread; under an address-space cap that spends the
+        // budget on reservations, not memory. Two arenas are plenty here.
+        #[cfg(target_env = "gnu")]
+        // SAFETY: `mallopt` only tunes the allocator; called before any
+        // plugin code runs.
+        unsafe {
+            libc::mallopt(libc::M_ARENA_MAX, 2);
+        }
         if let Err(e) = lower(libc::RLIMIT_AS, bytes) {
             failed.push(("RLIMIT_AS", e));
         }
