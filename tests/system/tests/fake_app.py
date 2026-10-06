@@ -114,6 +114,7 @@ def dispatcher_like(
     inspection: dict | None = None,
     measurement: dict | None = None,
     webgl_lost: bool = True,
+    cell_rows: list | None = None,
     screenshot: str | None = None,
     coverage: str | None = None,
     coverage_chunk: int = 4 * 1024 * 1024,
@@ -129,6 +130,9 @@ def dispatcher_like(
     ``measurement`` is the value ``measureTerminal`` returns and ``webgl_lost``
     what ``loseTerminalWebglContext`` answers; their tab ids are recorded under
     ``measurements`` / ``contextLosses``.
+    ``cell_rows`` is the value ``readTerminalCells`` returns; its
+    ``(tabId, contains)`` pairs are recorded under ``cellReads`` and each
+    ``compose`` command under ``compositions``.
     ``screenshot`` is the data URL returned by the ``screenshot`` command.
     ``coverage`` is the serialized ``window.__coverage__`` that ``readCoverage``
     pages through in ``coverage_chunk``-character chunks (``None`` = an
@@ -154,6 +158,8 @@ def dispatcher_like(
         "inspections": [],
         "measurements": [],
         "contextLosses": [],
+        "cellReads": [],
+        "compositions": [],
         "events": [],
         "exits": [],
         "dialogStubs": [],
@@ -221,6 +227,19 @@ def dispatcher_like(
         if action == "loseTerminalWebglContext":
             recorded["contextLosses"].append(command.get("tabId"))
             return {"ok": True, "action": "loseTerminalWebglContext", "value": webgl_lost}
+        if action == "readTerminalCells":
+            recorded["cellReads"].append((command.get("tabId"), command.get("contains")))
+            return {"ok": True, "action": "readTerminalCells", "value": cell_rows or []}
+        if action == "compose":
+            recorded["compositions"].append(
+                {
+                    "testId": command.get("testId"),
+                    "tabId": command.get("tabId"),
+                    "updates": command["updates"],
+                    "commit": command["commit"],
+                }
+            )
+            return {"ok": True, "action": "compose"}
         if action == "readTerminal":
             return {"ok": True, "action": "readTerminal", "value": terminal_text}
         if action == "getState":
