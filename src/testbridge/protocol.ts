@@ -331,6 +331,44 @@ export interface GetTerminalViewportCommand {
 }
 
 /**
+ * Read xterm's buffer cell model (#3059): each cell's characters and column
+ * width (2 = head of a wide character, 0 = the spacer cell after it, 1 =
+ * narrow). Proves glyph layout `readTerminal`'s text cannot: CJK characters
+ * occupying one wide cell, combining marks attached to their base cell, emoji
+ * sequences kept intact. With `contains`, every buffer row whose text includes
+ * it (scrollback too); without, the visible viewport rows. Returns
+ * {@link TerminalCellRow}[]. Read-only. When `tabId` is omitted the active tab
+ * is used.
+ */
+export interface ReadTerminalCellsCommand {
+  action: "readTerminalCells";
+  tabId?: string;
+  /** Only rows whose text contains this; omitted = the visible viewport. */
+  contains?: string;
+}
+
+/**
+ * Replay an IME composition on a text control (#3059): the `keydown` 229 /
+ * `compositionstart` / `compositionupdate` / `input` / `compositionend`
+ * sequence a webview delivers, with the control's value updated in place the
+ * way a real input method does (see `composition.ts`). The target is the
+ * element tagged `testId` (an input or textarea, e.g. Monaco's `editor-input`),
+ * or — without `testId` — the hidden input textarea of the terminal in `tabId`
+ * (the active tab when omitted). Proves the committed text arrives once, with
+ * no duplicate or partial commit; the native candidate window itself stays a
+ * manual check. Test-mode only.
+ */
+export interface ComposeCommand {
+  action: "compose";
+  testId?: string;
+  tabId?: string;
+  /** Successive preedit strings, e.g. `["に", "にほ", "日本"]`. */
+  updates: string[];
+  /** The text the composition commits. */
+  commit: string;
+}
+
+/**
  * Read a terminal's non-text state that the canvas hides (#4013): its OSC 133
  * command marks (#3415) and its inline-image store (PROD-057). Returns a
  * {@link TerminalInspection}. `commandMarks` / `inlineImages` are `null` when
@@ -643,6 +681,26 @@ export interface TerminalInspection {
   } | null;
 }
 
+/** One xterm buffer cell, as {@link ReadTerminalCellsCommand} reports it. */
+export interface TerminalCell {
+  /** Column index in the row. */
+  x: number;
+  /** The cell's characters: a base plus any attached combining/zero-width marks. */
+  chars: string;
+  /** Column width: 2 = wide character head, 0 = its spacer cell, 1 = narrow. */
+  width: number;
+}
+
+/** One buffer row's cell model, returned by `readTerminalCells`. */
+export interface TerminalCellRow {
+  /** Absolute buffer line index (scrollback included). */
+  y: number;
+  /** The row's text, trailing whitespace trimmed. */
+  text: string;
+  /** The row's cells up to its last glyph. */
+  cells: TerminalCell[];
+}
+
 /** A `{ cols, rows }` terminal grid size. */
 export interface TerminalGrid {
   cols: number;
@@ -707,6 +765,8 @@ export type BridgeCommand =
   | ScrollTerminalCommand
   | GetTerminalViewportCommand
   | InspectTerminalCommand
+  | ReadTerminalCellsCommand
+  | ComposeCommand
   | MeasureTerminalCommand
   | LoseTerminalWebglContextCommand
   | GetStateCommand

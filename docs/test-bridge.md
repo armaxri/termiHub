@@ -236,6 +236,8 @@ unmount.
 | `getTerminalViewport`      | Read a terminal's `{ viewportY, baseY }` scroll position       |
 | `inspectTerminal`          | Read a terminal's OSC 133 marks and inline-image store         |
 | `measureTerminal`          | Read a terminal's real fit, cell size, renderer and thumb      |
+| `readTerminalCells`        | Read xterm's buffer cells: characters and column width         |
+| `compose`                  | Test-only: replay an IME composition on a control (see below)  |
 | `loseTerminalWebglContext` | Test-only: force a WebGL context loss (see below)              |
 | `sampleCanvas`             | Read RGBA pixels of a `<canvas>` (remote-desktop frames)       |
 | `getState`                 | Read app store state, optionally by dot-path                   |
@@ -384,6 +386,41 @@ and fail when no terminal is registered for it. Python:
 `driver.measure_terminal(tab_id=None)` and
 `driver.lose_terminal_webgl_context(tab_id=None)`; the suite is
 `tests/system/tests/test_xterm_render_paths.py`.
+
+### Glyph cells and IME composition (`readTerminalCells`, `compose`)
+
+`readTerminal` returns text, which cannot tell a CJK character stored as one
+wide cell from two narrow ones, or a combining mark attached to its base from
+one in a cell of its own. `{ action: "readTerminalCells", tabId?, contains? }`
+reads xterm's buffer cell model (#3059, read-only): every buffer row whose text
+contains `contains` (scrollback too), or the visible viewport rows without it.
+
+```jsonc
+[
+  {
+    "y": 12, // absolute buffer line
+    "text": "日e\u0301",
+    "cells": [
+      { "x": 0, "chars": "日", "width": 2 }, // wide character head
+      { "x": 1, "chars": "", "width": 0 }, // its spacer cell
+      { "x": 2, "chars": "e\u0301", "width": 1 }, // base + attached mark
+    ],
+  },
+]
+```
+
+`{ action: "compose", testId?, tabId?, updates, commit }` replays an input
+method's DOM sequence on a control: `keydown` 229, `compositionstart`, then per
+preedit in `updates` a `compositionupdate` and `input`, and finally the commit's
+`input` and `compositionend` — updating the control's value in place as an IME
+does, because xterm and Monaco read the value, not just `event.data`. The
+target is the input or textarea tagged `testId` (Monaco's `editor-input`), else
+the input textarea of the terminal in `tabId` (the active tab). It proves the
+commit arrives once; the native preedit and candidate window are not involved
+and stay manual (MT-NIN-10 … 14). Python: `driver.read_terminal_cells(contains,
+tab_id=None)` and `driver.compose(updates, commit, test_id=None, tab_id=None)`;
+the suites are `tests/system/tests/test_terminal_glyph_shaping.py` and
+`tests/system/tests/test_ime_composition.py`.
 
 ### Canvas pixels (`sampleCanvas`)
 

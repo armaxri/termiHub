@@ -156,6 +156,31 @@ def test_measure_terminal_round_trip(bridge):
         assert handler.recorded["contextLosses"] == ["tab-2"]
 
 
+def test_read_terminal_cells_round_trip(bridge):
+    rows = [{"y": 4, "text": "日", "cells": [{"x": 0, "chars": "日", "width": 2}]}]
+    handler = dispatcher_like(cell_rows=rows)
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        assert driver.read_terminal_cells("日") == rows
+        assert driver.read_terminal_cells(tab_id="tab-3") == rows
+        assert handler.recorded["cellReads"] == [(None, "日"), ("tab-3", None)]
+
+
+def test_compose_round_trip(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.compose(["に", "にほ"], "日本")
+        driver.compose(["か"], "漢", test_id="editor-input")
+
+        assert handler.recorded["compositions"] == [
+            {"testId": None, "tabId": None, "updates": ["に", "にほ"], "commit": "日本"},
+            {"testId": "editor-input", "tabId": None, "updates": ["か"], "commit": "漢"},
+        ]
+
+
 def test_inspect_terminal_round_trip(bridge):
     inspection = {
         "commandMarks": {

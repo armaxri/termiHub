@@ -563,6 +563,54 @@ class Driver:
         """
         return self._call({"action": "measureTerminal", "tabId": tab_id})
 
+    def read_terminal_cells(
+        self, contains: Optional[str] = None, *, tab_id: Optional[str] = None
+    ) -> list[dict[str, Any]]:
+        """Read xterm's buffer cell model (#3059).
+
+        Returns one entry per row — every buffer row whose text contains
+        ``contains`` (scrollback included), or the visible viewport rows when
+        ``contains`` is ``None``::
+
+            [{"y": int,                 # absolute buffer line
+              "text": str,              # the row's text, right-trimmed
+              "cells": [{"x": int,      # column
+                         "chars": str,  # base + attached combining/ZWJ marks
+                         "width": int}  # 2 = wide head, 0 = its spacer, 1 = narrow
+                        , ...]}, ...]
+
+        Read-only. Active tab unless ``tab_id`` is given.
+        """
+        return self._call({"action": "readTerminalCells", "tabId": tab_id, "contains": contains})
+
+    def compose(
+        self,
+        updates: list[str],
+        commit: str,
+        *,
+        test_id: Optional[str] = None,
+        tab_id: Optional[str] = None,
+    ) -> None:
+        """Replay an IME composition and commit ``commit`` (#3059).
+
+        Dispatches the ``keydown`` 229 / ``compositionstart`` /
+        ``compositionupdate`` (one per ``updates`` preedit) / ``input`` /
+        ``compositionend`` sequence a webview delivers for a real input method,
+        updating the control's value in place as the IME would. Targets the
+        input or textarea tagged ``test_id`` (e.g. Monaco's ``editor-input``),
+        else the input textarea of the terminal in ``tab_id`` (active tab).
+        The native candidate window is not involved — that stays manual.
+        """
+        self._call(
+            {
+                "action": "compose",
+                "testId": test_id,
+                "tabId": tab_id,
+                "updates": list(updates),
+                "commit": commit,
+            }
+        )
+
     def lose_terminal_webgl_context(self, tab_id: Optional[str] = None) -> bool:
         """Force a real WebGL context loss on a terminal's renderer (#2988).
 

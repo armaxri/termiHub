@@ -34,6 +34,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
     {
         "click",
         "closeWindow",
+        "compose",
         "contextMenu",
         "doubleClick",
         "drag",
@@ -61,6 +62,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "projectionUnsubscribe",
         "readCoverage",
         "readTerminal",
+        "readTerminalCells",
         "resizeWindow",
         "sampleCanvas",
         "screenshot",
