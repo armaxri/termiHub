@@ -26,14 +26,22 @@ pub use codec::{
     MAX_PAYLOAD_LEN,
 };
 pub use messages::{
-    Alive, Cancel, Configure, CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize,
-    SandboxReport, SessionError, SessionFailed, SessionRef, WireError, WireToolchain,
+    Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
+    CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize, SandboxReport, SessionError,
+    SessionFailed, SessionRef, StreamAck, StreamChunk, StreamTransport, WireError, WireToolchain,
 };
+
+#[cfg(unix)]
+pub mod fd;
 
 /// The protocol version. The runner announces it in [`Hello`]; the host refuses
 /// a runner speaking any other version (the two ship together, so a mismatch
 /// means a broken or foreign install).
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// * `1` — phase 1 (#4182): handshake, sessions, logs, heartbeats.
+/// * `2` — phase 2 (#4183): the capability bridge over IPC (`BridgeRequest` /
+///   `BridgeReply`, socket-handle passing, the `Stream*` proxy fallback).
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The command-line flag the host passes the runner's protocol version with:
 /// `termihub-plugin-runner --protocol <n>`.
@@ -128,6 +136,24 @@ frame_kinds! {
     Pong = 0x22, Runner;
     /// Host → runner: no payload — run `plugin_shutdown` and exit.
     Shutdown = 0x23, Host;
+    /// Runner → host: [`BridgeRequest`], a plugin's capability-bridge call.
+    BridgeRequest = 0x30, Runner;
+    /// Host → runner: [`BridgeReply`]. A `HandlePassed` connection reply
+    /// carries the connected socket as ancillary data (`SCM_RIGHTS`).
+    BridgeReply = 0x31, Host;
+    /// Runner → host: [`ConnRef`] — the plugin dropped a bridge connection;
+    /// the host releases its connection slot (and closes a proxied socket).
+    BridgeRelease = 0x32, Runner;
+    /// Host → runner: [`StreamChunk`] — bytes read from a proxied socket.
+    StreamData = 0x33, Host;
+    /// Host → runner: [`ConnRef`] — a proxied socket reached end of stream.
+    StreamClosed = 0x34, Host;
+    /// Runner → host: [`StreamAck`] — the plugin consumed `StreamData` bytes.
+    StreamAck = 0x35, Runner;
+    /// Runner → host: [`StreamChunk`] — bytes for a proxied socket.
+    StreamWrite = 0x36, Runner;
+    /// Host → runner: [`StreamAck`] — `StreamWrite` bytes reached the socket.
+    StreamWriteAck = 0x37, Host;
 }
 
 /// A decoded frame.
@@ -183,6 +209,22 @@ pub enum Message {
     Pong(Heartbeat),
     /// See [`FrameKind::Shutdown`].
     Shutdown,
+    /// See [`FrameKind::BridgeRequest`].
+    BridgeRequest(BridgeRequest),
+    /// See [`FrameKind::BridgeReply`].
+    BridgeReply(BridgeReply),
+    /// See [`FrameKind::BridgeRelease`].
+    BridgeRelease(ConnRef),
+    /// See [`FrameKind::StreamData`].
+    StreamData(StreamChunk),
+    /// See [`FrameKind::StreamClosed`].
+    StreamClosed(ConnRef),
+    /// See [`FrameKind::StreamAck`].
+    StreamAck(StreamAck),
+    /// See [`FrameKind::StreamWrite`].
+    StreamWrite(StreamChunk),
+    /// See [`FrameKind::StreamWriteAck`].
+    StreamWriteAck(StreamAck),
 }
 
 /// A protocol violation or transport failure.
@@ -241,6 +283,14 @@ impl Message {
             Message::Ping(_) => FrameKind::Ping,
             Message::Pong(_) => FrameKind::Pong,
             Message::Shutdown => FrameKind::Shutdown,
+            Message::BridgeRequest(_) => FrameKind::BridgeRequest,
+            Message::BridgeReply(_) => FrameKind::BridgeReply,
+            Message::BridgeRelease(_) => FrameKind::BridgeRelease,
+            Message::StreamData(_) => FrameKind::StreamData,
+            Message::StreamClosed(_) => FrameKind::StreamClosed,
+            Message::StreamAck(_) => FrameKind::StreamAck,
+            Message::StreamWrite(_) => FrameKind::StreamWrite,
+            Message::StreamWriteAck(_) => FrameKind::StreamWriteAck,
         }
     }
 
@@ -269,6 +319,11 @@ impl Message {
             Message::Alive(m) => encode_control(kind, m),
             Message::Log(m) => encode_control(kind, m),
             Message::Ping(m) | Message::Pong(m) => encode_control(kind, m),
+            Message::BridgeRequest(m) => encode_control(kind, m),
+            Message::BridgeReply(m) => encode_control(kind, m),
+            Message::BridgeRelease(m) | Message::StreamClosed(m) => encode_control(kind, m),
+            Message::StreamData(m) | Message::StreamWrite(m) => encode_control(kind, m),
+            Message::StreamAck(m) | Message::StreamWriteAck(m) => encode_control(kind, m),
         }
     }
 
@@ -308,6 +363,14 @@ impl Message {
             FrameKind::Log => Message::Log(decode_control(kind, &payload)?),
             FrameKind::Ping => Message::Ping(decode_control(kind, &payload)?),
             FrameKind::Pong => Message::Pong(decode_control(kind, &payload)?),
+            FrameKind::BridgeRequest => Message::BridgeRequest(decode_control(kind, &payload)?),
+            FrameKind::BridgeReply => Message::BridgeReply(decode_control(kind, &payload)?),
+            FrameKind::BridgeRelease => Message::BridgeRelease(decode_control(kind, &payload)?),
+            FrameKind::StreamData => Message::StreamData(decode_control(kind, &payload)?),
+            FrameKind::StreamClosed => Message::StreamClosed(decode_control(kind, &payload)?),
+            FrameKind::StreamAck => Message::StreamAck(decode_control(kind, &payload)?),
+            FrameKind::StreamWrite => Message::StreamWrite(decode_control(kind, &payload)?),
+            FrameKind::StreamWriteAck => Message::StreamWriteAck(decode_control(kind, &payload)?),
         })
     }
 
