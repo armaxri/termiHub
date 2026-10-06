@@ -141,9 +141,45 @@ pub fn write_file_content(path: &str, content: &str) -> Result<(), TerminalError
     std::fs::write(path, content).map_err(TerminalError::Io)
 }
 
+/// Read a local file's raw bytes (any encoding).
+///
+/// Backs the byte-based (remote agent) upload leg, which used to read the file
+/// in the webview through the fs plugin (#3115).
+pub fn read_file_bytes(path: &str) -> Result<Vec<u8>, TerminalError> {
+    std::fs::read(path).map_err(TerminalError::Io)
+}
+
+/// Write raw bytes to a local file, creating or overwriting it.
+///
+/// Backs the byte-based (remote agent) download leg, which used to write the
+/// file in the webview through the fs plugin (#3115).
+pub fn write_file_bytes(path: &str, bytes: &[u8]) -> Result<(), TerminalError> {
+    std::fs::write(path, bytes).map_err(TerminalError::Io)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_bytes_round_trip_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blob.bin");
+        let path = path.to_str().unwrap();
+        let bytes: Vec<u8> = (0..=255u8).chain([0, 0xff, 0x80]).collect();
+        write_file_bytes(path, &bytes).unwrap();
+        assert_eq!(read_file_bytes(path).unwrap(), bytes);
+        // Overwrites rather than appends.
+        write_file_bytes(path, b"x").unwrap();
+        assert_eq!(read_file_bytes(path).unwrap(), b"x");
+    }
+
+    #[test]
+    fn read_file_bytes_of_a_missing_file_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.bin");
+        assert!(read_file_bytes(missing.to_str().unwrap()).is_err());
+    }
 
     #[test]
     fn list_dir_empty() {

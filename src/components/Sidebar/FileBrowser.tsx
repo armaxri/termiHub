@@ -3,7 +3,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Folder,
   File,
@@ -54,7 +53,7 @@ import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
-import { getHomeDir, sendInput } from "@/services/api";
+import { getHomeDir, localOpenFolder, sendInput } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { isLocalConnectionConfig, isWslConnectionConfig } from "@/utils/typedConnectionConfig";
@@ -1319,7 +1318,7 @@ export function FileBrowser() {
           break;
         case "openInExplorer":
           // Local-only: open the OS-native file manager at this folder.
-          openPath(entry.path).catch((err: unknown) => {
+          localOpenFolder(entry.path).catch((err: unknown) => {
             frontendLog("file_browser", `Open in file manager failed: ${errorMessage(err)}`);
             toast.error(`Failed to open "${entry.name}" in the file manager: ${errorMessage(err)}`);
           });
@@ -1490,7 +1489,7 @@ export function FileBrowser() {
 
   // Local-only: open the OS-native file manager at the currently-browsed folder.
   const handleOpenInExplorer = useCallback(() => {
-    openPath(currentPath).catch((err: unknown) => {
+    localOpenFolder(currentPath).catch((err: unknown) => {
       frontendLog("file_browser", `Open in file manager failed: ${errorMessage(err)}`);
       toast.error(`Failed to open the file manager: ${errorMessage(err)}`);
     });
