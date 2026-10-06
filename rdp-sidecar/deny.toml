@@ -24,17 +24,17 @@
 # surfaced; resolved to 0.10.2 via `cargo update -p chacha20`).
 yanked = "deny"
 
-# Unmaintained-crate advisories are NOT gated here, matching the root config:
-# the tree carries a set of them no local change can clear (gtk3 bindings,
-# proc-macro-error, ...). cargo-audit likewise does not fail on unmaintained.
+# Unmaintained-crate advisories are NOT gated here, matching the root config.
+# cargo-audit likewise does not fail on unmaintained. The one such notice left
+# in this graph, atomic-polyfill (RUSTSEC-2023-0089), is compiled into no
+# shipped target; see rdp-sidecar/.cargo/audit.toml for why it stays.
 unmaintained = "none"
 
 # RUSTSEC advisories accepted as a conscious release sign-off. Each has a
 # documented rationale below; keep this list minimal and revisit at each
-# dependency bump. Last revisited 2026-09-30 (#3054). The transitive `glib`
-# unsoundness notice (RUSTSEC-2024-0429) is not listed: cargo-deny's default
-# `unsound = "workspace"` never matches it, so an ignore would be stale. Its
-# sign-off lives in rdp-sidecar/.cargo/audit.toml for cargo-audit.
+# dependency bump. Last revisited 2026-10-06 (#3054): the GTK3 stack (glib
+# RUSTSEC-2024-0429, proc-macro-error RUSTSEC-2024-0370) left this lockfile
+# with `clipboard-files`, so only rsa remains.
 ignore = [
     # RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
     # picky/sspi -> IronRDP's CredSSP auth). Accepted as a release sign-off, same
@@ -43,7 +43,9 @@ ignore = [
     # the IronRDP/sspi stack, and the advisory has no fixed release on that line.
     # The sidechannel is a private-key RSA *decryption* timing leak; the RDP
     # CredSSP client validates the server's public key and does not perform
-    # attacker-observable private-key decryption through this crate.
+    # attacker-observable private-key decryption through this crate. The only
+    # client-private-key paths in sspi (smart-card / PKINIT) need
+    # `Credentials::SmartCard`, which termiHub never constructs.
     "RUSTSEC-2023-0071",
 ]
 
