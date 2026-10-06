@@ -14,7 +14,14 @@ This drives the user's path end to end:
   the banner offers **Save a copy…** and **Download**, there is no "Edit with
   sudo", and Save is disabled;
 - **Save a copy…** to a path in the user's home writes the (edited) buffer,
-  read back from the container with ``docker exec``.
+  read back from the container with ``docker exec``;
+- **Download** in the read-only banner saves the file locally through the
+  native Save dialog, stubbed with ``driver.stub_native_dialog`` (#4122): the
+  "Downloaded …" toast shows and the local file holds the remote contents
+  (#4128, was the manual MT-EDIT-01);
+- the file browser's **Download** (context menu) and **Upload** (toolbar), whose
+  native Save / Open dialogs are stubbed the same way, move the file over SFTP
+  in both directions.
 
 The probes behind the fallback are covered without UI in
 ``src-tauri/src/files/sftp.rs``; the backend's files-only detection in
@@ -24,7 +31,9 @@ The probes behind the fallback are covered without UI in
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +73,11 @@ DISCONNECT_OVERLAY = "terminal-disconnect-overlay"
 SAVE_COPY_DIALOG = "save-copy-dialog"
 SAVE_COPY_INPUT = "save-copy-input"
 SAVE_COPY_SUBMIT = "save-copy-submit"
+#: The terminal success toast of a transfer ("Downloaded …" / "Uploaded …").
+TRANSFER_DONE_TOAST = "transfer-done-toast"
+#: The file browser's Download context-menu item and Upload toolbar button.
+CTX_FILE_DOWNLOAD = "context-file-download"
+FILE_BROWSER_UPLOAD = "file-browser-upload"
 
 
 @pytest.fixture(scope="module")
@@ -207,3 +221,67 @@ class TestSftpOnlyHostLive(
             )
         finally:
             _container_remove(copy_path)
+
+    def _wait_local_file(self, path: Path, expected: str) -> None:
+        """Wait until a transfer has written ``expected`` to local file ``path``."""
+
+        def written() -> bool:
+            try:
+                return path.read_bytes().decode("utf-8") == expected
+            except (OSError, UnicodeDecodeError):
+                return False
+
+        self.wait(written, what=f"the remote contents to be downloaded to {path}")
+
+    def test_read_only_banner_download_saves_the_file_locally(self):
+        """MT-EDIT-01: Download a read-only file through the native Save dialog."""
+        self._connect_files_only("sftp-only-download")
+        self._open_files()
+        self._browse_to_etc()
+        self.open_file_in_editor("hostname")
+        self.wait_for_readonly()
+        self.wait(lambda: self.driver.exists(self.DOWNLOAD), what="the Download action")
+
+        target = Path(tempfile.mkdtemp(prefix="thub-sftp-download-")) / "hostname"
+        self.driver.stub_native_dialog("save", target)
+        self.driver.click(self.DOWNLOAD)
+        toast = self.wait(
+            lambda: self.driver.exists(TRANSFER_DONE_TOAST)
+            and self.driver.get_text(TRANSFER_DONE_TOAST),
+            what="the Downloaded toast",
+        )
+        assert "Downloaded hostname" in toast, f"unexpected toast: {toast!r}"
+        self._wait_local_file(target, _container_read("/etc/hostname"))
+
+    def test_file_browser_download_saves_the_file_locally(self):
+        """The context-menu Download writes the remote file to the picked path."""
+        self._connect_files_only("sftp-only-browser-download")
+        self._open_files()
+        self._browse_to_etc()
+
+        target = Path(tempfile.mkdtemp(prefix="thub-sftp-browser-download-")) / "hostname"
+        self.open_file_menu("hostname")
+        self.wait(lambda: self.driver.exists(CTX_FILE_DOWNLOAD), what="the Download menu item")
+        self.driver.stub_native_dialog("save", target)
+        self.driver.click(CTX_FILE_DOWNLOAD)
+        self._wait_local_file(target, _container_read("/etc/hostname"))
+
+    def test_file_browser_upload_writes_the_picked_file_to_the_host(self):
+        """The toolbar Upload copies the picked local file into the listed folder."""
+        self._connect_files_only("sftp-only-upload")
+        home = self._open_files()
+
+        name = f"{unique_name('upload')}.txt"
+        source = Path(tempfile.mkdtemp(prefix="thub-sftp-upload-")) / name
+        contents = f"uploaded by the harness: {name}\n"
+        source.write_bytes(contents.encode("utf-8"))
+        remote = f"{home.rstrip('/')}/{name}"
+        self.driver.stub_native_dialog("open", source)
+        self.driver.click(FILE_BROWSER_UPLOAD)
+        try:
+            self.wait_for_file_row(name)
+            assert _container_read(remote) == contents, (
+                "the uploaded file on the host must hold the local contents"
+            )
+        finally:
+            _container_remove(remote)
