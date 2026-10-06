@@ -28,14 +28,15 @@
 
 mod client;
 mod handle;
+mod locate;
 mod peer;
 mod session;
 mod spawn;
 
 pub use client::SandboxedPlugin;
 pub use handle::{PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
+pub use locate::{default_runner_path, RUNNER_BIN_NAME, RUNNER_MISSING};
 pub use session::SandboxedSession;
-pub use spawn::default_runner_path;
 
 /// Environment flag that opts a **debug build** into out-of-process plugins.
 pub const OUT_OF_PROCESS_ENV: &str = "TERMIHUB_PLUGIN_OUT_OF_PROCESS";
@@ -44,9 +45,10 @@ pub const OUT_OF_PROCESS_ENV: &str = "TERMIHUB_PLUGIN_OUT_OF_PROCESS";
 pub const RUNNER_PATH_ENV: &str = "TERMIHUB_PLUGIN_RUNNER";
 
 /// The runner configuration a debug build opts into: `Some` when
-/// [`OUT_OF_PROCESS_ENV`] is `1`, using [`RUNNER_PATH_ENV`] or else the sidecar
-/// next to the executable. The desktop calls this only under
-/// `cfg(debug_assertions)`, so a release build never reads the flag.
+/// [`OUT_OF_PROCESS_ENV`] is `1`, using [`RUNNER_PATH_ENV`] or else
+/// [`default_runner_path`] (the bundled sidecar, or the cargo-built runner).
+/// The desktop calls this only under `cfg(debug_assertions)`, so a release
+/// build never reads the flag.
 #[must_use]
 pub fn debug_runner_config_from_env() -> Option<PluginRunnerConfig> {
     runner_config_from(
