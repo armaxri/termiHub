@@ -641,6 +641,9 @@ function FileRow({
             className="file-browser__row"
             tabIndex={tabIndex}
             data-testid={`file-row-${entry.name}`}
+            // Mirrored from the wrapper so the row's own testid exposes the drop
+            // state (the bridge's dragTo `observe` reads it mid-drag, #4007).
+            data-drop-highlight={dnd.highlight ?? undefined}
             onClick={(e) => onRowClick(entry, e)}
             onDoubleClick={() => {
               // Directories and symlinks are followed; other files open for edit.
