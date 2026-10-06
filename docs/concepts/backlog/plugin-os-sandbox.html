@@ -1,0 +1,2005 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OS Sandbox for Native Plugin Backends (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Mockup-only mirrors of the real Settings classes
+         (src/components/Settings/SettingsPanel.css, SettingsNav.css) and of the
+         terminal disconnect overlay (TerminalDisconnectOverlay.css +
+         ui/ContentOverlay). Values use the mockup.css theme tokens. */
+      .settings-panel__body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        background: var(--bg-primary);
+      }
+      .settings-nav {
+        display: flex;
+        flex-direction: column;
+        width: 168px;
+        flex-shrink: 0;
+        padding: 4px 0;
+        border-right: 1px solid var(--border-secondary);
+      }
+      .settings-nav__item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 8px;
+        margin: 1px 4px;
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .settings-nav__item .li {
+        width: 14px;
+        height: 14px;
+      }
+      .settings-nav__item--active {
+        color: var(--text-primary);
+        font-weight: 600;
+        background: color-mix(in srgb, var(--accent-color) 12%, var(--bg-hover));
+      }
+      .settings-panel__content {
+        flex: 1;
+        overflow: hidden;
+        padding: 16px 20px;
+        max-width: 640px;
+      }
+      .settings-panel__section-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 8px;
+      }
+      .settings-panel__description {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 0 0 10px;
+        line-height: 1.45;
+      }
+      .settings-panel__subsection-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin: 12px 0 6px;
+      }
+      .settings-panel__file-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .settings-panel__file-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: var(--radius-md);
+        background: var(--bg-tertiary);
+      }
+      .settings-panel__file-item > div:first-child {
+        flex: 1;
+        min-width: 0;
+      }
+      .settings-panel__status-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        margin-right: 10px;
+      }
+      .settings-panel__status-indicator .li {
+        width: 13px;
+        height: 13px;
+      }
+      .settings-panel__status-indicator--ok {
+        color: var(--color-success);
+      }
+      .settings-panel__status-indicator--warning {
+        color: var(--color-warning);
+      }
+      .settings-panel__status-indicator--error {
+        color: var(--color-error);
+      }
+      .settings-panel__status-indicator--checking {
+        color: var(--text-secondary);
+      }
+      .settings-panel__section-badge {
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .row-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .row-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 4px;
+      }
+      .access-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 5px;
+      }
+      .access-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10.5px;
+        padding: 1px 6px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-primary);
+        color: var(--text-secondary);
+      }
+      .access-chip .li {
+        width: 11px;
+        height: 11px;
+      }
+      .access-chip--denied {
+        color: var(--text-disabled);
+        text-decoration: line-through;
+      }
+      .row-actions {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .row-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 8px;
+        font-size: 11px;
+      }
+      .row-actions .li {
+        width: 12px;
+        height: 12px;
+      }
+      .settings-panel__file-item .row-warning {
+        font-size: 11px;
+        color: var(--color-warning);
+        margin: 5px 0 0;
+        line-height: 1.4;
+      }
+      /* Terminal disconnect overlay mirror */
+      .terminal-host {
+        position: relative;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .terminal-disconnect-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+        backdrop-filter: blur(2px);
+        color: var(--text-primary);
+      }
+      .ui-content-overlay {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        text-align: center;
+        max-width: 420px;
+      }
+      .terminal-disconnect-overlay__icon {
+        width: 32px;
+        height: 32px;
+        color: var(--color-error);
+      }
+      .ui-content-overlay__heading {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+      }
+      .ui-content-overlay__subheading {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 0;
+        line-height: 1.5;
+      }
+      .terminal-disconnect-overlay__error-box {
+        width: 100%;
+        background: color-mix(in srgb, var(--color-error) 10%, transparent);
+        border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
+        border-radius: var(--radius-sm);
+        padding: 6px 10px;
+        text-align: left;
+      }
+      .terminal-disconnect-overlay__error-text {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--color-error);
+        white-space: pre-wrap;
+      }
+      .ui-content-overlay__actions {
+        display: flex;
+        gap: 8px;
+      }
+      /* Toast mirror (sonner, app-themed) */
+      .toast {
+        position: absolute;
+        right: 12px;
+        top: 12px;
+        width: 230px;
+        display: flex;
+        gap: 8px;
+        padding: 10px 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        font-size: 12px;
+      }
+      .toast .li {
+        flex-shrink: 0;
+        color: var(--color-warning);
+      }
+      .toast__title {
+        font-weight: 600;
+        margin: 0 0 2px;
+      }
+      .toast__body {
+        color: var(--text-secondary);
+        margin: 0;
+        line-height: 1.4;
+      }
+      .recommendation {
+        border-left: 3px solid var(--accent-color);
+        background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+        padding: 10px 14px;
+        border-radius: var(--radius-sm);
+        margin: 12px 0;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-shield-check" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-shield-alert" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </symbol>
+      <symbol id="i-shield-x" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m14.5 9.5-5 5" />
+        <path d="m9.5 9.5 5 5" />
+      </symbol>
+      <symbol id="i-puzzle" viewBox="0 0 24 24">
+        <path
+          d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"
+        />
+      </symbol>
+      <symbol id="i-box" viewBox="0 0 24 24">
+        <path
+          d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+        />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+      <symbol id="i-rotate-ccw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="M12 19h8" />
+        <path d="m4 17 6-6-6-6" />
+      </symbol>
+      <symbol id="i-monitor-x" viewBox="0 0 24 24">
+        <path d="m14.5 12.5-5-5" />
+        <path d="m9.5 12.5 5-5" />
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <path d="M12 17v4" />
+        <path d="M8 21h8" />
+      </symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24">
+        <path
+          d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"
+        />
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24">
+        <path d="M12 20v2" />
+        <path d="M12 2v2" />
+        <path d="M17 20v2" />
+        <path d="M17 2v2" />
+        <path d="M2 12h2" />
+        <path d="M2 17h2" />
+        <path d="M2 7h2" />
+        <path d="M20 12h2" />
+        <path d="M20 17h2" />
+        <path d="M20 7h2" />
+        <path d="M7 20v2" />
+        <path d="M7 2v2" />
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <rect x="8" y="8" width="8" height="8" rx="1" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>OS Sandbox for Native Plugin Backends</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented · pre-v1.0 requirement</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/3769">#3769</a> (SEC-002)</span
+          >
+          <span>Related: #3296 (hash-bound trust ack), PLG-004 (terminal-only), ADR-15</span>
+          <span><code>docs/concepts/backlog/plugin-os-sandbox.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Today a native plugin backend (a <code>cdylib</code> speaking the frozen 1.x C ABI in
+          <code>termihub-plugin-api</code>) is <code>dlopen</code>ed by
+          <code>core/src/plugin/host.rs</code> straight into the
+          <strong>main termiHub process</strong>. Once loaded it can read the decrypted credential
+          vault from memory, use <code>SSH_AUTH_SOCK</code>, read <code>~/.ssh</code>, open any
+          socket and tamper with every live session. The permission model (<code>network</code>,
+          <code>filesystem</code>, …) and the capability bridge are honest about this: they mediate
+          only what a <em>cooperating</em> plugin routes through them. For 0.1 the risk is contained
+          by policy — native plugins are default-off, each one needs a hash-bound trust
+          acknowledgement (#3296), and plugin types are terminal-only (PLG-004). The maintainer
+          decided on 2026-09-25 that a real OS sandbox is a <strong>pre-v1.0 requirement</strong>
+          (audit finding SEC-002).
+        </p>
+        <p>
+          This concept moves every native plugin into its own
+          <strong>sandboxed helper process</strong>. The helper loads the unchanged plugin library,
+          the OS confines the helper, and the host talks to it over a narrow, framed IPC channel.
+          The frozen ABI is kept <em>inside</em> the helper: plugins do not change and are not
+          rebuilt.
+        </p>
+
+        <div class="recommendation">
+          <p><strong>Recommendation in five lines</strong></p>
+          <ol>
+            <li>
+              <strong>One sandboxed helper process per plugin</strong> (not per session, not per
+              trust domain). A new small binary, <code>termihub-plugin-runner</code>, ships as a
+              Tauri sidecar. It loads the plugin's library inside itself and proxies the 1.x C ABI
+              over IPC, so plugins stay binary-compatible and the ABI gets no version bump.
+            </li>
+            <li>
+              <strong>The IPC channel is an inherited socket pair</strong> (Unix
+              <code>UnixStream::pair</code>, Windows a private named pipe handle). Frames are
+              length-delimited. Terminal bytes travel raw; control messages use MessagePack. Budget:
+              at most +0.5 ms p99 echo latency and at least 80 % of in-process throughput.
+            </li>
+            <li>
+              <strong>Per-OS confinement:</strong> macOS uses a Seatbelt profile applied by the
+              helper to itself with <code>sandbox_init</code> (no signing needed, so it works for
+              the unsigned beta). Linux uses <code>landlock</code> + <code>seccompiler</code> +
+              no_new_privs, with namespaces as optional extra hardening. Windows uses a per-plugin
+              AppContainer with no capabilities plus a job object.
+            </li>
+            <li>
+              <strong>Deny by default.</strong> The plugin can touch only its own install folder
+              (read-only) and its data folder (read-write). It cannot create sockets, start programs
+              or reach devices. Declared <code>network</code>/<code>filesystem</code> permissions
+              are honoured <em>only</em> through the existing capability bridge, which now runs in
+              the host across the IPC boundary. Socket handles are passed to the helper after the
+              host has checked the request.
+            </li>
+            <li>
+              <strong>Fail closed.</strong> If full isolation cannot be set up (mostly Linux kernels
+              without landlock), the plugin does not load, unless the user records a hash-bound
+              <em>reduced-isolation</em> acceptance. A crash or hang kills only that plugin's
+              sessions, with up to 3 restarts and then auto-disable. In-process loading is removed
+              before v1.0.
+            </li>
+          </ol>
+        </div>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            A compromised or malicious native plugin cannot read termiHub's memory (credentials,
+            other sessions), the user's files outside its data folder, or the SSH agent. It cannot
+            open network connections the user did not allow, start processes, or persist outside its
+            data folder.
+          </li>
+          <li>
+            The frozen 1.x plugin ABI (ADR-15) keeps working with
+            <strong>no change to plugin code or builds</strong>: every ABI 1.0/1.1 plugin that loads
+            today loads inside the helper.
+          </li>
+          <li>
+            A plugin crash, <code>panic = "abort"</code>, segfault, out-of-memory or hang never
+            takes down the termiHub host process.
+          </li>
+          <li>
+            Declared permissions become <strong>real</strong> sandbox rules, enforced by the kernel
+            rather than by plugin cooperation.
+          </li>
+          <li>
+            Users see the sandbox: each plugin shows its isolation status, what it can reach, and
+            clear crash and permission-denied feedback.
+          </li>
+          <li>
+            Automated escape tests run on every OS in CI and prove that the confinement holds.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Sandboxing frontend (JS/theme) plugins. They already run in a least-privilege Web Worker
+            (<code>src/plugins/sandbox/</code>).
+          </li>
+          <li>
+            Widening the capability ceiling. Plugins stay terminal-only (PLG-004). New surfaces
+            (file browser, monitoring, devices, process spawn) each need their own permission
+            <em>and</em> sandbox rule, designed together later.
+          </li>
+          <li>
+            Protecting against <strong>terminal-content attacks</strong>. A plugin legitimately
+            controls the bytes shown in its tab, so it can draw a fake password prompt. The trust
+            acknowledgement stays for this reason (see
+            <a href="#trust-after-sandbox">Trust after the sandbox</a>).
+          </li>
+          <li>Hosting plugins on remote agents. Agents do not run a <code>PluginHost</code>.</li>
+          <li>
+            Kernel or zero-day sandbox escapes. The sandbox raises the cost of an attack; it is not
+            a guarantee against OS bugs.
+          </li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">Today vs. proposed trust boundary</span>
+          <pre class="mermaid">
+flowchart LR
+    subgraph today["Today (0.1) — one process"]
+        direction TB
+        H1["termiHub host<br/>vault · sessions · SSH agent · webview"]
+        P1["plugin.dylib<br/>(dlopen in-process)"]
+        H1 --- P1
+    end
+    subgraph proposed["Proposed (pre-v1.0) — one helper per plugin"]
+        direction TB
+        H2["termiHub host<br/>vault · sessions · bridge (policy)"]
+        subgraph sb["OS sandbox"]
+            R["termihub-plugin-runner<br/>ABI shim"]
+            P2["plugin.dylib<br/>(unchanged)"]
+            R --- P2
+        end
+        H2 <-->|"framed IPC<br/>socketpair / pipe"| R
+    end
+    today -.->|"this concept"| proposed
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          The sandbox runs mostly in the background. It shows up in the UI in three places: the
+          <strong>Native Plugins</strong> section of Settings → Plugins (isolation status, what the
+          plugin can reach, process status), the plugin's <strong>terminal tab</strong> when the
+          helper crashes or stops responding, and a <strong>rate-limited toast</strong> when the
+          host refuses a plugin request (for example, a network connect without the
+          <code>network</code> permission).
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — Settings → Plugins → Native Plugins (sandboxed)</h3>
+          <div class="mockup-note">
+            The existing <code>NativePluginGateSettings</code> section after the sandbox lands. The
+            disclosure text changes from "no sandbox" to an honest description of the isolation.
+            Each trusted plugin row gains an isolation badge, process status and an access summary.
+          </div>
+          <div class="app" style="height: 560px">
+            <div class="tab-bar">
+              <div class="tab">
+                <svg class="li"><use href="#i-terminal" /></svg>
+                <span class="tab__title">acme-modbus</span>
+              </div>
+              <div class="tab tab--active">
+                <svg class="li"><use href="#i-settings" /></svg>
+                <span class="tab__title">Settings</span>
+                <button class="tab__close">
+                  <svg class="li"><use href="#i-x" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item activity-bar__item--active" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+              </nav>
+              <div class="settings-panel__body">
+                <nav class="settings-nav">
+                  <div class="settings-nav__item">
+                    <svg class="li"><use href="#i-settings" /></svg> General
+                  </div>
+                  <div class="settings-nav__item">
+                    <svg class="li"><use href="#i-terminal" /></svg> Terminal
+                  </div>
+                  <div class="settings-nav__item">
+                    <svg class="li"><use href="#i-lock" /></svg> Security
+                  </div>
+                  <div class="settings-nav__item settings-nav__item--active">
+                    <svg class="li"><use href="#i-puzzle" /></svg> Plugins
+                  </div>
+                </nav>
+                <div class="settings-panel__content">
+                  <h3 class="settings-panel__section-title">
+                    <svg class="li"><use href="#i-shield-check" /></svg> Native Plugins
+                    <span class="callout">A</span>
+                  </h3>
+                  <p class="settings-panel__description">
+                    Native plugins run in a separate, sandboxed process. A plugin can only use its
+                    own data folder and the access listed below; termiHub checks every network or
+                    file request it makes. Only trust plugins from sources you trust: a plugin still
+                    controls what appears in its terminal.
+                  </p>
+                  <div class="settings-panel__subsection-title">Trusted Native Plugins</div>
+                  <ul class="settings-panel__file-list">
+                    <li class="settings-panel__file-item">
+                      <div>
+                        <span class="row-name">Acme Modbus Terminal</span>
+                        <span class="settings-panel__section-badge"> · trusted · v1.4.0</span>
+                        <div class="row-meta">
+                          <span
+                            class="settings-panel__status-indicator settings-panel__status-indicator--ok"
+                            ><svg class="li"><use href="#i-shield-check" /></svg> Isolated</span
+                          ><span class="callout">B</span>
+                          <span
+                            class="settings-panel__status-indicator settings-panel__status-indicator--checking"
+                            ><svg class="li"><use href="#i-activity" /></svg> Running · 2
+                            sessions</span
+                          ><span class="callout">C</span>
+                        </div>
+                        <div class="access-chips">
+                          <span class="access-chip"
+                            ><svg class="li"><use href="#i-globe" /></svg> Network via
+                            termiHub</span
+                          >
+                          <span class="access-chip"
+                            ><svg class="li"><use href="#i-folder" /></svg> Own data folder</span
+                          >
+                          <span class="access-chip access-chip--denied"
+                            ><svg class="li"><use href="#i-folder" /></svg> Your files</span
+                          >
+                          <span class="access-chip access-chip--denied"
+                            ><svg class="li"><use href="#i-cpu" /></svg> Run programs</span
+                          ><span class="callout">D</span>
+                        </div>
+                      </div>
+                      <div class="row-actions">
+                        <button class="btn">
+                          <svg class="li"><use href="#i-rotate-ccw" /></svg> Restart
+                        </button>
+                        <button class="btn btn--link">
+                          <svg class="li"><use href="#i-shield-x" /></svg> Revoke
+                        </button>
+                      </div>
+                    </li>
+                    <li class="settings-panel__file-item">
+                      <div>
+                        <span class="row-name">Legacy Telnet+</span>
+                        <span class="settings-panel__section-badge"> · trusted · v0.9.2</span>
+                        <div class="row-meta">
+                          <span
+                            class="settings-panel__status-indicator settings-panel__status-indicator--warning"
+                            ><svg class="li"><use href="#i-shield-alert" /></svg> Reduced isolation
+                            (accepted)</span
+                          >
+                          <span
+                            class="settings-panel__status-indicator settings-panel__status-indicator--checking"
+                            ><svg class="li"><use href="#i-box" /></svg> Idle</span
+                          >
+                        </div>
+                        <p class="row-warning">
+                          This system cannot restrict file access (Linux Landlock is unavailable).
+                          Network and program limits still apply.
+                          <span class="callout">E</span>
+                        </p>
+                      </div>
+                      <div class="row-actions">
+                        <button class="btn btn--link">
+                          <svg class="li"><use href="#i-shield-x" /></svg> Revoke
+                        </button>
+                      </div>
+                    </li>
+                    <li class="settings-panel__file-item">
+                      <div>
+                        <span class="row-name">Serial Sniffer</span>
+                        <span class="settings-panel__section-badge"> · trusted · v2.0.1</span>
+                        <div class="row-meta">
+                          <span
+                            class="settings-panel__status-indicator settings-panel__status-indicator--error"
+                            ><svg class="li"><use href="#i-shield-x" /></svg> Disabled after 3
+                            crashes</span
+                          ><span class="callout">F</span>
+                        </div>
+                      </div>
+                      <div class="row-actions">
+                        <button class="btn">
+                          <svg class="li"><use href="#i-rotate-ccw" /></svg> Re-enable
+                        </button>
+                        <button class="btn btn--link">
+                          <svg class="li"><use href="#i-shield-x" /></svg> Revoke
+                        </button>
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">ready</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The section is no longer "Advanced / unsandboxed".
+                The global default-off toggle stays (see
+                <a href="#trust-after-sandbox">Trust after the sandbox</a>), and the disclosure
+                constant <code>NATIVE_TRUST_DISCLOSURE</code> is rewritten to match.
+              </li>
+              <li>
+                <span class="callout">B</span> Isolation badge: <strong>Isolated</strong> (full
+                profile active), <strong>Reduced isolation (accepted)</strong>, or
+                <strong>Isolation unavailable</strong> (not loaded). The badge reflects the profile
+                the helper <em>reported as enforced</em>, not the one that was requested.
+              </li>
+              <li>
+                <span class="callout">C</span> Process status: Starting · Running · N sessions ·
+                Idle · Restarting (n/3) · Not responding · Crashed.
+              </li>
+              <li>
+                <span class="callout">D</span> Access summary derived from the manifest permissions:
+                granted items appear normal, things no native plugin may ever do appear struck
+                through. Hovering a chip shows the exact rule (for example "outbound TCP only
+                through termiHub, max 8 connections").
+              </li>
+              <li>
+                <span class="callout">E</span> Reduced isolation is a recorded, hash-bound choice
+                (like <code>unverifiedToolchainAccepted</code>). The row says plainly which layer is
+                missing.
+              </li>
+              <li>
+                <span class="callout">F</span> The existing <code>RestartTracker</code> budget (3)
+                is spent. <strong>Re-enable</strong> resets it.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — plugin tab after the helper crashed, plus a permission-denied toast</h3>
+          <div class="mockup-note">
+            The plugin tab reuses the existing terminal disconnect overlay. Plugin types have no
+            auto-reconnect (PLG-004), so the action is a manual <strong>Restart session</strong>.
+            The toast is a separate example from a different moment: the host refused a bridge
+            request.
+          </div>
+          <div class="app" style="height: 380px">
+            <div class="tab-bar">
+              <div class="tab tab--active">
+                <svg class="li"><use href="#i-terminal" /></svg>
+                <span class="tab__title">acme-modbus · plc-07</span>
+                <button class="tab__close">
+                  <svg class="li"><use href="#i-x" /></svg>
+                </button>
+              </div>
+              <div class="tab">
+                <svg class="li"><use href="#i-terminal" /></svg>
+                <span class="tab__title">zsh</span>
+              </div>
+            </div>
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+              </nav>
+              <div class="terminal-host">
+                <div class="terminal-view">
+                  <div class="terminal-view__content">
+                    <div class="panel">
+                      <div class="terminal">
+                        <span class="prompt">plc-07&gt;</span> read holding 40001 8<br />
+                        40001: 0x01F4 0x0000 0x0003 0x00FF …
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="terminal-disconnect-overlay">
+                  <div class="ui-content-overlay">
+                    <svg class="li terminal-disconnect-overlay__icon">
+                      <use href="#i-monitor-x" />
+                    </svg>
+                    <p class="ui-content-overlay__heading">The plugin stopped unexpectedly</p>
+                    <p class="ui-content-overlay__subheading">
+                      "Acme Modbus Terminal" ran in its own sandboxed process, so termiHub and your
+                      other sessions are not affected. termiHub restarted the plugin (1 of 3).
+                    </p>
+                    <div class="terminal-disconnect-overlay__error-box">
+                      <span class="terminal-disconnect-overlay__error-text"
+                        >Plugin process exited: signal SIGSEGV (segmentation fault)</span
+                      >
+                    </div>
+                    <div class="ui-content-overlay__actions">
+                      <button class="btn btn--primary">Restart session</button>
+                      <button class="btn">Close tab</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="toast">
+                  <svg class="li"><use href="#i-shield-alert" /></svg>
+                  <div>
+                    <p class="toast__title">Blocked a plugin request</p>
+                    <p class="toast__body">
+                      "Serial Sniffer" tried to connect to 10.0.0.12:502 but does not have the
+                      network permission. Details are in the Log Viewer.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">acme-modbus · plugin restarted</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>Copy and placement rules</h3>
+        <ul>
+          <li>
+            Crash overlay heading: "The plugin stopped unexpectedly". The subheading always names
+            the plugin and says that termiHub and other sessions are unaffected. The error box shows
+            the exit reason (signal / exit code / "stopped responding" / "used too much memory").
+          </li>
+          <li>
+            Permission toasts are <strong>rate-limited</strong>: at most one per plugin per 30 s,
+            later ones fold into "and N more". Every denial is logged under the
+            <code>plugin</code> log target (Log Viewer) with the manifest id, like the existing
+            services <code>log</code> callback.
+          </li>
+          <li>
+            Only <strong>bridge</strong> denials raise a toast, because they are the ones the host
+            observes with full context. Kernel-level denials (a direct <code>socket()</code> call
+            returning <code>EPERM</code>) are logged best-effort, without a toast. See
+            <a href="#impl-denials">Denial reporting</a>.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+
+        <h3>Process model — decision</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Isolation</th>
+                <th>Cost</th>
+                <th>ABI semantics</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Helper per plugin</strong></td>
+                <td>
+                  Plugins are isolated from the host and from each other. Each helper gets a profile
+                  built from that plugin's own permissions.
+                </td>
+                <td>One process per <em>enabled</em> plugin (~5–15 MB RSS), idle-reaped.</td>
+                <td>
+                  Preserved: one <code>dlopen</code>, <code>termihub_plugin_init</code> once, many
+                  <code>create_backend</code> calls, global plugin state shared across sessions
+                  exactly as today.
+                </td>
+                <td><strong>Recommended</strong></td>
+              </tr>
+              <tr>
+                <td>Helper per session</td>
+                <td>Strongest: sessions are isolated from each other too.</td>
+                <td>
+                  One process per tab. The 40-concurrent-terminal goal turns into 40 processes, plus
+                  a cold start (spawn + sandbox + <code>dlopen</code>) on every connect.
+                </td>
+                <td>
+                  Changes semantics: init/shutdown run per session and a plugin can no longer share
+                  state between its sessions.
+                </td>
+                <td>Rejected as the default. A possible later per-plugin opt-in.</td>
+              </tr>
+              <tr>
+                <td>Helper per trust domain (publisher)</td>
+                <td>
+                  Weaker. The profile must be the <em>union</em> of all its plugins' permissions,
+                  and one plugin's crash or compromise affects its siblings.
+                </td>
+                <td>Fewest processes.</td>
+                <td>Preserved, but several libraries share one address space.</td>
+                <td>Rejected</td>
+              </tr>
+              <tr>
+                <td>Re-exec the main termiHub binary as the helper</td>
+                <td>Same as per plugin.</td>
+                <td>
+                  Loads the Tauri/WebKit/GTK dependency closure into every helper. That means a
+                  larger read allow-list and more memory.
+                </td>
+                <td>Preserved.</td>
+                <td>
+                  Rejected in favour of a small dedicated <code>termihub-plugin-runner</code>
+                  sidecar.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Lifecycle</h3>
+        <ul>
+          <li>
+            <strong>Spawn on load.</strong> When the plugin manager would load a native plugin today
+            (enable, startup, trust granted), the host spawns its helper. The helper checks the
+            library digest (the existing <code>PinnedLibrary</code> logic), applies the sandbox,
+            then <code>dlopen</code>s the library and runs the existing ABI gate, toolchain rule and
+            <code>termihub_plugin_init</code>. It reports <code>PluginInfo</code> plus the
+            <strong>enforced sandbox report</strong> back to the host. The host no longer
+            <code>dlopen</code>s any native plugin itself.
+          </li>
+          <li>
+            <strong>Sessions</strong> are multiplexed over the helper's single channel with a
+            host-assigned <code>session_id</code>.
+          </li>
+          <li>
+            <strong>Idle reap.</strong> 5 minutes after the last session closes, the host sends
+            <code>Shutdown</code> (the plugin's <code>termihub_plugin_shutdown</code> runs) and the
+            helper exits. The next session respawns it lazily and re-verifies the digest. This keeps
+            "many plugins installed" cheap.
+          </li>
+          <li>
+            <strong>Disable / revoke / uninstall / app quit:</strong> cancellation flags are set,
+            then <code>close</code> runs for every session (2 s budget), then
+            <code>Shutdown</code> (2 s budget), then the helper is killed. The host never waits on a
+            plugin without a deadline.
+          </li>
+          <li>
+            <strong>Parent death.</strong> The helper must never outlive the host. Linux uses
+            <code>PR_SET_PDEATHSIG(SIGKILL)</code>. On all OSes the helper exits on EOF of the IPC
+            socket. Windows adds a job object with <code>KILL_ON_JOB_CLOSE</code>.
+          </li>
+        </ul>
+
+        <h3>Crash isolation and restart policy</h3>
+        <ul>
+          <li>
+            A helper exit while sessions are open (signal, abort, non-zero exit, OOM kill) ends
+            <em>those</em> sessions with the crash overlay. The host and all other sessions keep
+            running. This also contains <code>panic = "abort"</code> plugins, which today would
+            abort the whole app.
+          </li>
+          <li>
+            The existing <code>RestartTracker</code> (<code>MAX_RESTART_ATTEMPTS = 3</code>) counts
+            crashes. The helper is respawned immediately, so new sessions work, but crashed sessions
+            are <strong>not</strong> auto-recreated, since plugin types have no reconnect or resume
+            protocol (PLG-004). The user decides with <strong>Restart session</strong>. On the 4th
+            crash the plugin is auto-disabled ("Disabled after 3 crashes"). The budget resets after
+            10 minutes without a crash, or on Re-enable.
+          </li>
+          <li>
+            <strong>Hang detection.</strong> The host pings every 5 s. Without a pong for 10 s the
+            helper is "Not responding", gets killed and counts as a crash. Each request/response
+            call (bridge replies, <code>close</code>) has its own deadline.
+          </li>
+          <li>
+            <strong>Resource limits</strong> (defaults, overridable per plugin only by the host,
+            never by the manifest): memory 512 MiB (Windows job memory limit, Linux
+            <code>RLIMIT_AS</code>; macOS has no hard per-process limit, so the host polls RSS and
+            kills at 1 GiB), file descriptors 256, no child processes.
+          </li>
+        </ul>
+
+        <h3>Capability model — what a terminal-only plugin may access</h3>
+        <p>
+          The principle is <strong>deny by default, mediate through the host</strong>. The sandbox
+          blocks every resource the plugin does not strictly need to run. Anything a declared
+          permission grants goes through the capability bridge, which already exists and already
+          checks <code>PermissionSet</code>, <code>FilesystemScope</code> and
+          <code>ConnectionPolicy</code>. Its callbacks are simply served by the host over IPC
+          instead of in-process. One enforcement point, the same on all three OSes.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Resource</th>
+                <th>Granted when</th>
+                <th>How</th>
+                <th>macOS (Seatbelt)</th>
+                <th>Linux</th>
+                <th>Windows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Own install folder (library + bundled deps)</td>
+                <td>always</td>
+                <td>direct, read + map-exec</td>
+                <td><code>file-read*</code> + <code>file-map-executable</code> subpath</td>
+                <td>landlock <code>ReadFile|ReadDir|Execute</code></td>
+                <td>ACE read+execute for the AppContainer SID</td>
+              </tr>
+              <tr>
+                <td>System libraries / dyld cache / locale</td>
+                <td>always</td>
+                <td>direct, read-only</td>
+                <td><code>/usr/lib</code>, <code>/System</code>, dyld shared cache</td>
+                <td><code>/lib*</code>, <code>/usr/lib*</code>, <code>/etc/ld.so.cache</code></td>
+                <td>default AppContainer read of <code>System32</code></td>
+              </tr>
+              <tr>
+                <td>Data folder <code>&lt;plugins&gt;/.data/&lt;id&gt;</code> (ABI 1.1 context)</td>
+                <td>always (1.1+), absent for 1.0</td>
+                <td>
+                  direct, read-write. <code>HOME</code> and <code>TMPDIR</code> point inside it
+                </td>
+                <td><code>file-read* file-write*</code> subpath</td>
+                <td>landlock RW rule</td>
+                <td>ACE modify for the AppContainer SID</td>
+              </tr>
+              <tr>
+                <td>Terminal I/O</td>
+                <td><code>terminal</code> (required)</td>
+                <td>IPC Output / Input / Resize frames</td>
+                <td colspan="3">inherited IPC descriptor only, no new IPC endpoints</td>
+              </tr>
+              <tr>
+                <td>Outbound TCP</td>
+                <td><code>network</code></td>
+                <td>
+                  bridge <code>open_connection</code>: the host checks the permission and policy,
+                  connects, and passes the connected socket handle to the helper
+                </td>
+                <td><code>(deny network*)</code>. A passed fd still works</td>
+                <td>seccomp: <code>socket()</code>→EPERM. landlock net (6.7+) denies connect</td>
+                <td>
+                  no <code>internetClient</code> capability. Handle via
+                  <code>WSADuplicateSocket</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Declared filesystem paths</td>
+                <td><code>filesystem</code> + paths</td>
+                <td>
+                  bridge
+                  <code>read_file</code
+                  >/<code>write_file</code>/<code>stat</code>/<code>list_dir</code>, checked by the
+                  host scope
+                </td>
+                <td colspan="3">
+                  <strong>no direct rule</strong>: the kernel denies them, so they are reachable
+                  only through the host
+                </td>
+              </tr>
+              <tr>
+                <td>Plugin settings</td>
+                <td><code>settings</code></td>
+                <td><code>settings_json</code> in <code>PluginSessionConfig</code> (unchanged)</td>
+                <td colspan="3">no OS resource</td>
+              </tr>
+              <tr>
+                <td>User files, <code>~/.ssh</code>, app config, credential vault, keychain</td>
+                <td><strong>never</strong></td>
+                <td>—</td>
+                <td>default deny + explicit deny of <code>~</code></td>
+                <td>landlock default deny</td>
+                <td>AppContainer has no access to the user profile</td>
+              </tr>
+              <tr>
+                <td>Start programs, fork, ptrace, other processes' memory</td>
+                <td><strong>never</strong></td>
+                <td>—</td>
+                <td><code>(deny process-exec process-fork)</code></td>
+                <td>
+                  seccomp KILL on <code>execve*</code>, <code>ptrace</code>,
+                  <code>process_vm_*</code>. <code>clone</code> only with
+                  <code>CLONE_THREAD</code>
+                </td>
+                <td>job: active-process limit 1. Child-process mitigation policy</td>
+              </tr>
+              <tr>
+                <td>
+                  Devices (serial, USB), clipboard, GUI, SSH agent socket, ADR-13 spawn socket
+                </td>
+                <td><strong>never</strong> (future permission)</td>
+                <td>—</td>
+                <td>deny <code>iokit-open</code>, most <code>mach-lookup</code></td>
+                <td>landlock default deny + <code>socket()</code> denied</td>
+                <td>no capabilities. Pipe DACLs exclude the AppContainer SID</td>
+              </tr>
+              <tr>
+                <td>Environment</td>
+                <td>—</td>
+                <td>
+                  scrubbed: no <code>SSH_AUTH_SOCK</code>, no <code>TERMIHUB_*</code>, only
+                  <code>LANG</code>/<code>TZ</code>/<code>HOME</code>/<code>TMPDIR</code>
+                </td>
+                <td colspan="3">set by the host at spawn</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Why declared filesystem paths are not opened up directly in the sandbox.</strong>
+          Granting the declared roots as landlock/Seatbelt/ACL rules was considered. It was rejected
+          for v1 for three reasons. On Windows it would mean rewriting ACLs on user directories. It
+          would widen the kernel-visible surface for a permission no shipped plugin uses. And the
+          bridge already is the documented API (<code>plugin-authoring.md</code>). A later minor can
+          add "direct access to declared paths" as an opt-in if a plugin needs streaming file I/O.
+        </p>
+
+        <h3>Failure modes and user-visible states</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Failure</th>
+                <th>Detected by</th>
+                <th>User sees</th>
+                <th>System does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Sandbox layer unavailable (e.g. kernel without landlock)</td>
+                <td>Helper sandbox report before <code>dlopen</code></td>
+                <td>
+                  Row: "Isolation unavailable on this system" +
+                  <em>Load with reduced isolation…</em>
+                </td>
+                <td>
+                  Library is <strong>not</strong> loaded. Loads only after the hash-bound
+                  <code>reducedIsolationAccepted</code> acknowledgement
+                </td>
+              </tr>
+              <tr>
+                <td>Sandbox setup fails unexpectedly (API error)</td>
+                <td>Helper exits with a <code>SandboxSetupFailed</code> report</td>
+                <td>Row: "Could not start the plugin sandbox" + log details</td>
+                <td>Not loaded. Never falls back to in-process</td>
+              </tr>
+              <tr>
+                <td>Helper binary missing or tampered</td>
+                <td>Host spawn error / digest check of the sidecar</td>
+                <td>"Plugin runner is missing — reinstall termiHub"</td>
+                <td>All native plugins unavailable, frontend plugins unaffected</td>
+              </tr>
+              <tr>
+                <td>ABI / toolchain / manifest mismatch</td>
+                <td>Helper (existing gates, now remote)</td>
+                <td>Existing "Incompatible" state (unchanged copy)</td>
+                <td>Helper exits, plugin marked incompatible</td>
+              </tr>
+              <tr>
+                <td>Crash during a session</td>
+                <td>Child exit status</td>
+                <td>Crash overlay in each affected tab + row "Restarting (n/3)"</td>
+                <td><code>RestartTracker</code>, respawn, sessions ended</td>
+              </tr>
+              <tr>
+                <td>Hang</td>
+                <td>Ping timeout / call deadline</td>
+                <td>Overlay "The plugin stopped responding"</td>
+                <td>Kill, counted as a crash</td>
+              </tr>
+              <tr>
+                <td>Memory limit exceeded</td>
+                <td>Job notification / OOM signal / RSS poll</td>
+                <td>Overlay "The plugin used too much memory"</td>
+                <td>Kill, counted as a crash</td>
+              </tr>
+              <tr>
+                <td>Bridge request denied</td>
+                <td>Host bridge (<code>PermissionSet</code>)</td>
+                <td>Rate-limited toast + Log Viewer entry</td>
+                <td>Plugin receives <code>PluginStatus::PermissionDenied</code> (existing)</td>
+              </tr>
+              <tr>
+                <td>Direct syscall denied by the kernel</td>
+                <td>Plugin gets <code>EPERM</code> / <code>EACCES</code></td>
+                <td>Log entry (best-effort, see below)</td>
+                <td>Nothing else. The plugin handles its own error</td>
+              </tr>
+              <tr>
+                <td>Malformed or hostile IPC from the helper</td>
+                <td>Host frame decoder</td>
+                <td>Overlay "The plugin sent invalid data"</td>
+                <td>Kill, counted as a crash. The host treats the helper as untrusted input</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 id="trust-after-sandbox">Trust after the sandbox</h3>
+        <ul>
+          <li>
+            The <strong>hash-bound trust acknowledgement (#3296) stays</strong>. The sandbox limits
+            what a plugin can reach, not what it shows. A trusted plugin still draws its terminal
+            and can phish there. The acknowledgement gains one optional field,
+            <code>reducedIsolationAccepted</code>, with the same fail-closed rules as
+            <code>unverifiedToolchainAccepted</code>: a plain or older acknowledgement never carries
+            it.
+          </li>
+          <li>
+            The <strong>global native default-off toggle stays for 1.0</strong> (recommended).
+            Whether to flip the default once the sandbox has soaked is a maintainer decision for
+            after the extended-testing period, not part of this concept.
+          </li>
+          <li>
+            There is <strong>no "run unsandboxed" switch</strong> for users. A toggle back to
+            in-process would bring back the inverted trust model SEC-002 describes. The in-process
+            path survives only as a debug-build developer flag until it is removed (phase 7).
+          </li>
+          <li>
+            The <strong>ABI 1.0 toolchain acceptance</strong> stays required. The helper's FFI
+            assumptions are the same as the host's today; only the blast radius shrinks. Relaxing it
+            is a separate later decision.
+          </li>
+        </ul>
+
+        <h3>Plugin-author impact</h3>
+        <ul>
+          <li>
+            <strong>No rebuild, no ABI change.</strong> The ABI is not bumped. The SDK crate stays
+            <code>publish = false</code>.
+          </li>
+          <li>
+            Behaviour that changes: direct <code>std::net</code> / <code>std::fs</code> outside the
+            data folder now fails with a permission error, so use the bridge. Plugins cannot spawn
+            processes. <code>HOME</code>/<code>TMPDIR</code> point into the data folder. These rules
+            are documented in <code>docs/plugin-authoring.md</code>. No third-party plugins have
+            shipped yet, so the installed base affected is effectively zero.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption">Helper process lifecycle (per plugin)</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> NotLoaded
+    NotLoaded --> Spawning: load (enable / startup / trust / first session)
+    Spawning --> Sandboxing: process started, IPC handshake ok
+    Spawning --> Failed: runner missing / spawn error
+    Sandboxing --> Loading: full profile enforced
+    Sandboxing --> Loading: reduced profile + reducedIsolationAccepted
+    Sandboxing --> IsolationUnavailable: reduced profile, not accepted
+    Sandboxing --> Failed: SandboxSetupFailed
+    Loading --> Ready: digest ok, ABI/toolchain ok, plugin_init ok
+    Loading --> Incompatible: ABI / toolchain / manifest mismatch
+    Ready --> Running: create_backend
+    Running --> Running: more sessions
+    Running --> Ready: last session closed
+    Ready --> Idle: 5 min idle, Shutdown sent, process exited
+    Idle --> Spawning: new session
+    Running --> Crashed: exit / signal / hang / OOM / bad frame
+    Ready --> Crashed: exit / signal / hang
+    Crashed --> Spawning: restarts < 3
+    Crashed --> AutoDisabled: 4th crash
+    AutoDisabled --> Spawning: user re-enables
+    Ready --> NotLoaded: disable / revoke / uninstall
+    Running --> NotLoaded: disable / revoke (close all, kill)
+    IsolationUnavailable --> Spawning: user accepts reduced isolation
+    Incompatible --> [*]
+    Failed --> [*]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Helper startup — sandbox before any plugin code runs</span>
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant M as PluginManager (host)
+    participant S as SandboxedPluginHost (host)
+    participant R as termihub-plugin-runner
+    participant K as OS kernel
+    participant P as plugin.dylib
+    M->>S: load(plugin, manifest, permissions, ack)
+    S->>S: build SandboxPolicy from manifest + paths
+    S->>R: spawn (scrubbed env, inherited IPC fd only,<br/>Windows: AppContainer + job)
+    R->>S: Hello{runner_version, protocol_version}
+    S->>R: Configure{policy, library_path, expected_digest}
+    R->>R: open + pin library (PinnedLibrary)
+    R->>K: apply sandbox (seatbelt / landlock+seccomp)
+    K-->>R: enforced layers report
+    R->>S: SandboxReport{full | reduced(missing) | failed}
+    alt reduced and not accepted, or failed
+        S->>R: Shutdown
+        S-->>M: IsolationUnavailable / Failed
+    else enforced
+        R->>P: dlopen (now confined) + abi_version + plugin_init
+        P-->>R: PluginInfo
+        R->>R: ABI gate, manifest mirror, toolchain rule
+        R->>S: Loaded{PluginInfo} or Incompatible{reason}
+        S-->>M: Ready / Incompatible
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Session data path — the 1.x ABI is preserved inside the helper</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant UI as Terminal tab
+    participant H as Host (SandboxedBackend)
+    participant B as Host bridge service
+    participant R as Runner (ABI shim)
+    participant P as Plugin
+    UI->>H: connect
+    H->>R: CreateSession{id, config_json, settings_json}
+    R->>P: termihub_plugin_create_backend(config,<br/>OutputSender→IPC, Bridge→IPC)
+    P-->>R: PluginBackend + PluginStatus::Ok
+    R-->>H: SessionCreated{id}
+    UI->>H: keystrokes
+    H->>R: Input{id, bytes} (queued, no round trip)
+    R->>P: vtable.write_input(bytes)
+    P->>R: output.send(bytes)
+    R->>H: Output{id, bytes}
+    H->>UI: terminal output
+    P->>R: bridge.open_connection("plc-07", 502)
+    R->>H: BridgeRequest{req, OpenConnection}
+    H->>B: PermissionSet.require(Network) + ConnectionPolicy
+    B-->>H: connected TcpStream
+    H->>R: BridgeReply{req, socket handle via SCM_RIGHTS / WSADuplicateSocket}
+    R-->>P: PluginTcpStream (real socket, local read/write)
+    UI->>H: close tab
+    H->>R: Cancel{id} then Close{id} (2 s deadline)
+    R->>P: is_cancelled=true, vtable.close, vtable.destroy
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Crash handling</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant R as Runner
+    participant H as Host
+    participant T as RestartTracker
+    participant UI as Tabs / Settings
+    R--xH: exit (SIGSEGV) / pipe EOF / ping timeout
+    H->>H: reap child, collect exit reason
+    H->>UI: affected sessions → Crashed overlay
+    H->>T: record_crash()
+    alt attempts < 3
+        T-->>H: Restart
+        H->>R: respawn (full startup sequence)
+        H->>UI: row "Restarting (n/3)" → "Running"
+    else budget spent
+        T-->>H: Disable
+        H->>UI: row "Disabled after 3 crashes"
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Linux layer selection and fallback</span>
+          <pre class="mermaid">
+flowchart TD
+    A[runner starts] --> B[prctl NO_NEW_PRIVS + PDEATHSIG]
+    B --> C{"unshare(USER|NET|IPC) allowed?"}
+    C -- yes --> C1[empty net ns: defence in depth]
+    C -- "no (AppArmor userns restriction, container)" --> D
+    C1 --> D{"landlock ABI >= 1?"}
+    D -- yes --> E[FS ruleset: install RO, libs RO, data RW]
+    E --> E2{"landlock ABI >= 4?"}
+    E2 -- yes --> E3[deny TCP bind/connect]
+    E2 -- no --> F
+    E3 --> F
+    D -- no --> X["mark FS layer missing → reduced"]
+    X --> F
+    F["seccomp-bpf allow-list (always required)"] --> G{seccomp ok?}
+    G -- no --> Z["SandboxSetupFailed: never load"]
+    G -- yes --> H{all required layers?}
+    H -- yes --> OK[report full]
+    H -- "no (FS missing)" --> RED[report reduced]
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept time (October 2026, plugin ABI 1.1). The codebase may
+          change before implementation. This section describes the planned approach given the
+          current state.
+        </p>
+
+        <h3>Components</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Location</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>plugin-runner/</code> (new workspace member, bin)</td>
+                <td>
+                  <strong>New</strong> — <code>termihub-plugin-runner</code>. Small, with no
+                  Tauri/webview dependencies. Parses one argument (protocol version), reads
+                  <code>Configure</code> from the inherited fd, applies the sandbox, then reuses
+                  <code>core::plugin::host</code>'s loading code
+                  (<code>load_backend_library_with</code>, <code>PinnedLibrary</code>, ABI/toolchain
+                  gates). The loading code moves into a shared module that does not pull in the rest
+                  of core. Builds the real ABI objects locally: <code>PluginOutputSender</code> (ctx
+                  writes Output frames), <code>PluginHostBridge</code> (vtable forwards to the
+                  host), <code>PluginHostContext</code> (services <code>log</code> becomes a Log
+                  frame, <code>is_cancelled</code> becomes a local atomic set by Cancel frames).
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/sandbox/</code> (new)</td>
+                <td>
+                  <strong>New</strong> — <code>policy.rs</code> (manifest → OS-neutral
+                  <code>SandboxPolicy</code>), <code>linux.rs</code>, <code>macos.rs</code>,
+                  <code>windows.rs</code> (the confinement each side applies),
+                  <code>spawn.rs</code> (host-side spawn: env scrub, fd/handle inheritance,
+                  AppContainer, job), <code>report.rs</code> (enforced-layer report).
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/ipc/</code> (new)</td>
+                <td>
+                  <strong>New</strong> — frame types, codec and protocol version. Shared by host and
+                  runner, fuzzed.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/host.rs</code></td>
+                <td>
+                  <code>PluginHost</code> drives a <code>SandboxedPlugin</code> (helper handle)
+                  instead of an in-process <code>LoadedLibrary</code>. The in-process path stays
+                  behind a debug-only flag until phase 7, then is deleted.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/connection.rs</code></td>
+                <td>
+                  <code>PluginConnectionType</code> receives a <code>SandboxedBackend</code> with
+                  the same operations as <code>LoadedBackend</code> (<code>write_input</code>,
+                  <code>resize</code>, <code>close</code>, <code>is_alive</code>). Capabilities stay
+                  hard-coded terminal-only.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/capabilities.rs</code></td>
+                <td>
+                  The bridge callbacks become an IPC <em>service</em>: the same
+                  <code>PermissionSet</code>/<code>FilesystemScope</code>/<code
+                    >ConnectionPolicy</code
+                  >
+                  guards, now answering BridgeRequest frames. <code>open_connection</code> returns a
+                  socket handle instead of an in-process stream.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/native_trust.rs</code></td>
+                <td>
+                  Add <code>reducedIsolationAccepted</code> to the acknowledgement (fail closed).
+                  Rewrite <code>NATIVE_TRUST_DISCLOSURE</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/security.rs</code>, <code>capabilities.rs</code> docs</td>
+                <td>
+                  Replace the "not an OS sandbox / out of scope" module docs with the new
+                  enforcement boundary.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/tauri.conf.json</code></td>
+                <td>
+                  <code>bundle.externalBin</code> += <code>termihub-plugin-runner</code> (per target
+                  triple). On macOS it is signed together with the app once signing exists.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/Settings/NativePluginGateSettings.tsx</code>, terminal
+                  overlay
+                </td>
+                <td>
+                  Isolation badge, process status, access chips, reduced-isolation acceptance,
+                  crash/hang overlay variants, rate-limited denial toasts. Status comes from a
+                  backend projection region (ADR-14), not from frontend-owned state.
+                </td>
+              </tr>
+              <tr>
+                <td><code>docs/architecture.md</code></td>
+                <td>
+                  <strong>New ADR-19</strong> "Native plugins run out of process in an OS sandbox".
+                  Amend ADR-15 (the in-process wording) and SECURITY.md. Update
+                  <code>plugin-authoring.md</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>IPC surface</h3>
+        <ul>
+          <li>
+            <strong>Transport.</strong> Unix uses
+            <code>std::os::unix::net::UnixStream::pair()</code>. The child's end is inherited as fd
+            3 (close-on-exec cleared only for it); everything else is closed. Windows uses a duplex
+            named pipe with a random 128-bit name, created by the host with a DACL for the user SID
+            and the plugin's AppContainer SID only. The host connects the client end and passes it
+            via <code>PROC_THREAD_ATTRIBUTE_HANDLE_LIST</code>. No filesystem rendezvous path
+            exists, so nothing can squat it, and the plugin cannot open new IPC endpoints.
+          </li>
+          <li>
+            <strong>Framing.</strong> Each frame is a 4-byte big-endian length followed by a 1-byte
+            kind and the payload; max frame 1 MiB. The host uses
+            <code>tokio_util::codec::LengthDelimitedCodec</code> (already a dependency); the runner
+            uses a small synchronous reader with the same format. Hot-path kinds
+            (<code>Input</code>, <code>Output</code>) carry <code>u32 session_id</code> + raw bytes,
+            with no serialisation. Control kinds (Hello, Configure, SandboxReport, Loaded,
+            CreateSession, Resize, Close, Cancel, BridgeRequest/Reply, Log, Ping/Pong, Shutdown) are
+            MessagePack via <code>rmp-serde</code> (already a dependency).
+            <code>ipc-channel</code> (Servo) was considered and rejected: it brings its own
+            serialisation and macOS Mach-port transport, which is more surface than one socket pair
+            needs.
+          </li>
+          <li>
+            <strong>Handle passing</strong> for bridge sockets uses <code>SCM_RIGHTS</code> on Unix
+            (via <code>rustix</code>/<code>nix</code>, already in the tree) and
+            <code>WSADuplicateSocketW</code> on Windows. If a handle cannot be passed (to be
+            verified in the spike for AppContainer), the runner falls back to proxying stream bytes
+            as <code>StreamData</code> frames.
+          </li>
+          <li>
+            <strong>Semantics delta, host side only.</strong> <code>write_input</code> and
+            <code>resize</code> become asynchronous. The host queues them with a bounded queue
+            (backpressure, no unbounded growth), and a plugin error arrives later as a session
+            error. Inside the helper the plugin still sees the synchronous ABI call and returns its
+            <code>PluginStatus</code> exactly as specified. <code>is_alive</code> becomes an event
+            the runner pushes on change.
+          </li>
+          <li>
+            <strong>Untrusted peer.</strong> The host validates every frame: length cap, known kind,
+            known <code>session_id</code>, Log lines capped at 8 KiB and sanitised (the existing
+            services rules), and a per-plugin output rate cap. Any violation kills the helper.
+          </li>
+        </ul>
+
+        <h3>Performance budget</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Budget (vs. in-process)</th>
+                <th>How measured</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Keystroke-to-echo latency</td>
+                <td>p99 added ≤ 0.5 ms (expected ~2 × 20–50 µs per hop)</td>
+                <td>echo-backend round trip, 10k samples</td>
+              </tr>
+              <tr>
+                <td>Output throughput, one session</td>
+                <td>≥ 80 % of in-process, and ≥ 100 MB/s absolute</td>
+                <td>bulk-output test plugin, 256 MiB</td>
+              </tr>
+              <tr>
+                <td>40 concurrent sessions in one plugin</td>
+                <td>no frame starvation; fairness within 2×</td>
+                <td>multiplexed stress test</td>
+              </tr>
+              <tr>
+                <td>Helper cold start (spawn + sandbox + dlopen + init)</td>
+                <td>≤ 150 ms p95</td>
+                <td>per-OS CI timing</td>
+              </tr>
+              <tr>
+                <td>Idle helper memory</td>
+                <td>≤ 15 MB RSS</td>
+                <td>per-OS CI measurement</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Output frames are written with a single <code>writev</code>/<code>WriteFile</code> per
+          <code>send</code>. No artificial coalescing delay is added; the plugin's own chunking
+          decides the batching.
+        </p>
+
+        <h3>Per-OS sandbox</h3>
+        <h4>macOS — Seatbelt via <code>sandbox_init</code> (recommended)</h4>
+        <ul>
+          <li>
+            The runner calls <code>sandbox_init_with_parameters</code> on itself, after opening the
+            IPC fd and pinning the library but <strong>before</strong> <code>dlopen</code>. The
+            profile is a generated SBPL string: <code>(deny default)</code>, allow read + map-exec
+            of the install folder and system libraries, read/write of the data folder,
+            <code>(deny network*)</code>, <code>(deny process-exec process-fork)</code>, deny
+            <code>iokit-open</code>, and only the few <code>mach-lookup</code> services dyld and
+            libsystem need. This is the mechanism Chromium, Firefox and WebKit use for their
+            renderer/content processes.
+          </li>
+          <li>
+            <strong>Works for the unsigned beta:</strong> it needs no code signature, entitlement or
+            provisioning profile.
+          </li>
+          <li>
+            Caveat: the API is formally deprecated or private, but it has been stable for over a
+            decade and is relied on by every major browser. The fallback, should Apple ever remove
+            it, is the App Sandbox (below). The phase-1 spike first evaluates
+            <code>birdcage</code> (it applies Seatbelt the same way). If it fits, use it per the
+            prefer-libraries rule; otherwise use a ~100-line FFI wrapper.
+          </li>
+          <li>
+            <strong>App Sandbox entitlements — rejected for now.</strong> They need a signed helper
+            carrying <code>com.apple.security.app-sandbox</code>. Ad-hoc signing makes container
+            behaviour unreliable, and the container is static per bundle id: dynamic per-plugin
+            paths would need security-scoped bookmarks. Revisit once Developer-ID signing lands (<a
+              href="macos-code-signing-notarization.html"
+              >macos-code-signing-notarization</a
+            >).
+          </li>
+          <li>
+            <code>sandbox-exec</code> (CLI) — rejected. It wraps the same mechanism, but adds a
+            dependency on a deprecated binary and a profile passed on argv.
+          </li>
+        </ul>
+        <h4>Linux — landlock + seccomp + no_new_privs (namespaces optional)</h4>
+        <ul>
+          <li>
+            <strong>Required layers:</strong> <code>PR_SET_NO_NEW_PRIVS</code>, a seccomp-bpf
+            allow-list built with <code>seccompiler</code> (AWS Firecracker; pure Rust, no
+            libseccomp dependency), and a landlock filesystem ruleset built with
+            <code>landlock</code> (the official rust-landlock crate, with its best-effort
+            compatibility mode reporting what was actually enforced).
+          </li>
+          <li>
+            <strong>Seccomp actions:</strong> <code>EPERM</code> for "soft" calls a plugin might
+            reasonably try (<code>socket</code>, <code>connect</code>, <code>bind</code>,
+            <code>open_by_handle_at</code>). <code>KILL_PROCESS</code> for escape primitives
+            (<code>execve*</code>, <code>ptrace</code>, <code>process_vm_*</code>,
+            <code>mount</code>, <code>bpf</code>, <code>keyctl</code>, <code>perf_event_open</code>,
+            <code>io_uring_*</code>, <code>unshare</code> after setup, <code>clone</code> without
+            <code>CLONE_THREAD</code>).
+          </li>
+          <li>
+            <strong>Network</strong> is closed by the seccomp <code>socket()</code> denial on every
+            kernel. landlock ABI v4 (Linux 6.7+) adds TCP bind/connect denial as a second layer. An
+            unprivileged user + net namespace is attempted as extra hardening but is
+            <em>not</em> required: Ubuntu 23.10+ restricts unprivileged user namespaces via
+            AppArmor, and containers often forbid them.
+          </li>
+          <li>
+            <strong>Fallback:</strong> the only layer with a meaningful kernel floor is landlock
+            (5.13+). Kernels without it (e.g. Debian 11, RHEL 8) get seccomp plus the env scrub but
+            no filesystem confinement. The runner reports this as <em>reduced</em>, the plugin stays
+            unloaded unless <code>reducedIsolationAccepted</code> is recorded, and the row names the
+            missing layer. If seccomp itself fails, the plugin never loads.
+          </li>
+          <li>
+            <code>extrasafe</code> and <code>birdcage</code> were considered as all-in-one wrappers.
+            The two focused crates give exact control over the enforced-layer report, which the
+            fail-closed policy depends on.
+          </li>
+        </ul>
+        <h4>Windows — AppContainer + job object</h4>
+        <ul>
+          <li>
+            A per-plugin AppContainer profile (<code>CreateAppContainerProfile</code>, name
+            <code>termiHub.Plugin.&lt;sha256(id)[..16]&gt;</code>) with
+            <strong>zero capabilities</strong>: no <code>internetClient</code>, no loopback, no
+            user-profile access. The runner is spawned with
+            <code>PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES</code>. The host adds ACEs for the
+            AppContainer SID on the install folder (read+execute) and the data folder (modify), and
+            removes the profile on uninstall. Evaluate Less-Privileged AppContainer (LPAC) in the
+            spike; it is stronger but may break <code>dlopen</code> of the plugin's CRT
+            dependencies.
+          </li>
+          <li>
+            <strong>Job object</strong> (via the <code>win32job</code> crate or the
+            <code>windows</code> crate directly): <code>KILL_ON_JOB_CLOSE</code>, active-process
+            limit 1, process memory limit, UI restrictions. Add the
+            <code>PROCESS_CREATION_CHILD_PROCESS_RESTRICTED</code> mitigation policy.
+          </li>
+          <li>
+            Bindings come from Microsoft's <code>windows</code> crate (already in the tree). No
+            mature dedicated AppContainer crate exists, so this is a thin, well-tested wrapper.
+          </li>
+          <li>
+            <strong>Restricted token + integrity level (Chromium-style)</strong> — rejected as the
+            primary mechanism. It is much more code to get right, and AppContainer gives network-off
+            and profile-off by default. Kept as a fallback idea only if AppContainer breaks a class
+            of plugins.
+          </li>
+        </ul>
+
+        <h3 id="impl-denials">Denial reporting</h3>
+        <ul>
+          <li>
+            <strong>Bridge denials</strong> are fully observable in the host and drive the toast and
+            log (phase 6).
+          </li>
+          <li>
+            <strong>Kernel denials</strong> are best-effort. On Linux the runner installs the
+            <code>EPERM</code> rules as <code>SECCOMP_RET_TRAP</code> with a
+            <code>SIGSYS</code> handler that sets the return value to <code>-EPERM</code> and queues
+            a <code>Denied{syscall}</code> Log frame (the technique Chromium uses). macOS and
+            Windows only log the denial on the plugin's own error path. This is acceptable because
+            these are bugs or attacks, not user workflows.
+          </li>
+        </ul>
+
+        <h3>Testing strategy</h3>
+        <ul>
+          <li>
+            <strong>Escape-probe plugin</strong>
+            (<code>core/tests/plugin_fixture/escape-probe</code>, test-only <code>cdylib</code>). It
+            tries, and reports the result of each attempt to: read a canary in a temp
+            <code>HOME/.ssh</code> and in the app config dir; write outside the data folder;
+            <code>connect</code> to a canary TCP listener the test owns; resolve DNS;
+            <code>exec /bin/sh</code> or <code>cmd.exe</code>; fork; <code>ptrace</code> the host or
+            read its <code>/proc/&lt;pid&gt;/mem</code>; read <code>SSH_AUTH_SOCK</code>; connect to
+            the ADR-13 spawn socket or pipe; open a serial device; on Windows, open the user profile
+            and HKCU. The test asserts that every attempt fails <em>and</em> that the canary
+            listener saw zero connections. It also runs positive controls (data-folder write, bridge
+            connect with <code>network</code>) to prove the sandbox is not simply broken.
+          </li>
+          <li>
+            <strong>Where it runs:</strong> every PR that touches <code>core/src/plugin/**</code>,
+            <code>plugin-runner/**</code> or <code>plugin-api/**</code>, on ubuntu, macOS and
+            windows, by extending the existing per-OS
+            <code>.github/workflows/plugin-packaging.yml</code> lane that already packages, trusts
+            and <code>dlopen</code>s echo-backend. These are safety tests, so they are never moved
+            to the post-merge lane.
+          </li>
+          <li>
+            <strong>Fallback coverage:</strong> a debug-only
+            <code>TERMIHUB_SANDBOX_SIMULATE_MISSING=landlock</code>
+            forces the reduced path, so states and acknowledgement gating are tested on any kernel.
+            A Docker job with the default seccomp profile (which blocks
+            <code>unshare</code>) covers the "no user namespaces" path.
+          </li>
+          <li>
+            <strong>Crash and hang fixtures:</strong> plugins that segfault, abort, spin, allocate
+            without bound, and send garbage frames. They assert the host survives, the states follow
+            the diagram, and the restart budget leads to auto-disable.
+          </li>
+          <li>
+            <strong>Fuzzing:</strong> <code>cargo-fuzz</code> targets for the frame decoder in both
+            directions (nightly lane).
+          </li>
+          <li>
+            <strong>Performance gate:</strong> a criterion bench comparing in-process with sandboxed
+            echo-backend against the budget table (nightly; a regression of more than 20 % fails).
+          </li>
+          <li>
+            <strong>ABI preservation:</strong> the existing
+            <code>core/tests/plugin_abi_1_1.rs</code> (1.0 and 1.1 plugins, toolchain rule) and
+            <code>plugin_package_load.rs</code> run unchanged through the sandboxed host.
+          </li>
+        </ul>
+
+        <h3>Rollout and phased plan (sized into issues)</h3>
+        <p>
+          Native plugins are default-off and no third-party plugin has shipped, so the switch can be
+          direct: no dual-mode period for users. Each phase lands green and behind the debug flag
+          until phase 7 flips it.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Issue</th>
+                <th>Size</th>
+                <th>Depends on</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>0</td>
+                <td>
+                  <strong>Spike:</strong> Seatbelt via <code>birdcage</code> vs. FFI, AppContainer +
+                  LPAC <code>dlopen</code> of a real plugin, <code>WSADuplicateSocket</code> into an
+                  AppContainer. Output is an amendment to this concept.
+                </td>
+                <td>M</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>1</td>
+                <td>
+                  <strong>Out-of-process host without OS sandbox:</strong> the
+                  <code>plugin-runner</code> crate, IPC codec + protocol, ABI shim (output sender,
+                  services, cancellation), <code>SandboxedBackend</code>, lifecycle, idle reap,
+                  parent-death, the sidecar in the bundle. The echo and ABI tests pass through it.
+                </td>
+                <td>L</td>
+                <td>0</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  <strong>Bridge over IPC:</strong> the bridge service in the host, socket-handle
+                  passing (proxy fallback), file operations, denial events.
+                </td>
+                <td>M</td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  <strong>Crash isolation:</strong> wire <code>RestartTracker</code>, ping/hang
+                  detection, resource limits, crash fixtures.
+                </td>
+                <td>M</td>
+                <td>1</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  <strong>Linux sandbox:</strong> policy → landlock + seccomp + optional namespaces,
+                  enforced-layer report, escape probe on ubuntu, Docker no-userns job.
+                </td>
+                <td>L</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>5a</td>
+                <td>
+                  <strong>macOS sandbox:</strong> SBPL generator + apply, escape probe on macOS.
+                </td>
+                <td>M</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>5b</td>
+                <td>
+                  <strong>Windows sandbox:</strong> AppContainer profile + ACLs + job object, escape
+                  probe on windows.
+                </td>
+                <td>L</td>
+                <td>2</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>
+                  <strong>UI + trust:</strong> projection region for plugin process status, Settings
+                  row (badge, status, chips), reduced-isolation acknowledgement, crash/hang
+                  overlays, rate-limited denial toasts, new disclosure copy.
+                </td>
+                <td>M</td>
+                <td>3, 4</td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>
+                  <strong>Cut-over:</strong> remove the in-process load path and debug flag, add
+                  ADR-19, amend ADR-15, update SECURITY.md and <code>plugin-authoring.md</code>,
+                  re-word <code>security.rs</code>/<code>capabilities.rs</code> docs, close SEC-002.
+                </td>
+                <td>S</td>
+                <td>4, 5a, 5b, 6</td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>
+                  <strong>Hardening lane:</strong> IPC fuzz targets + performance gate on the
+                  nightly lane.
+                </td>
+                <td>S</td>
+                <td>1</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Phase dependencies</span>
+          <pre class="mermaid">
+flowchart LR
+    P0[0 spike] --> P1[1 out-of-process host]
+    P1 --> P2[2 bridge over IPC]
+    P1 --> P3[3 crash isolation]
+    P1 --> P8[8 fuzz + perf gate]
+    P2 --> P4[4 Linux]
+    P2 --> P5a[5a macOS]
+    P2 --> P5b[5b Windows]
+    P3 --> P6[6 UI + trust]
+    P4 --> P6
+    P4 --> P7[7 cut-over + ADR-19]
+    P5a --> P7
+    P5b --> P7
+    P6 --> P7
+          </pre>
+        </div>
+
+        <h3>Open questions for the maintainer</h3>
+        <ol>
+          <li>
+            <strong>Reduced isolation:</strong> allow it with a hash-bound acknowledgement
+            (recommended), or refuse outright on kernels without landlock?
+          </li>
+          <li>
+            <strong>Default-off after the sandbox:</strong> keep native plugins default-off for 1.0
+            (recommended), or flip once escape tests have soaked?
+          </li>
+          <li>
+            <strong>Per-plugin process</strong> as the only model (recommended), or also offer
+            per-session isolation as an opt-in now?
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept plugin-os-sandbox</code>. Records the last commit at
+            which the concept and code were reconciled, plus open divergences. The concept is the
+            source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Native plugins load in a sandboxed helper process</td>
+                <td><code>core/src/plugin/host.rs</code> <code>dlopen</code>s in-process</td>
+                <td>Missing</td>
+                <td>Implement phases 0–7, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Disclosure describes the sandbox</td>
+                <td><code>NATIVE_TRUST_DISCLOSURE</code> says "no operating-system sandbox"</td>
+                <td>Correct for today</td>
+                <td>Rewrite in phase 6</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
