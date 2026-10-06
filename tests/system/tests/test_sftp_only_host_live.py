@@ -158,7 +158,9 @@ class TestSftpOnlyHostLive(
         )
         if self.password_prompt_open():
             self.handle_password_prompt()
-        return self.wait(lambda: self.file_browser_path() or None, what="the SFTP listing")
+        # Settled, not merely shown: until this session's first listing lands the
+        # pane can still show the previous test's session directory (``/etc``).
+        return self.wait_file_browser_settled()
 
     def _browse_to_etc(self) -> None:
         """Walk the browser from the home dir up to ``/`` and into ``/etc``."""

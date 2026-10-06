@@ -285,7 +285,8 @@ pub async fn remote_desktop_upload(
         .file_channel_with_session(&session_id, Some(agents))
         .await?;
     let requests: Arc<dyn AgentRequests> = Arc::new(rpc);
-    let (carrier, host, default_dir) = upload_carrier(channel, ssh, requests).await?;
+    let (carrier, side_channel, default_dir) = upload_carrier(channel, ssh, requests).await?;
+    let host = side_channel.host;
     let plan = tokio::task::spawn_blocking(move || plan_local(&local_paths))
         .await
         .map_err(|e| TerminalError::InternalError(format!("upload planning failed: {e}")))?;
@@ -305,13 +306,20 @@ pub async fn remote_desktop_upload(
     })
 }
 
-/// The carrier, file host and default folder of a `ready` channel, or the
-/// user-facing reason uploads are refused.
-async fn upload_carrier(
+/// The carrier, side channel and default folder of a `ready` channel, or the
+/// user-facing reason files are refused (uploads, and browsing since #4193).
+pub(crate) async fn upload_carrier(
     channel: RemoteDesktopFileChannel,
     ssh: Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
     agents: Arc<dyn AgentRequests>,
-) -> Result<(UploadCarrier, String, String), TerminalError> {
+) -> Result<
+    (
+        UploadCarrier,
+        termihub_core::connection::FileSideChannel,
+        String,
+    ),
+    TerminalError,
+> {
     let (channel, agent_id, default_dir) = match channel {
         RemoteDesktopFileChannel::Ready {
             channel,
@@ -347,7 +355,7 @@ async fn upload_carrier(
             )))
         }
     };
-    Ok((carrier, channel.host, default_dir))
+    Ok((carrier, channel, default_dir))
 }
 
 /// An upload error worded by its carrier: `SFTP error: …` for the SSH route,
@@ -667,6 +675,7 @@ pub async fn remote_desktop_disconnect(
     manager: State<'_, GraphicalSessionManager>,
     window_manager: State<'_, WindowManager>,
     registry: State<'_, crate::files::transfer::TransferRegistry>,
+    sessions: State<'_, crate::session::manager::SessionManager>,
 ) -> Result<(), TerminalError> {
     let closed = gated_disconnect(
         &manager,
@@ -677,6 +686,8 @@ pub async fn remote_desktop_disconnect(
     )
     .await?;
     if closed {
+        // The side channel open for browsing closes with the session (#4193).
+        sessions.side_channels.remove(&session_id);
         // Closing the session cancels its queued side-channel uploads (#4192).
         let cancelled =
             crate::session::graphical_upload::cancel_session_transfers(&registry, &session_id);

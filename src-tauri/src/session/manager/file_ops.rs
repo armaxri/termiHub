@@ -28,7 +28,7 @@ impl SessionManager {
     /// to it. This keeps the file-browser plumbing out of the manager while
     /// leaving the public API and behavior unchanged.
     fn file_ops(&self) -> FileOps<'_> {
-        FileOps::new(&self.sessions)
+        FileOps::new(&self.sessions).with_side_channels(&self.side_channels)
     }
 
     /// List directory contents via a session's file browser capability.

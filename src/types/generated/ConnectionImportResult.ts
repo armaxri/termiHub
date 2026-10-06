@@ -4,7 +4,16 @@
  * Result of a connection import, including the shared named credentials it
  * carried (#3564).
  */
-export type ConnectionImportResult = { connectionsImported: number, credentialsImported: number, 
+export type ConnectionImportResult = { 
+/**
+ * Connections actually added to the store.
+ */
+connectionsImported: number, 
+/**
+ * Connections in the file skipped because the store already holds them
+ * (#3689, #4210).
+ */
+connectionsSkipped: number, credentialsImported: number, 
 /**
  * Shared credentials created, or given their missing secret.
  */

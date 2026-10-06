@@ -9,6 +9,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import {
   createInlineImagesController,
   registerInlineImagesController,
+  shouldHoldOutputForInlineImages,
   type InlineImagesController,
 } from "./inlineImages";
 import "@xterm/xterm/css/xterm.css";
@@ -891,6 +892,9 @@ export function Terminal({
         // regardless of paint scheduling; whichever runs first flushes and clears
         // the other. The no-plugin fast path still flushes on the very next RAF.
         let flushTimer: ReturnType<typeof setTimeout> | null = null;
+        // When output was first held back for the inline-image addon's lazy load
+        // (`null` while not holding); bounds the hold, see flushOutput.
+        let imageHoldSince: number | null = null;
 
         const flushOutput = () => {
           if (rafId !== null) {
@@ -902,6 +906,16 @@ export function Terminal({
             flushTimer = null;
           }
           if (outputBuffer.length === 0) return;
+
+          // Hold the output (bounded) while the inline-image addon is still
+          // loading: bytes parsed before it attaches lose their images (#4017).
+          const now = Date.now();
+          if (shouldHoldOutputForInlineImages(inlineImagesRef.current, imageHoldSince, now)) {
+            imageHoldSince ??= now;
+            flushTimer = setTimeout(flushOutput, 16);
+            return;
+          }
+          imageHoldSince = null;
 
           // xterm.js 6's SmoothScrollableElement updates its scroll range
           // during the render pass (requestAnimationFrame), which runs

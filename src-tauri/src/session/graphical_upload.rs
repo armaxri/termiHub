@@ -368,7 +368,11 @@ impl AgentHostFiles {
     /// Run one request on the blocking pool (agent RPCs park their thread).
     /// `params` is one of the shared `Files*Params` DTOs with
     /// `connection_id: None` — the agent host's own file system.
-    async fn call(&self, method: &'static str, params: impl Serialize) -> Result<Value, FileError> {
+    pub(super) async fn call(
+        &self,
+        method: &'static str,
+        params: impl Serialize,
+    ) -> Result<Value, FileError> {
         let params =
             serde_json::to_value(params).map_err(|e| FileError::OperationFailed(e.to_string()))?;
         let agents = self.agents.clone();
@@ -379,7 +383,7 @@ impl AgentHostFiles {
             .map_err(FileError::OperationFailed)
     }
 
-    async fn stat_entry(&self, path: &str) -> Result<FileEntry, FileError> {
+    pub(super) async fn stat_entry(&self, path: &str) -> Result<FileEntry, FileError> {
         let value = self
             .call(
                 CONNECTION_FILES_STAT,

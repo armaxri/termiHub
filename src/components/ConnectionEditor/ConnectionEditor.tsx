@@ -41,6 +41,7 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import type { ConnectionTypeInfo } from "@/services/api";
+import { normalizeAgentTypeId } from "@/utils/agentSessionType";
 import { newId } from "@/services/transport/ids";
 import {
   buildAgentConnectionCreate,
@@ -152,13 +153,6 @@ function hasTerminalOptions(opts: TerminalOptions): boolean {
 /** Find schema for a type ID in the connection types registry. */
 function findSchema(connectionTypes: ConnectionTypeInfo[], typeId: string) {
   return connectionTypes.find((ct) => ct.typeId === typeId);
-}
-
-/** Normalize legacy session-type aliases to the canonical registry ID. */
-function normalizeAgentTypeId(typeId: string, types: ConnectionTypeInfo[]): string {
-  if (types.some((ct) => ct.typeId === typeId)) return typeId;
-  const aliases: Record<string, string> = { shell: "local" };
-  return aliases[typeId] ?? typeId;
 }
 
 /** Build default settings for a type, applying app settings defaults. */

@@ -165,7 +165,7 @@ class TestRemoteAgent(
         # Detection raises the password prompt first.
         self.handle_password_prompt(SSH_PASSWORD)
 
-        self.wait(self.setup_ready, what="the agent-setup form after arch detection", timeout=40.0)
+        self.wait_setup_ready()
         assert self.driver.exists(self.SETUP_REMOTE_PATH)
         assert self.driver.exists(self.SETUP_ARCH)
         self.cancel_agent_setup()
@@ -192,7 +192,7 @@ class TestRemoteAgent(
         )
         self.open_agent_setup(name)
         self.handle_password_prompt(SSH_PASSWORD)
-        self.wait(self.setup_ready, what="the agent-setup form after arch detection", timeout=40.0)
+        self.wait_setup_ready()
 
         self.start_local_agent_setup(str(binary))
         self.cancel_running_agent_setup()

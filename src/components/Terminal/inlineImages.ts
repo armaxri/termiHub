@@ -81,6 +81,12 @@ export interface InlineImagesController {
   /** Whether the addon is currently loaded into the terminal. */
   isActive(): boolean;
   /**
+   * Whether the addon is wanted but its lazy load has not settled yet. Output
+   * written to the terminal meanwhile is parsed without the image handlers, so
+   * an image in it is lost — see {@link shouldHoldOutputForInlineImages}.
+   */
+  isLoading(): boolean;
+  /**
    * MB of decoded image data the addon currently holds — above 0 once an image
    * was stored; 0 when the addon is not loaded (test-bridge introspection).
    */
@@ -146,6 +152,7 @@ export function createInlineImagesController(
       }
     },
     isActive: () => addon !== null,
+    isLoading: () => loading && wanted && !disposed,
     storageUsage: () => Math.max(0, addon?.storageUsage ?? 0),
     dispose() {
       if (disposed) return;
@@ -165,6 +172,30 @@ export function createInlineImagesController(
 
   controller.setEnabled(opts.enabled);
   return controller;
+}
+
+/**
+ * The longest a terminal holds its first output back for the image addon's lazy
+ * load (ms). The load is one cached dynamic import, normally a few ms; the bound
+ * only keeps a stalled import from ever blocking output.
+ */
+export const INLINE_IMAGE_LOAD_HOLD_MS = 2000;
+
+/**
+ * Whether a terminal should hold its buffered output until the image addon has
+ * loaded. Bytes the terminal parses before the addon is attached reach no
+ * SIXEL / iTerm2 handler, so an image a host sends right after connecting (a
+ * login banner, a remote `img2sixel` that runs before the tab finished mounting)
+ * would be dropped while its surrounding text still shows. Holding is bounded by
+ * {@link INLINE_IMAGE_LOAD_HOLD_MS} since the first held flush.
+ */
+export function shouldHoldOutputForInlineImages(
+  controller: Pick<InlineImagesController, "isLoading"> | null | undefined,
+  heldSinceMs: number | null,
+  nowMs: number
+): boolean {
+  if (!controller?.isLoading()) return false;
+  return heldSinceMs === null || nowMs - heldSinceMs < INLINE_IMAGE_LOAD_HOLD_MS;
 }
 
 // -----------------------------------------------------------------------------

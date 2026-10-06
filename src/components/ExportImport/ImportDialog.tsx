@@ -1,12 +1,56 @@
 import { useState, useCallback, useEffect } from "react";
 import { previewImport, importConnectionsWithCredentials, isImportError } from "@/services/api";
-import type { ImportPreview } from "@/services/api";
+import type { ConnectionImportResult, ImportPreview } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button } from "@/components/ui";
 import "./ImportDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { isImeComposing } from "@/utils/imeComposition";
+
+/** `count` followed by `noun`, pluralized with a trailing "s" when not 1. */
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count !== 1 ? "s" : ""}`;
+}
+
+/**
+ * One-line summary of a completed connection import.
+ *
+ * Counts only the connections actually added; ones the store already held
+ * are skipped by the backend (#3689) and reported separately (#4210).
+ */
+export function importSummary(result: ConnectionImportResult): string {
+  const { connectionsImported, connectionsSkipped, credentialsImported } = result;
+  const shared = result.sharedCredentialsImported;
+
+  let message: string;
+  if (connectionsImported > 0) {
+    message = `Imported ${plural(connectionsImported, "connection")}`;
+    if (credentialsImported > 0) {
+      message += ` and ${plural(credentialsImported, "credential")}`;
+    }
+    if (shared > 0) {
+      message += `, ${plural(shared, "shared credential")}`;
+    }
+    if (connectionsSkipped > 0) {
+      const verb = connectionsSkipped === 1 ? "exists" : "exist";
+      message += `, skipped ${connectionsSkipped} that already ${verb}`;
+    }
+  } else if (shared > 0) {
+    message = `Imported ${plural(shared, "shared credential")}`;
+    if (connectionsSkipped > 0) {
+      const verb = connectionsSkipped === 1 ? "exists" : "exist";
+      message += `, skipped ${plural(connectionsSkipped, "connection")} that already ${verb}`;
+    }
+  } else if (connectionsSkipped === 1) {
+    message = "Nothing imported — the connection already exists";
+  } else if (connectionsSkipped > 1) {
+    message = `Nothing imported — all ${connectionsSkipped} connections already exist`;
+  } else {
+    message = "Nothing imported — the file contains no connections";
+  }
+  return message;
+}
 
 export function ImportDialog() {
   const open = useAppStore((s) => s.importDialogOpen);
@@ -55,15 +99,8 @@ export function ImportDialog() {
         const importPassword = withCredentials && password ? password : null;
         const result = await importConnectionsWithCredentials(fileContent, importPassword);
 
-        let message = `Imported ${result.connectionsImported} connection${result.connectionsImported !== 1 ? "s" : ""}`;
-        if (result.credentialsImported > 0) {
-          message += ` and ${result.credentialsImported} credential${result.credentialsImported !== 1 ? "s" : ""}`;
-        }
-        if (result.sharedCredentialsImported > 0) {
-          message += `, ${result.sharedCredentialsImported} shared credential${result.sharedCredentialsImported !== 1 ? "s" : ""}`;
-        }
         setWarnings(result.warnings);
-        setSuccess(message);
+        setSuccess(importSummary(result));
         await loadFromBackend();
       } catch (err) {
         // Classify by the backend's stable error `kind`, never by the English

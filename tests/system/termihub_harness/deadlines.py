@@ -12,24 +12,27 @@ the ``[termihub-test-timing]`` lines the harness prints; see :mod:`.timing`),
 rounded up to 5 s, and never below the serial-tuned base. Never size a deadline
 from a single fast run, and never below observed max × ``HEADROOM``.
 
-**Evidence the current values rest on** (174 job logs of system-integration.yml
-runs, 2026-09-05 → 2026-09-26; full tables in issue #3660 and its PR and in
-``docs/testing.md`` → "Harness deadlines"):
+**Evidence the current values rest on** (#3663: the ``[termihub-test-timing]``
+lines of the System-Test Harness integration lane — 10 macOS, 10 Windows and
+11 Linux jobs of system-integration.yml, 2026-09-30 → 2026-10-06 — plus the 30
+serial display-critical jobs of the same runs; full table in the #3663 PR and in
+``docs/testing.md`` → "Harness deadlines"). Only *completed* samples count
+towards a max (the timing summary excludes expired ones), and ops that time out
+because the feature is broken are left at their serial budget, not raised:
 
-- ``APP_CONNECT``: the slowest class setup (app launch + bridge connect) in a
-  *passing* job was 28.3 s on Linux (``test_csp``), 18.5 s macOS, 10.2 s
-  Windows — Linux was within 2 s of the old 30 s budget. 2 × 28.3 → 60 s, one
-  value for every OS (it was already 60 s on macOS/Windows via the 2× scale).
-- ``CONTENDED_UI_FACTOR`` (the only slow category): on the 2-worker xdist
-  macOS/Windows bulk legs, UI poll loops and bridge commands hit their deadline
-  5.8 (macOS) / 12.6 (Windows) times per job at 1× but 0.7 / 1.8 at 2× (then
-  absorbed by ``--reruns``), incl. 3 Windows command timeouts at 10 s. The
-  serial display-critical grades hit 0.4 / 1.2 per job at 1×, and those were
-  the real scrollback losses (#2561/#2583) — so the factor applies only to a
-  macOS/Windows process running as one of >1 xdist workers.
-
-Per-op timing lines accumulate from every CI run now (:mod:`.timing`), so the
-contended factor can be replaced by per-op values once enough runs exist.
+- ``APP_CONNECT``: app-connect max 15.1 s macOS / 13.6 s Windows / 3.3 s Linux
+  on the 2-worker integration lane (p95 ≤ 7.2 s), 16.0 s on the serial Windows
+  display lane. 2 × 16.0 → 35 s for every OS (was 60 s, sized from a 28.3 s
+  Linux *class setup*, which includes more than the connect).
+- **No blanket factor any more.** On a parallel macOS/Windows worker
+  (:func:`contended`) an op keeps its serial budget unless its own contended
+  max × ``HEADROOM`` exceeds it; those ops — and only those — are listed in
+  :data:`CONTENDED_OP_DEADLINES` with the max they were sized from. Most are
+  Windows shell starts and PTY round trips (ConPTY under two WebView2 apps);
+  the same waits take ≤ 8.6 s on the serial Windows display lane.
+- ``CONTENDED_UI_FACTOR`` (2×) survives only for poll loops that record no
+  timing line (``op=None``: the file-browser row wait and the SSH host-key
+  prompt loop), since there is no data to drop it on.
 
 **Local debugging override.** ``TERMIHUB_WAIT_SCALE`` still multiplies every
 budget, but only outside CI — e.g. ``0.5`` to make a suspected hang fail fast,
@@ -47,7 +50,7 @@ import warnings
 HEADROOM = 2.0
 
 #: Bridge connect after an app launch (``Bridge.wait_for_app``). See module doc.
-APP_CONNECT = 60.0
+APP_CONNECT = 35.0
 #: Default per-command bridge round trip (``Driver`` default request timeout).
 COMMAND = 10.0
 #: Command budget for the live-connect / SFTP suites (#2460). A 60 s budget lets a
@@ -60,10 +63,38 @@ UI_WAIT = 20.0
 #: captured from a slow (not hung) webview (#2460).
 DIAGNOSTIC_PROBE = 60.0
 
-#: Slow category: webview-bound ops (bridge commands and UI poll loops) on a
-#: macOS/Windows runner that is fanning apps across >1 xdist worker. Each worker
-#: runs a full WKWebView / multi-process WebView2 app on a ~3–4 core runner, and
-#: the JS thread is starved under that load (#2690). See module doc for the data.
+#: Contended deadlines per op (seconds): the budget an op gets on a parallel
+#: macOS/Windows worker, never below the call site's own serial budget. Each value
+#: is the op's slowest completed contended sample × ``HEADROOM``, rounded up to
+#: 5 s (#3663). An op not listed keeps its serial budget — its contended max ×
+#: ``HEADROOM`` fits. Commands are checked against ``COMMAND`` (the smallest
+#: serial budget a command can run under); waits against their call sites' budget.
+CONTENDED_OP_DEADLINES: dict[str, float] = {
+    # Windows shell start / output under ConPTY (serial display lane: ≤ 8.6 s).
+    "wait:'…' in terminal output": 80.0,  # Windows max 39.1 s
+    "wait:the shell prompt": 70.0,  # Windows max 34.4 s
+    "wait:the terminal to report it exited": 70.0,  # Windows max 34.0 s
+    "wait:the '…' row in the terminal buffer": 70.0,  # Windows max 33.3 s
+    "wait:the active terminal's shell prompt": 65.0,  # Windows max 32.2 s
+    "wait:the shell's echo of the composed line": 55.0,  # Windows max 27.5 s
+    "wait:the PTY to report N rows x N cols": 55.0,  # Windows max 25.9 s
+    "wait:the PTYSZN stty answer": 55.0,  # Windows max 25.9 s
+    "wait:the DOM renderer to paint '…'": 50.0,  # Windows max 24.6 s
+    "wait:the new terminal's shell prompt": 35.0,  # Windows max 15.3 s
+    "wait:the restored terminals to reach a shell prompt": 25.0,  # Windows max 10.2 s
+    # Webview-bound UI waits.
+    "wait:connection '…'": 40.0,  # Windows max 19.2 s (p95 0.6 s)
+    "wait:'…' in window '…'": 30.0,  # Windows max 13.2 s
+    "wait:the editor status to populate": 25.0,  # macOS max 10.1 s
+    # Bridge commands (serial budget COMMAND = 10 s).
+    "command:projectionSubscribe": 40.0,  # Windows max 18.9 s
+    "command:getState": 20.0,  # macOS max 8.6 s
+    "command:click": 15.0,  # macOS max 5.3 s
+    "command:screenshot": 15.0,  # macOS max 5.2 s
+}
+
+#: Legacy slow category, kept only for poll loops that record no timing line
+#: (``ui_budget(..., op=None)``) — without data there is nothing to drop it on.
 CONTENDED_UI_FACTOR = 2.0
 CONTENDED_OS = ("darwin", "win32")
 
@@ -109,7 +140,9 @@ def debug_scale(environ: dict | None = None) -> float:
 
 #: Resolved once at import (see :func:`debug_scale` / :func:`contended`).
 DEBUG_SCALE = debug_scale()
-UI_FACTOR = CONTENDED_UI_FACTOR if contended() else 1.0
+CONTENDED = contended()
+#: Factor for unmeasured (``op=None``) poll loops only.
+UI_FACTOR = CONTENDED_UI_FACTOR if CONTENDED else 1.0
 
 
 def app_connect(seconds: float = APP_CONNECT) -> float:
@@ -117,6 +150,16 @@ def app_connect(seconds: float = APP_CONNECT) -> float:
     return seconds * DEBUG_SCALE
 
 
-def ui_budget(seconds: float) -> float:
-    """Effective budget of a webview-bound op: a bridge command or a UI poll loop."""
-    return seconds * UI_FACTOR * DEBUG_SCALE
+def ui_budget(seconds: float, op: str | None = None) -> float:
+    """Effective budget of a webview-bound op: a bridge command or a UI poll loop.
+
+    ``op`` is the op's timing name (``command:<action>`` / ``wait:<label>``). On a
+    contended worker a listed op gets ``max(seconds, CONTENDED_OP_DEADLINES[op])``;
+    an unlisted op keeps ``seconds``. ``op=None`` marks a loop that records no
+    timing line, which keeps the legacy ``CONTENDED_UI_FACTOR``.
+    """
+    if op is None:
+        return seconds * UI_FACTOR * DEBUG_SCALE
+    if CONTENDED:
+        seconds = max(seconds, CONTENDED_OP_DEADLINES.get(op, 0.0))
+    return seconds * DEBUG_SCALE

@@ -29,6 +29,7 @@ vi.mock("@/hooks/transferFeedback", () => ({ seedTransferQueueRow: hoisted.seed 
 vi.mock("@/components/ui", () => ({ toast: hoisted.toast }));
 
 import {
+  browseRoute,
   countLabel,
   dropSubject,
   routeCarrier,
@@ -66,6 +67,11 @@ describe("file transfer copy", () => {
     expect(routeVia({ ...SSH, user: "" })).toBe("via SFTP over the SSH tunnel (tiger-box)");
     expect(routeCarrier(SSH)).toContain("host key verified");
     expect(routeCarrier(AGENT)).toBe("termiHub agent (pi@lab-pi)");
+  });
+
+  it("names the account and carrier on the File Browser's route line (#4193)", () => {
+    expect(browseRoute(SSH)).toBe("arne@tiger-box · SFTP via SSH tunnel");
+    expect(browseRoute(AGENT)).toBe("pi@lab-pi · termiHub agent");
   });
 
   it("says why there is no transfer and how to enable it", () => {
@@ -166,6 +172,43 @@ describe("uploadToRemoteDesktop", () => {
     expect(hoisted.toast.error).toHaveBeenCalledWith(
       "Nothing was uploaded to /home/arne/Desktop on tiger-box",
       expect.anything()
+    );
+  });
+
+  it("offers Reveal on the summary, opening the destination (#4193)", async () => {
+    const onReveal = vi.fn();
+    hoisted.upload.mockResolvedValue(started(["a"]));
+    await uploadToRemoteDesktop("rd-1", ["/l/a"], undefined, onReveal);
+    settle("a", "done");
+    await flushMacrotask();
+    const opts = (
+      hoisted.toast.success.mock.calls[0] as unknown as [string, { action?: unknown }]
+    )[1];
+    const action = opts.action as { label: string; onClick: () => void };
+    expect(action.label).toBe("Reveal");
+    action.onClick();
+    expect(onReveal).toHaveBeenCalledWith("/home/arne/Desktop");
+  });
+
+  it("offers no Reveal when a file failed or without a browser", async () => {
+    hoisted.upload.mockResolvedValue(started(["a", "b"]));
+    await uploadToRemoteDesktop("rd-1", ["/l/a", "/l/b"], undefined, vi.fn());
+    settle("a", "done");
+    settle("b", "error");
+    await flushMacrotask();
+    expect(hoisted.toast.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.not.objectContaining({ action: expect.anything() })
+    );
+
+    vi.clearAllMocks();
+    hoisted.upload.mockResolvedValue(started(["c"]));
+    await uploadToRemoteDesktop("rd-1", ["/l/c"]);
+    settle("c", "done");
+    await flushMacrotask();
+    expect(hoisted.toast.success).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ action: undefined })
     );
   });
 

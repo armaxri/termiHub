@@ -1566,6 +1566,49 @@ describe("FileBrowser – session mode initial path (#630)", () => {
     const [, args] = calls[0] as [string, { sessionId: string; path: string }];
     expect(args.path).toBe("~");
   });
+
+  it("re-navigates a session whose pane still shows another session's listing (#4017)", async () => {
+    // Regression: the pane is one view across sessions. After switching to a
+    // session that reports no cwd (an SFTP-only or FTP host), the previous
+    // session's entries counted as "already loaded", so the browser stayed on
+    // that session's directory — and an upload landed there (`/etc`).
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "session_list_files") {
+        return Promise.resolve([
+          {
+            name: "passwd",
+            path: "/etc/passwd",
+            isDirectory: false,
+            size: 1,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ]);
+      }
+      return Promise.resolve(undefined);
+    });
+    await act(async () => {
+      await useAppStore.getState().navigateSession("sess-old", "/etc");
+    });
+    expect(currentFileBrowsersView().session.entries).toHaveLength(1);
+    mockedInvoke.mockClear();
+
+    useAppStore.setState({ sessionFileBrowserId: "sess-new" });
+    seedFileBrowsers({ mode: "session", session: currentFileBrowsersView().session });
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+
+    const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+    expect(calls.map(([, a]) => a)).toContainEqual({ sessionId: "sess-new", path: "~" });
+  });
 });
 
 describe("FileBrowser – Go to Terminal CWD button", () => {

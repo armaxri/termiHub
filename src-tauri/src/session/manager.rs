@@ -599,6 +599,12 @@ pub struct SessionManager {
     /// names one; entries of ended sessions are pruned lazily. See
     /// [`saved_connections`](self::saved_connections).
     pub(super) saved_connections: Arc<StdMutex<HashMap<String, String>>>,
+    /// Graphical sessions' file side channels open for browsing (#4193),
+    /// keyed by graphical session id. The file facade resolves an id that is
+    /// not a session here, so the File Browser and the Transfers queue reuse
+    /// the `session_*` commands on a VNC session's side channel. See
+    /// [`SideChannelBrowsers`](crate::session::graphical_browse::SideChannelBrowsers).
+    pub(crate) side_channels: crate::session::graphical_browse::SideChannelBrowsers,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -714,6 +720,7 @@ impl SessionManager {
             session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
             retained_requests: RetainedRequestStore::new(),
             saved_connections: Arc::new(StdMutex::new(HashMap::new())),
+            side_channels: Default::default(),
         }
     }
 
