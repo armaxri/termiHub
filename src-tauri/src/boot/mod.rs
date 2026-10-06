@@ -216,13 +216,19 @@ pub(crate) fn init_plugin_host(
     let plugins_root = config_dir.join("plugins");
     let connection_registry = std::sync::Arc::new(std::sync::Mutex::new(build_desktop_registry()));
     // ABI 1.1 plugins receive the app version in their host context (#3576).
-    let plugin_host = std::sync::Arc::new(
-        termihub_core::plugin::PluginHost::new(
-            plugins_root.clone(),
-            std::sync::Arc::clone(&connection_registry),
-        )
-        .with_host_version(env!("CARGO_PKG_VERSION")),
-    );
+    let plugin_host = termihub_core::plugin::PluginHost::new(
+        plugins_root.clone(),
+        std::sync::Arc::clone(&connection_registry),
+    )
+    .with_host_version(env!("CARGO_PKG_VERSION"));
+    // Out-of-process native plugins (#4182, plugin OS-sandbox phase 1) are a
+    // debug-build developer opt-in until the phase-7 cut-over:
+    // TERMIHUB_PLUGIN_OUT_OF_PROCESS=1 (runner from TERMIHUB_PLUGIN_RUNNER, or
+    // the sidecar next to the executable). Release builds never read it.
+    #[cfg(debug_assertions)]
+    let plugin_host =
+        plugin_host.with_runner(termihub_core::plugin::sandbox::debug_runner_config_from_env());
+    let plugin_host = std::sync::Arc::new(plugin_host);
     app.manage(termihub_core::plugin::PluginManager::with_hook(
         plugins_root,
         std::sync::Arc::new(termihub_core::plugin::HostLifecycleHook::new(
