@@ -9,6 +9,12 @@
 //!   serialisation.
 //! * Every **control** kind carries a MessagePack (`rmp-serde`) payload from
 //!   [`messages`]; kinds without data ([`FrameKind::Shutdown`]) carry none.
+//! * The **capability bridge** (#4183): the runner forwards each plugin bridge
+//!   call as a [`FrameKind::BridgeRequest`] and the host answers with a
+//!   [`FrameKind::BridgeReply`]. An approved connection's socket rides along
+//!   with its reply as `SCM_RIGHTS` ancillary data on Unix ([`fd`]); where a
+//!   handle cannot be passed, the `Stream*` kinds proxy its bytes under a
+//!   credit window ([`STREAM_WINDOW`]).
 //!
 //! The host treats the runner as an **untrusted peer**: [`Message::decode`]
 //! rejects an unknown kind, an oversized or truncated frame and a malformed
