@@ -398,3 +398,34 @@
   padding-top: var(--spacing-xs-sm);
   border-top: 1px solid var(--border-primary);
 }
+
+/* "Upload to folder…" folder picker (#4204). */
+.rd-folder-picker {
+  margin-top: var(--spacing-sm);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.rd-folder-picker__list {
+  list-style: none;
+  margin: 0;
+  padding: var(--spacing-xxs);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.rd-folder-picker__list .ui-btn {
+  justify-content: flex-start;
+}
+
+.rd-folder-picker__status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-xs-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}

@@ -58,6 +58,15 @@ export function routeCarrier(channel: FileSideChannel): string {
     : `SFTP via SSH tunnel (${account(channel)}, host key verified)`;
 }
 
+/**
+ * The File Browser header's route line for a side channel (#4193):
+ * "arne@tiger-box · SFTP via SSH tunnel" or "pi@lab-pi · termiHub agent".
+ */
+export function browseRoute(channel: FileSideChannel): string {
+  const carrier = channel.kind === "agent" ? "termiHub agent" : "SFTP via SSH tunnel";
+  return `${account(channel)} · ${carrier}`;
+}
+
 /** Why there is no file transfer, as a heading + how to enable it. */
 export interface UnavailableCopy {
   title: string;
@@ -138,13 +147,16 @@ function skippedNote(started: RemoteDesktopUploadStarted): string | undefined {
  * Upload `paths` to a graphical session's side channel with feedback all the
  * way: a pending toast while the uploads are queued and run, then one summary
  * ("Uploaded 2 files to /home/arne/Desktop on tiger-box"). Each file is a
- * Transfers-queue row keyed by the session. Resolves with what was queued, or
- * `null` when the backend refused the upload (the error is toasted).
+ * Transfers-queue row keyed by the session. With `onReveal`, the summary
+ * offers **Reveal** (opens Browse remote files at the destination, #4193).
+ * Resolves with what was queued, or `null` when the backend refused the upload
+ * (the error is toasted).
  */
 export async function uploadToRemoteDesktop(
   sessionId: string,
   paths: string[],
-  dest?: string
+  dest?: string,
+  onReveal?: (dir: string) => void
 ): Promise<RemoteDesktopUploadStarted | null> {
   const toastId = toast.loading(`Uploading ${dropSubject(paths)}…`, {
     testId: "remote-desktop-upload-toast",
@@ -170,12 +182,18 @@ export async function uploadToRemoteDesktop(
     });
   }
   const where = `${started.destDir} on ${started.host}`;
+  const reveal = onReveal
+    ? { label: "Reveal", onClick: () => onReveal(started.destDir) }
+    : undefined;
   const total = started.transfers.length;
   if (total === 0) {
     watch.stop();
     const opts = { id: toastId, description: skippedNote(started) };
     if (started.folders > 0) {
-      toast.success(`Created ${countLabel(started.folders, "folder")} in ${where}`, opts);
+      toast.success(`Created ${countLabel(started.folders, "folder")} in ${where}`, {
+        ...opts,
+        action: reveal,
+      });
     } else {
       toast.error(`Nothing was uploaded to ${where}`, opts);
     }
@@ -199,6 +217,7 @@ export async function uploadToRemoteDesktop(
       toast.success(`Uploaded ${countLabel(result.done)} to ${where}`, {
         id: toastId,
         description,
+        action: reveal,
         testId: "remote-desktop-upload-toast",
       });
     }

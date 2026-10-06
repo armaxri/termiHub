@@ -88,6 +88,8 @@ import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
 import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
+import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
+import { RemoteDesktopBrowseRoute } from "@/components/RemoteDesktop/RemoteDesktopBrowseRoute";
 import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
@@ -771,6 +773,12 @@ function useFileBrowserSync() {
       : activeTabConnectionType === "local";
 
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
+  // A remote-desktop tab's side-channel browser, once "Browse remote files"
+  // opened it (#4193).
+  const remoteDesktopSource = useRemoteDesktopBrowseStore((s) =>
+    activeTabId ? (s.sources[activeTabId] ?? null) : null
+  );
+  const remoteDesktopSessionId = remoteDesktopSource?.sessionId ?? null;
 
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabConfigForShell = activeTab?.config;
@@ -797,6 +805,18 @@ function useFileBrowserSync() {
         setFileBrowserMode("session");
       } else {
         setFileBrowserMode("local");
+      }
+      return;
+    }
+    if (activeTabContentType === "remote-desktop") {
+      // A VNC tab browses its session's file side channel once the user asked
+      // for it ("Browse remote files", #4193); the backend serves the
+      // graphical session id through the session layer.
+      if (remoteDesktopSessionId) {
+        setSessionFileBrowserId(remoteDesktopSessionId);
+        setFileBrowserMode("session");
+      } else {
+        setFileBrowserMode("none");
       }
       return;
     }
@@ -862,6 +882,22 @@ function useFileBrowserSync() {
     connectionTypes,
     remoteAgents,
     globalFileBrowserEnabled,
+    remoteDesktopSessionId,
+  ]);
+
+  // Open a remote-desktop side channel at the folder Browse / Reveal asked for
+  // (#4193), again on every open and when its tab becomes active.
+  const remoteDesktopDir = remoteDesktopSource?.dir ?? null;
+  const remoteDesktopOpenCount = remoteDesktopSource?.openCount ?? 0;
+  useEffect(() => {
+    if (sidebarView !== "files" || !remoteDesktopSessionId || !remoteDesktopDir) return;
+    navigateSession(remoteDesktopSessionId, remoteDesktopDir);
+  }, [
+    sidebarView,
+    remoteDesktopSessionId,
+    remoteDesktopDir,
+    remoteDesktopOpenCount,
+    navigateSession,
   ]);
 
   // Auto-navigate on tab switch or CWD change
@@ -928,11 +964,13 @@ function useFileBrowserSync() {
   // Auto-navigate when entering session mode with no entries loaded yet.
   useEffect(() => {
     if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
+    // A remote-desktop side channel opens at its own folder (effect above).
+    if (remoteDesktopSessionId) return;
     const sessionFileEntries = currentFileBrowsersView().session.entries;
     if (sessionFileEntries.length > 0) return; // Already loaded
     // Fall back to "~" so the agent resolves the home directory instead of "/".
     navigateSession(sessionFileBrowserId, cwd ?? "~");
-  }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
+  }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd, remoteDesktopSessionId]);
 
   // (Removed in #2421 / #2422) The SSH-specific standalone SFTP browser and its
   // auto-connect effect. SSH now browses through the session layer (mode
@@ -1733,6 +1771,7 @@ export function FileBrowser() {
             <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
           </div>
         )}
+        {mode === "session" && <RemoteDesktopBrowseRoute sessionId={sessionFileBrowserId} />}
         <div className="file-browser__toolbar">
           <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
           <div className="file-browser__actions">

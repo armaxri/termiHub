@@ -16,6 +16,7 @@ import { useTransferControls } from "@/hooks/useTransferControls";
 import type { RemoteDesktopFilesStatus } from "@/hooks/useRemoteDesktopFiles";
 import { routeCarrier, unavailableCopy } from "./fileTransfer";
 import { RemoteDesktopUploadFolderDialog } from "./RemoteDesktopUploadFolderDialog";
+import { listRemoteFolders } from "./browseRemoteFiles";
 
 interface RemoteDesktopFilesProps {
   /** The graphical session (its transfers are listed). */
@@ -26,6 +27,8 @@ interface RemoteDesktopFilesProps {
   destDir: string | null;
   /** Pick local files and upload them (into `dest` when given). */
   onUpload: (dest?: string) => Promise<void>;
+  /** Open the File Browser on the side channel at the upload folder (#4193). */
+  onBrowse: () => void;
   /** Re-resolve a degraded route. */
   onRetry: () => void;
   onClose: () => void;
@@ -88,15 +91,16 @@ function RouteStatus({
 /**
  * The toolbar's Files popover (#4192, concept `vnc-clipboard-file-transfer`):
  * the route line (folder · file host · carrier — the trust statement),
- * **Upload files…**, **Upload to folder…**, **Browse remote files** (arrives
- * with remote browsing, #4193) and this session's transfers, mirrored from the
- * Transfers queue with the same rows and controls.
+ * **Upload files…**, **Upload to folder…**, **Browse remote files** (the File
+ * Browser on the same side channel, #4193) and this session's transfers,
+ * mirrored from the Transfers queue with the same rows and controls.
  */
 export function RemoteDesktopFiles({
   sessionId,
   files,
   destDir,
   onUpload,
+  onBrowse,
   onRetry,
   onClose,
 }: RemoteDesktopFilesProps) {
@@ -160,12 +164,12 @@ export function RemoteDesktopFiles({
           size="sm"
           fullWidth
           icon={<Download size={14} />}
-          disabled
-          title="Browsing and downloading remote files arrives in a later update"
+          disabled={!ready}
+          onClick={onBrowse}
           data-testid="remote-desktop-files-browse"
         >
           <span className="rd-files__label">Browse remote files</span>
-          <span className="rd-files__hint">coming soon</span>
+          <span className="rd-files__hint">download</span>
         </Button>
       </div>
       {transfers.length > 0 && (
@@ -189,6 +193,7 @@ export function RemoteDesktopFiles({
           open={folderOpen}
           host={files.channel.host}
           defaultDir={destDir ?? files.defaultDir}
+          listFolders={(dir) => listRemoteFolders(sessionId, dir)}
           onCancel={() => setFolderOpen(false)}
           onSubmit={(dir) => {
             setFolderOpen(false);
