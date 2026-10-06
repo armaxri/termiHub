@@ -432,8 +432,9 @@ export function useSessionFileSystem() {
       // active session id. `null` for a local source.
       const srcSession =
         clipboard.sourceMode === "session" ? (clipboard.terminalSessionId ?? destSession) : null;
-      // Both ends must stream (SFTP or Docker) for a tracked remote copy
-      // (#3586); a local source never needs the probe.
+      // Both ends must stream (SFTP, Docker or an agent serving ranged
+      // slices, #3586/#4115) for a tracked remote copy; a local source never
+      // needs the probe.
       const [srcRemoteCopy, destRemoteCopy] =
         srcSession === null
           ? [false, false]

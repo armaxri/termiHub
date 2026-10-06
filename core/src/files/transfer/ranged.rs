@@ -71,7 +71,7 @@ impl RangedTransferError {
 /// Fold a `modified` timestamp string into a stable `u64` (FNV-1a), so a
 /// backend reporting its mtime only as text still yields a fingerprint that
 /// changes when the file is rewritten. Pure.
-fn mtime_token(modified: &str) -> Option<u64> {
+pub(super) fn mtime_token(modified: &str) -> Option<u64> {
     if modified.is_empty() {
         return None;
     }
@@ -83,8 +83,9 @@ fn mtime_token(modified: &str) -> Option<u64> {
     Some(hash)
 }
 
-/// Size + mtime of a remote file, or `None` when absent / un-stattable.
-async fn remote_fingerprint(
+/// Size + mtime of a remote file, or `None` when absent / un-stattable. Also
+/// fingerprints a ranged end of a remote→remote copy (#4115).
+pub(super) async fn remote_fingerprint(
     target: &dyn RangedTransferTarget,
     path: &str,
 ) -> Option<SourceFingerprint> {

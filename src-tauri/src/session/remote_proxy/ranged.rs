@@ -75,6 +75,13 @@ impl RangedFileAccess for RemoteFileBrowserProxy {
         .await?;
         Ok(())
     }
+
+    /// The zero-length probe ([`probe_ranges`](Self::probe_ranges)), so a
+    /// core executor gating on [`RangedFileAccess::probe`] asks the agent
+    /// (#4115).
+    async fn probe(&self) -> Result<(), FileError> {
+        self.probe_ranges().await
+    }
 }
 
 #[async_trait::async_trait]

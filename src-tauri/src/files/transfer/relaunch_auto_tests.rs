@@ -41,6 +41,7 @@ fn remote_copy(id: &str, src: &str, dst: &str) -> PersistedTransfer {
             path: "/src/data.csv".to_string(),
             saved_connection_id: Some(src.to_string()),
             container_id: None,
+            agent: None,
         }),
         ..record(id, Some(dst))
     }
@@ -216,6 +217,33 @@ fn an_agent_transfer_resumes_when_its_agent_session_opens() {
         vec!["t1"]
     );
     assert!(!waits.contains("t1"));
+}
+
+/// A remote-to-remote copy reading from an agent-hosted session (#4115)
+/// waits for that agent's session when its own destination has no agent.
+#[test]
+fn an_agent_sourced_remote_copy_waits_for_its_source_agent() {
+    let waits = CredentialWaits::default();
+    let registry = TransferRegistry::new();
+    let mut copy = remote_copy("r2r", "conn-src", "conn-dst");
+    if let Some(source) = copy.remote_source.as_mut() {
+        source.agent = Some(crate::files::transfer::persist::PersistedAgentTarget {
+            agent_id: "agent-src".to_string(),
+            remote_session_id: "remote-old".to_string(),
+            definition_id: Some("def-src".to_string()),
+        });
+    }
+    note_blocked(&waits, &copy, &RelaunchBlocked::AgentSessionUnavailable);
+
+    assert!(due(&waits, &agent_opened("agent-1", Some("def-src")), &registry).is_empty());
+    assert_eq!(
+        due(
+            &waits,
+            &agent_opened("agent-src", Some("def-src")),
+            &registry
+        ),
+        vec!["r2r"]
+    );
 }
 
 /// An ad-hoc agent session can only come back as itself, so any session on

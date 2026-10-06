@@ -1,5 +1,6 @@
-//! The SFTP and Docker ends of a remote→remote copy (#3586): each adapts one
-//! backend's streaming primitives to the engine's [`CopyEndpoint`] traits.
+//! The SFTP, Docker and ranged ends of a remote→remote copy (#3586, #4115):
+//! each adapts one backend's primitives to the engine's [`CopyEndpoint`]
+//! traits.
 
 use std::io;
 
@@ -13,6 +14,9 @@ pub(super) use sftp::SftpEndpoint;
 
 #[cfg(feature = "docker")]
 pub(super) use docker::DockerEndpoint;
+
+#[cfg(feature = "local-transfer")]
+pub(super) use ranged::RangedEndpoint;
 
 #[cfg(feature = "ssh")]
 mod sftp {
@@ -282,6 +286,291 @@ mod docker {
             // Close stdin and wait for `cat` to exit 0: only then is the file
             // complete in the container.
             ExecWriter::finish(*self).await.map_err(io::Error::other)
+        }
+    }
+}
+
+/// An end reached only through offset-addressed slices ([`RangedFileAccess`]):
+/// an agent-hosted session (#4115). Every read and write is one
+/// self-contained request of at most [`MAX_RANGE_BYTES`], so the copy needs
+/// no long-lived stream on the far side.
+///
+/// [`RangedFileAccess`]: crate::files::RangedFileAccess
+/// [`MAX_RANGE_BYTES`]: crate::files::MAX_RANGE_BYTES
+#[cfg(feature = "local-transfer")]
+mod ranged {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::{ready, Context, Poll};
+
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+    use tokio::sync::OnceCell;
+    use tracing::debug;
+
+    use super::*;
+    use crate::errors::FileError;
+    use crate::files::transfer::ranged::{remote_fingerprint, RangedTransferTarget};
+    use crate::files::MAX_RANGE_BYTES;
+
+    /// One slice request in flight.
+    type Pending<T> = Pin<Box<dyn Future<Output = Result<T, FileError>> + Send>>;
+
+    /// The size of one slice: the transfer chunk size.
+    const SLICE: usize = MAX_RANGE_BYTES as usize;
+
+    fn io_err(e: FileError) -> io::Error {
+        io::Error::other(e.to_string())
+    }
+
+    /// A ranged session. Its slice support is probed once per copy
+    /// ([`RangedFileAccess::probe`](crate::files::RangedFileAccess::probe)),
+    /// so a session that cannot serve slices fails the attempt with a clear
+    /// reason instead of on its first slice.
+    pub(in crate::files::transfer::remote_copy) struct RangedEndpoint {
+        target: Arc<dyn RangedTransferTarget>,
+        probed: OnceCell<()>,
+    }
+
+    impl RangedEndpoint {
+        pub(in crate::files::transfer::remote_copy) fn new(
+            target: Arc<dyn RangedTransferTarget>,
+        ) -> Self {
+            Self {
+                target,
+                probed: OnceCell::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CopyEndpoint for RangedEndpoint {
+        fn peer(&self) -> &'static str {
+            "agent"
+        }
+
+        fn error_prefix(&self) -> &'static str {
+            "Agent error"
+        }
+
+        async fn link(&self) -> Result<Box<dyn EndpointLink>, String> {
+            self.probed
+                .get_or_try_init(|| async {
+                    self.target
+                        .probe()
+                        .await
+                        .map_err(|e| format!("ranged file access unavailable: {e}"))
+                })
+                .await?;
+            Ok(Box::new(RangedLink {
+                target: self.target.clone(),
+            }))
+        }
+
+        async fn remove_partial(&self, path: &str) {
+            if let Err(e) = self.target.remove_file(path).await {
+                debug!(error = %e, "could not remove partial ranged copy (best-effort)");
+            }
+        }
+    }
+
+    /// One attempt's access to a ranged end. Slices are stateless, so an
+    /// attempt holds nothing but the target.
+    struct RangedLink {
+        target: Arc<dyn RangedTransferTarget>,
+    }
+
+    #[async_trait]
+    impl EndpointLink for RangedLink {
+        async fn fingerprint(&self, path: &str) -> Option<SourceFingerprint> {
+            remote_fingerprint(self.target.as_ref(), path).await
+        }
+
+        async fn file_size(&self, path: &str) -> Option<u64> {
+            self.target.stat(path).await.ok().map(|entry| entry.size)
+        }
+
+        /// Every slice names its offset, and `stat` fingerprints the source.
+        fn can_resume_read(&self) -> bool {
+            true
+        }
+
+        /// `stat` measures the partial, and every write states the offset it
+        /// expects, so a chunk can never land in the wrong place.
+        fn can_resume_write(&self) -> bool {
+            true
+        }
+
+        async fn open_read(
+            &self,
+            path: &str,
+            offset: u64,
+        ) -> Result<Box<dyn CopyReader>, OpenError> {
+            Ok(Box::new(RangedReader {
+                target: self.target.clone(),
+                path: Arc::from(path),
+                next: offset,
+                buf: Vec::new(),
+                pos: 0,
+                eof: false,
+                pending: None,
+            }))
+        }
+
+        async fn open_write(
+            &self,
+            path: &str,
+            offset: u64,
+        ) -> Result<Box<dyn CopyWriter>, OpenError> {
+            Ok(Box::new(RangedWriter {
+                target: self.target.clone(),
+                path: Arc::from(path),
+                landed: offset,
+                staged: Vec::with_capacity(SLICE),
+                in_flight: None,
+                created: offset > 0,
+            }))
+        }
+    }
+
+    /// Reads a ranged source one slice at a time. A short slice is the end
+    /// of the file.
+    struct RangedReader {
+        target: Arc<dyn RangedTransferTarget>,
+        path: Arc<str>,
+        /// Offset of the next slice to request.
+        next: u64,
+        /// The current slice and how much of it was handed out.
+        buf: Vec<u8>,
+        pos: usize,
+        eof: bool,
+        pending: Option<Pending<Vec<u8>>>,
+    }
+
+    impl AsyncRead for RangedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            out: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let this = &mut *self;
+            loop {
+                if this.pos < this.buf.len() {
+                    let n = (this.buf.len() - this.pos).min(out.remaining());
+                    out.put_slice(&this.buf[this.pos..this.pos + n]);
+                    this.pos += n;
+                    return Poll::Ready(Ok(()));
+                }
+                if this.eof || out.remaining() == 0 {
+                    return Poll::Ready(Ok(()));
+                }
+                let fut = this.pending.get_or_insert_with(|| {
+                    let (target, path, offset) =
+                        (this.target.clone(), this.path.clone(), this.next);
+                    Box::pin(async move { target.read_range(&path, offset, MAX_RANGE_BYTES).await })
+                });
+                let result = ready!(fut.as_mut().poll(cx));
+                this.pending = None;
+                let slice = result.map_err(io_err)?;
+                this.next += slice.len() as u64;
+                this.eof = slice.len() < SLICE;
+                this.buf = slice;
+                this.pos = 0;
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CopyReader for RangedReader {
+        async fn finish(self: Box<Self>) -> io::Result<()> {
+            // Every slice was its own complete request; nothing to settle.
+            Ok(())
+        }
+    }
+
+    /// Writes a ranged destination one slice at a time: bytes are staged
+    /// until a full slice is ready (or the stream is flushed), then sent as
+    /// one `write_range` at the offset the destination must already hold.
+    struct RangedWriter {
+        target: Arc<dyn RangedTransferTarget>,
+        path: Arc<str>,
+        /// Bytes confirmed at the destination.
+        landed: u64,
+        staged: Vec<u8>,
+        /// The slice being written and its length.
+        in_flight: Option<(Pending<()>, usize)>,
+        /// Whether the destination exists: a resumed write appends to the
+        /// partial; a fresh one must create (truncate) it even when the
+        /// source is empty.
+        created: bool,
+    }
+
+    impl RangedWriter {
+        /// Drive the slice in flight, if any, to completion.
+        fn poll_in_flight(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            if let Some((fut, len)) = self.in_flight.as_mut() {
+                let result = ready!(fut.as_mut().poll(cx));
+                let len = *len;
+                self.in_flight = None;
+                result.map_err(io_err)?;
+                self.landed += len as u64;
+                self.created = true;
+            }
+            Poll::Ready(Ok(()))
+        }
+
+        /// Send the staged bytes as one slice at the landed offset.
+        fn send_staged(&mut self) {
+            let data = std::mem::replace(&mut self.staged, Vec::with_capacity(SLICE));
+            let len = data.len();
+            let (target, path, offset) = (self.target.clone(), self.path.clone(), self.landed);
+            self.in_flight = Some((
+                Box::pin(async move { target.write_range(&path, offset, &data).await }),
+                len,
+            ));
+        }
+    }
+
+    impl AsyncWrite for RangedWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            data: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            let this = &mut *self;
+            ready!(this.poll_in_flight(cx))?;
+            if this.staged.len() >= SLICE {
+                this.send_staged();
+                ready!(this.poll_in_flight(cx))?;
+            }
+            let n = (SLICE - this.staged.len()).min(data.len());
+            this.staged.extend_from_slice(&data[..n]);
+            Poll::Ready(Ok(n))
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            let this = &mut *self;
+            loop {
+                ready!(this.poll_in_flight(cx))?;
+                if this.staged.is_empty() && this.created {
+                    return Poll::Ready(Ok(()));
+                }
+                // An empty slice at offset 0 creates an empty destination.
+                this.send_staged();
+            }
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            self.poll_flush(cx)
+        }
+    }
+
+    #[async_trait]
+    impl CopyWriter for RangedWriter {
+        async fn finish(mut self: Box<Self>) -> io::Result<()> {
+            // Send whatever is still staged: only then have the counted bytes
+            // landed.
+            self.flush().await
         }
     }
 }

@@ -163,7 +163,15 @@ pub(crate) fn note_blocked(
             }
             WaitFor::Connections(connections)
         }
-        RelaunchBlocked::AgentSessionUnavailable => match &record.agent {
+        // A remote-to-remote copy may be waiting on its source's agent
+        // instead (#4115); with two agent ends it waits on the destination's,
+        // and a Resume re-checks both.
+        RelaunchBlocked::AgentSessionUnavailable => match record.agent.as_ref().or_else(|| {
+            record
+                .remote_source
+                .as_ref()
+                .and_then(|source| source.agent.as_ref())
+        }) {
             Some(agent) => WaitFor::AgentSession {
                 agent_id: agent.agent_id.clone(),
                 definition_id: agent.definition_id.clone(),

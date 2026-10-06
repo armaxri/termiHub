@@ -39,6 +39,7 @@ use termihub_core::backends::ssh::SftpFileBrowser;
 use termihub_core::config::FtpConfig;
 use termihub_core::config::SshConfig;
 
+use super::persist::PersistedAgentTarget;
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::{TransferHandle, TransferRegistry};
 use super::relaunch_credentials::{
@@ -227,33 +228,41 @@ pub(crate) async fn run_session_target(
 
 /// One end of a relaunched remote-to-remote copy: its session, the saved
 /// connection that session was opened for, and — for a Docker end (#3586) —
-/// the container it streamed through.
+/// the container it streamed through, or — for an agent-hosted end (#4115) —
+/// the identity of its agent session.
 pub(crate) struct CopyEnd<'a> {
     pub session_id: &'a str,
     pub saved_connection_id: Option<&'a str>,
     pub container_id: Option<&'a str>,
+    pub agent: Option<&'a PersistedAgentTarget>,
 }
 
 /// Resolve one end of a remote-to-remote copy: a Docker end by its persisted
-/// container id (see [`super::relaunch_docker`]), any other end as an SFTP
-/// session (#3206, #3876).
+/// container id (see [`super::relaunch_docker`]), an agent-hosted end by its
+/// persisted session identity (see [`super::relaunch_agent`]; none live yet
+/// keeps the row paused), any other end as an SFTP session (#3206, #3876).
 async fn resolve_copy_end(
     sources: &AppSources<'_>,
     end: CopyEnd<'_>,
 ) -> Result<RemoteCopyEndpoint, RelaunchBlocked> {
-    match end.container_id {
-        Some(container_id) => super::relaunch_docker::resolve_docker_target(
+    if let Some(container_id) = end.container_id {
+        return super::relaunch_docker::resolve_docker_target(
             sources.manager,
             end.session_id,
             container_id,
         )
         .await
         .map(RemoteCopyEndpoint::Docker)
-        .map_err(RelaunchBlocked::Failed),
-        None => resolve_sftp_endpoint(sources, end.session_id, end.saved_connection_id)
-            .await
-            .map(RemoteCopyEndpoint::Sftp),
+        .map_err(RelaunchBlocked::Failed);
     }
+    if let Some(agent) = end.agent {
+        return super::relaunch_agent::resolve_live_agent_target(sources.manager, agent)
+            .await
+            .map(|proxy| RemoteCopyEndpoint::Ranged(proxy));
+    }
+    resolve_sftp_endpoint(sources, end.session_id, end.saved_connection_id)
+        .await
+        .map(RemoteCopyEndpoint::Sftp)
 }
 
 /// Resolve both ends of a remote-to-remote copy (#3206, #3876, #3586): the
