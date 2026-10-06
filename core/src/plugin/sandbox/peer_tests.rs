@@ -132,9 +132,93 @@ fn handshake_frames_after_the_handshake_are_violations() {
         pid: 1,
     });
     assert!(shared.dispatch(hello).is_err());
+}
+
+#[test]
+fn a_pong_must_answer_a_ping_that_was_sent() {
+    let shared = shared();
+    // No ping sent yet: any pong is forged.
+    assert!(shared
+        .dispatch(Message::Pong(Heartbeat { nonce: 1 }))
+        .is_err());
+    {
+        let mut beat = shared.heartbeat.lock().unwrap();
+        beat.last_sent = 2;
+        beat.outstanding_since = Some(std::time::Instant::now());
+    }
+    // A stale duplicate is ignored and leaves the ping outstanding.
     assert!(shared
         .dispatch(Message::Pong(Heartbeat { nonce: 1 }))
         .is_ok());
+    assert!(shared.heartbeat.lock().unwrap().outstanding_since.is_some());
+    // A pong from the future is a violation.
+    assert!(shared
+        .dispatch(Message::Pong(Heartbeat { nonce: 3 }))
+        .is_err());
+    // The answer clears it.
+    assert!(shared
+        .dispatch(Message::Pong(Heartbeat { nonce: 2 }))
+        .is_ok());
+    assert!(shared.heartbeat.lock().unwrap().outstanding_since.is_none());
+}
+
+#[test]
+fn the_first_recorded_cause_wins_and_reaches_the_exit_hook() {
+    let shared = shared();
+    let seen = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&seen);
+    shared.set_exit_hook(Box::new(move |cause| {
+        *sink.lock().unwrap() = Some(cause.clone());
+    }));
+    assert_eq!(shared.exit_cause(), None);
+    shared.violation("bad frame");
+    shared.set_pending_cause(RunnerExitCause::Stopped);
+    assert_eq!(
+        shared.exit_cause(),
+        Some(RunnerExitCause::InvalidData {
+            detail: "bad frame".into()
+        })
+    );
+    // Reaping makes it final and runs the hook once.
+    shared.finish(None);
+    shared.finish(None);
+    assert_eq!(seen.lock().unwrap().clone(), shared.exit_cause());
+    assert!(shared.dead.load(Ordering::SeqCst));
+
+    // A hook installed after the exit runs at once.
+    let late = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&late);
+    shared.set_exit_hook(Box::new(move |cause| {
+        *sink.lock().unwrap() = Some(cause.clone());
+    }));
+    assert_eq!(late.lock().unwrap().clone(), shared.exit_cause());
+}
+
+#[test]
+fn an_unprovoked_exit_is_classified_from_its_status() {
+    let shared = shared();
+    shared.finish(None);
+    assert_eq!(
+        shared.exit_cause(),
+        Some(RunnerExitCause::Crashed {
+            signal: None,
+            exit_code: None
+        })
+    );
+}
+
+#[test]
+fn a_reported_allocation_failure_makes_the_exit_out_of_memory() {
+    let shared = shared();
+    shared.expect_stderr();
+    Arc::clone(&shared)
+        .forward_stderr(&b"plugin says hi\nmemory allocation of 1048576 bytes failed\n"[..]);
+    shared.finish(None);
+    assert_eq!(shared.exit_cause(), Some(RunnerExitCause::OutOfMemory));
+    assert!(!is_allocation_failure(b"memory allocation of lots"));
+    assert!(is_allocation_failure(
+        b"memory allocation of 8 bytes failed\r\n"
+    ));
 }
 
 #[test]

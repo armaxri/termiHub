@@ -21,6 +21,7 @@ use termihub_plugin_runner::ipc::{
 use crate::connection::OutputSender;
 
 use super::client::{SandboxedPlugin, CREATE_TIMEOUT, REQUEST_TIMEOUT};
+use super::exit::RunnerExitCause;
 use super::peer::Reply;
 
 /// Largest input chunk carried in one `Input` frame.
@@ -62,6 +63,8 @@ impl SandboxedSession {
             settings_json: settings_json.to_owned(),
             data_dir: data_dir.to_owned(),
         });
+        // The create has its own (long) deadline; the hang verdict waits.
+        let in_flight = plugin.call_in_flight();
         let outcome =
             plugin
                 .send(&request)
@@ -69,10 +72,16 @@ impl SandboxedSession {
                     Ok(Reply::Created) => Ok(()),
                     Ok(Reply::Failed(error)) => Err(error),
                     Ok(Reply::Closed) => Err(PluginError::NotAlive),
-                    Err(_) => Err(PluginError::Other(
-                        "the plugin runner did not answer CreateSession in time".to_owned(),
-                    )),
+                    Err(_) => {
+                        // A missed call deadline is a hang (#4184): the
+                        // runner's request thread is stuck in the plugin.
+                        plugin.kill_for(RunnerExitCause::NotResponding);
+                        Err(PluginError::Other(
+                            "the plugin runner did not answer CreateSession in time".to_owned(),
+                        ))
+                    }
                 });
+        drop(in_flight);
         match outcome {
             Ok(()) => Ok(Self {
                 plugin,
@@ -117,6 +126,17 @@ impl SandboxedSession {
         }))
     }
 
+    /// Why the session ended on its own: the cause of its runner's exit
+    /// (#4184). `None` while it runs and after a [`close`](Self::close).
+    #[must_use]
+    pub fn exit_cause(&self) -> Option<RunnerExitCause> {
+        if self.closed {
+            None
+        } else {
+            self.plugin.exit_cause()
+        }
+    }
+
     /// Whether the session is alive (as last pushed by the runner, and the
     /// runner itself is running).
     #[must_use]
@@ -149,9 +169,13 @@ impl SandboxedSession {
         }))?;
         match reply.map(|rx| rx.recv_timeout(REQUEST_TIMEOUT)) {
             Some(Ok(_)) | None => Ok(()),
-            Some(Err(_)) => Err(PluginError::Other(
-                "the plugin runner did not close the session in time".to_owned(),
-            )),
+            Some(Err(_)) => {
+                // The close deadline is a call deadline: missing it is a hang.
+                self.plugin.kill_for(RunnerExitCause::NotResponding);
+                Err(PluginError::Other(
+                    "the plugin runner did not close the session in time".to_owned(),
+                ))
+            }
         }
     }
 

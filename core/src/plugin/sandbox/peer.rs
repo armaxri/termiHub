@@ -2,10 +2,17 @@
 //! thread that demultiplexes runner frames onto sessions, the per-frame
 //! validation (direction, known session id, log bounds), and the kill / reap
 //! paths every violation or exit ends in.
+//!
+//! **Exit causes (#4184).** Whoever kills the runner records why first
+//! ([`Shared::kill_for`]: not responding, out of memory, invalid data, or a
+//! host stop); an exit nobody asked for is classified from the process status
+//! when it is reaped. The final [`RunnerExitCause`] is recorded once and handed
+//! to the exit hook the plugin handle installs (crash budget, respawn).
 
 use std::collections::HashMap;
+use std::io::{BufRead, Write};
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -18,6 +25,7 @@ use crate::plugin::host_context::emit_runner_log;
 use crate::plugin::log_rate_limit::PluginLogLimiter;
 
 use super::client::EXIT_TIMEOUT;
+use super::exit::RunnerExitCause;
 
 /// Upper bound on a `Log` line as the runner may send it: the 8 KiB message
 /// bound, after lossy UTF-8 decoding (each invalid byte → 3-byte U+FFFD).
@@ -25,6 +33,32 @@ const MAX_WIRE_LOG_BYTES: usize = MAX_LOG_MESSAGE_BYTES * 3;
 
 /// Read buffer of the host's frame reader.
 const READ_BUFFER: usize = 64 * 1024;
+
+/// Longest runner stderr line forwarded in one piece.
+const MAX_STDERR_LINE: u64 = 16 * 1024;
+
+/// How long classifying an exit waits for the stderr forwarder to drain.
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Called once with the final cause when the runner is gone.
+pub(super) type ExitHook = Box<dyn FnOnce(&RunnerExitCause) + Send>;
+
+/// The final exit cause and the hook waiting for it.
+#[derive(Default)]
+struct ExitState {
+    cause: Option<RunnerExitCause>,
+    hook: Option<ExitHook>,
+}
+
+/// Ping bookkeeping for hang detection (#4184).
+#[derive(Debug, Default)]
+pub(super) struct HeartbeatState {
+    /// Nonce of the last `Ping` sent (0: none yet).
+    pub(super) last_sent: u64,
+    /// When the unanswered `Ping` was sent (or a call deadline last covered
+    /// it), if one is outstanding.
+    pub(super) outstanding_since: Option<Instant>,
+}
 
 /// What a host-side request (`CreateSession`, `Close`) waits for.
 #[derive(Debug)]
@@ -57,6 +91,20 @@ pub(super) struct Shared {
     pub(super) log_limiter: Arc<PluginLogLimiter>,
     /// When the session count last dropped to zero (idle reaping).
     pub(super) idle_since: Mutex<Option<Instant>>,
+    /// Why the host is killing the runner, recorded before the kill (first
+    /// wins).
+    pending_cause: Mutex<Option<RunnerExitCause>>,
+    /// The final exit cause, once the runner is reaped, and its hook.
+    exit: Mutex<ExitState>,
+    /// Hang detection state.
+    pub(super) heartbeat: Mutex<HeartbeatState>,
+    /// Requests with their own deadline in flight (`CreateSession`); while
+    /// any is, a missing pong is not yet a hang.
+    pub(super) calls_in_flight: AtomicUsize,
+    /// The runner reported a failed allocation on stderr.
+    out_of_memory: AtomicBool,
+    /// The stderr forwarder is done (or there is none).
+    stderr_done: AtomicBool,
 }
 
 impl Shared {
@@ -74,7 +122,40 @@ impl Shared {
             child: Mutex::new(child),
             log_limiter,
             idle_since: Mutex::new(Some(Instant::now())),
+            pending_cause: Mutex::new(None),
+            exit: Mutex::new(ExitState::default()),
+            heartbeat: Mutex::new(HeartbeatState::default()),
+            calls_in_flight: AtomicUsize::new(0),
+            out_of_memory: AtomicBool::new(false),
+            stderr_done: AtomicBool::new(true),
         })
+    }
+
+    /// Forward the runner's stderr (the plugin's own diagnostics) to the
+    /// host's, line by line, noting a failed allocation on the way (a Rust
+    /// plugin under `RLIMIT_AS` prints `memory allocation of N bytes failed`
+    /// and aborts). Runs on its own thread until end of stream.
+    pub(super) fn forward_stderr<R: std::io::Read>(self: Arc<Self>, stderr: R) {
+        let mut reader = std::io::BufReader::new(stderr);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match std::io::Read::take(&mut reader, MAX_STDERR_LINE).read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if is_allocation_failure(&line) {
+                        self.out_of_memory.store(true, Ordering::SeqCst);
+                    }
+                    let _ = std::io::stderr().write_all(&line);
+                }
+            }
+        }
+        self.stderr_done.store(true, Ordering::SeqCst);
+    }
+
+    /// Mark a stderr forwarder as running (before its thread starts).
+    pub(super) fn expect_stderr(&self) {
+        self.stderr_done.store(false, Ordering::SeqCst);
     }
 
     pub(super) fn read_loop<R: std::io::Read>(self: Arc<Self>, reader: R) {
@@ -95,10 +176,10 @@ impl Shared {
                         break;
                     }
                 },
-                Ok(None) => {
-                    self.mark_dead("the plugin runner exited");
-                    break;
-                }
+                // End of stream: the runner exited (or is exiting). `reap`
+                // below classifies the exit before the sessions are ended, so
+                // a session never reports dead without its cause.
+                Ok(None) => break,
                 Err(e) => {
                     self.violation(&e.to_string());
                     break;
@@ -170,9 +251,7 @@ impl Shared {
                 );
                 Ok(())
             }
-            // Hang detection (phase 3) consumes pongs; for now they are valid
-            // and ignored.
-            Message::Pong(_) => Ok(()),
+            Message::Pong(beat) => self.pong(beat.nonce),
             other => Err(format!(
                 "unexpected {:?} frame after the handshake",
                 other.kind()
@@ -187,6 +266,19 @@ impl Shared {
         let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = sessions.get(&id) {
             f(slot);
+        }
+        Ok(())
+    }
+
+    /// A `Pong`: clears the outstanding ping. A nonce that was never sent is a
+    /// violation; a stale duplicate is ignored.
+    fn pong(&self, nonce: u64) -> Result<(), String> {
+        let mut heartbeat = self.heartbeat.lock().unwrap_or_else(|e| e.into_inner());
+        if nonce == 0 || nonce > heartbeat.last_sent {
+            return Err(format!("pong {nonce} for a ping that was never sent"));
+        }
+        if nonce == heartbeat.last_sent {
+            heartbeat.outstanding_since = None;
         }
         Ok(())
     }
@@ -220,14 +312,106 @@ impl Shared {
 
     /// A protocol violation: log it, kill the runner, end every session.
     pub(super) fn violation(&self, reason: &str) {
-        if !self.dead.load(Ordering::SeqCst) {
+        self.kill_for(RunnerExitCause::InvalidData {
+            detail: reason.to_owned(),
+        });
+    }
+
+    /// Kill the runner for `cause` (recorded first, so the sessions it ends
+    /// report it): a violation, a hang, the memory watchdog, or a host stop.
+    pub(super) fn kill_for(&self, cause: RunnerExitCause) {
+        if !self.dead.load(Ordering::SeqCst) && cause.is_failure() {
             tracing::warn!(
                 target: crate::plugin::PLUGIN_LOG_TARGET,
-                "[{}] killing the plugin runner: {reason}",
-                self.plugin_id
+                "[{}] killing the plugin runner: {}",
+                self.plugin_id,
+                cause.describe()
             );
         }
+        self.set_pending_cause(cause);
         self.kill();
+    }
+
+    /// Record why the runner is about to end, unless a cause is already
+    /// recorded (the first one wins).
+    pub(super) fn set_pending_cause(&self, cause: RunnerExitCause) {
+        let mut pending = self.pending_cause.lock().unwrap_or_else(|e| e.into_inner());
+        if pending.is_none() {
+            *pending = Some(cause);
+        }
+    }
+
+    /// The cause the runner ended (or is being ended) with, if it did.
+    pub(super) fn exit_cause(&self) -> Option<RunnerExitCause> {
+        let final_cause = self
+            .exit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cause
+            .clone();
+        final_cause.or_else(|| {
+            self.pending_cause
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        })
+    }
+
+    /// Install the exit hook; runs it at once if the runner already ended.
+    pub(super) fn set_exit_hook(&self, hook: ExitHook) {
+        let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
+        match exit.cause.clone() {
+            Some(cause) => {
+                drop(exit);
+                // The cause is final, so the runner is gone: make sure every
+                // session (and `is_alive`) says so before the hook acts on it.
+                self.mark_dead("the plugin runner exited");
+                hook(&cause);
+            }
+            None => exit.hook = Some(hook),
+        }
+    }
+
+    /// Record the final cause from the reaped `status` (a pending cause wins),
+    /// end every session, then run the exit hook. Idempotent.
+    fn finish(&self, status: Option<std::process::ExitStatus>) {
+        let pending = self
+            .pending_cause
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        // A cause recorded by `kill_for` was already logged there.
+        let natural = pending.is_none();
+        let cause = pending.unwrap_or_else(|| {
+            // The runner died on its own: let the stderr forwarder drain so a
+            // reported allocation failure is not missed.
+            let deadline = Instant::now() + STDERR_DRAIN_TIMEOUT;
+            while !self.stderr_done.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            RunnerExitCause::from_status(status, self.out_of_memory.load(Ordering::SeqCst))
+        });
+        let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
+        if exit.cause.is_some() {
+            return;
+        }
+        if natural && cause.is_failure() {
+            tracing::warn!(
+                target: crate::plugin::PLUGIN_LOG_TARGET,
+                "[{}] {}",
+                self.plugin_id,
+                cause.describe()
+            );
+        }
+        exit.cause = Some(cause.clone());
+        let hook = exit.hook.take();
+        drop(exit);
+        // Dead before the hook runs: a respawn it triggers must not find this
+        // runner still looking alive.
+        self.mark_dead("the plugin runner exited");
+        if let Some(hook) = hook {
+            hook(&cause);
+        }
     }
 
     pub(super) fn kill(&self) {
@@ -263,23 +447,35 @@ impl Shared {
             return;
         };
         let deadline = Instant::now() + timeout;
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(status)) => break Some(status),
                 Ok(None) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 _ => {
+                    // Still running past the deadline (or unwaitable): the
+                    // host ends it, so a stall here is a hang, not a crash.
+                    self.set_pending_cause(RunnerExitCause::NotResponding);
                     let _ = child.kill();
-                    let _ = child.wait();
-                    break;
+                    break child.wait().ok();
                 }
             }
-        }
+        };
         *guard = None;
         drop(guard);
+        self.finish(status);
         self.mark_dead("the plugin runner exited");
     }
+}
+
+/// Whether a stderr line is Rust's report of a failed allocation
+/// (`memory allocation of N bytes failed`).
+fn is_allocation_failure(line: &[u8]) -> bool {
+    const PREFIX: &[u8] = b"memory allocation of ";
+    const SUFFIX: &[u8] = b" bytes failed";
+    let trimmed = line.trim_ascii_end();
+    trimmed.starts_with(PREFIX) && trimmed.ends_with(SUFFIX)
 }
 
 #[cfg(test)]

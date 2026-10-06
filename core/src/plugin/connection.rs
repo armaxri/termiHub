@@ -566,6 +566,13 @@ impl ConnectionType for PluginConnectionType {
         self.backend.as_ref().is_some_and(ActiveBackend::is_alive)
     }
 
+    fn plugin_exit_cause(&self) -> Option<super::sandbox::RunnerExitCause> {
+        match self.backend.as_ref()? {
+            ActiveBackend::Sandboxed(session) => session.exit_cause(),
+            ActiveBackend::InProcess(_) => None,
+        }
+    }
+
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         let backend = self
             .backend

@@ -64,9 +64,11 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
         .env_clear()
         .envs(scrubbed_env())
         .stdin(Stdio::null())
-        // Plugin stdout/stderr go where they went in-process: the host's.
+        // Plugin stdout goes where it went in-process: the host's. Stderr is
+        // forwarded there line by line by the host (#4184), which watches it
+        // for a plugin's allocation failure under the memory limit.
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     // SAFETY: the closure runs in the forked child before `exec` and only calls
     // the async-signal-safe `dup2` / `fcntl` on descriptors it was handed.
     unsafe {
