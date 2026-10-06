@@ -13,7 +13,8 @@
 //      any `+build` metadata, e.g. `0.10.0-rc.18`) and that exact
 //      `name@version` is not in `.github/prerelease-allowlist.json`;
 //   2. an allowlist entry matches no locked crate any more (stale) — so the
-//      list shrinks as russh / IronRDP move to stable releases (#3734);
+//      list shrinks as russh / IronRDP move to stable releases (accepted risk,
+//      docs/supply-chain.md "Accepted risks");
 //   3. an allowlist entry is malformed (missing reason / tracker, or a version
 //      that is not actually a pre-release).
 //

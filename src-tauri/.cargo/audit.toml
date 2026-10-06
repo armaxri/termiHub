@@ -1,10 +1,12 @@
-# Cargo audit configuration
+# Cargo audit configuration (used when cargo-audit runs from src-tauri/)
 # https://docs.rs/cargo-audit/latest/cargo_audit/
+#
+# Mirrors the workspace config in ../../.cargo/audit.toml. Every ID is an
+# accepted risk documented in docs/supply-chain.md -> "Accepted risks (Rust
+# advisories and pre-release crates)"; see the workspace config for the per-ID
+# rationale.
 
 [advisories]
-# RUSTSEC-2023-0071: Marvin Attack timing sidechannel in the `rsa` crate.
-# The `rsa` crate is a transitive dependency of `ssh-key` (used for OpenSSH
-# key format parsing). We only extract raw RSA key components and rebuild
-# them via OpenSSL — we never perform RSA encryption/decryption through
-# this crate, so the timing sidechannel does not apply.
+# RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (via russh/ssh-key).
+# Client-side signing only, one signature per login, no RSA decryption path.
 ignore = ["RUSTSEC-2023-0071"]

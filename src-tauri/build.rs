@@ -59,7 +59,19 @@ fn main() {
     // `custom-protocol` feature (`DEP_TAURI_DEV`, the same switch the macro's
     // `cfg!(not(feature = "custom-protocol"))` follows), and the same
     // `tauri-codegen` function, with compression on (see Cargo.toml).
-    let attributes = tauri_build::Attributes::new().codegen(tauri_build::CodegenContext::new());
+    //
+    // Keep the Visual C++ runtime dynamically linked on Windows, as it was before
+    // Tauri 2.12. tauri-build 2.7 links it statically by default: it writes a stub
+    // `msvcrt.lib` into this crate's OUT_DIR and emits
+    // `cargo:rustc-link-search=native=<OUT_DIR>`. Cargo hands every build-script
+    // link-search path in the build to rustdoc, so `cargo test --workspace` doc
+    // tests of other crates (termihub-core) picked up the stub and failed to link
+    // (`LNK4003 ... msvcrt.lib`, unresolved `__CxxFrameHandler3`). The static CRT
+    // also changes what the shipped binary needs at runtime, so adopting it is a
+    // separate decision, not part of a dependency bump.
+    let attributes = tauri_build::Attributes::new()
+        .codegen(tauri_build::CodegenContext::new())
+        .windows_attributes(tauri_build::WindowsAttributes::new().static_vc_runtime(false));
     if let Err(error) = tauri_build::try_build(attributes) {
         // Mirror `tauri_build::build()`: print the error and fail the build.
         println!("{error:#}");

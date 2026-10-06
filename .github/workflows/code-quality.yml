@@ -90,7 +90,8 @@ jobs:
       # Fails if Cargo.lock or rdp-sidecar/Cargo.lock locks a pre-release crate
       # version (e.g. `-rc.N`) that is not in the reviewed set
       # .github/prerelease-allowlist.json, or the list has a stale entry
-      # (SUP-002, tracker #3734). Plain Node, preinstalled on the runner.
+      # (SUP-002; accepted-risk register in docs/supply-chain.md). Plain Node,
+      # preinstalled on the runner.
       - name: Check pre-release crates are reviewed
         run: node scripts/internal/check-prerelease-crates.mjs
 

@@ -106,6 +106,65 @@ is not reachable through them. Remove both ids when Monaco ships a release pinni
 DOMPurify >=3.4.16 (0.57.0 is the latest stable as of 2026-10-06), then bump monaco-editor.
 Earlier `dompurify` overrides (removed in #3482) had the same blind spot.
 
+### Accepted risks (Rust advisories and pre-release crates)
+
+The Rust side of the Security Audit job runs `cargo audit` (config:
+[`.cargo/audit.toml`](../.cargo/audit.toml)) and `cargo deny check` (config:
+[`deny.toml`](../deny.toml)) on the root workspace and on `rdp-sidecar/`. A real vulnerability or
+a yanked crate fails the job. The entries below are the only exceptions. Each is a transitive
+crate pinned by an upstream dependency, with no fix we can take today, and the maintainer
+accepted each as a documented risk on 2026-10-06 (#3054, #3734) instead of waiting on upstream.
+The ignore lists carry the same rationale next to each ID.
+
+#### Advisories ignored in the root workspace
+
+| Advisory            | Crate (path)                                          | Kind          | Why it is not exploitable in termiHub                                                                                                                                                                                                                                                     | Leaves the tree when                    |
+| ------------------- | ----------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `RUSTSEC-2023-0071` | rsa 0.10.0-rc (`russh`, `ssh-key`)                    | vulnerability | termiHub is an SSH client only. RSA client keys sign the server-chosen session hash once per login, and host-key checks are public-key verifications. There is no RSA decryption path, and a server sees one signature per connection, far from the timed sample the Marvin attack needs. | an rsa release with a constant-time fix |
+| `RUSTSEC-2024-0370` | proc-macro-error 1.0 (`glib-macros` 0.18, Linux GTK3) | unmaintained  | Build-time proc-macro helper. It runs only at compile time on our own sources and ships no runtime code.                                                                                                                                                                                  | Tauri/wry move off gtk-rs 0.18          |
+| `RUSTSEC-2024-0429` | glib 0.18 (Tauri/wry Linux GTK3 stack)                | unsound       | The unsoundness is in `glib::VariantStrIter`'s iterator impls over GVariant string arrays, which termiHub code never calls. Our only direct glib use is GTK signal handlers in the Linux drag-out path (`src-tauri/src/files/drag_out.rs`).                                               | Tauri/wry move to glib 0.20+            |
+
+cargo-deny lists only `RUSTSEC-2023-0071`. It never reports the transitive glib notice
+(`unsound = "workspace"`) and does not gate unmaintained crates (`unmaintained = "none"`), so an
+ignore entry for those would be stale. The rdp-sidecar keeps its own lists in
+`rdp-sidecar/.cargo/audit.toml` and `rdp-sidecar/deny.toml`.
+
+Cleared on 2026-10-06: the five `unic-*` advisories (RUSTSEC-2025-0075, -0080, -0081, -0098,
+-0100) left the tree with the Tauri 2.12 bump, because tauri-utils 2.10 moved from urlpattern 0.3
+to 0.6, which uses `icu_properties`. The `serial`, `rustls-pemfile` and `git2` ignores went
+earlier, with #3974, #3975 and #3973.
+
+#### Pre-release crates (#3734)
+
+russh 0.61 (SSH) and the rdp-sidecar IronRDP/picky stack are built on the RustCrypto 0.7/0.10
+line and the Dalek 3/5 line, which upstream has only published as release candidates (`-rc.N`,
+`-pre.N`). The full set is in
+[`.github/prerelease-allowlist.json`](../.github/prerelease-allowlist.json). It is accepted
+because:
+
+- `Cargo.lock` pins every exact version, so nothing moves without a reviewed lockfile change.
+- cargo-audit and cargo-deny cover these crates like any other crate. An advisory or a yank
+  against one of them fails CI. The yanked gate is what caught the crypto-bigint 0.7.0-0.7.4
+  yank.
+- We move to the stable releases when upstream publishes them, by bumping russh and IronRDP.
+
+`bollard-stubs` is also on the allowlist, but it is not a risk: it uses the Docker Engine API
+version as a permanent pre-release tag (#3735).
+
+#### How entries leave
+
+Removal is enforced, so this list cannot outlive the risk it describes:
+
+- [`scripts/internal/check-prerelease-crates.mjs`](../scripts/internal/check-prerelease-crates.mjs)
+  runs on every PR. It fails when a pre-release is locked without an allowlist entry, and when an
+  entry no longer matches any locked crate.
+- `cargo deny check` reports an `ignore` entry whose advisory no longer matches as
+  `advisory-not-detected`.
+- cargo-audit does not flag a stale ignore. When a crate leaves `Cargo.lock`, remove its ID from
+  `.cargo/audit.toml` and its row above in the same PR. To check by hand whether an ID still
+  fires, run cargo-audit outside the repo so the config is not picked up:
+  `cd /tmp && cargo audit -f <repo>/Cargo.lock`.
+
 ## Vendored forks
 
 Six third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
