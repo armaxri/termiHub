@@ -35,7 +35,7 @@ mod spawn;
 
 pub use client::SandboxedPlugin;
 pub use handle::{PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
-pub use locate::{default_runner_path, RUNNER_BIN_NAME, RUNNER_MISSING};
+pub use locate::{default_runner_path, log_bundled_runner, RUNNER_BIN_NAME, RUNNER_MISSING};
 pub use session::SandboxedSession;
 
 /// Environment flag that opts a **debug build** into out-of-process plugins.

@@ -56,6 +56,18 @@ pub fn default_runner_path() -> Option<PathBuf> {
     )
 }
 
+/// Log, once at startup, where the bundled runner is expected and the digest
+/// it is held to. This also keeps the embedded digest in the shipped binary in
+/// every build, so `scripts/internal/verify-plugin-runner-bundle.sh` can check
+/// a bundle's runner against it even while release builds never spawn one.
+pub fn log_bundled_runner() {
+    tracing::info!(
+        path = ?bundled_runner_path(),
+        sha256 = EXPECTED_RUNNER_SHA256.unwrap_or("none embedded"),
+        "Bundled plugin runner"
+    );
+}
+
 /// The bundled location: [`RUNNER_BIN_NAME`] next to the running executable.
 fn bundled_runner_path() -> Option<PathBuf> {
     Some(
@@ -277,6 +289,16 @@ mod tests {
     fn default_runner_path_resolves_from_the_current_executable() {
         let path = default_runner_path().expect("current exe has a parent");
         assert_eq!(path.file_name().unwrap(), RUNNER_BIN_NAME);
+    }
+
+    #[test]
+    fn the_startup_log_names_the_bundled_runner() {
+        // Must not panic without a subscriber or an embedded digest.
+        log_bundled_runner();
+        assert_eq!(
+            bundled_runner_path().and_then(|p| p.file_name().map(ToOwned::to_owned)),
+            Some(RUNNER_BIN_NAME.into())
+        );
     }
 
     #[test]
