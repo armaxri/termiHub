@@ -89,18 +89,50 @@ pub struct SettingsField {
 
 /// Conditional visibility rule for a settings field.
 ///
-/// The field is shown only when the field identified by [`field`](Condition::field)
-/// equals [`equals`](Condition::equals).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The basic rule shows the field only when the field identified by
+/// [`field`](Condition::field) equals [`equals`](Condition::equals). Three
+/// optional extensions make the grammar expressive enough for computed notices
+/// (#4198) without hardcoding any connection UI:
+///
+/// - [`same_host_as`](Condition::same_host_as) compares two fields instead of
+///   one field to a constant: the value checked against `equals` (a boolean)
+///   is whether `field` names the same host as the field `same_host_as`, by
+///   [`is_same_host`](crate::connection::graphical_files::is_same_host).
+/// - [`all_of`](Condition::all_of) adds conditions that must all hold too.
+/// - [`any_of`](Condition::any_of) adds conditions of which at least one must
+///   hold (ignored when empty).
+///
+/// Every condition is evaluated by `schema_defaults::is_field_visible` in core
+/// and by its TypeScript mirror `isFieldVisible` in `src/utils/schemaDefaults.ts`;
+/// the shared golden vectors keep the two in lockstep.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct Condition {
     /// Key of the field to check.
     pub field: String,
-    /// Value that the field must equal for this field to be visible.
+    /// Value that the field must equal for this field to be visible. With
+    /// [`same_host_as`](Condition::same_host_as) it is the expected boolean
+    /// outcome of the host comparison instead.
     #[cfg_attr(test, ts(type = "unknown"))]
     pub equals: serde_json::Value,
+    /// Key of a second field whose value is compared with `field`'s value as a
+    /// host name: the comparison is `true` when `field`'s host, as seen from
+    /// that second host, is loopback or the same name. When either side is
+    /// unset or empty the hosts cannot be shown to differ, so the comparison
+    /// is `true` (same host).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub same_host_as: Option<String>,
+    /// Further conditions that must all hold as well.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
+    pub all_of: Vec<Condition>,
+    /// Further conditions of which at least one must hold (when non-empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
+    pub any_of: Vec<Condition>,
 }
 
 /// Type of a settings field, determining the UI widget and validation rules.
@@ -166,6 +198,10 @@ pub enum FieldType {
     /// only in a given state (e.g. a plain-FTP warning shown only when
     /// `tlsMode == "none"`). Because it carries no value, it is skipped by
     /// validation and never contributes to the settings JSON.
+    ///
+    /// The message may reference current setting values as `{{fieldKey}}`
+    /// placeholders (#4198), which the UI substitutes before rendering (an
+    /// unset value renders as empty), e.g. "Files go to {{sshHost}}".
     Notice {
         /// Visual severity, controlling the callout's color and icon.
         severity: NoticeSeverity,
@@ -295,6 +331,7 @@ mod tests {
                             visible_when: Some(Condition {
                                 field: "authMethod".to_string(),
                                 equals: serde_json::json!("key"),
+                                ..Default::default()
                             }),
                         },
                         SettingsField {
@@ -311,6 +348,7 @@ mod tests {
                             visible_when: Some(Condition {
                                 field: "authMethod".to_string(),
                                 equals: serde_json::json!("password"),
+                                ..Default::default()
                             }),
                         },
                     ],
@@ -448,6 +486,7 @@ mod tests {
         let condition = Condition {
             field: "authMethod".to_string(),
             equals: serde_json::json!("key"),
+            ..Default::default()
         };
         let json = serde_json::to_string(&condition).unwrap();
         let deserialized: Condition = serde_json::from_str(&json).unwrap();
@@ -509,6 +548,7 @@ mod tests {
             visible_when: Some(Condition {
                 field: "auth".to_string(),
                 equals: serde_json::json!("key"),
+                ..Default::default()
             }),
         };
         let json = serde_json::to_value(&field).unwrap();

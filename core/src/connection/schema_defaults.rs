@@ -15,7 +15,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::schema::{FieldType, SettingsField, SettingsGroup, SettingsSchema};
+use super::graphical_files::is_same_host;
+use super::schema::{Condition, FieldType, SettingsField, SettingsGroup, SettingsSchema};
 
 /// Settings values keyed by field key. Mirrors the TS `Record<string, unknown>`.
 type Settings = Map<String, Value>;
@@ -56,17 +57,58 @@ fn collect_field_defaults(fields: &[SettingsField], out: &mut Settings) {
 /// Returns `true` if the field has no `visibleWhen` condition, or if the
 /// condition is satisfied.
 pub fn is_field_visible(field: &SettingsField, settings: &Settings) -> bool {
-    match &field.visible_when {
-        None => true,
-        Some(condition) => {
-            // A missing referenced field is `undefined` in the TS original, which
-            // never equals a concrete `equals` value, so the field stays hidden.
-            // Present values compare by JSON value equality (order-independent for
-            // scalars, which is all conditions carry in practice).
-            settings
-                .get(&condition.field)
-                .is_some_and(|actual| *actual == condition.equals)
+    field
+        .visible_when
+        .as_ref()
+        .is_none_or(|condition| evaluate_condition(condition, settings))
+}
+
+/// Evaluate one visibility [`Condition`] (including its `allOf` / `anyOf`
+/// sub-conditions) against the settings. Mirrors `evaluateCondition` in
+/// `src/utils/schemaDefaults.ts`.
+pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
+    let primary = match &condition.same_host_as {
+        // Two-field host comparison: the outcome must equal `equals`.
+        Some(other) => {
+            let same = hosts_compare_same(
+                settings.get(&condition.field),
+                settings.get(other),
+            );
+            condition.equals == Value::Bool(same)
         }
+        // A missing referenced field is `undefined` in the TS original, which
+        // never equals a concrete `equals` value, so the field stays hidden.
+        // Present values compare by JSON value equality (order-independent for
+        // scalars, which is all conditions carry in practice).
+        None => settings
+            .get(&condition.field)
+            .is_some_and(|actual| *actual == condition.equals),
+    };
+    primary
+        && condition
+            .all_of
+            .iter()
+            .all(|c| evaluate_condition(c, settings))
+        && (condition.any_of.is_empty()
+            || condition
+                .any_of
+                .iter()
+                .any(|c| evaluate_condition(c, settings)))
+}
+
+/// The host comparison behind [`Condition::same_host_as`]: whether `target`
+/// names the same host as `file_host` (see [`is_same_host`]). When either side
+/// is unset, not a string, or blank the hosts cannot be shown to differ, so
+/// they compare as the same host.
+fn hosts_compare_same(target: Option<&Value>, file_host: Option<&Value>) -> bool {
+    let text = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    match (text(target), text(file_host)) {
+        (Some(target), Some(file_host)) => is_same_host(target, file_host),
+        _ => true,
     }
 }
 
@@ -358,6 +400,7 @@ mod tests {
                             visible_when: Some(crate::connection::schema::Condition {
                                 field: "authMethod".to_string(),
                                 equals: json!("key"),
+                                ..Default::default()
                             }),
                             ..text_field("keyPath")
                         },
@@ -365,6 +408,7 @@ mod tests {
                             visible_when: Some(crate::connection::schema::Condition {
                                 field: "authMethod".to_string(),
                                 equals: json!("password"),
+                                ..Default::default()
                             }),
                             ..password_field("password")
                         },
@@ -458,6 +502,7 @@ mod tests {
             visible_when: Some(crate::connection::schema::Condition {
                 field: "authMethod".to_string(),
                 equals: json!("password"),
+                ..Default::default()
             }),
             ..password_field("password")
         };
@@ -477,6 +522,7 @@ mod tests {
             visible_when: Some(crate::connection::schema::Condition {
                 field: "advanced".to_string(),
                 equals: json!(true),
+                ..Default::default()
             }),
             ..text_field("extraOption")
         };
@@ -496,6 +542,7 @@ mod tests {
             visible_when: Some(crate::connection::schema::Condition {
                 field: "mode".to_string(),
                 equals: json!(2),
+                ..Default::default()
             }),
             ..text_field("highPort")
         };
@@ -509,6 +556,7 @@ mod tests {
             visible_when: Some(crate::connection::schema::Condition {
                 field: "mode".to_string(),
                 equals: json!("advanced"),
+                ..Default::default()
             }),
             ..text_field("extra")
         };
@@ -729,6 +777,7 @@ mod tests {
                         visible_when: Some(crate::connection::schema::Condition {
                             field: "authMethod".to_string(),
                             equals: json!("password"),
+                            ..Default::default()
                         }),
                         ..password_field("password")
                     },
@@ -948,6 +997,7 @@ mod prop_tests {
                 visible_when: Some(Condition {
                     field: ref_field.clone(),
                     equals: equals.clone(),
+                    ..Default::default()
                 }),
                 ..text_field("target")
             };

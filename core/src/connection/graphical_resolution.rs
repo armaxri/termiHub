@@ -76,6 +76,7 @@ fn when_fixed() -> Option<Condition> {
     Some(Condition {
         field: RESOLUTION_MODE_KEY.to_string(),
         equals: serde_json::json!(RESOLUTION_MODE_FIXED),
+        ..Default::default()
     })
 }
 

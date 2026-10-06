@@ -684,6 +684,7 @@ mod tests {
                 visible_when: Some(Condition {
                     field: "auth".to_string(),
                     equals: serde_json::json!("password"),
+                    ..Default::default()
                 }),
             },
         ];
@@ -730,6 +731,7 @@ mod tests {
                 visible_when: Some(Condition {
                     field: "auth".to_string(),
                     equals: serde_json::json!("password"),
+                    ..Default::default()
                 }),
             },
         ];

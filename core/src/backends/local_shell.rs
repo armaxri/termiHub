@@ -388,6 +388,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         visible_when: Some(Condition {
                             field: "shell".to_string(),
                             equals: serde_json::json!("custom"),
+                            ..Default::default()
                         }),
                     },
                     SettingsField {
