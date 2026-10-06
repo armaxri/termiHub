@@ -398,6 +398,7 @@ fn security_group() -> SettingsGroup {
                 visible_when: Some(Condition {
                     field: "tlsMode".to_string(),
                     equals: serde_json::json!("none"),
+                    ..Default::default()
                 }),
                 ..base_field(
                     "tlsWarning",
@@ -416,6 +417,7 @@ fn authentication_group() -> SettingsGroup {
     let not_anonymous = Condition {
         field: "anonymous".to_string(),
         equals: serde_json::json!(false),
+        ..Default::default()
     };
     SettingsGroup {
         collapsed: false,

@@ -8,6 +8,7 @@ import {
   filterRuntimeOptions,
   filterCredentialFields,
   withSchemaDefaults,
+  interpolateSettings,
 } from "./schemaDefaults";
 
 function textField(key: string, opts: Partial<SettingsField> = {}): SettingsField {
@@ -493,5 +494,28 @@ describe("withSchemaDefaults", () => {
 
   it("tolerates undefined settings", () => {
     expect(withSchemaDefaults(schema, undefined)).toEqual({ autoReconnect: true });
+  });
+});
+
+describe("interpolateSettings", () => {
+  it("substitutes {{key}} placeholders with the current values", () => {
+    expect(
+      interpolateSettings("Files go to {{sshHost}}, not {{ host }}.", {
+        sshHost: "bastion.corp",
+        host: "10.0.4.17",
+      })
+    ).toBe("Files go to bastion.corp, not 10.0.4.17.");
+  });
+
+  it("renders numbers and booleans as text", () => {
+    expect(interpolateSettings("{{port}}/{{on}}", { port: 5900, on: true })).toBe("5900/true");
+  });
+
+  it("renders unset and structured values as empty", () => {
+    expect(interpolateSettings("[{{missing}}][{{list}}]", { list: [1] })).toBe("[][]");
+  });
+
+  it("leaves text without placeholders unchanged", () => {
+    expect(interpolateSettings("plain {text}", {})).toBe("plain {text}");
   });
 });

@@ -386,6 +386,7 @@ fn when_security_is(mode: &str) -> Option<Condition> {
     Some(Condition {
         field: "securityMode".to_string(),
         equals: serde_json::json!(mode),
+        ..Default::default()
     })
 }
 
@@ -395,6 +396,7 @@ fn when_field_is_true(field: &str) -> Option<Condition> {
     Some(Condition {
         field: field.to_string(),
         equals: serde_json::json!(true),
+        ..Default::default()
     })
 }
 

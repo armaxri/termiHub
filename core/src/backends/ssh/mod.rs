@@ -402,6 +402,7 @@ impl ConnectionType for Ssh {
                             visible_when: Some(Condition {
                                 field: "authMethod".to_string(),
                                 equals: serde_json::json!("password"),
+                                ..Default::default()
                             }),
                         },
                         SettingsField {
@@ -420,6 +421,7 @@ impl ConnectionType for Ssh {
                             visible_when: Some(Condition {
                                 field: "authMethod".to_string(),
                                 equals: serde_json::json!("key"),
+                                ..Default::default()
                             }),
                         },
                         SettingsField {
@@ -667,6 +669,7 @@ impl ConnectionType for Ssh {
                             visible_when: Some(Condition {
                                 field: crate::connection::AUTO_RECONNECT_KEY.to_string(),
                                 equals: serde_json::json!(true),
+                                ..Default::default()
                             }),
                         },
                     ],

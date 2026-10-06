@@ -1,0 +1,197 @@
+{
+  "operation": "isSameHost",
+  "cases": [
+    {
+      "name": "tunnel to localhost is the desktop host",
+      "input": "localhost",
+      "args": {
+        "fileHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "loopback name is case-insensitive",
+      "input": "LOCALHOST",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "fully-qualified localhost.",
+      "input": "localhost.",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "*.localhost is loopback (RFC 6761)",
+      "input": "vnc.localhost",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "bare .localhost is not a *.localhost name",
+      "input": ".localhost",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "127.0.0.1 is loopback",
+      "input": "127.0.0.1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "any 127/8 address is loopback",
+      "input": "127.1.2.3",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "IPv6 ::1 is loopback",
+      "input": "::1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "bracketed [::1] is loopback",
+      "input": "[::1]",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "expanded IPv6 loopback",
+      "input": "0:0:0:0:0:0:0:1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "IPv4-compatible ::0.0.0.1 is ::1",
+      "input": "::0.0.0.1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "IPv4-mapped loopback is not ::1",
+      "input": "::ffff:127.0.0.1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "::2 is not loopback",
+      "input": "::2",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "surrounding whitespace is ignored",
+      "input": " localhost ",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": true
+    },
+    {
+      "name": "octet with a leading zero is not an address",
+      "input": "127.000.0.1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "short-form 127.1 is not an address",
+      "input": "127.1",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "gateway: a LAN target differs from the SSH host",
+      "input": "10.0.4.17",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "localhost.example.com is not loopback",
+      "input": "localhost.example.com",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "same name, different case",
+      "input": "Tiger-Box",
+      "args": {
+        "fileHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "same name, trailing dot",
+      "input": "tiger-box.",
+      "args": {
+        "fileHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "same IPv6 address, one bracketed",
+      "input": "[fd00::5]",
+      "args": {
+        "fileHost": "fd00::5"
+      },
+      "expected": true
+    },
+    {
+      "name": "different names",
+      "input": "desk.corp",
+      "args": {
+        "fileHost": "bastion.corp"
+      },
+      "expected": false
+    },
+    {
+      "name": "empty target is never the same host",
+      "input": "",
+      "args": {
+        "fileHost": ""
+      },
+      "expected": false
+    },
+    {
+      "name": "non-ASCII case is not folded",
+      "input": "stra\u00dfe",
+      "args": {
+        "fileHost": "STRASSE"
+      },
+      "expected": false
+    }
+  ]
+}

@@ -503,6 +503,7 @@ pub fn monitor_fields() -> Vec<SettingsField> {
             visible_when: Some(Condition {
                 field: MONITORS_KEY.to_string(),
                 equals: serde_json::json!(MONITORS_CUSTOM),
+                ..Default::default()
             }),
         },
     ]

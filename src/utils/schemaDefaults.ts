@@ -8,6 +8,7 @@
 
 import type { SettingsSchema, SettingsField, Condition } from "@/types/schema";
 import type { PasswordPromptInfo } from "@/types/generated/PasswordPromptInfo";
+import { isSameHost } from "./sameHost";
 
 // Generated via ts-rs from the Rust `PasswordPromptInfo` in
 // `core/src/connection/schema_defaults.rs` (#3088).
@@ -76,10 +77,64 @@ export function isFieldVisible(field: SettingsField, settings: Record<string, un
   return evaluateCondition(field.visibleWhen, settings);
 }
 
-function evaluateCondition(condition: Condition, settings: Record<string, unknown>): boolean {
-  const actual = settings[condition.field];
-  // Use JSON comparison for robust value matching (handles strings, numbers, booleans)
-  return JSON.stringify(actual) === JSON.stringify(condition.equals);
+/**
+ * Evaluate one visibility condition (including its `allOf` / `anyOf`
+ * sub-conditions) against the settings. Mirrors `evaluate_condition` in
+ * `core/src/connection/schema_defaults.rs`.
+ *
+ * - Basic rule: `settings[field]` equals `equals` (JSON comparison).
+ * - `sameHostAs`: `equals` is compared with whether `settings[field]` names the
+ *   same host as `settings[sameHostAs]` ({@link hostsCompareSame}).
+ * - `allOf`: every sub-condition must hold too.
+ * - `anyOf`: when non-empty, at least one sub-condition must hold.
+ */
+export function evaluateCondition(
+  condition: Condition,
+  settings: Record<string, unknown>
+): boolean {
+  let primary: boolean;
+  if (condition.sameHostAs !== undefined) {
+    const same = hostsCompareSame(settings[condition.field], settings[condition.sameHostAs]);
+    primary = condition.equals === same;
+  } else {
+    // Use JSON comparison for robust value matching (handles strings, numbers, booleans)
+    primary = JSON.stringify(settings[condition.field]) === JSON.stringify(condition.equals);
+  }
+  const allOf = condition.allOf ?? [];
+  const anyOf = condition.anyOf ?? [];
+  return (
+    primary &&
+    allOf.every((c) => evaluateCondition(c, settings)) &&
+    (anyOf.length === 0 || anyOf.some((c) => evaluateCondition(c, settings)))
+  );
+}
+
+/**
+ * The host comparison behind `Condition.sameHostAs`: whether `target` names the
+ * same host as `fileHost` (see `isSameHost`). When either side is unset, not a
+ * string, or blank the hosts cannot be shown to differ, so they compare as the
+ * same host.
+ */
+function hostsCompareSame(target: unknown, fileHost: unknown): boolean {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+  const t = text(target);
+  const f = text(fileHost);
+  if (t === null || f === null) return true;
+  return isSameHost(t, f);
+}
+
+/**
+ * Substitute `{{fieldKey}}` placeholders in a notice message with the current
+ * setting values (#4198). Strings, numbers and booleans render as text; an
+ * unset or structured value renders as empty.
+ */
+export function interpolateSettings(template: string, settings: Record<string, unknown>): string {
+  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key: string) => {
+    const value = settings[key];
+    if (typeof value === "string") return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return "";
+  });
 }
 
 /**

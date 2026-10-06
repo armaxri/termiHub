@@ -37,6 +37,7 @@ fn when_auto_login() -> Option<Condition> {
     Some(Condition {
         field: "authMethod".to_string(),
         equals: serde_json::json!(AUTH_METHOD_AUTO_LOGIN),
+        ..Default::default()
     })
 }
 

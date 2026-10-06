@@ -762,6 +762,7 @@ impl ConnectionType for Docker {
                             visible_when: Some(Condition {
                                 field: "containerMode".to_string(),
                                 equals: serde_json::json!("existing"),
+                                ..Default::default()
                             }),
                         },
                         SettingsField {
@@ -787,6 +788,7 @@ impl ConnectionType for Docker {
                             visible_when: Some(Condition {
                                 field: "containerMode".to_string(),
                                 equals: serde_json::json!("compose"),
+                                ..Default::default()
                             }),
                         },
                         SettingsField {

@@ -1444,7 +1444,7 @@ flowchart LR
     end
 ```
 
-Supported field types: `text`, `password`, `number`, `boolean`, `select` (dropdown), `port`, `filePath` (with file picker), `keyValueList` (for env vars), `objectList` (for volume mounts). Fields can declare conditional visibility (`visibleWhen`) — for example, "show Key Path only when Auth Method is 'key'".
+Supported field types: `text`, `password`, `number`, `boolean`, `select` (dropdown), `port`, `filePath` (with file picker), `keyValueList` (for env vars), `objectList` (for volume mounts). Fields can declare conditional visibility (`visibleWhen`) — for example, "show Key Path only when Auth Method is 'key'". A condition compares one field to a value (`field` + `equals`), can instead compare two fields as host names (`sameHostAs`, the same-host rule of `core::connection::graphical_files::is_same_host`), and can combine further conditions with `allOf` / `anyOf`. A display-only `notice` field may name live values as `{{fieldKey}}` placeholders. The VNC File Transfer warning ("Files would go to {{sshHost}}, not to the desktop host {{host}}") uses both (#4198). Core (`schema_defaults::is_field_visible`) and the frontend (`isFieldVisible`) replay the same golden vectors (`core/tests/fixtures/golden/schema_defaults/`).
 
 ### Credential Storage
 

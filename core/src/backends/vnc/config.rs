@@ -331,6 +331,7 @@ fn when_tunnel_enabled() -> Option<Condition> {
     Some(Condition {
         field: "useSshTunnel".to_string(),
         equals: serde_json::json!(true),
+        ..Default::default()
     })
 }
 
@@ -339,6 +340,7 @@ fn when_tls_ca() -> Option<Condition> {
     Some(Condition {
         field: "tlsVerify".to_string(),
         equals: serde_json::json!("ca"),
+        ..Default::default()
     })
 }
 
@@ -349,6 +351,7 @@ fn when_ssh_auth_is(method: &str) -> Option<Condition> {
     Some(Condition {
         field: "sshAuthMethod".to_string(),
         equals: serde_json::json!(method),
+        ..Default::default()
     })
 }
 
@@ -602,7 +605,29 @@ fn when_file_transfer_enabled() -> Option<Condition> {
     Some(Condition {
         field: "fileTransfer".to_string(),
         equals: serde_json::json!(true),
+        ..Default::default()
     })
+}
+
+/// `useSshTunnel == enabled`.
+fn when_tunnel_is(enabled: bool) -> Condition {
+    Condition {
+        field: "useSshTunnel".to_string(),
+        equals: serde_json::json!(enabled),
+        ..Default::default()
+    }
+}
+
+/// Whether the VNC `host`, as seen from the SSH tunnel host, is that same host
+/// (loopback or the same name) — the editor-side twin of the per-session
+/// `sameHost` verdict (#4198, [`crate::connection::graphical_files::is_same_host`]).
+fn when_vnc_host_is_ssh_host(same: bool) -> Condition {
+    Condition {
+        field: "host".to_string(),
+        equals: serde_json::json!(same),
+        same_host_as: Some("sshHost".to_string()),
+        ..Default::default()
+    }
 }
 
 /// The "File Transfer" group (#3770, #4191): the opt-in plus the default
@@ -646,12 +671,34 @@ fn file_transfer_group() -> SettingsGroup {
                      host, files land on the SSH/agent host, not on the desktop."
                         .to_string(),
                 ),
-                visible_when: when_file_transfer_enabled(),
+                visible_when: Some(Condition {
+                    any_of: vec![when_tunnel_is(false), when_vnc_host_is_ssh_host(true)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
                 ..field(
                     "fileTransferRouteNotice",
                     "",
                     FieldType::Notice {
                         severity: NoticeSeverity::Info,
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "Files would go to {{sshHost}}, not to the desktop host {{host}}. \
+                     The VNC host is reached through the SSH tunnel, so uploads land \
+                     on the tunnel host, as its user."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    all_of: vec![when_tunnel_is(true), when_vnc_host_is_ssh_host(false)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
+                ..field(
+                    "fileTransferHostWarning",
+                    "",
+                    FieldType::Notice {
+                        severity: NoticeSeverity::Warning,
                     },
                 )
             },
@@ -1149,12 +1196,72 @@ mod tests {
         assert!(matches!(toggle.field_type, FieldType::Boolean));
         assert_eq!(toggle.default, Some(serde_json::json!(false)));
         assert!(toggle.visible_when.is_none());
-        for key in ["fileTransferDir", "fileTransferRouteNotice"] {
+        for key in [
+            "fileTransferDir",
+            "fileTransferRouteNotice",
+            "fileTransferHostWarning",
+        ] {
             let f = group.fields.iter().find(|f| f.key == key).unwrap();
             let cond = f.visible_when.as_ref().unwrap();
             assert_eq!(cond.field, "fileTransfer");
             assert_eq!(cond.equals, serde_json::json!(true));
         }
+    }
+
+    /// #4198: the File Transfer group shows the info notice, or — exactly when
+    /// the SSH tunnel host is not the desktop host — the warning instead.
+    #[test]
+    fn file_transfer_notice_warns_only_when_files_land_off_the_desktop_host() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let schema = vnc_settings_schema();
+        let group = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "fileTransfer")
+            .unwrap();
+        let notice = |key: &str| group.fields.iter().find(|f| f.key == key).unwrap();
+        let info = notice("fileTransferRouteNotice");
+        let warning = notice("fileTransferHostWarning");
+        assert!(matches!(
+            warning.field_type,
+            FieldType::Notice {
+                severity: NoticeSeverity::Warning
+            }
+        ));
+        let shown = |settings: serde_json::Value| {
+            let map = settings.as_object().unwrap().clone();
+            (
+                is_field_visible(info, &map),
+                is_field_visible(warning, &map),
+            )
+        };
+        let gateway = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": true,
+            "host": "10.0.4.17", "sshHost": "bastion.corp",
+        });
+        assert_eq!(shown(gateway), (false, true));
+        let loopback = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": true,
+            "host": "localhost", "sshHost": "bastion.corp",
+        });
+        assert_eq!(shown(loopback), (true, false));
+        let same_name = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": true,
+            "host": "Desk.Corp", "sshHost": "desk.corp.",
+        });
+        assert_eq!(shown(same_name), (true, false));
+        let no_tunnel = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "10.0.4.17", "sshHost": "bastion.corp",
+        });
+        assert_eq!(shown(no_tunnel), (true, false));
+        let off = serde_json::json!({
+            "fileTransfer": false, "useSshTunnel": true,
+            "host": "10.0.4.17", "sshHost": "bastion.corp",
+        });
+        assert_eq!(shown(off), (false, false));
+        let warning_text = warning.description.as_deref().unwrap();
+        assert!(warning_text.contains("{{sshHost}}") && warning_text.contains("{{host}}"));
     }
 
     #[test]

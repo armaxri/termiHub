@@ -3,7 +3,7 @@ import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronRight } from "lucide-react";
 import type { SettingsSchema, SettingsGroup } from "@/types/schema";
-import { isFieldVisible, withSchemaDefaults } from "@/utils/schemaDefaults";
+import { interpolateSettings, isFieldVisible, withSchemaDefaults } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
 import { vncPortForDisplay } from "@/utils/vncDisplayPort";
@@ -306,10 +306,18 @@ export function ConnectionSettingsForm({
                 {
                   // Display-only notice fields carry no value, so they render
                   // standalone rather than through a react-hook-form Controller.
+                  // Their message may name live values as `{{fieldKey}}` (#4198).
                   field.fieldType.type === "notice" ? (
                     <DynamicField
                       key={field.key}
-                      field={field}
+                      field={
+                        field.description
+                          ? {
+                              ...field,
+                              description: interpolateSettings(field.description, visibilityValues),
+                            }
+                          : field
+                      }
                       value={undefined}
                       onChange={() => {}}
                     />
