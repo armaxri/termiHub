@@ -110,6 +110,15 @@ WA-CI-005).
   budget when running locally — `0.5` makes a suspected hang fail fast, `3` gives
   a slow VM slack. It is **ignored in CI** (`GITHUB_ACTIONS=true`, with a
   warning), so no lane can reintroduce a global multiplier.
+- **Hang guard (xdist workers).** Deadlines bound the harness's _waits_, not a
+  blocking call (a pipe `close()`, a `recv` without timeout). On xdist workers
+  each test phase runs under a watchdog — setup 45 min (the deployed-agent
+  build runs there), call 15 min, teardown 5 min, overridable with
+  `TERMIHUB_TEST_HANG_{SETUP,CALL,TEARDOWN}_SECONDS`. An overrun dumps every
+  thread's stack to `tests/system/artifacts/hang-tracebacks/<worker>-<pid>.txt`,
+  kills the worker's child processes and exits it: xdist reports "worker crashed
+  while running <test>" and a replacement worker finishes the lane (#4017).
+  `TERMIHUB_TEST_HANG_GUARD=1` forces it on in a serial run, `0` turns it off.
 
 #### Display-backed runner (frontend-dependent live E2E, macOS)
 
@@ -1721,6 +1730,14 @@ fresh clone, or CI — behaves exactly as it always did.
 | SSH-tunnel test ports            | `18081–18088`                                                    | `base + test_port_offset`.                                                    |
 | Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`                                     | Suffixed with `compose_project`.                                              |
 | `tauri-driver` (E2E) port        | `4444`                                                           | `4444 + test_port_offset`.                                                    |
+
+Container and network names come from `TERMIHUB_TEST_PROJECT`, while the compose
+_project_ that owns them is whatever `-p` / `COMPOSE_PROJECT_NAME` the bring-up
+used. When this checkout's fixed-name fixtures are already up under another
+project from the same compose file (a bare `docker compose up` names the project
+after the directory, `docker`), the harness adopts that project for its compose
+commands instead of failing on "container name … is already in use" (#4017).
+Mixed or foreign-file owners are left alone and compose fails as usual.
 
 The Rust integration tests reach the jump-host target through its **Compose
 service-name network alias** (`ssh-jumphost-target`, `ssh-jumphost-bastion`),
