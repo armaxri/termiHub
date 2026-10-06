@@ -48,3 +48,7 @@ libc = "0.2"
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+
+[target.'cfg(unix)'.dev-dependencies]
+# `dup2` / `fcntl` to hand the runner its channel as fd 3 in the process tests.
+libc = "0.2"
