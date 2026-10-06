@@ -117,7 +117,12 @@ jobs:
     # The lane builds the app (debug) and launches it once per suite against live
     # Docker fixtures; a generous ceiling keeps a slow image build or a hung app
     # from being read as success, while still bounding a wedged run.
-    timeout-minutes: 120
+    # 180 (was 120, #4017): the serial Linux leg took 116 of 120 min on
+    # 2026-10-06 while ~150 Docker suites were still failing fast on a
+    # compose-name conflict; with those running for real it no longer fits.
+    # A hang is bounded per test by the harness' hang guard on the xdist legs
+    # (tests/system/termihub_harness/hang_guard.py), not by this ceiling.
+    timeout-minutes: 180
 
     strategy:
       # One red platform must not cancel the others — each leg is independent
