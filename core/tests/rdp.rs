@@ -1,5 +1,5 @@
 #![cfg(feature = "rdp-sidecar")]
-//! RDP Integration Tests (RDP-01 through RDP-14, #3609 / TIN-005).
+//! RDP Integration Tests (RDP-01 through RDP-16, #3609 / TIN-005).
 //!
 //! Exercises termiHub's `rdp` graphical backend — the IronRDP sidecar
 //! (`termihub-rdp-helper`) spawned and bridged by [`SidecarRdp`] — against a
@@ -1417,4 +1417,329 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
     // Hand later tests a fresh session: this one's chansrv has had its file
     // capabilities cut and its clipboard owned by a file list.
     end_xrdp_session("RDP-14").await;
+}
+
+// ── RDP-15: drive redirection through xrdp's FUSE mount (RDPDR, #1757/#4086) ─
+
+/// Where xrdp's chansrv mounts the session's redirected drives and the files a
+/// client offers on its clipboard (`FuseMountName` in sesman.ini, relative to
+/// the user's home). Private to `testuser` (no `allow_other`), so every probe
+/// below runs as that user.
+const THINCLIENT_DRIVES: &str = "/home/testuser/thinclient_drives";
+
+/// The marker chansrv logs (at INFO) when the client announces a drive.
+const CHANSRV_DRIVE_MARKER: &str = "Detected remote drive";
+
+/// Run `script` (sh) as the fixture user in this checkout's rdp container and
+/// return its stdout, or the failure (non-zero exit) as an error.
+fn fixture_user_sh(script: &str) -> Result<String, String> {
+    common::docker_cli(&[
+        "exec",
+        "-u",
+        RDP_USER,
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        script,
+    ])
+}
+
+/// Poll until `script` (run as the fixture user) succeeds or `secs` pass.
+async fn wait_for_user_sh(script: &str, secs: u64) -> Result<String, String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let result = fixture_user_sh(script);
+        if result.is_ok() || tokio::time::Instant::now() >= deadline {
+            return result;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Opted in, the shared folder is announced as a drive that chansrv mounts
+/// under `~/thinclient_drives/<name>`; a server-side list, read, write, rename,
+/// mkdir and delete through that mount land in (and only in) the local shared
+/// folder. A symlink in the folder pointing outside it is refused, so the
+/// server never reads a file beyond the share. Off by default: the same session
+/// setup announces no drive.
+#[tokio::test]
+async fn rdp_15_drive_redirection_serves_only_the_shared_folder() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-15");
+    let label = "RDP-15";
+    let nonce = format!("{}", std::process::id());
+    let drive = format!("th{nonce}");
+
+    // The share sits next to a secret it must never expose; the share holds a
+    // symlink to that secret (and one to its parent directory).
+    let outer = tempfile::tempdir().expect("temp dir");
+    let share = outer.path().join("share");
+    std::fs::create_dir(&share).expect("share dir");
+    std::fs::write(share.join("seed.txt"), format!("seed {nonce}")).expect("seed file");
+    std::fs::write(outer.path().join("secret.txt"), format!("secret {nonce}")).expect("secret");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(outer.path().join("secret.txt"), share.join("leak.txt"))
+            .expect("file symlink");
+        std::os::unix::fs::symlink(outer.path(), share.join("up")).expect("dir symlink");
+    }
+
+    // A fresh session: chansrv announces drives to the FUSE mount per session.
+    end_xrdp_session(label).await;
+    let since = fixture_now(label);
+    let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+    settings["driveRedirection"] = serde_json::json!(true);
+    settings["sharedFolderPath"] = serde_json::json!(share);
+    settings["driveName"] = serde_json::json!(drive);
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(settings).await.expect("RDP-15: connect");
+    let pid = spawned_helper_pid(label);
+    let graphical = rdp.graphical().expect("RDP-15: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, label).await;
+    let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+    // The announced drive is mounted as one directory. xrdp names it from the
+    // announce's 8-byte PreferredDosName, which IronRDP fills with the literal
+    // "ignored" (the real name travels in DeviceData, which xrdp does not read).
+    let mounted = wait_for_user_sh(
+        &format!("ls '{THINCLIENT_DRIVES}' | grep -x -e '{drive}' -e ignored"),
+        30,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        panic!(
+            "{label}: the drive never appeared under {THINCLIENT_DRIVES} \
+             (chansrv drive lines: {}): {e}",
+            chansrv_lines_since(CHANSRV_DRIVE_MARKER, &since, label)
+        )
+    });
+    let mount = format!("{THINCLIENT_DRIVES}/{}", mounted.trim());
+
+    // List + read.
+    let listing = fixture_user_sh(&format!("ls -A '{mount}'")).expect("list the drive");
+    let mut names: Vec<&str> = listing.lines().collect();
+    names.sort_unstable();
+    assert_eq!(names, ["leak.txt", "seed.txt", "up"], "{label}: listing");
+    assert_eq!(
+        fixture_user_sh(&format!("cat '{mount}/seed.txt'")).expect("read seed"),
+        format!("seed {nonce}"),
+        "{label}: read"
+    );
+
+    // Write a new file, then rename it, then create a directory.
+    fixture_user_sh(&format!("printf 'written {nonce}' > '{mount}/new.txt'")).expect("write");
+    assert_eq!(
+        std::fs::read_to_string(share.join("new.txt")).expect("written file on the host"),
+        format!("written {nonce}"),
+        "{label}: write lands in the shared folder"
+    );
+    fixture_user_sh(&format!("mv '{mount}/new.txt' '{mount}/renamed.txt'")).expect("rename");
+    assert!(
+        !share.join("new.txt").exists(),
+        "{label}: rename removes the old name"
+    );
+    assert_eq!(
+        std::fs::read_to_string(share.join("renamed.txt")).expect("renamed file on the host"),
+        format!("written {nonce}"),
+        "{label}: rename keeps the content"
+    );
+    fixture_user_sh(&format!("mkdir '{mount}/dir'")).expect("mkdir");
+    assert!(
+        share.join("dir").is_dir(),
+        "{label}: mkdir lands in the shared folder"
+    );
+
+    // Delete.
+    fixture_user_sh(&format!("rm '{mount}/seed.txt' && rmdir '{mount}/dir'")).expect("delete");
+    assert!(
+        !share.join("seed.txt").exists(),
+        "{label}: delete removes the file"
+    );
+    assert!(
+        !share.join("dir").exists(),
+        "{label}: rmdir removes the directory"
+    );
+
+    // Sandbox: neither symlink may be followed out of the share.
+    for escape in ["leak.txt", "up/secret.txt"] {
+        let read = fixture_user_sh(&format!("cat '{mount}/{escape}' 2>/dev/null"));
+        assert!(
+            !read.as_deref().unwrap_or("").contains("secret"),
+            "{label}: {escape} must not expose a file outside the share: {read:?}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(outer.path().join("secret.txt")).expect("secret intact"),
+        format!("secret {nonce}"),
+        "{label}: the file outside the share is untouched"
+    );
+    assert!(rdp.fatal_error().is_none(), "{label}: the session survives");
+
+    rdp.disconnect().await.expect("disconnect should succeed");
+    drain.abort();
+    assert_helper_gone(pid, label).await;
+
+    // Off by default: a fresh session with default settings announces no drive.
+    let label = "RDP-15 default";
+    end_xrdp_session(label).await;
+    let since = fixture_now(label);
+    let mut rdp = SidecarRdp::new();
+    rdp.connect(rdp_settings(port_rdp(), RDP_PASSWORD))
+        .await
+        .expect("RDP-15: connect with default settings");
+    let pid = spawned_helper_pid(label);
+    let graphical = rdp.graphical().expect("RDP-15: graphical backend present");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_xrdp_session(&mut frames, label).await;
+    assert!(
+        wait_for_chansrv_line(CHANSRV_ATTACH_MARKER, &since, 15, label).await > 0,
+        "{label}: chansrv never logged this connection"
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        chansrv_lines_since(CHANSRV_DRIVE_MARKER, &since, label),
+        0,
+        "{label}: no drive may be announced unless drive redirection is opted in"
+    );
+    let drives = fixture_user_sh(&format!("ls '{THINCLIENT_DRIVES}' 2>/dev/null || true"))
+        .expect("list thinclient_drives");
+    assert!(
+        drives.trim().is_empty(),
+        "{label}: no drive is mounted by default: {drives:?}"
+    );
+    rdp.disconnect().await.expect("disconnect should succeed");
+    assert_helper_gone(pid, label).await;
+    end_xrdp_session(label).await;
+}
+
+// ── RDP-16: shared-folder files served to the server over CLIPRDR (#1778/#4086) ─
+
+/// The directory under [`THINCLIENT_DRIVES`] where chansrv exposes the files a
+/// client offers on its clipboard; reading one fetches its bytes from the
+/// client over CLIPRDR file streams.
+const CLIPBOARD_FILES: &str = "/home/testuser/thinclient_drives/.clipboard";
+
+/// What chansrv logs (at WARN) for the offered `sub\nested.txt` entry: xrdp
+/// 0.10 does not paste client directories, so tree entries are skipped.
+const CHANSRV_SKIPPED_NESTED: &str = "skipping directory not supported [sub\\nested.txt]";
+
+/// Paste on the server: ask the session's CLIPBOARD for `text/uri-list` (what a
+/// file manager does), which makes chansrv fetch the client's file list and
+/// expose it under [`CLIPBOARD_FILES`]. Returns the URIs, one per line.
+fn paste_uri_list_on_server(label: &str) -> String {
+    xrdp_session_exec(
+        "timeout 5 xclip -o -selection clipboard -t text/uri-list 2>/dev/null || true",
+        label,
+    )
+}
+
+/// Opted in ("Receive Clipboard Files" with a shared folder, not view-only),
+/// the folder's contents are offered on the client's clipboard at connect: a
+/// paste on the server lists them under chansrv's `.clipboard` directory and
+/// reading each one streams its bytes from the sidecar over CLIPRDR file
+/// contents requests (a multi-range file arrives intact); a subfolder is
+/// offered as a tree, which xrdp skips. View-only and default sessions offer
+/// nothing.
+#[tokio::test]
+async fn rdp_16_shared_folder_files_are_served_to_the_server() {
+    let _serial = SERIAL.lock().await;
+    require_rdp!();
+    assert_no_helpers("RDP-16");
+    let nonce = format!("{}", std::process::id());
+    let big: String = (0..12_000)
+        .map(|i| format!("line {i:05} {nonce}\n"))
+        .collect();
+
+    for (transfer, view_only) in [(true, false), (true, true), (false, false)] {
+        let label = match (transfer, view_only) {
+            (true, false) => "RDP-16 opted in",
+            (true, true) => "RDP-16 view-only",
+            (false, _) => "RDP-16 default",
+        };
+        let share = tempfile::tempdir().expect("temp shared folder");
+        std::fs::write(share.path().join("alpha.txt"), format!("alpha {nonce}")).expect("file");
+        std::fs::write(share.path().join("big.txt"), &big).expect("big file");
+        std::fs::create_dir(share.path().join("sub")).expect("sub dir");
+        std::fs::write(
+            share.path().join("sub").join("nested.txt"),
+            format!("nested {nonce}"),
+        )
+        .expect("nested file");
+
+        // chansrv ANDs every client's CLIPRDR capabilities into the session's,
+        // so each pass needs a session no file-stream-less client has touched.
+        end_xrdp_session(label).await;
+        let since = fixture_now(label);
+        let mut settings = rdp_settings(port_rdp(), RDP_PASSWORD);
+        settings["driveRedirection"] = serde_json::json!(true);
+        settings["sharedFolderPath"] = serde_json::json!(share.path());
+        settings["clipboardFileTransfer"] = serde_json::json!(transfer);
+        settings["viewOnly"] = serde_json::json!(view_only);
+        let mut rdp = SidecarRdp::new();
+        rdp.connect(settings).await.expect("RDP-16: connect");
+        let pid = spawned_helper_pid(label);
+        let graphical = rdp.graphical().expect("RDP-16: graphical backend present");
+        let mut frames = graphical.subscribe_frames();
+        wait_for_xrdp_session(&mut frames, label).await;
+        let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
+
+        if transfer && !view_only {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+            let mut uris = String::new();
+            while tokio::time::Instant::now() < deadline && !uris.contains("alpha.txt") {
+                uris = paste_uri_list_on_server(label);
+                if !uris.contains("alpha.txt") {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+            assert!(
+                uris.contains(&format!("file://{CLIPBOARD_FILES}/alpha.txt")),
+                "{label}: the server's paste lists the shared folder: {uris:?}"
+            );
+            let read = |path: &str| {
+                fixture_user_sh(&format!("cat '{CLIPBOARD_FILES}/{path}'")).unwrap_or_else(|e| {
+                    let tree = fixture_user_sh(&format!("ls -laR '{CLIPBOARD_FILES}'"));
+                    panic!("{label}: read {path}: {e}\nuris: {uris:?}\ntree: {tree:?}")
+                })
+            };
+            assert_eq!(
+                read("alpha.txt"),
+                format!("alpha {nonce}"),
+                "{label}: alpha"
+            );
+            assert!(read("big.txt") == big, "{label}: big.txt arrives intact");
+            // The subfolder is offered as a tree (a directory entry plus a file
+            // carrying its `\`-separated relative path, #1780); xrdp 0.10's
+            // chansrv cannot paste directories and logs that it skips both.
+            assert!(
+                chansrv_lines_since(CHANSRV_SKIPPED_NESTED, &since, label) > 0,
+                "{label}: the nested file was offered with its relative path"
+            );
+        } else {
+            assert!(
+                wait_for_chansrv_line(CHANSRV_ATTACH_MARKER, &since, 15, label).await > 0,
+                "{label}: chansrv never logged this connection"
+            );
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let uris = paste_uri_list_on_server(label);
+            assert!(
+                uris.trim().is_empty(),
+                "{label}: no local file may be offered: {uris:?}"
+            );
+            let listed = fixture_user_sh(&format!("ls -A '{CLIPBOARD_FILES}' 2>/dev/null || true"))
+                .expect("list .clipboard");
+            assert!(
+                listed.trim().is_empty(),
+                "{label}: nothing is exposed under .clipboard: {listed:?}"
+            );
+        }
+        assert!(rdp.fatal_error().is_none(), "{label}: the session survives");
+
+        rdp.disconnect().await.expect("disconnect should succeed");
+        drain.abort();
+        assert_helper_gone(pid, label).await;
+    }
+    end_xrdp_session("RDP-16").await;
 }

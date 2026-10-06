@@ -74,7 +74,7 @@
   },
   "pnpm": {
     "overrides": {
-      "markdown-it": ">=14.2.0 <15",
+      "markdown-it": ">=14.3.1 <15",
       "js-yaml": ">=4.3.2 <5",
       "flatted": ">=3.4.2",
       "fast-uri": ">=3.1.6 <4",

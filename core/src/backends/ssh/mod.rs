@@ -22,6 +22,7 @@ mod legacy_pem;
 mod monitoring;
 mod process;
 mod prompt_clock;
+pub mod remote_shell;
 pub mod session_pool;
 pub mod sftp;
 pub mod sftp_ops;
@@ -50,7 +51,6 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::{ExecProcessManager, MonitoringProvider, ProcessManager};
-use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
 use self::connector::{RusshSshConnector, SshConnector};
@@ -637,6 +637,9 @@ impl ConnectionType for Ssh {
                                 "as you navigate in the shell, and enables jumping between prompts, ",
                             "selecting or copying a command's output, and the success/failure ",
                             "marker next to each finished command.\n\n",
+                                "termiHub first asks the host which login shell it runs: bash, ",
+                                "zsh and other POSIX shells get the POSIX setup, PowerShell gets ",
+                                "its own, and cmd.exe or an undetected shell gets nothing.\n\n",
                                 "The setup runs visibly in the terminal — you can always see what ",
                                 "termiHub is doing. Disable this if you manage your own shell ",
                                 "integration or prefer a clean terminal start.",
@@ -756,22 +759,31 @@ impl ConnectionType for Ssh {
 
         self.files_only.send_replace(false);
         let alive = Arc::new(AtomicBool::new(true));
+        // With shell integration on, the connector also probes the remote
+        // login shell so the setup line below matches it (#4143).
         let handle = self
             .connector
-            .open_shell(&config, alive.clone(), cancel.as_ref())
+            .open_shell_detecting(&config, alive.clone(), cancel.as_ref(), shell_integration)
             .await?;
 
         // Created before the reader thread so a refused shell can probe SFTP
         // through the same provider the file browser then uses (#4078).
         let file_browser = Arc::new(SftpFileBrowser::new(config.clone()));
 
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when enabled.
+        // Inject the shell-integration (OSC 7 CWD tracking) setup when enabled,
+        // in the detected shell's own syntax and line ending — nothing for
+        // cmd.exe or an undetected shell (#4143).
         if shell_integration {
-            if let Some(setup) = osc7_setup_command("ssh") {
-                let cmd = format!("{setup}\n");
-                if let Err(e) = (handle.write)(cmd.as_bytes()) {
-                    debug!("Failed to inject OSC 7 hook: {e}");
+            match remote_shell::integration_setup_line(handle.remote_shell) {
+                Some(cmd) => {
+                    if let Err(e) = (handle.write)(cmd.as_bytes()) {
+                        debug!("Failed to inject OSC 7 hook: {e}");
+                    }
                 }
+                None => debug!(
+                    remote_shell = ?handle.remote_shell,
+                    "No shell-integration setup for this remote shell"
+                ),
             }
         }
 
@@ -1027,6 +1039,10 @@ mod tests {
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
         /// PTY size `(cols, rows)` of the config the last `open_shell` got.
         opened_size: Arc<Mutex<Option<(u16, u16)>>>,
+        /// The login shell a remote-shell probe "detects" (#4143).
+        remote_shell: remote_shell::RemoteShell,
+        /// The `detect_remote_shell` flag of the last `open_shell_detecting`.
+        detect_requested: Arc<Mutex<Option<bool>>>,
     }
 
     impl MockSshConnector {
@@ -1038,6 +1054,8 @@ mod tests {
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 opened_size: Arc::new(Mutex::new(None)),
+                remote_shell: remote_shell::RemoteShell::Posix,
+                detect_requested: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1049,6 +1067,8 @@ mod tests {
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 opened_size: Arc::new(Mutex::new(None)),
+                remote_shell: remote_shell::RemoteShell::Posix,
+                detect_requested: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1061,6 +1081,8 @@ mod tests {
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 opened_size: Arc::new(Mutex::new(None)),
+                remote_shell: remote_shell::RemoteShell::Posix,
+                detect_requested: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -1072,10 +1094,33 @@ mod tests {
                 ..Self::new()
             }
         }
+
+        /// A host whose login shell the probe reports as `shell` (#4143).
+        fn with_shell(shell: remote_shell::RemoteShell) -> Self {
+            Self {
+                remote_shell: shell,
+                ..Self::new()
+            }
+        }
     }
 
     #[async_trait::async_trait]
     impl SshConnector for MockSshConnector {
+        async fn open_shell_detecting(
+            &self,
+            config: &SshConfig,
+            alive: Arc<AtomicBool>,
+            cancel: Option<&CancellationToken>,
+            detect_remote_shell: bool,
+        ) -> Result<SshShellHandle, SessionError> {
+            *self.detect_requested.lock().unwrap() = Some(detect_remote_shell);
+            let mut handle = self.open_shell(config, alive, cancel).await?;
+            if !detect_remote_shell {
+                handle.remote_shell = remote_shell::RemoteShell::Unknown;
+            }
+            Ok(handle)
+        }
+
         async fn open_shell(
             &self,
             config: &SshConfig,
@@ -1130,6 +1175,7 @@ mod tests {
                 }),
                 extensions: Vec::new(),
                 shell_refused,
+                remote_shell: self.remote_shell,
             })
         }
     }
@@ -2436,36 +2482,82 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn osc7_injected_when_shell_integration_enabled() {
-        if osc7_setup_command("ssh").is_none() {
-            return; // platform does not provide an OSC7 command
-        }
-        let connector = MockSshConnector::new();
-        let write_log = connector.write_log.clone();
-        let mut ssh = Ssh::with_connector(Box::new(connector));
-        let settings = serde_json::json!({
+    fn integration_settings() -> serde_json::Value {
+        serde_json::json!({
             "host": "test.example.com",
             "port": 22,
             "username": "admin",
             "authMethod": "password",
             "shellIntegration": true,
-        });
-        ssh.connect(settings).await.unwrap();
-        {
-            let log = write_log.lock().unwrap();
-            assert!(
-                !log.is_empty(),
-                "expected OSC7 setup to be written when shell integration is enabled"
-            );
-        }
+        })
+    }
+
+    /// Connect to a mock host whose login shell is `shell` with shell
+    /// integration on; return what was typed into the session and whether
+    /// the remote shell was probed.
+    async fn writes_for_shell(shell: remote_shell::RemoteShell) -> (Vec<Vec<u8>>, Option<bool>) {
+        let connector = MockSshConnector::with_shell(shell);
+        let write_log = connector.write_log.clone();
+        let detect = connector.detect_requested.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(integration_settings()).await.unwrap();
+        let writes = write_log.lock().unwrap().clone();
         ssh.disconnect().await.unwrap();
+        let detected = *detect.lock().unwrap();
+        (writes, detected)
+    }
+
+    #[tokio::test]
+    async fn osc7_injected_when_shell_integration_enabled() {
+        // A POSIX host gets the bash hook, LF-terminated — byte-identical to
+        // the injection before remote-shell detection existed (#4143).
+        let (writes, detected) = writes_for_shell(remote_shell::RemoteShell::Posix).await;
+        assert_eq!(detected, Some(true), "integration on must probe the shell");
+        let expected = format!(
+            "{}\n",
+            crate::session::shell::osc7_setup_command("ssh").unwrap()
+        );
+        assert_eq!(writes, vec![expected.into_bytes()]);
+    }
+
+    #[tokio::test]
+    async fn powershell_host_gets_the_powershell_setup_ended_with_cr() {
+        // #4143: the POSIX line (LF-ended) left PSReadLine in a continuation
+        // and swallowed the user's first command.
+        let (writes, _) = writes_for_shell(remote_shell::RemoteShell::PowerShell).await;
+        assert_eq!(writes.len(), 1, "exactly one setup line: {writes:?}");
+        let line = String::from_utf8(writes[0].clone()).unwrap();
+        assert_eq!(
+            line,
+            format!(
+                "{}\r",
+                crate::session::shell::osc7_setup_command("powershell").unwrap()
+            )
+        );
+        assert!(!line.contains('\n'), "no LF may reach PSReadLine");
+        assert!(
+            !line.contains("PROMPT_COMMAND"),
+            "no POSIX setup on PowerShell"
+        );
+    }
+
+    #[tokio::test]
+    async fn cmd_and_unknown_hosts_get_no_setup() {
+        for shell in [
+            remote_shell::RemoteShell::Cmd,
+            remote_shell::RemoteShell::Unknown,
+        ] {
+            let (writes, detected) = writes_for_shell(shell).await;
+            assert_eq!(detected, Some(true));
+            assert!(writes.is_empty(), "{shell:?} must get nothing: {writes:?}");
+        }
     }
 
     #[tokio::test]
     async fn osc7_not_injected_when_shell_integration_disabled() {
         let connector = MockSshConnector::new();
         let write_log = connector.write_log.clone();
+        let detect = connector.detect_requested.clone();
         let mut ssh = Ssh::with_connector(Box::new(connector));
         ssh.connect(mock_settings()).await.unwrap(); // shellIntegration: false
         {
@@ -2475,6 +2567,8 @@ mod tests {
                 "expected no writes when shell integration is disabled"
             );
         }
+        // No integration, no probe: the host sees no extra exec channel.
+        assert_eq!(*detect.lock().unwrap(), Some(false));
         ssh.disconnect().await.unwrap();
     }
 }

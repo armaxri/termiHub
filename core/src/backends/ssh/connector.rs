@@ -24,6 +24,8 @@ use tokio_util::sync::CancellationToken;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
+use super::remote_shell::RemoteShell;
+
 // ── Type aliases for complex closure types ─────────────────────────
 
 type WriteFn = Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>;
@@ -60,6 +62,9 @@ pub struct SshShellHandle {
     /// up as files-only instead of tearing it down. Never set for a shell that
     /// ran and later exited (e.g. the user typed `exit`).
     pub shell_refused: Arc<AtomicBool>,
+    /// The remote login shell, when the connector was asked to detect it
+    /// (#4143); [`RemoteShell::Unknown`] otherwise.
+    pub remote_shell: RemoteShell,
 }
 
 // ── Shell-refusal detection (#4078) ───────────────────────────────
@@ -124,6 +129,24 @@ pub trait SshConnector: Send + Sync + 'static {
         alive: Arc<AtomicBool>,
         cancel: Option<&CancellationToken>,
     ) -> Result<SshShellHandle, SessionError>;
+
+    /// Like [`open_shell`](Self::open_shell), but when `detect_remote_shell` is
+    /// set, also probe the remote login shell (#4143) — before the shell
+    /// channel opens — and report it in [`SshShellHandle::remote_shell`]. Shell
+    /// integration needs it to pick a setup line the shell can parse.
+    ///
+    /// The default ignores the flag (the handle reports whatever `open_shell`
+    /// set), which keeps test doubles simple.
+    async fn open_shell_detecting(
+        &self,
+        config: &SshConfig,
+        alive: Arc<AtomicBool>,
+        cancel: Option<&CancellationToken>,
+        detect_remote_shell: bool,
+    ) -> Result<SshShellHandle, SessionError> {
+        let _ = detect_remote_shell;
+        self.open_shell(config, alive, cancel).await
+    }
 }
 
 // ── Command enum for the channel task ─────────────────────────────
@@ -235,6 +258,17 @@ impl SshConnector for RusshSshConnector {
         alive: Arc<AtomicBool>,
         cancel: Option<&CancellationToken>,
     ) -> Result<SshShellHandle, SessionError> {
+        self.open_shell_detecting(config, alive, cancel, false)
+            .await
+    }
+
+    async fn open_shell_detecting(
+        &self,
+        config: &SshConfig,
+        alive: Arc<AtomicBool>,
+        cancel: Option<&CancellationToken>,
+        detect_remote_shell: bool,
+    ) -> Result<SshShellHandle, SessionError> {
         use super::jump_host::connect_target;
         use super::x11::X11Forwarder;
         use russh::ChannelMsg;
@@ -252,6 +286,15 @@ impl SshConnector for RusshSshConnector {
             // the reference back to the pool, closing the gateway once unused.
             extensions.push(Box::new(gateway_ref));
         }
+        // Ask the host which login shell it runs (#4143) on its own exec
+        // channel, closed again before the shell channel opens — so a host
+        // with `MaxSessions 1` is not refused the shell, and the answer is in
+        // hand before anything is typed into the session.
+        let remote_shell = if detect_remote_shell {
+            super::remote_shell::detect_remote_shell(&session).await
+        } else {
+            RemoteShell::Unknown
+        };
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
@@ -527,6 +570,7 @@ impl SshConnector for RusshSshConnector {
             }),
             extensions,
             shell_refused,
+            remote_shell,
         })
     }
 }

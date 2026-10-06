@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use common::{require_native_sshd, ssh_exec, ssh_keys_dir};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
+use termihub_core::backends::ssh::remote_shell::{detect_remote_shell, RemoteShell};
 use termihub_core::backends::ssh::{
     probe_exec_capability, ssh_exec_with_stdin, SftpAdvancedOps, SftpFileBrowser, Ssh,
 };
@@ -213,7 +214,7 @@ async fn native_05_interactive_shell_session_round_trips() {
 
     let mut ssh = Ssh::new();
     let mut settings = sshd.key_settings();
-    // No OSC 7 hook: it is POSIX-shell syntax, and cmd.exe would echo it back.
+    // Integration off: the plain shell path. `native_05c` covers it on (#4143).
     settings["shellIntegration"] = serde_json::Value::Bool(false);
     ssh.connect(settings).await.expect("shell session connects");
     let mut rx = ssh.subscribe_output();
@@ -239,6 +240,68 @@ async fn native_05_interactive_shell_session_round_trips() {
 
     ssh.disconnect().await.expect("disconnect cleanly");
     assert!(!ssh.is_connected(), "session reports disconnected");
+}
+
+/// The login shell the fixture runs: Win32-OpenSSH's default `cmd.exe` on
+/// Windows (the lane leaves `DefaultShell` unset), a POSIX shell elsewhere.
+const FIXTURE_SHELL: RemoteShell = if cfg!(windows) {
+    RemoteShell::Cmd
+} else {
+    RemoteShell::Posix
+};
+
+#[tokio::test]
+async fn native_05b_remote_shell_probe_detects_the_login_shell() {
+    let sshd = require_native_sshd!();
+
+    let (session, _) = connect_and_authenticate(&sshd.key_config())
+        .await
+        .expect("key auth with the fixture client key should succeed");
+    assert_eq!(detect_remote_shell(&session).await, FIXTURE_SHELL);
+}
+
+/// #4143: with shell integration ON (the default) the first typed command
+/// must run — the setup line may never swallow it — and the host's terminal
+/// shows only setup the shell understands.
+#[tokio::test]
+async fn native_05c_first_command_runs_with_shell_integration_on() {
+    let sshd = require_native_sshd!();
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(true);
+    ssh.connect(settings).await.expect("shell session connects");
+    let mut rx = ssh.subscribe_output();
+
+    ssh.write(SHELL_LINE.as_bytes())
+        .expect("write to the shell");
+    // POSIX: the OSC 7 hook is live once a prompt after the command prints it.
+    let want_osc7 = FIXTURE_SHELL == RemoteShell::Posix;
+    let mut seen = String::new();
+    let done = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(chunk) = rx.recv().await {
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+            let ran = seen.contains(SHELL_EXPECT);
+            if ran && (!want_osc7 || seen.contains("\x1b]7;file://")) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        done,
+        "the first command did not run (or no OSC 7 followed); output so far: {seen:?}"
+    );
+    if FIXTURE_SHELL == RemoteShell::Cmd {
+        assert!(
+            !seen.contains("PROMPT_COMMAND") && !seen.contains("[termiHub]"),
+            "cmd.exe must not be sent the POSIX setup; output: {seen:?}"
+        );
+    }
+
+    ssh.disconnect().await.expect("disconnect cleanly");
 }
 
 #[tokio::test]

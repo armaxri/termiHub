@@ -1049,7 +1049,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             xvfb \
-            xclip
+            xclip \
+            sway \
+            wl-clipboard
 
       # Split Rust test run (CI-013, #3350). A plain `cargo test --workspace`
       # ran the contention-sensitive suites (PTY shells, embedded russh server,
@@ -1075,6 +1077,9 @@ jobs:
           # drives it with xclip (both installed above); on ubuntu a missing tool
           # fails the test instead of skipping it.
           TERMIHUB_REQUIRE_X11_CLIPBOARD_TEST: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          # Its native-Wayland sibling (#1847, #4004) starts a private headless sway
+          # and pastes with wl-paste (sway + wl-clipboard, installed above).
+          TERMIHUB_REQUIRE_WAYLAND_CLIPBOARD_TEST: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh bulk --workspace
 
       - name: Run Rust tests (contention-sensitive suites, capped threads)
