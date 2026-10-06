@@ -318,16 +318,16 @@ class TestNativeDialogs(
 
         The harness does the whole bridge-drivable half (#1004): set up a
         master-password store, save an SSH password into it, then export **with
-        credentials** (encrypted, a password the harness types) and import the
-        same file back **with credentials** (typing the export password). The
-        two native dialogs (the Save in export, the Open pick in import) are
-        stubbed. The harness asserts the import dialog reports
-        the credential was imported, exercising the real Argon2id + AES-256-GCM
+        credentials** (encrypted, a password the harness types), delete the
+        connection, and import the same file back **with credentials** (typing
+        the export password). The two native dialogs (the Save in export, the
+        Open pick in import) are stubbed. The harness asserts the import dialog
+        reports the credential was imported, exercising the real Argon2id + AES-256-GCM
         round-trip rather than re-implementing the crypto in a fixture.
         """
         self.close_all_tabs()
         # 1) + 2) An unlocked master-password store holding one saved SSH password.
-        self._store_one_ssh_password("enc-import")
+        conn_name = self._store_one_ssh_password("enc-import")
 
         # 3) Export WITH credentials (encrypted) → native Save dialog.
         export_target = self._scratch("enc-export", "encrypted-export.json")
@@ -353,7 +353,20 @@ class TestNativeDialogs(
             "credential was not picked up"
         )
 
-        # 4) Import the same file back → native Open dialog, then type the export
+        # 4) Delete the exported connection (which also drops its saved password).
+        #    An import never touches a connection the store already holds — nor
+        #    overwrites that connection's saved secrets (#3689) — so importing the
+        #    file straight back into the store that wrote it adds nothing and
+        #    reports no credential (every OS, nightly 37459399330). With the
+        #    connection gone, the import re-adds it and restores its password.
+        self.switch_to_connections_sidebar()
+        self.connection_context_action(conn_name, self.CTX_DELETE)
+        self.wait(
+            lambda: self.find_connection(conn_name) is None,
+            what="the exported connection to be deleted",
+        )
+
+        # 5) Import the same file back → native Open dialog, then type the export
         #    password and confirm the credential was imported.
         self.driver.stub_native_dialog("open", export_target)
         self._open_activity_menu_item("settings-menu-import")
@@ -370,6 +383,10 @@ class TestNativeDialogs(
         )
         assert "credential" in success.lower(), (
             f"import did not report credentials imported (message: {success!r})"
+        )
+        self.wait(
+            lambda: self.find_connection(conn_name) is not None,
+            what="the deleted connection to be imported back",
         )
 
     # ── Open in Editor → Save As + unsaved warning (MT-TAB-17/18/19) ──────────
@@ -832,7 +849,9 @@ class TestNativeDialogs(
             "Replace did not restore the exported secret — the file still differs from the "
             f"store; preview: {self._preview_counts()}"
         )
-        self.driver.press_key("Escape", "vault-import-passphrase")  # close without importing
+        # Close without importing. The passphrase field only exists on the pick
+        # step — the preview step replaces it — so press Escape inside the preview.
+        self.driver.press_key("Escape", "vault-import-preview-panel")
         self.wait(
             lambda: not self.driver.exists("vault-import-title"),
             what="the vault import dialog to close",
