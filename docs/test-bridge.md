@@ -732,7 +732,31 @@ native OS drag pipeline (see [Not covered](#not-covered)).
   or an error (#4110). `dragTo` now waits up to 30 frames for the two to separate,
   re-reads the press point, and otherwise wakes in a fixed direction. Each
   `dragTo` writes one durable `test_bridge` line to `termihub.log` with both
-  rects, so a failure artifact shows where the bridge pressed and aimed.
+  rects, so a failure artifact shows where the bridge pressed and aimed. A drag
+  of an element onto **itself** (`fromTestId === toTestId` — a folder dropped on
+  its own row, the refused self-drop) skips that wait: it wakes in a fixed
+  direction and comes back to release over the element.
+
+- **Held modifiers** — `modifiers: { alt?, ctrl?, shift?, meta? }` holds those
+  keys for the whole gesture: every pointer event from the press to the release
+  carries the matching `*Key` flag, as a real held key would. The file browser
+  reads `altKey` off the drag's pointer events, so `{ alt: true }` turns a
+  drag-to-move into a copy (PROD-006). Python: `driver.drag_to(a, b, alt=True)`.
+
+- **Mid-drag observations** — the drop-target highlight and the floating drag
+  chip exist only while the drag is held, so no verb issued after `dragTo` can
+  see them. `observe: [testId, …]` snapshots those elements after the last move
+  over the target (one frame later) and before the release, and the response
+  `value` is `{ [testId]: { exists, text, attributes } }`. File-browser rows
+  carry `data-drop-highlight="valid" | "invalid"` on their own `file-row-<name>`
+  testid, and each breadcrumb segment is `file-browser-crumb-<label>`:
+
+  ```python
+  seen = driver.drag_to("file-row-a.txt", "file-row-docs",
+                        observe=["file-row-docs", "file-browser-drag-chip"])
+  assert seen["file-row-docs"]["attributes"]["data-drop-highlight"] == "valid"
+  assert seen["file-browser-drag-chip"]["text"] == 'Move "a.txt"'
+  ```
 
 ### Reading form values (`getValue` vs `getAttribute`)
 
@@ -824,7 +848,7 @@ if (!result.passed) {
 | `{ action: "contextMenu", testId }`                                | Open the element's right-click context menu       |
 | `{ action: "pressKey", key, testId?, ctrl?, meta?, shift?, alt? }` | Dispatch a key + optional modifiers               |
 | `{ action: "drag", testId, dx, dy? }`                              | Drag an element by a pixel delta                  |
-| `{ action: "dragTo", fromTestId, toTestId }`                       | Drag one element onto another                     |
+| `{ action: "dragTo", fromTestId, toTestId, modifiers?, observe? }` | Drag one element onto another                     |
 | `{ action: "terminalInput", text, tabId? }`                        | Send a command into a terminal session            |
 | `{ action: "scrollTerminal", lines?, toBottom?, tabId? }`          | Scroll a terminal's viewport (lines / to bottom)  |
 | `{ action: "waitFor", testId, timeoutMs?, intervalMs? }`           | Poll until the element exists, or fail on timeout |
