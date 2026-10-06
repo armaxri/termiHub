@@ -65,6 +65,22 @@ pub const SESSION_ID_LEN: usize = 4;
 /// split into several requests.
 pub const MAX_BRIDGE_CHUNK: usize = 512 * 1024;
 
+/// Most entries one `list_dir` bridge call returns (#4220). Applied by the host
+/// while it reads the directory (in process and over IPC alike) and re-checked
+/// by the runner while it reassembles pages; a larger directory is refused with
+/// `PluginStatus::ResourceLimit`.
+pub const MAX_LIST_DIR_ENTRIES: usize = 1 << 20;
+
+/// Most bytes one `list_dir` bridge call returns, counted as each name's UTF-8
+/// length plus [`LIST_DIR_ENTRY_OVERHEAD`] (#4220). Bounds what the host holds
+/// for one listing and what the runner reassembles.
+pub const MAX_LIST_DIR_BYTES: usize = 16 * 1024 * 1024;
+
+/// Per-entry bytes a name is charged against [`MAX_LIST_DIR_BYTES`] and a page
+/// against [`MAX_BRIDGE_CHUNK`]: its ABI length prefix plus MessagePack framing
+/// slack.
+pub const LIST_DIR_ENTRY_OVERHEAD: usize = 8;
+
 /// Flow-control window of one proxied connection, per direction: the most
 /// `StreamData` bytes the host sends before the runner acknowledges them, and
 /// the most `StreamWrite` bytes the runner sends before the host acknowledges

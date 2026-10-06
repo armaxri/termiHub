@@ -32,6 +32,9 @@ use termihub_plugin_api::{
     AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginHostBridgeVTable,
     PluginStatus, PluginTcpStream, CURRENT_PLUGIN_ABI_VERSION,
 };
+use termihub_plugin_runner::ipc::{
+    LIST_DIR_ENTRY_OVERHEAD, MAX_LIST_DIR_BYTES, MAX_LIST_DIR_ENTRIES,
+};
 
 use super::manifest::ConnectionPolicyManifest;
 use super::security::{PermissionError, PermissionSet};
@@ -460,16 +463,29 @@ pub(crate) fn guarded_stat(
 
 /// `list_dir`: the entry names (lossy UTF-8) of an in-scope directory, in the
 /// host's directory order.
+///
+/// Bounded (#4220): a directory with more than [`MAX_LIST_DIR_ENTRIES`]
+/// entries, or whose names exceed [`MAX_LIST_DIR_BYTES`] (each charged its
+/// length plus [`LIST_DIR_ENTRY_OVERHEAD`]), is refused with
+/// [`PluginStatus::ResourceLimit`] while it is read, so the host never holds an
+/// unbounded listing — in process and over plugin IPC alike.
 pub(crate) fn guarded_list_dir(
     permissions: &PermissionSet,
     path: &str,
 ) -> Result<Vec<String>, PluginStatus> {
     let resolved = scoped(permissions, path)?;
     let read_dir = std::fs::read_dir(&resolved).map_err(|_| PluginStatus::Io)?;
-    Ok(read_dir
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect())
+    let mut names = Vec::new();
+    let mut bytes = 0usize;
+    for entry in read_dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        bytes = bytes.saturating_add(name.len() + LIST_DIR_ENTRY_OVERHEAD);
+        if names.len() >= MAX_LIST_DIR_ENTRIES || bytes > MAX_LIST_DIR_BYTES {
+            return Err(PluginStatus::ResourceLimit);
+        }
+        names.push(name);
+    }
+    Ok(names)
 }
 
 /// Collapse a guarded operation's outcome into the status a callback returns,

@@ -127,7 +127,18 @@ fn sample_messages() -> Vec<Message> {
         Message::BridgeRequest(BridgeRequest {
             request_id: 5,
             session_id: 7,
-            op: BridgeOp::ListDir { path: "/p".into() },
+            op: BridgeOp::ListDir {
+                path: "/p".into(),
+                cursor: 0,
+            },
+        }),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 6,
+            session_id: 7,
+            op: BridgeOp::ListDir {
+                path: "/p".into(),
+                cursor: u64::MAX,
+            },
         }),
         Message::BridgeReply(BridgeReply {
             request_id: 1,
@@ -166,6 +177,14 @@ fn sample_messages() -> Vec<Message> {
             request_id: 5,
             result: BridgeResult::Entries {
                 names: vec!["a".into(), "b\nc".into()],
+                next_cursor: 0,
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
+            request_id: 5,
+            result: BridgeResult::Entries {
+                names: vec![],
+                next_cursor: 3,
             },
         }),
         Message::BridgeReply(BridgeReply {
@@ -246,6 +265,102 @@ fn bridge_data_travels_as_a_byte_string() {
     .encode()
     .unwrap();
     assert!(reply.len() <= MAX_FRAME_LEN);
+}
+
+#[test]
+fn list_dir_frames_without_a_cursor_decode_as_the_first_page() {
+    // The pre-#4220 shapes: no `cursor` on the request, no `next_cursor` on
+    // the reply. Both fields default to `0` (start / last page).
+    #[derive(serde::Serialize)]
+    enum OldOp {
+        ListDir { path: String },
+    }
+    #[derive(serde::Serialize)]
+    struct OldRequest {
+        request_id: u64,
+        session_id: u32,
+        op: OldOp,
+    }
+    #[derive(serde::Serialize)]
+    enum OldResult {
+        Entries { names: Vec<String> },
+    }
+    #[derive(serde::Serialize)]
+    struct OldReply {
+        request_id: u64,
+        result: OldResult,
+    }
+    let request = RawFrame {
+        kind: FrameKind::BridgeRequest as u8,
+        payload: rmp_serde::to_vec_named(&OldRequest {
+            request_id: 1,
+            session_id: 2,
+            op: OldOp::ListDir { path: "/p".into() },
+        })
+        .unwrap(),
+    };
+    assert_eq!(
+        Message::decode_from_peer(request, Sender::Host).unwrap(),
+        Message::BridgeRequest(BridgeRequest {
+            request_id: 1,
+            session_id: 2,
+            op: BridgeOp::ListDir {
+                path: "/p".into(),
+                cursor: 0
+            },
+        })
+    );
+    let reply = RawFrame {
+        kind: FrameKind::BridgeReply as u8,
+        payload: rmp_serde::to_vec_named(&OldReply {
+            request_id: 1,
+            result: OldResult::Entries {
+                names: vec!["a".into()],
+            },
+        })
+        .unwrap(),
+    };
+    assert_eq!(
+        Message::decode_from_peer(reply, Sender::Runner).unwrap(),
+        Message::BridgeReply(BridgeReply {
+            request_id: 1,
+            result: BridgeResult::Entries {
+                names: vec!["a".into()],
+                next_cursor: 0
+            },
+        })
+    );
+}
+
+#[test]
+fn a_full_list_dir_page_fits_one_frame() {
+    // The host fills a page up to `MAX_BRIDGE_CHUNK`, charging each name its
+    // length plus `LIST_DIR_ENTRY_OVERHEAD`. Worst case for the envelope: the
+    // shortest names (most per-entry framing).
+    let count = MAX_BRIDGE_CHUNK / (1 + LIST_DIR_ENTRY_OVERHEAD);
+    let frame = Message::BridgeReply(BridgeReply {
+        request_id: u64::MAX,
+        result: BridgeResult::Entries {
+            names: vec!["x".into(); count],
+            next_cursor: u64::MAX,
+        },
+    })
+    .encode()
+    .unwrap();
+    assert!(frame.len() <= MAX_FRAME_LEN, "{} bytes", frame.len());
+    // And the longest names a host produces (lossy UTF-8 of NAME_MAX bytes).
+    let long = "\u{FFFD}".repeat(255);
+    let count = MAX_BRIDGE_CHUNK / (long.len() + LIST_DIR_ENTRY_OVERHEAD);
+    let frame = Message::BridgeReply(BridgeReply {
+        request_id: u64::MAX,
+        result: BridgeResult::Entries {
+            names: vec![long; count],
+            next_cursor: u64::MAX,
+        },
+    })
+    .encode()
+    .unwrap();
+    assert!(frame.len() <= MAX_FRAME_LEN, "{} bytes", frame.len());
 }
 
 #[test]
