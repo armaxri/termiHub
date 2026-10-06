@@ -1509,6 +1509,14 @@ flowchart LR
             re-resolves the route; nothing auto-retries uploads.
           </li>
           <li>
+            <strong>App quit mid-transfer</strong> (#4205) → the row is kept in the persisted queue
+            with the saved VNC connection and the route (host, account, agent — never a secret).
+            After a restart it shows paused, "VNC session unavailable — reconnect to resume", and
+            continues from its byte-verified offset once a session of that connection is active and
+            its side channel is ready. A route that now leads to a different host fails the row
+            instead of continuing the partial file there.
+          </li>
+          <li>
             <strong>Desktop user ≠ SSH user</strong> (VNC session owned by another account) → files
             land in the SSH user's home; the route line shows <code>user@host</code> so this is
             visible.
