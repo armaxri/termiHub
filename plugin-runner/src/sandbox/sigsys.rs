@@ -4,7 +4,7 @@
 //! denial with `SECCOMP_RET_TRAP` instead of `SECCOMP_RET_ERRNO(EPERM)`: the
 //! kernel skips the call and raises `SIGSYS` on the calling thread, with the
 //! system call number in `siginfo.si_syscall` (the technique Chromium uses).
-//! [`on_sigsys`] then
+//! `on_sigsys` then
 //!
 //! 1. writes `-EPERM` into the saved return register of the interrupted
 //!    context (`rax` on x86_64, `x0` on aarch64), so when the handler returns
@@ -117,7 +117,7 @@ unsafe fn set_return(context: *mut libc::c_void, value: i64) {
 /// The signature of an `SA_SIGINFO` handler.
 type SigactionHandler = extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void);
 
-/// [`on_sigsys`] as the `sa_sigaction` value.
+/// `on_sigsys` as the `sa_sigaction` value.
 fn handler_address() -> libc::sighandler_t {
     on_sigsys as SigactionHandler as libc::sighandler_t
 }
@@ -144,7 +144,7 @@ extern "C" fn on_sigsys(
     unsafe { set_return(context, -i64::from(libc::EPERM)) };
 }
 
-/// Install [`on_sigsys`] for `SIGSYS` and unblock the signal on the calling
+/// Install `on_sigsys` for `SIGSYS` and unblock the signal on the calling
 /// thread (threads started later inherit the mask). Must run before the
 /// `trapped` filter is installed; the silent filter then keeps the plugin
 /// from replacing it.
