@@ -139,8 +139,7 @@ jobs:
             librsvg2-dev \
             libasound2-dev \
             patchelf \
-            rpm2cpio \
-            cpio
+            libarchive-tools
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -271,16 +270,28 @@ jobs:
                 D="$X/$kind"
                 rm -rf "$D" && mkdir -p "$D"
                 echo "--- $kind: $(basename "$pkg")"
+                rc=0
                 case "$kind" in
-                deb) dpkg-deb -x "$pkg" "$D" ;;
-                rpm) (cd "$D" && rpm2cpio "$pkg" | cpio -idm --quiet) ;;
+                deb) dpkg-deb -x "$pkg" "$D" || rc=$? ;;
+                # bsdtar (libarchive) reads the rpm payload directly. Not
+                # rpm2cpio | cpio: rpm2cpio exits 1 without a message on Tauri's
+                # rpms even though it extracts them, which failed this step.
+                rpm) bsdtar -xf "$pkg" -C "$D" || rc=$? ;;
                 appimage)
                   chmod +x "$pkg"
                   # FUSE is unavailable on GitHub runners, so extract rather than mount.
-                  (cd "$D" && "$pkg" --appimage-extract >/dev/null)
+                  (cd "$D" && "$pkg" --appimage-extract >/dev/null) || rc=$?
                   D="$D/squashfs-root"
                   ;;
                 esac
+                if [ "$rc" -ne 0 ]; then
+                  echo "::error::extracting $kind package $(basename "$pkg") failed (exit $rc)"
+                  exit 1
+                fi
+                if [ ! -f "$D/usr/bin/termihub" ]; then
+                  echo "::error::no usr/bin/termihub extracted from $(basename "$pkg")"
+                  exit 1
+                fi
                 check "$D/usr/bin/termihub"
               done
               if [ "$found" -eq 0 ]; then
