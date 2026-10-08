@@ -44,10 +44,12 @@ pub(crate) fn apply(limits: &ResourceLimits) -> Vec<(&'static str, std::io::Erro
     failed
 }
 
+/// Windows: nothing to apply here. The host starts the runner suspended inside
+/// a job object that already carries these limits (committed memory, active
+/// processes), so they bind before the runner's first instruction (#4201,
+/// `termihub_plugin_runner::process`).
 #[cfg(not(unix))]
 pub(crate) fn apply(_limits: &ResourceLimits) -> Vec<(&'static str, std::io::Error)> {
-    // Windows: the sandbox phase (#4187) puts the runner in a job object; its
-    // memory and active-process limits belong there.
     Vec::new()
 }
 
