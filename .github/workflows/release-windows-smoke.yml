@@ -25,6 +25,10 @@ name: Release Windows Smoke
 #      attestation, and runs `termihub-agent --version`,
 #   8. uninstalls silently and asserts the uninstall entry and binaries are gone.
 #
+# In parallel, plugin-lpac-per-machine.yml installs the same MSI on its own
+# runner and loads the echo-backend plugin in its LPAC through the installed
+# plugin runner as a standard user (#4252).
+#
 # The msiexec install/uninstall logs and app logs are uploaded as an artifact on
 # every run, so a failed install is diagnosable without a re-run.
 #
@@ -54,20 +58,19 @@ permissions:
   attestations: read
 
 jobs:
-  windows-install-smoke:
-    name: Windows x64 install + launch smoke (MSI)
+  # The release tag both jobs grade.
+  resolve-tag:
+    name: Resolve release tag
     # Only run for a manual dispatch, or for a Release run that was triggered by a
     # tag push AND succeeded — a failed/cancelled Release has no assets to test.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success')
-    runs-on: windows-latest
-    timeout-minutes: 30
-
-    env:
-      LOG_DIR: ${{ github.workspace }}\smoke-logs
-
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - name: Resolve release tag
         id: tag
@@ -104,6 +107,16 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
+  windows-install-smoke:
+    name: Windows x64 install + launch smoke (MSI)
+    needs: resolve-tag
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      LOG_DIR: ${{ github.workspace }}\smoke-logs
+
+    steps:
       - name: Checkout code
         # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011) and
         # verify-conpty-bundle.ps1 with its pins (#4121).
@@ -118,8 +131,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           set -euo pipefail
           # RUNNER_TEMP is a Windows path; use its POSIX form inside Git Bash.
@@ -143,7 +156,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
           MSI: ${{ steps.download.outputs.msi }}
           AGENT: ${{ steps.download.outputs.agent }}
         run: |
@@ -166,7 +179,7 @@ jobs:
         shell: pwsh
         env:
           MSI: ${{ steps.download.outputs.msi }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path $env:LOG_DIR | Out-Null
@@ -254,7 +267,7 @@ jobs:
         shell: pwsh
         env:
           EXE: ${{ steps.install.outputs.exe }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           # The release exe is a GUI-subsystem binary (windows_subsystem =
@@ -347,7 +360,7 @@ jobs:
         env:
           EXE: ${{ steps.install.outputs.exe }}
           DIR: ${{ steps.install.outputs.dir }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $appLog = Join-Path $env:LOCALAPPDATA 'com.termihub.app\logs\termihub.log'
@@ -367,7 +380,7 @@ jobs:
         shell: pwsh
         env:
           AGENT: ${{ steps.download.outputs.agent }}
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $text = (& $env:AGENT --version 2>&1 | Out-String).Trim()
@@ -423,7 +436,7 @@ jobs:
         if: always()
         shell: bash
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
           JOB_STATUS: ${{ job.status }}
         run: |
           {
@@ -440,3 +453,14 @@ jobs:
           path: smoke-logs/
           if-no-files-found: ignore
           retention-days: 14
+
+  # A native plugin loads in its LPAC through the installed runner as a
+  # standard user (#4252). Its own runner: it builds a harness at the tag.
+  per-machine-plugin-lpac:
+    name: Plugin LPAC from the per-machine install
+    needs: resolve-tag
+    uses: ./.github/workflows/plugin-lpac-per-machine.yml
+    with:
+      release_tag: ${{ needs.resolve-tag.outputs.tag }}
+      msi_asset: termiHub-${{ needs.resolve-tag.outputs.version }}-windows-x64.msi
+      ref: ${{ needs.resolve-tag.outputs.tag }}
