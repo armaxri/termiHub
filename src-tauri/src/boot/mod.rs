@@ -1027,7 +1027,12 @@ pub(crate) fn init_projection(app: &tauri::App) {
     let projection_state = commands::projection::ProjectionState::with_handler(Arc::new(registry));
     seed_projection_regions(app, &projection_state);
     init_reconnect_driver(app, &projection_state);
+    // The read-only `plugin-sandbox` region (#4188): seeded from the plugin
+    // host, then re-published by a background snapshotter (the host's state
+    // changes on runner threads, e.g. a crash or a bridge denial).
+    plugin_sandbox_projection::seed(app.handle(), &projection_state);
     app.manage(projection_state);
+    plugin_sandbox_projection::start_publisher(app.handle().clone());
 }
 
 pub(crate) fn init_secondary_managers(

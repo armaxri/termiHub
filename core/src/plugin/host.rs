@@ -1344,6 +1344,31 @@ impl PluginHost {
             .map(PluginSandboxStatus::refused)
     }
 
+    /// [`sandbox_status`](Self::sandbox_status) of every plugin that has one —
+    /// loaded out of process, or refused before it loaded — sorted by id.
+    #[must_use]
+    pub fn sandbox_statuses(&self) -> Vec<(String, PluginSandboxStatus)> {
+        let mut ids: Vec<String> = self
+            .loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        ids.extend(
+            self.sandbox_refusals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .keys()
+                .cloned(),
+        );
+        ids.sort();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|id| self.sandbox_status(&id).map(|status| (id, status)))
+            .collect()
+    }
+
     /// The health of out-of-process plugin `id` (crash count, last exit,
     /// auto-disable reason), when it is loaded out of process.
     #[must_use]
@@ -1713,6 +1738,53 @@ mod tests {
             other => panic!("expected NativePluginNotTrusted, got {other:?}"),
         }
         assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn a_refused_out_of_process_load_is_reported_until_unload() {
+        // A trusted native plugin whose runner cannot be started: the Settings
+        // row says "Plugin runner is missing" (#4188), until the plugin is
+        // unloaded (disabled / revoked).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+        let host = PluginHost::new(tmp.path().to_path_buf(), registry).with_runner(Some(
+            PluginRunnerConfig::new(tmp.path().join("no-such-runner")),
+        ));
+        let hash = write_dummy_backend(tmp.path(), "host-sec");
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust.acknowledge("host-sec", hash).unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        assert!(matches!(
+            host.load(&plugin),
+            Err(HostError::RunnerUnavailable { .. })
+        ));
+        assert!(host.sandbox_status("theme-only").is_none());
+        let status = host
+            .sandbox_status("host-sec")
+            .expect("the refusal is recorded");
+        assert_eq!(
+            status.isolation,
+            super::super::sandbox::IsolationStatus::RunnerMissing
+        );
+        assert_eq!(host.sandbox_statuses().len(), 1);
+        host.unload("host-sec");
+        assert!(host.sandbox_status("host-sec").is_none());
+        assert!(host.sandbox_statuses().is_empty());
+    }
+
+    #[test]
+    fn an_in_process_plugin_has_no_sandbox_status() {
+        let (host, tmp) = test_host();
+        write_dummy_backend(tmp.path(), "host-sec");
+        NativeTrustStore::load(tmp.path())
+            .set_native_enabled(true)
+            .unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        // Refused by the trust gate — not a sandbox refusal.
+        assert!(host.load(&plugin).is_err());
+        assert!(host.sandbox_status("host-sec").is_none());
+        assert!(!host.runs_out_of_process());
     }
 
     #[test]

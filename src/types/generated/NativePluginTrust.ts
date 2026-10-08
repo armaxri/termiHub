@@ -14,9 +14,16 @@ export type NativePluginTrust = {
 enabled: boolean, 
 /**
  * The plain-language disclosure the UI must show before enabling/trusting a
- * native plugin (in-process, full privileges, no OS sandbox).
+ * native plugin — the sandboxed wording when native plugins run out of
+ * process, the in-process (no OS sandbox) wording otherwise (#4188).
  */
 disclosure: string, 
+/**
+ * Whether native plugins run out of process in the OS sandbox on this
+ * build (the debug opt-in until the phase-7 cut-over) — the UI shows the
+ * isolation badges only then.
+ */
+outOfProcess: boolean, 
 /**
  * Every recorded per-plugin acknowledgment, sorted by plugin id.
  */

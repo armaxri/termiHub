@@ -76,6 +76,10 @@ mod macos_services;
 mod macros;
 mod network;
 mod plugin_protocol;
+/// Native-plugin sandbox status (#4188, plugin OS-sandbox phase 6): the shared,
+/// read-only `plugin-sandbox` projection region the Settings badges and the
+/// bridge-denial toasts render from — see [`plugin_sandbox_projection`].
+mod plugin_sandbox_projection;
 /// Stateless-UI projection substrate (#2149): server-authoritative per-region
 /// versioned diff channels with multi-subscriber fan-out. Public so integration
 /// tests can drive the projector directly.

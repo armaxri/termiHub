@@ -21,4 +21,9 @@ acknowledgedAt: string,
  * Whether the user explicitly accepted an unverifiable build toolchain
  * (native ABI 1.0 plugins, #3576).
  */
-unverifiedToolchainAccepted: boolean, };
+unverifiedToolchainAccepted: boolean, 
+/**
+ * Whether the user explicitly accepted reduced sandbox isolation on this
+ * system (`reducedIsolationAccepted`, #4188).
+ */
+reducedIsolationAccepted: boolean, };
