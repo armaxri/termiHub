@@ -34,10 +34,11 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    CopySid, EqualSid, FreeSid, GetAce, GetLengthSid, InitializeSecurityDescriptor,
-    SetFileSecurityW, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL,
-    DACL_SECURITY_INFORMATION, INHERITED_ACE, NO_INHERITANCE, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_DESCRIPTOR, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+    CopySid, EqualSid, FreeSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
+    InitializeSecurityDescriptor, SetFileSecurityW, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION,
+    INHERITED_ACE, NO_INHERITANCE, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
+    SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -159,7 +160,7 @@ impl AppContainer {
             // would walk a folder's whole tree to re-propagate inheritance,
             // which the runner's folder (a cargo target dir in tests) makes
             // slow, and a non-inheritable entry does not need.
-            write_dacl_only(&wide, updated.acl)
+            write_dacl_only(&wide, updated.acl, current.inheritance_control())
         } else {
             // SAFETY: NUL-terminated path; `updated.acl` is a valid ACL.
             let status = unsafe {
@@ -333,6 +334,20 @@ impl Dacl {
         Ok(Self { descriptor, acl })
     }
 
+    /// The descriptor's DACL inheritance bits (auto-inherited, protected),
+    /// to carry over when the DACL is rewritten in place.
+    fn inheritance_control(&self) -> u16 {
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        // SAFETY: a valid descriptor; both out-pointers are writable.
+        if unsafe { GetSecurityDescriptorControl(self.descriptor, &mut control, &mut revision) }
+            == 0
+        {
+            return 0;
+        }
+        control & (SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED)
+    }
+
     /// Whether an explicit allow entry for `sid` grants at least `access`
     /// with `inheritance`.
     fn allows(&self, sid: PSID, access: u32, inheritance: ACE_FLAGS) -> bool {
@@ -412,9 +427,9 @@ impl Drop for NewAcl {
     }
 }
 
-/// Replace the DACL of `path` with `acl`, without re-propagating inheritance
-/// to a folder's contents.
-fn write_dacl_only(path: &[u16], acl: *mut ACL) -> io::Result<()> {
+/// Replace the DACL of `path` with `acl` (keeping the inheritance `control`
+/// bits), without re-propagating inheritance to a folder's contents.
+fn write_dacl_only(path: &[u16], acl: *mut ACL, control: u16) -> io::Result<()> {
     // SAFETY: all-zero is a valid buffer for `InitializeSecurityDescriptor`.
     let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
     let raw: PSECURITY_DESCRIPTOR = std::ptr::from_mut(&mut descriptor).cast();
@@ -424,6 +439,12 @@ fn write_dacl_only(path: &[u16], acl: *mut ACL) -> io::Result<()> {
     }
     // SAFETY: `acl` is valid and outlives the descriptor's use below.
     if unsafe { SetSecurityDescriptorDacl(raw, 1, acl, 0) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let bits = SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED;
+    // SAFETY: `raw` is an initialised absolute descriptor; only settable
+    // control bits are passed.
+    if unsafe { SetSecurityDescriptorControl(raw, bits, control & bits) } == 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: NUL-terminated path; a valid absolute descriptor.
