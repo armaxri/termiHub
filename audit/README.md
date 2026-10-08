@@ -1,6 +1,6 @@
 # termiHub full-stack audit — 2026-09
 
-> **Final status (2026-09-29):** see [`FINAL-SUMMARY.md`](./FINAL-SUMMARY.md) — 622 of 668 findings fixed (SEC-002 closed 2026-10-08 by the plugin OS sandbox, #4189); what is open, deferred and won't-fix, with reasons.
+> **Final status (2026-09-29):** see [`FINAL-SUMMARY.md`](./FINAL-SUMMARY.md) — 626 of 668 findings fixed (SEC-002 closed 2026-10-08 by the plugin OS sandbox, #4189; ledger reconciled with closed trackers the same day, #4269); what is open, deferred and won't-fix, with reasons.
 
 A comprehensive, multi-angle pre-release audit of termiHub. The goal is to surface
 **every gap, defect, and — especially — every workaround**, so the app can be fixed and

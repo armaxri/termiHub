@@ -13,6 +13,8 @@
 
 **154 findings are flagged `is_workaround: true`** (the remove-before-release set).
 
+**Status (2026-10-08):** 626 fixed, 23 wontfix, 8 deferred, 1 partial, 10 open (marketing). Reasons per finding are in [`FINAL-SUMMARY.md`](./FINAL-SUMMARY.md).
+
 Each finding is one file under `audit/<angle>/NNNN-*.md`; each angle has a `_summary.md`. See `RELEASE-BLOCKERS.md` for the ranked release-gating synthesis.
 
 ## Findings by angle

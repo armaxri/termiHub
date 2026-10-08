@@ -6,13 +6,16 @@ The 2026-09 full-stack audit raised **668 findings** across 38 angles
 the roll-up.
 
 Updated 2026-10-08: SEC-002 moved from deferred to fixed — native plugins now run only
-out of process in an OS sandbox (ADR-19, #4189).
+out of process in an OS sandbox (ADR-19, #4189). The same day the ledger was reconciled
+against closed trackers (#4269): CI-009, SEC-013, SUP-006 and CI-016 moved to fixed;
+SUP-004, WA-CI-012 and WA-CI-014 moved from deferred to won't fix, because the maintainer
+closed their trackers by accepting the remaining risk (`docs/supply-chain.md`).
 
 | Status   | Count | Meaning                                                           |
 | -------- | ----: | ----------------------------------------------------------------- |
-| fixed    |   622 | Landed on `develop`, referenced by PR/issue in the finding file   |
-| wontfix  |    21 | Deliberately kept as-is, with a recorded reason                   |
-| deferred |    14 | Real, but held back by a maintainer decision or tracked elsewhere |
+| fixed    |   626 | Landed on `develop`, referenced by PR/issue in the finding file   |
+| wontfix  |    23 | Deliberately kept as-is, with a recorded reason                   |
+| deferred |     8 | Real, but held back by a maintainer decision or tracked elsewhere |
 | partial  |     1 | Half done; the other half waits on a maintainer decision          |
 | open     |    10 | Marketing/content work that needs the maintainer's voice          |
 
@@ -44,31 +47,29 @@ These need product voice and assets, not code:
 
 ## Deferred — decided, not in v0.1.0
 
-| Finding            | Why                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| CI-008, PKG-004    | Code signing / notarization: unsigned-beta decision; signing planned before v1.0                                      |
-| I18N-012, I18N-017 | English-only, left-to-right beta (maintainer decision 2026-09-25); the string-matching logic bugs were fixed          |
-| SUP-004, WA-CI-012 | Unmaintained-crate advisories stay ungated by policy; every one is enumerated with a rationale (#3055, tracked #3054) |
-| SUP-006, CI-016    | Yanked-crate gate kept on purpose (it caught real yanks); the recurring manual fix is tracked in #2645                |
-| WA-CI-014          | Pre-release RustCrypto stack accepted; tracked in #3734 until stable releases exist                                   |
-| CI-001, TIN-001    | The full integration/E2E lane runs nightly, not per PR (slim PR lane, #3325); per-PR static guards were added         |
-| CONC-008           | Per-session RDP/VNC mutex is intentional protocol serialization (#2991)                                               |
-| PERF-011           | Full-viewport repaint is the fix for the #1849 stale-rows bug; already off with the default WebGL renderer            |
+| Finding            | Why                                                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| CI-008, PKG-004    | Code signing / notarization: unsigned-beta decision; signing planned before v1.0 (installers are provenance-attested, #3348) |
+| I18N-012, I18N-017 | English-only, left-to-right beta (maintainer decision 2026-09-25); the string-matching logic bugs were fixed                 |
+| CI-001, TIN-001    | The full integration/E2E lane runs nightly, not per PR (slim PR lane, #3325); per-PR static guards were added                |
+| CONC-008           | Per-session RDP/VNC mutex is intentional protocol serialization (#2991)                                                      |
+| PERF-011           | Full-viewport repaint is the fix for the #1849 stale-rows bug; already off with the default WebGL renderer                   |
 
 ## Won't fix — kept deliberately
 
-| Finding                                                          | Why                                                                                                       |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| CI-007                                                           | Publish-as-prerelease then verify-assets is the chosen release model (#2650)                              |
-| DUP-008                                                          | Desktop and agent keep two frozen, incompatible on-disk formats; merging them is net-negative             |
-| DUP-014                                                          | The three field names are three distinct, test-guarded contracts (disk, RPC, manifest)                    |
-| SEC-013                                                          | Maintainer accepted + documented the capability scope (docs/architecture.md §8); tightening tracked #3115 |
-| SUP-003, WA-CI-013                                               | RUSTSEC-2023-0071 (`rsa` Marvin) is not reachable: we never decrypt through `rsa`; sign-off documented    |
-| LIBBE-003, LIBBE-005, LIBBE-006, LIBBE-007, LIBFE-006            | Hand-rolled code the audit itself judged correct to keep                                                  |
-| PARITY-011, TAURI-013                                            | Architecture observations with no action required                                                         |
-| PROD-020                                                         | VNC (RFB) has no standard audio channel; documented                                                       |
-| PROD-062                                                         | Fonts are already configurable per app and per connection; themes are colour-only by design               |
-| WA-CI-007, WA-CI-009, WA-CI-010, WA-CI-011, WA-CI-015, WA-CI-021 | CI robustness settings the findings themselves recommended keeping                                        |
+| Finding                                                          | Why                                                                                                                                                              |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI-007                                                           | Publish-as-prerelease then verify-assets is the chosen release model (#2650)                                                                                     |
+| DUP-008                                                          | Desktop and agent keep two frozen, incompatible on-disk formats; merging them is net-negative                                                                    |
+| DUP-014                                                          | The three field names are three distinct, test-guarded contracts (disk, RPC, manifest)                                                                           |
+| SUP-004, WA-CI-012                                               | Unmaintained-crate advisories stay ungated; clearable ones were cleared and the rest are accepted risks in `docs/supply-chain.md` (#3054 closed via #4169/#4170) |
+| WA-CI-014                                                        | Pre-release RustCrypto/Dalek stack accepted as documented risk, enforced by the pre-release allowlist; bump when upstream ships stable (#3734 closed via #4170)  |
+| SUP-003, WA-CI-013                                               | RUSTSEC-2023-0071 (`rsa` Marvin) is not reachable: termiHub has no RSA decryption path; accepted risk in `docs/supply-chain.md`                                  |
+| LIBBE-003, LIBBE-005, LIBBE-006, LIBBE-007, LIBFE-006            | Hand-rolled code the audit itself judged correct to keep                                                                                                         |
+| PARITY-011, TAURI-013                                            | Architecture observations with no action required                                                                                                                |
+| PROD-020                                                         | VNC (RFB) has no standard audio channel; documented                                                                                                              |
+| PROD-062                                                         | Fonts are already configurable per app and per connection; themes are colour-only by design                                                                      |
+| WA-CI-007, WA-CI-009, WA-CI-010, WA-CI-011, WA-CI-015, WA-CI-021 | CI robustness settings the findings themselves recommended keeping                                                                                               |
 
 ## Where the work lives
 
