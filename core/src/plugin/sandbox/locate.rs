@@ -204,7 +204,8 @@ fn occupies_channel_fd(pinned: &PinnedLibrary) -> bool {
 }
 
 /// Re-verify a pinned runner after its child was spawned; on `Err` the caller
-/// kills the child before sending it anything.
+/// kills the child before sending it anything. Only Unix spawns a runner yet.
+#[cfg(any(unix, test))]
 pub(super) fn confirm_runner(runner: &Path, pinned: &PinnedLibrary) -> Result<(), HostError> {
     pinned
         .confirm_after_load()
@@ -392,8 +393,10 @@ mod tests {
             .unwrap();
         #[cfg(windows)]
         {
-            // The share-deny handle makes the rewrite itself impossible.
+            // The share-deny handle makes the rewrite itself impossible, so
+            // the pinned runner is still intact.
             assert!(std::fs::write(&path, b"evil").is_err());
+            confirm_runner(&path, &pinned).expect("still intact");
         }
         #[cfg(not(windows))]
         {
