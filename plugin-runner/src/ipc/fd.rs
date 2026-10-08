@@ -21,6 +21,7 @@ use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 
@@ -34,6 +35,14 @@ const MAX_FDS_PER_READ: usize = 8;
 /// ancillary data. The descriptor travels with the frame's first byte; any
 /// remainder a short `sendmsg` left is written normally. The caller keeps
 /// ownership of `fd` (the kernel duplicates it into the receiver).
+///
+/// A full channel makes the send wait for room, up to the stream's write
+/// timeout, on every platform: Linux blocks in `sendmsg`, but macOS fails it at
+/// once with `EMSGSIZE` (or `ENOBUFS`), which used to kill the runner (#4268).
+/// Those errors, and `EAGAIN`, are retried once `poll` reports the socket
+/// writable. A channel still full at the deadline fails with
+/// [`io::ErrorKind::TimedOut`]. Nothing was sent when `sendmsg` fails, so a
+/// retry never duplicates bytes or the descriptor.
 pub fn send_with_fd(stream: &UnixStream, frame: &[u8], fd: BorrowedFd<'_>) -> io::Result<()> {
     if frame.is_empty() {
         return Err(io::Error::new(
@@ -43,6 +52,10 @@ pub fn send_with_fd(stream: &UnixStream, frame: &[u8], fd: BorrowedFd<'_>) -> io
     }
     let fds = [fd.as_raw_fd()];
     let cmsg = [ControlMessage::ScmRights(&fds)];
+    let deadline = stream
+        .write_timeout()?
+        .map(|timeout| Instant::now() + timeout);
+    let mut pause = None;
     let sent = loop {
         match sendmsg::<UnixAddr>(
             stream.as_raw_fd(),
@@ -53,12 +66,79 @@ pub fn send_with_fd(stream: &UnixStream, frame: &[u8], fd: BorrowedFd<'_>) -> io
         ) {
             Ok(n) => break n,
             Err(nix::errno::Errno::EINTR) => {}
+            Err(e) if is_buffer_full(e) => wait_for_room(stream, deadline, &mut pause)?,
             Err(e) => return Err(io::Error::from(e)),
         }
     };
     let mut writer = stream;
     writer.write_all(&frame[sent..])?;
     writer.flush()
+}
+
+/// Longest pause between retries when `poll` reports room the descriptor
+/// send still cannot use.
+const MAX_RETRY_PAUSE: Duration = Duration::from_millis(50);
+
+/// Whether a failed descriptor send means "the channel is full": `EAGAIN`
+/// (the same value as `EWOULDBLOCK` here: a non-blocking socket, or a blocking
+/// one whose send timeout ran out), and macOS's `EMSGSIZE` / `ENOBUFS` for a
+/// send that does not fit (#4268).
+fn is_buffer_full(errno: nix::errno::Errno) -> bool {
+    use nix::errno::Errno;
+    matches!(errno, Errno::EAGAIN | Errno::EMSGSIZE | Errno::ENOBUFS)
+}
+
+/// Wait until `stream` is writable or `deadline` passes (`None`: no limit,
+/// like a blocking send without a timeout). `pause` paces repeated retries:
+/// should `poll` report room the next send still cannot use, each further
+/// retry first sleeps a little longer (up to [`MAX_RETRY_PAUSE`]) instead of
+/// spinning.
+fn wait_for_room(
+    stream: &UnixStream,
+    deadline: Option<Instant>,
+    pause: &mut Option<Duration>,
+) -> io::Result<()> {
+    if let Some(wait) = *pause {
+        let wait = deadline.map_or(wait, |d| {
+            wait.min(d.saturating_duration_since(Instant::now()))
+        });
+        std::thread::sleep(wait);
+    }
+    loop {
+        let timeout_ms = match deadline {
+            None => -1,
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "the channel stayed full past the write timeout",
+                    ));
+                }
+                // Round up so a sub-millisecond remainder still waits.
+                i32::try_from(left.as_micros().div_ceil(1000)).unwrap_or(i32::MAX)
+            }
+        };
+        let mut pollfd = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        // SAFETY: `poll` on one valid, initialised `pollfd`.
+        let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+        if ready > 0 {
+            // Writable, or an error / hang-up the retried send reports.
+            *pause = Some(pause.map_or(Duration::from_millis(1), |p| (p * 2).min(MAX_RETRY_PAUSE)));
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
