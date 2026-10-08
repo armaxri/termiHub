@@ -148,6 +148,25 @@ class SpawnUi(TabsUi, TerminalUi):
     def wait_toast(self, test_id: str, *, timeout: float = 30.0) -> None:
         self.wait(lambda: self.driver.exists(test_id), timeout=timeout, what=f"the {test_id} toast")
 
+    def accept_spawned_host_key(self, before: set[str], *, timeout: float = 60.0) -> None:
+        """Accept the host-key prompt of a spawned connect, or see it got through.
+
+        Keyed on the *new* spawned tab rather than the active terminal: a tab
+        left over from an earlier attempt can already show output, which would
+        make the generic helper return before this connect's prompt appears.
+        """
+
+        def settled() -> bool:
+            if self.driver.exists("ssh-hostkey-prompt"):
+                self.driver.click("ssh-hostkey-accept-remember")
+                return True
+            for tab in self.spawned_tabs():
+                if tab.get("id") not in before and self.driver.read_terminal(tab["id"]).strip():
+                    return True  # already trusted: the shell is printing
+            return False
+
+        self.wait(settled, timeout=timeout, what="the spawned connect's host-key prompt")
+
     def run_in_tab(
         self, tab_id: str, command: str, needle: str, *, timeout: float = 60.0
     ) -> str:
@@ -249,12 +268,14 @@ class TestExternalSshSpawn(SpawnUi, ConnectionsUi, PasswordPromptUi, SystemTest)
 
         before = self.spawned_ids()
         self.spawn_cli("--kind", "ssh", "--connection", str(conn["id"]), "--location", "/tmp")
-        # A spawned tab carries no saved-connection id, so nothing resolves the
-        # password before the connect: the handshake runs first and raises the
-        # host-key trust prompt (#1959), and only the rejected empty-password
-        # auth then raises the password prompt. Answer them in that order.
-        self.accept_host_key_prompt()
+        # Since e3dc69e3c the spawn resolves the saved connection's password
+        # before it connects, so the password prompt comes first and the
+        # handshake's host-key trust prompt (#1959) only after it is answered.
+        # Answered the other way round, the host-key wait ran out while the
+        # password modal blocked the connect, and the prompt that followed was
+        # never accepted (the connect timed out behind it; nightly 2026-10-07).
         self.handle_password_prompt()
+        self.accept_spawned_host_key(before)
 
         tab = self.wait_new_spawned_tab(before)
         assert tab.get("title") == f"{name} (Spawned)"

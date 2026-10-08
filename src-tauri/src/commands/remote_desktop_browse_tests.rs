@@ -72,7 +72,16 @@ async fn open(
     dir: Option<&str>,
 ) -> Result<RemoteDesktopFileBrowser, TerminalError> {
     let agents: Arc<dyn AgentRequests> = FakeAgent::new();
-    open_side_channel(side, "rd-1", channel, None, agents, dir.map(str::to_string)).await
+    open_side_channel(
+        side,
+        "rd-1",
+        channel,
+        None,
+        agents,
+        dir.map(str::to_string),
+        None,
+    )
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -82,6 +91,41 @@ async fn a_ready_agent_route_opens_at_the_default_folder() {
     assert_eq!(opened.start_dir, "/home/pi/Desktop");
     assert_eq!(opened.channel, side_channel(FileSideChannelKind::Agent));
     assert!(side.get("rd-1").and_then(|c| c.agent()).is_some());
+}
+
+/// Opened for a session of a saved connection, the side channel carries the
+/// identity its downloads and uploads persist (#4205); without one it
+/// carries none, so they are not persisted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_saved_connections_side_channel_registers_its_identity() {
+    let side = SideChannelBrowsers::default();
+    open(&side, ready_agent(), None).await.unwrap();
+    assert_eq!(side.target("rd-1"), None);
+
+    let agents: Arc<dyn AgentRequests> = FakeAgent::new();
+    open_side_channel(
+        &side,
+        "rd-1",
+        ready_agent(),
+        None,
+        agents,
+        None,
+        Some("Lab/pi-desktop"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        side.target("rd-1"),
+        Some(crate::files::transfer::persist::PersistedGraphicalTarget {
+            connection_id: "Lab/pi-desktop".to_string(),
+            route: FileSideChannelKind::Agent,
+            host: "lab-pi".to_string(),
+            user: "pi".to_string(),
+            agent_id: Some("agent-1".to_string()),
+        })
+    );
+    assert!(side.remove("rd-1"));
+    assert_eq!(side.target("rd-1"), None, "closing drops the identity");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

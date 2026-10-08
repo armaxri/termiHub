@@ -18,8 +18,8 @@ use tauri::AppHandle;
 
 use super::persist::{
     FolderPasteEndpoint, FolderPasteOperation, PersistedAgentTarget, PersistedDockerTarget,
-    PersistedFolderPaste, PersistedRemoteSource, PersistedTransfer, PersistedTransferStatus,
-    PersistedTransferStore,
+    PersistedFolderPaste, PersistedGraphicalTarget, PersistedRemoteSource, PersistedTransfer,
+    PersistedTransferStatus, PersistedTransferStore,
 };
 use super::persist_storage::TransferPersistenceStorage;
 use super::relaunch_auto::CredentialWaits;
@@ -197,6 +197,7 @@ impl TransferPersistenceManager {
             remote_source: None,
             saved_connection_id: None,
             agent: None,
+            graphical: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -303,6 +304,21 @@ impl TransferPersistenceManager {
             return;
         };
         entry.agent = Some(agent);
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach a graphical session's side-channel identity to a registered
+    /// transfer (#4205): the saved VNC connection and the route to the file
+    /// host, so a relaunch after a restart resumes it once a session of that
+    /// connection is back. Ids and host names only — never a secret. A no-op
+    /// for an unknown id (never fabricates a record).
+    pub fn record_graphical_target(&self, transfer_id: &str, target: PersistedGraphicalTarget) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.graphical = Some(target);
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -440,6 +456,24 @@ impl TransferPersistenceManager {
     /// startup rehydration list (never auto-resume — PROD-0011 decision).
     pub fn load_incomplete_as_paused(&self) -> Vec<PersistedTransfer> {
         self.lock().incomplete_as_paused()
+    }
+
+    /// The graphical side-channel transfers (#4205) that were still queued or
+    /// running when the previous run ended — cut off by the quit, not paused
+    /// by the user. Each record keeps its persisted status.
+    pub fn interrupted_side_channel_transfers(&self) -> Vec<PersistedTransfer> {
+        self.lock()
+            .transfers
+            .iter()
+            .filter(|t| {
+                t.graphical.is_some()
+                    && matches!(
+                        t.status,
+                        PersistedTransferStatus::Queued | PersistedTransferStatus::Active
+                    )
+            })
+            .cloned()
+            .collect()
     }
 
     /// The current persisted record for a transfer id, if any (a clone).
@@ -834,6 +868,63 @@ mod tests {
         assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
         assert_eq!(rehydrated[0].agent, Some(agent));
         assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
+    }
+
+    /// A graphical side-channel upload (#4205) keeps its VNC identity and its
+    /// checkpoint through the quit teardown and a restart (a fresh manager on
+    /// the same file), so the next launch can resume it from the offset;
+    /// attaching it to an unknown id never fabricates a record.
+    #[test]
+    fn graphical_target_survives_quit_and_restart() {
+        let dir = TempDir::new().unwrap();
+        let target = PersistedGraphicalTarget {
+            connection_id: "Lab/pi-desktop".to_string(),
+            route: termihub_core::connection::FileSideChannelKind::Ssh,
+            host: "lab-pi".to_string(),
+            user: "pi".to_string(),
+            agent_id: None,
+        };
+        {
+            let m = TransferPersistenceManager::new_test(dir.path());
+            m.record_registration(
+                "up-1",
+                "rd-1",
+                TransferDirection::Upload,
+                "big.bin",
+                "/home/pi/Desktop/big.bin",
+                Some("/local/big.bin".to_string()),
+                0,
+            );
+            m.record_graphical_target("up-1", target.clone());
+            m.record_graphical_target("ghost", target.clone());
+            m.note_progress(
+                "up-1",
+                PersistedTransferStatus::Active,
+                CHECKPOINT_BYTES + 7,
+                3 * CHECKPOINT_BYTES,
+                false,
+                Some(42),
+            );
+            // The quit teardown's cancel-all keeps the record.
+            m.note_progress(
+                "up-1",
+                PersistedTransferStatus::Cancelled,
+                CHECKPOINT_BYTES + 9,
+                3 * CHECKPOINT_BYTES,
+                true,
+                Some(42),
+            );
+            m.flush();
+        }
+        let m = TransferPersistenceManager::new_test(dir.path());
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        let record = &rehydrated[0];
+        assert_eq!(record.graphical, Some(target));
+        assert_eq!(record.status, PersistedTransferStatus::Paused);
+        assert_eq!(record.resume_offset, CHECKPOINT_BYTES + 7);
+        assert_eq!(record.source_mtime, Some(42));
+        assert_eq!(record.direction, TransferDirection::Upload);
     }
 
     #[test]

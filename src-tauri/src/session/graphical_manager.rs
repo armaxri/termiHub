@@ -230,6 +230,10 @@ struct GraphicalSession {
     _forward: Option<AgentPortForward>,
     /// What file-transfer route resolution needs from the settings (#4191).
     file_channel: FileChannelContext,
+    /// The saved connection the session was opened from (#4205), bound after
+    /// connect; a side-channel transfer records it so a relaunch after a
+    /// restart can wait for a session of the same connection.
+    saved_connection_id: Option<String>,
 }
 
 /// What an agent-routed connect hands the shared connect path (#3241).
@@ -497,6 +501,7 @@ impl GraphicalSessionManager {
             held,
             _forward: routed.map(|r| r.forward),
             file_channel,
+            saved_connection_id: None,
         };
         self.sessions
             .lock()
@@ -504,6 +509,38 @@ impl GraphicalSessionManager {
             .insert(session_id.clone(), session);
 
         Ok(session_id)
+    }
+
+    /// Remember the saved connection `session_id` was opened from (#4205).
+    /// A no-op for an unknown session or an empty id.
+    pub async fn bind_saved_connection(&self, session_id: &str, connection_id: &str) {
+        if connection_id.is_empty() {
+            return;
+        }
+        if let Some(session) = self.sessions.lock().await.get_mut(session_id) {
+            session.saved_connection_id = Some(connection_id.to_string());
+        }
+    }
+
+    /// The saved connection `session_id` was opened from, if it is known.
+    pub async fn saved_connection_of(&self, session_id: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .and_then(|s| s.saved_connection_id.clone())
+    }
+
+    /// The live sessions opened from the saved connection `connection_id`
+    /// (#4205), in no particular order.
+    pub async fn sessions_for_saved_connection(&self, connection_id: &str) -> Vec<String> {
+        self.sessions
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, s)| s.saved_connection_id.as_deref() == Some(connection_id))
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     /// Resolve a session's file-transfer side channel (#4191): the route

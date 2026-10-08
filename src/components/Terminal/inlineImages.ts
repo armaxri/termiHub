@@ -81,9 +81,10 @@ export interface InlineImagesController {
   /** Whether the addon is currently loaded into the terminal. */
   isActive(): boolean;
   /**
-   * Whether the addon is wanted but its lazy load has not settled yet. Output
-   * written to the terminal meanwhile is parsed without the image handlers, so
-   * an image in it is lost — see {@link shouldHoldOutputForInlineImages}.
+   * Whether the addon is wanted but not yet able to decode: its lazy load has
+   * not settled, or its SIXEL decoder is still being instantiated. Output
+   * written to the terminal meanwhile loses its images — see
+   * {@link shouldHoldOutputForInlineImages}.
    */
   isLoading(): boolean;
   /**
@@ -93,6 +94,37 @@ export interface InlineImagesController {
   storageUsage(): number;
   /** Dispose the addon (if loaded) and ignore any in-flight lazy load. */
   dispose(): void;
+}
+
+/**
+ * The longest a terminal holds its first output back for the image addon's lazy
+ * load and its SIXEL decoder (ms). Both are normally a few ms (one cached
+ * dynamic import, one small WebAssembly instantiation); the bound only keeps a
+ * stalled load from ever blocking output.
+ */
+export const INLINE_IMAGE_LOAD_HOLD_MS = 2000;
+
+/** How often the controller re-checks a pending SIXEL decoder (ms). */
+const DECODER_POLL_MS = 10;
+
+/**
+ * Whether `addon`'s SIXEL handler is still waiting for its decoder.
+ *
+ * `@xterm/addon-image` creates the SIXEL decoder asynchronously (a WebAssembly
+ * instantiation, `DecoderAsync(...).then(d => this._dec = d)`) when the addon
+ * activates, and until it resolves the handler's `hook`/`put`/`unhook` return
+ * early: a SIXEL sequence parsed in that window is dropped while the text
+ * around it still prints. A host that sends an image right on connect (the
+ * nightly sixel-over-telnet case, #4017) hit exactly that window. The check
+ * reads the addon's private handler map, so an addon whose shape differs (no
+ * `_handlers` map, no SIXEL handler) is treated as ready rather than held.
+ */
+export function sixelDecoderPending(addon: unknown): boolean {
+  const handlers = (addon as { _handlers?: unknown } | null)?._handlers;
+  if (!(handlers instanceof Map)) return false;
+  const sixel = handlers.get("sixel") as { _dec?: unknown } | undefined;
+  if (!sixel || typeof sixel !== "object") return false;
+  return sixel._dec === undefined || sixel._dec === null;
 }
 
 /**
@@ -108,6 +140,12 @@ export function createInlineImagesController(
     enabled: boolean;
     loader?: ImageAddonLoader;
     onError?: (err: unknown) => void;
+    /**
+     * Called once the addon is ready to decode images: `elapsedMs` since the
+     * controller was created, `decoderReady` false when the bounded wait for
+     * the SIXEL decoder gave up (diagnostics).
+     */
+    onReady?: (elapsedMs: number, decoderReady: boolean) => void;
   }
 ): InlineImagesController {
   const loader = opts.loader ?? defaultLoader;
@@ -117,6 +155,27 @@ export function createInlineImagesController(
   // At most one lazy load in flight; its result is re-checked against `wanted`
   // on resolve, so an off→on toggle mid-load still ends up with one addon.
   let loading = false;
+
+  // Set while the attached addon's SIXEL decoder is still being instantiated
+  // (see {@link sixelDecoderPending}); cleared once it is ready or the bounded
+  // wait gives up.
+  let decoderPending = false;
+  const startedAt = Date.now();
+
+  // Poll (bounded) until the addon's asynchronously created SIXEL decoder is
+  // ready. Until then the addon's handler silently drops every SIXEL sequence.
+  const awaitDecoder = (instance: LoadedImageAddon, since: number) => {
+    if (disposed || addon !== instance) {
+      decoderPending = false;
+      return;
+    }
+    if (!sixelDecoderPending(instance) || Date.now() - since >= INLINE_IMAGE_LOAD_HOLD_MS) {
+      decoderPending = false;
+      opts.onReady?.(Date.now() - startedAt, !sixelDecoderPending(instance));
+      return;
+    }
+    setTimeout(() => awaitDecoder(instance, since), DECODER_POLL_MS);
+  };
 
   const load = () => {
     if (loading || addon) return;
@@ -128,6 +187,8 @@ export function createInlineImagesController(
         const instance = new Ctor(INLINE_IMAGE_ADDON_OPTIONS);
         xterm.loadAddon(instance);
         addon = instance;
+        decoderPending = true;
+        awaitDecoder(instance, Date.now());
       })
       .catch((err: unknown) => {
         loading = false;
@@ -152,7 +213,7 @@ export function createInlineImagesController(
       }
     },
     isActive: () => addon !== null,
-    isLoading: () => loading && wanted && !disposed,
+    isLoading: () => (loading || decoderPending) && wanted && !disposed,
     storageUsage: () => Math.max(0, addon?.storageUsage ?? 0),
     dispose() {
       if (disposed) return;
@@ -173,13 +234,6 @@ export function createInlineImagesController(
   controller.setEnabled(opts.enabled);
   return controller;
 }
-
-/**
- * The longest a terminal holds its first output back for the image addon's lazy
- * load (ms). The load is one cached dynamic import, normally a few ms; the bound
- * only keeps a stalled import from ever blocking output.
- */
-export const INLINE_IMAGE_LOAD_HOLD_MS = 2000;
 
 /**
  * Whether a terminal should hold its buffered output until the image addon has

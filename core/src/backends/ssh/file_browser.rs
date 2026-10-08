@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use crate::config::SshConfig;
 use crate::errors::FileError;
 use crate::files::transfer::SourceFingerprint;
+use crate::files::utils::{expand_home_relative, is_home_relative};
 use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 use super::handler::SshSession;
@@ -166,6 +167,24 @@ impl SftpFileBrowser {
             Ok(meta) => meta.size.unwrap_or(0),
             Err(_) => 0,
         }
+    }
+
+    /// Resolve a [home-relative](is_home_relative) `path` (`~`, `~/…`) against
+    /// the login directory (SFTP `realpath` of `.`). SFTP servers do not expand
+    /// `~` — a `readdir` of `~` answers "No such file" — yet the file browser
+    /// starts a session that reports no cwd (an SFTP-only host) at `~`. Other
+    /// paths pass through without a round-trip.
+    async fn resolve_home(&self, path: &str) -> Result<String, FileError> {
+        if !is_home_relative(path) {
+            return Ok(path.to_string());
+        }
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        let home = sftp_ops::realpath(&state.sftp, ".").await?;
+        Ok(expand_home_relative(path, &home))
     }
 
     /// Ensure the SFTP session is connected, opening it if needed.
@@ -324,6 +343,7 @@ impl SftpTransferChannel {
 #[async_trait::async_trait]
 impl FileBrowser for SftpFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -336,6 +356,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -378,6 +399,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -405,6 +427,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -435,6 +458,8 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
+        let from = &self.resolve_home(from).await?;
+        let to = &self.resolve_home(to).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -451,6 +476,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -467,6 +493,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -479,6 +506,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -588,6 +616,7 @@ impl FileBrowser for SftpFileBrowser {
 #[async_trait::async_trait]
 impl RangedFileAccess for SftpFileBrowser {
     async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let path = &self.resolve_home(path).await?;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
@@ -612,6 +641,7 @@ impl RangedFileAccess for SftpFileBrowser {
     }
 
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         use tokio::io::AsyncWriteExt;
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
