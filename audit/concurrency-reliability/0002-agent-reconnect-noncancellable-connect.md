@@ -6,6 +6,8 @@ severity: high
 category: reliability
 is_workaround: false
 subsystem: src-tauri/terminal/agent_manager
+status: fixed
+resolution: "#2758 — cancellable reconnect"
 evidence:
   - src-tauri/src/terminal/agent_manager.rs:2650
   - src-tauri/src/terminal/agent_manager.rs:2625
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/utils/ssh_auth.rs:26
   - src-tauri/src/utils/ssh_auth.rs:62
   - src-tauri/src/terminal/agent_manager.rs:944
-status: fixed
-resolution: "#2758 — cancellable reconnect"
 ---
 
 ## What
@@ -22,7 +22,7 @@ resolution: "#2758 — cancellable reconnect"
 The desktop→agent in-task reconnect loop (`reconnect_agent`, `agent_manager.rs:2609`) establishes
 each attempt with the **non-cancellable** blocking helper `connect_and_authenticate(&ssh_config)`
 (`:2650`), which internally does `block_in_place` + `Handle::block_on(core_connect(..))`
-(`ssh_auth.rs:26`). The `alive` flag is checked only in the backoff sleep *between* attempts
+(`ssh_auth.rs:26`). The `alive` flag is checked only in the backoff sleep _between_ attempts
 (`:2631`, `:2643`) and never during the SSH TCP-connect/auth itself. A cancellable twin —
 `connect_and_authenticate_cancellable` (`ssh_auth.rs:62`) — exists and is used by the **initial**
 agent connect (G1/#1235) and by the tunnel module, but the reconnect path does not take it.

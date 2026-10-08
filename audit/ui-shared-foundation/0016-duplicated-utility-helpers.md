@@ -6,6 +6,8 @@ severity: low
 category: arch
 is_workaround: false
 subsystem: src/utils
+status: fixed
+resolution: "#3072 — remaining dups consolidated: shared errorMessage() util routed through ~200 sites/~60 files (folded 3 local reimpls + 2 wrappers, net -210 lines); ColorInput ui primitive extracted, used in ThemeEditor+CustomRuleEditor. id-gen was ALREADY consolidated (generateMacroId/generateWorkflowId both wrap newId ULID, #2149) — added missing newId shape tests. Earlier bits (parseTags/slugify/formatBytes) already done. 6531 tests green"
 evidence:
   - src/components/MacroSidebar/MacroEditorDialog.tsx:32
   - src/components/WorkflowSidebar/WorkflowEditorDialog.tsx:51
@@ -15,8 +17,6 @@ evidence:
   - src/utils/formatters.ts:4
   - src/components/ThemeEditor/ThemeEditor.tsx:137
   - src/components/Settings/CustomRuleEditor.tsx:179
-status: fixed
-resolution: "#3072 — remaining dups consolidated: shared errorMessage() util routed through ~200 sites/~60 files (folded 3 local reimpls + 2 wrappers, net -210 lines); ColorInput ui primitive extracted, used in ThemeEditor+CustomRuleEditor. id-gen was ALREADY consolidated (generateMacroId/generateWorkflowId both wrap newId ULID, #2149) — added missing newId shape tests. Earlier bits (parseTags/slugify/formatBytes) already done. 6531 tests green"
 ---
 
 ## What
@@ -28,7 +28,7 @@ Several small display/logic helpers are copy-pasted between sibling features ins
 - **`slugify*`** — `MacroSidebar.tsx:25-31` `slugifyMacroName` ≡ `WorkflowSidebar.tsx:29-35` `slugifyWorkflowName`.
 - **ID generation** — `MacroSidebar.tsx:16-22` `generateMacroId()` ≡ `WorkflowSidebar.tsx:20-26`
   `generateWorkflowId()` (same `crypto.randomUUID()` + fallback), while `EmbeddedServerSidebar.tsx:76`
-  and `TunnelSidebar.tsx:55` inline a *different* ad-hoc scheme (`` `srv-${Date.now()}-…` ``) — two
+  and `TunnelSidebar.tsx:55` inline a _different_ ad-hoc scheme (`` `srv-${Date.now()}-…` ``) — two
   competing id conventions.
 - **`formatBytes`** — `EmbeddedServerItem.tsx:43-47` defines a local copy even though
   `utils/formatters.ts:4` exports one (which `TunnelListItem.tsx:20` correctly imports).

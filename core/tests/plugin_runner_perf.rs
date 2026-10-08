@@ -10,9 +10,10 @@
 //! | helper cold start               | ≤ 150 ms p95 (spawn + handshake + init) |
 //! | idle helper memory              | ≤ 15 MiB RSS                            |
 //!
-//! The fairness spread is asserted on runners with at least
-//! [`FAIRNESS_MIN_CORES`] cores and reported below that; starvation is asserted
-//! everywhere.
+//! The fairness spread and starvation are asserted on every OS, the 3-vCPU
+//! macOS runner included: the spread there was 21-91x until the channel lock
+//! queued senders before they leave the CPU (#4260, see
+//! `termihub_plugin_runner::ipc::FairMutex`).
 //!
 //! Every budget breach is collected and reported together, then fails the
 //! test, so one nightly run names every regression. The budgets are absolute
@@ -85,14 +86,6 @@ const BUDGET_MB_PER_S: f64 = 100.0;
 const BUDGET_COLD_START_P95: Duration = Duration::from_millis(150);
 const BUDGET_IDLE_RSS_KIB: u64 = 15 * 1024;
 const BUDGET_FAIRNESS: f64 = 2.0;
-/// Cores the fairness spread needs to be a measurement of the channel: a
-/// writer, the runner's reader and main loop, and the host's reader all run hot
-/// at once. On fewer cores (the 3-vCPU macOS runner) the OS hands the 40
-/// writer threads CPU in ~10 ms batches and single writes stall 50-80 ms, so
-/// the spread ranks the threads' CPU time, not their share of the channel
-/// (#4233 measured 37-77x there, 1.0x on 4+ cores); it is then reported, and
-/// starvation is still asserted.
-const FAIRNESS_MIN_CORES: usize = 4;
 /// A session of the 40 that has not finished by then is starved.
 const STARVATION_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -404,17 +397,10 @@ async fn out_of_process_echo_stays_within_the_budget() {
     let fastest = finished.iter().copied().fold(0.0, f64::max);
     let spread = fastest / slowest;
     let cores = std::thread::available_parallelism().map_or(1, usize::from);
-    let fairness_asserted = cores >= FAIRNESS_MIN_CORES;
     println!(
         "{FAIR_SESSIONS} sessions  slowest {slowest:.0} MB/s | fastest {fastest:.0} MB/s | \
          spread {spread:.2}x | starved {starved}"
     );
-    if !fairness_asserted {
-        println!(
-            "({cores} cores < {FAIRNESS_MIN_CORES}: the spread measures CPU scheduling of the \
-             writer threads here; reported, not asserted. Starvation is still asserted.)"
-        );
-    }
 
     write_report(&serde_json::json!({
         "latency_p99_added_us": added_p99.as_micros() as u64,
@@ -425,7 +411,6 @@ async fn out_of_process_echo_stays_within_the_budget() {
         "idle_rss_kib": idle_rss,
         "fair_sessions": FAIR_SESSIONS,
         "fair_spread": spread,
-        "fair_spread_asserted": fairness_asserted,
         "cores": cores,
         "fair_starved": starved,
         "release": !cfg!(debug_assertions),
@@ -463,7 +448,7 @@ async fn out_of_process_echo_stays_within_the_budget() {
         breaches.push(format!(
             "{starved} of {FAIR_SESSIONS} sessions starved (> {STARVATION_TIMEOUT:?})"
         ));
-    } else if fairness_asserted && spread > BUDGET_FAIRNESS {
+    } else if spread > BUDGET_FAIRNESS {
         breaches.push(format!("fairness spread {spread:.2}x > {BUDGET_FAIRNESS}x"));
     }
     assert!(

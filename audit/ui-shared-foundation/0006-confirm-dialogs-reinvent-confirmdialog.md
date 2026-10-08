@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui/ConfirmDialog
+status: fixed
+resolution: "#2925 — migrated ConfirmCloseTab + LargePaste dialogs to existing ui/ConfirmDialog (focus/Enter/Esc handled once). Follow-up #2924 (confirmIcon slot + UpdateAgentDialog)"
 evidence:
   - src/components/Terminal/ConfirmCloseTabDialog.tsx:19
   - src/components/Terminal/ConfirmCloseTabDialog.tsx:57
@@ -14,8 +16,6 @@ evidence:
   - src/components/ConnectionEditor/UnsavedChangesDialog.tsx:17
   - src/components/Terminal/CloseWindowDecisionDialog.tsx:61
   - src/components/WorkflowSidebar/LocalProcessAuthDialog.tsx:28
-status: fixed
-resolution: "#2925 — migrated ConfirmCloseTab + LargePaste dialogs to existing ui/ConfirmDialog (focus/Enter/Esc handled once). Follow-up #2924 (confirmIcon slot + UpdateAgentDialog)"
 ---
 
 ## What

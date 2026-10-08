@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui/Input
+status: fixed
+resolution: "#2962 — migrated raw text inputs to ui/Input: settings create-inputs (#2962) + General/Appearance/PasswordInput/TerminalSearchBar/KeyPathInput (#2985). Only justified native color swatches remain raw"
 evidence:
   - src/components/WorkspaceEditor/ConnectionPicker.tsx:86
   - src/components/Settings/GeneralSettings.tsx:106
@@ -15,8 +17,6 @@ evidence:
   - src/components/Settings/FileTypeSettings.tsx:151
   - src/components/Settings/CustomGrammarsSettings.tsx:213
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:252
-status: fixed
-resolution: "#2962 — migrated raw text inputs to ui/Input: settings create-inputs (#2962) + General/Appearance/PasswordInput/TerminalSearchBar/KeyPathInput (#2985). Only justified native color swatches remain raw"
 ---
 
 ## What

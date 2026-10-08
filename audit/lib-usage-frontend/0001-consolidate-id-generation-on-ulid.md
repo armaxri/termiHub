@@ -6,6 +6,8 @@ severity: medium
 category: arch
 is_workaround: false
 subsystem: src (cross-cutting)
+status: fixed
+resolution: "#2738 — collision fix #2724 + helper consolidation #2738"
 evidence:
   - src/components/Sidebar/ConnectionList.tsx:967
   - src/components/ConnectionEditor/ConnectionEditor.tsx:750
@@ -24,8 +26,6 @@ evidence:
   - src/services/customHighlightRules.ts:28
   - src/themes/customThemes.ts:55
   - src/services/transport/ids.ts:9
-status: fixed
-resolution: "#2738 — collision fix #2724 + helper consolidation #2738"
 ---
 
 ## What
@@ -46,9 +46,8 @@ dependency** and already has a canonical wrapper at `src/services/transport/ids.
    (macros, workflows, themes, highlight rules, shell-integration entries, saved
    connections, …). Each is separately maintained and separately tested.
 
-2. **Collision-prone `Date.now()`-only IDs.** Several creation paths use *only* a
+2. **Collision-prone `Date.now()`-only IDs.** Several creation paths use _only_ a
    millisecond timestamp with no random/counter suffix:
-
    - `src/components/Sidebar/ConnectionList.tsx:967` — `id: \`folder-${Date.now()}\``
    - `src/hooks/useConnections.ts:20,28` — `conn-${Date.now()}` / `folder-${Date.now()}`
    - `src/components/ConnectionEditor/ConnectionEditor.tsx:750,786` — `agent-${Date.now()}` / `conn-${Date.now()}`

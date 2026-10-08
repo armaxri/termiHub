@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui
+status: fixed
+resolution: "#2769 — RadioGroup primitive (raw <select> remainder #2770)"
 evidence:
   - src/components/ExportImport/ExportDialog.tsx:91
   - src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx:92
@@ -16,8 +18,6 @@ evidence:
   - src/components/PasswordPrompt/PasswordPrompt.tsx:82
   - src/components/Terminal/OpenSavedFileDialog.tsx:53
   - src/components/JumpHostSection.tsx:108
-status: fixed
-resolution: "#2769 — RadioGroup primitive (raw <select> remainder #2770)"
 ---
 
 ## What

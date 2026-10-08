@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui/Field
+status: fixed
+resolution: "#3152 — COMPLETE: #3071 added the error slot to SettingsField; #3070/#3152 then unified ui/Field and Settings/SettingsField — ui/Field is the single primitive (optional htmlFor->span+aria-label, hint, variant=settings) and SettingsField is a thin wrapper. Remaining hand-written settings-form__field blocks in other panels tracked in follow-up #3151."
 evidence:
   - src/components/ui/Field.tsx
   - src/components/Settings/SettingsField.tsx
@@ -13,8 +15,6 @@ evidence:
   - src/components/ConnectionEditor/ConnectionTerminalSettings.tsx:231
   - src/components/ConnectionEditor/JumpHostEntry.tsx:53
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:172
-status: fixed
-resolution: "#3152 — COMPLETE: #3071 added the error slot to SettingsField; #3070/#3152 then unified ui/Field and Settings/SettingsField — ui/Field is the single primitive (optional htmlFor->span+aria-label, hint, variant=settings) and SettingsField is a thin wrapper. Remaining hand-written settings-form__field blocks in other panels tracked in follow-up #3151."
 ---
 
 ## What
@@ -24,11 +24,11 @@ There are three parallel ways to render "label + control + error/hint" in the ap
 1. **`ui/Field`** (Field.tsx) — the shared primitive: label + `htmlFor` + inline `error` with
    `role="alert"`. Used correctly by TunnelEditor, WorkspaceEditor, Workflow/Macro editors,
    ThemeEditor, CustomRuleEditor, WorkflowStepRow.
-2. **`Settings/SettingsField`** (SettingsField.tsx) — a *second* field wrapper: label + hint,
+2. **`Settings/SettingsField`** (SettingsField.tsx) — a _second_ field wrapper: label + hint,
    auto-derives `aria-label`, but **has no error slot**. Used pervasively in Settings panels
    (GeneralSettings 37×, AppearanceSettings 9×).
 3. **Raw `settings-form__field` markup** — `<label className="settings-form__field"><span
-   className="settings-form__label">…</span>…<p className="settings-form__hint…">error</p></label>`
+className="settings-form__label">…</span>…<p className="settings-form__hint…">error</p></label>`
    hand-written per field.
 
 ## Why it matters

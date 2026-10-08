@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui
+status: fixed
+resolution: "#2748"
 evidence:
   - src/components/Sidebar/ConnectionList.tsx:1498
   - src/components/Sidebar/ConnectionList.tsx:1682
@@ -24,8 +26,6 @@ evidence:
   - src/components/Terminal/MacroPlaybackDialog.tsx:91
   - src/components/WorkflowSidebar/WorkflowTriggersEditor.tsx:102
   - src/components/ConnectionEditor/IconPickerDialog.tsx:93
-status: fixed
-resolution: "#2748"
 ---
 
 ## What
