@@ -84,9 +84,6 @@ pub(crate) mod exit {
     pub const REDUCED_ISOLATION_REFUSED: i32 = 5;
     /// Bad command line (wrong protocol version, missing flag).
     pub const USAGE: i32 = 64;
-    /// This platform has no runner transport yet.
-    #[cfg_attr(unix, allow(dead_code, reason = "used by the non-Unix stub only"))]
-    pub const UNAVAILABLE: i32 = 69;
 }
 
 /// One live plugin session.
@@ -102,7 +99,8 @@ type Sessions = Arc<Mutex<HashMap<u32, Session>>>;
 /// Descriptors the host passes along with frames (Unix handle passing).
 #[cfg(unix)]
 pub(crate) type PassedFds = Option<FdQueue>;
-/// No handle passing on this platform yet.
+/// No handle passing over the Windows pipe yet (#4219): every bridge
+/// connection is proxied.
 #[cfg(not(unix))]
 pub(crate) type PassedFds = ();
 
@@ -111,7 +109,10 @@ pub(crate) type PassedFds = ();
 pub(crate) fn run<R: Read + Send + 'static>(
     reader: R,
     channel: Arc<Channel>,
-    #[cfg_attr(not(unix), allow(unused_variables, reason = "no handle passing yet"))]
+    #[cfg_attr(
+        not(unix),
+        allow(unused_variables, reason = "no handle passing on Windows yet (#4219)")
+    )]
     fds: PassedFds,
 ) -> i32 {
     // Buffered: a frame is three reads (length, kind, payload); the buffer
@@ -158,6 +159,12 @@ pub(crate) fn run<R: Read + Send + 'static>(
         // Reduced isolation loads only with the user's hash-bound
         // acknowledgement (#4188); the host enforces it too.
         return exit::REDUCED_ISOLATION_REFUSED;
+    }
+    // Report the confined plugin's refused system calls from its first
+    // instruction on (`plugin_init` included).
+    #[cfg(target_os = "linux")]
+    if configure.sandbox.is_some() {
+        confine::spawn_denial_reporter(Arc::clone(&channel));
     }
     let library = match prepared.and_then(|p| {
         p.load().map_err(|e| LoadFailed {

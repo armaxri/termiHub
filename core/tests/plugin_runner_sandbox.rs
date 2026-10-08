@@ -174,6 +174,16 @@ impl Probe {
             .clone()
     }
 
+    /// The denial events the host recorded for the running runner.
+    #[cfg(target_os = "linux")]
+    fn denials(&self) -> Vec<termihub_core::plugin::sandbox::BridgeDenial> {
+        self.host
+            .sandboxed_plugin(self.id())
+            .and_then(|h| h.running())
+            .expect("a running runner")
+            .bridge_denials()
+    }
+
     fn install_dir(&self) -> PathBuf {
         self.installed.root.join(self.id())
     }
@@ -510,5 +520,76 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
     }
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(canary.tcp_accepted.load(Ordering::SeqCst), 0);
+    conn.disconnect().await.unwrap();
+}
+
+/// Linux: every reported seccomp denial reaches the host as a
+/// `Denied{syscall}` report (#4236) while the plugin still sees `EPERM`; a
+/// burst is coalesced (rate-limited) into a few reports; and the plugin cannot
+/// replace the `SIGSYS` handler the reports rely on.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn seccomp_denials_reach_the_host_as_denied_reports() {
+    use termihub_core::plugin::sandbox::DenialReason;
+
+    const EPERM_TEXT: &str = "Operation not permitted";
+    let work = tempfile::TempDir::new().unwrap();
+    let canary = canaries(work.path());
+    let probe_plugin = Probe::load(Probe::install(work.path()), config()).expect("the probe loads");
+    let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;
+
+    // The denied calls still fail with EPERM, exactly as before the trap.
+    let tcp = format!("127.0.0.1:{}", canary.tcp_port);
+    let unix = canonical(&canary.unix_path);
+    for (op, arg) in [("tcp", tcp.as_str()), ("unix", &unix), ("bind", "")] {
+        let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
+        assert!(!allowed && line.contains(EPERM_TEXT), "{line}");
+    }
+    // The plugin cannot take the SIGSYS handler over, and denials keep
+    // answering EPERM afterwards.
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "sigsys", "").await;
+    assert!(!allowed && line.contains(EPERM_TEXT), "{line}");
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "tcp", &tcp).await;
+    assert!(!allowed && line.contains(EPERM_TEXT), "{line}");
+
+    let syscall_count = |name: &str| -> (usize, u32) {
+        let denials: Vec<_> = probe_plugin
+            .denials()
+            .into_iter()
+            .filter(|d| d.reason == DenialReason::Syscall && d.operation == name)
+            .collect();
+        (denials.len(), denials.iter().map(|d| d.count).sum())
+    };
+    // Four `socket` calls were refused above (tcp, unix, bind, tcp).
+    let deadline = Instant::now() + WAIT;
+    while syscall_count("socket").1 < 4 {
+        assert!(Instant::now() < deadline, "no socket denial reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Let the last report interval pass, then fire a burst.
+    std::thread::sleep(Duration::from_millis(1500));
+    let (events_before, calls_before) = syscall_count("socket");
+    assert_eq!(calls_before, 4, "{:?}", probe_plugin.denials());
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "sockets", "1000").await;
+    assert!(!allowed && line.contains(EPERM_TEXT), "{line}");
+    let deadline = Instant::now() + WAIT;
+    while syscall_count("socket").1 < calls_before + 1000 {
+        assert!(Instant::now() < deadline, "the burst was not reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    let (events_after, calls_after) = syscall_count("socket");
+    assert_eq!(
+        calls_after,
+        calls_before + 1000,
+        "every refused call is counted"
+    );
+    assert!(
+        events_after - events_before <= 3,
+        "1000 denials must be coalesced into a few reports, got {}",
+        events_after - events_before
+    );
+    assert_eq!(canary.tcp_accepted.load(Ordering::SeqCst), 0);
+    assert_eq!(canary.unix_accepted.load(Ordering::SeqCst), 0);
     conn.disconnect().await.unwrap();
 }

@@ -282,8 +282,8 @@ pub enum HostError {
     },
 
     /// The out-of-process plugin runner (#4182) could not be started: the
-    /// sidecar binary is missing or not executable, or this platform has no
-    /// runner transport yet.
+    /// sidecar binary is missing, tampered with or not executable, or its
+    /// channel could not be set up.
     #[error("plugin runner `{path}` could not be started: {detail}")]
     RunnerUnavailable {
         /// The runner binary the host tried to start.

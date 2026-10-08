@@ -1,7 +1,8 @@
 //! The host ↔ `termihub-plugin-runner` IPC protocol (#4182).
 //!
-//! One duplex byte stream per runner (an inherited `socketpair` end on Unix),
-//! carrying length-delimited frames (see [`codec`]): `[u32 BE length][u8
+//! One duplex byte stream per runner — an inherited `socketpair` end on Unix,
+//! an inherited private named-pipe handle on Windows (`pipe`); both behind
+//! [`ChannelStream`] — carrying length-delimited frames (see [`codec`]): `[u32 BE length][u8
 //! kind][payload]`, max 1 MiB.
 //!
 //! * The **hot path** — [`FrameKind::Input`] / [`FrameKind::Output`] — carries a
@@ -12,7 +13,7 @@
 //! * The **capability bridge** (#4183): the runner forwards each plugin bridge
 //!   call as a [`FrameKind::BridgeRequest`] and the host answers with a
 //!   [`FrameKind::BridgeReply`]. An approved connection's socket rides along
-//!   with its reply as `SCM_RIGHTS` ancillary data on Unix ([`fd`]); where a
+//!   with its reply as `SCM_RIGHTS` ancillary data on Unix (`fd`); where a
 //!   handle cannot be passed, the `Stream*` kinds proxy its bytes under a
 //!   credit window ([`STREAM_WINDOW`]).
 //!
@@ -23,6 +24,7 @@
 
 pub mod codec;
 pub mod messages;
+pub mod transport;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -35,11 +37,15 @@ pub use messages::{
     Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
     CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize, ResourceLimits,
     SandboxReport, SessionError, SessionFailed, SessionRef, StreamAck, StreamChunk,
-    StreamTransport, WireError, WireToolchain,
+    StreamTransport, SyscallDenial, WireError, WireToolchain,
 };
+
+pub use transport::ChannelStream;
 
 #[cfg(unix)]
 pub mod fd;
+#[cfg(windows)]
+pub mod pipe;
 
 /// The protocol version. The runner announces it in [`Hello`]; the host refuses
 /// a runner speaking any other version (the two ship together, so a mismatch
@@ -56,6 +62,10 @@ pub const PROTOCOL_ARG: &str = "--protocol";
 
 /// The descriptor the runner's end of the channel is inherited as on Unix.
 pub const IPC_FD: i32 = 3;
+
+/// The command-line flag the host passes the runner's inherited channel handle
+/// value with on Windows: `--protocol <n> --ipc-handle <value>` (#4201).
+pub const IPC_HANDLE_ARG: &str = "--ipc-handle";
 
 /// Bytes of the session id prefixing an `Input` / `Output` payload.
 pub const SESSION_ID_LEN: usize = 4;

@@ -66,7 +66,8 @@ pub struct Configure {
 pub struct ResourceLimits {
     /// Cap on the runner's address space in bytes (`RLIMIT_AS`, Linux only:
     /// macOS does not enforce it, so the host polls the runner's resident size
-    /// there instead). `None` leaves it unlimited.
+    /// there instead). On Windows the host's job object enforces it as the
+    /// per-process committed-memory limit (#4201). `None` leaves it unlimited.
     #[serde(default)]
     pub address_space_bytes: Option<u64>,
     /// Cap on open file descriptors (`RLIMIT_NOFILE`). `None` leaves it as
@@ -76,7 +77,9 @@ pub struct ResourceLimits {
     /// Forbid starting child processes. Enforced with `RLIMIT_NPROC = 0` on
     /// macOS, where it counts processes only. On Linux `RLIMIT_NPROC` also
     /// counts threads (which plugins need), so there the OS sandbox's seccomp
-    /// filter forbids child processes whenever the sandbox is on (#4185).
+    /// filter forbids child processes whenever the sandbox is on (#4185). On
+    /// Windows the host's job object enforces it as an active-process limit
+    /// of 1 (#4201).
     #[serde(default)]
     pub forbid_child_processes: bool,
 }
@@ -312,6 +315,24 @@ pub struct Log {
     pub message: String,
     /// Whether the runner cut the plugin's message to the bound.
     pub truncated: bool,
+    /// Set when this line reports system calls the OS sandbox refused
+    /// (`Denied{syscall}`, #4236) rather than a plugin's own log line. The
+    /// host records it as a denial event and logs its own text for it; an
+    /// older host ignores the field and logs `message` as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied: Option<SyscallDenial>,
+}
+
+/// System calls the OS sandbox refused with `EPERM` (Linux seccomp, #4236),
+/// coalesced per call over one report interval of the runner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyscallDenial {
+    /// The system call's name: one of
+    /// [`REPORTED_SYSCALLS`](crate::sandbox::denial::REPORTED_SYSCALLS). The
+    /// host refuses any other name (untrusted peer).
+    pub syscall: String,
+    /// How many calls were refused since the previous report (at least 1).
+    pub count: u32,
 }
 
 /// `Ping` / `Pong` payload.

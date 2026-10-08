@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plugin_fixture;
-#[cfg(unix)]
 mod plugin_runner_support;
 use plugin_fixture::{artifact_name, fixture_library, Variant};
 
@@ -78,7 +77,6 @@ async fn abi_1_1_end_to_end() {
     abi_1_1_plugin_toolchain_and_host_context_round_trip().await;
     host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(None).await;
     // The same scenario, unchanged, through the out-of-process runner (#4182).
-    #[cfg(unix)]
     host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(Some(
         termihub_core::plugin::sandbox::PluginRunnerConfig::new(
             plugin_runner_support::runner_binary(),

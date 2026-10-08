@@ -20,7 +20,7 @@ pub(super) struct ChannelWriter {
 }
 
 impl ChannelWriter {
-    /// A writer that cannot pass descriptors (unit tests, non-Unix).
+    /// A writer that cannot pass descriptors (unit tests, Windows).
     #[cfg(any(test, not(unix)))]
     pub(super) fn new(inner: Box<dyn Write + Send>) -> Self {
         Self {
@@ -32,12 +32,19 @@ impl ChannelWriter {
 
     /// A writer over a Unix channel that can also pass descriptors.
     #[cfg(unix)]
-    pub(super) fn unix(stream: std::os::unix::net::UnixStream) -> io::Result<Self> {
+    pub(super) fn for_channel(stream: super::spawn::HostChannel) -> io::Result<Self> {
         let fd_stream = stream.try_clone()?;
         Ok(Self {
             inner: Mutex::new(Box::new(stream)),
             fd_stream: Some(fd_stream),
         })
+    }
+
+    /// A writer over the Windows pipe channel. Handles are not passed over it
+    /// yet (#4219), so every bridge connection is proxied.
+    #[cfg(windows)]
+    pub(super) fn for_channel(stream: super::spawn::HostChannel) -> io::Result<Self> {
+        Ok(Self::new(Box::new(stream)))
     }
 
     /// Write one already-encoded frame.

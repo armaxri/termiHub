@@ -4,14 +4,18 @@
 //! The termiHub host spawns one runner per enabled native plugin:
 //!
 //! ```text
-//! termihub-plugin-runner --protocol <n>
+//! termihub-plugin-runner --protocol <n>                          (Unix)
+//! termihub-plugin-runner --protocol <n> --ipc-handle <value>     (Windows)
 //! ```
 //!
-//! with the runner's end of a `socketpair` inherited as descriptor 3 (Unix).
-//! There is no filesystem rendezvous path and no other argument: what to load
-//! arrives in the `Configure` frame. The runner exits when the host sends
-//! `Shutdown`, when the channel reaches end of stream (the host is gone) and —
-//! on Linux — when the parent dies (`PR_SET_PDEATHSIG`).
+//! On Unix the runner's end of a `socketpair` is inherited as descriptor 3; on
+//! Windows the runner's end of a private named pipe is the only handle it
+//! inherits besides its standard handles, and its value is given on the command
+//! line (#4201). There is no filesystem rendezvous path and no other argument:
+//! what to load arrives in the `Configure` frame. The runner exits when the
+//! host sends `Shutdown`, when the channel reaches end of stream (the host is
+//! gone) and — on Linux — when the parent dies (`PR_SET_PDEATHSIG`); on Windows
+//! the host's kill-on-close job object ends it with the host.
 //!
 //! Between the handshake and the `dlopen` the runner confines itself with the
 //! OS sandbox the host requests in `Configure` (Seatbelt on macOS, #4186;
@@ -19,12 +23,6 @@
 //! See
 //! `docs/concepts/backlog/plugin-os-sandbox.html`.
 
-// Windows has no runner transport yet (next slice of #4182), so the session
-// server is unreachable there until it lands.
-#[cfg_attr(
-    not(unix),
-    allow(dead_code, unused_imports, reason = "no Windows transport yet")
-)]
 mod runner;
 
 use termihub_plugin_runner::ipc::{PROTOCOL_ARG, PROTOCOL_VERSION};
@@ -34,23 +32,41 @@ fn main() {
 }
 
 fn real_main() -> i32 {
-    if !protocol_matches(std::env::args().skip(1)) {
+    let Some(launch) = parse_args(std::env::args().skip(1)) else {
         eprintln!(
             "termihub-plugin-runner: expected `{PROTOCOL_ARG} {PROTOCOL_VERSION}`; this runner is \
              started by termiHub, not by hand"
         );
         return runner::exit::USAGE;
-    }
-    platform::run()
+    };
+    platform::run(launch)
 }
 
-/// Whether the arguments are exactly `--protocol <PROTOCOL_VERSION>`.
-fn protocol_matches(mut args: impl Iterator<Item = String>) -> bool {
-    let flag = args.next();
-    let value = args.next();
-    flag.as_deref() == Some(PROTOCOL_ARG)
-        && value.as_deref() == Some(PROTOCOL_VERSION.to_string().as_str())
-        && args.next().is_none()
+/// What the command line hands the runner besides the protocol version.
+#[cfg(unix)]
+type Launch = ();
+/// The inherited channel handle's value (Windows).
+#[cfg(windows)]
+type Launch = usize;
+
+/// Accept exactly `--protocol <PROTOCOL_VERSION>` (Unix) or
+/// `--protocol <PROTOCOL_VERSION> --ipc-handle <value>` (Windows).
+fn parse_args(mut args: impl Iterator<Item = String>) -> Option<Launch> {
+    let flag = args.next()?;
+    let version = args.next()?;
+    if flag != PROTOCOL_ARG || version != PROTOCOL_VERSION.to_string() {
+        return None;
+    }
+    #[cfg(windows)]
+    let launch = {
+        if args.next()? != termihub_plugin_runner::ipc::IPC_HANDLE_ARG {
+            return None;
+        }
+        args.next()?.parse::<usize>().ok().filter(|&v| v != 0)?
+    };
+    #[cfg(unix)]
+    let launch = ();
+    args.next().is_none().then_some(launch)
 }
 
 #[cfg(unix)]
@@ -64,7 +80,7 @@ mod platform {
 
     use crate::runner::{self, Channel};
 
-    pub(crate) fn run() -> i32 {
+    pub(crate) fn run((): super::Launch) -> i32 {
         #[cfg(target_os = "linux")]
         if !die_with_parent() {
             return runner::exit::OK;
@@ -101,17 +117,34 @@ mod platform {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 mod platform {
-    use crate::runner;
+    use std::sync::Arc;
 
-    /// The Windows transport (a private duplex named pipe passed through
-    /// `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, plus a kill-on-close job object)
-    /// is the next slice of #4182; until then the host never spawns a runner on
-    /// Windows.
-    pub(crate) fn run() -> i32 {
-        eprintln!("termihub-plugin-runner: no IPC transport on this platform yet");
-        runner::exit::UNAVAILABLE
+    use termihub_plugin_runner::ipc::pipe::PipeStream;
+    use termihub_plugin_runner::ipc::ChannelStream;
+
+    use crate::runner::{self, Channel};
+
+    /// Drive the inherited pipe handle with overlapped `ReadFile` /
+    /// `WriteFile`. Never Winsock or `std::net`: under LPAC `WSAStartup` fails
+    /// and std's lazy Winsock initialisation panics (spike #4181).
+    pub(crate) fn run(handle: super::Launch) -> i32 {
+        // SAFETY: the value names the pipe end the host passed us through the
+        // handle list; nothing else in this process owns it. A value that is
+        // not a pipe is refused without being touched.
+        let stream = match unsafe { PipeStream::from_inherited(handle) } {
+            Ok(stream) => stream,
+            Err(_) => return runner::exit::PROTOCOL,
+        };
+        let writer = match stream.try_clone() {
+            Ok(writer) => writer,
+            Err(_) => return runner::exit::PROTOCOL,
+        };
+        let channel = Arc::new(Channel::new(Box::new(writer)));
+        // No handle passing over the pipe yet (#4219): bridge connections are
+        // proxied.
+        runner::run(stream, channel, ())
     }
 }
 
@@ -126,14 +159,33 @@ mod tests {
             .into_iter()
     }
 
+    #[cfg(unix)]
     #[test]
     fn only_the_exact_protocol_argument_is_accepted() {
         let v = PROTOCOL_VERSION.to_string();
-        assert!(protocol_matches(args(&[PROTOCOL_ARG, &v])));
-        assert!(!protocol_matches(args(&[])));
-        assert!(!protocol_matches(args(&[PROTOCOL_ARG])));
-        assert!(!protocol_matches(args(&[PROTOCOL_ARG, "999"])));
-        assert!(!protocol_matches(args(&["--other", &v])));
-        assert!(!protocol_matches(args(&[PROTOCOL_ARG, &v, "extra"])));
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v])).is_some());
+        assert!(parse_args(args(&[])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, "999"])).is_none());
+        assert!(parse_args(args(&["--other", &v])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, "extra"])).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_protocol_and_a_channel_handle_value_are_required() {
+        use termihub_plugin_runner::ipc::IPC_HANDLE_ARG;
+        let v = PROTOCOL_VERSION.to_string();
+        assert_eq!(
+            parse_args(args(&[PROTOCOL_ARG, &v, IPC_HANDLE_ARG, "1234"])),
+            Some(1234)
+        );
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, IPC_HANDLE_ARG])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, IPC_HANDLE_ARG, "0"])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, IPC_HANDLE_ARG, "x"])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, "999", IPC_HANDLE_ARG, "1234"])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, "--other", "1234"])).is_none());
+        assert!(parse_args(args(&[PROTOCOL_ARG, &v, IPC_HANDLE_ARG, "1234", "x"])).is_none());
     }
 }

@@ -23,7 +23,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plugin_fixture;
-#[cfg(unix)]
 mod plugin_runner_support;
 use plugin_fixture::{fixture_library, Variant};
 
@@ -123,7 +122,6 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
     load_and_echo(&root, &installed, &backend.connection_type, None).await;
     // The same load + session, unchanged, through the out-of-process plugin
     // runner (#4182).
-    #[cfg(unix)]
     load_and_echo(
         &root,
         &installed,
