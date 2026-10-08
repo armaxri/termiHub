@@ -80,6 +80,7 @@ impl SandboxedPlugin {
         } = spawn_runner(&config.runner_path, &configure.limits)?;
         let stderr = child.stderr.take();
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
+        shared.set_output_rate_cap(config.output_rate_cap);
         if let Some(stderr) = stderr {
             shared.expect_stderr();
             let forwarder = Arc::clone(&shared);

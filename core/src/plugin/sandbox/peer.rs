@@ -26,6 +26,7 @@ use crate::plugin::log_rate_limit::PluginLogLimiter;
 use super::bridge::BridgeHost;
 use super::client::EXIT_TIMEOUT;
 use super::exit::RunnerExitCause;
+use super::rate::{OutputMeter, OutputRateCap};
 use super::spawn::RunnerChild;
 
 /// Upper bound on a `Log` line as the runner may send it: the 8 KiB message
@@ -108,6 +109,8 @@ pub(super) struct Shared {
     stderr_done: AtomicBool,
     /// The capability-bridge service answering this runner's requests (#4183).
     pub(super) bridge: Arc<BridgeHost>,
+    /// Meters the runner's `Output` bytes across all its sessions (#4203).
+    output_meter: Mutex<OutputMeter>,
 }
 
 impl Shared {
@@ -132,7 +135,15 @@ impl Shared {
             calls_in_flight: AtomicUsize::new(0),
             out_of_memory: AtomicBool::new(false),
             stderr_done: AtomicBool::new(true),
+            output_meter: Mutex::new(OutputMeter::new(OutputRateCap::default(), Instant::now())),
         })
+    }
+
+    /// Enforce `cap` on the runner's output from now on (before the reader
+    /// thread starts; [`OutputRateCap::default`] until then).
+    pub(super) fn set_output_rate_cap(&self, cap: OutputRateCap) {
+        *self.output_meter.lock().unwrap_or_else(|e| e.into_inner()) =
+            OutputMeter::new(cap, Instant::now());
     }
 
     /// Forward the runner's stderr (the plugin's own diagnostics) to the
@@ -201,6 +212,12 @@ impl Shared {
     pub(super) fn dispatch(&self, message: Message) -> Result<(), String> {
         match message {
             Message::Output { session_id, data } => {
+                // Every output byte counts against the runner's cap, whichever
+                // session it is for, delivered or not (#4203).
+                self.output_meter
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .charge(data.len(), Instant::now())?;
                 let mut subscriber = None;
                 self.with_session(session_id, |slot| {
                     subscriber = slot

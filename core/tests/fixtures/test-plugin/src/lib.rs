@@ -69,6 +69,10 @@ struct EchoBackend {
 impl PluginTerminalBackend for EchoBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
         #[cfg(feature = "crash-commands")]
+        if let Some(mib) = data.strip_prefix(b"!flood:") {
+            return flood(&self.output, mib);
+        }
+        #[cfg(feature = "crash-commands")]
         if let Some(reply) = crash_command(data) {
             return self.output.send(reply.as_bytes());
         }
@@ -100,6 +104,22 @@ impl PluginTerminalBackend for EchoBackend {
     }
 }
 
+/// `!flood:<MiB>` — send `<MiB>` MiB of output in 64 KiB chunks as fast as
+/// the channel takes them (the output rate cap, #4203), then `FLOODED`. Stops
+/// early once the host is gone.
+#[cfg(feature = "crash-commands")]
+fn flood(output: &PluginOutputSender, mib: &[u8]) -> Result<(), PluginError> {
+    let mib: usize = std::str::from_utf8(mib)
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    let chunk = vec![b'#'; 64 * 1024];
+    for _ in 0..mib * 16 {
+        output.send(&chunk)?;
+    }
+    output.send(b"FLOODED")
+}
+
 /// MiB held by the `!hoard` fixture so far.
 #[cfg(feature = "crash-commands")]
 static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -119,6 +139,10 @@ static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 ///   IPC descriptor (3), as a hostile plugin could.
 /// * `!fds` — open `/dev/null` until it fails: `FDS:<count>`.
 /// * `!spawn` — try to start `/bin/sh`: `SPAWN_OK` or `SPAWN_DENIED`.
+/// * `!fdstat:<n>` — what descriptor `<n>` is in the runner (#4203):
+///   `FDSTAT:CLOSED`, `FDSTAT:<dev>:<ino>`, or `FDSTAT:ERR:<error>`.
+///
+/// `!flood:<MiB>` is handled by the backend itself (it needs the output).
 #[cfg(feature = "crash-commands")]
 fn crash_command(data: &[u8]) -> Option<String> {
     match data {
@@ -183,6 +207,26 @@ fn crash_command(data: &[u8]) -> Option<String> {
                 }
             }
             Some(format!("FDS:{}", held.len()))
+        }
+        #[cfg(unix)]
+        _ if data.starts_with(b"!fdstat:") => {
+            use std::os::fd::FromRawFd;
+            use std::os::unix::fs::MetadataExt;
+            let Some(fd) = std::str::from_utf8(&data[b"!fdstat:".len()..])
+                .ok()
+                .and_then(|n| n.parse::<i32>().ok())
+            else {
+                return Some("FDSTAT:ERR:bad descriptor number".to_owned());
+            };
+            // SAFETY: only `fstat` is called on it, and ManuallyDrop never
+            // closes it (it may be the runner's own descriptor).
+            let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) });
+            Some(match file.metadata() {
+                Ok(meta) => format!("FDSTAT:{}:{}", meta.dev(), meta.ino()),
+                // EBADF: nothing open under that number.
+                Err(e) if e.raw_os_error() == Some(9) => "FDSTAT:CLOSED".to_owned(),
+                Err(e) => format!("FDSTAT:ERR:{e}"),
+            })
         }
         b"!spawn" => match std::process::Command::new("/bin/sh")
             .args(["-c", "exit 0"])

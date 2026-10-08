@@ -4,8 +4,9 @@
 //!
 //! A test-only fixture plugin (`tests/fixtures/test-plugin`, feature
 //! `crash-commands`) misbehaves on command: it segfaults, aborts, spins, sends
-//! garbage frames, allocates without bound, opens descriptors and tries to
-//! start a process. Next to it the real `echo-backend` example runs in its own
+//! garbage frames, allocates without bound, opens descriptors, tries to start
+//! a process, floods output past the rate cap and probes for descriptors it
+//! should not have inherited (#4203). Next to it the real `echo-backend` example runs in its own
 //! runner. Every test asserts that the host (this process) survives, that the
 //! other plugin's sessions are unaffected, and that the backend records the
 //! right exit cause per session; the crash budget restarts three crashes and
@@ -25,7 +26,7 @@ use plugin_runner_support::{
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::plugin::sandbox::{
-    PluginRunnerConfig, ResourceLimits, RunnerExitCause, WatchdogConfig,
+    OutputRateCap, PluginRunnerConfig, ResourceLimits, RunnerExitCause, WatchdogConfig,
 };
 use termihub_core::plugin::{PluginHost, PluginManager, PluginState};
 
@@ -393,4 +394,127 @@ async fn a_quiet_runner_answers_pings_and_is_left_alone() {
     assert_eq!(crashes(&f), 0);
     drop(conn);
     f.host.unload(&f.crash.plugin.manifest.id);
+}
+
+/// Read `rx` on a background task until `marker` arrives (or the channel
+/// ends), so the host's delivery never backpressures the runner. Returns
+/// whether the marker came.
+fn drain_until(mut rx: OutputReceiver, marker: &'static [u8]) -> tokio::task::JoinHandle<bool> {
+    tokio::spawn(async move {
+        while let Some(chunk) = rx.recv().await {
+            if chunk.ends_with(marker) {
+                return true;
+            }
+        }
+        false
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn output_beyond_the_rate_cap_kills_the_runner_and_spares_the_other_plugin() {
+    // A small cap so the test's flood surely exceeds it; the hang timer is
+    // out of reach (the flood runs inside a plugin call), so only the cap can
+    // end the runner.
+    let config = PluginRunnerConfig::new(runner_binary())
+        .with_watchdog(WatchdogConfig {
+            hang_timeout: Duration::from_secs(600),
+            ..fast_watchdog()
+        })
+        .with_output_rate_cap(OutputRateCap {
+            bytes_per_second: 4 * 1024 * 1024,
+            burst_bytes: 16 * 1024 * 1024,
+        });
+    let f = fixture(config);
+    let (echo, mut echo_rx) = connect(&f.registry, &f.echo.type_id).await;
+    let (victim, rx) = connect(&f.registry, &f.crash.type_id).await;
+    let (bystander, _rx2) = connect(&f.registry, &f.crash.type_id).await;
+    let pid = f
+        .host
+        .sandboxed_plugin(&f.crash.plugin.manifest.id)
+        .and_then(|h| h.running())
+        .and_then(|p| p.pid())
+        .expect("a runner pid");
+    // Everything the flood sends is consumed, as a live terminal would.
+    let drained = drain_until(rx, b"FLOODED");
+    victim.write(b"!flood:1024").unwrap();
+    // The other plugin answers while the flood is on and after it.
+    assert_echo_alive(echo.as_ref(), &mut echo_rx, "during the flood").await;
+
+    assert!(
+        wait_until(WAIT, || !victim.is_connected() && !bystander.is_connected()),
+        "every session of the flooding plugin ends"
+    );
+    assert!(wait_until(WAIT, || !process_exists(pid)));
+    // The flood never finished: the runner was cut off mid-way.
+    assert!(!drained.is_finished() || !drained.await.unwrap());
+    assert!(wait_until(WAIT, || victim.plugin_exit_cause().is_some()));
+    let cause = victim.plugin_exit_cause().unwrap();
+    assert!(
+        matches!(&cause, RunnerExitCause::InvalidData { detail } if detail.contains("output rate cap")),
+        "{cause:?}"
+    );
+    assert_eq!(bystander.plugin_exit_cause(), Some(cause));
+    assert!(wait_until(WAIT, || crashes(&f) == 1));
+    assert_echo_alive(echo.as_ref(), &mut echo_rx, "after the flood").await;
+    drop((victim, bystander));
+    f.host.unload(&f.crash.plugin.manifest.id);
+    f.host.unload(&f.echo.plugin.manifest.id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn output_within_the_default_cap_is_left_alone() {
+    let f = fixture(default_config());
+    let (conn, rx) = connect(&f.registry, &f.crash.type_id).await;
+    let drained = drain_until(rx, b"FLOODED");
+    // 64 MiB at full speed: well inside the default burst budget.
+    conn.write(b"!flood:64").unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(60), drained)
+            .await
+            .expect("the flood finishes")
+            .unwrap(),
+        "the whole flood arrived"
+    );
+    assert!(conn.is_connected());
+    assert_eq!(crashes(&f), 0);
+    drop(conn);
+    f.host.unload(&f.crash.plugin.manifest.id);
+    f.host.unload(&f.echo.plugin.manifest.id);
+}
+
+/// A descriptor the host holds **without** close-on-exec when the runner is
+/// spawned (a library's, say) must not reach the runner (#4203): only 0-3 are
+/// inherited. The plugin, inside the runner, reports what that descriptor
+/// number is there: nothing, or some other file the runner opened itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_runner_inherits_no_stray_descriptor() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+
+    let stray = tempfile::tempfile().unwrap();
+    let fd = stray.as_raw_fd();
+    // SAFETY: `fd` is open and owned by `stray` for the whole test.
+    assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFD, 0) }, 0);
+    let meta = stray.metadata().unwrap();
+    let leaked = format!("FDSTAT:{}:{}", meta.dev(), meta.ino());
+
+    // The runner is spawned at load, after the stray descriptor exists.
+    let f = fixture(default_config());
+    let (conn, mut rx) = connect(&f.registry, &f.crash.type_id).await;
+    conn.write(format!("!fdstat:{fd}").as_bytes()).unwrap();
+    let seen = read_line(&mut rx).await;
+    assert!(seen.starts_with("FDSTAT:"), "unexpected reply {seen}");
+    assert!(!seen.starts_with("FDSTAT:ERR"), "probe failed: {seen}");
+    assert_ne!(seen, leaked, "the runner inherited descriptor {fd}");
+    // The probe itself works: the runner's own channel is descriptor 3.
+    conn.write(b"!fdstat:3").unwrap();
+    let ipc = read_line(&mut rx).await;
+    assert!(
+        ipc.starts_with("FDSTAT:") && ipc != "FDSTAT:CLOSED" && !ipc.starts_with("FDSTAT:ERR"),
+        "{ipc}"
+    );
+    drop(conn);
+    drop(stray);
+    f.host.unload(&f.crash.plugin.manifest.id);
+    f.host.unload(&f.echo.plugin.manifest.id);
 }

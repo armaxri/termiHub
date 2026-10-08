@@ -1,9 +1,11 @@
 //! Host-side spawn of a `termihub-plugin-runner` process (#4182).
 //!
 //! * **Transport (Unix):** `UnixStream::pair()`; the runner's end is inherited
-//!   as descriptor 3 and nothing else is passed — every other descriptor the
-//!   host opens is close-on-exec (std's default). There is no filesystem
-//!   rendezvous path, so nothing can squat it.
+//!   as descriptor 3 and nothing else is passed. Std opens descriptors
+//!   close-on-exec, but a library (or a plugin loaded in process) may not, so
+//!   the forked child marks every descriptor above 3 close-on-exec before the
+//!   `exec` (#4203): the runner starts holding exactly 0–3. There is no
+//!   filesystem rendezvous path, so nothing can squat it.
 //! * **Transport (Windows, #4201):** a private single-instance named pipe
 //!   (`termihub_plugin_runner::ipc::pipe::PipeStream`); the
 //!   runner's end is the only handle it inherits besides its standard handles
@@ -137,8 +139,9 @@ fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Sp
         // for a plugin's allocation failure under the memory limit.
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
-    // SAFETY: the closure runs in the forked child before `exec` and only calls
-    // the async-signal-safe `dup2` / `fcntl` on descriptors it was handed.
+    // SAFETY: the closure runs in the forked child before `exec` and only makes
+    // async-signal-safe system calls (`dup2`, `fcntl`, `getrlimit`,
+    // `close_range`) on descriptors of its own process; it allocates nothing.
     unsafe {
         command.pre_exec(move || {
             if runner_fd == IPC_FD {
@@ -150,6 +153,7 @@ fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Sp
                 // `dup2` leaves the new descriptor without close-on-exec.
                 return Err(std::io::Error::last_os_error());
             }
+            cloexec_above(IPC_FD);
             Ok(())
         });
     }
@@ -236,6 +240,68 @@ fn spawn_command(command: std::process::Command) -> std::io::Result<std::process
 #[cfg(all(unix, not(target_os = "linux")))]
 fn spawn_command(mut command: std::process::Command) -> std::io::Result<std::process::Child> {
     command.spawn()
+}
+
+/// Mark every descriptor above `last_kept` close-on-exec, in the forked child
+/// before `exec` (#4203): whatever the host process holds without
+/// close-on-exec — a library's descriptor, a racing `fork` elsewhere — never
+/// reaches the runner.
+///
+/// Marking instead of closing keeps the descriptors `exec` itself still needs:
+/// std's close-on-exec error pipe, and on Linux the pinned runner image that
+/// is executed as `/proc/self/fd/<n>` ([`super::locate`]). `exec` then closes
+/// them all.
+///
+/// Linux uses `close_range(CLOSE_RANGE_CLOEXEC)` (5.11+); older kernels and
+/// other Unixes fall back to a loop up to the descriptor limit.
+///
+/// # Safety
+///
+/// Async-signal-safe: system calls only, no allocation; callable between
+/// `fork` and `exec`.
+#[cfg(unix)]
+unsafe fn cloexec_above(last_kept: libc::c_int) {
+    let first = last_kept.saturating_add(1);
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: a plain system call on this process's descriptor table.
+        let done = unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                libc::c_uint::try_from(first).unwrap_or(libc::c_uint::MAX),
+                libc::c_uint::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        } == 0;
+        if done {
+            return;
+        }
+    }
+    // SAFETY: as above; `fcntl` on a descriptor that is not open fails with
+    // `EBADF`, which is ignored.
+    unsafe {
+        for fd in first..descriptor_ceiling() {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
+}
+
+/// Upper bound (exclusive) of the descriptor loop: the soft `RLIMIT_NOFILE`,
+/// capped so an unlimited limit cannot make the child spin.
+#[cfg(unix)]
+fn descriptor_ceiling() -> libc::c_int {
+    const CAP: libc::rlim_t = 1 << 20;
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid, writable `rlimit`.
+    let soft = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        limit.rlim_cur.min(CAP)
+    } else {
+        CAP
+    };
+    libc::c_int::try_from(soft).unwrap_or(libc::c_int::MAX)
 }
 
 /// Send/receive buffer size requested for each end of the channel.
