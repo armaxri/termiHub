@@ -13,9 +13,10 @@
 //! `Shutdown`, when the channel reaches end of stream (the host is gone) and —
 //! on Linux — when the parent dies (`PR_SET_PDEATHSIG`).
 //!
-//! Phase 1 applies **no OS sandbox** yet; the per-OS confinement (Seatbelt,
-//! landlock + seccomp, LPAC) lands in later phases between the handshake and
-//! the `dlopen`. See `docs/concepts/backlog/plugin-os-sandbox.html`.
+//! Between the handshake and the `dlopen` the runner confines itself with the
+//! OS sandbox the host requests in `Configure` (Seatbelt on macOS, #4186;
+//! landlock + seccomp and LPAC follow in #4185 / #4187). See
+//! `docs/concepts/backlog/plugin-os-sandbox.html`.
 
 // Windows has no runner transport yet (next slice of #4182), so the session
 // server is unreachable there until it lands.

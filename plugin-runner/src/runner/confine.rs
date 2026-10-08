@@ -21,14 +21,13 @@ pub(super) fn library_path(configure: &Configure) -> PathBuf {
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
-/// Point `HOME` and `TMPDIR` into the data folder (so a plugin's temporary
-/// files land where it may write), then apply `policy` to this process.
+/// Point `HOME` and `TMPDIR` at the data folder (so a plugin's temporary
+/// files land where it may write), then apply `policy` to this process. The
+/// folder is not created here: the host creates it for ABI 1.1 plugins only,
+/// right after the load.
 pub(super) fn apply(policy: &SandboxPolicy) -> SandboxReport {
     if let Some(data) = &policy.data_dir {
-        let tmp = std::path::Path::new(data).join("tmp");
-        if std::fs::create_dir_all(&tmp).is_ok() {
-            std::env::set_var("TMPDIR", &tmp);
-        }
+        std::env::set_var("TMPDIR", data);
         std::env::set_var("HOME", data);
     }
     sandbox::apply(policy)

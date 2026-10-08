@@ -1325,11 +1325,7 @@ impl PluginHost {
         let sandbox = if let Some(policy) = &config.sandbox_policy_override {
             Some(policy.clone())
         } else if config.os_sandbox {
-            let data_dir = prepare_plugin_data_dir(&self.root, id)?;
-            Some(super::sandbox::sandbox_policy(
-                &self.root.join(id),
-                Some(&data_dir),
-            )?)
+            Some(super::sandbox::sandbox_policy(&self.root, id)?)
         } else {
             None
         };

@@ -7,7 +7,7 @@
 //!   folder read/write, and nothing else. The runner gets **no network**: a
 //!   plugin reaches the network only through the capability bridge, where the
 //!   host opens the socket and passes the connected descriptor in.
-//! * [`SandboxReport`](crate::ipc::SandboxReport) — what the runner actually
+//! * [`SandboxReport`] — what the runner actually
 //!   enforced, sent before any plugin code is mapped; [`Isolation`] classifies
 //!   it and [`layer`] names the layers.
 //! * [`apply`] — the per-OS confinement of the calling process: Seatbelt on
@@ -63,7 +63,8 @@ pub struct SandboxPolicy {
     /// map-executable, never writable.
     pub install_dir: String,
     /// The plugin's private data folder: read and write. The runner points
-    /// `HOME` and `TMPDIR` inside it. `None` grants no writable folder.
+    /// `HOME` and `TMPDIR` at it. It may not exist yet (the host creates it
+    /// only for plugins that use it). `None` grants no writable folder.
     #[serde(default)]
     pub data_dir: Option<String>,
     /// Folders denied explicitly even where a broader allowance would reach

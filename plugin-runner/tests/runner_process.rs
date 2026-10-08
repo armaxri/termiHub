@@ -219,6 +219,4 @@ fn macos_applies_seatbelt_before_the_load() {
     }
     assert!(matches!(next(&host), Message::LoadFailed(_)));
     assert_eq!(wait_exit(&mut child).code(), Some(3));
-    // HOME / TMPDIR were pointed into the data folder.
-    assert!(data.join("tmp").is_dir());
 }

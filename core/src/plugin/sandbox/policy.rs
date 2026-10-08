@@ -8,37 +8,39 @@
 //! bridge in the host (#4183), not by loosening the sandbox: the runner itself
 //! has no network and no filesystem access beyond these two folders.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use termihub_plugin_runner::ipc::SandboxReport;
 use termihub_plugin_runner::sandbox::{required_layers, Isolation, SandboxPolicy};
 
+use crate::plugin::host_context::PLUGIN_DATA_DIR_NAME;
 use crate::plugin::HostError;
 
-/// Build the policy for a plugin installed in `install_dir` with the private
-/// data folder `data_dir` (already created). Paths are canonicalised: the
-/// kernel matches resolved paths. The user's home folder is denied explicitly.
-pub fn sandbox_policy(
-    install_dir: &Path,
-    data_dir: Option<&str>,
-) -> Result<SandboxPolicy, HostError> {
-    let canonical = |path: &Path| -> Result<String, HostError> {
-        let resolved = path.canonicalize().map_err(|e| {
-            HostError::SandboxSetupFailed(format!(
-                "cannot resolve the plugin folder `{}`: {e}",
-                path.display()
-            ))
-        })?;
-        resolved.to_str().map(str::to_owned).ok_or_else(|| {
-            HostError::SandboxSetupFailed(format!(
-                "the plugin folder `{}` is not valid UTF-8",
-                resolved.display()
-            ))
-        })
+/// Build the policy for plugin `id` under `plugins_root`: its install folder
+/// `<root>/<id>` read-only and its private data folder `<root>/.data/<id>`
+/// read/write. Paths are canonicalised (the kernel matches resolved paths).
+/// The user's home folder is denied explicitly.
+///
+/// The data folder is **not created** here: the host creates it after the
+/// load, and only for an ABI 1.1 plugin (whose ABI is known only then); an
+/// ABI 1.0 plugin keeps having none, and so nothing it can write.
+pub fn sandbox_policy(plugins_root: &Path, id: &str) -> Result<SandboxPolicy, HostError> {
+    let failed = |path: &Path, e: &dyn std::fmt::Display| {
+        HostError::SandboxSetupFailed(format!(
+            "cannot resolve the plugin folder `{}`: {e}",
+            path.display()
+        ))
     };
+    let canonical = |path: &Path| path.canonicalize().map_err(|e| failed(path, &e));
+    let utf8 = |path: PathBuf| {
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| failed(&path, &"not valid UTF-8"))
+    };
+    let root = canonical(plugins_root)?;
     let policy = SandboxPolicy {
-        install_dir: canonical(install_dir)?,
-        data_dir: data_dir.map(|d| canonical(Path::new(d))).transpose()?,
+        install_dir: utf8(canonical(&plugins_root.join(id))?)?,
+        data_dir: Some(utf8(root.join(PLUGIN_DATA_DIR_NAME).join(id))?),
         denied_dirs: crate::config::home_directory()
             .and_then(|home| home.canonicalize().ok())
             .and_then(|home| home.to_str().map(str::to_owned))
@@ -82,25 +84,30 @@ mod tests {
     #[test]
     fn the_policy_is_canonical_and_denies_home() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let install = tmp.path().join("acme");
-        let data = tmp.path().join(".data").join("acme");
-        std::fs::create_dir_all(&install).unwrap();
-        std::fs::create_dir_all(&data).unwrap();
-        let policy = sandbox_policy(&install, data.to_str()).unwrap();
-        let canonical = |p: &Path| p.canonicalize().unwrap().to_str().unwrap().to_owned();
-        assert_eq!(policy.install_dir, canonical(&install));
-        assert_eq!(policy.data_dir, Some(canonical(&data)));
+        let root = tmp.path().join("plugins");
+        std::fs::create_dir_all(root.join("acme")).unwrap();
+        let policy = sandbox_policy(&root, "acme").unwrap();
+        let canonical = root.canonicalize().unwrap();
+        let expect = |p: PathBuf| p.to_str().unwrap().to_owned();
+        assert_eq!(policy.install_dir, expect(canonical.join("acme")));
+        assert_eq!(
+            policy.data_dir,
+            Some(expect(canonical.join(PLUGIN_DATA_DIR_NAME).join("acme")))
+        );
+        assert!(
+            !root.join(PLUGIN_DATA_DIR_NAME).exists(),
+            "the data folder is created by the host only for a 1.1 plugin"
+        );
         if let Some(home) = crate::config::home_directory().and_then(|h| h.canonicalize().ok()) {
             assert_eq!(policy.denied_dirs, vec![home.to_str().unwrap().to_owned()]);
         }
     }
 
     #[test]
-    fn a_missing_folder_fails_closed() {
+    fn a_missing_install_folder_fails_closed() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let missing = tmp.path().join("absent");
         assert!(matches!(
-            sandbox_policy(&missing, None),
+            sandbox_policy(tmp.path(), "absent"),
             Err(HostError::SandboxSetupFailed(_))
         ));
     }

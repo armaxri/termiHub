@@ -172,6 +172,10 @@ pub(crate) fn run<R: Read + Send + 'static>(
 }
 
 /// What the reader thread hands the main loop.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value per host frame, moved once; boxing would allocate per Input frame"
+)]
 enum Inbound {
     /// A host frame for the main loop.
     Message(Message),
