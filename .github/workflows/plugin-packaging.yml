@@ -3,8 +3,8 @@ name: Plugin Packaging
 # Per-OS package-then-load for native plugins (PLG-011). Each OS builds the
 # `echo-backend` example with the real packer (`--target host`, i.e. the
 # multi-platform format), installs the package through PluginManager and loads
-# it with the real PluginHost (core/tests/plugin_host_roundtrip's packaged
-# sibling, core/tests/plugin_package_load.rs). A merge job then combines the
+# it with the real PluginHost in its sandboxed plugin runner
+# (core/tests/plugin_package_load.rs). A merge job then combines the
 # per-OS packages into one fat package, verifies every platform entry's hash
 # against the library each OS built, and loads the fat package on Linux. Each
 # Unix OS also runs the OS-sandbox escape probe (#4186).
