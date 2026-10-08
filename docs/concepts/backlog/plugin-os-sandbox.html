@@ -1601,18 +1601,21 @@ flowchart TD
               </tr>
               <tr>
                 <td>Output throughput, one session</td>
-                <td>≥ 80 % of in-process, and ≥ 100 MB/s absolute</td>
-                <td>bulk-output test plugin, 256 MiB</td>
+                <td>
+                  ≥ 100 MB/s absolute (re-baselined in #4190: the relative "≥ 80 % of in-process" is
+                  reported only)
+                </td>
+                <td>echo-backend, 256 MiB in 64 KiB chunks</td>
               </tr>
               <tr>
                 <td>40 concurrent sessions in one plugin</td>
                 <td>no frame starvation; fairness within 2×</td>
-                <td>multiplexed stress test</td>
+                <td>40 echo sessions pumping 8 MiB each through one helper at once</td>
               </tr>
               <tr>
                 <td>Helper cold start (spawn + sandbox + dlopen + init)</td>
                 <td>≤ 150 ms p95</td>
-                <td>per-OS CI timing</td>
+                <td>per-OS CI timing, 20 load/unload cycles</td>
               </tr>
               <tr>
                 <td>Idle helper memory</td>
@@ -1622,6 +1625,14 @@ flowchart TD
             </tbody>
           </table>
         </div>
+        <p>
+          <strong>Why throughput is absolute only (#4190).</strong> The first measurement (#4182)
+          showed the in-process echo baseline is a plain memory copy (about 35 GB/s), while the
+          helper moves about 3.5 GB/s over the socket: roughly 10 % of in-process, yet 35 times the
+          100 MB/s floor and far above anything a terminal needs. No cross-process transport can
+          reach 80 % of a memory copy, so the relative figure is reported, not enforced. The latency
+          budget stays relative (p99 <em>added</em>), because there the baseline is meaningful.
+        </p>
         <p>
           Output frames are written with a single <code>writev</code>/<code>WriteFile</code> per
           <code>send</code>. No artificial coalescing delay is added; the plugin's own chunking
@@ -1817,11 +1828,16 @@ flowchart TD
           </li>
           <li>
             <strong>Fuzzing:</strong> <code>cargo-fuzz</code> targets for the frame decoder in both
-            directions (nightly lane).
+            directions plus a structured round trip (<code>plugin-runner/fuzz/</code>), run for 60 s
+            each with a cached corpus on the nightly lane (#4190).
           </li>
           <li>
-            <strong>Performance gate:</strong> a criterion bench comparing in-process with sandboxed
-            echo-backend against the budget table (nightly; a regression of more than 20 % fails).
+            <strong>Performance gate:</strong> the ignored test
+            <code>core/tests/plugin_runner_perf.rs</code> measures in-process and sandboxed
+            echo-backend and fails on any breach of the budget table, listing every breach. The
+            nightly <code>plugin-sandbox-nightly.yml</code> lane runs it optimised on Linux and
+            macOS (#4190). The budgets are absolute ceilings, not "20 % worse than the last run":
+            hosted runners vary by more than 20 % from run to run, so a stored baseline would flap.
           </li>
           <li>
             <strong>ABI preservation:</strong> the existing
