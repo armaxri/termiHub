@@ -83,7 +83,41 @@ export interface DragToCommand {
   action: "dragTo";
   fromTestId: string;
   toTestId: string;
+  /**
+   * Modifier keys held for the whole gesture — set on every pointer event from
+   * the press to the release, as a real held key would be. The file browser
+   * reads `altKey` to turn a drag-to-move into a copy (PROD-006).
+   */
+  modifiers?: DragModifiers;
+  /**
+   * Test ids to snapshot while the pointer is held over the target, after the
+   * last move and before the release — the mid-drag UI (a drop-target highlight,
+   * the floating drag chip) that is gone once the gesture ends. When present,
+   * the response `value` is a {@link DragObservations} keyed by these ids.
+   */
+  observe?: string[];
 }
+
+/** Modifier keys a {@link DragToCommand} holds for its whole gesture. */
+export interface DragModifiers {
+  alt?: boolean;
+  ctrl?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+}
+
+/** One observed element while a `dragTo` hovers its target. */
+export interface DragObservation {
+  /** Whether an element with the test id was in the DOM at that moment. */
+  exists: boolean;
+  /** Its `textContent` (`null` when absent). */
+  text: string | null;
+  /** Every attribute on it (e.g. `data-drop-highlight`), empty when absent. */
+  attributes: Record<string, string>;
+}
+
+/** The `value` of a `dragTo` that asked to `observe`: one entry per test id. */
+export type DragObservations = Record<string, DragObservation>;
 
 /**
  * Send input into a running terminal **session** (not a form field).

@@ -1173,6 +1173,18 @@ class SshServerControl:
         ).strip()
         return None if out == "none" else int(out)
 
+    def inode(self, path: str) -> int | None:
+        """The inode number of ``path`` inside the container, ``None`` if absent.
+
+        A same-filesystem rename keeps the inode; a copy-then-delete does not —
+        so comparing it before and after a move proves the move was a
+        server-side rename (#4007).
+        """
+        out = self._exec(
+            ["sh", "-c", 'if [ -e "$1" ]; then stat -c %i "$1"; else echo none; fi', "sh", path]
+        ).strip()
+        return None if out == "none" else int(out)
+
     def write_file(self, path: str, content: str, *, user: str) -> None:
         """Write ``content`` to ``path`` inside the container **as** ``user``.
 

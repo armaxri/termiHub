@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { runScenario, type RunOptions } from "./runner";
 import type {
   Driver,
+  DragToOptions,
   EditorCursorDirection,
   EditorCursorOptions,
   GetComputedStyleOptions,
@@ -11,7 +12,7 @@ import type {
   ScrollTerminalOptions,
   TerminalInputOptions,
 } from "./driver";
-import type { CanvasSample, TerminalViewport } from "./protocol";
+import type { CanvasSample, DragModifiers, DragObservations, TerminalViewport } from "./protocol";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 import type { WindowInfo } from "@/types/window";
@@ -30,7 +31,7 @@ class FakeDriver implements Driver {
   drags: Array<{ testId: string; dx: number; dy?: number }> = [];
   contextMenus: string[] = [];
   pressedKeys: Array<{ key: string; testId?: string; modifiers?: KeyModifiers }> = [];
-  dragTos: Array<{ from: string; to: string }> = [];
+  dragTos: Array<{ from: string; to: string; modifiers?: DragModifiers }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   events: Array<{ event: string; payload?: unknown }> = [];
   elements = new Map<string, { text?: string; value?: string }>();
@@ -90,10 +91,17 @@ class FakeDriver implements Driver {
     this.cursorMoves.push({ direction, times: options?.times });
   }
 
-  async dragTo(from: string, to: string): Promise<void> {
+  async dragTo(
+    from: string,
+    to: string,
+    options: DragToOptions = {}
+  ): Promise<DragObservations | undefined> {
     if (!this.elements.has(from)) throw new BridgeError("dragTo", `no element "${from}"`);
     if (!this.elements.has(to)) throw new BridgeError("dragTo", `no element "${to}"`);
-    this.dragTos.push({ from, to });
+    this.dragTos.push(
+      options.modifiers ? { from, to, modifiers: options.modifiers } : { from, to }
+    );
+    return undefined;
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
@@ -303,6 +311,34 @@ describe("runScenario", () => {
       { key: "Enter", testId: "tab-1" },
     ]);
     expect(driver.dragTos).toEqual([{ from: "tab-1", to: "tab-2" }]);
+  });
+
+  it("passes a dragTo step's held modifiers to the driver", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("file-row-a.txt", {});
+    driver.elements.set("file-row-dest", {});
+
+    const result = await runScenario(
+      {
+        name: "alt-drag",
+        steps: [
+          {
+            action: "dragTo",
+            fromTestId: "file-row-a.txt",
+            toTestId: "file-row-dest",
+            modifiers: { alt: true },
+          },
+        ],
+        checks: [],
+      },
+      driver,
+      instant()
+    );
+
+    expect(result.passed).toBe(true);
+    expect(driver.dragTos).toEqual([
+      { from: "file-row-a.txt", to: "file-row-dest", modifiers: { alt: true } },
+    ]);
   });
 
   it("runs doubleClick and resizeWindow steps", async () => {

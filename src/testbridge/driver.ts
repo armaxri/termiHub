@@ -3,6 +3,8 @@ import type {
   BridgeResponse,
   CanvasPoint,
   CanvasSample,
+  DragModifiers,
+  DragObservations,
   TerminalViewport,
 } from "./protocol";
 import type { WindowInfo } from "@/types/window";
@@ -53,6 +55,14 @@ export interface KeyModifiers {
   meta?: boolean;
   shift?: boolean;
   alt?: boolean;
+}
+
+/** Options for {@link Driver.dragTo}. */
+export interface DragToOptions {
+  /** Keys held for the whole gesture (e.g. `{ alt: true }` copies a file). */
+  modifiers?: DragModifiers;
+  /** Test ids to snapshot while the pointer is held over the target. */
+  observe?: string[];
 }
 
 /** A caret-movement direction for {@link Driver.editorCursor}. */
@@ -129,8 +139,17 @@ export interface Driver {
    * editor is active.
    */
   editorCursor(direction: EditorCursorDirection, options?: EditorCursorOptions): Promise<void>;
-  /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
-  dragTo(fromTestId: string, toTestId: string): Promise<void>;
+  /**
+   * Drag one element onto another (pointer-based, e.g. @dnd-kit reordering).
+   * `options.modifiers` holds keys (Alt → copy in the file browser) for the
+   * whole gesture; `options.observe` snapshots elements while the pointer is
+   * held over the target and resolves to those observations.
+   */
+  dragTo(
+    fromTestId: string,
+    toTestId: string,
+    options?: DragToOptions
+  ): Promise<DragObservations | undefined>;
   /**
    * Send input into a terminal session (active tab unless `tabId` is given). A
    * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
@@ -286,8 +305,18 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "editorCursor", direction, times: options.times });
   }
 
-  async dragTo(fromTestId: string, toTestId: string): Promise<void> {
-    await this.send({ action: "dragTo", fromTestId, toTestId });
+  async dragTo(
+    fromTestId: string,
+    toTestId: string,
+    options: DragToOptions = {}
+  ): Promise<DragObservations | undefined> {
+    return this.send<DragObservations | undefined>({
+      action: "dragTo",
+      fromTestId,
+      toTestId,
+      modifiers: options.modifiers,
+      observe: options.observe,
+    });
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {

@@ -9,6 +9,8 @@
  * "press these buttons, then assert the terminal shows X".
  */
 
+import type { DragModifiers } from "./protocol";
+
 /** A single UI action performed in sequence before the checks run. */
 export type ScenarioStep =
   | { action: "click"; testId: string }
@@ -34,7 +36,13 @@ export type ScenarioStep =
   /** Drag an element by a pixel delta (e.g. a resize handle); `dy` defaults to 0. */
   | { action: "drag"; testId: string; dx: number; dy?: number }
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
-  | { action: "dragTo"; fromTestId: string; toTestId: string }
+  | {
+      action: "dragTo";
+      fromTestId: string;
+      toTestId: string;
+      /** Keys held for the whole gesture (e.g. `{ alt: true }` to copy a file). */
+      modifiers?: DragModifiers;
+    }
   /** Send a command into a terminal session (active tab unless `tabId` is set). */
   | { action: "terminalInput"; text: string; tabId?: string }
   /**
