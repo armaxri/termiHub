@@ -78,6 +78,17 @@ describe("nativePluginSandbox helpers", () => {
     expect(processLabel(undefined)).toBeUndefined();
   });
 
+  it("lists the optional netns layer among the enforced layers (#4237)", () => {
+    const badge = isolationBadge(
+      plugin(),
+      status({ isolation: "full", enforced: ["seccomp", "landlock", "netns"] }),
+      sandboxed,
+      true
+    );
+    expect(badge?.kind).toBe("isolated");
+    expect(badge?.detail).toBe("Enforced: Linux seccomp, Linux Landlock, Linux network namespace");
+  });
+
   it("names the missing layer in the warning", () => {
     expect(missingLayerWarning(["seccomp"])).toBe(
       "This system cannot restrict network and program access (Linux seccomp is unavailable)."

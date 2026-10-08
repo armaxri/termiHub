@@ -52,6 +52,7 @@ const LAYER_NAMES: Record<string, string> = {
   seatbelt: "macOS Seatbelt",
   appcontainer: "Windows AppContainer",
   "job-object": "Windows job object",
+  netns: "Linux network namespace",
 };
 
 /** What each layer restricts, for the "This system cannot restrict …" copy. */
@@ -61,6 +62,7 @@ const LAYER_RESTRICTS: Record<string, string> = {
   seatbelt: "file, network and program access",
   appcontainer: "file and network access",
   "job-object": "memory and program limits",
+  netns: "network interfaces",
 };
 
 /** The display name of a sandbox layer. */
