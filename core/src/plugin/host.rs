@@ -62,7 +62,7 @@ use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
 use super::plugin_state::{self, PluginStateRecord};
-use super::sandbox::{PluginRunnerConfig, SandboxedPluginHandle};
+use super::sandbox::{AutoDisableHook, PluginHealth, PluginRunnerConfig, SandboxedPluginHandle};
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 use super::signer_change::PackageSigner;
 use super::trust_store::TrustStore;
@@ -1045,10 +1045,12 @@ impl PluginHost {
     /// activation state the management layer promotes on.
     #[must_use]
     pub fn is_loaded(&self, id: &str) -> bool {
-        self.loaded
+        let loaded = self
+            .loaded
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains_key(id)
+            .contains_key(id);
+        loaded && !self.is_auto_disabled(id)
     }
 
     /// Whether a plugin id is currently **active** — its [`load`](Self::load)
@@ -1059,10 +1061,13 @@ impl PluginHost {
     /// [`PluginState::Active`](super::PluginState).
     #[must_use]
     pub fn is_active(&self, id: &str) -> bool {
-        self.active
+        let active = self
+            .active
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains(id)
+            .contains(id);
+        // An auto-disabled plugin (#4184) is no longer active.
+        active && !self.is_auto_disabled(id)
     }
 
     /// Load a plugin's backend and register its connection type.
@@ -1229,6 +1234,9 @@ impl PluginHost {
             )
         };
 
+        if let PluginRuntime::Sandboxed(handle) = &runtime {
+            handle.on_auto_disable(self.auto_disable_hook(&id, &connection_type));
+        }
         self.loaded
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1247,6 +1255,42 @@ impl PluginHost {
         // recovery counter so a future, unrelated failure gets a full budget.
         self.clear_recovery(&plugin.manifest.id);
         Ok(())
+    }
+
+    /// What happens when an out-of-process plugin spends its crash budget
+    /// (#4184): its connection type is unregistered (as on disable) and the
+    /// plugin is persisted as disabled with the reason, so it stays off across
+    /// restarts until the user re-enables it.
+    fn auto_disable_hook(&self, id: &str, connection_type: &str) -> AutoDisableHook {
+        let registry = Arc::clone(&self.registry);
+        let root = self.root.clone();
+        let id = id.to_owned();
+        let connection_type = connection_type.to_owned();
+        Box::new(move |reason: &str| {
+            registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .unregister(&connection_type);
+            if let Err(e) = plugin_state::record_auto_disable(&root, &id, reason) {
+                tracing::warn!(
+                    target: super::PLUGIN_LOG_TARGET,
+                    "[{id}] could not persist the auto-disable: {e}"
+                );
+            }
+        })
+    }
+
+    /// The health of out-of-process plugin `id` (crash count, last exit,
+    /// auto-disable reason), when it is loaded out of process.
+    #[must_use]
+    pub fn plugin_health(&self, id: &str) -> Option<PluginHealth> {
+        self.sandboxed_plugin(id).map(|handle| handle.health())
+    }
+
+    /// Whether out-of-process plugin `id` spent its crash budget.
+    fn is_auto_disabled(&self, id: &str) -> bool {
+        self.sandboxed_plugin(id)
+            .is_some_and(|handle| handle.auto_disabled().is_some())
     }
 
     /// Start plugin `id`'s runner and run the load sequence in it. The runner
@@ -1275,6 +1319,7 @@ impl PluginHost {
             accept_unverified_toolchain: options.accept_unverified_toolchain,
             plugin_id: id.to_owned(),
             host_version: self.host_version.clone(),
+            limits: config.limits,
         };
         SandboxedPluginHandle::start(
             config.clone(),

@@ -12,7 +12,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use termihub_plugin_runner::ipc::{
-    Configure, FrameReader, Message, Sender, IPC_FD, PROTOCOL_ARG, PROTOCOL_VERSION,
+    Configure, FrameReader, Message, ResourceLimits, Sender, IPC_FD, PROTOCOL_ARG, PROTOCOL_VERSION,
 };
 
 const RUNNER: &str = env!("CARGO_BIN_EXE_termihub-plugin-runner");
@@ -105,6 +105,8 @@ fn a_library_that_cannot_load_is_reported_then_the_runner_exits() {
         accept_unverified_toolchain: false,
         plugin_id: "missing".into(),
         host_version: "0.0.0".into(),
+        // The limits are applied before the load, so they must not break it.
+        limits: ResourceLimits::plugin_defaults(),
     });
     host.write_all(&configure.encode().unwrap()).unwrap();
     assert!(matches!(next(&host), Message::SandboxReport(_)));

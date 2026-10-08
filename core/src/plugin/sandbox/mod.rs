@@ -22,10 +22,14 @@
 //!   the host runs the same permission / scope / policy guards as in process,
 //!   passes approved sockets to the runner (`SCM_RIGHTS`) or proxies them, and
 //!   records every refusal as a [`BridgeDenial`].
+//! * Crash isolation (#4184, phase 3): every runner exit gets a
+//!   [`RunnerExitCause`]; a [`CrashBudget`] respawns after three crashes and
+//!   auto-disables on the fourth; a watchdog detects hangs (ping/pong) and, on
+//!   macOS, excess memory; the runner applies [`ResourceLimits`] before it
+//!   loads the plugin.
 //!
 //! **Scope so far.** No OS confinement yet (Seatbelt / landlock + seccomp /
-//! LPAC are phases 4–5), crash budgets and hang detection are phase 3, and
-//! Windows has no transport yet. The out-of-process path is therefore
+//! LPAC are phases 4–5), and Windows has no transport yet. The out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
@@ -33,18 +37,27 @@
 
 mod bridge;
 mod client;
+mod exit;
 mod handle;
 mod peer;
 mod proxy;
 mod session;
 mod spawn;
+mod watchdog;
 mod writer;
 
 pub use bridge::{BridgeDenial, BridgeGrant, DenialReason};
 pub use client::SandboxedPlugin;
-pub use handle::{PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
+pub use exit::{auto_disable_reason, CrashBudget, RunnerExitCause, DEFAULT_CRASH_WINDOW};
+pub(crate) use handle::AutoDisableHook;
+pub use handle::{PluginHealth, PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
 pub use session::SandboxedSession;
 pub use spawn::default_runner_path;
+pub use termihub_plugin_runner::ipc::ResourceLimits;
+pub use watchdog::{
+    WatchdogConfig, DEFAULT_HANG_TIMEOUT, DEFAULT_PING_INTERVAL, DEFAULT_RSS_LIMIT,
+    DEFAULT_RSS_POLL_INTERVAL,
+};
 
 /// Environment flag that opts a **debug build** into out-of-process plugins.
 pub const OUT_OF_PROCESS_ENV: &str = "TERMIHUB_PLUGIN_OUT_OF_PROCESS";
