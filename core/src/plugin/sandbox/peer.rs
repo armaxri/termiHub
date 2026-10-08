@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use termihub_plugin_api::{PluginError, MAX_LOG_MESSAGE_BYTES};
 use termihub_plugin_runner::ipc::{FrameReader, Message, ProtocolError, Sender, SyscallDenial};
-use termihub_plugin_runner::sandbox::denial::reported_syscall;
+use termihub_plugin_runner::sandbox::denial::{denial_message, reported_syscall};
 
 use crate::connection::OutputSender;
 use crate::plugin::host_context::emit_runner_log;
@@ -291,16 +291,11 @@ impl Shared {
             return Err(format!("denial report for {syscall} with a zero count"));
         }
         self.bridge.record_syscall_denial(syscall, denied.count);
-        let calls = if denied.count == 1 { "call" } else { "calls" };
         emit_runner_log(
             &self.log_limiter,
             &self.plugin_id,
             termihub_plugin_api::PluginLogLevel::Warn.as_wire(),
-            format!(
-                "Denied{{syscall: {syscall}}}: the OS sandbox refused {} {calls} with EPERM",
-                denied.count
-            )
-            .as_bytes(),
+            denial_message(syscall, denied.count).as_bytes(),
             false,
         );
         Ok(())

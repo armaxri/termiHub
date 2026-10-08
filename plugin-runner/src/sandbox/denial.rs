@@ -45,17 +45,22 @@ pub fn reported_syscall(name: &str) -> Option<&'static str> {
     REPORTED_SYSCALLS.iter().copied().find(|s| *s == name)
 }
 
+/// The log text for `count` refused calls of `syscall` (the runner's frame
+/// text, and the line the host composes itself from a validated report).
+#[must_use]
+pub fn denial_message(syscall: &str, count: u32) -> String {
+    let calls = if count == 1 { "call" } else { "calls" };
+    format!("Denied{{syscall: {syscall}}}: the OS sandbox refused {count} {calls} with EPERM")
+}
+
 /// The `Log` frame reporting `count` refused calls of `syscall`. The message
 /// is what an older host (which ignores [`Log::denied`]) logs.
 #[must_use]
 pub fn denial_log(syscall: &str, count: u32) -> Log {
-    let calls = if count == 1 { "call" } else { "calls" };
     Log {
         session_id: None,
         level: PluginLogLevel::Warn.as_wire(),
-        message: format!(
-            "Denied{{syscall: {syscall}}}: the OS sandbox refused {count} {calls} with EPERM"
-        ),
+        message: denial_message(syscall, count),
         truncated: false,
         denied: Some(SyscallDenial {
             syscall: syscall.to_owned(),
