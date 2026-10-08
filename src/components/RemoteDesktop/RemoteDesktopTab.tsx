@@ -119,6 +119,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         void remoteFiles.uploadPaths(paths);
         return;
       }
+      // A linked SSH route waiting for its password (#4265): the drop is the
+      // user's action — ask, then upload once the route is ready.
+      if (files.status === "degraded" && files.needsSecret) {
+        void remoteFiles.refresh().then((next) => {
+          if (next?.status === "ready") void remoteFiles.uploadPaths(paths);
+        });
+        return;
+      }
       const why =
         files.status === "unavailable"
           ? unavailableCopy(files.reason)
@@ -235,8 +243,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
 
   const handleToggleFiles = useCallback(() => {
     setFilesOpen((open) => {
-      // Opening re-resolves the route, so a degraded one can recover.
-      if (!open) remoteFiles.refresh();
+      // Opening re-resolves the route, so a degraded one can recover (and a
+      // linked SSH route asks for its missing password, #4265).
+      if (!open) void remoteFiles.refresh();
       return !open;
     });
   }, [remoteFiles]);
@@ -361,7 +370,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
               setFilesOpen(false);
               void browseRemote(remoteFiles.destDir ?? undefined);
             }}
-            onRetry={remoteFiles.refresh}
+            onRetry={() => void remoteFiles.refresh()}
             onClose={() => setFilesOpen(false)}
           />
         )}

@@ -58,6 +58,25 @@ export function RemoteDesktopDropOverlay({
     );
   }
 
+  // A linked SSH route waiting for its secret (#4265): the drop asks for it,
+  // then uploads.
+  if (files.status === "degraded" && files.needsSecret) {
+    const secret = files.needsSecret.kind === "key_passphrase" ? "key passphrase" : "password";
+    return (
+      <div className="rd-drop" data-testid="remote-desktop-drop-overlay" data-state="needsSecret">
+        <Upload className="rd-drop__icon" size={28} aria-hidden />
+        <span className="rd-drop__title">Drop to upload {subject}</span>
+        <span className="rd-drop__sub">
+          to <code>{files.channel.host}</code> — you'll be asked for the {secret} of{" "}
+          <code>
+            {files.needsSecret.username}@{files.needsSecret.host}
+          </code>{" "}
+          first
+        </span>
+      </div>
+    );
+  }
+
   const copy =
     files.status === "unavailable"
       ? unavailableCopy(files.reason)

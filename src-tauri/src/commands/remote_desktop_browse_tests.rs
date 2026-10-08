@@ -177,6 +177,7 @@ async fn a_degraded_route_does_not_open() {
             channel: side_channel(FileSideChannelKind::Ssh),
             agent_id: None,
             message: "SFTP is not enabled on lab-pi".to_string(),
+            needs_secret: None,
         },
         None,
     )

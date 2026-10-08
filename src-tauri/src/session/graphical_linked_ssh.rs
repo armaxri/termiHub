@@ -12,8 +12,11 @@
 //!   through the same resolver relaunched transfers use
 //!   ([`unattended_settings`]), so a shared named credential (#3557) and
 //!   per-file credential scopes (#3591) apply. A secret that is not stored (or
-//!   a locked store) makes the link unusable with a reason, instead of a
-//!   password prompt in the middle of a remote-desktop session;
+//!   a locked store) makes the link unusable with a reason and a
+//!   [`LinkedSecretRequest`] (#4265): the UI asks for it with the usual
+//!   password prompt when the user acts, and hands the answer back as the
+//!   session's **supplied** secret, which then stands in for the missing one.
+//!   Nothing here prompts, so unattended callers keep the reason;
 //! - its **jump-host chain**, expanded to inline hops (#940).
 //!
 //! The SSH connect itself is attended: an unknown host key is put to the user
@@ -23,22 +26,28 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 use termihub_core::backends::ssh::parse_ssh_settings;
 
-use super::graphical_file_channel::{LinkedLookup, LinkedSshSource, LinkedSshTarget};
+use super::graphical_file_channel::{
+    LinkedLookup, LinkedSecretKind, LinkedSecretRequest, LinkedSshSource, LinkedSshTarget,
+};
 use crate::connection::config::SavedConnection;
 use crate::connection::jump_host_resolver::{match_unique, UniqueMatch};
 use crate::connection::manager::ConnectionManager;
 use crate::credential::{CredentialStore, CredentialType};
-use crate::files::transfer::relaunch_credentials::{unattended_settings, Unresolved};
+use crate::files::transfer::relaunch_credentials::{
+    needed_secret, unattended_settings, Unresolved,
+};
 
 /// Look the saved SSH connection `connection_id` up in `connections` and
 /// resolve it for connecting (see the module docs).
 ///
-/// `owner_of` names the credential owner of a connection's per-connection
+/// `supplied` is the secret the user entered for this session, used only when
+/// none can be read from the store. `owner_of` names the credential owner of a connection's per-connection
 /// secrets, `key_is_encrypted` tells whether a key file needs a passphrase,
 /// and `resolve_jump_hosts` expands saved-connection jump-host references.
 pub(crate) fn lookup_linked(
     connections: &[SavedConnection],
     connection_id: &str,
+    supplied: Option<&str>,
     owner_of: impl Fn(&SavedConnection) -> String,
     creds: &dyn CredentialStore,
     key_is_encrypted: impl Fn(&str) -> bool,
@@ -58,24 +67,42 @@ pub(crate) fn lookup_linked(
         }
     };
     let owner = owner_of(conn);
-    let mut settings = match unattended_settings(conn, Some(&owner), creds, key_is_encrypted) {
+    let mut ask_again = None;
+    let mut settings = match unattended_settings(conn, Some(&owner), creds, &key_is_encrypted) {
         Ok(settings) => settings,
-        Err(Unresolved::StoreLocked) => {
-            return unusable(
-                conn,
-                "the credential store is locked; unlock it to use the linked SSH connection"
-                    .to_string(),
-            )
-        }
-        Err(Unresolved::NotStored) => {
-            return unusable(
-                conn,
-                format!(
-                    "no password is saved for the linked SSH connection '{}'; save it in \
-                     that connection",
-                    conn.name
-                ),
-            )
+        Err(unresolved) => {
+            let Some(request) = secret_request(conn, unresolved, &key_is_encrypted) else {
+                return unusable(conn, "the linked SSH connection needs a secret".to_string());
+            };
+            if let Some(secret) = supplied.filter(|s| !s.is_empty()) {
+                let mut settings = conn.config.settings.clone();
+                if let Some(obj) = settings.as_object_mut() {
+                    obj.insert("password".into(), Value::String(secret.to_string()));
+                }
+                ask_again = Some(request);
+                settings
+            } else {
+                let message = match unresolved {
+                    Unresolved::StoreLocked => {
+                        "the credential store is locked; unlock it to use the linked SSH connection"
+                            .to_string()
+                    }
+                    Unresolved::NotStored => format!(
+                        "no {} is saved for the linked SSH connection '{}'; enter it with \
+                         Retry, or save it in that connection",
+                        match request.kind {
+                            LinkedSecretKind::Password => "password",
+                            LinkedSecretKind::KeyPassphrase => "key passphrase",
+                        },
+                        conn.name
+                    ),
+                };
+                let mut lookup = unusable(conn, message);
+                if let LinkedLookup::Unusable { secret, .. } = &mut lookup {
+                    *secret = Some(Box::new(request));
+                }
+                return lookup;
+            }
         }
     };
     if let Err(e) = resolve_jump_hosts(&mut settings) {
@@ -89,7 +116,41 @@ pub(crate) fn lookup_linked(
         connection_id: conn.id.clone(),
         name: conn.name.clone(),
         config,
+        ask_again,
     }))
+}
+
+/// What to ask the user for when `conn`'s secret could not be resolved
+/// unattended (#4265); `None` when its connect needs no secret after all.
+fn secret_request(
+    conn: &SavedConnection,
+    unresolved: Unresolved,
+    key_is_encrypted: impl Fn(&str) -> bool,
+) -> Option<LinkedSecretRequest> {
+    let settings = &conn.config.settings;
+    let text = |key: &str| {
+        settings
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let auth_method = needed_secret(&conn.config.type_id, settings, key_is_encrypted)?;
+    let kind = match auth_method {
+        "key" => LinkedSecretKind::KeyPassphrase,
+        _ => LinkedSecretKind::Password,
+    };
+    Some(LinkedSecretRequest {
+        connection_id: conn.id.clone(),
+        source_file: conn.source_file.clone(),
+        kind,
+        auth_method: auth_method.to_string(),
+        host: text("host"),
+        username: text("username"),
+        store_locked: unresolved == Unresolved::StoreLocked,
+        can_save: text("credentialRef").trim().is_empty(),
+        rejected: false,
+    })
 }
 
 /// [`LinkedLookup::Unusable`] for `conn`, naming its host and account.
@@ -107,6 +168,7 @@ fn unusable(conn: &SavedConnection, message: String) -> LinkedLookup {
         host: text("host"),
         user: text("username"),
         message,
+        secret: None,
     }
 }
 
@@ -118,7 +180,7 @@ pub(crate) struct AppLinkedSsh {
 
 #[async_trait::async_trait]
 impl LinkedSshSource for AppLinkedSsh {
-    fn lookup(&self, connection_id: &str) -> LinkedLookup {
+    fn lookup(&self, connection_id: &str, supplied: Option<&str>) -> LinkedLookup {
         let Some(manager) = self.app.try_state::<ConnectionManager>() else {
             return LinkedLookup::Missing;
         };
@@ -132,6 +194,7 @@ impl LinkedSshSource for AppLinkedSsh {
         lookup_linked(
             &connections,
             connection_id,
+            supplied,
             |c| {
                 manager
                     .connection_credential_key(

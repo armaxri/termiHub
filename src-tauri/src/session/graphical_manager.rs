@@ -637,6 +637,27 @@ impl GraphicalSessionManager {
             .map(|(channel, _)| channel)
     }
 
+    /// Keep `secret`, entered by the user for the session's linked SSH
+    /// connection (#4265), for its file-route resolutions from now on. Only
+    /// the user-facing `remote_desktop_file_channel` calls this, on a user
+    /// action; unattended callers never do.
+    pub async fn supply_linked_secret(
+        &self,
+        session_id: &str,
+        secret: String,
+    ) -> Result<(), TerminalError> {
+        let cache = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?
+                .linked_ssh
+                .clone()
+        };
+        cache.supply_secret(secret).await;
+        Ok(())
+    }
+
     /// [`file_channel`](Self::file_channel) plus the authenticated SSH session
     /// of an SSH route — the tunnel's, or the linked saved SSH connection's
     /// (#4194) — for opening the SFTP channel an upload runs on (#4192).

@@ -118,6 +118,75 @@ pub(crate) struct LinkedSshTarget {
     /// The connection's display name, shown as the route's carrier.
     pub name: String,
     pub config: SshConfig,
+    /// Set when the secret in `config` is the one the user entered for this
+    /// session (#4265), not a stored one: what to ask for again should the
+    /// server reject it.
+    pub ask_again: Option<LinkedSecretRequest>,
+}
+
+/// Which secret a linked SSH connection needs from the user (#4265). Named
+/// like the frontend's prompt kinds and credential types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "snake_case")]
+pub enum LinkedSecretKind {
+    /// The account password (password auth).
+    Password,
+    /// The passphrase of an encrypted private key (key auth).
+    KeyPassphrase,
+}
+
+/// A linked SSH connection whose secret is neither saved nor unlockable
+/// without the user (#4265): what the UI needs to ask for it with the usual
+/// password prompt — only when the user acts (opens the Files popover, drops
+/// files, clicks Retry), never on its own. Unattended callers ignore it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedSecretRequest {
+    /// The saved SSH connection's id — the credential-store owner a checked
+    /// "Save password" stores under.
+    pub connection_id: String,
+    /// The external connection file it lives in (#3591); `None` for the main
+    /// store.
+    pub source_file: Option<String>,
+    /// Which secret to ask for.
+    pub kind: LinkedSecretKind,
+    /// The connection's `authMethod` (`password` or `key`), for the
+    /// credential-store unlock gate.
+    pub auth_method: String,
+    /// The SSH host and account, shown in the prompt.
+    pub host: String,
+    pub username: String,
+    /// The credential store is locked: unlock it first — the saved secret may
+    /// then be found without asking.
+    pub store_locked: bool,
+    /// Whether the prompt may offer "Save password". `false` for a shared
+    /// named credential (#3557), which is rotated in Settings instead.
+    pub can_save: bool,
+    /// The secret the user entered for this session was rejected.
+    pub rejected: bool,
+}
+
+/// Why connecting a linked saved SSH connection failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinkedConnectError {
+    pub message: String,
+    /// The server rejected the credentials (typed, never parsed from text).
+    pub auth_rejected: bool,
+}
+
+impl LinkedConnectError {
+    fn of(e: &termihub_core::errors::SessionError) -> Self {
+        use termihub_core::errors::{ConnectFailureKind, SessionError};
+        Self {
+            message: e.to_string(),
+            auth_rejected: matches!(e, SessionError::AuthFailed)
+                || e.connect_failure_kind() == Some(ConnectFailureKind::AuthFailed),
+        }
+    }
 }
 
 /// What looking up a linked saved SSH connection found (#4194).
@@ -134,6 +203,8 @@ pub(crate) enum LinkedLookup {
         user: String,
         /// Why, phrased to follow "File transfer to {host} is unavailable: ".
         message: String,
+        /// Set when the user can fix it by entering the secret (#4265).
+        secret: Option<Box<LinkedSecretRequest>>,
     },
     /// The connection, ready to connect.
     Found(Box<LinkedSshTarget>),
@@ -149,12 +220,14 @@ pub(crate) struct LinkedSshConnection {
 /// Connect a linked saved SSH connection: directly, or through its pooled
 /// jump-host gateway. Attended — an unknown host key is put to the user by the
 /// registered host-key verifier, exactly as for any SSH connect.
-pub(crate) async fn connect_linked_ssh(config: &SshConfig) -> Result<LinkedSshConnection, String> {
+pub(crate) async fn connect_linked_ssh(
+    config: &SshConfig,
+) -> Result<LinkedSshConnection, LinkedConnectError> {
     if config.proxy_jump.is_empty() {
         let (session, _registry) =
             termihub_core::backends::ssh::auth::connect_and_authenticate(config)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| LinkedConnectError::of(&e))?;
         return Ok(LinkedSshConnection {
             session: Arc::new(session),
             _gateway: None,
@@ -165,7 +238,7 @@ pub(crate) async fn connect_linked_ssh(config: &SshConfig) -> Result<LinkedSshCo
             config, None,
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| LinkedConnectError::of(&e))?;
     Ok(LinkedSshConnection {
         session: Arc::new(session),
         _gateway: Some(gateway),
@@ -177,11 +250,12 @@ pub(crate) async fn connect_linked_ssh(config: &SshConfig) -> Result<LinkedSshCo
 #[async_trait]
 pub(crate) trait LinkedSshSource: Send + Sync {
     /// Look the saved SSH connection `connection_id` up (blocking: it reads the
-    /// connection files and the credential store).
-    fn lookup(&self, connection_id: &str) -> LinkedLookup;
+    /// connection files and the credential store). `supplied` is the secret
+    /// the user entered for this session (#4265), used when none is stored.
+    fn lookup(&self, connection_id: &str, supplied: Option<&str>) -> LinkedLookup;
 
     /// Open an SSH session to the looked-up connection.
-    async fn connect(&self, config: &SshConfig) -> Result<LinkedSshConnection, String> {
+    async fn connect(&self, config: &SshConfig) -> Result<LinkedSshConnection, LinkedConnectError> {
         connect_linked_ssh(config).await
     }
 }
@@ -207,12 +281,30 @@ impl LinkedKey {
     }
 }
 
-/// A graphical session's open linked SSH session, if any (#4194). Held for the
-/// session's lifetime and reused across resolutions; the lock is held while
-/// connecting, so concurrent resolutions never open (or prompt for) a second
-/// session.
+/// What a graphical session keeps for its linked route.
+#[derive(Default)]
+struct LinkedState {
+    /// The open linked SSH session, if any.
+    held: Option<(LinkedKey, LinkedSshConnection)>,
+    /// The secret the user entered for the linked connection (#4265), in
+    /// memory only and only for this session; never written anywhere.
+    secret: Option<zeroize::Zeroizing<String>>,
+}
+
+/// A graphical session's open linked SSH session, if any (#4194), and the
+/// secret the user entered for it (#4265). Held for the session's lifetime
+/// and reused across resolutions; the lock is held while connecting, so
+/// concurrent resolutions never open (or prompt for) a second session.
 #[derive(Clone, Default)]
-pub(crate) struct LinkedSshCache(Arc<tokio::sync::Mutex<Option<(LinkedKey, LinkedSshConnection)>>>);
+pub(crate) struct LinkedSshCache(Arc<tokio::sync::Mutex<LinkedState>>);
+
+impl LinkedSshCache {
+    /// Keep `secret`, entered by the user, for the linked connection's next
+    /// lookups in this session (#4265). Only ever called on a user action.
+    pub(crate) async fn supply_secret(&self, secret: String) {
+        self.0.lock().await.secret = Some(zeroize::Zeroizing::new(secret));
+    }
+}
 
 /// The linked-route seam and the session's cache, as route resolution takes
 /// them.
@@ -227,8 +319,9 @@ enum LinkedRoute {
     None,
     /// The link resolved and its session is up.
     Ready(FileSideChannel, Arc<SshSession>),
-    /// The link resolved but its host refused or cannot be signed in to.
-    Degraded(FileSideChannel, String),
+    /// The link resolved but its host refused or cannot be signed in to; with
+    /// the secret to ask the user for when that would fix it (#4265).
+    Degraded(FileSideChannel, String, Option<LinkedSecretRequest>),
 }
 
 /// Resolve the linked saved SSH connection of `route`: look it up, reuse the
@@ -238,13 +331,16 @@ enum LinkedRoute {
 async fn resolve_linked_route(route: &LinkedFileRoute, linked: &LinkedResolver) -> LinkedRoute {
     let source = linked.source.clone();
     let id = route.connection_id.clone();
-    let lookup = tokio::task::spawn_blocking(move || source.lookup(&id))
-        .await
-        .unwrap_or(LinkedLookup::Missing);
+    let supplied = linked.cache.0.lock().await.secret.clone();
+    let lookup = tokio::task::spawn_blocking(move || {
+        source.lookup(&id, supplied.as_ref().map(|s| s.as_str()))
+    })
+    .await
+    .unwrap_or(LinkedLookup::Missing);
     let mut cache = linked.cache.0.lock().await;
     let target = match lookup {
         LinkedLookup::Missing => {
-            *cache = None;
+            *cache = LinkedState::default();
             return LinkedRoute::None;
         }
         LinkedLookup::Unusable {
@@ -252,10 +348,11 @@ async fn resolve_linked_route(route: &LinkedFileRoute, linked: &LinkedResolver) 
             host,
             user,
             message,
+            secret,
         } => {
-            *cache = None;
+            cache.held = None;
             let channel = linked_ssh_channel(&route.target_host, &host, &user, &name);
-            return LinkedRoute::Degraded(channel, message);
+            return LinkedRoute::Degraded(channel, message, secret.map(|s| *s));
         }
         LinkedLookup::Found(target) => target,
     };
@@ -266,19 +363,28 @@ async fn resolve_linked_route(route: &LinkedFileRoute, linked: &LinkedResolver) 
         &target.name,
     );
     let key = LinkedKey::of(&target);
-    if let Some((held, conn)) = cache.as_ref() {
+    if let Some((held, conn)) = cache.held.as_ref() {
         if *held == key && !conn.session.is_closed() {
             return LinkedRoute::Ready(channel, conn.session.clone());
         }
     }
-    *cache = None;
+    cache.held = None;
     match linked.source.connect(&target.config).await {
         Ok(conn) => {
             let session = conn.session.clone();
-            *cache = Some((key, conn));
+            cache.held = Some((key, conn));
             LinkedRoute::Ready(channel, session)
         }
-        Err(e) => LinkedRoute::Degraded(channel, e),
+        // The user's own secret was rejected: forget it and ask again.
+        Err(e) if e.auth_rejected && target.ask_again.is_some() => {
+            cache.secret = None;
+            let ask = target.ask_again.map(|ask| LinkedSecretRequest {
+                rejected: true,
+                ..ask
+            });
+            LinkedRoute::Degraded(channel, e.message, ask)
+        }
+        Err(e) => LinkedRoute::Degraded(channel, e.message, None),
     }
 }
 
@@ -311,6 +417,19 @@ pub enum RemoteDesktopFileChannel {
         agent_id: Option<String>,
         /// The user-facing reason.
         message: String,
+        /// A linked SSH route (#4194) that works once the user enters its
+        /// password or key passphrase (#4265). The UI asks with the usual
+        /// password prompt only when the user acts; unattended callers never
+        /// ask.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            test,
+            ts(
+                optional,
+                type = "import(\"./LinkedSecretRequest\").LinkedSecretRequest"
+            )
+        )]
+        needs_secret: Option<LinkedSecretRequest>,
     },
     /// No file transfer for this session.
     Unavailable {
@@ -414,7 +533,7 @@ pub(crate) async fn resolve_file_channel_routed(
                     linked_channel = Some(channel);
                     ssh_session = Some(session);
                 }
-                LinkedRoute::Degraded(channel, message) => {
+                LinkedRoute::Degraded(channel, message, needs_secret) => {
                     let message = format!(
                         "File transfer to {} is unavailable: {message}",
                         channel.host
@@ -423,6 +542,7 @@ pub(crate) async fn resolve_file_channel_routed(
                         channel,
                         agent_id: None,
                         message,
+                        needs_secret,
                     };
                     return (degraded, None);
                 }
@@ -472,6 +592,7 @@ pub(crate) async fn resolve_file_channel_routed(
             ),
             channel,
             agent_id,
+            needs_secret: None,
         },
     };
     (resolved, ssh_session)
