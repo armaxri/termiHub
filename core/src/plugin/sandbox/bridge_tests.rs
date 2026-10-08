@@ -812,6 +812,94 @@ fn a_passed_socket_is_counted_before_its_reply_is_sent() {
     );
 }
 
+/// Unix (#4268): a socket passed into a full channel waits for room. macOS
+/// fails such an `SCM_RIGHTS` `sendmsg` at once with `EMSGSIZE` where Linux
+/// blocks; treating that as fatal killed the runner whenever a plugin opened a
+/// connection while the host's backlog to it filled the channel.
+#[cfg(unix)]
+#[test]
+fn a_socket_passed_into_a_full_channel_waits_for_room() {
+    use std::os::unix::net::UnixStream;
+    use termihub_plugin_runner::ipc::fd::FdReader;
+
+    let shared = Shared::new(
+        "probe".to_owned(),
+        None,
+        Arc::new(PluginLogLimiter::default()),
+    );
+    let (host_end, runner_end) = UnixStream::pair().unwrap();
+    let mut filler = host_end.try_clone().unwrap();
+    filler.set_nonblocking(true).unwrap();
+    let mut backlog = 0;
+    while let Ok(n) = filler.write(&[0u8; 4096]) {
+        backlog += n;
+    }
+    filler.set_nonblocking(false).unwrap();
+    let writer = Arc::new(ChannelWriter::for_channel(host_end).unwrap());
+    shared
+        .bridge
+        .attach(writer, CURRENT_PLUGIN_ABI_VERSION, Arc::downgrade(&shared));
+    let id = shared.next_session.fetch_add(1, Ordering::SeqCst);
+    shared.bridge.open_session(
+        id,
+        BridgeGrant::new(
+            PermissionSet::from_parts([PluginPermission::Network], &[]),
+            ConnectionPolicy::default(),
+        ),
+    );
+    shared
+        .dispatch(Message::BridgeRequest(BridgeRequest {
+            request_id: 7,
+            session_id: id,
+            op: BridgeOp::OpenConnection {
+                host: "127.0.0.1".into(),
+                port: echo_server(),
+            },
+        }))
+        .unwrap();
+    // Let the reply reach the full channel before the runner reads anything.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while shared.bridge.open_connections() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !shared.dead.load(Ordering::SeqCst),
+        "the runner was killed instead of waiting for room"
+    );
+
+    runner_end
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut reader = FdReader::new(runner_end);
+    let fds = reader.fds();
+    let mut skipped = vec![0u8; backlog];
+    reader.read_exact(&mut skipped).unwrap();
+    let mut frames = FrameReader::new(reader);
+    let frame = frames.read_frame().unwrap().unwrap();
+    match Message::decode_from_peer(frame, Sender::Runner).unwrap() {
+        Message::BridgeReply(reply) => {
+            assert_eq!(reply.request_id, 7);
+            assert!(matches!(
+                reply.result,
+                BridgeResult::Connection {
+                    transport: StreamTransport::HandlePassed,
+                    ..
+                }
+            ));
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut sock = TcpStream::from(fds.pop().expect("the passed socket"));
+    sock.write_all(b"hello").unwrap();
+    let mut got = [0u8; 5];
+    sock.read_exact(&mut got).unwrap();
+    assert_eq!(&got, b"hello");
+    assert!(!shared.dead.load(Ordering::SeqCst), "the runner was killed");
+    assert_eq!(shared.bridge.open_connections(), 1);
+    assert_eq!(shared.bridge.handles_passed(), 1);
+}
+
 /// Windows (#4219): a harness that duplicates sockets into "the runner" —
 /// this very process, standing in for it.
 #[cfg(windows)]

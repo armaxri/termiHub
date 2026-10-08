@@ -249,6 +249,79 @@ mod tests {
         assert!(flags >= 0 && flags & libc::FD_CLOEXEC != 0);
     }
 
+    /// Fill `host`'s send buffer with non-blocking writes until `EAGAIN`,
+    /// leaving it blocking again. Returns how many bytes it queued.
+    fn fill(host: &UnixStream) -> usize {
+        let mut filler = host.try_clone().unwrap();
+        filler.set_nonblocking(true).unwrap();
+        let mut queued = 0;
+        while let Ok(n) = filler.write(&[0u8; 4096]) {
+            queued += n;
+        }
+        filler.set_nonblocking(false).unwrap();
+        queued
+    }
+
+    /// #4268: macOS fails an `SCM_RIGHTS` `sendmsg` into a full socket at once
+    /// with `EMSGSIZE` where Linux blocks; the send must wait for room either way.
+    #[test]
+    fn a_descriptor_sent_into_a_full_channel_waits_for_room() {
+        let (host, runner) = UnixStream::pair().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        let queued = fill(&host);
+        host.set_write_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let sender = std::thread::spawn(move || {
+            let sent = send_with_fd(&host, b"frame", sock.as_fd());
+            (sent, host)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!sender.is_finished(), "the send did not wait for room");
+
+        runner
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = FdReader::new(runner);
+        let fds = reader.fds();
+        let mut backlog = vec![0u8; queued];
+        reader.read_exact(&mut backlog).unwrap();
+        let (sent, host) = sender.join().unwrap();
+        sent.unwrap();
+        drop(host);
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"frame");
+        let mut passed = TcpStream::from(fds.pop().expect("the passed socket"));
+        passed.write_all(b"x").unwrap();
+        let mut got = [0u8; 1];
+        peer.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"x");
+    }
+
+    /// A channel that stays full past the write timeout fails the send (the
+    /// host then kills the runner), after waiting rather than at once.
+    #[test]
+    fn a_channel_full_past_the_write_timeout_fails_the_send() {
+        let (host, _runner) = UnixStream::pair().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        fill(&host);
+        let timeout = std::time::Duration::from_millis(300);
+        host.set_write_timeout(Some(timeout)).unwrap();
+        let started = std::time::Instant::now();
+        let err = send_with_fd(&host, b"frame", sock.as_fd()).unwrap_err();
+        assert!(
+            matches!(
+                err.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            ),
+            "{err:?}"
+        );
+        assert!(started.elapsed() >= timeout, "failed before the timeout");
+    }
+
     #[test]
     fn an_empty_frame_cannot_carry_a_descriptor() {
         let (host, _runner) = UnixStream::pair().unwrap();
