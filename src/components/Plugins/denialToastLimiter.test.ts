@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { PluginDenial, PluginSandboxView } from "@/store/pluginSandboxBridge";
-import { DENIAL_TOAST_WINDOW_MS, DenialToastLimiter, describeDenial } from "./denialToastLimiter";
+import {
+  DENIAL_TOAST_WINDOW_MS,
+  DenialToastLimiter,
+  denialDetail,
+  describeDenial,
+} from "./denialToastLimiter";
 
 const nameOf = (id: string) => (id === "sniffer" ? "Serial Sniffer" : id);
 
@@ -10,6 +15,7 @@ function denial(atMs: number, overrides: Partial<PluginDenial> = {}): PluginDeni
     target: "10.0.0.12:502",
     reason: "permission",
     atMs,
+    count: 1,
     ...overrides,
   };
 }
@@ -86,5 +92,31 @@ describe("describeDenial", () => {
         denial(0, { reason: "syscall", operation: "connect", target: "", count: 4 })
       )
     ).toBe('"P": blocked system call: connect (×4).');
+  });
+});
+
+describe("kernel-level denials are log-only (#4247)", () => {
+  const syscall = (atMs: number) =>
+    denial(atMs, { reason: "syscall", operation: "connect", target: "", count: 4 });
+
+  it("never toasts a syscall denial", () => {
+    const limiter = new DenialToastLimiter();
+    limiter.observe(view([]), 0, nameOf);
+    expect(limiter.observe(view([syscall(1)]), 1, nameOf)).toEqual([]);
+    expect(limiter.nextFlushAt()).toBeUndefined();
+  });
+
+  it("still toasts a bridge denial next to syscall ones, without counting them", () => {
+    const limiter = new DenialToastLimiter();
+    limiter.observe(view([]), 0, nameOf);
+    const toasts = limiter.observe(view([syscall(1), denial(2), syscall(3)]), 3, nameOf);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].description).toContain("tried to connect to 10.0.0.12:502");
+    expect(toasts[0].description).not.toContain("more");
+  });
+
+  it("labels denials for the details list", () => {
+    expect(denialDetail(syscall(0))).toBe("Blocked system call: connect (×4)");
+    expect(denialDetail(denial(0))).toBe("Blocked open_connection 10.0.0.12:502");
   });
 });

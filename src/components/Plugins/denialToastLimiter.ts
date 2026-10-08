@@ -25,6 +25,28 @@ function weight(denial: PluginDenial): number {
   return Math.max(1, denial.count ?? 1);
 }
 
+/**
+ * Whether a denial raises a toast. Only **bridge** denials do: kernel-level
+ * (`syscall`) denials are logged only (concept "Copy and placement rules",
+ * #4247) and stay visible in the Settings → Plugins details list.
+ */
+export function isToastable(denial: PluginDenial): boolean {
+  return denial.reason !== "syscall";
+}
+
+/** One short line for the Settings → Plugins details list. */
+export function denialDetail(denial: PluginDenial): string {
+  const times = weight(denial) > 1 ? ` (×${weight(denial)})` : "";
+  if (denial.reason === "syscall") {
+    return `Blocked system call: ${denial.operation}${times}`;
+  }
+  if (denial.reason === "resourceLimit") {
+    return `Limit reached: ${denial.operation}${times}`;
+  }
+  const target = denial.target ? ` ${denial.target}` : "";
+  return `Blocked ${denial.operation}${target}${times}`;
+}
+
 /** The plain-language sentence for one denial. */
 export function describeDenial(pluginName: string, denial: PluginDenial): string {
   const who = `"${pluginName}"`;
@@ -76,7 +98,7 @@ export class DenialToastLimiter {
       const latest = status.denials.reduce((max, d) => Math.max(max, d.atMs), seen ?? -1);
       this.lastSeen.set(pluginId, latest);
       if (seen === undefined) continue; // baseline of the first view
-      const fresh = status.denials.filter((d) => d.atMs > seen);
+      const fresh = status.denials.filter((d) => d.atMs > seen && isToastable(d));
       if (fresh.length === 0) continue;
       const total = fresh.reduce((sum, d) => sum + weight(d), 0);
       const window = this.windows.get(pluginId);

@@ -1961,13 +1961,14 @@ flowchart TD
               </tr>
               <tr>
                 <td>7</td>
+                <td>Kernel-level denials logged best-effort, without a toast</td>
                 <td>
-                  <strong>Cut-over:</strong> remove the in-process load path and debug flag, add
-                  ADR-19, amend ADR-15, update SECURITY.md and <code>plugin-authoring.md</code>,
-                  re-word <code>security.rs</code>/<code>capabilities.rs</code> docs, close SEC-002.
+                  Only bridge denials raise the rate-limited toast; kernel-level
+                  (<code>syscall</code>) denials from #4236 are log-only and listed in the Settings
+                  row as "Blocked system call: &lt;name&gt; (×N)" (#4247)
                 </td>
-                <td>S</td>
-                <td>4, 5a, 5b, 6</td>
+                <td>Matches</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>8</td>

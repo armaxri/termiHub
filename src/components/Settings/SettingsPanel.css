@@ -382,6 +382,17 @@
   color: var(--color-warning);
 }
 
+.native-plugin-sandbox__denials {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.native-plugin-sandbox__denial-list {
+  margin: 0;
+  padding-left: var(--spacing-md);
+}
+
 .native-plugin-sandbox__chips {
   display: flex;
   flex-wrap: wrap;

@@ -61,8 +61,9 @@ export interface PluginDenial {
    * string so a reason the host adds later still renders. */
   reason: string;
   atMs: number;
-  /** How many identical denials this entry folds (absent = 1). */
-  count?: number;
+  /** How many refused calls this entry stands for (a kernel-level `syscall`
+   * report folds repeats; 1 for a bridge denial). */
+  count: number;
 }
 
 /** One plugin's sandbox status (twin of Rust `PluginSandboxStatus`). */

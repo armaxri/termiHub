@@ -30,6 +30,7 @@ function withDenials(atMs: number[]): PluginSandboxView {
           target: "10.0.0.12:502",
           reason: "permission",
           atMs: at,
+          count: 1,
         })),
       },
     },
@@ -84,6 +85,26 @@ describe("PluginDenialToasts (#4188)", () => {
   it("does not replay denials that existed before it subscribed", () => {
     mockView = withDenials([1, 2]);
     render();
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("does not toast a kernel-level syscall denial (#4247)", () => {
+    render();
+    mockView = withDenials([]);
+    render();
+    mockView = {
+      outOfProcess: true,
+      plugins: {
+        sniffer: {
+          isolation: "full",
+          enforced: [],
+          missing: [],
+          denials: [{ operation: "connect", target: "", reason: "syscall", atMs: 5, count: 3 }],
+        },
+      },
+    };
+    render();
+    act(() => vi.advanceTimersByTime(60_000));
     expect(info).not.toHaveBeenCalled();
   });
 });

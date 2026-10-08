@@ -18,6 +18,9 @@
 - **Blocked plugin request toasts.** When termiHub refuses a plugin request (for
   example a network connection without the network permission), a toast says so,
   at most once per plugin every 30 seconds. Details are in the Log Viewer.
+- System calls the plugin sandbox blocks are listed under the plugin in
+  Settings → Plugins ("Blocked system call: connect (×4)") and in the Log
+  Viewer, without a toast.
 
 ### Changed
 

@@ -419,5 +419,29 @@ describe("NativePluginGateSettings", () => {
       });
       expect(acknowledgeNativePlugin).not.toHaveBeenCalled();
     });
+
+    it("lists recent denials, including kernel-level system calls (#4247)", async () => {
+      withStatus({
+        isolation: "full",
+        denials: [
+          { operation: "connect", target: "", reason: "syscall", atMs: 1, count: 4 },
+          {
+            operation: "open_connection",
+            target: "10.0.0.12:502",
+            reason: "permission",
+            atMs: 2,
+            count: 1,
+          },
+        ],
+      });
+      await renderFlushed();
+      const items = Array.from(query("native-plugin-denials-echo")!.querySelectorAll("li")).map(
+        (li) => li.textContent
+      );
+      expect(items).toEqual([
+        "Blocked system call: connect (×4)",
+        "Blocked open_connection 10.0.0.12:502",
+      ]);
+    });
   });
 });

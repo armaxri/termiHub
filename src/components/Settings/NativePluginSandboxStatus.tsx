@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Chip } from "@/components/ui";
 import type { PluginSandboxStatus } from "@/store/pluginSandboxBridge";
 import type { InstalledPlugin } from "@/types/plugin";
+import { denialDetail } from "@/components/Plugins/denialToastLimiter";
 import {
   accessChips,
   missingLayerWarning,
@@ -94,6 +95,24 @@ export function NativePluginSandboxStatus({
         >
           {badge.detail} Details are in the Log Viewer.
         </p>
+      )}
+      {status && status.denials.length > 0 && (
+        <div className="native-plugin-sandbox__denials">
+          <span className="settings-panel__description">Recently blocked:</span>
+          <ul
+            className="native-plugin-sandbox__denial-list"
+            data-testid={`native-plugin-denials-${id}`}
+          >
+            {status.denials.map((denial) => (
+              <li
+                key={`${denial.atMs}-${denial.operation}-${denial.target}`}
+                className="settings-panel__description"
+              >
+                {denialDetail(denial)}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {showChips && (
         <div
