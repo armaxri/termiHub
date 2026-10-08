@@ -7,6 +7,7 @@ import {
   INLINE_IMAGE_LIMITS,
   INLINE_IMAGE_LOAD_HOLD_MS,
   shouldHoldOutputForInlineImages,
+  sixelDecoderPending,
   type ImageAddonLoader,
 } from "./inlineImages";
 
@@ -231,5 +232,79 @@ describe("inline-images controller registry (#4013)", () => {
     unregisterFirst();
     expect(getInlineImagesController("tab-img")).toBe(second);
     unregisterSecond();
+  });
+});
+
+describe("waiting for the addon's async SIXEL decoder (#4017)", () => {
+  // The real addon creates its SIXEL decoder asynchronously on activate; until
+  // it resolves, the handler drops every SIXEL sequence while the surrounding
+  // text still prints (nightly 2026-10-07: sixel over telnet, no image stored).
+  function decoderSetup() {
+    const sixel: { _dec?: unknown } = {};
+    class AddonWithPendingDecoder {
+      _handlers = new Map<string, unknown>([["sixel", sixel]]);
+      activate = vi.fn();
+      dispose = vi.fn();
+      storageUsage = 0;
+    }
+    const onReady = vi.fn();
+    const controller = createInlineImagesController({ loadAddon: vi.fn() } as never, {
+      enabled: true,
+      loader: (async () => AddonWithPendingDecoder) as unknown as ImageAddonLoader,
+      onReady,
+    });
+    return { controller, sixel, onReady };
+  }
+
+  it("keeps loading until the decoder exists, then reports ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, sixel, onReady } = decoderSetup();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.isActive()).toBe(true);
+      // Attached, but output must still be held: the decoder is not there yet.
+      expect(controller.isLoading()).toBe(true);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(controller.isLoading()).toBe(true);
+      sixel._dec = {};
+      await vi.advanceTimersByTimeAsync(20);
+      expect(controller.isLoading()).toBe(false);
+      expect(onReady).toHaveBeenCalledWith(expect.any(Number), true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up on a decoder that never arrives within the hold window", async () => {
+    vi.useFakeTimers();
+    try {
+      const { controller, onReady } = decoderSetup();
+      await vi.advanceTimersByTimeAsync(INLINE_IMAGE_LOAD_HOLD_MS + 50);
+      expect(controller.isLoading()).toBe(false);
+      expect(onReady).toHaveBeenCalledWith(expect.any(Number), false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the decoder state off the addon's sixel handler", () => {
+    expect(sixelDecoderPending({ _handlers: new Map([["sixel", {}]]) })).toBe(true);
+    expect(sixelDecoderPending({ _handlers: new Map([["sixel", { _dec: {} }]]) })).toBe(false);
+    // An unknown addon shape is never held.
+    expect(sixelDecoderPending({})).toBe(false);
+    expect(sixelDecoderPending({ _handlers: new Map() })).toBe(false);
+    expect(sixelDecoderPending(null)).toBe(false);
+  });
+
+  it("matches the installed addon's private shape", async () => {
+    // Pins the private fields the check reads: the handler map exists on a
+    // fresh addon, and the bundle still assigns the decoder asynchronously.
+    const { ImageAddon } = await import("@xterm/addon-image");
+    expect((new ImageAddon() as unknown as { _handlers: unknown })._handlers).toBeInstanceOf(Map);
+    const { readFileSync } = await import("node:fs");
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const bundle = readFileSync(require.resolve("@xterm/addon-image"), "utf8");
+    expect(bundle).toMatch(/\.then\(\(?\w+\)?=>this\._dec=\w+\)/);
   });
 });

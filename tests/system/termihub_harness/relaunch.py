@@ -29,13 +29,64 @@ _CREATE_TIME_SLACK = 2.0
 
 
 def _same_file(a: Optional[str], b: Path) -> bool:
-    """Whether path ``a`` names the same file as ``b`` (resolving links)."""
+    """Whether path ``a`` names the same file as ``b``.
+
+    Compared by file identity (device + inode), not by spelling: on macOS the
+    app relaunches ``Contents/MacOS/<CFBundleExecutable>``, which can differ in
+    case from the path the harness launched (``termiHub`` vs ``termihub``) on a
+    case-insensitive volume, and ``realpath`` does not fold case. A spelling
+    mismatch made the harness miss the relaunched app (nightly 2026-10-07).
+    Falls back to comparing resolved paths when either file cannot be stat'ed.
+    """
     if not a:
         return False
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        pass
     try:
         return os.path.realpath(a) == os.path.realpath(b)
     except OSError:
         return False
+
+
+def describe_candidates(
+    binary: Path,
+    bridge_port: int,
+    processes: Optional[Iterable[psutil.Process]] = None,
+) -> list[str]:
+    """One line per process that looks like the app, for a failed adopt.
+
+    Lists every process whose executable name matches ``binary``'s (ignoring
+    case) with what the finder checks — the executable, whether it is the same
+    file, its start time and its bridge port — so a nightly that still misses a
+    relaunch shows which check rejected it.
+    """
+    candidates = processes if processes is not None else psutil.process_iter()
+    stem = binary.name.lower()
+    lines = []
+    for proc in candidates:
+        try:
+            exe = proc.exe()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
+            exe, error = None, type(exc).__name__
+        else:
+            error = ""
+        if not exe or Path(exe).name.lower() != stem:
+            continue
+        try:
+            port = proc.environ().get(BRIDGE_PORT_ENV)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as exc:
+            port = f"<{type(exc).__name__}>"
+        try:
+            created = f"{proc.create_time():.1f}"
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            created = "?"
+        lines.append(
+            f"pid={proc.pid} exe={exe} same_file={_same_file(exe, binary)} "
+            f"created={created} {BRIDGE_PORT_ENV}={port} (want {bridge_port}){error}"
+        )
+    return lines
 
 
 def find_relaunched_app(

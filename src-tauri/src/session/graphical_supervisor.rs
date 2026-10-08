@@ -91,7 +91,8 @@ use termihub_core::reconnect_backoff::{
 use crate::session::frame_guard::REJECTED_FRAMES_MESSAGE;
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_manager::{
-    cert_pump, cursor_pump, emit_state, frame_pump, GraphicalEventSink, PendingCert,
+    cert_pump, cursor_pump, emit_state, frame_pump, Activation, GraphicalEventSink, OnReactivated,
+    PendingCert,
 };
 use crate::session::rdp_trust_store::RdpTrustStore;
 
@@ -182,6 +183,9 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     /// Backoff jitter source: [`system_jitter`](termihub_core::reconnect_backoff::system_jitter)
     /// in production, a constant under the paused-time tests.
     pub(crate) jitter: fn() -> f64,
+    /// Run when a reconnected generation lifts the session back to `Active`
+    /// (#4230), so waiting side-channel transfers can resume.
+    pub(crate) on_reactivated: Option<OnReactivated>,
     pub(crate) sink: S,
 }
 
@@ -292,7 +296,10 @@ impl<S: GraphicalEventSink> Supervisor<S> {
                 self.pending_cert.clone(),
             ));
         }
-        let activate = reconnecting.then(|| self.state.clone());
+        let activate = reconnecting.then(|| Activation {
+            state: self.state.clone(),
+            on_active: self.on_reactivated.clone(),
+        });
         let end = frame_pump(
             self.session_id.clone(),
             generation.frames,

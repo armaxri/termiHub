@@ -70,11 +70,14 @@ class TestNetworkToolsAgentLive(
     def _cleanup_between_tests(self):
         yield
         self.dismiss_connection_error_if_present()
+        # The test ends on the Network Tools view, where the agent tree is not
+        # rendered: the disconnect's context menu can only open from the
+        # Connections sidebar (the teardown timed out on it, nightly 2026-10-07).
+        self.switch_to_connections_sidebar()
         for agent in self.remote_agents():
             if agent.get("connectionState") not in (None, "disconnected"):
                 self.disconnect_agent(agent["name"])
         self.close_all_tabs()
-        self.switch_to_connections_sidebar()
 
     # ── MT-NET-19: Open Ports run on a remote agent ──────────────────────────────
     def test_open_ports_on_agent_lists_agent_host_ports(self, desktop_probe_port: int):
