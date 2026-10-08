@@ -10,7 +10,11 @@
 //! fallback), a denied one, the connection ceiling, filesystem allow/deny for
 //! read / write / stat / list, a directory listing paged over several frames,
 //! and the host's denial events.
-#![cfg(all(feature = "plugin", unix))]
+//!
+//! Runs on every OS (#4240). Windows passes no sockets over the runner pipe
+//! yet (#4219), so there every connection takes the `StreamData` proxy path,
+//! and the tests prove the same behaviour over it.
+#![cfg(feature = "plugin")]
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -154,6 +158,7 @@ fn netecho(port: u16) -> serde_json::Value {
     serde_json::json!({ "probe": "netecho", "probeHost": "127.0.0.1", "probePort": port })
 }
 
+/// The socket is passed on Unix; Windows proxies it (#4219).
 #[tokio::test(flavor = "multi_thread")]
 async fn an_allowed_connection_reaches_the_peer_through_a_passed_socket() {
     let work = tempfile::TempDir::new().unwrap();
