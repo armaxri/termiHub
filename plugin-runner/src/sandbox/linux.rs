@@ -171,7 +171,7 @@ fn is_dir(fd: &PathFd) -> bool {
 /// system call the kernel takes the most severe verdict of all of them
 /// (`KILL_PROCESS` > `ERRNO` > `ALLOW`):
 ///
-/// 1. **allow-list** — [`allowed`] syscalls pass, everything else fails with
+/// 1. **allow-list** — [`allowed`](filters::allowed) syscalls pass, everything else fails with
 ///    `ENOSYS` (the conventional "not available here", which libraries fall
 ///    back from). `clone3` is deliberately absent: its flags sit behind a
 ///    pointer seccomp cannot inspect, and on `ENOSYS` glibc falls back to
