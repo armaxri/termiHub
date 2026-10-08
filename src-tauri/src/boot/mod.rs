@@ -458,10 +458,21 @@ pub(crate) fn init_session_managers(
     // A newer-format, unreadable or corrupt trust store is reported at startup
     // rather than only logged (#2745).
     recovery_warnings.extend(rdp_trust_store.take_load_warnings());
+    // An automatic reconnect of a saved VNC connection's session resumes the
+    // side-channel transfers waiting for it (#4230), like a fresh connect does.
+    let resume_app = app.handle().clone();
     let graphical_manager = crate::session::graphical_manager::GraphicalSessionManager::new(
         std::sync::Arc::new(build_desktop_registry()),
         rdp_trust_store,
-    );
+    )
+    .with_reactivated_hook(std::sync::Arc::new(move |connection_id: &str| {
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+            &resume_app,
+            crate::files::transfer::relaunch_auto::WaitTrigger::GraphicalSessionActive(
+                connection_id.to_string(),
+            ),
+        );
+    }));
     app.manage(graphical_manager);
 
     // SSH host-key verification (#1959): register the process-wide
