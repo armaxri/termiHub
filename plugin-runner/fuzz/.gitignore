@@ -1,0 +1,8 @@
+# cargo-fuzz build and run outputs. The corpus is regenerated from the real
+# encoder by `gen-seeds` and cached by the nightly lane, not committed; the
+# lockfile is local so fuzz-only deps never touch the workspace's audits.
+target/
+corpus/
+artifacts/
+coverage/
+Cargo.lock

@@ -30,7 +30,7 @@ members = [
 # `vendor/libunftp` is a [patch.crates-io] fork too (#4099), excluded for the
 # same reason: it keeps upstream's own rustfmt.toml and lint table, so its
 # sources stay byte-comparable with upstream.
-exclude = ["rdp-sidecar", "vendor/serial2", "vendor/libunftp"]
+exclude = ["rdp-sidecar", "vendor/serial2", "vendor/libunftp", "plugin-runner/fuzz"]
 resolver = "2"
 
 # Minimum supported Rust version (SUP-011), inherited by every first-party member
