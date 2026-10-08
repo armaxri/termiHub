@@ -45,7 +45,10 @@ fn assert_reencodes(message: &Message, me: Sender) {
         // with field names and may then exceed the 1 MiB frame cap. That is a
         // refusal, not a corruption.
         Err(ProtocolError::FrameTooLarge(_)) => return,
-        Err(err) => panic!("a decoded {:?} frame does not re-encode: {err}", message.kind()),
+        Err(err) => panic!(
+            "a decoded {:?} frame does not re-encode: {err}",
+            message.kind()
+        ),
     };
     let mut frames = FrameReader::new(encoded.as_slice());
     let frame = frames
@@ -53,7 +56,10 @@ fn assert_reencodes(message: &Message, me: Sender) {
         .expect("a re-encoded frame reads back")
         .expect("a re-encoded frame is not empty");
     let again = Message::decode_from_peer(frame, me).expect("a re-encoded frame decodes");
-    assert_eq!(&again, message, "decode -> encode -> decode changed the message");
+    assert_eq!(
+        &again, message,
+        "decode -> encode -> decode changed the message"
+    );
     assert!(
         matches!(frames.read_frame(), Ok(None)),
         "a re-encoded message is exactly one frame"
