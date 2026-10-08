@@ -685,6 +685,9 @@ impl PluginManager {
         // The plugin's private data directory (ABI 1.1 host context, #3576)
         // survives updates but not an uninstall.
         super::host_context::remove_plugin_data_dir(&self.root, id)?;
+        // Its Windows sandbox profile (the per-plugin AppContainer, #4187).
+        #[cfg(windows)]
+        super::sandbox::remove_app_container_profile(id);
 
         let mut state = self.read_state_store()?;
         state.plugins.remove(id);
@@ -2357,6 +2360,22 @@ mod tests {
             .plugins
             .contains_key("gone"));
         assert!(!mgr.read_state_store().unwrap().plugins.contains_key("gone"));
+    }
+
+    /// Windows: uninstall also deletes the plugin's AppContainer profile
+    /// (#4187).
+    #[cfg(windows)]
+    #[test]
+    fn uninstall_removes_the_appcontainer_profile() {
+        use termihub_plugin_runner::appcontainer::{profile_exists, AppContainer};
+        let (mgr, tmp) = manager();
+        let id = format!("ac-gone-{}", std::process::id());
+        let pkg = make_package(tmp.path(), &manifest_json(&id, "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        AppContainer::ensure(&id).unwrap();
+        assert!(profile_exists(&id).unwrap());
+        mgr.uninstall(&id).unwrap();
+        assert!(!profile_exists(&id).unwrap());
     }
 
     #[test]

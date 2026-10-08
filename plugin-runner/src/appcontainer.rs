@@ -195,6 +195,35 @@ pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
     check_hresult(hr, "DeleteAppContainerProfile")
 }
 
+/// Where Windows records each AppContainer profile, one subkey per SID.
+const PROFILE_MAPPINGS_KEY: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppContainer\Mappings";
+
+/// Whether plugin `plugin_id`'s AppContainer profile exists (its mapping is
+/// registered for the current user).
+pub fn profile_exists(plugin_id: &str) -> io::Result<bool> {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
+    let name = to_wide(app_container_name(plugin_id).as_ref())?;
+    let mut sid: PSID = std::ptr::null_mut();
+    // SAFETY: NUL-terminated name; `sid` receives a SID freed below.
+    let hr = unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &mut sid) };
+    check_hresult(hr, "DeriveAppContainerSidFromAppContainerName")?;
+    let sid = FreedSid(sid);
+    let key_path = format!(r"{PROFILE_MAPPINGS_KEY}\{}", sid_to_string(sid.0)?);
+    let wide = to_wide(key_path.as_ref())?;
+    let mut key: HKEY = std::ptr::null_mut();
+    // SAFETY: a predefined root, a NUL-terminated subkey, an out-pointer for
+    // a key closed below.
+    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, KEY_READ, &mut key) };
+    if status != 0 {
+        return Ok(false);
+    }
+    // SAFETY: the key opened above, closed once.
+    unsafe { RegCloseKey(key) };
+    Ok(true)
+}
+
 /// `HRESULT_FROM_WIN32`.
 fn hresult_from_win32(code: u32) -> i32 {
     if code == 0 {
@@ -427,6 +456,7 @@ mod tests {
         assert!(first.sid_string().starts_with("S-1-15-2-"), "{first:?}");
         let again = AppContainer::ensure(&id).unwrap();
         assert_eq!(first, again);
+        assert!(profile_exists(&id).unwrap());
 
         let tmp = tempfile::TempDir::new().unwrap();
         let wide = to_wide(tmp.path().as_os_str()).unwrap();
@@ -448,6 +478,7 @@ mod tests {
             .allows(first.sid(), READ_EXECUTE, NO_INHERITANCE));
 
         delete_profile(&id).unwrap();
+        assert!(!profile_exists(&id).unwrap());
         delete_profile(&id).unwrap();
     }
 }

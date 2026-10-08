@@ -11,6 +11,10 @@
 //!   `--ipc-handle`. The runner starts suspended inside a kill-on-close job
 //!   object carrying the [`ResourceLimits`], so it never outlives the host
 //!   (`termihub_plugin_runner::process`).
+//! * **Confinement (Windows, #4187):** a runner with a sandbox policy starts in
+//!   its plugin's Less-Privileged AppContainer (`super::appcontainer`), and the
+//!   pipe's DACL also admits that AppContainer's SID. On Unix the runner
+//!   confines itself after the handshake.
 //! * **Environment:** scrubbed to [`PASSED_ENV`] — no `SSH_AUTH_SOCK`, no
 //!   `TERMIHUB_*`, nothing else of the host's.
 //! * **Integrity (#4202):** the bundled runner is hashed through a retained
@@ -20,6 +24,7 @@
 use std::path::Path;
 
 use termihub_plugin_runner::ipc::ResourceLimits;
+use termihub_plugin_runner::sandbox::SandboxPolicy;
 
 use super::locate::{check_runner, confirm_runner};
 
@@ -50,6 +55,29 @@ pub(super) type HostChannel = std::os::unix::net::UnixStream;
 #[cfg(windows)]
 pub(super) type HostChannel = termihub_plugin_runner::ipc::pipe::PipeStream;
 
+/// The plugin a runner is confined for, when its configuration requests the
+/// OS sandbox.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(
+    not(windows),
+    allow(dead_code, reason = "read by the Windows spawn only")
+)]
+pub(super) struct RunnerSandbox<'a> {
+    /// The plugin id (names its Windows AppContainer).
+    pub(super) plugin_id: &'a str,
+    /// What the runner may access.
+    pub(super) policy: &'a SandboxPolicy,
+}
+
+/// What the host confines a runner with at spawn: the plugin's AppContainer
+/// on Windows; nothing on Unix, where the runner confines itself.
+#[cfg(windows)]
+type Confinement = termihub_plugin_runner::appcontainer::AppContainer;
+/// What the host confines a runner with at spawn: the plugin's AppContainer
+/// on Windows; nothing on Unix, where the runner confines itself.
+#[cfg(unix)]
+type Confinement = ();
+
 /// A freshly spawned runner and the host's end of its channel.
 pub(super) struct Spawned {
     pub(super) child: RunnerChild,
@@ -67,9 +95,14 @@ pub(super) fn scrubbed_env() -> Vec<(String, std::ffi::OsString)> {
 
 /// Spawn `runner` with its channel end, after the bundled runner passed its
 /// integrity check. `limits` bind the runner's job object on Windows; on Unix
-/// the runner applies them itself after the handshake.
-pub(super) fn spawn_runner(runner: &Path, limits: &ResourceLimits) -> Result<Spawned, HostError> {
-    spawn_checked(runner, check_runner(runner)?, limits)
+/// the runner applies them itself after the handshake. With a `sandbox`, a
+/// Windows runner starts in the plugin's AppContainer.
+pub(super) fn spawn_runner(
+    runner: &Path,
+    limits: &ResourceLimits,
+    sandbox: Option<RunnerSandbox<'_>>,
+) -> Result<Spawned, HostError> {
+    spawn_checked(runner, check_runner(runner)?, limits, sandbox)
 }
 
 /// Spawn `runner`; through `pinned` (and re-verified after the spawn) when it
@@ -78,6 +111,7 @@ fn spawn_checked(
     runner: &Path,
     pinned: Option<termihub_plugin_runner::loader::PinnedLibrary>,
     limits: &ResourceLimits,
+    sandbox: Option<RunnerSandbox<'_>>,
 ) -> Result<Spawned, HostError> {
     let unavailable = |detail: String| HostError::RunnerUnavailable {
         path: runner.to_owned(),
@@ -90,7 +124,9 @@ fn spawn_checked(
         Some(pinned) => pinned.load_path().map_err(|e| unavailable(e.to_string()))?,
         None => runner.to_owned(),
     };
-    let Spawned { mut child, stream } = start(&exec_path, runner, limits).map_err(unavailable)?;
+    let confinement = confinement(&exec_path, sandbox)?;
+    let Spawned { mut child, stream } =
+        start(&exec_path, runner, limits, confinement.as_ref()).map_err(unavailable)?;
     // The spawn returned once the image was mapped: re-hash the pinned file
     // before the runner is sent anything, and kill it if the file changed.
     if let Some(pinned) = &pinned {
@@ -103,10 +139,36 @@ fn spawn_checked(
     Ok(Spawned { child, stream })
 }
 
+/// Windows: prepare the plugin's AppContainer for a sandboxed runner.
+#[cfg(windows)]
+fn confinement(
+    exec_path: &Path,
+    sandbox: Option<RunnerSandbox<'_>>,
+) -> Result<Option<Confinement>, HostError> {
+    sandbox
+        .map(|sandbox| super::appcontainer::prepare(exec_path, sandbox.plugin_id, sandbox.policy))
+        .transpose()
+}
+
+/// Unix: the runner confines itself after the handshake.
+#[cfg(unix)]
+#[allow(clippy::unnecessary_wraps, reason = "the Windows twin can fail")]
+fn confinement(
+    _exec_path: &Path,
+    _sandbox: Option<RunnerSandbox<'_>>,
+) -> Result<Option<Confinement>, HostError> {
+    Ok(None)
+}
+
 /// Start `exec_path` (shown as `runner`) with its end of a fresh socketpair as
 /// descriptor 3.
 #[cfg(unix)]
-fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Spawned, String> {
+fn start(
+    exec_path: &Path,
+    runner: &Path,
+    _limits: &ResourceLimits,
+    _confinement: Option<&Confinement>,
+) -> Result<Spawned, String> {
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
     use std::os::unix::process::CommandExt;
@@ -165,25 +227,41 @@ fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Sp
 
 /// Start `exec_path` inside a kill-on-close job object bounded by `limits`,
 /// with its end of a fresh private pipe as its only inherited handle besides
-/// its standard handles (#4201).
+/// its standard handles (#4201) — and inside `container`, when given (#4187),
+/// whose SID the pipe's DACL then admits too.
 #[cfg(windows)]
-fn start(exec_path: &Path, _runner: &Path, limits: &ResourceLimits) -> Result<Spawned, String> {
+fn start(
+    exec_path: &Path,
+    _runner: &Path,
+    limits: &ResourceLimits,
+    container: Option<&Confinement>,
+) -> Result<Spawned, String> {
     use std::os::windows::io::AsHandle;
 
     use termihub_plugin_runner::ipc::pipe::PipeStream;
     use termihub_plugin_runner::ipc::{PROTOCOL_ARG, PROTOCOL_VERSION};
     use termihub_plugin_runner::process::{ChildStdio, RunnerCommand};
 
-    let (host_end, runner_end) =
-        PipeStream::pair().map_err(|e| format!("creating the runner pipe failed: {e}"))?;
-    let child = RunnerCommand::new(exec_path)
+    let sids: Vec<&str> = container.iter().map(|c| c.sid_string()).collect();
+    let (host_end, runner_end) = PipeStream::pair_with_access(&sids)
+        .map_err(|e| format!("creating the runner pipe failed: {e}"))?;
+    let mut command = RunnerCommand::new(exec_path);
+    command
         .arg(PROTOCOL_ARG)
         .arg(PROTOCOL_VERSION.to_string())
         .envs(scrubbed_env())
         // As on Unix: plugin stdout goes to the host's, stderr is forwarded.
         .stdout(ChildStdio::Inherit)
         .stderr(ChildStdio::Piped)
-        .limits(*limits)
+        .limits(*limits);
+    if let Some(container) = container {
+        command.app_container(container.clone());
+        // A working directory the AppContainer may open: its own folder.
+        if let Some(folder) = exec_path.parent() {
+            command.current_dir(folder);
+        }
+    }
+    let child = command
         .spawn(runner_end.as_handle())
         .map_err(|e| e.to_string())?;
     // The runner owns its end now; the host must not keep a copy, or the
@@ -275,7 +353,7 @@ mod tests {
     fn a_missing_runner_is_unavailable() {
         let tmp = tempfile::TempDir::new().unwrap();
         let missing = tmp.path().join("no-such-runner");
-        match spawn_runner(&missing, &ResourceLimits::default()) {
+        match spawn_runner(&missing, &ResourceLimits::default(), None) {
             Err(HostError::RunnerUnavailable { path, .. }) => assert_eq!(path, missing),
             Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
             Ok(_) => panic!("spawning a missing runner succeeded"),
@@ -312,7 +390,7 @@ mod tests {
         use termihub_plugin_runner::loader::PinnedLibrary;
         for _ in 0..50 {
             let pinned = PinnedLibrary::open_verified(path, digest).unwrap();
-            match spawn_checked(path, Some(pinned), &ResourceLimits::default()) {
+            match spawn_checked(path, Some(pinned), &ResourceLimits::default(), None) {
                 Err(HostError::RunnerUnavailable { detail, .. })
                     if detail.contains("Text file busy") =>
                 {
@@ -356,11 +434,15 @@ mod tests {
             hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
         );
         let pinned = PinnedLibrary::open_verified(&path, &digest).unwrap();
-        let Spawned { mut child, stream } =
-            match spawn_checked(&path, Some(pinned), &ResourceLimits::plugin_defaults()) {
-                Ok(spawned) => spawned,
-                Err(e) => panic!("pinned spawn failed: {e}"),
-            };
+        let Spawned { mut child, stream } = match spawn_checked(
+            &path,
+            Some(pinned),
+            &ResourceLimits::plugin_defaults(),
+            None,
+        ) {
+            Ok(spawned) => spawned,
+            Err(e) => panic!("pinned spawn failed: {e}"),
+        };
         child.wait().expect("the stand-in exits");
         assert_eq!((&stream).read(&mut [0u8; 1]).unwrap(), 0, "channel EOF");
     }
@@ -378,7 +460,7 @@ mod tests {
         std::fs::copy(&path, &swap).unwrap();
         std::fs::set_permissions(&swap, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::rename(&swap, &path).unwrap();
-        match spawn_checked(&path, Some(pinned), &ResourceLimits::default()) {
+        match spawn_checked(&path, Some(pinned), &ResourceLimits::default(), None) {
             Err(HostError::RunnerUnavailable { .. }) => {}
             Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
             Ok(_) => panic!("a swapped runner was spawned"),

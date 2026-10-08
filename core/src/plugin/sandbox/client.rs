@@ -32,7 +32,7 @@ use super::bridge::{BridgeDenial, BridgeGrant};
 use super::exit::RunnerExitCause;
 use super::handle::PluginRunnerConfig;
 use super::peer::{ExitHook, Reply, SessionSlot, Shared};
-use super::spawn::{spawn_runner, RunnerChild, Spawned};
+use super::spawn::{spawn_runner, RunnerChild, RunnerSandbox, Spawned};
 use super::writer::ChannelWriter;
 
 /// How long the runner may take to say `Hello` after spawn.
@@ -77,7 +77,14 @@ impl SandboxedPlugin {
         let Spawned {
             mut child,
             mut stream,
-        } = spawn_runner(&config.runner_path, &configure.limits)?;
+        } = spawn_runner(
+            &config.runner_path,
+            &configure.limits,
+            configure.sandbox.as_ref().map(|policy| RunnerSandbox {
+                plugin_id: &configure.plugin_id,
+                policy,
+            }),
+        )?;
         let stderr = child.stderr.take();
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
         if let Some(stderr) = stderr {
