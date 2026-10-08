@@ -240,7 +240,7 @@ pub(crate) fn unattended_settings(
 /// The auth method whose secret a connect of these settings needs
 /// (`"password"` or `"key"`, as [`resolve_credential`] takes it), or `None`
 /// when it needs none.
-fn needed_secret(
+pub(crate) fn needed_secret(
     type_id: &str,
     settings: &Value,
     key_is_encrypted: impl Fn(&str) -> bool,

@@ -263,14 +263,38 @@ pub async fn remote_desktop_connect(
 /// folder — or a typed reason there is none. Backend-enforced: an opted-out
 /// connection answers `unavailable`/`disabled`, a view-only one
 /// `unavailable`/`viewOnly`, a direct one `unavailable`/`noRoute`.
+///
+/// `linked_secret` is the password or key passphrase the user just entered in
+/// the password prompt for a linked SSH route that asked for it (#4265,
+/// `needsSecret`); it is kept in memory for the session only. When it makes
+/// the route ready, transfers a restart cut off that wait for this connection
+/// are resumed.
 #[tauri::command]
 pub async fn remote_desktop_file_channel(
     session_id: String,
+    linked_secret: Option<String>,
+    app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<RemoteDesktopFileChannel, TerminalError> {
     let agents: Arc<dyn AgentFiles> = Arc::new(agent_manager.inner().clone());
-    manager.file_channel(&session_id, Some(agents)).await
+    let supplied = linked_secret.filter(|s| !s.is_empty());
+    let supplied_any = supplied.is_some();
+    if let Some(secret) = supplied {
+        manager.supply_linked_secret(&session_id, secret).await?;
+    }
+    let channel = manager.file_channel(&session_id, Some(agents)).await?;
+    if supplied_any && matches!(channel, RemoteDesktopFileChannel::Ready { .. }) {
+        if let Some(connection_id) = manager.saved_connection_of(&session_id).await {
+            crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+                &app_handle,
+                crate::files::transfer::relaunch_auto::WaitTrigger::GraphicalSessionActive(
+                    connection_id,
+                ),
+            );
+        }
+    }
+    Ok(channel)
 }
 
 /// Upload local files and folders to a graphical session's file side channel

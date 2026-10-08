@@ -22,4 +22,11 @@ defaultDir: string, } | { "status": "degraded", channel: import("./FileSideChann
 /**
  * The user-facing reason.
  */
-message: string, } | { "status": "unavailable", reason: import("./FileChannelUnavailable").FileChannelUnavailable, };
+message: string, 
+/**
+ * A linked SSH route (#4194) that works once the user enters its
+ * password or key passphrase (#4265). The UI asks with the usual
+ * password prompt only when the user acts; unattended callers never
+ * ask.
+ */
+needsSecret?: import("./LinkedSecretRequest").LinkedSecretRequest, } | { "status": "unavailable", reason: import("./FileChannelUnavailable").FileChannelUnavailable, };

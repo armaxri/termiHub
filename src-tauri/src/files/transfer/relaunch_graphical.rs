@@ -180,10 +180,13 @@ impl LiveSideChannel {
             RemoteDesktopFileChannel::Ready {
                 channel, agent_id, ..
             } => Self::Ready(SideChannelIdentity::of(channel, agent_id.as_deref())),
+            // A linked route waiting for the user's password (#4265) is
+            // waited for like any other: a relaunch never asks for it.
             RemoteDesktopFileChannel::Degraded {
                 channel,
                 agent_id,
                 message,
+                ..
             } => Self::Degraded {
                 identity: SideChannelIdentity::of(channel, agent_id.as_deref()),
                 message: message.clone(),
