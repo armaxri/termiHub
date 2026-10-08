@@ -151,15 +151,15 @@ jobs:
           TERMIHUB_PLUGIN_LIBRARY_SHA256: ${{ steps.lib.outputs.sha256 }}
         run: cargo test -p termihub-core --features plugin --test plugin_package_load -- --nocapture
 
-      # Plugin OS sandbox (#4186, #4185): the escape-probe fixture runs inside
-      # the confined plugin runner and tries every forbidden operation; each
-      # must fail while the positive controls (data folder, install folder, a
-      # bridge connection through a passed socket) succeed. macOS asserts
-      # Seatbelt, Linux landlock + seccomp (and the simulated reduced path). A
-      # safety test: never moved to the post-merge lane. Windows has no runner
-      # transport yet (#4187).
+      # Plugin OS sandbox (#4186, #4185, #4187): the escape-probe fixture runs
+      # inside the confined plugin runner and tries every forbidden operation;
+      # each must fail while the positive controls (data folder, install
+      # folder, a bridge connection opened by the host) succeed. macOS asserts
+      # Seatbelt, Linux landlock + seccomp (and the simulated reduced path),
+      # Windows the Less-Privileged AppContainer + job object (incl.
+      # HKCU\Software, %USERPROFILE%, a named pipe, cmd.exe). A safety test:
+      # never moved to the post-merge lane.
       - name: Sandbox escape probe
-        if: runner.os != 'Windows'
         shell: bash
         run: cargo test -p termihub-core --features plugin --test plugin_runner_sandbox -- --nocapture
 
