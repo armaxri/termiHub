@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui
+status: fixed
+resolution: "#2748"
 evidence:
   - src/components/Sidebar/FileBrowser.tsx:1316
   - src/components/Sidebar/FileBrowser.tsx:1612
@@ -19,8 +21,6 @@ evidence:
   - src/components/Settings/ExternalFilesSettings.tsx:115
   - src/components/Sidebar/AgentSetupDialog.tsx:360
   - src/components/Sidebar/ConnectionPathDialog.tsx:188
-status: fixed
-resolution: "#2748"
 ---
 
 ## What

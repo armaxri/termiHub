@@ -6,6 +6,8 @@ severity: high
 category: docs
 is_workaround: false
 subsystem: README/user-docs
+status: fixed
+resolution: "#2723"
 evidence:
   - README.md:64
   - src-tauri/src/commands/update.rs:11
@@ -13,8 +15,6 @@ evidence:
   - core/src/plugin/host.rs:41
   - src-tauri/src/lib.rs:548
   - docs/plugin-authoring.md:189
-status: fixed
-resolution: "#2723"
 ---
 
 ## What

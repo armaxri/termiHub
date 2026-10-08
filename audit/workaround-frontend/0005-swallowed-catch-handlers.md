@@ -6,6 +6,8 @@ severity: medium
 category: workaround
 is_workaround: true
 subsystem: components / hooks / store (widespread)
+status: fixed
+resolution: "#2732+#2751 — critical + remainder via fireAndForget"
 evidence:
   - src/store/appStore.ts:1901
   - src/store/appStore.ts:1916
@@ -14,23 +16,23 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1051
   - src/hooks/useConnectSavedConnection.ts:172
   - src/components/Sidebar/AgentNode.tsx:873
-status: fixed
-resolution: "#2732+#2751 — critical + remainder via fireAndForget"
 ---
 
 ## What
+
 About 40 production call sites attach a no-op rejection handler, `.catch(() => {})`, to async
 operations — many on genuinely important paths (closing sessions, detaching persistent tabs,
 disconnecting agents, cancelling connects, removing credentials). Example:
 
 ```ts
-apiDetachPersistentTab(sessionId, tab.id).catch(() => {});   // appStore.ts:1916
-apiCloseTerminal(sessionId).catch(() => {});                 // appStore.ts:1918
-apiDisconnectAgent(agentId).catch(() => {});                 // appStore.ts:6204
+apiDetachPersistentTab(sessionId, tab.id).catch(() => {}); // appStore.ts:1916
+apiCloseTerminal(sessionId).catch(() => {}); // appStore.ts:1918
+apiDisconnectAgent(agentId).catch(() => {}); // appStore.ts:6204
 removeCredential(agent.id, resolution.credentialType).catch(() => {}); // AgentNode.tsx:873
 ```
 
 ## Why it matters
+
 - A silently-swallowed rejection means a failed cleanup (session not actually closed, credential
   not actually removed, agent not actually disconnected) produces **no log, no toast, no trace**.
   For a tool whose CLAUDE.md mandates "every action gives feedback" and routes all diagnostics to
@@ -41,6 +43,7 @@ removeCredential(agent.id, resolution.credentialType).catch(() => {}); // AgentN
   the blanket pattern is the problem.
 
 ## Evidence
+
 Representative sites listed above; full set (~40) spans `store/appStore.ts` (1901, 1916, 1918,
 3442-3443, 3877, 6204), `OpenConnections/OpenConnectionsModal.tsx` (295-498, many),
 `Terminal/Terminal.tsx` (1051, 1505), `Terminal/FileBrowserTab.tsx` (73, 99),
@@ -49,6 +52,7 @@ Representative sites listed above; full set (~40) spans `store/appStore.ts` (190
 `RecentSessionsSidebar/RecentSessionsSidebar.tsx` (120), and others.
 
 ## Recommendation
+
 Replace `.catch(() => {})` with `.catch((err) => frontendLog("<module>", ...))` at minimum so
 failures are visible in the LogViewer, and surface a recoverable error (toast) on user-initiated
 mutating actions (close/disconnect/remove-credential). Keep a genuinely-inert best-effort only
