@@ -1020,3 +1020,10 @@ plugin-side migration callback in 0.1.
   child processes; it must answer the host's ping within 10 s, so do not block
   `write_input` / `resize` / `close` for long. Three crashes are restarted; the
   fourth within 10 minutes disables the plugin until the user re-enables it.
+  On macOS the runner also confines itself with an OS sandbox (Seatbelt)
+  before your library is loaded: your plugin can read its install folder,
+  read and write its private data folder (`HOME` and `TMPDIR` point inside
+  it), and nothing else — no other files, no network sockets of its own (use
+  the bridge's `open_connection`), no child processes. Paths are matched after
+  symlinks are resolved, so use the data folder path termiHub hands you.
+  Linux and Windows follow.
