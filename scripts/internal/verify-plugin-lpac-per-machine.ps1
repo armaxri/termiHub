@@ -176,8 +176,16 @@ $inner = Join-Path $stage 'run-as-user.ps1'
 param([string]$Runner, [string]$Lib, [string]$Exe, [string]$Test, [string]$Out)
 $ErrorActionPreference = 'Stop'
 try {
-    $local = [Environment]::GetFolderPath('LocalApplicationData')
-    $temp = Join-Path $local 'Temp'
+    # Start-Process -Credential hands this process the caller's environment,
+    # so every profile path in it is the administrator's: rebuild them from
+    # this user's own profile (by SID, from the profile list).
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $profileKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+    $userProfile = (Get-ItemProperty -LiteralPath $profileKey).ProfileImagePath
+    $env:USERPROFILE = $userProfile
+    $env:APPDATA = Join-Path $userProfile 'AppData\Roaming'
+    $env:LOCALAPPDATA = Join-Path $userProfile 'AppData\Local'
+    $temp = Join-Path $env:LOCALAPPDATA 'Temp'
     New-Item -ItemType Directory -Force -Path $temp | Out-Null
     $env:TEMP = $temp
     $env:TMP = $temp
@@ -240,6 +248,9 @@ try {
     $codeFile = Join-Path $OutDir 'exit-code.txt'
     if (-not (Test-Path -LiteralPath $codeFile)) {
         throw 'the harness never ran as the test user (no exit-code.txt)'
+    }
+    if (Test-Path -LiteralPath (Join-Path $OutDir 'wrapper-error.txt')) {
+        throw 'the user-side wrapper failed (see wrapper-error.txt above)'
     }
     $identity = Get-Content -Raw -LiteralPath (Join-Path $OutDir 'identity.txt')
     if ($identity -notmatch [regex]::Escape($userName) -or $identity -notmatch 'administrator: False') {
