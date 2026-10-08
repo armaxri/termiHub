@@ -50,6 +50,12 @@ pub mod layer {
     pub const LANDLOCK: &str = "landlock";
     /// Linux seccomp-bpf system-call filter (#4185).
     pub const SECCOMP: &str = "seccomp";
+    /// Linux unprivileged user + network + IPC namespace (#4237). Optional
+    /// defence in depth: listed as enforced where the system allows
+    /// unprivileged user namespaces, never listed as missing and never
+    /// required, so it does not change the [`Isolation`](super::Isolation)
+    /// class.
+    pub const NETNS: &str = "netns";
     /// Windows Less-Privileged AppContainer (#4187).
     pub const APPCONTAINER: &str = "appcontainer";
     /// Windows job object (#4187).
@@ -117,8 +123,8 @@ pub struct SandboxPolicy {
     #[serde(default)]
     pub denied_dirs: Vec<String>,
     /// Test hook: layers the runner must treat as unavailable on this system
-    /// (only `landlock` is understood, on Linux), to exercise the
-    /// reduced-isolation path on any kernel. Set by a debug-build host from
+    /// (`landlock` and `netns` are understood, on Linux), to exercise the
+    /// reduced-isolation path and the no-namespace path on any kernel. Set by a debug-build host from
     /// [`SIMULATE_MISSING_ENV`]; a release-build runner ignores it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub simulate_missing: Vec<String>,
@@ -263,9 +269,13 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 ))]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
-    let skip_landlock =
-        cfg!(debug_assertions) && policy.simulate_missing.iter().any(|l| l == layer::LANDLOCK);
-    linux::apply(policy, skip_landlock)
+    let simulated =
+        |name: &str| cfg!(debug_assertions) && policy.simulate_missing.iter().any(|l| l == name);
+    let skip = linux::Skip {
+        landlock: simulated(layer::LANDLOCK),
+        namespaces: simulated(layer::NETNS),
+    };
+    linux::apply(policy, skip)
 }
 
 /// Linux on an architecture the seccomp filter has no syscall table for:

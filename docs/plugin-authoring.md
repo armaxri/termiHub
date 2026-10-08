@@ -1043,9 +1043,13 @@ plugin-side migration callback in 0.1.
   refused call on such a thread ends the runner), and installing your own
   `SIGSYS` handler fails with `EPERM`. A kernel without landlock (older than 5.13)
   still gets the system-call filter but no file confinement; termiHub reports
-  that as reduced isolation. On Windows the runner starts inside a
-  per-plugin Less-Privileged AppContainer with no capabilities, inside a job
-  object: it can read its install folder and the system libraries, read and
+  that as reduced isolation. Where the system allows unprivileged user
+  namespaces, the Linux runner also moves into its own user and network
+  namespace (no network interface is up; your uid and gid stay the same, and
+  sockets the bridge hands you work normally); where it does not, this extra
+  layer is skipped and the isolation level is unaffected. On Windows the
+  runner starts inside a per-plugin Less-Privileged AppContainer with no
+  capabilities, inside a job object: it can read its install folder and the system libraries, read and
   write its data folder (`HOME`, `TMP` and `TEMP` point inside it), and
   nothing else — not your user profile, not `HKCU\Software`, no network, no
   child processes (`ERROR_CHILD_PROCESS_BLOCKED`). Winsock cannot start there,

@@ -267,15 +267,15 @@ fn macos_applies_seatbelt_before_the_load() {
 /// is attempted; the load then fails normally (the library does not exist),
 /// and the `LoadFailed` frame still reaches the host through the confined
 /// channel (#4185).
+///
+/// The optional `netns` layer (#4237) is listed exactly where this system
+/// allows unprivileged user namespaces.
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_applies_landlock_and_seccomp_before_the_load() {
     let report = linux_report_for(Vec::new());
     assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
-    assert_eq!(
-        report.enforced,
-        vec!["seccomp".to_owned(), "landlock".to_owned()]
-    );
+    assert_eq!(report.enforced, with_netns(&["seccomp", "landlock"]));
 }
 
 /// Linux: the debug-only `simulate_missing` hook forces the reduced path —
@@ -285,8 +285,35 @@ fn linux_applies_landlock_and_seccomp_before_the_load() {
 fn linux_reports_reduced_isolation_without_landlock() {
     let report = linux_report_for(vec!["landlock".to_owned()]);
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
-    assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
+    assert_eq!(report.enforced, with_netns(&["seccomp"]));
     assert_eq!(report.missing, vec!["landlock".to_owned()]);
+}
+
+/// Linux: the namespace layer is optional (#4237). Without it — simulated
+/// with the debug-only hook, as on a system that forbids unprivileged user
+/// namespaces — isolation stays **full** and `netns` is not listed as
+/// missing.
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn linux_namespaces_are_an_optional_layer() {
+    let report = linux_report_for(vec!["netns".to_owned()]);
+    assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+    assert_eq!(
+        report.enforced,
+        vec!["seccomp".to_owned(), "landlock".to_owned()]
+    );
+    assert!(report.missing.is_empty(), "{report:?}");
+}
+
+/// `layers`, plus `netns` where this system lets the runner enter it.
+#[cfg(target_os = "linux")]
+fn with_netns(layers: &[&str]) -> Vec<String> {
+    let mut expected: Vec<String> = layers.iter().map(|l| (*l).to_owned()).collect();
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if termihub_plugin_runner::sandbox::linux::namespaces::available() {
+        expected.push("netns".to_owned());
+    }
+    expected
 }
 
 /// Run the handshake with a valid Linux policy and return the sandbox report;
