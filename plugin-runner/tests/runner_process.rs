@@ -109,6 +109,7 @@ fn a_library_that_cannot_load_is_reported_then_the_runner_exits() {
         // The limits are applied before the load, so they must not break it.
         limits: ResourceLimits::plugin_defaults(),
         sandbox: None,
+        accept_reduced_isolation: false,
     });
     host.write_all(&configure.encode().unwrap()).unwrap();
     assert!(matches!(next(&host), Message::SandboxReport(_)));
@@ -148,6 +149,14 @@ fn a_frame_only_the_runner_may_send_is_a_violation() {
 }
 
 fn configure_with(library_path: &str, sandbox: Option<SandboxPolicy>) -> Message {
+    configure_accepting(library_path, sandbox, false)
+}
+
+fn configure_accepting(
+    library_path: &str,
+    sandbox: Option<SandboxPolicy>,
+    accept_reduced_isolation: bool,
+) -> Message {
     Message::Configure(Configure {
         library_path: library_path.into(),
         expected_digest: None,
@@ -157,6 +166,7 @@ fn configure_with(library_path: &str, sandbox: Option<SandboxPolicy>) -> Message
         host_version: "0.0.0".into(),
         limits: ResourceLimits::plugin_defaults(),
         sandbox,
+        accept_reduced_isolation,
     })
 }
 
@@ -229,7 +239,7 @@ fn macos_applies_seatbelt_before_the_load() {
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_applies_landlock_and_seccomp_before_the_load() {
-    let report = linux_report_for(Vec::new());
+    let report = linux_report_for(Vec::new(), false);
     assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
     assert_eq!(
         report.enforced,
@@ -238,20 +248,35 @@ fn linux_applies_landlock_and_seccomp_before_the_load() {
 }
 
 /// Linux: the debug-only `simulate_missing` hook forces the reduced path —
-/// seccomp enforced, landlock reported missing (#4185).
+/// seccomp enforced, landlock reported missing (#4185). With the
+/// `reducedIsolationAccepted` acknowledgement the load is attempted (#4188).
 #[cfg(all(target_os = "linux", debug_assertions))]
 #[test]
 fn linux_reports_reduced_isolation_without_landlock() {
-    let report = linux_report_for(vec!["landlock".to_owned()]);
+    let report = linux_report_for(vec!["landlock".to_owned()], true);
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
     assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
     assert_eq!(report.missing, vec!["landlock".to_owned()]);
 }
 
-/// Run the handshake with a valid Linux policy and return the sandbox report;
-/// asserts the load then fails cleanly (`LoadFailed`, exit code 3).
+/// Linux: without the acknowledgement, reduced isolation is reported and the
+/// runner exits without even attempting the load (#4188).
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn linux_refuses_reduced_isolation_without_the_acknowledgement() {
+    let report = linux_report_for(vec!["landlock".to_owned()], false);
+    assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+}
+
+/// Run the handshake with a valid Linux policy and return the sandbox report.
+/// Asserts the load then fails cleanly (`LoadFailed`, exit code 3) — or, for
+/// reduced isolation without `accept_reduced`, that the runner exits with
+/// code 5 before any load.
 #[cfg(target_os = "linux")]
-fn linux_report_for(simulate_missing: Vec<String>) -> termihub_plugin_runner::ipc::SandboxReport {
+fn linux_report_for(
+    simulate_missing: Vec<String>,
+    accept_reduced: bool,
+) -> termihub_plugin_runner::ipc::SandboxReport {
     let tmp = tempfile::TempDir::new().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let install = root.join("install");
@@ -268,7 +293,7 @@ fn linux_report_for(simulate_missing: Vec<String>) -> termihub_plugin_runner::ip
     assert!(matches!(next(&host), Message::Hello(_)));
     let lib = install.join("libmissing.so");
     host.write_all(
-        &configure_with(lib.to_str().unwrap(), Some(policy))
+        &configure_accepting(lib.to_str().unwrap(), Some(policy), accept_reduced)
             .encode()
             .unwrap(),
     )
@@ -277,7 +302,11 @@ fn linux_report_for(simulate_missing: Vec<String>) -> termihub_plugin_runner::ip
         Message::SandboxReport(report) => report,
         other => panic!("expected SandboxReport, got {other:?}"),
     };
-    assert!(matches!(next(&host), Message::LoadFailed(_)));
-    assert_eq!(wait_exit(&mut child).code(), Some(3));
+    if report.isolation() == Isolation::Reduced && !accept_reduced {
+        assert_eq!(wait_exit(&mut child).code(), Some(5));
+    } else {
+        assert!(matches!(next(&host), Message::LoadFailed(_)));
+        assert_eq!(wait_exit(&mut child).code(), Some(3));
+    }
     report
 }

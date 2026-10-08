@@ -30,6 +30,7 @@ fn sample_messages() -> Vec<Message> {
                 denied_dirs: vec!["/home/u".into()],
                 simulate_missing: vec!["landlock".into()],
             }),
+            accept_reduced_isolation: true,
         }),
         Message::SandboxReport(SandboxReport::default()),
         Message::SandboxReport(SandboxReport {

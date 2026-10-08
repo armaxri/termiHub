@@ -51,18 +51,40 @@ use super::signature::now_rfc3339;
 pub const NATIVE_TRUST_FILE_NAME: &str = "native-plugin-trust.json";
 
 /// The plain-language informed-consent disclosure the trust-acknowledgment
-/// surface must show before a user enables or trusts a native plugin.
+/// surface shows when native plugins run **out of process in the OS sandbox**
+/// (plugin OS-sandbox concept, phase 6, #4188).
 ///
-/// It states the honest security posture the maintainer decision rests on:
-/// native plugins run **in-process with full application privileges and no OS
-/// sandbox**. The frontend renders this verbatim so the disclosure and the gate
-/// can never drift apart.
-pub const NATIVE_TRUST_DISCLOSURE: &str = "Native plugins run inside termiHub with the full \
-     privileges of the application itself. There is no operating-system sandbox around them, so a \
-     native plugin can read and modify anything termiHub can — your connections, credentials, and \
-     files. Only enable and trust native plugins you have obtained from a source you trust. \
-     Sandbox hardening is planned for a future release; until then, this trust is your only \
-     protection.";
+/// It is honest about both halves: the sandbox limits what a plugin can
+/// *reach* (its own data folder plus the access its manifest lists, every
+/// network or file request checked by termiHub), but not what it *shows* — a
+/// trusted plugin still draws its own terminal and could phish there. The
+/// frontend renders this verbatim so the disclosure and the gate cannot drift.
+pub const NATIVE_TRUST_DISCLOSURE: &str = "Native plugins run in a separate, sandboxed process. \
+     A plugin can only use its own data folder and the access listed below; termiHub checks every \
+     network or file request it makes. Only trust plugins from sources you trust: a plugin still \
+     controls what appears in its terminal.";
+
+/// The disclosure shown while native plugins still load **inside termiHub**
+/// (no out-of-process runner: the in-process path, which survives only until
+/// the sandbox cut-over, concept phase 7). States the honest posture: full
+/// application privileges and no OS sandbox.
+pub const NATIVE_TRUST_DISCLOSURE_IN_PROCESS: &str = "Native plugins run inside termiHub with \
+     the full privileges of the application itself. There is no operating-system sandbox around \
+     them, so a native plugin can read and modify anything termiHub can — your connections, \
+     credentials, and files. Only enable and trust native plugins you have obtained from a source \
+     you trust.";
+
+/// The disclosure that matches how native plugins run on this host:
+/// [`NATIVE_TRUST_DISCLOSURE`] when they run out of process in the sandbox,
+/// [`NATIVE_TRUST_DISCLOSURE_IN_PROCESS`] otherwise.
+#[must_use]
+pub fn native_trust_disclosure(out_of_process: bool) -> &'static str {
+    if out_of_process {
+        NATIVE_TRUST_DISCLOSURE
+    } else {
+        NATIVE_TRUST_DISCLOSURE_IN_PROCESS
+    }
+}
 
 /// Errors persisting the native-plugin trust store. Read failures never surface
 /// as an error — an unreadable store **fails closed** to "nothing trusted" (see
@@ -98,6 +120,26 @@ pub struct NativeAck {
     /// including for every acknowledgment recorded before the field existed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unverified_toolchain_accepted: bool,
+    /// Whether the user **explicitly accepted** that this system cannot apply
+    /// every OS sandbox layer to this plugin (plugin OS-sandbox concept,
+    /// "Trust after the sandbox", #4188) — for example Linux without landlock,
+    /// where file access cannot be restricted. Without it the host refuses a
+    /// plugin whose runner reports reduced isolation. Same fail-closed rules as
+    /// [`unverified_toolchain_accepted`](Self::unverified_toolchain_accepted):
+    /// **absent → `false`**, a plain or older acknowledgment never carries it,
+    /// and a changed binary loses it with the rest of the acknowledgment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reduced_isolation_accepted: bool,
+}
+
+/// The explicit risk acceptances a trust acknowledgment records alongside the
+/// library hash. Both default to `false` (fail closed).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AckAcceptances {
+    /// Accept an unverifiable (ABI 1.0) build toolchain (#3576).
+    pub unverified_toolchain: bool,
+    /// Accept reduced OS-sandbox isolation on this system (#4188).
+    pub reduced_isolation: bool,
 }
 
 /// The persisted `native-plugin-trust.json` document: the global default-OFF
@@ -183,6 +225,20 @@ impl NativeTrustStore {
                 .is_some_and(|ack| ack.unverified_toolchain_accepted)
     }
 
+    /// Whether plugin `id`'s acknowledgment for exactly this library hash also
+    /// records the user's explicit acceptance of **reduced sandbox isolation**
+    /// (#4188). Implies [`is_acknowledged`](Self::is_acknowledged); `false` in
+    /// every other case, including while native plugins are off.
+    #[must_use]
+    pub fn accepts_reduced_isolation(&self, id: &str, library_sha256: &str) -> bool {
+        self.is_acknowledged(id, library_sha256)
+            && self
+                .doc
+                .acks
+                .get(id)
+                .is_some_and(|ack| ack.reduced_isolation_accepted)
+    }
+
     /// The acknowledgment recorded for `id`, if any (regardless of the global
     /// flag) — for the settings surface that lists trusted native plugins.
     #[must_use]
@@ -234,12 +290,33 @@ impl NativeTrustStore {
         library_sha256: impl Into<String>,
         accept_unverified_toolchain: bool,
     ) -> Result<(), NativeTrustError> {
+        self.acknowledge_with(
+            id,
+            library_sha256,
+            AckAcceptances {
+                unverified_toolchain: accept_unverified_toolchain,
+                reduced_isolation: false,
+            },
+        )
+    }
+
+    /// Record (or refresh) the trust acknowledgment for `id` bound to
+    /// `library_sha256`, together with the explicit risk `acceptances`, and
+    /// persist. Every acceptance is part of the hash-bound acknowledgment, so a
+    /// changed binary loses all of them; re-acknowledging replaces them.
+    pub fn acknowledge_with(
+        &mut self,
+        id: &str,
+        library_sha256: impl Into<String>,
+        acceptances: AckAcceptances,
+    ) -> Result<(), NativeTrustError> {
         self.doc.acks.insert(
             id.to_owned(),
             NativeAck {
                 library_sha256: library_sha256.into(),
                 acknowledged_at: now_rfc3339(),
-                unverified_toolchain_accepted: accept_unverified_toolchain,
+                unverified_toolchain_accepted: acceptances.unverified_toolchain,
+                reduced_isolation_accepted: acceptances.reduced_isolation,
             },
         );
         self.save()
@@ -412,6 +489,71 @@ mod tests {
         let store = NativeTrustStore::load(tmp.path());
         assert!(store.is_acknowledged("old", "hash-A"));
         assert!(!store.accepts_unverified_toolchain("old", "hash-A"));
+    }
+
+    #[test]
+    fn reduced_isolation_acceptance_is_explicit_hash_bound_and_persisted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut store = NativeTrustStore::load(tmp.path());
+        store.set_native_enabled(true).unwrap();
+
+        // A plain acknowledgment never accepts reduced isolation (#4188).
+        store.acknowledge("p", "hash-A").unwrap();
+        assert!(!store.accepts_reduced_isolation("p", "hash-A"));
+        // Neither does a toolchain-only acceptance.
+        store
+            .acknowledge_with_toolchain_acceptance("p", "hash-A", true)
+            .unwrap();
+        assert!(!store.accepts_reduced_isolation("p", "hash-A"));
+
+        let both = AckAcceptances {
+            unverified_toolchain: true,
+            reduced_isolation: true,
+        };
+        store.acknowledge_with("p", "hash-A", both).unwrap();
+        assert!(store.accepts_reduced_isolation("p", "hash-A"));
+        assert!(store.accepts_unverified_toolchain("p", "hash-A"));
+        // Bound to the exact library and plugin.
+        assert!(!store.accepts_reduced_isolation("p", "hash-B"));
+        assert!(!store.accepts_reduced_isolation("other", "hash-A"));
+
+        // Survives a reload, and serialises under the concept's field name.
+        let reloaded = NativeTrustStore::load(tmp.path());
+        assert!(reloaded.accepts_reduced_isolation("p", "hash-A"));
+        let raw = std::fs::read_to_string(tmp.path().join(NATIVE_TRUST_FILE_NAME)).unwrap();
+        assert!(raw.contains("\"reducedIsolationAccepted\": true"), "{raw}");
+
+        // Withdrawn by a plain re-acknowledgment, and void while native plugins are off.
+        store.acknowledge("p", "hash-A").unwrap();
+        assert!(!store.accepts_reduced_isolation("p", "hash-A"));
+        store.acknowledge_with("p", "hash-A", both).unwrap();
+        store.set_native_enabled(false).unwrap();
+        assert!(!store.accepts_reduced_isolation("p", "hash-A"));
+    }
+
+    #[test]
+    fn an_older_acknowledgment_reads_as_reduced_isolation_not_accepted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(NATIVE_TRUST_FILE_NAME),
+            r#"{"nativePluginsEnabled":true,"acks":{"p":{"librarySha256":"h","acknowledgedAt":"t","unverifiedToolchainAccepted":true}}}"#,
+        )
+        .unwrap();
+        let store = NativeTrustStore::load(tmp.path());
+        assert!(store.is_acknowledged("p", "h"));
+        assert!(!store.accepts_reduced_isolation("p", "h"));
+    }
+
+    #[test]
+    fn the_disclosure_matches_how_plugins_run() {
+        assert_eq!(native_trust_disclosure(true), NATIVE_TRUST_DISCLOSURE);
+        assert!(NATIVE_TRUST_DISCLOSURE.contains("sandboxed process"));
+        assert!(NATIVE_TRUST_DISCLOSURE.contains("what appears in its terminal"));
+        let in_process = native_trust_disclosure(false);
+        assert!(
+            in_process.contains("no operating-system sandbox"),
+            "{in_process}"
+        );
     }
 
     #[test]

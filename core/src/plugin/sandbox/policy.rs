@@ -78,9 +78,11 @@ fn parse_simulate_missing(value: Option<&str>) -> Vec<String> {
 
 /// Accept or refuse a runner's report for a requested sandbox: a failed setup,
 /// or a layer this platform requires that is not enforced, refuses the plugin.
-/// Reduced isolation is accepted for now (the `reducedIsolationAccepted`
-/// acknowledgement gate is a later phase).
-pub(super) fn check_report(report: &SandboxReport) -> Result<(), HostError> {
+/// Reduced isolation (an optional layer missing) is accepted only when the
+/// hash-bound trust acknowledgement records `reducedIsolationAccepted`
+/// (`accept_reduced`, #4188) — the runner refuses it as well, but the host
+/// does not take an untrusted peer's word for it.
+pub(super) fn check_report(report: &SandboxReport, accept_reduced: bool) -> Result<(), HostError> {
     if let Some(failed) = &report.failed {
         return Err(HostError::SandboxSetupFailed(failed.clone()));
     }
@@ -90,9 +92,14 @@ pub(super) fn check_report(report: &SandboxReport) -> Result<(), HostError> {
         )));
     }
     if report.isolation() == Isolation::Reduced {
+        if !accept_reduced {
+            return Err(HostError::ReducedIsolationNotAccepted {
+                missing: report.missing.clone(),
+            });
+        }
         tracing::warn!(
             target: crate::plugin::PLUGIN_LOG_TARGET,
-            "plugin runner reports reduced isolation, missing: {}",
+            "plugin runner reports reduced isolation (accepted), missing: {}",
             report.missing.join(", ")
         );
     }
@@ -151,23 +158,63 @@ mod tests {
             failed: Some("denied by the kernel".into()),
             ..SandboxReport::default()
         };
-        assert!(matches!(
-            check_report(&failed),
-            Err(HostError::SandboxSetupFailed(m)) if m.contains("denied by the kernel")
-        ));
+        // Neither acceptance turns a failed setup into a load.
+        for accept in [false, true] {
+            assert!(matches!(
+                check_report(&failed, accept),
+                Err(HostError::SandboxSetupFailed(m)) if m.contains("denied by the kernel")
+            ));
+        }
         let full = SandboxReport::enforced(required_layers());
-        assert!(check_report(&full).is_ok());
+        assert!(check_report(&full, false).is_ok());
         let nothing = SandboxReport::default();
         assert_eq!(
-            check_report(&nothing).is_err(),
+            check_report(&nothing, true).is_err(),
             !required_layers().is_empty()
         );
+    }
+
+    #[test]
+    fn reduced_isolation_needs_the_acknowledgement() {
+        // Every required layer enforced, an optional one missing.
+        let mut enforced: Vec<String> = required_layers().iter().map(|l| (*l).to_owned()).collect();
+        if enforced.is_empty() {
+            enforced.push(layer::SECCOMP.to_owned());
+        }
         let reduced = SandboxReport {
+            enforced,
             missing: vec![layer::LANDLOCK.into()],
-            ..SandboxReport::enforced(required_layers())
+            failed: None,
         };
-        // Reduced is not refused here (the acknowledgement gate is later),
-        // as long as every required layer is enforced.
-        assert!(check_report(&reduced).is_ok());
+        assert_eq!(reduced.isolation(), Isolation::Reduced);
+        // Fail closed without the hash-bound `reducedIsolationAccepted` (#4188)…
+        match check_report(&reduced, false) {
+            Err(HostError::ReducedIsolationNotAccepted { missing }) => {
+                assert_eq!(missing, vec![layer::LANDLOCK.to_owned()]);
+            }
+            other => panic!("expected ReducedIsolationNotAccepted, got {other:?}"),
+        }
+        let message = check_report(&reduced, false).unwrap_err().to_string();
+        assert!(message.contains("landlock"), "{message}");
+        // …and load once it is accepted.
+        assert!(check_report(&reduced, true).is_ok());
+    }
+
+    #[test]
+    fn a_missing_required_layer_is_never_accepted_as_reduced() {
+        // Only an optional layer may be missing: a required one fails even
+        // with the acceptance (seatbelt on macOS, seccomp on Linux).
+        let Some(required) = required_layers().first() else {
+            return;
+        };
+        let report = SandboxReport {
+            enforced: vec!["something-else".into()],
+            missing: vec![(*required).to_owned()],
+            failed: None,
+        };
+        assert!(matches!(
+            check_report(&report, true),
+            Err(HostError::SandboxSetupFailed(_))
+        ));
     }
 }

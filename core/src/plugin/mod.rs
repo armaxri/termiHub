@@ -130,7 +130,8 @@ pub use manifest::{
     ThemeEntry, ThemeExtension, WidgetPosition,
 };
 pub use native_trust::{
-    native_library_hash, NativeAck, NativeTrustError, NativeTrustStore, NATIVE_TRUST_DISCLOSURE,
+    native_library_hash, native_trust_disclosure, AckAcceptances, NativeAck, NativeTrustError,
+    NativeTrustStore, NATIVE_TRUST_DISCLOSURE, NATIVE_TRUST_DISCLOSURE_IN_PROCESS,
     NATIVE_TRUST_FILE_NAME,
 };
 pub use pack::{

@@ -8,7 +8,8 @@
 //! runner         resource limits     (setrlimit, #4184)
 //! runner         OS sandbox          (Configure.sandbox: Seatbelt on macOS, #4186;
 //!                                     landlock + seccomp on Linux, #4185)
-//! runner → host  SandboxReport      (then exit if the sandbox setup failed)
+//! runner → host  SandboxReport      (then exit if the sandbox setup failed, or
+//!                                    if isolation is reduced and not accepted)
 //! runner         dlopen + gates      (ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)
 //! ...            CreateSession / Input / Resize / Close / Cancel / Ping
@@ -49,6 +50,7 @@ use termihub_plugin_runner::ipc::{
 use termihub_plugin_runner::loader::{
     prepare_plugin_library, BackendLoadOptions, PluginLibrary, PreparedLibrary,
 };
+use termihub_plugin_runner::sandbox::Isolation;
 
 use bridge::BridgeClient;
 pub(crate) use channel::Channel;
@@ -76,6 +78,10 @@ pub(crate) mod exit {
     /// The OS sandbox could not be applied; a failed `SandboxReport` was sent
     /// first and the plugin was never loaded.
     pub const SANDBOX_FAILED: i32 = 4;
+    /// The sandbox reported reduced isolation and the host did not send the
+    /// `reducedIsolationAccepted` acknowledgement; the report was sent first
+    /// and the plugin was never loaded (#4188).
+    pub const REDUCED_ISOLATION_REFUSED: i32 = 5;
     /// Bad command line (wrong protocol version, missing flag).
     pub const USAGE: i32 = 64;
     /// This platform has no runner transport yet.
@@ -138,12 +144,20 @@ pub(crate) fn run<R: Read + Send + 'static>(
         None => SandboxReport::default(),
     };
     let sandbox_failed = report.failed.is_some();
+    let reduced_refused = configure.sandbox.is_some()
+        && report.isolation() == Isolation::Reduced
+        && !configure.accept_reduced_isolation;
     if channel.send(&Message::SandboxReport(report)).is_err() {
         return exit::PROTOCOL;
     }
     if sandbox_failed {
         // Never fall back to loading the plugin unconfined.
         return exit::SANDBOX_FAILED;
+    }
+    if reduced_refused {
+        // Reduced isolation loads only with the user's hash-bound
+        // acknowledgement (#4188); the host enforces it too.
+        return exit::REDUCED_ISOLATION_REFUSED;
     }
     let library = match prepared.and_then(|p| {
         p.load().map_err(|e| LoadFailed {

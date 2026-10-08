@@ -50,6 +50,12 @@ pub struct Configure {
     /// harness) means no confinement.
     #[serde(default)]
     pub sandbox: Option<SandboxPolicy>,
+    /// Whether the hash-bound trust acknowledgement accepts **reduced**
+    /// isolation for this exact library (`reducedIsolationAccepted`, #4188).
+    /// Without it a runner whose sandbox reports a missing layer sends its
+    /// report and exits without loading the plugin. Absent means `false`.
+    #[serde(default)]
+    pub accept_reduced_isolation: bool,
 }
 
 /// Process resource limits for a runner (#4184, concept "Crash isolation and
