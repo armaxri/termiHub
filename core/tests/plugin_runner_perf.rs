@@ -34,7 +34,7 @@
 //! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
 #![cfg(feature = "plugin")]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 mod plugin_runner_support;
@@ -103,29 +103,49 @@ async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
     }
     samples.sort();
     let (p50, p99) = (percentile(&samples, 50), percentile(&samples, 99));
-    let mb_per_s = pump(conn, rx, THROUGHPUT_CHUNK, THROUGHPUT_TOTAL)
-        .await
-        .expect("echo keeps flowing");
+    let mb_per_s = pump(
+        conn,
+        rx,
+        THROUGHPUT_CHUNK,
+        THROUGHPUT_TOTAL,
+        Arc::new(Barrier::new(1)),
+    )
+    .await
+    .expect("echo keeps flowing");
     Measured { p50, p99, mb_per_s }
 }
 
 /// Write `total` bytes in `chunk`-sized writes from a blocking thread while
 /// draining the echo; return MB/s, or `None` if the echo stopped.
-async fn pump(conn: Shared, mut rx: OutputReceiver, chunk: usize, total: usize) -> Option<f64> {
-    let start = Instant::now();
+///
+/// The writer starts once every pump sharing `start` is ready, and the rate is
+/// timed from that common release: otherwise the first writers of a fairness
+/// run would pump alone while the others' threads are still being created (a
+/// 3-vCPU CI runner showed one session at 936 MB/s, near the solo rate, next
+/// to 25 MB/s ones), which measures thread start-up skew, not sharing.
+async fn pump(
+    conn: Shared,
+    mut rx: OutputReceiver,
+    chunk: usize,
+    total: usize,
+    start: Arc<Barrier>,
+) -> Option<f64> {
     let writer = tokio::task::spawn_blocking(move || {
+        start.wait();
+        let released = Instant::now();
         let data = vec![b'a'; chunk];
         for _ in 0..total / chunk {
             conn.lock().unwrap().write(&data).unwrap();
         }
+        released
     });
     let mut received = 0usize;
     while received < total {
         received += rx.recv().await?.len();
     }
-    let elapsed = start.elapsed();
-    writer.await.unwrap();
-    Some(total as f64 / 1_000_000.0 / elapsed.as_secs_f64())
+    let done = Instant::now();
+    let released = writer.await.unwrap();
+    Some(total as f64 / 1_000_000.0 / (done - released).as_secs_f64())
 }
 
 /// `n` cold starts (spawn + handshake + dlopen + init) by loading and
@@ -169,13 +189,15 @@ async fn fairness(registry: &Registry, type_id: &str) -> Vec<Option<f64>> {
     for _ in 0..FAIR_SESSIONS {
         sessions.push(session(registry, type_id).await);
     }
+    let start = Arc::new(Barrier::new(FAIR_SESSIONS));
     let pumps: Vec<_> = sessions
         .into_iter()
         .map(|(conn, rx)| {
+            let start = Arc::clone(&start);
             tokio::spawn(async move {
                 tokio::time::timeout(
                     STARVATION_TIMEOUT,
-                    pump(conn, rx, FAIR_CHUNK, FAIR_PER_SESSION),
+                    pump(conn, rx, FAIR_CHUNK, FAIR_PER_SESSION, start),
                 )
                 .await
                 .ok()
