@@ -594,6 +594,11 @@ impl BridgeHost {
                 transport: delivery.transport(),
             },
         });
+        // Count a pass before its reply goes out: the runner may use the
+        // socket, and the host see its output, as soon as the reply lands.
+        if proxy.is_none() {
+            self.passed.fetch_add(1, Ordering::SeqCst);
+        }
         let sent = match delivery {
             #[cfg(unix)]
             Delivery::Fd => self.send_with_socket(attached, &reply, &stream),
@@ -609,17 +614,17 @@ impl BridgeHost {
         };
         drop(stream);
         if !sent {
+            if proxy.is_none() {
+                self.passed.fetch_sub(1, Ordering::SeqCst);
+            }
             if let Some(gone) = lock(&self.conns).remove(&conn_id) {
                 close_conns(vec![gone]);
             }
             return;
         }
-        match proxy {
-            // Only after the reply, so no `StreamData` precedes it.
-            Some(proxy) => proxy.start(self.frame_sink()),
-            None => {
-                self.passed.fetch_add(1, Ordering::SeqCst);
-            }
+        // Only after the reply, so no `StreamData` precedes it.
+        if let Some(proxy) = proxy {
+            proxy.start(self.frame_sink());
         }
     }
 
