@@ -225,16 +225,18 @@ try {
     Write-Output "test user: $userName ($userSid), member of Users only"
 
     # 4. Run the harness as that user, with its profile loaded (the
-    # AppContainer profile lives in the user's registry hive).
+    # AppContainer profile lives in the user's registry hive). Start-Process
+    # joins -ArgumentList with spaces unquoted, so every argument is quoted
+    # (the install dir is under "Program Files").
     $cred = New-Object System.Management.Automation.PSCredential(".\$userName", $secure)
     $shell = (Get-Process -Id $PID).Path
     $p = Start-Process -FilePath $shell -Credential $cred -LoadUserProfile -PassThru -Wait `
         -WorkingDirectory $stage `
         -RedirectStandardOutput (Join-Path $OutDir 'user-stdout.log') `
         -RedirectStandardError (Join-Path $OutDir 'user-stderr.log') `
-        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        -ArgumentList (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
             '-File', $inner, '-Runner', $runner, '-Lib', $stagedLib, '-Exe', $stagedHarness,
-            '-Test', $TestName, '-Out', $userOut)
+            '-Test', $TestName, '-Out', $userOut) | ForEach-Object { "`"$_`"" })
     Write-Output "user process exited with $($p.ExitCode)"
     Copy-Item -Path (Join-Path $userOut '*') -Destination $OutDir -ErrorAction SilentlyContinue
 
