@@ -150,7 +150,8 @@ check_bundle() {
     echo "=== Release Bundle Build + Smoke Test ==="
 
     # Build the real installable bundle with the same recipe as the installers
-    # (scripts/build.sh: RDP sidecar + notices + 'pnpm tauri build'), then launch it
+    # (scripts/build.sh: RDP sidecar + plugin runner + notices + 'pnpm tauri build'),
+    # check the bundled plugin runner, then launch it
     # with scripts/smoke-test.sh (TOOL-011, #3750). Without this, release-check could
     # report READY for a commit that does not produce a working app. It runs last
     # because it is the slowest step and needs a desktop session (a display) to launch
@@ -181,6 +182,16 @@ check_bundle() {
             fail "Bundle build produced no installer (expected: $INSTALLER_GLOB)"
         else
             pass "Bundle build produced:$INSTALLERS"
+        fi
+
+        # The bundled plugin runner (#4202) must start and match the digest the
+        # app embeds, or the app would refuse it as tampered.
+        RUNNER_APP="$SMOKE_APP"
+        case "$SMOKE_APP" in *.app) RUNNER_APP="$SMOKE_APP/Contents/MacOS/termihub" ;; esac
+        if ./scripts/internal/verify-plugin-runner-bundle.sh "$RUNNER_APP" 2>&1; then
+            pass "Bundled plugin runner starts and matches the embedded digest"
+        else
+            fail "Bundled plugin runner check failed (scripts/internal/verify-plugin-runner-bundle.sh)"
         fi
 
         SMOKE_CMD=(./scripts/smoke-test.sh "$SMOKE_APP")

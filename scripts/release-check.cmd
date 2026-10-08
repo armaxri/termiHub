@@ -395,7 +395,8 @@ echo.
 echo === Release Bundle Build + Smoke Test ===
 
 REM Build the real installable bundle with the installers' recipe (build.cmd:
-REM RDP sidecar + notices + 'pnpm tauri build'), then launch it with
+REM RDP sidecar + plugin runner + notices + 'pnpm tauri build'), check the
+REM bundled plugin runner, then launch it with
 REM smoke-test.cmd (TOOL-011, #3750). Runs last: slowest step, needs a desktop
 REM session. Mirrors release-check.sh.
 set "SMOKE_APP=target\release\termihub.exe"
@@ -417,6 +418,18 @@ if not exist "%SMOKE_APP%" (
     echo   FAIL: Built app not found at %SMOKE_APP% - cannot smoke-test it
     set FAILED=1
     exit /b 0
+)
+REM The bundled plugin runner (#4202) must start (exit 64, its usage code, on a
+REM wrong --protocol) and its SHA-256 must be the digest the app embeds, or the
+REM app would refuse it as tampered. Same checks as
+REM scripts\internal\verify-plugin-runner-bundle.sh, in .NET-only PowerShell (no
+REM cmdlets: they break when launched from pwsh, #4029).
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; try { $a = [IO.Path]::GetFullPath('%SMOKE_APP%'); $r = [IO.Path]::Combine([IO.Path]::GetDirectoryName($a), 'termihub-plugin-runner.exe'); if (-not [IO.File]::Exists($r)) { [Console]::Error.WriteLine('missing ' + $r); exit 1 }; $i = [Diagnostics.ProcessStartInfo]::new($r, '--protocol 0'); $i.UseShellExecute = $false; $i.CreateNoWindow = $true; $p = [Diagnostics.Process]::Start($i); if (-not $p.WaitForExit(30000)) { $p.Kill(); exit 1 }; if ($p.ExitCode -ne 64) { [Console]::Error.WriteLine('runner exit ' + $p.ExitCode + ', expected 64'); exit 1 }; $s = [IO.File]::OpenRead($r); try { $d = [Security.Cryptography.SHA256]::Create().ComputeHash($s) } finally { $s.Dispose() }; $h = [BitConverter]::ToString($d).Replace('-', '').ToLowerInvariant(); if (-not [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($a)).Contains($h)) { [Console]::Error.WriteLine('digest ' + $h + ' not embedded in ' + $a); exit 1 } } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+if errorlevel 1 (
+    echo   FAIL: Bundled plugin runner check failed ^(missing, does not start, or digest mismatch^)
+    set FAILED=1
+) else (
+    echo   PASS: Bundled plugin runner starts and matches the embedded digest
 )
 call scripts\smoke-test.cmd "%SMOKE_APP%"
 if errorlevel 1 (
