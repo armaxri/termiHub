@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/security.rs:11
   - core/src/plugin/capabilities.rs:15
   - src/plugins/frontendPlugins.ts:107
-status: deferred
-resolution: "maintainer 2026-09-25 — native plugins default-off + hash-bound trust ack (#3296); OS sandbox pre-v1.0; documented"
+status: fixed
+resolution: "#4189 — native plugins run only out of process in an OS-sandboxed termihub-plugin-runner (ADR-19; #3769 phases #4181–#4188, #4190, #4201, #4219, #4233); in-process path removed; default-off + hash-bound trust ack (#3296) kept"
 ---
 
 ## What
