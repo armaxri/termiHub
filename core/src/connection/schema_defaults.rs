@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::graphical_files::is_same_host;
+use super::graphical_files::{is_same_host, is_same_named_host};
 use super::schema::{Condition, FieldType, SettingsField, SettingsGroup, SettingsSchema};
 
 /// Settings values keyed by field key. Mirrors the TS `Record<string, unknown>`.
@@ -67,17 +67,30 @@ pub fn is_field_visible(field: &SettingsField, settings: &Settings) -> bool {
 /// sub-conditions) against the settings. Mirrors `evaluateCondition` in
 /// `src/utils/schemaDefaults.ts`.
 pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
-    let primary = match &condition.same_host_as {
+    let primary = match (&condition.same_host_as, &condition.same_name_as) {
         // Two-field host comparison: the outcome must equal `equals`.
-        Some(other) => {
-            let same = hosts_compare_same(settings.get(&condition.field), settings.get(other));
+        (Some(other), _) => {
+            let same = hosts_compare_same(
+                settings.get(&condition.field),
+                settings.get(other),
+                is_same_host,
+            );
+            condition.equals == Value::Bool(same)
+        }
+        // The same, with both hosts seen from this computer (#4194).
+        (None, Some(other)) => {
+            let same = hosts_compare_same(
+                settings.get(&condition.field),
+                settings.get(other),
+                is_same_named_host,
+            );
             condition.equals == Value::Bool(same)
         }
         // A missing referenced field is `undefined` in the TS original, which
         // never equals a concrete `equals` value, so the field stays hidden.
         // Present values compare by JSON value equality (order-independent for
         // scalars, which is all conditions carry in practice).
-        None => settings
+        (None, None) => settings
             .get(&condition.field)
             .is_some_and(|actual| *actual == condition.equals),
     };
@@ -93,18 +106,23 @@ pub fn evaluate_condition(condition: &Condition, settings: &Settings) -> bool {
                 .any(|c| evaluate_condition(c, settings)))
 }
 
-/// The host comparison behind [`Condition::same_host_as`]: whether `target`
-/// names the same host as `file_host` (see [`is_same_host`]). When either side
-/// is unset, not a string, or blank the hosts cannot be shown to differ, so
-/// they compare as the same host.
-fn hosts_compare_same(target: Option<&Value>, file_host: Option<&Value>) -> bool {
+/// The host comparison behind [`Condition::same_host_as`] and
+/// [`Condition::same_name_as`]: whether `target` names the same host as
+/// `file_host` by `same` ([`is_same_host`] or [`is_same_named_host`]). When
+/// either side is unset, not a string, or blank the hosts cannot be shown to
+/// differ, so they compare as the same host.
+fn hosts_compare_same(
+    target: Option<&Value>,
+    file_host: Option<&Value>,
+    same: fn(&str, &str) -> bool,
+) -> bool {
     fn text(v: Option<&Value>) -> Option<&str> {
         v.and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
     }
     match (text(target), text(file_host)) {
-        (Some(target), Some(file_host)) => is_same_host(target, file_host),
+        (Some(target), Some(file_host)) => same(target, file_host),
         _ => true,
     }
 }

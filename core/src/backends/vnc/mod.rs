@@ -345,6 +345,7 @@ fn tunnel_file_channel(cfg: &VncConfig, has_tunnel: bool) -> Option<FileSideChan
         host: cfg.ssh_host.clone(),
         user: cfg.ssh_username.clone(),
         same_host: is_same_host(&cfg.host, &cfg.ssh_host),
+        linked_connection: None,
     })
 }
 

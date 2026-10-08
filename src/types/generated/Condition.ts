@@ -12,6 +12,10 @@
  *   one field to a constant: the value checked against `equals` (a boolean)
  *   is whether `field` names the same host as the field `same_host_as`, by
  *   [`is_same_host`](crate::connection::graphical_files::is_same_host).
+ * - [`same_name_as`](Condition::same_name_as) is the same two-field host
+ *   comparison with both hosts seen from this computer, by
+ *   [`is_same_named_host`](crate::connection::graphical_files::is_same_named_host)
+ *   (#4194): a loopback name is this computer, never the other host.
  * - [`all_of`](Condition::all_of) adds conditions that must all hold too.
  * - [`any_of`](Condition::any_of) adds conditions of which at least one must
  *   hold (ignored when empty).
@@ -39,6 +43,15 @@ equals: unknown,
  * is `true` (same host).
  */
 sameHostAs?: string, 
+/**
+ * Key of a second field whose value is compared with `field`'s value as a
+ * host name, both as seen from this computer: the comparison is `true`
+ * when both are loopback or have the same name. As with
+ * [`same_host_as`](Condition::same_host_as), an unset or empty side
+ * compares as the same host. The key may name a value the form derives
+ * rather than a field, e.g. `fileTransferVia.host` (#4194).
+ */
+sameNameAs?: string, 
 /**
  * Further conditions that must all hold as well.
  */

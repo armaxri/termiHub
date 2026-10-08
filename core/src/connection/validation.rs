@@ -89,7 +89,8 @@ fn validate_field_type(
         FieldType::Text
         | FieldType::Password
         | FieldType::SerialPort
-        | FieldType::DockerContainer => {
+        | FieldType::DockerContainer
+        | FieldType::SavedConnection { .. } => {
             if !value.is_string() {
                 errors.push(ValidationError {
                     field: key.to_string(),

@@ -23,6 +23,12 @@ host: string,
 user: string, 
 /**
  * Whether `host` is the desktop host: the VNC target, as seen from `host`,
- * is loopback or has the same name as `host`.
+ * is loopback or has the same name as `host`. For a linked SSH connection
+ * both hosts are seen from this computer ([`is_same_named_host`]).
  */
-sameHost: boolean, };
+sameHost: boolean, 
+/**
+ * The name of the saved SSH connection a direct connection linked as its
+ * file route (#4194); absent for the tunnel and agent routes.
+ */
+linkedConnection?: string, };

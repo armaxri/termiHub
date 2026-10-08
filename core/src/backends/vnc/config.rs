@@ -630,10 +630,29 @@ fn when_vnc_host_is_ssh_host(same: bool) -> Condition {
     }
 }
 
+/// The settings key of a direct connection's linked SSH file route (#4194):
+/// the id of a saved SSH connection, or empty for none.
+pub const FILE_TRANSFER_VIA_KEY: &str = "fileTransferVia";
+
+/// Whether the VNC `host` and the linked SSH connection's host
+/// (`fileTransferVia.host`, a value the editor derives from the picked saved
+/// connection) name the same host as seen from this computer (#4194). Core
+/// never derives that value, so here the comparison sees an unset side and
+/// counts the hosts as the same.
+fn when_vnc_host_is_linked_host(same: bool) -> Condition {
+    Condition {
+        field: "host".to_string(),
+        equals: serde_json::json!(same),
+        same_name_as: Some(format!("{FILE_TRANSFER_VIA_KEY}.host")),
+        ..Default::default()
+    }
+}
+
 /// The "File Transfer" group (#3770, #4191): the opt-in plus the default
 /// folder, after SSH Tunnel. Off by default. The notice says where files land;
 /// the live route (SSH vs agent host, and whether that is the desktop host) is
-/// resolved per session by `remote_desktop_file_channel`.
+/// resolved per session by `remote_desktop_file_channel`. A direct connection
+/// may link a saved SSH connection as its route (#4194).
 fn file_transfer_group() -> SettingsGroup {
     SettingsGroup {
         collapsed: false,
@@ -665,14 +684,45 @@ fn file_transfer_group() -> SettingsGroup {
                 ..field("fileTransferDir", "Default folder", FieldType::Text)
             },
             SettingsField {
+                placeholder: Some("None".to_string()),
                 description: Some(
-                    "Files go to the SSH tunnel host (or the agent host), as that \
-                     host's user. If the VNC host is not localhost or that same \
-                     host, files land on the SSH/agent host, not on the desktop."
+                    "A direct connection has no side channel of its own: link a saved \
+                     SSH connection to move files over SFTP on its host, with its \
+                     usual sign-in and host-key check."
                         .to_string(),
                 ),
                 visible_when: Some(Condition {
-                    any_of: vec![when_tunnel_is(false), when_vnc_host_is_ssh_host(true)],
+                    all_of: vec![when_tunnel_is(false)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
+                ..field(
+                    FILE_TRANSFER_VIA_KEY,
+                    "File transfer via",
+                    FieldType::SavedConnection {
+                        connection_type: "ssh".to_string(),
+                        match_host_field: Some("host".to_string()),
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "Files go to the SSH tunnel host, the agent host, or — for a \
+                     direct connection — the linked SSH connection's host, as that \
+                     host's user. If that is not the VNC desktop host, files land \
+                     there, not on the desktop."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    any_of: vec![
+                        Condition {
+                            all_of: vec![when_vnc_host_is_linked_host(true)],
+                            ..when_tunnel_is(false)
+                        },
+                        Condition {
+                            all_of: vec![when_vnc_host_is_ssh_host(true)],
+                            ..when_tunnel_is(true)
+                        },
+                    ],
                     ..when_file_transfer_enabled().unwrap_or_default()
                 }),
                 ..field(
@@ -696,6 +746,25 @@ fn file_transfer_group() -> SettingsGroup {
                 }),
                 ..field(
                     "fileTransferHostWarning",
+                    "",
+                    FieldType::Notice {
+                        severity: NoticeSeverity::Warning,
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "Files would go to {{fileTransferVia.host}}, the host of the linked \
+                     SSH connection, not to the desktop host {{host}}. Uploads land \
+                     there, as that connection's user."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    all_of: vec![when_tunnel_is(false), when_vnc_host_is_linked_host(false)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
+                ..field(
+                    "fileTransferViaHostWarning",
                     "",
                     FieldType::Notice {
                         severity: NoticeSeverity::Warning,

@@ -9,10 +9,15 @@
 //! - **Agent** (#3241 port forward) — the agent's host-level
 //!   `connection.files.*` calls (no `connection_id`). The file host is the
 //!   agent host.
-//! - **Direct** — no route; the feature is unavailable.
+//! - **Linked SSH connection** (#4194) — a direct connection may link a saved
+//!   SSH connection as its file route: SFTP on that connection's own session,
+//!   with its usual auth and host-key trust. The file host is that
+//!   connection's host. The desktop resolves and connects it.
+//! - **Direct** without a link — no route; the feature is unavailable.
 //!
-//! When both apply, the agent wins: the tunnel would then run from the agent
-//! host, and the agent already owns the file service. The feature is **off by
+//! Precedence: agent, then SSH tunnel, then linked SSH connection, then none.
+//! The agent wins over the tunnel because the tunnel would then run from the
+//! agent host, and the agent already owns the file service. The feature is **off by
 //! default** per connection and refused in **view-only** sessions; both rules
 //! are enforced by the backend, not only the UI.
 //!
@@ -55,8 +60,14 @@ pub struct FileSideChannel {
     /// The account files are written as on `host` (empty when unknown).
     pub user: String,
     /// Whether `host` is the desktop host: the VNC target, as seen from `host`,
-    /// is loopback or has the same name as `host`.
+    /// is loopback or has the same name as `host`. For a linked SSH connection
+    /// both hosts are seen from this computer ([`is_same_named_host`]).
     pub same_host: bool,
+    /// The name of the saved SSH connection a direct connection linked as its
+    /// file route (#4194); absent for the tunnel and agent routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub linked_connection: Option<String>,
 }
 
 /// Why a graphical session has no usable file side channel.
@@ -69,8 +80,9 @@ pub enum FileChannelUnavailable {
     Disabled,
     /// The session is view-only: files are refused in both directions.
     ViewOnly,
-    /// Neither an SSH tunnel nor an agent carries this connection (direct VNC),
-    /// or the backend type has no side channel at all.
+    /// Neither an SSH tunnel nor an agent carries this connection and no saved
+    /// SSH connection is linked (direct VNC; a deleted link counts as none), or
+    /// the backend type has no side channel at all.
     NoRoute,
 }
 
@@ -117,17 +129,41 @@ impl FileChannelPolicy {
 /// Resolve a session's side channel from its policy and the candidate routes.
 ///
 /// The policy refusals come first (off → `Disabled`, view-only → `ViewOnly`);
-/// then the agent route wins over the SSH tunnel; with neither the result is
-/// `NoRoute`.
+/// then the agent route wins over the SSH tunnel, which wins over a linked
+/// saved SSH connection (#4194); with none of them the result is `NoRoute`.
 pub fn resolve_file_side_channel(
     policy: FileChannelPolicy,
     agent: Option<FileSideChannel>,
     ssh: Option<FileSideChannel>,
+    linked: Option<FileSideChannel>,
 ) -> Result<FileSideChannel, FileChannelUnavailable> {
     if let Some(refusal) = policy.refusal() {
         return Err(refusal);
     }
-    agent.or(ssh).ok_or(FileChannelUnavailable::NoRoute)
+    agent
+        .or(ssh)
+        .or(linked)
+        .ok_or(FileChannelUnavailable::NoRoute)
+}
+
+/// The side channel of a saved SSH connection named `name` on `ssh_host`
+/// (account `user`), linked as the file route of a direct VNC connection to
+/// `vnc_host` (#4194). It is an SSH channel whose file host is the linked
+/// connection's host; it counts as the desktop host only when both names
+/// denote the same host as seen from this computer ([`is_same_named_host`]).
+pub fn linked_ssh_channel(
+    vnc_host: &str,
+    ssh_host: &str,
+    user: &str,
+    name: &str,
+) -> FileSideChannel {
+    FileSideChannel {
+        kind: FileSideChannelKind::Ssh,
+        host: ssh_host.to_string(),
+        user: user.to_string(),
+        same_host: is_same_named_host(vnc_host, ssh_host),
+        linked_connection: Some(name.to_string()),
+    }
 }
 
 /// Strip IPv6 brackets and surrounding whitespace from a host string.
@@ -166,6 +202,23 @@ pub fn is_same_host(target: &str, file_host: &str) -> bool {
     let target = bare_host(target).trim_end_matches('.');
     let file_host = bare_host(file_host).trim_end_matches('.');
     !target.is_empty() && target.eq_ignore_ascii_case(file_host)
+}
+
+/// Whether `a` and `b` name the same host **as both seen from this computer**
+/// (#4194): both are loopback, or they have the same name (case-insensitive,
+/// ignoring IPv6 brackets and a trailing dot). Unlike [`is_same_host`], a
+/// loopback name is not "the other host" — a direct VNC connection to
+/// `localhost` shows this computer's desktop, not a linked SSH host's.
+pub fn is_same_named_host(a: &str, b: &str) -> bool {
+    match (is_loopback_host(a), is_loopback_host(b)) {
+        (true, true) => true,
+        (false, false) => {
+            let a = bare_host(a).trim_end_matches('.');
+            let b = bare_host(b).trim_end_matches('.');
+            !a.is_empty() && a.eq_ignore_ascii_case(b)
+        }
+        _ => false,
+    }
 }
 
 /// Join a remote directory and a child name with `/` (SFTP and the agent both
