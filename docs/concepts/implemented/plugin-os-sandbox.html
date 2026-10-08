@@ -1613,8 +1613,8 @@ flowchart TD
                 <td>no frame starvation; fairness within 2×</td>
                 <td>
                   40 echo sessions pumping 8 MiB each through one helper at once, released together;
-                  the spread is asserted on 4+ cores (on the 3-vCPU macOS runner it ranks the writer
-                  threads' CPU time, #4233)
+                  asserted on every OS. Channel senders queue in arrival order before they give up
+                  the CPU (#4233, #4260)
                 </td>
               </tr>
               <tr>
@@ -2356,7 +2356,7 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
           <strong>Last synced:</strong> phase 7 cut-over (#4189), 2026-10-08 ·
           <strong>Status:</strong> implemented — every native plugin runs in a sandboxed
           <code>termihub-plugin-runner</code>; the in-process path and its debug flag are gone.
-          Open: per-machine install check on Windows (#4252) and macOS fairness (#4260)
+          Open: per-machine install check on Windows (#4252)
         </p>
         <div class="table-wrap">
           <table>
