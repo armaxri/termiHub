@@ -10,8 +10,8 @@ evidence:
   - deny.toml:25
   - docs/ci-yanked-crate-runbook.md:1
   - .github/workflows/cargo-update-lockfile.yml:1
-status: deferred
-resolution: "#2645 — yanked-crate gate (yanked=deny) reds all PRs on upstream yanks — KEPT by design (headline gate; caught crypto-bigint 0.7 yank). The recurring-manual-stopgap concern is a SEPARATE systemic mitigation tracked #2645, not changed by #3055"
+status: fixed
+resolution: "#2648, #3291, #3326 — #2645 closed by #2648 (cargo-update chore + docs/ci-yanked-crate-runbook.md); #3291 made the chore daily with auto-merge; #3326 (#3325) moved Security Audit off the per-PR lane: PRs run it only when a manifest/lockfile changes, develop push + daily schedule still gate. A fresh upstream yank no longer reds unrelated PRs. yanked=deny kept"
 ---
 
 ## What

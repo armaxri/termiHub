@@ -10,7 +10,7 @@ evidence:
   - deny.toml:49
   - .cargo/audit.toml:10
 status: wontfix
-resolution: "#3055 — same conscious sign-off as SUP-003 (RUSTSEC-2023-0071 in deny.toml + audit.toml), documented rationale + #3054"
+resolution: "#3055, #4170 — same sign-off as SUP-003 (RUSTSEC-2023-0071 in deny.toml + .cargo/audit.toml); accepted risk in docs/supply-chain.md, #3054 closed 2026-10-06"
 ---
 
 ## What

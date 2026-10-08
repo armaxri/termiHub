@@ -9,8 +9,8 @@ subsystem: workspace
 evidence:
   - deny.toml:34
   - .github/workflows/code-quality.yml:325
-status: deferred
-resolution: "#3055 — maintainer decision (2026-09-18): unmaintained stays ungated by policy, BUT the abandoned-dep set is no longer unmonitored — #3055 enumerated every non-actionable unmaintained/unsound RUSTSEC ID with rationale in .cargo/audit.toml + tracking issue #3054 for upstream resolution. Net-new: #3055 also FIXED 2 real vulns the noise had masked (rustls RUSTSEC-2026-0285, cryptoki -0286)"
+status: wontfix
+resolution: "maintainer decision 2026-10-06 (#3054 closed by #4169 + #4170) — unmaintained stays ungated (unmaintained = none). Clearable notices were cleared (unic-* via Tauri 2.12 #4170; serial/rustls-pemfile/git2 #3974/#3975/#3973; sidecar GTK3 stack #4169). The rest are documented accepted risks in docs/supply-chain.md (Accepted risks), where stale entries are detected. #3055 earlier fixed rustls RUSTSEC-2026-0285 and cryptoki -0286. No open tracker"
 ---
 
 ## What

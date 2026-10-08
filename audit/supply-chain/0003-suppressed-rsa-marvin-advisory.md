@@ -10,7 +10,7 @@ evidence:
   - deny.toml:43
   - .cargo/audit.toml:1
 status: wontfix
-resolution: "#3055 — conscious documented sign-off: RUSTSEC-2023-0071 (rsa Marvin timing sidechannel) suppressed in both tools — we only extract raw RSA components + rebuild via OpenSSL, never decrypt through rsa, so sidechannel N/A; rationale in audit.toml + tracked #3054"
+resolution: "#3055, #4170 — conscious documented sign-off: RUSTSEC-2023-0071 (rsa Marvin) ignored in both tools. termiHub is an SSH client only: RSA client keys sign once per login and there is no RSA decryption path (rationale corrected in #4170). Recorded in docs/supply-chain.md (Accepted risks); maintainer accepted 2026-10-06 when #3054 closed"
 ---
 
 ## What

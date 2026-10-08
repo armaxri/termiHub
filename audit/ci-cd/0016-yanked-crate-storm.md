@@ -10,8 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:343
   - .github/workflows/cargo-update-lockfile.yml:1
   - docs/ci-yanked-crate-runbook.md:1
-status: deferred
-resolution: "#2645 — same as SUP-006: yanked-gate reactive-mitigation is the systemic #2645 item; yanked=deny intentionally retained"
+status: fixed
+resolution: "#2648, #3291, #3326 — same as SUP-006: daily cargo-update chore with auto-merge (#3291) + runbook (#2648, closed #2645); Security Audit runs on PRs only when a manifest/lockfile changes, on develop push and daily (#3326). yanked=deny stays blocking"
 ---
 
 ## What

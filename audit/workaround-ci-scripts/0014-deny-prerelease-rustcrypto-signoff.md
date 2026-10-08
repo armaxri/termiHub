@@ -8,8 +8,8 @@ is_workaround: true
 subsystem: deny.toml
 evidence:
   - deny.toml:bans
-status: deferred
-resolution: "maintainer-decision — deny.toml bans policy (pre-release RustCrypto stack accepted + multiple-versions/wildcards allowed) is a SEPARATE bans/duplicates call, out of #3055's advisory-suppression scope — needs its own maintainer decision on tightening [bans]"
+status: wontfix
+resolution: "maintainer decision 2026-10-06 (#3734 closed by #4170) — pre-release RustCrypto/Dalek stack under russh 0.61 / IronRDP accepted as documented risk in docs/supply-chain.md (Pre-release crates): exact-pinned, covered by cargo-audit/cargo-deny, allowlist enforced by check-prerelease-crates.mjs; bump when upstream ships stable. multiple-versions/wildcards stay allow. No open tracker"
 ---
 
 ## What

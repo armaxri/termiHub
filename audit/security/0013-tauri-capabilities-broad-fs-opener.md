@@ -10,8 +10,8 @@ evidence:
   - src-tauri/capabilities/default.json:10
   - src-tauri/capabilities/default.json:12
   - src-tauri/tauri.conf.json:25
-status: wontfix
-resolution: "maintainer 2026-09-19 (#3116) — accepted + documented; CSP further tightened #3633/#3646"
+status: fixed
+resolution: "#4136, #4140 (closed #3115) — fs:default and opener:allow-open-path dropped; fs read/write text reach only dialog-picked paths, openUrl scoped to http/https/mailto, folder reveal via validated local_open_folder command (#4140). style-src drops 'unsafe-inline' and dangerousDisableAssetCspModification via a per-load nonce; 'unsafe-inline' remains only in style-src-attr (#4136). Earlier: posture documented #3116, CSP tightened #3633/#3646"
 ---
 
 ## What

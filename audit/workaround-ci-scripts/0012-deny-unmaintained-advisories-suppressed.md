@@ -8,8 +8,8 @@ is_workaround: true
 subsystem: deny.toml
 evidence:
   - deny.toml:34
-status: deferred
-resolution: "#3055 — same policy item as SUP-004: unmaintained=none kept by maintainer decision; non-actionable advisories now documented-ignored + tracked #3054"
+status: wontfix
+resolution: "maintainer decision 2026-10-06 (#3054 closed by #4169 + #4170) — same policy item as SUP-004: unmaintained = none kept; remaining notices are documented accepted risks in docs/supply-chain.md (Accepted risks), clearable ones removed. No open tracker"
 ---
 
 ## What
