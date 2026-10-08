@@ -32,7 +32,10 @@ on:
       branch:
         description: "Which branch(es) to grade"
         type: choice
-        options: [both, develop, main]
+        # "dispatched" grades the commit the run was dispatched on, so a feature
+        # branch can prove a lane change before it merges
+        # (`gh workflow run plugin-sandbox-nightly.yml --ref <branch> -f branch=dispatched`).
+        options: [both, develop, main, dispatched]
         default: develop
       fuzz_seconds:
         description: "Seconds per fuzz target"
@@ -61,6 +64,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           SCHEDULE: ${{ github.event.schedule }}
           BRANCH: ${{ github.event.inputs.branch }}
+          SHA: ${{ github.sha }}
         run: |
           if [ "$EVENT" = "schedule" ]; then
             case "$SCHEDULE" in
@@ -71,6 +75,10 @@ jobs:
             case "$BRANCH" in
               main) echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
               both) echo 'branches=["main","develop"]' >> "$GITHUB_OUTPUT" ;;
+              # The commit SHA, not the branch name: it is a valid checkout
+              # ref and, unlike a "dev2/feature/..." name, a valid artifact
+              # name.
+              dispatched) echo "branches=[\"$SHA\"]" >> "$GITHUB_OUTPUT" ;;
               *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
             esac
           fi
@@ -143,9 +151,9 @@ jobs:
       fail-fast: false
       matrix:
         branch: ${{ fromJSON(needs.setup.outputs.branches) }}
-        # The out-of-process host is Unix-only today (the test is
-        # `cfg(unix)`); Windows joins with the AppContainer phase (5b).
-        os: [ubuntu-latest, macos-latest]
+        # Windows runs the runner in its LPAC AppContainer under a job object
+        # (#4187) and measures idle memory as the working set (#4233).
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

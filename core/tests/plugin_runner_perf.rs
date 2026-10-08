@@ -22,7 +22,9 @@
 //! (concept re-baselined in #4190).
 //!
 //! Ignored by default (timing-sensitive, and only meaningful optimised); the
-//! nightly `plugin-sandbox-nightly.yml` lane runs it on Linux and macOS. Run:
+//! nightly `plugin-sandbox-nightly.yml` lane runs it on Linux, macOS and
+//! Windows (#4233; there the runner starts in its LPAC AppContainer under a job
+//! object, and "RSS" is the runner's working set). Run:
 //!
 //! ```text
 //! cargo test -p termihub-core --features plugin --release \
@@ -30,14 +32,14 @@
 //! ```
 //!
 //! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
-#![cfg(all(feature = "plugin", unix))]
+#![cfg(feature = "plugin")]
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 mod plugin_runner_support;
 use plugin_runner_support::{
-    host_for, install_echo, kill_process, new_connection, runner_binary, wait_until,
+    host_for, install_echo, kill_process, new_connection, rss_kib, runner_binary, wait_until,
 };
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
@@ -151,14 +153,6 @@ fn cold_starts(host: &PluginHost, plugin: &InstalledPlugin, n: usize) -> Vec<Dur
         .collect();
     samples.sort();
     samples
-}
-
-fn rss_kib(pid: u32) -> Option<u64> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 fn runner_pid(host: &PluginHost, id: &str) -> u32 {
@@ -312,7 +306,7 @@ async fn out_of_process_echo_stays_within_the_budget() {
             breaches.push(format!("idle RSS {kib} KiB > {BUDGET_IDLE_RSS_KIB} KiB"));
         }
         Some(_) => {}
-        None => breaches.push("idle RSS could not be measured (ps)".to_owned()),
+        None => breaches.push("idle RSS could not be measured".to_owned()),
     }
     if starved > 0 {
         breaches.push(format!(
