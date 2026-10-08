@@ -91,8 +91,9 @@ enum Beat {
 }
 
 /// Start the watchdog thread for `plugin`.
-/// `address_space_limit` is the runner's `RLIMIT_AS` (Linux), used to tell a
-/// hang from a runner busy running out of memory.
+/// `address_space_limit` is the runner's `RLIMIT_AS` (Linux) or its job
+/// object's committed-memory limit (Windows), used to tell a hang from a
+/// runner busy running out of memory.
 pub(super) fn spawn(
     plugin: Weak<SandboxedPlugin>,
     config: WatchdogConfig,
@@ -215,8 +216,11 @@ fn heartbeat(shared: &Shared, now: Instant, next_ping: Instant, hang_timeout: Du
     }
 }
 
-/// The address space (virtual size) of process `pid` in bytes — what
-/// `RLIMIT_AS` caps. Linux only; elsewhere `None`.
+/// The memory of process `pid` that its `address_space_bytes` limit caps, in
+/// bytes: the address space (virtual size) under Linux's `RLIMIT_AS`, the
+/// committed private memory under the Windows job object's per-process
+/// memory limit (#4201, #4240). `None` elsewhere (macOS enforces no such
+/// limit; the resident-size poll stands in there).
 #[must_use]
 fn address_space_bytes(pid: u32) -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -227,11 +231,51 @@ fn address_space_bytes(pid: u32) -> Option<u64> {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         Some(pages.saturating_mul(u64::try_from(page).ok()?))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        committed_bytes(pid)
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = pid;
         None
     }
+}
+
+/// The private committed memory of process `pid` (its commit charge): what
+/// `JOB_OBJECT_LIMIT_PROCESS_MEMORY` caps.
+#[cfg(windows)]
+fn committed_bytes(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let size = u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>()).ok()?;
+    // SAFETY: opens the runner (a child of this process) for querying only;
+    // the handle is closed below.
+    let process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    // SAFETY: an all-zero `PROCESS_MEMORY_COUNTERS_EX` is a valid value.
+    let mut counters: PROCESS_MEMORY_COUNTERS_EX = unsafe { std::mem::zeroed() };
+    // SAFETY: `counters` is writable for `size` bytes; the EX struct starts
+    // with the plain one, which is what the call's pointer type names.
+    let ok = unsafe {
+        K32GetProcessMemoryInfo(
+            process,
+            std::ptr::from_mut(&mut counters).cast::<PROCESS_MEMORY_COUNTERS>(),
+            size,
+        )
+    };
+    // SAFETY: closes the handle opened above, once.
+    unsafe { CloseHandle(process) };
+    (ok != 0).then(|| u64::try_from(counters.PrivateUsage).unwrap_or(u64::MAX))
 }
 
 /// The memory process `pid` uses, in bytes, where the platform can tell: the

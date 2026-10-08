@@ -222,6 +222,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Console",
+    # The plugin-runner watchdog reads a runner's commit charge
+    # (`K32GetProcessMemoryInfo`) to tell a hang near its job memory limit
+    # from a plain hang (#4240).
+    "Win32_System_ProcessStatus",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see
