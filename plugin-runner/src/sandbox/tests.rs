@@ -1,11 +1,22 @@
 use super::macos::{seatbelt_profile, PARAM_DATA_DIR, PARAM_INSTALL_DIR};
 use super::*;
 
+/// An absolute path on this OS: Unix paths as written, `C:`-prefixed on
+/// Windows (where `/x` is not absolute). The profile generator itself is
+/// OS-independent, so its tests run everywhere.
+fn abs(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
 fn policy() -> SandboxPolicy {
     SandboxPolicy {
-        install_dir: "/plugins/acme".to_owned(),
-        data_dir: Some("/plugins/.data/acme".to_owned()),
-        denied_dirs: vec!["/Users/someone".to_owned()],
+        install_dir: abs("/plugins/acme"),
+        data_dir: Some(abs("/plugins/.data/acme")),
+        denied_dirs: vec![abs("/Users/someone")],
     }
 }
 
@@ -36,9 +47,9 @@ fn profile_snapshot_with_data_and_denied_home() {
     assert_eq!(
         profile.params,
         vec![
-            ("DENIED_DIR_0".to_owned(), "/Users/someone".to_owned()),
-            ("INSTALL_DIR".to_owned(), "/plugins/acme".to_owned()),
-            ("DATA_DIR".to_owned(), "/plugins/.data/acme".to_owned()),
+            ("DENIED_DIR_0".to_owned(), abs("/Users/someone")),
+            ("INSTALL_DIR".to_owned(), abs("/plugins/acme")),
+            ("DATA_DIR".to_owned(), abs("/plugins/.data/acme")),
         ]
     );
 }
@@ -57,7 +68,7 @@ fn profile_without_data_dir_grants_no_write() {
     assert!(!profile.sbpl.contains("DENIED_DIR"));
     assert_eq!(
         profile.params,
-        vec![(PARAM_INSTALL_DIR.to_owned(), "/plugins/acme".to_owned())]
+        vec![(PARAM_INSTALL_DIR.to_owned(), abs("/plugins/acme"))]
     );
 }
 
@@ -67,7 +78,7 @@ fn profile_without_data_dir_grants_no_write() {
 #[test]
 fn denied_dirs_precede_the_allowances() {
     let profile = seatbelt_profile(&SandboxPolicy {
-        denied_dirs: vec!["/a".to_owned(), "/b".to_owned()],
+        denied_dirs: vec![abs("/a"), abs("/b")],
         ..policy()
     })
     .unwrap();
@@ -75,19 +86,19 @@ fn denied_dirs_precede_the_allowances() {
     let install = profile.sbpl.find("(param \"INSTALL_DIR\")").unwrap();
     let data = profile.sbpl.find("(param \"DATA_DIR\")").unwrap();
     assert!(deny_1 < install && install < data);
-    assert_eq!(profile.params[0], ("DENIED_DIR_0".into(), "/a".into()));
-    assert_eq!(profile.params[1], ("DENIED_DIR_1".into(), "/b".into()));
+    assert_eq!(profile.params[0], ("DENIED_DIR_0".into(), abs("/a")));
+    assert_eq!(profile.params[1], ("DENIED_DIR_1".into(), abs("/b")));
 }
 
 /// Hostile folder names never reach the profile text: they travel as
 /// parameters only, verbatim.
 #[test]
 fn paths_are_parameters_never_profile_text() {
-    let hostile = r#"/tmp/x") (allow default) ("#;
+    let hostile = abs(r#"/tmp/x") (allow default) ("#);
     let profile = seatbelt_profile(&SandboxPolicy {
-        install_dir: hostile.to_owned(),
-        data_dir: Some("/tmp/da\"ta\\(dir)".to_owned()),
-        denied_dirs: vec!["/tmp/;; comment\n(allow network*)".to_owned()],
+        install_dir: hostile.clone(),
+        data_dir: Some(abs("/tmp/da\"ta\\(dir)")),
+        denied_dirs: vec![abs("/tmp/;; comment\n(allow network*)")],
     })
     .unwrap();
     assert!(!profile.sbpl.contains("/tmp"));
@@ -96,9 +107,9 @@ fn paths_are_parameters_never_profile_text() {
     assert_eq!(
         profile.sbpl,
         seatbelt_profile(&SandboxPolicy {
-            install_dir: "/x".into(),
-            data_dir: Some("/y".into()),
-            denied_dirs: vec!["/z".into()],
+            install_dir: abs("/x"),
+            data_dir: Some(abs("/y")),
+            denied_dirs: vec![abs("/z")],
         })
         .unwrap()
         .sbpl,
@@ -107,7 +118,7 @@ fn paths_are_parameters_never_profile_text() {
     assert!(profile
         .params
         .iter()
-        .any(|(n, v)| n == PARAM_INSTALL_DIR && v == hostile));
+        .any(|(n, v)| n == PARAM_INSTALL_DIR && *v == hostile));
 }
 
 /// The profile closes every escape route the concept lists.
@@ -134,18 +145,18 @@ fn invalid_paths_are_refused() {
         ..policy()
     };
     for (path, reason) in [
-        ("", "empty"),
-        ("relative/dir", "not absolute"),
-        ("/", "is the filesystem root"),
-        ("/a\0b", "contains a NUL byte"),
+        (String::new(), "empty"),
+        ("relative/dir".to_owned(), "not absolute"),
+        (abs("/"), "is the filesystem root"),
+        (abs("/a\0b"), "contains a NUL byte"),
     ] {
-        match seatbelt_profile(&with(path)) {
+        match seatbelt_profile(&with(&path)) {
             Err(SandboxError::InvalidPath { reason: r, .. }) => assert_eq!(r, reason, "{path:?}"),
             other => panic!("{path:?}: {other:?}"),
         }
     }
     let root_denied = SandboxPolicy {
-        denied_dirs: vec!["/".into()],
+        denied_dirs: vec![abs("/")],
         ..policy()
     };
     assert!(root_denied.validate().is_err());
