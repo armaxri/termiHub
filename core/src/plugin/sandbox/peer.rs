@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use termihub_plugin_api::{PluginError, MAX_LOG_MESSAGE_BYTES};
-use termihub_plugin_runner::ipc::{FrameReader, Message, ProtocolError, Sender};
+use termihub_plugin_runner::ipc::{FrameReader, Message, ProtocolError, Sender, SyscallDenial};
+use termihub_plugin_runner::sandbox::denial::reported_syscall;
 
 use crate::connection::OutputSender;
 use crate::plugin::host_context::emit_runner_log;
@@ -248,6 +249,9 @@ impl Shared {
                 if let Some(id) = log.session_id {
                     self.check_session_id(id)?;
                 }
+                if let Some(denied) = &log.denied {
+                    return self.syscall_denied(denied);
+                }
                 let bytes = log.message.as_bytes();
                 let bounded = &bytes[..bytes.len().min(MAX_LOG_MESSAGE_BYTES)];
                 emit_runner_log(
@@ -272,6 +276,34 @@ impl Shared {
                 other.kind()
             )),
         }
+    }
+
+    /// A `Denied{syscall}` report (#4236): record it with the bridge denials
+    /// and log a host-composed line through the plugin's rate limiter. The
+    /// runner's own message text is not used. An unknown system call name or
+    /// a zero count is a violation.
+    fn syscall_denied(&self, denied: &SyscallDenial) -> Result<(), String> {
+        let Some(syscall) = reported_syscall(&denied.syscall) else {
+            let name: String = denied.syscall.chars().take(64).collect();
+            return Err(format!("denial report for unknown system call {name:?}"));
+        };
+        if denied.count == 0 {
+            return Err(format!("denial report for {syscall} with a zero count"));
+        }
+        self.bridge.record_syscall_denial(syscall, denied.count);
+        let calls = if denied.count == 1 { "call" } else { "calls" };
+        emit_runner_log(
+            &self.log_limiter,
+            &self.plugin_id,
+            termihub_plugin_api::PluginLogLevel::Warn.as_wire(),
+            format!(
+                "Denied{{syscall: {syscall}}}: the OS sandbox refused {} {calls} with EPERM",
+                denied.count
+            )
+            .as_bytes(),
+            false,
+        );
+        Ok(())
     }
 
     /// Run `f` on a live session; ignore a retired one; reject an id that was

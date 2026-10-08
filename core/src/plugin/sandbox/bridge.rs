@@ -26,7 +26,10 @@
 //!   runner (the least recently paged one is dropped first; continuing it is
 //!   an I/O error).
 //! * **Denials** are recorded as structured [`BridgeDenial`] events per plugin
-//!   (and logged), ready for the UI phase to turn into toasts.
+//!   (and logged), ready for the UI phase to turn into toasts. The system calls
+//!   the runner's OS sandbox refused (Linux seccomp, reported by the runner as
+//!   `Denied{syscall}` log frames, #4236) land in the same list with
+//!   [`DenialReason::Syscall`].
 //!
 //! The runner is an **untrusted peer**: a request for a never-allocated
 //! session, a duplicate request id, an invalid write mode, an oversized
@@ -114,6 +117,10 @@ pub enum DenialReason {
     Permission,
     /// A resource ceiling (concurrent connections, in-flight requests).
     ResourceLimit,
+    /// The runner's OS sandbox refused a system call (Linux seccomp, #4236):
+    /// `operation` names the system call, `count` how many calls the report
+    /// covered, and there is no `target`.
+    Syscall,
 }
 
 /// One refused bridge request, per plugin — what the UI phase turns into a
@@ -122,14 +129,20 @@ pub enum DenialReason {
 pub struct BridgeDenial {
     /// The plugin (manifest id).
     pub plugin_id: String,
-    /// The plugin session whose bridge was called.
+    /// The plugin session whose bridge was called; `0` for a
+    /// [`DenialReason::Syscall`] denial, which no session owns.
     pub session_id: u32,
-    /// The ABI callback (`open_connection`, `read_file`, …).
+    /// The ABI callback (`open_connection`, `read_file`, …), or the system
+    /// call for a [`DenialReason::Syscall`] denial (`socket`, `connect`, …).
     pub operation: &'static str,
-    /// What was asked for (`host:port` or a path), sanitised and truncated.
+    /// What was asked for (`host:port` or a path), sanitised and truncated;
+    /// empty for a [`DenialReason::Syscall`] denial.
     pub target: String,
     /// Why it was refused.
     pub reason: DenialReason,
+    /// How many refused calls this event stands for: `1` for a bridge call;
+    /// a syscall report coalesces the calls of one interval of the runner.
+    pub count: u32,
     /// When.
     pub at: SystemTime,
 }
@@ -633,6 +646,7 @@ impl BridgeHost {
             operation: request.op.name(),
             target: sanitize_target(&target),
             reason,
+            count: 1,
             at: SystemTime::now(),
         };
         tracing::warn!(
@@ -647,6 +661,25 @@ impl BridgeHost {
             denial.operation,
             denial.target
         );
+        self.push_denial(denial);
+    }
+
+    /// Record a `Denied{syscall}` report of the runner (#4236): `count`
+    /// calls of `syscall` (an already validated, known name) refused by the
+    /// OS sandbox. The caller logs it (rate-limited with the plugin's log).
+    pub(super) fn record_syscall_denial(&self, syscall: &'static str, count: u32) {
+        self.push_denial(BridgeDenial {
+            plugin_id: self.plugin_id.clone(),
+            session_id: 0,
+            operation: syscall,
+            target: String::new(),
+            reason: DenialReason::Syscall,
+            count,
+            at: SystemTime::now(),
+        });
+    }
+
+    fn push_denial(&self, denial: BridgeDenial) {
         let mut denials = lock(&self.denials);
         if denials.len() >= MAX_DENIALS {
             denials.pop_front();
