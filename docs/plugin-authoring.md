@@ -1033,4 +1033,9 @@ plugin-side migration callback in 0.1.
   with `EPERM`, and `execve`, `ptrace`, mounts, `io_uring` and similar escape
   primitives end the runner. A kernel without landlock (older than 5.13)
   still gets the system-call filter but no file confinement; termiHub reports
-  that as reduced isolation. Windows follows.
+  that as reduced isolation and loads the plugin only after the user accepts
+  it for that exact build (Settings → Plugins → _Load with reduced
+  isolation…_). Windows follows. Settings → Plugins shows each plugin's
+  isolation, process status and access summary; a crash ends the plugin's
+  sessions with an overlay that names the cause, and a refused bridge request
+  shows a rate-limited toast plus a Log Viewer entry.
