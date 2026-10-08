@@ -6,6 +6,8 @@ severity: low
 category: workaround
 is_workaround: true
 subsystem: components / hooks (multiple)
+status: fixed
+resolution: "#3017 — resolve exhaustive-deps suppressions: memoize the one .join-key hack site (loop-guard test) + one-line justification on the genuinely mount-once ones; no deferral"
 evidence:
   - src/App.tsx:270
   - src/components/Terminal/Terminal.tsx:1078
@@ -13,11 +15,10 @@ evidence:
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:161
   - src/components/CommandPalette/CommandPalette.tsx:120
   - src/components/NetworkTools/LatencyChart.tsx:157
-status: fixed
-resolution: "#3017 — resolve exhaustive-deps suppressions: memoize the one .join-key hack site (loop-guard test) + one-line justification on the genuinely mount-once ones; no deferral"
 ---
 
 ## What
+
 Nine production `useEffect`/`useCallback` sites suppress the `react-hooks/exhaustive-deps` lint
 rather than declaring their real dependencies:
 
@@ -30,6 +31,7 @@ Some also use hand-built dependency keys like `[connectedAgents.map((a) => a.id)
 (OpenConnectionsModal.tsx:236) to work around the linter rather than depending on the value.
 
 ## Why it matters
+
 - `exhaustive-deps` is the rule that catches stale-closure bugs (an effect capturing an old prop/
   state value and never re-running). Each suppression is an assertion "this is intentionally
   mount-once / the missing deps are stable" that is easy to get wrong and invisible thereafter.
@@ -38,9 +40,11 @@ Some also use hand-built dependency keys like `[connectedAgents.map((a) => a.id)
   callbacks/state) indistinguishable from the safe ones.
 
 ## Evidence
+
 `grep 'exhaustive-deps' src/**` — the 9 production sites listed (the remaining hits are test files).
 
 ## Recommendation
+
 For each site, either declare the real deps, or if genuinely run-once, extract the values into
 refs / a stable callback and delete the suppression. The `.join(",")` dep-key hacks should become
 a `useMemo`'d stable identity. Reducing the production suppression count toward zero (keeping only

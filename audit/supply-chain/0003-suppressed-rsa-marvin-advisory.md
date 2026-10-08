@@ -10,7 +10,7 @@ evidence:
   - deny.toml:43
   - .cargo/audit.toml:1
 status: wontfix
-resolution: "#3055 — conscious documented sign-off: RUSTSEC-2023-0071 (rsa Marvin timing sidechannel) suppressed in both tools — we only extract raw RSA components + rebuild via OpenSSL, never decrypt through rsa, so sidechannel N/A; rationale in audit.toml + tracked #3054"
+resolution: "#3055, #4170 — conscious documented sign-off: RUSTSEC-2023-0071 (rsa Marvin) ignored in both tools. termiHub is an SSH client only: RSA client keys sign once per login and there is no RSA decryption path (rationale corrected in #4170). Recorded in docs/supply-chain.md (Accepted risks); maintainer accepted 2026-10-06 when #3054 closed"
 ---
 
 ## What
@@ -26,7 +26,7 @@ pre-release `0.10.0-rc.18` (see SUP-002), pulled transitively via `ssh-key`.
 Suppressing a live cryptographic advisory is a deliberate risk acceptance, not a
 neutral config choice. The documented rationale is sound on its face — the code
 only extracts raw RSA key components and rebuilds them via OpenSSL, and never
-performs RSA decryption *through* this crate, so the padding-oracle timing
+performs RSA decryption _through_ this crate, so the padding-oracle timing
 channel is claimed not to apply. That reasoning is plausible but load-bearing:
 it is only valid as long as no code path ever routes an RSA private-key
 operation through the `rsa` crate. There is no automated guard that this stays

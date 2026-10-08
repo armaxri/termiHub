@@ -6,6 +6,8 @@ severity: high
 category: arch
 is_workaround: false
 subsystem: src/components/DynamicForm
+status: fixed
+resolution: "#3082 — RHF+zod now used in 8 editors (was 'exactly one form'): CustomRuleEditor/EmbeddedServerDialog/MacroEditorDialog/WorkflowEditorDialog/ThemeEditor/TunnelEditor/ConnectionSettingsForm/ConnectionEditor (#3074-3082, one-PR-per-editor, each with superRefine 1:1 validation + safeParse Save-gate + shared ui primitives). ConnectionEditor's connection-TYPE selector deliberately kept local (~40 derived effects, zero validation benefit, high-risk on core connect flow — #3081). Substantive intent achieved; remainder intentional-keep-local"
 evidence:
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:2
   - src/components/ConnectionEditor/ConnectionEditor.tsx:312
@@ -16,8 +18,6 @@ evidence:
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:53
   - src/components/ThemeEditor/ThemeEditor.tsx:39
   - src/components/Settings/CustomRuleEditor.tsx:91
-status: fixed
-resolution: "#3082 — RHF+zod now used in 8 editors (was 'exactly one form'): CustomRuleEditor/EmbeddedServerDialog/MacroEditorDialog/WorkflowEditorDialog/ThemeEditor/TunnelEditor/ConnectionSettingsForm/ConnectionEditor (#3074-3082, one-PR-per-editor, each with superRefine 1:1 validation + safeParse Save-gate + shared ui primitives). ConnectionEditor's connection-TYPE selector deliberately kept local (~40 derived effects, zero validation benefit, high-risk on core connect flow — #3081). Substantive intent achieved; remainder intentional-keep-local"
 ---
 
 ## What

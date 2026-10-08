@@ -6,6 +6,8 @@ severity: medium
 category: reliability
 is_workaround: false
 subsystem: core/backends
+status: fixed
+resolution: "#2771 — output_tx lock released before send (wsl/telnet/ssh; docker/serial already safe)"
 evidence:
   - core/src/backends/local_shell.rs:549
   - core/src/backends/wsl.rs:875
@@ -13,8 +15,6 @@ evidence:
   - core/src/backends/ssh/mod.rs:630
   - core/src/plugin/connection.rs:341
   - core/src/backends/local_shell.rs:595
-status: fixed
-resolution: "#2771 — output_tx lock released before send (wsl/telnet/ssh; docker/serial already safe)"
 ---
 
 ## What
@@ -35,8 +35,8 @@ until the async consumer drains.
 
 This is the same class the audit brief already flagged (a local-shell reader holding a mutex across
 `blocking_send`), and it is **replicated across five backends**. It is bounded, not a hard deadlock:
-once the receiver is dropped, `blocking_send` returns `Err` immediately, so a *closed* consumer
-frees the lock. But a *slow* consumer (a stalled frontend / backed-up forwarder) pins the output
+once the receiver is dropped, `blocking_send` returns `Err` immediately, so a _closed_ consumer
+frees the lock. But a _slow_ consumer (a stalled frontend / backed-up forwarder) pins the output
 lock and delays session teardown and exit detection — the exit watcher can't record the exit, and
 `close`/cleanup paths that need the lock hang behind a live-but-slow consumer.
 
@@ -52,7 +52,7 @@ if let Some(sender) = guard.as_ref() {           // guard: MutexGuard<Option<Sen
 ## Recommendation
 
 Clone the `Sender` out of the mutex, drop the guard, then `blocking_send` on the clone — the lock
-protects the *slot*, not the send. This is a small, mechanical change repeated across the five
+protects the _slot_, not the send. This is a small, mechanical change repeated across the five
 backends and removes the teardown-vs-slow-consumer stall. Consider a shared helper so the pattern is
 fixed once and reused.
 </content>

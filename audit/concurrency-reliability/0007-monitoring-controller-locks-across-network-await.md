@@ -6,6 +6,8 @@ severity: medium
 category: reliability
 is_workaround: false
 subsystem: src-tauri/session/monitoring_controller
+status: fixed
+resolution: "#2991 — MonitoringController resolved provider as owned Arc (new monitoring_handle) under a short lock, drops sessions map lock before subscribe/RPC .await; still-current guards; deadlock-repro test"
 evidence:
   - src-tauri/src/session/monitoring_controller.rs:258
   - src-tauri/src/session/monitoring_controller.rs:259
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/session/monitoring_controller.rs:289
   - src-tauri/src/session/monitoring_controller.rs:313
   - src-tauri/src/session/monitoring_controller.rs:338
-status: fixed
-resolution: "#2991 — MonitoringController resolved provider as owned Arc (new monitoring_handle) under a short lock, drops sessions map lock before subscribe/RPC .await; still-current guards; deadlock-repro test"
 ---
 
 ## What
@@ -23,7 +23,7 @@ Several `MonitoringController` methods hold a `tokio::sync::Mutex` guard across 
 network round-trip:
 
 - `stop_session_monitoring` line **258**: `if let Some(proxy) =
-  self.monitoring_overrides.lock().await.remove(...)` — the scrutinee guard temporary stays alive
+self.monitoring_overrides.lock().await.remove(...)` — the scrutinee guard temporary stays alive
   for the whole `if let` block, so `monitoring_overrides` is **held across
   `proxy.unsubscribe().await`** (`:259`, an agent RPC).
 - Line **265→268**: `sessions` guard held across `provider.unsubscribe().await`.
@@ -42,7 +42,7 @@ blocking every other session's monitoring control and any code path that locks `
 
 There is also a latent reentrancy-deadlock: if any awaited provider callback re-enters the same map
 lock, the task self-deadlocks. Contrast the well-written `override_provider` helper (`:88-97`) and
-the `start` path (`:126-147`) which deliberately clone the Arc / scope the guard *before* awaiting —
+the `start` path (`:126-147`) which deliberately clone the Arc / scope the guard _before_ awaiting —
 the methods above don't.
 
 ## Evidence

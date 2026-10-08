@@ -6,6 +6,8 @@ severity: high
 category: arch
 is_workaround: false
 subsystem: agent/protocol vs src-tauri/session (remote_proxy, agent_manager)
+status: fixed
+resolution: "#3222, #3760 — desktop agent_manager initialize/notifications/forward/update notices now use core::protocol::methods DTOs (generic InitializeResult<C>, EmptyParams), wire JSON proven byte-identical (#3760). Agent-side emitters -> #3759"
 evidence:
   - agent/src/protocol/methods.rs:31
   - agent/src/protocol/methods.rs:148
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:457
   - src-tauri/src/session/remote_proxy.rs:542
   - src-tauri/Cargo.toml:87
-status: fixed
-resolution: "#3222, #3760 — desktop agent_manager initialize/notifications/forward/update notices now use core::protocol::methods DTOs (generic InitializeResult<C>, EmptyParams), wire JSON proven byte-identical (#3760). Agent-side emitters -> #3759"
 ---
 
 ## What

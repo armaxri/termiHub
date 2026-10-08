@@ -6,6 +6,8 @@ severity: low
 category: reliability
 is_workaround: true
 subsystem: core, src-tauri, agent (multiple)
+status: fixed
+resolution: "#3048 — poison-recovery tail: converted 10 remaining prod .expect('...poisoned') lock sites to .unwrap_or_else(|e| e.into_inner()) in ssh/session_pool.rs (7) + tool/mod.rs (3); rest of listed sites were test code (verified), no poison-policy ambiguity"
 evidence:
   - src-tauri/src/credential/master_password.rs:100
   - src-tauri/src/credential/manager.rs:70
@@ -14,11 +16,10 @@ evidence:
   - src-tauri/src/session/ssh_trust_store.rs:119
   - src-tauri/src/session/rdp_trust_store.rs:115
   - src-tauri/src/session/ssh_host_key_verifier.rs:123
-status: fixed
-resolution: "#3048 — poison-recovery tail: converted 10 remaining prod .expect('...poisoned') lock sites to .unwrap_or_else(|e| e.into_inner()) in ssh/session_pool.rs (7) + tool/mod.rs (3); rest of listed sites were test code (verified), no poison-policy ambiguity"
 ---
 
 ## What
+
 Across the credential store, session pool, trust stores, host-key verifier and
 tool host, `std::sync` locks are accessed with `.expect("... lock poisoned")` /
 `.lock().unwrap()`. There are ~180 such sites in production paths (the bulk of
@@ -26,14 +27,16 @@ the raw "unwrap in production" count). Each panics if the lock is poisoned (a
 thread panicked while holding it).
 
 ## Why it matters
+
 This is a deliberate poison-propagation pattern (a poisoned credential/crypto
-lock arguably *should* refuse to serve), so most are defensible. But it is a
+lock arguably _should_ refuse to serve), so most are defensible. But it is a
 blanket violation of the repo's stated "No `.unwrap()` in production code" rule,
 and for the credential/master-password paths a poison-panic mid-operation could
 crash the app rather than lock the store safely. It is worth a deliberate policy
 decision before release rather than being left implicit.
 
 ## Recommendation
+
 Decide the policy explicitly and document it: either (a) adopt `parking_lot`
 locks (no poisoning, cleaner API) workspace-wide, or (b) keep `std::sync` but
 centralize the poison handling in helper methods that recover the guard

@@ -6,6 +6,8 @@ severity: low
 category: ui
 is_workaround: false
 subsystem: src/components/SidebarListItem
+status: fixed
+resolution: "#3138 — COMPLETE: #2942 promoted SidebarStatusDot->shared ui/StatusDot; #3138 then consolidated the remaining state-palette dots (agent/connection-tree/plugin/shell-integration) onto ui/StatusDot with connection-state tones + lg size + pulse/dimmed modifiers. No hand-rolled status dots remain."
 evidence:
   - src/components/SidebarListItem/SidebarListItem.tsx:19
   - src/components/TransferQueue/TransferEntry.tsx:94
@@ -15,8 +17,6 @@ evidence:
   - src/components/UpdateNotification/UpdateNotification.tsx:73
   - src/components/Settings/ShellIntegrationSettings.tsx:173
   - src/components/Plugins/PluginDetailPanel.tsx:101
-status: fixed
-resolution: "#3138 — COMPLETE: #2942 promoted SidebarStatusDot->shared ui/StatusDot; #3138 then consolidated the remaining state-palette dots (agent/connection-tree/plugin/shell-integration) onto ui/StatusDot with connection-state tones + lg size + pulse/dimmed modifiers. No hand-rolled status dots remain."
 ---
 
 ## What

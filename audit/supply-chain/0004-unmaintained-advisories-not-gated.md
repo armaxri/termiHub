@@ -9,8 +9,8 @@ subsystem: workspace
 evidence:
   - deny.toml:34
   - .github/workflows/code-quality.yml:325
-status: deferred
-resolution: "#3055 — maintainer decision (2026-09-18): unmaintained stays ungated by policy, BUT the abandoned-dep set is no longer unmonitored — #3055 enumerated every non-actionable unmaintained/unsound RUSTSEC ID with rationale in .cargo/audit.toml + tracking issue #3054 for upstream resolution. Net-new: #3055 also FIXED 2 real vulns the noise had masked (rustls RUSTSEC-2026-0285, cryptoki -0286)"
+status: wontfix
+resolution: "maintainer decision 2026-10-06 (#3054 closed by #4169 + #4170) — unmaintained stays ungated (unmaintained = none). Clearable notices were cleared (unic-* via Tauri 2.12 #4170; serial/rustls-pemfile/git2 #3974/#3975/#3973; sidecar GTK3 stack #4169). The rest are documented accepted risks in docs/supply-chain.md (Accepted risks), where stale entries are detected. #3055 earlier fixed rustls RUSTSEC-2026-0285 and cryptoki -0286. No open tracker"
 ---
 
 ## What
@@ -19,21 +19,21 @@ resolution: "#3055 — maintainer decision (2026-09-18): unmaintained stays unga
 fail (or even warn) on RUSTSEC "unmaintained" advisories, and cargo-audit is kept
 in agreement (it likewise does not fail on them). The comment acknowledges the
 tree carries "a large, tauri-bound set of them (gtk3 bindings, async-std,
-proc-macro-error, unic-*, rustls-pemfile, serial, …)".
+proc-macro-error, unic-\*, rustls-pemfile, serial, …)".
 
 ## Why it matters
 
 Unmaintained is a real supply-chain signal: an abandoned crate will not receive
-the *next* CVE fix, and several named here are non-trivial (gtk3 bindings are the
+the _next_ CVE fix, and several named here are non-trivial (gtk3 bindings are the
 Linux UI substrate; `rustls-pemfile` sits on the TLS trust path; `async-std` is a
 full executor). Turning the gate fully off — rather than to `"warn"` — means a
-*newly* unmaintained crate (one that becomes abandoned after this decision) also
+_newly_ unmaintained crate (one that becomes abandoned after this decision) also
 surfaces nothing, including ones that are **not** in the tracked tauri set and
 that a local change could actually act on. The blanket-off setting hides both the
 known-unactionable and the future-actionable cases with the same switch.
 
 The stated reason (the tauri-bound set can't be cleared by any local change,
-tracked in #1037) justifies not *failing* on them, but not silencing them
+tracked in #1037) justifies not _failing_ on them, but not silencing them
 entirely.
 
 ## Evidence
@@ -48,7 +48,7 @@ entirely.
 
 Switch `unmaintained` from `"none"` to `"warn"` so new/abandoned crates appear in
 the CI log without gating PRs, and pair it with an explicit
-`[advisories] ignore` list of the *specific* known-unactionable advisory IDs
+`[advisories] ignore` list of the _specific_ known-unactionable advisory IDs
 (the tauri-bound set) so the noise stays suppressed by ID while anything new is
 visible. That converts a blanket blind spot into a reviewed allowlist. Keep #1037
 as the tracker for actually retiring the gtk3/async-std/etc. deps as tauri's

@@ -6,6 +6,8 @@ severity: high
 category: reliability
 is_workaround: false
 subsystem: agent/session/manager
+status: fixed
+resolution: "#2788 — three-phase create: reserve id in pending_creates → connect w/o sessions lock → re-acquire to insert"
 evidence:
   - agent/src/session/manager.rs:485
   - agent/src/session/manager.rs:503
@@ -13,8 +15,6 @@ evidence:
   - agent/src/session/manager.rs:660
   - agent/src/session/manager.rs:671
   - agent/src/daemon/client.rs:97
-status: fixed
-resolution: "#2788 — three-phase create: reserve id in pending_creates → connect w/o sessions lock → re-acquire to insert"
 ---
 
 ## What

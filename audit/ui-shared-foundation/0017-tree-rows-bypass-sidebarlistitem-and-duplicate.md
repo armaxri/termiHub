@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/Sidebar
+status: fixed
+resolution: "#2875 — extracted TreeFolderRow/TreeItemRow primitives (forwardRef, ref+prop composition for Radix ContextMenu asChild); ConnectionList + AgentNode (folder/connection/session rows) migrated; DOM parity via unchanged suites + new TreeRow tests"
 evidence:
   - src/components/Sidebar/ConnectionList.tsx:177
   - src/components/Sidebar/ConnectionList.tsx:410
@@ -13,8 +15,6 @@ evidence:
   - src/components/Sidebar/AgentNode.tsx:217
   - src/components/Sidebar/AgentNode.tsx:1476
   - src/components/SidebarListItem/SidebarListItem.tsx
-status: fixed
-resolution: "#2875 — extracted TreeFolderRow/TreeItemRow primitives (forwardRef, ref+prop composition for Radix ContextMenu asChild); ConnectionList + AgentNode (folder/connection/session rows) migrated; DOM parity via unchanged suites + new TreeRow tests"
 ---
 
 ## What
