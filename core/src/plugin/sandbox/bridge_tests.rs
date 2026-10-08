@@ -801,8 +801,15 @@ fn a_passed_socket_is_counted_before_its_reply_is_sent() {
         while matches!(runner_end.read(&mut sink), Ok(n) if n > 0) {}
     });
     holder.join().unwrap();
-    assert_eq!(shared.bridge.open_connections(), 1, "the reply is pending");
-    assert_eq!(counted, 1, "the pass was counted only after its reply was sent");
+    assert_eq!(
+        shared.bridge.open_connections(),
+        1,
+        "the connection was handed out"
+    );
+    assert_eq!(
+        counted, 1,
+        "the pass was counted only after its reply was sent"
+    );
 }
 
 /// Windows (#4219): a harness that duplicates sockets into "the runner" —
