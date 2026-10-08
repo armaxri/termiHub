@@ -290,6 +290,13 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         if not control.available:
             pytest.skip("no container runtime to drop the SSH session server-side")
 
+        # The overlay's controls carry no tab id, and an inactive tab keeps its
+        # overlay mounted: a dropped tab left by an earlier test (or a rerun)
+        # would take the bare-testid clicks and reads below. On nightly
+        # 2026-10-07 "View Scrollback" dismissed the previous test's overlay
+        # and this tab's never closed. Start from an empty tab strip.
+        self.close_all_tabs()
+
         # Baseline sshd sessions before this test connects, so the session this
         # connection spawns can be isolated by set difference and killed alone.
         pids_before = control.session_pids()
