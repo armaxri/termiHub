@@ -199,7 +199,7 @@ jobs:
           docker run --rm -v "$PWD:/src:ro" "rust:${version}-bookworm" bash -euo pipefail -c '
             apt-get update -qq
             apt-get install -y -qq pkg-config libudev-dev libssl-dev libdbus-1-dev >/dev/null
-            useradd -m probe
+            useradd -m -s /bin/bash probe
             cp -r /src /home/probe/src
             chown -R probe /home/probe/src /usr/local/cargo
             su probe -c "
