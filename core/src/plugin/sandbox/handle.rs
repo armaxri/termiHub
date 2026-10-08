@@ -10,20 +10,31 @@
 //! **Idle reap:** once the runner has had no session for
 //! [`PluginRunnerConfig::idle_timeout`] (5 minutes by default) it is shut down;
 //! a background thread holding only a weak reference checks for that.
+//!
+//! **Crashes (#4184):** every runner exit the host did not ask for (crash,
+//! hang, out of memory, invalid data) is charged to the plugin's
+//! [`CrashBudget`]. While it lasts the runner is respawned at once, so new
+//! sessions work (crashed sessions are not recreated: plugin types have no
+//! resume protocol, PLG-004); the crash that exceeds it auto-disables the
+//! plugin and reports the reason to the host, which persists it.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use termihub_plugin_api::PluginError;
-use termihub_plugin_runner::ipc::{Cancel, Configure, Message};
+use termihub_plugin_runner::ipc::{Cancel, Configure, Message, ResourceLimits};
 use termihub_plugin_runner::loader::LoadedPluginInfo;
 
 use crate::plugin::log_rate_limit::PluginLogLimiter;
+use crate::plugin::security::{RecoveryAction, MAX_RESTART_ATTEMPTS};
 use crate::plugin::HostError;
 
 use super::client::SandboxedPlugin;
+use super::exit::{auto_disable_reason, CrashBudget, RunnerExitCause, DEFAULT_CRASH_WINDOW};
+use super::watchdog::WatchdogConfig;
 
 /// Default idle time after which a session-free runner is shut down.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -38,15 +49,28 @@ pub struct PluginRunnerConfig {
     pub runner_path: PathBuf,
     /// How long a runner may sit without sessions before it is shut down.
     pub idle_timeout: Duration,
+    /// Resource limits every runner applies before loading its plugin
+    /// (host-chosen, never from the manifest).
+    pub limits: ResourceLimits,
+    /// Hang detection and the resident-size poll.
+    pub watchdog: WatchdogConfig,
+    /// A plugin's crash budget resets after this long without a crash.
+    pub crash_window: Duration,
 }
 
 impl PluginRunnerConfig {
-    /// Run plugins through `runner_path`, with the default idle timeout.
+    /// Run plugins through `runner_path` with the concept's defaults: 5 min
+    /// idle reap, 512 MiB / 256 descriptors / no child processes, ping every
+    /// 5 s with a 10 s timeout, a 1 GiB resident-size poll on macOS, and a
+    /// 10-minute crash window.
     #[must_use]
     pub fn new(runner_path: impl Into<PathBuf>) -> Self {
         Self {
             runner_path: runner_path.into(),
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            limits: ResourceLimits::plugin_defaults(),
+            watchdog: WatchdogConfig::default(),
+            crash_window: DEFAULT_CRASH_WINDOW,
         }
     }
 
@@ -56,7 +80,40 @@ impl PluginRunnerConfig {
         self.idle_timeout = idle_timeout;
         self
     }
+
+    /// Override the resource limits.
+    #[must_use]
+    pub fn with_limits(mut self, limits: ResourceLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Override the watchdog (tests use short intervals).
+    #[must_use]
+    pub fn with_watchdog(mut self, watchdog: WatchdogConfig) -> Self {
+        self.watchdog = watchdog;
+        self
+    }
 }
+
+/// A sandboxed plugin's health, for the plugin list's status (UI phase).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginHealth {
+    /// Whether a runner is running now.
+    pub running: bool,
+    /// Crashes counted in the current window ("Restarting (n/3)").
+    pub crashes: u32,
+    /// Crashes that are restarted before the plugin is auto-disabled.
+    pub max_restarts: u32,
+    /// How the last runner ended, if one did.
+    pub last_exit: Option<RunnerExitCause>,
+    /// Why the plugin was auto-disabled ("Disabled after 3 crashes").
+    pub auto_disabled: Option<String>,
+}
+
+/// Called once with the reason when the plugin is auto-disabled.
+pub(crate) type AutoDisableHook = Box<dyn Fn(&str) + Send + Sync>;
 
 /// An enabled plugin served by a (re)spawnable runner.
 pub struct SandboxedPluginHandle {
@@ -67,6 +124,12 @@ pub struct SandboxedPluginHandle {
     log_limiter: Arc<PluginLogLimiter>,
     current: Mutex<Option<Arc<SandboxedPlugin>>>,
     stopped: AtomicBool,
+    /// This handle, for the exit hooks it installs on each runner.
+    weak: Weak<Self>,
+    budget: Mutex<CrashBudget>,
+    last_exit: Mutex<Option<RunnerExitCause>>,
+    auto_disabled: Mutex<Option<String>>,
+    on_auto_disable: Mutex<Option<AutoDisableHook>>,
 }
 
 impl std::fmt::Debug for SandboxedPluginHandle {
@@ -87,19 +150,131 @@ impl SandboxedPluginHandle {
         configure: Configure,
         log_limiter: Arc<PluginLogLimiter>,
     ) -> Result<Arc<Self>, HostError> {
-        let first =
-            SandboxedPlugin::spawn(&config.runner_path, &configure, Arc::clone(&log_limiter))?;
-        let handle = Arc::new(Self {
+        let first = SandboxedPlugin::spawn(&config, &configure, Arc::clone(&log_limiter))?;
+        let budget = Mutex::new(CrashBudget::new(config.crash_window));
+        let handle = Arc::new_cyclic(|weak| Self {
             info: first.info().clone(),
             config,
             configure,
             data_dir: Mutex::new(String::new()),
             log_limiter,
-            current: Mutex::new(Some(first)),
+            current: Mutex::new(None),
             stopped: AtomicBool::new(false),
+            weak: weak.clone(),
+            budget,
+            last_exit: Mutex::new(None),
+            auto_disabled: Mutex::new(None),
+            on_auto_disable: Mutex::new(None),
         });
+        handle.watch(&first);
+        *handle.current.lock().unwrap_or_else(|e| e.into_inner()) = Some(first);
         spawn_idle_reaper(Arc::downgrade(&handle), handle.config.idle_timeout);
         Ok(handle)
+    }
+
+    /// Have `plugin` report its exit to this handle.
+    fn watch(&self, plugin: &SandboxedPlugin) {
+        let handle = self.weak.clone();
+        plugin.set_exit_hook(Box::new(move |cause| {
+            if let Some(handle) = handle.upgrade() {
+                handle.runner_exited(cause);
+            }
+        }));
+    }
+
+    /// A runner ended: charge a failure to the budget, then respawn or
+    /// auto-disable. Runs on whichever thread reaped the runner, possibly
+    /// under `current`'s lock, so the follow-up work runs on its own thread.
+    fn runner_exited(&self, cause: &RunnerExitCause) {
+        *self.last_exit.lock().unwrap_or_else(|e| e.into_inner()) = Some(cause.clone());
+        if !cause.is_failure() || self.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        let action = self
+            .budget
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_crash(Instant::now());
+        let handle = self.weak.clone();
+        let follow_up: Box<dyn FnOnce(&Self) + Send> = match action {
+            RecoveryAction::Restart => Box::new(|handle: &Self| {
+                // Respawn now so the next session finds a running plugin.
+                if let Err(e) = handle.acquire() {
+                    tracing::warn!(
+                        target: crate::plugin::PLUGIN_LOG_TARGET,
+                        "[{}] restarting the plugin after a crash failed: {e}",
+                        handle.info.id
+                    );
+                }
+            }),
+            RecoveryAction::Disable => {
+                let reason = auto_disable_reason();
+                *self.auto_disabled.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(reason.clone());
+                self.stopped.store(true, Ordering::SeqCst);
+                tracing::warn!(
+                    target: crate::plugin::PLUGIN_LOG_TARGET,
+                    "[{}] {reason}: the plugin is disabled until it is re-enabled",
+                    self.info.id
+                );
+                Box::new(move |handle: &Self| {
+                    handle.stop();
+                    if let Some(hook) = handle
+                        .on_auto_disable
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .as_ref()
+                    {
+                        hook(&reason);
+                    }
+                })
+            }
+        };
+        let _ = std::thread::Builder::new()
+            .name("plugin-runner-recovery".to_owned())
+            .spawn(move || {
+                if let Some(handle) = handle.upgrade() {
+                    follow_up(&handle);
+                }
+            });
+    }
+
+    /// Set what happens when the crash budget is spent (the host unregisters
+    /// the plugin's type and persists the reason). Runs at most once.
+    pub(crate) fn on_auto_disable(&self, hook: AutoDisableHook) {
+        *self
+            .on_auto_disable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(hook);
+    }
+
+    /// Why the plugin was auto-disabled, if it was.
+    #[must_use]
+    pub fn auto_disabled(&self) -> Option<String> {
+        self.auto_disabled
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The plugin's health: running, crash count, last exit, auto-disable.
+    #[must_use]
+    pub fn health(&self) -> PluginHealth {
+        PluginHealth {
+            running: self.running().is_some(),
+            crashes: self
+                .budget
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .crashes(),
+            max_restarts: MAX_RESTART_ATTEMPTS,
+            last_exit: self
+                .last_exit
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            auto_disabled: self.auto_disabled(),
+        }
     }
 
     /// Metadata the plugin reported at its first load.
@@ -124,19 +299,26 @@ impl SandboxedPluginHandle {
     /// The running runner, respawning it if it was reaped or died. Refused once
     /// the plugin was stopped (unloaded).
     pub(crate) fn acquire(&self) -> Result<Arc<SandboxedPlugin>, PluginError> {
+        if let Some(reason) = self.auto_disabled() {
+            return Err(PluginError::Other(reason));
+        }
         if self.stopped.load(Ordering::SeqCst) {
             return Err(PluginError::NotAlive);
         }
         let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        // Re-checked under the lock: `stop` takes it after setting the flag,
+        // so a respawn racing a stop never leaves a runner behind.
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(PluginError::NotAlive);
+        }
         if let Some(plugin) = current.as_ref().filter(|p| p.is_alive()) {
             return Ok(Arc::clone(plugin));
         }
-        let plugin = SandboxedPlugin::spawn(
-            &self.config.runner_path,
-            &self.configure,
-            Arc::clone(&self.log_limiter),
-        )
-        .map_err(|e| PluginError::Other(format!("restarting the plugin runner failed: {e}")))?;
+        let plugin =
+            SandboxedPlugin::spawn(&self.config, &self.configure, Arc::clone(&self.log_limiter))
+                .map_err(|e| {
+                    PluginError::Other(format!("restarting the plugin runner failed: {e}"))
+                })?;
         // The library is re-verified on every spawn; it must still be the same
         // plugin at the same ABI the host registered.
         if plugin.info().id != self.info.id || plugin.info().abi_version != self.info.abi_version {
@@ -145,6 +327,7 @@ impl SandboxedPluginHandle {
                 "the plugin library changed since it was loaded".to_owned(),
             ));
         }
+        self.watch(&plugin);
         *current = Some(Arc::clone(&plugin));
         Ok(plugin)
     }

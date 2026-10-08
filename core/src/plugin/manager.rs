@@ -107,7 +107,9 @@ pub struct InstalledPlugin {
     /// The plugin's current lifecycle state.
     pub state: PluginState,
     /// Human-readable detail when [`state`](InstalledPlugin::state) is
-    /// [`PluginState::Error`]; `null`/absent otherwise.
+    /// [`PluginState::Error`], or why the host auto-disabled a
+    /// [`PluginState::Disabled`] plugin ("Disabled after 3 crashes", #4184);
+    /// `null`/absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error_message: Option<String>,
@@ -646,6 +648,7 @@ impl PluginManager {
                 package_sha256: Some(package_sha256),
                 signer: Some(incoming_signer),
                 verified_backend,
+                auto_disabled_reason: None,
                 extra: Map::new(),
             },
         );
@@ -815,6 +818,11 @@ impl PluginManager {
                 ..PluginStateRecord::default()
             });
         record.enabled = enabled;
+        if enabled {
+            // Re-enabling clears an auto-disable (#4184); the host starts the
+            // plugin with a fresh crash budget.
+            record.auto_disabled_reason = None;
+        }
         self.write_state_store(&state)?;
 
         let mut plugin = self.installed_plugin_from(manifest, &state, &dir);
@@ -1044,10 +1052,16 @@ impl PluginManager {
             PluginState::Disabled
         };
 
+        // An auto-disabled plugin (#4184) is `Disabled` with the reason, so the
+        // plugin list can say "Disabled after 3 crashes" next to Re-enable.
+        let error_message = match plugin_state {
+            PluginState::Disabled => record.and_then(|r| r.auto_disabled_reason.clone()),
+            _ => None,
+        };
         InstalledPlugin {
             manifest,
             state: plugin_state,
-            error_message: None,
+            error_message,
             installed_at,
         }
     }
@@ -2369,6 +2383,33 @@ mod tests {
         let enabled = mgr.enable("toggle").unwrap();
         assert_eq!(enabled.state, PluginState::Installed);
         assert_eq!(mgr.get("toggle").unwrap().state, PluginState::Installed);
+    }
+
+    #[test]
+    fn an_auto_disabled_plugin_shows_its_reason_until_re_enabled() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("crashy", "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+
+        // What the host persists when the crash budget is spent (#4184).
+        super::super::plugin_state::record_auto_disable(
+            mgr.root(),
+            "crashy",
+            "Disabled after 3 crashes",
+        )
+        .unwrap();
+        let plugin = mgr.get("crashy").unwrap();
+        assert_eq!(plugin.state, PluginState::Disabled);
+        assert_eq!(
+            plugin.error_message.as_deref(),
+            Some("Disabled after 3 crashes")
+        );
+
+        // Re-enable clears the reason; a later user disable shows none.
+        assert_eq!(mgr.enable("crashy").unwrap().error_message, None);
+        let disabled = mgr.disable("crashy").unwrap();
+        assert_eq!(disabled.state, PluginState::Disabled);
+        assert_eq!(disabled.error_message, None);
     }
 
     #[test]

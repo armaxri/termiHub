@@ -38,6 +38,52 @@ pub struct Configure {
     pub plugin_id: String,
     /// The application version handed to ABI 1.1 plugins.
     pub host_version: String,
+    /// Process resource limits the runner applies to itself before it loads
+    /// any plugin code (#4184). Chosen by the host, never by the manifest.
+    /// Absent (an older host) means no limits.
+    #[serde(default)]
+    pub limits: ResourceLimits,
+}
+
+/// Process resource limits for a runner (#4184, concept "Crash isolation and
+/// restart policy"). The runner applies them with `setrlimit` after the
+/// handshake and before the plugin library is mapped, so they bind every byte
+/// of plugin code. Each limit only ever lowers the inherited one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    /// Cap on the runner's address space in bytes (`RLIMIT_AS`, Linux only:
+    /// macOS does not enforce it, so the host polls the runner's resident size
+    /// there instead). `None` leaves it unlimited.
+    #[serde(default)]
+    pub address_space_bytes: Option<u64>,
+    /// Cap on open file descriptors (`RLIMIT_NOFILE`). `None` leaves it as
+    /// inherited.
+    #[serde(default)]
+    pub max_open_files: Option<u64>,
+    /// Forbid starting child processes. Enforced with `RLIMIT_NPROC = 0` on
+    /// macOS, where it counts processes only. On Linux `RLIMIT_NPROC` also
+    /// counts threads (which plugins need), so it is left to the seccomp
+    /// filter of the Linux sandbox phase (#4185).
+    #[serde(default)]
+    pub forbid_child_processes: bool,
+}
+
+impl ResourceLimits {
+    /// Default address-space cap: 512 MiB.
+    pub const DEFAULT_ADDRESS_SPACE_BYTES: u64 = 512 * 1024 * 1024;
+    /// Default open-file cap.
+    pub const DEFAULT_MAX_OPEN_FILES: u64 = 256;
+
+    /// The concept's defaults: 512 MiB of address space, 256 descriptors, no
+    /// child processes.
+    #[must_use]
+    pub const fn plugin_defaults() -> Self {
+        Self {
+            address_space_bytes: Some(Self::DEFAULT_ADDRESS_SPACE_BYTES),
+            max_open_files: Some(Self::DEFAULT_MAX_OPEN_FILES),
+            forbid_child_processes: true,
+        }
+    }
 }
 
 /// Runner → host: which confinement layers the runner applied before loading
@@ -310,10 +356,16 @@ pub enum BridgeOp {
         /// The path, as the plugin passed it (resolved by the host scope).
         path: String,
     },
-    /// `list_dir(path)`.
+    /// `list_dir(path)`, one page. A listing larger than one frame is paged
+    /// (#4220): the first request carries `cursor: 0`, and each later one the
+    /// `next_cursor` of the previous [`BridgeResult::Entries`]; the runner
+    /// reassembles the pages.
     ListDir {
         /// The path, as the plugin passed it (resolved by the host scope).
         path: String,
+        /// `0` starts a listing; otherwise the host-issued continuation cursor.
+        #[serde(default)]
+        cursor: u64,
     },
 }
 
@@ -378,10 +430,15 @@ pub enum BridgeResult {
         /// File size in bytes.
         len: u64,
     },
-    /// `list_dir` succeeded: the entry names (lossy UTF-8), host order.
+    /// `list_dir` succeeded: one page of entry names (lossy UTF-8), host
+    /// order.
     Entries {
         /// The entry names.
         names: Vec<String>,
+        /// `0` when this page ends the listing; otherwise the cursor that
+        /// requests the next page (#4220).
+        #[serde(default)]
+        next_cursor: u64,
     },
 }
 

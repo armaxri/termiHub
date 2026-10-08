@@ -5,6 +5,7 @@
 //! runner → host  Hello
 //! host → runner  Configure
 //! runner → host  SandboxReport      (phase 1: nothing enforced yet)
+//! runner         resource limits     (setrlimit, #4184)
 //! runner         load_plugin_library (digest pin, ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)
 //! ...            CreateSession / Input / Resize / Close / Cancel / Ping
@@ -25,6 +26,7 @@
 
 mod bridge;
 mod channel;
+mod limits;
 mod shim;
 
 use std::collections::HashMap;
@@ -122,6 +124,10 @@ pub(crate) fn run<R: Read + Send + 'static>(
         .is_err()
     {
         return exit::PROTOCOL;
+    }
+    // Resource limits (#4184) bind the plugin from its first mapped byte.
+    for (limit, error) in limits::apply(&configure.limits) {
+        eprintln!("termihub-plugin-runner: could not apply {limit}: {error}");
     }
     let library = match load(&configure) {
         Ok(library) => library,
@@ -297,6 +303,9 @@ impl Server {
                 }
                 None => self.plugin_shutdown.store(true, Ordering::SeqCst),
             },
+            // Answered here, on the thread that runs every plugin call, not on
+            // the reader thread: a plugin stuck in a call must stop the pongs
+            // so the host's hang watchdog sees it (#4184).
             Message::Ping(Heartbeat { nonce }) => {
                 let _ = self.channel.send(&Message::Pong(Heartbeat { nonce }));
             }

@@ -1006,9 +1006,17 @@ plugin-side migration callback in 0.1.
   connection-policy checks and, for an approved `open_connection`, connects
   and hands your plugin the connected socket. Large `read_file` / `write_file`
   calls are moved in 512 KiB pieces; a `write_file` larger than that is
-  therefore not atomic. Refusals still return `PermissionDenied` (or
-  `ResourceLimit`).
+  therefore not atomic. A large `list_dir` arrives in pages taken from one
+  snapshot of the directory and is returned whole, in the same format; a
+  directory of more than 1,048,576 entries (or 16 MiB of names) is refused
+  with `ResourceLimit`, in process too. Refusals still return
+  `PermissionDenied` (or `ResourceLimit`).
   [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
   the echo example this way, and
   [`core/tests/plugin_runner_bridge.rs`](../core/tests/plugin_runner_bridge.rs)
-  the bridge.
+  the bridge. Out of process, a crash, hang or runaway allocation ends only your
+  plugin's sessions: the runner is limited to 512 MiB of address space on Linux
+  (a 1 GiB resident-size cap on macOS), 256 open descriptors and, on macOS, no
+  child processes; it must answer the host's ping within 10 s, so do not block
+  `write_input` / `resize` / `close` for long. Three crashes are restarted; the
+  fourth within 10 minutes disables the plugin until the user re-enables it.

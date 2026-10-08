@@ -17,7 +17,9 @@ manifest: PluginManifest,
 state: PluginState, 
 /**
  * Human-readable detail when [`state`](InstalledPlugin::state) is
- * [`PluginState::Error`]; `null`/absent otherwise.
+ * [`PluginState::Error`], or why the host auto-disabled a
+ * [`PluginState::Disabled`] plugin ("Disabled after 3 crashes", #4184);
+ * `null`/absent otherwise.
  */
 errorMessage?: string, 
 /**
