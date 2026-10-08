@@ -132,7 +132,7 @@ async function runStep(
       await driver.drag(step.testId, step.dx, step.dy);
       return;
     case "dragTo":
-      await driver.dragTo(step.fromTestId, step.toTestId);
+      await driver.dragTo(step.fromTestId, step.toTestId, { modifiers: step.modifiers });
       return;
     case "terminalInput":
       await driver.terminalInput(step.text, { tabId: step.tabId });

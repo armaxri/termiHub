@@ -1802,7 +1802,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
 
   it("renders a clickable breadcrumb for the current path", async () => {
     await renderLocalAt("/home");
-    const crumbs = container.querySelectorAll('[data-testid="file-browser-crumb"]');
+    const crumbs = container.querySelectorAll('[data-testid^="file-browser-crumb-"]');
     const labels = Array.from(crumbs).map((c) => c.textContent);
     expect(labels).toEqual(["/", "home"]);
   });
@@ -1810,7 +1810,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
   it("navigates when a breadcrumb segment is clicked", async () => {
     await renderLocalAt("/home");
     const rootCrumb = container.querySelectorAll(
-      '[data-testid="file-browser-crumb"]'
+      '[data-testid^="file-browser-crumb-"]'
     )[0] as HTMLElement;
     await act(async () => {
       rootCrumb.click();

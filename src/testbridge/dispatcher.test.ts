@@ -565,6 +565,124 @@ describe("dispatchCommand", () => {
       expect(seq.indexOf("tick")).toBeLessThan(seq.indexOf("up"));
     });
 
+    it("holds the requested modifiers on every pointer event of the gesture", async () => {
+      // The file browser reads `altKey` off the drag's pointer events to turn a
+      // move into a copy (PROD-006), so the held key must be on press, moves and
+      // release alike — as a real held key would be.
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      const seen: Array<[string, boolean, boolean, boolean, boolean]> = [];
+      const record = (e: Event) => {
+        const p = e as PointerEvent;
+        seen.push([p.type, p.altKey, p.ctrlKey, p.shiftKey, p.metaKey]);
+      };
+      a.addEventListener("pointerdown", record);
+      document.addEventListener("pointermove", record);
+      document.addEventListener("pointerup", record);
+      try {
+        await dispatchCommand(
+          { action: "dragTo", fromTestId: "a", toTestId: "b", modifiers: { alt: true } },
+          deps
+        );
+      } finally {
+        document.removeEventListener("pointermove", record);
+        document.removeEventListener("pointerup", record);
+      }
+      expect(seen[0][0]).toBe("pointerdown");
+      expect(seen[seen.length - 1][0]).toBe("pointerup");
+      expect(seen.every(([, alt, ctrl, shift, meta]) => alt && !ctrl && !shift && !meta)).toBe(
+        true
+      );
+    });
+
+    it("holds no modifier by default", async () => {
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      const alts: boolean[] = [];
+      a.addEventListener("pointerdown", (e) => alts.push((e as PointerEvent).altKey));
+      await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "b" }, deps);
+      expect(alts).toEqual([false]);
+    });
+
+    it("snapshots observed elements over the target, before the release", async () => {
+      // Mid-drag UI (the drop highlight, the drag chip) is gone after the
+      // release, so `observe` must read it while the pointer is still held.
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const b = container.querySelector<HTMLElement>('[data-testid="b"]')!;
+      const onMove = () => {
+        b.setAttribute("data-drop-highlight", "valid");
+        if (!container.querySelector('[data-testid="chip"]')) {
+          const chip = document.createElement("div");
+          chip.setAttribute("data-testid", "chip");
+          chip.textContent = "Move a.txt";
+          container.appendChild(chip);
+        }
+      };
+      const onUp = () => {
+        b.removeAttribute("data-drop-highlight");
+        container.querySelector('[data-testid="chip"]')?.remove();
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      try {
+        const res = await dispatchCommand(
+          { action: "dragTo", fromTestId: "a", toTestId: "b", observe: ["b", "chip", "gone"] },
+          deps
+        );
+        expect(res).toEqual({
+          ok: true,
+          action: "dragTo",
+          value: {
+            b: {
+              exists: true,
+              text: "",
+              attributes: { "data-testid": "b", "data-drop-highlight": "valid" },
+            },
+            chip: { exists: true, text: "Move a.txt", attributes: { "data-testid": "chip" } },
+            gone: { exists: false, text: null, attributes: {} },
+          },
+        });
+      } finally {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+      }
+      // The release still happened: the mid-drag UI is gone again.
+      expect(b.hasAttribute("data-drop-highlight")).toBe(false);
+    });
+
+    it("drags an element onto itself without waiting for it to move away", async () => {
+      // A self-drop (a folder onto its own row) is deliberate: source and target
+      // are the same element, so their centers always coincide. The overlap wait
+      // (#4110) is for two *different* rows stacked mid-layout, not this.
+      const { deps, container } = setup(`<div data-testid="a"></div>`);
+      const a = container.querySelector<HTMLElement>('[data-testid="a"]')!;
+      vi.spyOn(a, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 200, 28));
+      const xs: number[] = [];
+      const record = (e: Event) => xs.push((e as PointerEvent).clientX);
+      a.addEventListener("pointerdown", record);
+      document.addEventListener("pointermove", record);
+      const frames = vi.spyOn(globalThis, "requestAnimationFrame");
+      let frameCalls = 0;
+      try {
+        const res = await dispatchCommand(
+          { action: "dragTo", fromTestId: "a", toTestId: "a" },
+          deps
+        );
+        expect(res).toEqual({ ok: true, action: "dragTo" });
+      } finally {
+        document.removeEventListener("pointermove", record);
+        frameCalls = frames.mock.calls.length;
+        frames.mockRestore();
+      }
+      // Press at the center, wake 12px away (past the activation distance),
+      // then come back to release over the element itself.
+      expect(xs[0]).toBe(110);
+      expect(xs[1]).toBe(122);
+      expect(xs[xs.length - 1]).toBe(110);
+      // Only the gesture's own frames — no 30-frame overlap wait (2 rAFs each).
+      expect(frameCalls).toBeLessThanOrEqual(2 * 7);
+    });
+
     it("fails when an endpoint is absent", async () => {
       const { deps } = setup(`<div data-testid="a"></div>`);
       const res = await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "z" }, deps);

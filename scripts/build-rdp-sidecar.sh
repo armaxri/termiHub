@@ -21,6 +21,9 @@
 #                         `externalBin` expects. Tauri strips the -<triple>
 #                         suffix and drops the helper next to the app binary,
 #                         where SidecarRdp's next-to-exe resolution finds it.
+#                         macOS: ad-hoc signed first, under its installed
+#                         name, so the release re-sign leaves its bytes (and
+#                         the digest core/build.rs embeds) unchanged (#4222).
 #   --out <dir>           Also copy the binary into <dir> (e.g. next to a
 #                         locally-built desktop binary for manual testing).
 set -euo pipefail
@@ -53,7 +56,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --help | -h)
-        sed -n '2,25p' "$0"
+        sed -n '2,28p' "$0"
         exit 0
         ;;
     *)
@@ -118,7 +121,34 @@ if [ "$EXTERNALBIN" -eq 1 ]; then
     *) STAGE_NAME="termihub-rdp-helper-${TARGET}" ;;
     esac
     mkdir -p "$STAGE_DIR"
-    cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
+
+    case "$TARGET" in
+    *-apple-darwin)
+        # The macOS release re-signs every Mach-O in the bundle ad hoc
+        # (release.yml / dev-build.yml, PKG-005), which rewrites the linker's
+        # signature and so the file's SHA-256: the bundled helper would no
+        # longer match the digest core/build.rs embedded, and the app would
+        # refuse it as tampered (#4222). Re-signing code that is already
+        # ad-hoc signed under the same name is byte-identical, so sign it here
+        # under its installed name: the bytes Tauri bundles, the digest
+        # core/build.rs embeds and the re-signed file in the .app then match.
+        if command -v codesign >/dev/null 2>&1; then
+            SIGN_DIR="$(mktemp -d)"
+            cp "$BIN_PATH" "$SIGN_DIR/termihub-rdp-helper"
+            codesign -s - --force "$SIGN_DIR/termihub-rdp-helper"
+            cp "$SIGN_DIR/termihub-rdp-helper" "$STAGE_DIR/$STAGE_NAME"
+            rm -rf "$SIGN_DIR"
+            echo "Ad-hoc signed as termihub-rdp-helper"
+        else
+            echo "WARNING: codesign not found; staging the helper unsigned. A macOS" >&2
+            echo "  bundle re-signed later will not match the embedded digest." >&2
+            cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
+        fi
+        ;;
+    *)
+        cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
+        ;;
+    esac
     echo "Staged for Tauri externalBin: $STAGE_DIR/$STAGE_NAME"
 
     # Compute the sidecar's SHA-256 (#1762). `core/build.rs` hashes this exact

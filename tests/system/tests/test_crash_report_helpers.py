@@ -68,3 +68,20 @@ def test_remove_path_runs_as_root_without_stdin(monkeypatch):
     assert cmd[:2] == ["docker", "exec"] and "-u" not in cmd and "-i" not in cmd
     assert cmd[-3:] == ["-rf", "--", "/tmp/x"]
     assert kwargs["input"] is None
+
+
+def test_inode_reads_stat_and_reports_absence(monkeypatch):
+    outputs = iter(["1234\n", "none\n"])
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(stdout=next(outputs))
+
+    monkeypatch.setattr(fixtures, "container_runtime", lambda: "docker")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    control = fixtures.SshServerControl()
+    assert control.inode("/home/testuser/a.txt") == 1234
+    assert control.inode("/home/testuser/gone.txt") is None
+    assert "stat -c %i" in calls[0][-3]
+    assert calls[0][-1] == "/home/testuser/a.txt"

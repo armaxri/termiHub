@@ -21,8 +21,9 @@ REM   --out <dir>           Also copy the binary into <dir> (e.g. next to a
 REM                         locally-built desktop binary for manual testing).
 REM
 REM Mirrors scripts/build-rdp-sidecar.sh (flag parity is checked by
-REM scripts/internal/check-script-parity.sh). Relative --out paths resolve against
-REM the repo root, as in the .sh. Hashing uses .NET's SHA256 via Windows
+REM scripts/internal/check-script-parity.sh), except the macOS ad-hoc pre-sign
+REM (#4222), which only applies to apple-darwin targets (never built from
+REM Windows). Relative --out paths resolve against the repo root, as in the .sh. Hashing uses .NET's SHA256 via Windows
 REM PowerShell with no cmdlets -- the same line build-agents.cmd uses (it works
 REM when launched from pwsh, #4029; locale-independent, unlike certutil).
 REM

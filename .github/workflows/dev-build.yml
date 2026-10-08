@@ -321,6 +321,13 @@ jobs:
           # 3. Sign the top-level app bundle (no --deep; inner content already signed)
           codesign -s - --force "$APP"
 
+          # 3a. The re-signed RDP helper must still match the digest the app
+          #     embeds (#1762), or RDP is refused as tampered (#4222).
+          #     build-rdp-sidecar.sh signed it under its installed name before
+          #     staging, so the re-sign above is byte-identical.
+          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          scripts/internal/verify-rdp-helper-bundle.sh "$APP/Contents/MacOS/$EXE_NAME"
+
           # 4. HARD GATE: the whole bundle must verify as consistently signed.
           #    This is what catches the "damaged" (inconsistent) state.
           echo "=== Signature verification (strict, deep) ==="
@@ -333,7 +340,6 @@ jobs:
           #    the app embeds (the staged runner was signed under the same
           #    name, so the re-sign is byte-identical). --no-run: the x64
           #    bundle is cross-built here; Release macOS Smoke runs it natively.
-          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
           scripts/internal/verify-plugin-runner-bundle.sh --no-run "$APP/Contents/MacOS/$EXE_NAME"
 
           # Advisory only: Gatekeeper always rejects an ad-hoc (non-Developer ID)
