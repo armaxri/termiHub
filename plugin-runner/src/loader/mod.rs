@@ -261,40 +261,6 @@ impl PluginLibrary {
         // same library, whose ownership now transfers to the wrapper.
         Ok(unsafe { LoadedBackend::from_raw(backend) })
     }
-
-    /// Build a library handle for teardown-ordering tests without a real plugin.
-    ///
-    /// The `library` handle is the already-loaded process image (`dlopen(NULL)`
-    /// / the current module), which loads nothing new and runs no initializers.
-    /// The only observable effect on drop is `shutdown`. Never call
-    /// `create_backend_with_context` on it.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn for_drop_order_test(info: LoadedPluginInfo, shutdown: PluginShutdownFn) -> Self {
-        unsafe extern "C" fn unused_create_backend(
-            _config: *const PluginSessionConfig,
-            _output: PluginOutputSender,
-            _bridge: PluginHostBridge,
-            _out_backend: *mut PluginBackend,
-        ) -> termihub_plugin_api::PluginStatus {
-            termihub_plugin_api::PluginStatus::Other
-        }
-
-        #[cfg(unix)]
-        let library: Library = libloading::os::unix::Library::this().into();
-        #[cfg(windows)]
-        let library: Library = match libloading::os::windows::Library::this() {
-            Ok(lib) => lib.into(),
-            Err(e) => panic!("handle to the current module: {e}"),
-        };
-
-        Self {
-            info,
-            create_backend: unused_create_backend,
-            shutdown,
-            library,
-        }
-    }
 }
 
 impl Drop for PluginLibrary {
