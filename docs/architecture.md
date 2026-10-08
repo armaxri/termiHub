@@ -3511,7 +3511,7 @@ sandbox is a pre-v1.0 requirement and approved the concept
 - Each enabled plugin costs one process; terminal I/O crosses a socket (budget: at most +0.5 ms p99
   echo latency, an absolute throughput floor instead of a ratio, #4190).
 - The sandbox raises the cost of an attack; it does not protect against kernel or OS escapes.
-  Follow-ups: a Windows per-machine install check (#4252) and macOS scheduling fairness (#4260).
+  Follow-up: a Windows per-machine install check (#4252).
 
 ---
 
