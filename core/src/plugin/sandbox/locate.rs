@@ -204,8 +204,7 @@ fn occupies_channel_fd(pinned: &PinnedLibrary) -> bool {
 }
 
 /// Re-verify a pinned runner after its child was spawned; on `Err` the caller
-/// kills the child before sending it anything. Only Unix spawns a runner yet.
-#[cfg(any(unix, test))]
+/// kills the child before sending it anything.
 pub(super) fn confirm_runner(runner: &Path, pinned: &PinnedLibrary) -> Result<(), HostError> {
     pinned
         .confirm_after_load()

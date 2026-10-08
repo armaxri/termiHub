@@ -613,6 +613,9 @@ impl BridgeHost {
         }
     }
 
+    /// Only the Unix socket hand-over kills from here; Windows proxies every
+    /// connection until #4219.
+    #[cfg(unix)]
     fn kill(&self, reason: &str) {
         if let Some(shared) = self.attached.get().and_then(|a| a.shared.upgrade()) {
             shared.violation(reason);
