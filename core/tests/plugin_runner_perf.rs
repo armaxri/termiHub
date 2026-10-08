@@ -1,22 +1,35 @@
-//! Performance of the out-of-process plugin host against the in-process one
-//! (#4182), measured with the real `echo-backend` example plugin against the
-//! concept's budget ("Performance budget" in
-//! `docs/concepts/backlog/plugin-os-sandbox.html`):
+//! Performance gate of the out-of-process plugin host (#4182, #4190), measured
+//! with the real `echo-backend` example plugin against the concept's budget
+//! ("Performance budget" in `docs/concepts/backlog/plugin-os-sandbox.html`):
 //!
-//! * keystroke-to-echo latency: p99 added ≤ 0.5 ms (10 000 samples);
-//! * single-session output throughput: ≥ 80 % of in-process and ≥ 100 MB/s.
+//! | Metric                          | Budget                                  |
+//! | ------------------------------- | --------------------------------------- |
+//! | keystroke-to-echo latency       | p99 added ≤ 0.5 ms (10 000 samples)     |
+//! | output throughput, one session  | ≥ 100 MB/s absolute (256 MiB)           |
+//! | 40 concurrent sessions          | every session completes; fairness ≤ 2×  |
+//! | helper cold start               | ≤ 150 ms p95 (spawn + handshake + init) |
+//! | idle helper memory              | ≤ 15 MiB RSS                            |
 //!
-//! Ignored by default (timing-sensitive, and only meaningful optimised). Run:
+//! Every budget breach is collected and reported together, then fails the
+//! test, so one nightly run names every regression. The budgets are absolute
+//! ceilings rather than "within 20 % of the last run": a hosted CI runner
+//! varies far more than 20 % from run to run, so a stored baseline would either
+//! flap or be loose enough to say nothing.
+//!
+//! Throughput has no relative budget: the in-process "baseline" of the echo
+//! plugin is a plain memory copy (tens of GB/s) that no cross-process transport
+//! can approach, so the old "≥ 80 % of in-process" figure is reported only
+//! (concept re-baselined in #4190).
+//!
+//! Ignored by default (timing-sensitive, and only meaningful optimised); the
+//! nightly `plugin-sandbox-nightly.yml` lane runs it on Linux and macOS. Run:
 //!
 //! ```text
 //! cargo test -p termihub-core --features plugin --release \
 //!   --test plugin_runner_perf -- --ignored --nocapture
 //! ```
 //!
-//! The nightly performance gate (concept phase 8) is a follow-up; this test
-//! reports the numbers and asserts the latency budget and the absolute
-//! throughput floor. The relative throughput figure is reported only (see the
-//! note at the end of the test).
+//! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
 #![cfg(all(feature = "plugin", unix))]
 
 use std::sync::{Arc, Mutex};
@@ -27,16 +40,31 @@ use plugin_runner_support::{
     host_for, install_echo, kill_process, new_connection, runner_binary, wait_until,
 };
 
-use termihub_core::connection::{ConnectionType, OutputReceiver};
+use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::plugin::sandbox::PluginRunnerConfig;
+use termihub_core::plugin::{InstalledPlugin, PluginHost};
 
 const LATENCY_SAMPLES: usize = 10_000;
 const THROUGHPUT_CHUNK: usize = 64 * 1024;
 const THROUGHPUT_TOTAL: usize = 256 * 1024 * 1024;
+const COLD_START_SAMPLES: usize = 20;
+const FAIR_SESSIONS: usize = 40;
+const FAIR_CHUNK: usize = 16 * 1024;
+const FAIR_PER_SESSION: usize = 8 * 1024 * 1024;
+
+/// The budget table (see the module docs).
+const BUDGET_ADDED_P99: Duration = Duration::from_micros(500);
+const BUDGET_MB_PER_S: f64 = 100.0;
+const BUDGET_COLD_START_P95: Duration = Duration::from_millis(150);
+const BUDGET_IDLE_RSS_KIB: u64 = 15 * 1024;
+const BUDGET_FAIRNESS: f64 = 2.0;
+/// A session of the 40 that has not finished by then is starved.
+const STARVATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `ConnectionType` is `Send` but not `Sync`; the throughput pump writes from
 /// another thread, so the session sits behind an (uncontended) mutex.
 type Shared = Arc<Mutex<Box<dyn ConnectionType>>>;
+type Registry = Arc<Mutex<ConnectionTypeRegistry>>;
 
 struct Measured {
     p50: Duration,
@@ -44,16 +72,17 @@ struct Measured {
     mb_per_s: f64,
 }
 
-async fn session(
-    registry: &Arc<Mutex<termihub_core::connection::ConnectionTypeRegistry>>,
-    type_id: &str,
-) -> (Shared, OutputReceiver) {
+async fn session(registry: &Registry, type_id: &str) -> (Shared, OutputReceiver) {
     let mut conn = new_connection(registry, type_id);
     let rx = conn.subscribe_output();
     conn.connect(serde_json::json!({ "echoPrefix": "" }))
         .await
         .expect("connect");
     (Arc::new(Mutex::new(conn)), rx)
+}
+
+fn percentile(sorted: &[Duration], pct: usize) -> Duration {
+    sorted[(sorted.len() * pct / 100).min(sorted.len() - 1)]
 }
 
 async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
@@ -71,32 +100,97 @@ async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
         assert_eq!(chunk, b"x");
     }
     samples.sort();
-    let p50 = samples[samples.len() / 2];
-    let p99 = samples[samples.len() * 99 / 100];
-
-    let writer = Arc::clone(&conn);
-    let start = Instant::now();
-    let pump = tokio::task::spawn_blocking(move || {
-        let chunk = vec![b'a'; THROUGHPUT_CHUNK];
-        for _ in 0..THROUGHPUT_TOTAL / THROUGHPUT_CHUNK {
-            writer.lock().unwrap().write(&chunk).unwrap();
-        }
-    });
-    let mut received = 0usize;
-    while received < THROUGHPUT_TOTAL {
-        received += rx.recv().await.expect("echo keeps flowing").len();
-    }
-    let elapsed = start.elapsed();
-    pump.await.unwrap();
-    let mb_per_s = THROUGHPUT_TOTAL as f64 / 1_000_000.0 / elapsed.as_secs_f64();
+    let (p50, p99) = (percentile(&samples, 50), percentile(&samples, 99));
+    let mb_per_s = pump(conn, rx, THROUGHPUT_CHUNK, THROUGHPUT_TOTAL)
+        .await
+        .expect("echo keeps flowing");
     Measured { p50, p99, mb_per_s }
 }
 
+/// Write `total` bytes in `chunk`-sized writes from a blocking thread while
+/// draining the echo; return MB/s, or `None` if the echo stopped.
+async fn pump(conn: Shared, mut rx: OutputReceiver, chunk: usize, total: usize) -> Option<f64> {
+    let start = Instant::now();
+    let writer = tokio::task::spawn_blocking(move || {
+        let data = vec![b'a'; chunk];
+        for _ in 0..total / chunk {
+            conn.lock().unwrap().write(&data).unwrap();
+        }
+    });
+    let mut received = 0usize;
+    while received < total {
+        received += rx.recv().await?.len();
+    }
+    let elapsed = start.elapsed();
+    writer.await.unwrap();
+    Some(total as f64 / 1_000_000.0 / elapsed.as_secs_f64())
+}
+
+/// `n` cold starts (spawn + handshake + dlopen + init) by loading and
+/// unloading the plugin out of process; sorted.
+fn cold_starts(host: &PluginHost, plugin: &InstalledPlugin, n: usize) -> Vec<Duration> {
+    let mut samples: Vec<Duration> = (0..n)
+        .map(|_| {
+            let start = Instant::now();
+            host.load(plugin).expect("load out of process");
+            let took = start.elapsed();
+            host.unload(&plugin.manifest.id);
+            took
+        })
+        .collect();
+    samples.sort();
+    samples
+}
+
+fn rss_kib(pid: u32) -> Option<u64> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+fn runner_pid(host: &PluginHost, id: &str) -> u32 {
+    host.sandboxed_plugin(id)
+        .and_then(|h| h.running())
+        .and_then(|p| p.pid())
+        .expect("runner pid")
+}
+
+/// Per-session MB/s of [`FAIR_SESSIONS`] sessions pumping at once through one
+/// runner; `None` for a session that starved.
+async fn fairness(registry: &Registry, type_id: &str) -> Vec<Option<f64>> {
+    let mut sessions = Vec::with_capacity(FAIR_SESSIONS);
+    for _ in 0..FAIR_SESSIONS {
+        sessions.push(session(registry, type_id).await);
+    }
+    let pumps: Vec<_> = sessions
+        .into_iter()
+        .map(|(conn, rx)| {
+            tokio::spawn(async move {
+                tokio::time::timeout(
+                    STARVATION_TIMEOUT,
+                    pump(conn, rx, FAIR_CHUNK, FAIR_PER_SESSION),
+                )
+                .await
+                .ok()
+                .flatten()
+            })
+        })
+        .collect();
+    let mut rates = Vec::with_capacity(FAIR_SESSIONS);
+    for pump in pumps {
+        rates.push(pump.await.unwrap());
+    }
+    rates
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "performance measurement; run optimised with --ignored --nocapture"]
+#[ignore = "performance gate; run optimised with --ignored --nocapture (nightly lane)"]
 async fn out_of_process_echo_stays_within_the_budget() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
+    let id = echo.plugin.manifest.id.clone();
 
     let (in_host, in_registry) = host_for(&echo);
     let warm = Instant::now();
@@ -107,19 +201,23 @@ async fn out_of_process_echo_stays_within_the_budget() {
     );
     let (conn, rx) = session(&in_registry, &echo.type_id).await;
     let inproc = measure(conn, rx).await;
-    in_host.unload(&echo.plugin.manifest.id);
+    in_host.unload(&id);
 
     let (out_host, out_registry) = host_for(&echo);
     let out_host = out_host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
-    let cold = Instant::now();
+    let starts = cold_starts(&out_host, &echo.plugin, COLD_START_SAMPLES);
+    let cold_p50 = percentile(&starts, 50);
+    let cold_p95 = percentile(&starts, 95);
+    println!(
+        "runner cold start (spawn + handshake + dlopen + init) p50 {cold_p50:?} p95 {cold_p95:?}"
+    );
+
     out_host.load(&echo.plugin).unwrap();
-    let cold_start = cold.elapsed();
-    // A respawn after an idle reap: the same sequence on an already-seen binary.
+    // A respawn after a crash: the same sequence plus the first session.
     let handle = out_host
-        .sandboxed_plugin(&echo.plugin.manifest.id)
+        .sandboxed_plugin(&id)
         .expect("loaded out of process");
-    let first_pid = handle.running().and_then(|p| p.pid()).expect("runner pid");
-    kill_process(first_pid);
+    kill_process(runner_pid(&out_host, &id));
     assert!(wait_until(Duration::from_secs(5), || handle
         .running()
         .is_none()));
@@ -129,22 +227,15 @@ async fn out_of_process_echo_stays_within_the_budget() {
         "runner respawn + first session (spawn + handshake + dlopen + init + create) {:?}",
         respawn.elapsed()
     );
-    let pid = out_host
-        .sandboxed_plugin(&echo.plugin.manifest.id)
-        .and_then(|h| h.running())
-        .and_then(|p| p.pid())
-        .expect("runner pid");
-    let rss = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .unwrap_or_default();
-    println!(
-        "runner cold start (spawn + handshake + dlopen + init) {cold_start:?}; idle RSS {rss} KiB"
-    );
+    // Idle: loaded, its only session closed, nothing in flight.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let idle_rss = rss_kib(runner_pid(&out_host, &id));
+    println!("runner idle RSS {idle_rss:?} KiB");
+
     let (conn, rx) = session(&out_registry, &echo.type_id).await;
     let sandboxed = measure(conn, rx).await;
-    out_host.unload(&echo.plugin.manifest.id);
+    let rates = fairness(&out_registry, &echo.type_id).await;
+    out_host.unload(&id);
 
     let added_p99 = sandboxed.p99.saturating_sub(inproc.p99);
     let ratio = sandboxed.mb_per_s / inproc.mb_per_s;
@@ -153,34 +244,81 @@ async fn out_of_process_echo_stays_within_the_budget() {
         inproc.p50, inproc.p99, sandboxed.p50, sandboxed.p99, added_p99
     );
     println!(
-        "throughput    in-process {:.0} MB/s | runner {:.0} MB/s | ratio {:.0} %",
+        "throughput    in-process {:.0} MB/s | runner {:.0} MB/s | ratio {:.0} % (reported only)",
         inproc.mb_per_s,
         sandboxed.mb_per_s,
         ratio * 100.0
     );
+    let finished: Vec<f64> = rates.iter().flatten().copied().collect();
+    let starved = rates.len() - finished.len();
+    let slowest = finished.iter().copied().fold(f64::INFINITY, f64::min);
+    let fastest = finished.iter().copied().fold(0.0, f64::max);
+    let spread = fastest / slowest;
+    println!(
+        "{FAIR_SESSIONS} sessions  slowest {slowest:.0} MB/s | fastest {fastest:.0} MB/s | \
+         spread {spread:.2}x | starved {starved}"
+    );
+
+    write_report(&serde_json::json!({
+        "latency_p99_added_us": added_p99.as_micros() as u64,
+        "latency_p99_runner_us": sandboxed.p99.as_micros() as u64,
+        "throughput_mb_per_s": sandboxed.mb_per_s.round(),
+        "throughput_ratio_pct": (ratio * 100.0).round(),
+        "cold_start_p95_ms": cold_p95.as_secs_f64() * 1000.0,
+        "idle_rss_kib": idle_rss,
+        "fair_sessions": FAIR_SESSIONS,
+        "fair_spread": spread,
+        "fair_starved": starved,
+        "release": !cfg!(debug_assertions),
+    }));
+
     if cfg!(debug_assertions) {
         println!("(debug build: numbers are indicative only; budgets not asserted)");
         return;
     }
+    let mut breaches = Vec::new();
+    if added_p99 > BUDGET_ADDED_P99 {
+        breaches.push(format!(
+            "p99 latency added {added_p99:?} > {BUDGET_ADDED_P99:?}"
+        ));
+    }
+    if sandboxed.mb_per_s < BUDGET_MB_PER_S {
+        breaches.push(format!(
+            "throughput {:.0} MB/s < {BUDGET_MB_PER_S} MB/s",
+            sandboxed.mb_per_s
+        ));
+    }
+    if cold_p95 > BUDGET_COLD_START_P95 {
+        breaches.push(format!(
+            "cold start p95 {cold_p95:?} > {BUDGET_COLD_START_P95:?}"
+        ));
+    }
+    match idle_rss {
+        Some(kib) if kib > BUDGET_IDLE_RSS_KIB => {
+            breaches.push(format!("idle RSS {kib} KiB > {BUDGET_IDLE_RSS_KIB} KiB"));
+        }
+        Some(_) => {}
+        None => breaches.push("idle RSS could not be measured (ps)".to_owned()),
+    }
+    if starved > 0 {
+        breaches.push(format!(
+            "{starved} of {FAIR_SESSIONS} sessions starved (> {STARVATION_TIMEOUT:?})"
+        ));
+    } else if spread > BUDGET_FAIRNESS {
+        breaches.push(format!("fairness spread {spread:.2}x > {BUDGET_FAIRNESS}x"));
+    }
     assert!(
-        added_p99 <= Duration::from_micros(500),
-        "p99 latency added {added_p99:?} exceeds the 0.5 ms budget"
+        breaches.is_empty(),
+        "plugin sandbox performance budget breached:\n  {}",
+        breaches.join("\n  ")
     );
-    assert!(
-        sandboxed.mb_per_s >= 100.0,
-        "runner throughput {:.0} MB/s is under 100 MB/s",
-        sandboxed.mb_per_s
-    );
-    // The concept's relative budget (≥ 80 % of in-process) is reported, not
-    // asserted: against this echo plugin the in-process "baseline" is a pure
-    // in-memory copy (tens of GB/s), which no cross-process transport can
-    // approach. Re-baselining it on a realistic pipeline is part of the phase-8
-    // performance gate.
-    if ratio < 0.8 {
-        println!(
-            "note: relative throughput {:.0} % is below the concept's 80 % \
-             (in-process baseline is a memory copy)",
-            ratio * 100.0
-        );
+}
+
+/// Write the numbers to `$TERMIHUB_PERF_REPORT` when set (the nightly lane
+/// uploads it and shows it in the job summary).
+fn write_report(report: &serde_json::Value) {
+    if let Some(path) = std::env::var_os("TERMIHUB_PERF_REPORT") {
+        let text = serde_json::to_string_pretty(report).expect("serialise the report");
+        std::fs::write(&path, text).expect("write TERMIHUB_PERF_REPORT");
     }
 }
