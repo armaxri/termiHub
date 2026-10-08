@@ -199,6 +199,7 @@ each job runs only if the PR can affect it:
 | Shell Script Quality                                      | a shell/cmd script changed                                |
 | Workflow Lint (actionlint)                                | a `.github/` file changed                                 |
 | Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes         |
+| Plugin IPC Fuzz Crate (stable check)                      | `plugin-runner/`, `plugin-api/` or Cargo.toml changed     |
 | System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
 | Security Audit                                            | a dependency manifest/lockfile changed                    |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |

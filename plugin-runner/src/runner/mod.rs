@@ -32,6 +32,8 @@ mod bridge;
 mod channel;
 mod confine;
 mod limits;
+#[cfg(windows)]
+mod passed;
 mod shim;
 
 use std::collections::HashMap;
@@ -99,8 +101,8 @@ type Sessions = Arc<Mutex<HashMap<u32, Session>>>;
 /// Descriptors the host passes along with frames (Unix handle passing).
 #[cfg(unix)]
 pub(crate) type PassedFds = Option<FdQueue>;
-/// No handle passing over the Windows pipe yet (#4219): every bridge
-/// connection is proxied.
+/// Nothing rides along with frames on Windows: a bridge socket arrives as a
+/// handle the host duplicated into this process, named in its reply (#4219).
 #[cfg(not(unix))]
 pub(crate) type PassedFds = ();
 
@@ -111,7 +113,10 @@ pub(crate) fn run<R: Read + Send + 'static>(
     channel: Arc<Channel>,
     #[cfg_attr(
         not(unix),
-        allow(unused_variables, reason = "no handle passing on Windows yet (#4219)")
+        allow(
+            unused_variables,
+            reason = "Windows sockets arrive as duplicated handles, not with frames"
+        )
     )]
     fds: PassedFds,
 ) -> i32 {

@@ -148,8 +148,8 @@ mod platform {
             }
         };
         let channel = Arc::new(Channel::new(Box::new(writer)));
-        // No handle passing over the pipe yet (#4219): bridge connections are
-        // proxied.
+        // Bridge sockets arrive as handles the host duplicated into this
+        // process (#4219), not with frames.
         runner::run(stream, channel, ())
     }
 }

@@ -10,7 +10,9 @@
 //!
 //! * **Network.** An approved `open_connection` comes back either as the
 //!   connected socket itself (`SCM_RIGHTS` on Unix, popped from the channel's
-//!   [`FdQueue`]) — the plugin then reads and writes it locally with no hop
+//!   `FdQueue`; on Windows a handle the host duplicated into this process,
+//!   driven with overlapped `ReadFile` / `WriteFile` and never Winsock, #4219)
+//!   — the plugin then reads and writes it locally with no hop
 //!   through the host — or, where a handle cannot be passed, as a **proxied**
 //!   connection whose bytes travel as `StreamData` / `StreamWrite` frames with
 //!   a per-direction credit window ([`STREAM_WINDOW`]). Dropping the stream
@@ -67,6 +69,13 @@ enum ConnHandle {
     /// The connected socket itself, plus its release guard.
     #[cfg(unix)]
     Passed(std::os::fd::OwnedFd, ReleaseGuard),
+    /// The socket the host duplicated into this process, plus its release
+    /// guard (Windows).
+    #[cfg(windows)]
+    Passed(
+        termihub_plugin_runner::ipc::handle::SocketStream,
+        ReleaseGuard,
+    ),
     /// A proxied connection.
     Proxy(ProxyStream),
 }
@@ -189,14 +198,21 @@ impl BridgeClient {
                 let fd = self.fds.as_ref().and_then(FdQueue::pop)?;
                 Some(ConnHandle::Passed(fd, guard))
             }
-            #[cfg(not(unix))]
-            StreamTransport::HandlePassed => {
-                // Windows handle passing (DuplicateHandle +
-                // overlapped ReadFile/WriteFile) lands with the Windows
-                // transport (#4219); until then the host only offers `Proxy` here.
-                drop(guard);
-                None
+            #[cfg(windows)]
+            StreamTransport::HandleDuplicated { handle } => {
+                use termihub_plugin_runner::ipc::handle::{adopt, SocketStream};
+                // SAFETY: the host duplicated this handle into this process
+                // for this very reply; a value that is not a socket handle is
+                // refused untouched (and the slot released).
+                let socket = unsafe { adopt(handle) }.ok()?;
+                Some(ConnHandle::Passed(SocketStream::new(socket), guard))
             }
+            // A transport this platform cannot receive: the host never sends
+            // it here; refuse it and release the slot.
+            #[cfg(unix)]
+            StreamTransport::HandleDuplicated { .. } => None,
+            #[cfg(windows)]
+            StreamTransport::HandlePassed => None,
         }
     }
 
@@ -390,6 +406,10 @@ unsafe extern "C" fn ipc_open_connection(
             #[cfg(unix)]
             Some(ConnHandle::Passed(fd, guard)) => {
                 PluginTcpStream::from_std_guarded(std::net::TcpStream::from(fd), Box::new(guard))
+            }
+            #[cfg(windows)]
+            Some(ConnHandle::Passed(socket, guard)) => {
+                super::passed::into_plugin_stream(socket, Box::new(guard))
             }
             Some(ConnHandle::Proxy(proxy)) => proxy.into_plugin_stream(),
             None => return status_of(&completion.result),

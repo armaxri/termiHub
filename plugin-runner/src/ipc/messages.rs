@@ -429,6 +429,14 @@ pub enum StreamTransport {
     /// The host passed the connected socket itself along with the reply
     /// (`SCM_RIGHTS` on Unix): the runner drives it directly.
     HandlePassed,
+    /// Windows (#4219): the host duplicated the connected socket into the
+    /// runner (`DuplicateHandle`) before replying; `handle` is its value in the
+    /// runner's handle table. The runner owns it and drives it with overlapped
+    /// `ReadFile` / `WriteFile` — never Winsock, which cannot start under LPAC.
+    HandleDuplicated {
+        /// The handle value in the runner process.
+        handle: u64,
+    },
     /// The host keeps the socket and relays its bytes as `StreamData` /
     /// `StreamWrite` frames (the fallback where a handle cannot be passed).
     Proxy,

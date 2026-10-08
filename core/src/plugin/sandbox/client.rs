@@ -86,6 +86,13 @@ impl SandboxedPlugin {
             }),
         )?;
         let stderr = child.stderr.take();
+        // Bridge sockets are duplicated into the runner through its process
+        // handle (#4219); without a copy every connection is proxied.
+        #[cfg(windows)]
+        let runner_process = {
+            use std::os::windows::io::AsHandle;
+            child.as_handle().try_clone_to_owned().ok()
+        };
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
         shared.set_output_rate_cap(config.output_rate_cap);
         if let Some(stderr) = stderr {
@@ -107,7 +114,13 @@ impl SandboxedPlugin {
                     .try_clone()
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
                     .inspect_err(|_| shared.kill())?;
-                let writer = ChannelWriter::for_channel(stream)
+                let writer = ChannelWriter::for_channel(stream);
+                #[cfg(windows)]
+                let writer = writer.map(|w| match runner_process {
+                    Some(process) => w.passing_into(process),
+                    None => w,
+                });
+                let writer = writer
                     .map(Arc::new)
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
                     .inspect_err(|_| shared.kill())?;
@@ -302,6 +315,14 @@ impl SandboxedPlugin {
     #[must_use]
     pub fn bridge_connections(&self) -> usize {
         self.shared.bridge.open_connections()
+    }
+
+    /// Bridge connections whose socket was handed to the runner itself
+    /// (`SCM_RIGHTS` on Unix, `DuplicateHandle` on Windows) rather than
+    /// proxied, since the runner started.
+    #[must_use]
+    pub fn bridge_handles_passed(&self) -> u64 {
+        self.shared.bridge.handles_passed()
     }
 
     /// Relay every new bridge connection through the host (`StreamData`)

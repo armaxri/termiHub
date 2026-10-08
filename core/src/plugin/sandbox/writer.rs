@@ -1,6 +1,7 @@
 //! The host's write half of a runner channel, shared by every sender: session
 //! requests, the bridge service's replies (some carrying a passed socket) and
-//! the proxied-stream pumps (#4183).
+//! the proxied-stream pumps (#4183). On Windows it also holds the runner's
+//! process handle, which bridge sockets are duplicated into (#4219).
 //!
 //! Each frame goes out in one write under one lock, so frames from concurrent
 //! senders never interleave, and a frame carrying a descriptor is ordered with
@@ -23,6 +24,11 @@ pub(super) struct ChannelWriter {
     /// only ever used while `inner` is locked. `None` in unit tests.
     #[cfg(unix)]
     fd_stream: Option<std::os::unix::net::UnixStream>,
+    /// The runner process, which bridge sockets are duplicated into
+    /// (`DuplicateHandle`). `None` until [`passing_into`](Self::passing_into)
+    /// and in unit tests.
+    #[cfg(windows)]
+    runner: Option<std::os::windows::io::OwnedHandle>,
 }
 
 impl ChannelWriter {
@@ -33,6 +39,8 @@ impl ChannelWriter {
             inner: FairMutex::new(inner),
             #[cfg(unix)]
             fd_stream: None,
+            #[cfg(windows)]
+            runner: None,
         }
     }
 
@@ -46,11 +54,19 @@ impl ChannelWriter {
         })
     }
 
-    /// A writer over the Windows pipe channel. Handles are not passed over it
-    /// yet (#4219), so every bridge connection is proxied.
+    /// A writer over the Windows pipe channel. It passes bridge sockets only
+    /// once it knows the runner process ([`passing_into`](Self::passing_into)).
     #[cfg(windows)]
     pub(super) fn for_channel(stream: super::spawn::HostChannel) -> io::Result<Self> {
         Ok(Self::new(Box::new(stream)))
+    }
+
+    /// Pass bridge sockets by duplicating them into `runner` (its process
+    /// handle, which needs `PROCESS_DUP_HANDLE`).
+    #[cfg(windows)]
+    pub(super) fn passing_into(mut self, runner: std::os::windows::io::OwnedHandle) -> Self {
+        self.runner = Some(runner);
+        self
     }
 
     /// Write one already-encoded frame.
@@ -67,9 +83,36 @@ impl ChannelWriter {
         {
             self.fd_stream.is_some()
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            false
+            self.runner.is_some()
+        }
+    }
+
+    /// Duplicate `socket` into the runner (least access, see
+    /// [`termihub_plugin_runner::ipc::handle::SOCKET_ACCESS`]) and return its
+    /// value there.
+    #[cfg(windows)]
+    pub(super) fn duplicate_into_runner(&self, socket: &std::net::TcpStream) -> io::Result<u64> {
+        use std::os::windows::io::{AsHandle, AsRawSocket, BorrowedHandle};
+        let Some(runner) = self.runner.as_ref() else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this channel cannot pass handles",
+            ));
+        };
+        // SAFETY: a base-provider socket is a kernel handle (the caller
+        // checked `XP1_IFS_HANDLES`), valid while `socket` lives.
+        let handle = unsafe { BorrowedHandle::borrow_raw(socket.as_raw_socket() as _) };
+        termihub_plugin_runner::ipc::handle::duplicate_into(runner.as_handle(), handle)
+    }
+
+    /// Close a duplicate whose reply never reached the runner.
+    #[cfg(windows)]
+    pub(super) fn close_in_runner(&self, value: u64) {
+        use std::os::windows::io::AsHandle;
+        if let Some(runner) = self.runner.as_ref() {
+            termihub_plugin_runner::ipc::handle::close_in(runner.as_handle(), value);
         }
     }
 

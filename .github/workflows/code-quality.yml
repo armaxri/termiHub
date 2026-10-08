@@ -52,6 +52,7 @@ jobs:
       agent: ${{ steps.detect.outputs.agent }}
       workflows: ${{ steps.detect.outputs.workflows }}
       rustdoc: ${{ steps.detect.outputs.rustdoc }}
+      plugin_fuzz: ${{ steps.detect.outputs.plugin_fuzz }}
       tests: ${{ steps.detect.outputs.tests }}
       test_matrix: ${{ steps.detect.outputs.test_matrix }}
 
@@ -584,6 +585,56 @@ jobs:
           echo "::group::cargo doc termihub, termihub-core, termihub-agent (--all-features)"
           cargo doc --no-deps --all-features -p termihub -p termihub-core -p termihub-agent
           echo "::endgroup::"
+
+  # The plugin-runner IPC fuzz crate (#4257). plugin-runner/fuzz is excluded from
+  # the workspace (libfuzzer-sys, its own lockfile), so no workspace job compiles
+  # it, and its only other consumer is the scheduled plugin-sandbox-nightly.yml,
+  # which runs main's copy. Its structured message generator constructs every
+  # IPC message literally, so a field added to one without updating the
+  # generator broke it silently until #4219 happened to touch it. This job
+  # compiles the lib, the gen-seeds bin and all three fuzz targets on the pinned
+  # STABLE toolchain: only `cargo fuzz build`/`run` need nightly (for
+  # -Zsanitizer=address); a plain clippy check of libfuzzer-sys and the
+  # `fuzz_target!` bodies builds on stable. Its target dir is the fuzz crate's
+  # own (plugin-runner/fuzz/target, a separate workspace root), cached under this
+  # job's own key, so it never touches the workspace cache.
+  plugin-fuzz-check:
+    name: Plugin IPC Fuzz Crate (stable check)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.plugin_fuzz != 'false' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt, clippy
+
+      # The fuzz crate's Cargo.lock is deliberately uncommitted (its deps must
+      # stay out of the workspace audits). Seed it from the workspace lockfile so
+      # the deps it shares with plugin-runner resolve to the reviewed workspace
+      # versions; cargo prunes the rest and adds only the fuzz-only crates.
+      - name: Seed the fuzz lockfile from the workspace
+        run: cp Cargo.lock plugin-runner/fuzz/Cargo.lock
+
+      - name: Cache the fuzz crate build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: plugin-runner/fuzz
+          # Reader/writer split, same as rust-quality: PRs restore, pushes save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      # `cargo fmt --all` at the root does not reach an excluded crate.
+      - name: Check fuzz crate formatting
+        working-directory: plugin-runner/fuzz
+        run: cargo fmt -- --check
+
+      - name: Clippy the fuzz crate (lib, gen-seeds, fuzz targets)
+        working-directory: plugin-runner/fuzz
+        run: cargo clippy --all-targets -- -D warnings
 
   # Shell-script quality: static analysis + cross-platform parity + headless
   # smoke (audit finding TOOL-012 / WA-CI-029).
@@ -1428,6 +1479,7 @@ jobs:
       - rust-quality
       - rust-quality-windows
       - rustdoc
+      - plugin-fuzz-check
       - rdp-sidecar-quality
       - frontend-quality
       - shellcheck

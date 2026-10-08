@@ -262,6 +262,15 @@ impl Probe {
             .clone()
     }
 
+    /// Bridge connections whose socket was handed into the running runner.
+    fn handles_passed(&self) -> u64 {
+        self.host
+            .sandboxed_plugin(self.id())
+            .and_then(|h| h.running())
+            .expect("a running runner")
+            .bridge_handles_passed()
+    }
+
     /// The denial events the host recorded for the running runner.
     #[cfg(target_os = "linux")]
     fn denials(&self) -> Vec<termihub_core::plugin::sandbox::BridgeDenial> {
@@ -426,7 +435,8 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     conn.disconnect().await.unwrap();
 
     // --- The capability bridge still reaches the network: the host opens the
-    // connection and passes the socket into the confined runner. ---
+    // connection and passes the socket into the confined runner (on Windows
+    // duplicated into the LPAC and driven without Winsock, #4219). ---
     let port = echo_server();
     let (mut bridged, mut rx) = probe_plugin
         .session(serde_json::json!({
@@ -434,6 +444,11 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         }))
         .await;
     assert_eq!(read_line(&mut rx).await, "NETECHO:ping");
+    assert_eq!(
+        probe_plugin.handles_passed(),
+        1,
+        "the socket was handed into the confined runner, not proxied"
+    );
     bridged.disconnect().await.unwrap();
 }
 
