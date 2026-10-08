@@ -13,11 +13,13 @@
 #   2. hash to a SHA-256 embedded in <app-binary>. core/build.rs embeds the
 #      staged helper's digest (#1762) and the RDP adapter refuses a helper that
 #      does not match it, so this catches a bundling or signing step (the macOS
-#      ad-hoc re-sign, PKG-005) that rewrote the file after staging.
+#      ad-hoc re-sign, PKG-005; the AppImage patchelf, #4243) that rewrote the
+#      file after staging.
 #
 # Exit status: 0 = all checks passed, 1 = a check failed, 2 = usage error.
-# Runs inside the re-signed .app in release.yml / dev-build.yml and in Release
-# macOS Smoke; check-script-headless.sh runs it against stubs per PR.
+# Runs in release.yml / dev-build.yml (inside the re-signed macOS .app; on
+# Linux in the target dir, .deb, .rpm and AppImage) and the release install
+# smokes; check-script-headless.sh runs it against stubs per PR.
 
 set -euo pipefail
 
@@ -25,7 +27,7 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-    sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 APP=""

@@ -131,14 +131,16 @@ jobs:
           echo "Installed binary: $BIN"
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
 
-      # The plugin runner (#4202) ships next to termihub. It must start and
-      # match the digest the app embeds, or the app would refuse it as tampered.
-      - name: Verify the bundled plugin runner
+      # The plugin runner (#4202) and the RDP helper (#1762) ship next to
+      # termihub. They must match the digests the app embeds (the runner must
+      # also start), or the app would refuse them as tampered.
+      - name: Verify the bundled sidecars
         env:
           BIN: ${{ steps.deb.outputs.bin }}
         run: |
           set -euo pipefail
           scripts/internal/verify-plugin-runner-bundle.sh "$(readlink -f "$BIN")"
+          scripts/internal/verify-rdp-helper-bundle.sh "$(readlink -f "$BIN")"
 
       - name: Assert headless --version
         id: version

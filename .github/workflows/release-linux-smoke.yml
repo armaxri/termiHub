@@ -202,17 +202,20 @@ jobs:
           echo "Installed binary: $BIN"
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
 
-      # The plugin runner (#4202) ships next to the app binary in both packages.
-      # It must start and match the digest the app embeds, or the app would
-      # refuse it as tampered (e.g. if AppImage packaging rewrote it).
-      - name: Verify the bundled plugin runner (AppImage + .deb)
+      # The plugin runner (#4202) and the RDP helper (#1762) ship next to the app
+      # binary in both packages. They must match the digests the app embeds (the
+      # runner must also start), or the app would refuse them as tampered (e.g.
+      # if AppImage packaging rewrote them, #4243).
+      - name: Verify the bundled sidecars (AppImage + .deb)
         env:
           APPRUN: ${{ steps.appimage.outputs.bin }}
           DEB_BIN: ${{ steps.deb.outputs.bin }}
         run: |
           set -euo pipefail
-          scripts/internal/verify-plugin-runner-bundle.sh "$(dirname "$APPRUN")/usr/bin/termihub"
-          scripts/internal/verify-plugin-runner-bundle.sh "$(readlink -f "$DEB_BIN")"
+          for app in "$(dirname "$APPRUN")/usr/bin/termihub" "$(readlink -f "$DEB_BIN")"; do
+            scripts/internal/verify-plugin-runner-bundle.sh "$app"
+            scripts/internal/verify-rdp-helper-bundle.sh "$app"
+          done
 
       - name: Smoke-test AppImage (headless)
         id: smoke_appimage

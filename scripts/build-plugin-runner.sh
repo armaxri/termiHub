@@ -19,6 +19,8 @@
 #                         app checks before spawning the bundled runner. macOS:
 #                         ad-hoc signed first, under its installed name, so the
 #                         release re-sign leaves the bytes (and digest) as is.
+#                         Linux: RUNPATH set to $ORIGIN/../lib first (needs
+#                         patchelf), so the AppImage bundler leaves it as is.
 #   --out <dir>           Also copy the binary into <dir> (e.g. next to a
 #                         locally-built desktop binary for manual testing).
 set -euo pipefail
@@ -51,7 +53,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --help | -h)
-        sed -n '2,23p' "$0"
+        sed -n '2,25p' "$0"
         exit 0
         ;;
     *)
@@ -134,6 +136,31 @@ if [ "$EXTERNALBIN" -eq 1 ]; then
             echo "WARNING: codesign not found; staging the runner unsigned. A macOS" >&2
             echo "  bundle re-signed later will not match the embedded digest." >&2
             cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
+        fi
+        ;;
+    *-linux-*)
+        # The AppImage bundler (Tauri's linuxdeploy) runs
+        # `patchelf --set-rpath '$ORIGIN/../lib'` on every ELF in usr/bin,
+        # which rewrites the file and so its SHA-256: the runner in the
+        # AppImage would no longer match the digest core/build.rs embedded,
+        # and the app would refuse it as tampered (#4243). patchelf leaves a
+        # file whose RUNPATH already has that exact value untouched (no
+        # write), so set it here: the bytes the .deb/.rpm/AppImage ship and
+        # the digest core/build.rs embeds then all match. Outside an AppImage
+        # it resolves to /usr/lib (or a missing target/<triple>/lib), adding
+        # no search path the loader would not use anyway.
+        cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
+        if command -v patchelf >/dev/null 2>&1; then
+            LINUXDEPLOY_RPATH="\$ORIGIN/../lib" # literal; ld.so expands it
+            patchelf --set-rpath "$LINUXDEPLOY_RPATH" "$STAGE_DIR/$STAGE_NAME"
+            if [ "$(patchelf --print-rpath "$STAGE_DIR/$STAGE_NAME")" != "$LINUXDEPLOY_RPATH" ]; then
+                echo "ERROR: failed to set RUNPATH $LINUXDEPLOY_RPATH on $STAGE_DIR/$STAGE_NAME" >&2
+                exit 1
+            fi
+            echo "Set RUNPATH $LINUXDEPLOY_RPATH (as the AppImage bundler would)"
+        else
+            echo "WARNING: patchelf not found; staging the runner without the AppImage" >&2
+            echo "  RUNPATH. An AppImage bundled later will not match the embedded digest." >&2
         fi
         ;;
     *)

@@ -138,7 +138,9 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libasound2-dev \
-            patchelf
+            patchelf \
+            rpm2cpio \
+            cpio
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -233,12 +235,14 @@ jobs:
           ./scripts/internal/verify-no-vcruntime.ps1 -Nsis $nsis.FullName
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      # The bundled plugin runner (#4202) must start and match the digest the
-      # app embeds, or the app would refuse it as tampered. Windows/Linux: the
-      # target dir (tauri-build copies the staged runner next to termihub);
-      # Linux also inside the AppImage/.deb, whose packaging could rewrite it.
-      # macOS is checked inside the re-signed .app below.
-      - name: Verify the bundled plugin runner
+      # The bundled sidecars must match the digests the app embeds, or the app
+      # would refuse them as tampered: the plugin runner (#4202, which must also
+      # start) and the RDP helper (#1762). Windows/Linux: the target dir
+      # (tauri-build copies the staged sidecars next to termihub). Linux also
+      # inside every package: the AppImage bundler (linuxdeploy) patchelfs each
+      # ELF in usr/bin, which once broke both digests (#4243). macOS is checked
+      # inside the re-signed .app below.
+      - name: Verify the bundled sidecars
         if: ${{ !startsWith(matrix.os, 'macos') }}
         shell: bash
         run: |
@@ -248,19 +252,41 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
           scripts/internal/verify-plugin-runner-bundle.sh "$BIN"
           if [ "${{ runner.os }}" = "Linux" ]; then
+            check() {
+              scripts/internal/verify-plugin-runner-bundle.sh "$1"
+              scripts/internal/verify-rdp-helper-bundle.sh "$1"
+            }
+            scripts/internal/verify-rdp-helper-bundle.sh "$BIN"
+            B="$PWD/target/$T/release/bundle"
             X="$(mktemp -d)"
-            for deb in "target/$T/release/bundle/deb/"*.deb; do
-              [ -e "$deb" ] || continue
-              dpkg-deb -x "$deb" "$X/deb"
-              scripts/internal/verify-plugin-runner-bundle.sh "$X/deb/usr/bin/termihub"
-            done
-            for img in "target/$T/release/bundle/appimage/"*.AppImage; do
-              [ -e "$img" ] || continue
-              img="$PWD/$img"
-              chmod +x "$img"
-              # FUSE is unavailable on GitHub runners, so extract rather than mount.
-              (cd "$X" && "$img" --appimage-extract >/dev/null)
-              scripts/internal/verify-plugin-runner-bundle.sh "$X/squashfs-root/usr/bin/termihub"
+            # Every Linux leg builds a .deb and an .rpm; linux-x64 also the
+            # AppImage. Fail on a missing package rather than skip its check.
+            want="deb rpm"
+            if [ "${{ matrix.bundle_path }}" = "appimage" ]; then want="$want appimage"; fi
+            for kind in $want; do
+              found=0
+              for pkg in "$B/$kind/"*.deb "$B/$kind/"*.rpm "$B/$kind/"*.AppImage; do
+                [ -e "$pkg" ] || continue
+                found=1
+                D="$X/$kind"
+                rm -rf "$D" && mkdir -p "$D"
+                echo "--- $kind: $(basename "$pkg")"
+                case "$kind" in
+                deb) dpkg-deb -x "$pkg" "$D" ;;
+                rpm) (cd "$D" && rpm2cpio "$pkg" | cpio -idm --quiet) ;;
+                appimage)
+                  chmod +x "$pkg"
+                  # FUSE is unavailable on GitHub runners, so extract rather than mount.
+                  (cd "$D" && "$pkg" --appimage-extract >/dev/null)
+                  D="$D/squashfs-root"
+                  ;;
+                esac
+                check "$D/usr/bin/termihub"
+              done
+              if [ "$found" -eq 0 ]; then
+                echo "::error::no $kind package built under $B/$kind"
+                exit 1
+              fi
             done
             rm -rf "$X"
           fi
