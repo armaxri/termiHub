@@ -60,6 +60,9 @@ export type { SpinnerProps, SpinnerSize } from "./Spinner";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
 
+export { Chip } from "./Chip";
+export type { ChipProps } from "./Chip";
+
 export { StatusDot } from "./StatusDot";
 export type { StatusDotProps, StatusTone, StatusDotSize } from "./StatusDot";
 
