@@ -1,5 +1,6 @@
-//! Linux: `PR_SET_NO_NEW_PRIVS`, a landlock ruleset and a seccomp-bpf filter
-//! applied by the runner to itself before `dlopen` (#4185).
+//! Linux: `PR_SET_NO_NEW_PRIVS`, optional namespaces (#4237), a landlock
+//! ruleset and a seccomp-bpf filter applied by the runner to itself before
+//! `dlopen` (#4185).
 //!
 //! Mechanisms chosen in the concept and proven in the phase-0 spike (#4181):
 //! the official [`landlock`] crate (best-effort compatibility mode, so the
@@ -10,10 +11,21 @@
 //!
 //! **Layers** (in this order):
 //!
-//! 1. `PR_SET_NO_NEW_PRIVS` — required by both other layers for an
+//! 1. `PR_SET_NO_NEW_PRIVS` — required by landlock and seccomp for an
 //!    unprivileged process, and it keeps set-uid binaries from gaining
 //!    privileges (there is no `execve` anyway).
-//! 2. **landlock** ([`layer::LANDLOCK`]) — default-deny filesystem: the
+//! 2. **namespaces** ([`layer::NETNS`], optional, #4237) — an unprivileged
+//!    user + network + IPC namespace: the runner's own ids mapped to
+//!    themselves, every capability the new user namespace grants dropped
+//!    again, and an empty network namespace (only a loopback interface that is
+//!    down). Entered before landlock (which would deny writing the id maps)
+//!    and seccomp (which kills `unshare`). Defence in depth behind the
+//!    seccomp `socket` denial and landlock's TCP rules. Where unprivileged user namespaces are not allowed (Ubuntu
+//!    23.10+ AppArmor restriction, `kernel.unprivileged_userns_clone = 0`,
+//!    Docker's default seccomp profile) it is skipped silently: never
+//!    `missing`, never required, so it does not change the isolation class.
+//!    See [`namespaces`].
+//! 3. **landlock** ([`layer::LANDLOCK`]) — default-deny filesystem: the
 //!    install folder read (+ execute), the data folder read/write (when it
 //!    exists: the host creates it for ABI 1.1 plugins only), the system
 //!    libraries and a few device and time-zone files read-only, nothing else.
@@ -22,7 +34,7 @@
 //!    are scoped to the runner. A kernel without landlock (< 5.13, or landlock
 //!    not enabled) is reported as `missing` — **reduced** isolation, which the
 //!    host gates behind the `reducedIsolationAccepted` acknowledgement (#4188).
-//! 3. **seccomp** ([`layer::SECCOMP`]) — required: if it cannot be installed
+//! 4. **seccomp** ([`layer::SECCOMP`]) — required: if it cannot be installed
 //!    the setup fails and the plugin never loads. See [`filters`]. Its
 //!    `EPERM` denials of network and signal calls are reported to the host as
 //!    `Denied{syscall}` log frames through a `SIGSYS` trap
@@ -74,13 +86,27 @@ const SYSTEM_READ_DIRS: &[&str] = &[
 /// Device files a plugin may also write.
 const SYSTEM_WRITE_FILES: &[&str] = &["/dev/null"];
 
+/// Layers [`apply`] must leave out (debug builds only, through
+/// [`SandboxPolicy::simulate_missing`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Skip {
+    /// Force the reduced path: landlock reported missing.
+    pub landlock: bool,
+    /// Do not enter the optional namespaces (as on a system that forbids
+    /// unprivileged user namespaces).
+    pub namespaces: bool,
+}
+
 /// Confine the calling process to `policy`. Irreversible.
 ///
-/// `skip_landlock` forces the reduced path (debug builds only, through
-/// [`SandboxPolicy::simulate_missing`]).
-pub fn apply(policy: &SandboxPolicy, skip_landlock: bool) -> Result<SandboxReport, SandboxError> {
+/// Must run while the process is single-threaded (entering a user namespace
+/// requires it; the attempt is skipped otherwise).
+pub fn apply(policy: &SandboxPolicy, skip: Skip) -> Result<SandboxReport, SandboxError> {
     set_no_new_privs()?;
-    let landlock = if skip_landlock {
+    // Before landlock (which would deny writing the id maps under `/proc`)
+    // and before seccomp (which kills `unshare`).
+    let namespaces = !skip.namespaces && namespaces::enter()?;
+    let landlock = if skip.landlock {
         false
     } else {
         apply_landlock(policy)?
@@ -91,6 +117,10 @@ pub fn apply(policy: &SandboxPolicy, skip_landlock: bool) -> Result<SandboxRepor
         report.enforced.push(layer::LANDLOCK.to_owned());
     } else {
         report.missing.push(layer::LANDLOCK.to_owned());
+    }
+    if namespaces {
+        // Optional: listed when enforced, never as missing.
+        report.enforced.push(layer::NETNS.to_owned());
     }
     Ok(report)
 }
@@ -168,6 +198,233 @@ fn is_dir(fd: &PathFd) -> bool {
     std::fs::File::from(file)
         .metadata()
         .is_ok_and(|m| m.is_dir())
+}
+
+/// The optional namespace layer (#4237): an unprivileged user + network + IPC
+/// namespace the runner enters before landlock and seccomp.
+///
+/// * **user** — required to create the other two without privileges. The
+///   runner's effective uid and gid are mapped to themselves (so files it
+///   creates in its data folder keep their owner; an unmapped id would make
+///   every file creation fail with `EOVERFLOW`), `setgroups` is denied, and
+///   every capability the new namespace grants is dropped right away.
+/// * **network** — an empty network namespace: no interface but a loopback
+///   that is down, so even a gap in the seccomp `socket` denial would reach
+///   nothing. Descriptors opened before — the IPC channel and the connected
+///   bridge sockets the host passes later with `SCM_RIGHTS` — keep working:
+///   a socket belongs to the namespace it was created in.
+/// * **IPC** — no access to the host's System V IPC objects and POSIX message
+///   queues.
+///
+/// Whether the kernel allows it is first tried in a throw-away child
+/// ([`available`]): `unshare` itself can succeed where writing the id maps
+/// then fails (Ubuntu's AppArmor userns restriction drops the capabilities
+/// the write needs), and once the runner is in a user namespace it cannot
+/// leave it. Only if the child succeeded does the runner enter for real; if
+/// that then fails half way (the maps, the capability drop), the setup fails
+/// closed rather than run a plugin with unmapped ids or namespace
+/// capabilities.
+pub mod namespaces {
+    use std::ffi::CStr;
+    use std::io;
+
+    use super::super::{layer, SandboxError};
+
+    /// The namespaces entered together. `unshare` is all-or-nothing: if one
+    /// of them cannot be created, none is.
+    const FLAGS: libc::c_int = libc::CLONE_NEWUSER | libc::CLONE_NEWNET | libc::CLONE_NEWIPC;
+
+    const SETGROUPS: &CStr = c"/proc/self/setgroups";
+    const UID_MAP: &CStr = c"/proc/self/uid_map";
+    const GID_MAP: &CStr = c"/proc/self/gid_map";
+
+    /// `_LINUX_CAPABILITY_VERSION_3`: 64-bit capability sets, two words.
+    const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+    /// `struct __user_cap_header_struct`.
+    #[repr(C)]
+    struct CapHeader {
+        version: u32,
+        pid: libc::c_int,
+    }
+
+    /// `struct __user_cap_data_struct`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct CapData {
+        effective: u32,
+        permitted: u32,
+        inheritable: u32,
+    }
+
+    /// The id maps of the new user namespace: the caller's effective ids
+    /// mapped to themselves. Built before `fork` / `unshare`, so writing them
+    /// allocates nothing (and `geteuid` still answers in the parent
+    /// namespace).
+    struct IdMaps {
+        uid: Vec<u8>,
+        gid: Vec<u8>,
+    }
+
+    impl IdMaps {
+        fn of_caller() -> Self {
+            // SAFETY: neither call takes arguments or can fail.
+            let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+            Self {
+                uid: format!("{uid} {uid} 1").into_bytes(),
+                gid: format!("{gid} {gid} 1").into_bytes(),
+            }
+        }
+
+        /// Write the maps of the user namespace the caller just entered.
+        /// Async-signal-safe (it runs in a forked child too).
+        fn write(&self) -> Result<(), (&'static CStr, i32)> {
+            // An unprivileged process may only write its gid map once
+            // `setgroups` is denied. Kernels before 3.19 have no such file
+            // (and no such rule).
+            match write_file(SETGROUPS, b"deny") {
+                Err((_, libc::ENOENT)) | Ok(()) => {}
+                Err(e) => return Err(e),
+            }
+            write_file(UID_MAP, &self.uid)?;
+            write_file(GID_MAP, &self.gid)
+        }
+    }
+
+    fn errno() -> i32 {
+        io::Error::last_os_error().raw_os_error().unwrap_or(0)
+    }
+
+    /// Write `bytes` to `path` in one `write`. Async-signal-safe.
+    fn write_file(path: &'static CStr, bytes: &[u8]) -> Result<(), (&'static CStr, i32)> {
+        // SAFETY: `path` is NUL-terminated; the descriptor is closed below.
+        let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+        if fd < 0 {
+            return Err((path, errno()));
+        }
+        // SAFETY: `bytes` is valid for `bytes.len()` bytes.
+        let written = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+        let error = errno();
+        // SAFETY: `fd` was opened above and is not used again.
+        unsafe { libc::close(fd) };
+        if usize::try_from(written).is_ok_and(|n| n == bytes.len()) {
+            Ok(())
+        } else {
+            Err((path, error))
+        }
+    }
+
+    /// Whether this process could enter the namespaces: a forked child tries
+    /// `unshare` and the id maps, and exits with the verdict. Leaves the
+    /// caller untouched. Safe to call from a multi-threaded process (the
+    /// child makes only async-signal-safe calls on memory prepared before the
+    /// fork). `false` also when `fork` itself is refused.
+    #[must_use]
+    pub fn available() -> bool {
+        let maps = IdMaps::of_caller();
+        // SAFETY: the child only calls `unshare`, `open`, `write`, `close`
+        // and `_exit` on memory that exists before the fork; the parent
+        // reaps it below.
+        match unsafe { libc::fork() } {
+            -1 => false,
+            0 => {
+                // SAFETY: as above; `_exit` skips every atexit handler and
+                // buffer flush of the parent's state.
+                let entered = unsafe { libc::unshare(FLAGS) } == 0 && maps.write().is_ok();
+                unsafe { libc::_exit(i32::from(!entered)) }
+            }
+            child => exited_cleanly(child),
+        }
+    }
+
+    /// Reap `child`; whether it exited with code 0.
+    fn exited_cleanly(child: libc::pid_t) -> bool {
+        let mut status = 0;
+        loop {
+            // SAFETY: `status` is a valid out pointer; `child` is our child.
+            let rc = unsafe { libc::waitpid(child, &mut status, 0) };
+            if rc == child {
+                return libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+            }
+            if rc == -1 && errno() != libc::EINTR {
+                return false;
+            }
+        }
+    }
+
+    /// Enter the namespaces if this system allows it: `Ok(true)` when the
+    /// process now runs in them, `Ok(false)` when they are unavailable (the
+    /// process is unchanged), an error when entering failed half way (fail
+    /// closed). Must run single-threaded, before landlock and seccomp.
+    pub fn enter() -> Result<bool, SandboxError> {
+        if !available() {
+            return Ok(false);
+        }
+        let maps = IdMaps::of_caller();
+        let death_signal = parent_death_signal();
+        // SAFETY: `unshare` takes no pointers.
+        if unsafe { libc::unshare(FLAGS) } != 0 {
+            // Nothing was entered (e.g. another thread exists after all).
+            return Ok(false);
+        }
+        maps.write().map_err(|(path, errno)| {
+            failed(format!(
+                "writing {} failed: {}",
+                path.to_string_lossy(),
+                io::Error::from_raw_os_error(errno)
+            ))
+        })?;
+        drop_capabilities()?;
+        // A credential change can clear the parent-death signal; the runner
+        // must still die with its host.
+        if death_signal != 0 && parent_death_signal() != death_signal {
+            // SAFETY: `prctl(PR_SET_PDEATHSIG, sig)` takes no pointers.
+            unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, death_signal) };
+        }
+        Ok(true)
+    }
+
+    fn parent_death_signal() -> libc::c_int {
+        let mut signal: libc::c_int = 0;
+        // SAFETY: `prctl(PR_GET_PDEATHSIG, &int)` writes one `int`.
+        unsafe { libc::prctl(libc::PR_GET_PDEATHSIG, &mut signal) };
+        signal
+    }
+
+    /// Clear the effective, permitted and inheritable capability sets (the
+    /// ambient set follows the permitted one). The new user namespace grants
+    /// all of them; the runner needs none.
+    fn drop_capabilities() -> Result<(), SandboxError> {
+        let mut header = CapHeader {
+            version: CAPABILITY_VERSION_3,
+            pid: 0,
+        };
+        let data = [CapData::default(); 2];
+        // SAFETY: `capset` reads one header and two data structs, laid out
+        // as the kernel's v3 structs.
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_capset,
+                std::ptr::addr_of_mut!(header),
+                data.as_ptr(),
+            )
+        };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(failed(format!(
+                "capset failed: {}",
+                io::Error::last_os_error()
+            )))
+        }
+    }
+
+    fn failed(detail: String) -> SandboxError {
+        SandboxError::Apply {
+            layer: layer::NETNS,
+            detail,
+        }
+    }
 }
 
 /// The seccomp-bpf filters (#4185). Four filters are stacked; for every
