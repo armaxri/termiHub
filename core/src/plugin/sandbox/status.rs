@@ -140,7 +140,7 @@ pub struct DenialInfo {
     pub operation: String,
     /// What was asked for (`host:port` or a path), sanitised.
     pub target: String,
-    /// Why, as the camelCase name of the host's [`DenialReason`]
+    /// Why, as the camelCase name of the host's [`DenialReason`](super::DenialReason)
     /// (`permission`, `resourceLimit`, …). A string, not a closed enum, so a
     /// reason the host adds later reaches the UI without a lock-step change.
     pub reason: String,
