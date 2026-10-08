@@ -316,7 +316,7 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
                 Ok(mut entries) => {
                     entries.sort();
                     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-                    for byte in entries.iter().flat_map(|e| e.bytes().chain([b'\n'])) {
+                    for byte in entries.iter().flat_map(|e| e.bytes().chain(*b"\n")) {
                         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
                     }
                     format!("LIST_SUMMARY:{}:{hash:016x}", entries.len()).into_bytes()
