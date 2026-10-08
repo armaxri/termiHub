@@ -79,8 +79,8 @@ use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess, GetExitCodeProcess,
     InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
     WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
-    EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
-    PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+    DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
     PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
     PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
@@ -236,6 +236,15 @@ impl RunnerCommand {
         // double-NUL-terminated UTF-16 environment block, the NUL-terminated
         // working directory (or NULL), and `startup`, whose attribute list
         // (and every value it points to) outlives it.
+        // A confined runner gets no console at all: connecting an LPAC process
+        // to a (hidden) console host is not something its token can be relied
+        // on to do, and the runner never needs one — its standard handles are
+        // the NUL device and pipes.
+        let console_flag = if self.app_container.is_some() {
+            DETACHED_PROCESS
+        } else {
+            CREATE_NO_WINDOW
+        };
         let created = unsafe {
             CreateProcessW(
                 application.as_ptr(),
@@ -246,7 +255,7 @@ impl RunnerCommand {
                 CREATE_SUSPENDED
                     | CREATE_UNICODE_ENVIRONMENT
                     | EXTENDED_STARTUPINFO_PRESENT
-                    | CREATE_NO_WINDOW,
+                    | console_flag,
                 environment.as_ptr().cast::<c_void>(),
                 current_dir
                     .as_ref()
