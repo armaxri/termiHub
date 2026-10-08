@@ -6,6 +6,8 @@ severity: medium
 category: arch
 is_workaround: false
 subsystem: src/components
+status: fixed
+resolution: "#2873 — extracted useListFilter/useJsonFileExport+Import/useDeleteConfirm hooks (src/hooks); migrated Macro/Workflow/Workspace sidebars; entity-specific toasts kept caller-owned. Remaining RecentSessions/Tunnel/EmbeddedServer migration → #2874"
 evidence:
   - src/components/MacroSidebar/MacroSidebar.tsx:34
   - src/components/WorkflowSidebar/WorkflowSidebar.tsx:38
@@ -14,8 +16,6 @@ evidence:
   - src/components/WorkflowSidebar/WorkflowSidebar.tsx:154
   - src/components/WorkspaceSidebar/WorkspaceSidebar.tsx:103
   - src/components/TunnelSidebar/TunnelSidebar.tsx:108
-status: fixed
-resolution: "#2873 — extracted useListFilter/useJsonFileExport+Import/useDeleteConfirm hooks (src/hooks); migrated Macro/Workflow/Workspace sidebars; entity-specific toasts kept caller-owned. Remaining RecentSessions/Tunnel/EmbeddedServer migration → #2874"
 ---
 
 ## What

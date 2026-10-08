@@ -6,6 +6,8 @@ severity: high
 category: docs
 is_workaround: false
 subsystem: src-tauri/src/*_projection
+status: fixed
+resolution: "#2723"
 evidence:
   - src-tauri/src/lib.rs:1
   - src-tauri/src/system_monitor_projection/mod.rs:1
@@ -18,8 +20,6 @@ evidence:
   - src-tauri/src/layout/mod.rs:11
   - src-tauri/src/workflow_projection/mod.rs:1
   - src-tauri/src/broadcast_projection/mod.rs:1
-status: fixed
-resolution: "#2723"
 ---
 
 ## What

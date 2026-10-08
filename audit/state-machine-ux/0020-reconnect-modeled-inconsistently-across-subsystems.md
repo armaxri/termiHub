@@ -6,6 +6,8 @@ severity: high
 category: arch
 is_workaround: false
 subsystem: cross-cutting — session/agent/tunnel/monitoring/remote-desktop
+status: fixed
+resolution: "#3739 — one reconnect policy for all connection types: 1s doubling to 30s cap, 10 attempts, jitter; FTP overrides with 3 fast retries; backoff overflow fixed"
 evidence:
   - src-tauri/src/agents_projection/store.rs:43
   - src-tauri/src/session_projection/store.rs:49
@@ -13,8 +15,6 @@ evidence:
   - src/types/tunnel.ts:76
   - src/types/monitoring.ts:9
   - src/types/remoteDesktop.ts:11
-status: fixed
-resolution: "#3739 — one reconnect policy for all connection types: 1s doubling to 30s cap, 10 attempts, jitter; FTP overrides with 3 fast retries; backoff overflow fixed"
 ---
 
 ## What

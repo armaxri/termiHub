@@ -6,6 +6,8 @@ severity: high
 category: docs
 is_workaround: false
 subsystem: README/connection-types
+status: fixed
+resolution: "#2723"
 evidence:
   - README.md:75
   - README.md:168
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/Cargo.toml:18
   - src-tauri/src/session/registry.rs:96
   - src/utils/experimentalTypes.ts:11
-status: fixed
-resolution: "#2723"
 ---
 
 ## What

@@ -6,6 +6,8 @@ severity: high
 category: perf
 is_workaround: false
 subsystem: src/components/FileEditor, vite.config.ts
+status: fixed
+resolution: "#2812 — Monaco+shiki code-split out of entry via React.lazy/dynamic import; entry -48% raw/-50% gzip; FileEditor behavior preserved (removed harmful manualChunks)"
 evidence:
   - src/components/SplitView/SplitView.tsx:62
   - src/components/FileEditor/FileEditor.tsx:2
@@ -13,8 +15,6 @@ evidence:
   - src/utils/monacoCustomLanguages.ts:27
   - src/utils/monacoCustomLanguages.ts:28
   - vite.config.ts:19
-status: fixed
-resolution: "#2812 — Monaco+shiki code-split out of entry via React.lazy/dynamic import; entry -48% raw/-50% gzip; FileEditor behavior preserved (removed harmful manualChunks)"
 ---
 
 ## What

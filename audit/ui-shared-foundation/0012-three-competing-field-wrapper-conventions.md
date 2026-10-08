@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui/Field
+status: fixed
+resolution: "#3152 — COMPLETE: #3071 added the error slot to SettingsField; #3070/#3152 then unified ui/Field and Settings/SettingsField — ui/Field is the single primitive (optional htmlFor->span+aria-label, hint, variant=settings) and SettingsField is a thin wrapper. Remaining hand-written settings-form__field blocks in other panels tracked in follow-up #3151."
 evidence:
   - src/components/ui/Field.tsx
   - src/components/Settings/SettingsField.tsx
@@ -13,8 +15,6 @@ evidence:
   - src/components/ConnectionEditor/ConnectionTerminalSettings.tsx:231
   - src/components/ConnectionEditor/JumpHostEntry.tsx:53
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:172
-status: fixed
-resolution: "#3152 — COMPLETE: #3071 added the error slot to SettingsField; #3070/#3152 then unified ui/Field and Settings/SettingsField — ui/Field is the single primitive (optional htmlFor->span+aria-label, hint, variant=settings) and SettingsField is a thin wrapper. Remaining hand-written settings-form__field blocks in other panels tracked in follow-up #3151."
 ---
 
 ## What

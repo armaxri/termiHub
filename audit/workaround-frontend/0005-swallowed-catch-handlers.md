@@ -6,6 +6,8 @@ severity: medium
 category: workaround
 is_workaround: true
 subsystem: components / hooks / store (widespread)
+status: fixed
+resolution: "#2732+#2751 — critical + remainder via fireAndForget"
 evidence:
   - src/store/appStore.ts:1901
   - src/store/appStore.ts:1916
@@ -14,8 +16,6 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1051
   - src/hooks/useConnectSavedConnection.ts:172
   - src/components/Sidebar/AgentNode.tsx:873
-status: fixed
-resolution: "#2732+#2751 — critical + remainder via fireAndForget"
 ---
 
 ## What

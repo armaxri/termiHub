@@ -6,6 +6,8 @@ severity: high
 category: bug
 is_workaround: false
 subsystem: agent/session/definitions
+status: fixed
+resolution: "#2754 — single-lock; red-verified"
 evidence:
   - agent/src/session/definitions.rs:170
   - agent/src/session/definitions.rs:210
@@ -14,8 +16,6 @@ evidence:
   - agent/src/session/definitions.rs:324
   - agent/src/session/definitions.rs:256
   - agent/src/session/definitions.rs:352
-status: fixed
-resolution: "#2754 — single-lock; red-verified"
 ---
 
 ## What

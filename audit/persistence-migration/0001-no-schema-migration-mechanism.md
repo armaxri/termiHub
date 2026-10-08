@@ -6,6 +6,8 @@ severity: critical
 category: arch
 is_workaround: false
 subsystem: src-tauri/src (all storage.rs), agent/src/state
+status: fixed
+resolution: "#2746 — framework + 6 stores; remaining stores #2744/#2745"
 evidence:
   - src-tauri/src/connection/config.rs:145
   - src-tauri/src/workspace/config.rs:162
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/workflows/config.rs:132
   - src-tauri/src/connection/settings.rs:125
   - agent/src/state/persistence.rs:13
-status: fixed
-resolution: "#2746 — framework + 6 stores; remaining stores #2744/#2745"
 ---
 
 ## What

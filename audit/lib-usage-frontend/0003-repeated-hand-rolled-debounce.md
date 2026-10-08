@@ -6,6 +6,8 @@ severity: low
 category: arch
 is_workaround: false
 subsystem: src/components, src/hooks
+status: fixed
+resolution: "#3023 — hook already existed (UISF-005); migrated 3 remaining hand-rolled debounce sites (useLocalDirWatch, FileEditor, RemoteDesktopCanvas) through useDebouncedCallback; SettingsPanel+PluginSettingsSection deferred #3022 (distinct flush/keyed-map semantics)"
 evidence:
   - src/components/Settings/SettingsPanel.tsx:116
   - src/components/FileEditor/FileEditor.tsx:638
@@ -13,8 +15,6 @@ evidence:
   - src/components/Settings/KeyPathInput.tsx:28
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:119
   - src/test/setup.ts:53
-status: fixed
-resolution: "#3023 — hook already existed (UISF-005); migrated 3 remaining hand-rolled debounce sites (useLocalDirWatch, FileEditor, RemoteDesktopCanvas) through useDebouncedCallback; SettingsPanel+PluginSettingsSection deferred #3022 (distinct flush/keyed-map semantics)"
 ---
 
 ## What

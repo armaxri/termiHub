@@ -6,6 +6,8 @@ severity: medium
 category: arch
 is_workaround: false
 subsystem: src (cross-cutting)
+status: fixed
+resolution: "#2738 — collision fix #2724 + helper consolidation #2738"
 evidence:
   - src/components/Sidebar/ConnectionList.tsx:967
   - src/components/ConnectionEditor/ConnectionEditor.tsx:750
@@ -24,8 +26,6 @@ evidence:
   - src/services/customHighlightRules.ts:28
   - src/themes/customThemes.ts:55
   - src/services/transport/ids.ts:9
-status: fixed
-resolution: "#2738 — collision fix #2724 + helper consolidation #2738"
 ---
 
 ## What

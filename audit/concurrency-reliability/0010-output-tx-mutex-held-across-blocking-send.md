@@ -6,6 +6,8 @@ severity: medium
 category: reliability
 is_workaround: false
 subsystem: core/backends
+status: fixed
+resolution: "#2771 — output_tx lock released before send (wsl/telnet/ssh; docker/serial already safe)"
 evidence:
   - core/src/backends/local_shell.rs:549
   - core/src/backends/wsl.rs:875
@@ -13,8 +15,6 @@ evidence:
   - core/src/backends/ssh/mod.rs:630
   - core/src/plugin/connection.rs:341
   - core/src/backends/local_shell.rs:595
-status: fixed
-resolution: "#2771 — output_tx lock released before send (wsl/telnet/ssh; docker/serial already safe)"
 ---
 
 ## What

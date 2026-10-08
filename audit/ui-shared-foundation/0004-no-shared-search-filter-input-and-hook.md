@@ -6,6 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: src/components/ui
+status: fixed
+resolution: "#2927 — added ui/SearchInput primitive (icon+clear over ui/Input); reused useListFilter; migrated Macro/Workflow/RecentSessions sidebars. Follow-up #2928 (11 more)"
 evidence:
   - src/components/Settings/SettingsSearch.tsx
   - src/components/Terminal/TerminalSearchBar.tsx
@@ -17,8 +19,6 @@ evidence:
   - src/components/WorkspaceEditor/ConnectionPicker.tsx
   - src/components/Settings/LanguagePackagesSettings.tsx
   - src/components/CommandPalette/CommandPalette.tsx
-status: fixed
-resolution: "#2927 — added ui/SearchInput primitive (icon+clear over ui/Input); reused useListFilter; migrated Macro/Workflow/RecentSessions sidebars. Follow-up #2928 (11 more)"
 ---
 
 ## What

@@ -6,6 +6,8 @@ severity: high
 category: reliability
 is_workaround: false
 subsystem: src-tauri/terminal/agent_manager
+status: fixed
+resolution: "#2758 — cancellable reconnect"
 evidence:
   - src-tauri/src/terminal/agent_manager.rs:2650
   - src-tauri/src/terminal/agent_manager.rs:2625
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/utils/ssh_auth.rs:26
   - src-tauri/src/utils/ssh_auth.rs:62
   - src-tauri/src/terminal/agent_manager.rs:944
-status: fixed
-resolution: "#2758 — cancellable reconnect"
 ---
 
 ## What

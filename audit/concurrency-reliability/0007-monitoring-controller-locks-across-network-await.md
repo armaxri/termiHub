@@ -6,6 +6,8 @@ severity: medium
 category: reliability
 is_workaround: false
 subsystem: src-tauri/session/monitoring_controller
+status: fixed
+resolution: "#2991 — MonitoringController resolved provider as owned Arc (new monitoring_handle) under a short lock, drops sessions map lock before subscribe/RPC .await; still-current guards; deadlock-repro test"
 evidence:
   - src-tauri/src/session/monitoring_controller.rs:258
   - src-tauri/src/session/monitoring_controller.rs:259
@@ -13,8 +15,6 @@ evidence:
   - src-tauri/src/session/monitoring_controller.rs:289
   - src-tauri/src/session/monitoring_controller.rs:313
   - src-tauri/src/session/monitoring_controller.rs:338
-status: fixed
-resolution: "#2991 — MonitoringController resolved provider as owned Arc (new monitoring_handle) under a short lock, drops sessions map lock before subscribe/RPC .await; still-current guards; deadlock-repro test"
 ---
 
 ## What
