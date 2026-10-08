@@ -1,7 +1,7 @@
 name: 'Detect changed CI areas'
 description: >-
   Classify what a PR changes (rust, frontend, sidecar, scripts, harness,
-  markdown, deps, agent, workflows, rustdoc) via scripts/internal/ci-changes.mjs, so per-PR
+  markdown, deps, agent, workflows, rustdoc, plugin_fuzz) via scripts/internal/ci-changes.mjs, so per-PR
   jobs can skip work the PR cannot affect (#3325). A workspace .rs file whose
   changed lines are all whole-line `//` comments sets only `rustdoc` (fmt +
   Rustdoc), not `rust`/`agent` (#3903). On a PR whose HEAD commit (the PR
@@ -43,6 +43,9 @@ outputs:
   rustdoc:
     description: 'Workspace Rust sources changed, code or comment-only (fmt + Rustdoc, #3903)'
     value: ${{ steps.classify.outputs.rustdoc }}
+  plugin_fuzz:
+    description: 'Anything the workspace-excluded plugin-runner/fuzz crate builds from changed (#4257)'
+    value: ${{ steps.classify.outputs.plugin_fuzz }}
   tests:
     description: >-
       false only when the PR head commit carries [skip-tests] (#3915): gate the
