@@ -134,6 +134,24 @@ export interface ProjectedSessionLifecycle {
    * info panel. Twin of the Rust `SessionLifecycle.files_only`, folded from the
    * backend's own detection. Omitted (`undefined`) when false. */
   filesOnly?: boolean;
+  /** The session ended because its sandboxed plugin process failed (#4188):
+   * crashed, stopped responding, used too much memory or sent invalid data.
+   * Twin of the Rust `SessionLifecycle.plugin_exit`, folded by the backend at the
+   * `terminal-exit` source; drives the plugin crash overlay. Omitted otherwise. */
+  pluginExit?: PluginSessionExit;
+}
+
+/** Why a plugin session's sandboxed plugin process failed (#4188) — twin of the
+ * Rust `PluginSessionExit`. */
+export interface PluginSessionExit {
+  /** The plugin's manifest id (keys the `plugin-sandbox` region). */
+  pluginId: string;
+  /** The plugin's display name, for the overlay subheading. */
+  pluginName: string;
+  /** The classified failure. */
+  kind: "crashed" | "notResponding" | "outOfMemory" | "invalidData";
+  /** One line for the overlay's detail box. */
+  message: string;
 }
 
 /** The `session-lifecycle` region view model: `{ sessions: { <id>: … } }`. */
@@ -1027,6 +1045,20 @@ export function effectiveReconnectTriggerError(
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
   return projected?.reconnectError;
+}
+
+/**
+ * Why a projected session's sandboxed plugin process failed (#4188), while the
+ * session is ended (`undefined` for a live or reconnecting session, so a stale
+ * cause never shows over a restarted tab).
+ */
+export function effectivePluginExit(
+  projected: ProjectedSessionLifecycle | undefined
+): PluginSessionExit | undefined {
+  if (!projected?.pluginExit) return undefined;
+  return projected.status === "disconnected" || projected.status === "failed"
+    ? projected.pluginExit
+    : undefined;
 }
 
 /**

@@ -1251,3 +1251,55 @@ fn ending_or_restarting_a_session_clears_files_only() {
     store.connect("d");
     assert!(!store.get("d").unwrap().files_only);
 }
+
+// ── plugin process exit (#4188) ───────────────────────────────────────
+
+fn crashed_plugin() -> PluginSessionExit {
+    PluginSessionExit {
+        plugin_id: "acme".into(),
+        plugin_name: "Acme Modbus".into(),
+        kind: "crashed".into(),
+        message: "plugin process exited: signal SIGSEGV (segmentation fault)".into(),
+    }
+}
+
+#[test]
+fn a_plugin_exit_is_recorded_alongside_the_drop_and_serialized() {
+    let store = deterministic_store();
+    store.connect("tab-p");
+    store.connected("tab-p");
+    store.dropped("tab-p", None);
+    store.plugin_exited("tab-p", crashed_plugin());
+    let entry = store.get("tab-p").unwrap();
+    assert_eq!(entry.plugin_exit, Some(crashed_plugin()));
+    assert_eq!(entry.status, SessionStatus::Disconnected);
+    let json = &store.snapshot()["sessions"]["tab-p"]["pluginExit"];
+    assert_eq!(json["pluginId"], "acme");
+    assert_eq!(json["kind"], "crashed");
+    assert!(json["message"].as_str().unwrap().contains("SIGSEGV"));
+}
+
+#[test]
+fn a_plugin_exit_is_omitted_until_set_and_cleared_by_a_reconnect() {
+    let store = deterministic_store();
+    store.connect("tab-p");
+    store.connected("tab-p");
+    assert!(store.snapshot()["sessions"]["tab-p"]
+        .get("pluginExit")
+        .is_none());
+    store.plugin_exited("tab-p", crashed_plugin());
+    // "Restart session" reconnects the tab: the crash no longer applies.
+    store.connect("tab-p");
+    assert_eq!(store.get("tab-p").unwrap().plugin_exit, None);
+    store.connected("tab-p");
+    store.plugin_exited("tab-p", crashed_plugin());
+    store.reconnect("tab-p");
+    assert_eq!(store.get("tab-p").unwrap().plugin_exit, None);
+}
+
+#[test]
+fn a_plugin_exit_for_an_unknown_session_is_a_noop() {
+    let store = deterministic_store();
+    store.plugin_exited("ghost", crashed_plugin());
+    assert!(store.get("ghost").is_none());
+}

@@ -40,6 +40,11 @@
 //!   [`SandboxReport`]. A failed setup, or a required layer that is missing,
 //!   refuses the plugin ([`HostError::SandboxSetupFailed`](super::HostError)).
 //!
+//! * Status for the UI (#4188, phase 6): [`PluginSandboxStatus`] — the
+//!   isolation badge, process state and recent bridge denials — and the
+//!   `reducedIsolationAccepted` gate: reduced isolation loads only with the
+//!   hash-bound acknowledgement.
+//!
 //! **Scope so far.** OS confinement on macOS and Linux (LPAC is #4187). The
 //! out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
@@ -58,6 +63,7 @@ mod proxy;
 mod rate;
 mod session;
 mod spawn;
+mod status;
 mod watchdog;
 mod writer;
 
@@ -70,6 +76,11 @@ pub use locate::{default_runner_path, log_bundled_runner, RUNNER_BIN_NAME, RUNNE
 pub use policy::sandbox_policy;
 pub use rate::OutputRateCap;
 pub use session::SandboxedSession;
+pub(crate) use status::SandboxOutcome;
+pub use status::{
+    DenialInfo, IsolationStatus, PluginExitInfo, PluginSandboxStatus, ProcessState, ProcessStatus,
+    STATUS_DENIALS,
+};
 pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
 pub use termihub_plugin_runner::sandbox::{layer, Isolation, SandboxPolicy};
 pub use watchdog::{

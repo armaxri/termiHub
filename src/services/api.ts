@@ -3281,6 +3281,12 @@ export interface AcknowledgeNativePluginOptions {
    * host refuses such a plugin otherwise (#3576).
    */
   acceptUnverifiedToolchain?: boolean;
+  /**
+   * Record the user's explicit acceptance that this system cannot apply every
+   * OS sandbox layer to the plugin (`reducedIsolationAccepted`, #4188). The
+   * host refuses a plugin with reduced isolation otherwise.
+   */
+  acceptReducedIsolation?: boolean;
 }
 
 /**
@@ -3294,6 +3300,7 @@ export async function acknowledgeNativePlugin(
   return await invoke<InstalledPlugin>("acknowledge_native_plugin", {
     id,
     acceptUnverifiedToolchain: options.acceptUnverifiedToolchain ?? false,
+    acceptReducedIsolation: options.acceptReducedIsolation ?? false,
   });
 }
 

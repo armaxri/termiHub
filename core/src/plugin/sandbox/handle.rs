@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use termihub_plugin_api::PluginError;
-use termihub_plugin_runner::ipc::{Cancel, Configure, Message, ResourceLimits};
+use termihub_plugin_runner::ipc::{Cancel, Configure, Message, ResourceLimits, SandboxReport};
 use termihub_plugin_runner::loader::LoadedPluginInfo;
 use termihub_plugin_runner::sandbox::SandboxPolicy;
 
@@ -169,6 +169,8 @@ pub struct SandboxedPluginHandle {
     last_exit: Mutex<Option<RunnerExitCause>>,
     auto_disabled: Mutex<Option<String>>,
     on_auto_disable: Mutex<Option<AutoDisableHook>>,
+    /// The sandbox report of the latest runner (#4188).
+    report: Mutex<SandboxReport>,
 }
 
 impl std::fmt::Debug for SandboxedPluginHandle {
@@ -191,7 +193,9 @@ impl SandboxedPluginHandle {
     ) -> Result<Arc<Self>, HostError> {
         let first = SandboxedPlugin::spawn(&config, &configure, Arc::clone(&log_limiter))?;
         let budget = Mutex::new(CrashBudget::new(config.crash_window));
+        let report = Mutex::new(first.sandbox_report().clone());
         let handle = Arc::new_cyclic(|weak| Self {
+            report,
             info: first.info().clone(),
             config,
             configure,
@@ -316,6 +320,16 @@ impl SandboxedPluginHandle {
         }
     }
 
+    /// What OS confinement the latest runner reported (#4186), kept across an
+    /// idle reap so the Settings row still shows it.
+    #[must_use]
+    pub fn sandbox_report(&self) -> SandboxReport {
+        self.report
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     /// Metadata the plugin reported at its first load.
     #[must_use]
     pub fn info(&self) -> &LoadedPluginInfo {
@@ -367,6 +381,7 @@ impl SandboxedPluginHandle {
             ));
         }
         self.watch(&plugin);
+        *self.report.lock().unwrap_or_else(|e| e.into_inner()) = plugin.sandbox_report().clone();
         *current = Some(Arc::clone(&plugin));
         Ok(plugin)
     }
