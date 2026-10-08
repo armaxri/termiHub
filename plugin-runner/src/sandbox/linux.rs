@@ -217,7 +217,7 @@ fn is_dir(fd: &PathFd) -> bool {
 ///   queues.
 ///
 /// Whether the kernel allows it is first tried in a throw-away child
-/// ([`available`]): `unshare` itself can succeed where writing the id maps
+/// ([`available`](namespaces::available)): `unshare` itself can succeed where writing the id maps
 /// then fails (Ubuntu's AppArmor userns restriction drops the capabilities
 /// the write needs), and once the runner is in a user namespace it cannot
 /// leave it. Only if the child succeeded does the runner enter for real; if
