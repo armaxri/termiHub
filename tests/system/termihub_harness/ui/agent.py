@@ -62,6 +62,7 @@ class AgentUi(HarnessMixin):
     CTX_DEF_START_PERSISTENT = "context-agent-def-start-persistent"
 
     ERROR_TITLE = "connection-error-title"
+    ERROR_MESSAGE = "connection-error-message"
     ERROR_SETUP_AGENT = "connection-error-setup-agent"
     ERROR_DETAILS = "connection-error-details"
     ERROR_CLOSE = "connection-error-close"
@@ -330,6 +331,32 @@ class AgentUi(HarnessMixin):
     # ── connection-error dialog ─────────────────────────────────────────────────
     def connection_error_present(self) -> bool:
         return self.driver.exists(self.ERROR_TITLE)
+
+    def wait_connection_error_title(self, *, accept_host_keys: bool = True) -> str:
+        """Wait for a failed agent connect's error dialog and return its title.
+
+        A connect that reaches the SSH handshake raises the host-key trust prompt
+        (#1959) the first time this app meets the host — *after* the password
+        prompt. Unanswered, the handshake stalls until the prompt times out and
+        the connect fails with "Unknown server key" instead of the error the test
+        set out to provoke (wrong password, missing agent binary). That stalled
+        prompt outlived each 20 s wait, so its late dialogs stacked up and leaked
+        into the next test (the 2026-10-08 nightly, #4017). With
+        ``accept_host_keys`` (the default) any such prompt seen while waiting is
+        accepted with "Accept for host", like :meth:`wait_agent_connected`.
+        """
+
+        def title() -> Optional[str]:
+            if accept_host_keys and self.driver.exists(self.HOSTKEY_PROMPT):
+                self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+                return None
+            return self.driver.get_text(self.ERROR_TITLE)
+
+        return self.wait(title, what="the connection-error title")
+
+    def connection_error_message(self) -> str:
+        """The user-facing message line of the open connection-error dialog."""
+        return self.driver.get_text(self.ERROR_MESSAGE)
 
     def dismiss_connection_error(self) -> None:
         """Wait for the connection-error dialog, click Close, and wait for it to go."""

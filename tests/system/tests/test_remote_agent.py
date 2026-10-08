@@ -18,11 +18,16 @@ Divergences from the original, by design:
   button (in the experimental Remote Agents sidebar group) is the only create
   path now.
 * **The "Agent Not Installed" Setup-Agent button** (old MT-AGENT-02) is not
-  asserted: connecting to the password container (no agent binary) classifies as
-  a generic "Connection Failed", not the ``agent-missing`` category that renders
-  that button (the categorization itself is covered by the
+  asserted: the category the password container (no agent binary) lands in is
+  not pinned here (the categorization itself is covered by the
   ``classifyAgentError`` / ``ConnectionErrorDialog`` unit tests). This port
-  asserts the real outcome — an error dialog appears and dismisses.
+  asserts the real outcome — an error dialog that is not a host-key failure
+  appears and dismisses.
+* **The SSH host-key prompt** (#1959) raised by the handshake on the first
+  connect to the container is accepted while waiting for the error dialog
+  (:meth:`AgentUi.wait_connection_error_title`). Left unanswered it failed every
+  handshake connect with "Unknown server key" and passed these tests vacuously
+  until the stalled dialogs stacked into the next test (#4017).
 * **MT-AGENT-03/05/06/08** in the old suite only asserted that a selector string
   contained a substring (tautologies); the setup-dialog fields they referenced
   are covered here by :meth:`test_setup_wizard_opens_and_detects`.
@@ -114,9 +119,7 @@ class TestRemoteAgent(
         # Password is requested before the connect attempt; answer it, then the
         # refused connection raises the error dialog.
         self.handle_password_prompt()
-        title = self.wait(
-            lambda: self.driver.get_text(self.ERROR_TITLE), what="the connection-error title"
-        )
+        title = self.wait_connection_error_title()
         assert title.strip()
         self.dismiss_connection_error()
 
@@ -127,10 +130,10 @@ class TestRemoteAgent(
         )
         self.connect_agent(name)
         self.handle_password_prompt("definitely-the-wrong-password")
-        title = self.wait(
-            lambda: self.driver.get_text(self.ERROR_TITLE), what="the connection-error title"
-        )
-        assert title.strip()
+        # The handshake raises the host-key prompt first; the helper accepts it so
+        # the connect reaches auth and fails on the password, not the host key.
+        title = self.wait_connection_error_title()
+        assert title.strip() == "Authentication Failed", self.connection_error_message()
         self.dismiss_connection_error()
 
     def test_missing_agent_errors_and_close_keeps_agent(self):
@@ -144,10 +147,11 @@ class TestRemoteAgent(
         self.connect_agent(name)
         self.handle_password_prompt(SSH_PASSWORD)
 
-        title = self.wait(
-            lambda: self.driver.get_text(self.ERROR_TITLE), what="the connection-error title"
-        )
+        title = self.wait_connection_error_title()
         assert title.strip()
+        # It failed past the handshake (no agent binary), not on an unanswered
+        # host-key prompt — which used to make this pass vacuously (#4017).
+        assert "server key" not in self.connection_error_message().lower()
         self.dismiss_connection_error()
         assert self.find_agent(name) is not None
 
