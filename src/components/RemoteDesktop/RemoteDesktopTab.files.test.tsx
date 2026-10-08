@@ -54,6 +54,9 @@ vi.mock("@/services/api", () => ({
   remoteDesktopCloseFileBrowser: hoisted.closeBrowser,
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   storeCredential: hoisted.storeCredential,
+  // Opening the File Browser switches the sidebar view, whose layout is saved
+  // on a 300 ms debounce that can fire while later tests in this file run.
+  saveSettings: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => {
