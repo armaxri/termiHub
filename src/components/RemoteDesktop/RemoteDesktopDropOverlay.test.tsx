@@ -103,4 +103,28 @@ describe("RemoteDesktopDropOverlay (#4192)", () => {
     expect(overlay.dataset.state).toBe("resolving");
     expect(overlay.textContent).toContain("Checking the file route");
   });
+
+  it("offers the drop on a linked route waiting for its password (#4265)", () => {
+    const overlay = render({
+      status: "degraded",
+      channel: { kind: "ssh", host: "tiger-box", user: "arne", sameHost: false },
+      agentId: null,
+      message: "no password is saved",
+      needsSecret: {
+        connectionId: "Lab/Tiger",
+        sourceFile: null,
+        kind: "password",
+        authMethod: "password",
+        host: "tiger-box",
+        username: "arne",
+        storeLocked: false,
+        canSave: true,
+        rejected: false,
+      },
+    });
+    expect(overlay.dataset.state).toBe("needsSecret");
+    expect(overlay.textContent).toContain("Drop to upload 2 files");
+    expect(overlay.textContent).toContain("asked for the password of arne@tiger-box");
+    expect(overlay.classList.contains("rd-drop--off")).toBe(false);
+  });
 });

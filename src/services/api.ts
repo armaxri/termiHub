@@ -951,11 +951,22 @@ export async function sshKeyboardInteractiveRespond(
  * VNC SSH tunnel or the hosting agent's file service, the file host and the
  * default folder — or why there is none. Re-query after the session becomes
  * Active again (a reconnect builds a new tunnel).
+ *
+ * `linkedSecret` is the password or key passphrase the user just entered for
+ * a linked SSH route that asked for it (`needsSecret`, #4265); the backend
+ * keeps it in memory for the session.
  */
 export async function remoteDesktopFileChannel(
-  sessionId: SessionId
+  sessionId: SessionId,
+  linkedSecret?: string
 ): Promise<RemoteDesktopFileChannel> {
-  return await invoke<RemoteDesktopFileChannel>("remote_desktop_file_channel", { sessionId });
+  if (linkedSecret === undefined) {
+    return await invoke<RemoteDesktopFileChannel>("remote_desktop_file_channel", { sessionId });
+  }
+  return await invoke<RemoteDesktopFileChannel>("remote_desktop_file_channel", {
+    sessionId,
+    linkedSecret,
+  });
 }
 
 /**
