@@ -1038,4 +1038,11 @@ plugin-side migration callback in 0.1.
   with `EPERM`, and `execve`, `ptrace`, mounts, `io_uring` and similar escape
   primitives end the runner. A kernel without landlock (older than 5.13)
   still gets the system-call filter but no file confinement; termiHub reports
-  that as reduced isolation. Windows follows.
+  that as reduced isolation. On Windows the runner starts inside a
+  per-plugin Less-Privileged AppContainer with no capabilities, inside a job
+  object: it can read its install folder and the system libraries, read and
+  write its data folder (`HOME`, `TMP` and `TEMP` point inside it), and
+  nothing else — not your user profile, not `HKCU\Software`, no network, no
+  child processes (`ERROR_CHILD_PROCESS_BLOCKED`). Winsock cannot start there,
+  so `std::net` panics on first use: reach the network only through the
+  bridge.
