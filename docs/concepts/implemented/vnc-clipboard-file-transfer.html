@@ -8,7 +8,7 @@
   Decision recorded here: do NOT implement an RFB file-transfer extension; move
   files over the connection's existing SSH tunnel (SFTP) or agent side channel.
 
-  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/backlog/vnc-clipboard-file-transfer.html
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/implemented/vnc-clipboard-file-transfer.html
 -->
 <html lang="en">
   <head>
@@ -582,13 +582,13 @@
       <header class="concept-header">
         <h1>VNC File Transfer via the Connection's Side Channel</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue:
             <a href="https://github.com/armaxri/termiHub/issues/3770">#3770</a> (follow-up to
             <a href="https://github.com/armaxri/termiHub/issues/3472">#3472</a>)</span
           >
-          <span><code>docs/concepts/backlog/vnc-clipboard-file-transfer.html</code></span>
+          <span><code>docs/concepts/implemented/vnc-clipboard-file-transfer.html</code></span>
         </div>
       </header>
 
@@ -600,9 +600,9 @@
           or the <strong>agent</strong> (its <code>connection.files.*</code> service on the agent
           host). Drag files onto the VNC canvas to upload; a toolbar <strong>Files</strong> button
           uploads or opens the existing file browser on that host for downloads. Off by default,
-          per-connection opt-in, never in view-only sessions. Direct VNC connections with neither an
-          SSH tunnel nor an agent get no file transfer (a later phase may let them link a saved SSH
-          connection).
+          per-connection opt-in, never in view-only sessions. A direct VNC connection with neither
+          an SSH tunnel nor an agent can link a <strong>saved SSH connection</strong> as its file
+          route (Phase 4); without one it gets no file transfer.
         </p>
       </div>
 
@@ -678,7 +678,7 @@
           </li>
           <li>
             File transfer for direct VNC connections without SSH tunnel or agent in the first phases
-            (see Phase 4 for an optional linked-SSH-connection route).
+            unless they link a saved SSH connection (Phase 4).
           </li>
           <li>Changing the RDP clipboard file transfer.</li>
         </ul>
@@ -893,7 +893,7 @@ flowchart LR
     R -->|SSH Tunnel group enabled| S[SFTP on the tunnel's SSH session<br/>works with ANY VNC server]
     R -->|Hosted under an agent| A[Agent connection.files.*<br/>works with ANY VNC server]
     R -->|Direct TCP| D[No side channel<br/>feature unavailable]
-    D -.->|Phase 4, optional| L[Linked saved SSH connection]
+    D -.->|Phase 4| L[Linked saved SSH connection<br/>SFTP on its own SSH session]
     X[RFB extensions] -.->|rejected| XU[UltraVNC / TightVNC only<br/>Windows, CVE history]
           </pre>
         </div>
@@ -1357,6 +1357,45 @@ flowchart LR
                 </div>
               </div>
             </div>
+            <div>
+              <div class="state-label">Direct connection, linked SSH connection (Phase 4)</div>
+              <div class="editor">
+                <div class="editor__header">
+                  <svg class="li"><use href="#i-monitor" /></svg> VNC — office-pc
+                </div>
+                <div class="editor__body">
+                  <div class="form-group">
+                    <div class="form-group__title">SSH Tunnel</div>
+                    <div class="check-row">
+                      <span class="check"></span>
+                      Connect through SSH tunnel
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <div class="form-group__title">File Transfer</div>
+                    <div class="check-row check-row--on">
+                      <span class="check"
+                        ><svg class="li"><use href="#i-check" /></svg
+                      ></span>
+                      Allow file transfer over the side channel
+                    </div>
+                    <div class="field">
+                      <span class="field__label">File transfer via</span
+                      ><span class="input"
+                        >Lab / Tiger <svg class="li"><use href="#i-chevron-down" /></svg
+                      ></span>
+                    </div>
+                    <div class="field__hint" style="grid-column: auto">
+                      <span class="warn"
+                        ><svg class="li"><use href="#i-triangle-alert" /></svg> Files would go to
+                        tiger-box, the host of the linked SSH connection, not to the desktop host
+                        office-pc.</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1388,12 +1427,30 @@ flowchart LR
             editor warns when the box is ticked.
           </li>
           <li>
-            <strong>No route</strong> — direct VNC: the Files button is disabled with a tooltip and
-            drops show the "unavailable" overlay. (Phase 4: optional linked SSH connection.)
+            <strong>Linked SSH route</strong> (Phase 4, #4194) — a direct VNC connection (no SSH
+            tunnel, no agent) names a saved SSH connection in <code>fileTransferVia</code> ("File
+            transfer via" in the editor; the picker lists saved SSH connections only, plus None, and
+            an unset picker preselects one whose host is the VNC host). The session opens that
+            connection's own SSH session — its stored password or key passphrase, read without
+            prompting (a secret that is not stored, or a locked store, degrades the route with the
+            reason), its jump hosts, and the usual host-key trust — and moves files over SFTP on it.
+            The session is reused for the VNC session's lifetime and dropped as soon as the link no
+            longer resolves. The file host is the linked connection's host; it is "the desktop host"
+            only when both names denote the same host <em>as seen from this computer</em>
+            (both loopback, or the same name) — a loopback VNC host is this computer, so it never
+            matches a remote SSH host. The editor warns, naming both hosts, when they differ. The
+            link follows the SSH connection when it is renamed or moved; an agent-hosted VNC
+            connection has no picker.
           </li>
           <li>
-            Precedence if both exist (agent-hosted <em>and</em> SSH tunnel): agent, because the
-            tunnel then runs from the agent host and the agent already owns the file service.
+            <strong>No route</strong> — direct VNC without a link, or whose linked SSH connection
+            was deleted: the Files button is disabled with a tooltip and drops show the
+            "unavailable" overlay, which says how to get a route.
+          </li>
+          <li>
+            Precedence: agent, then SSH tunnel, then linked SSH connection. The agent wins over a
+            tunnel because the tunnel then runs from the agent host and the agent already owns the
+            file service; a link is only consulted for a direct connection.
           </li>
         </ul>
 
@@ -1757,14 +1814,19 @@ sequenceDiagram
                   For direct VNC: "File transfer via" picker linking a saved SSH connection; host
                   mismatch warning.
                 </td>
-                <td>Only if users ask; decide after Phases 1–3 ship.</td>
+                <td>
+                  A direct VNC connection with a linked SSH connection supports the phase 2 and 3
+                  flows; route-resolution tests cover the linked case and the host-mismatch warning.
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
         <p>
           Phases 1→2→3 are sequential (each builds on the previous). Phase 2's frontend half and
-          Phase 1's backend half can be split across two PRs once the command contract is fixed.
+          Phase 1's backend half can be split across two PRs once the command contract is fixed. All
+          four phases are implemented: #4191, #4192, #4193 and #4194 (the maintainer took Phase 4 on
+          2026-10-08).
         </p>
       </section>
 
@@ -1775,7 +1837,8 @@ sequenceDiagram
           <li>
             <strong>Expectation gap</strong>: users coming from UltraVNC/TightVNC viewers expect
             file transfer on direct connections to Windows hosts. Mitigation: the unavailable
-            overlay explains how to get it (SSH tunnel / agent); revisit trigger for (a1).
+            overlay explains how to get it (SSH tunnel, agent, or a linked SSH connection); revisit
+            trigger for (a1).
           </li>
           <li>
             <strong>Wrong-host confusion</strong> with gateway tunnels. Mitigation: route line and
@@ -1809,7 +1872,9 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          <strong>Last synced:</strong> Phase 4 (#4194), 2026-10-08, against <code>develop</code> at
+          <code>027ae00c8</code> plus the #4194 branch · <strong>Status:</strong> implemented — all
+          four phases are on <code>develop</code>; no open divergences
         </p>
         <div class="table-wrap">
           <table>
@@ -1825,10 +1890,75 @@ sequenceDiagram
             <tbody>
               <tr>
                 <td>1</td>
-                <td>VNC file transfer over SSH-tunnel SFTP / agent side channel</td>
-                <td>Not implemented; Extended Clipboard skips <code>files</code> (#3472)</td>
-                <td>Missing</td>
-                <td>Implement Phases 1–3, then re-sync</td>
+                <td>
+                  Route resolution: SSH tunnel and agent routes, same-host check, opt-in and
+                  view-only refusals, backend-enforced
+                </td>
+                <td>
+                  <code>core::connection::graphical_files</code> +
+                  <code>session::graphical_file_channel</code>, command
+                  <code>remote_desktop_file_channel</code> (#4191)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Drop-to-upload, Files popover, keep-both naming, toasts</td>
+                <td>
+                  <code>remote_desktop_upload</code>, <code>RemoteDesktopDropOverlay</code>,
+                  <code>RemoteDesktopFiles</code>, Files button with warning dot (#4192)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  Browse &amp; download over the side channel, route line in the browser header
+                </td>
+                <td>
+                  <code>RemoteDesktopBrowseRoute</code>, browse commands, Reveal on the upload
+                  summary (#4193)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Linked saved SSH connection for direct VNC, with a host-mismatch warning</td>
+                <td>
+                  <code>fileTransferVia</code>: a schema <code>savedConnection</code> picker and a
+                  <code>sameNameAs</code> warning notice; the desktop resolves the link
+                  (<code>session::graphical_linked_ssh</code>), opens and reuses its own SSH
+                  session, and falls back to no route when the link is gone; labels name the linked
+                  connection as the carrier (#4194)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Same-host rule for a linked connection</td>
+                <td>
+                  Both hosts are compared as seen from this computer
+                  (<code>is_same_named_host</code>), unlike the tunnel/agent rule where a loopback
+                  VNC target is the file host — a direct connection to <code>localhost</code> shows
+                  this computer
+                </td>
+                <td>Design reality</td>
+                <td>Concept updated (Route resolution)</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Linked route needs no prompt mid-session</td>
+                <td>
+                  The link's secret is read from the credential store without prompting; a missing
+                  secret or a locked store degrades the route with the reason. The link follows the
+                  SSH connection's renames and moves
+                </td>
+                <td>Undocumented</td>
+                <td>Concept updated (Route resolution)</td>
               </tr>
             </tbody>
           </table>
