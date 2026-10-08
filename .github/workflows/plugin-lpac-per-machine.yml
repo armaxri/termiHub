@@ -1,0 +1,157 @@
+name: Plugin LPAC (per-machine install)
+
+# A native plugin loads in its Less-Privileged AppContainer through the runner
+# of a per-machine MSI install, as a standard user (#4252).
+#
+# The host grants each plugin's AppContainer read + execute on the runner and
+# its folder. Under C:\Program Files a standard user cannot rewrite that ACL,
+# so the grant is refused and the runner has to start through the install
+# folder's inherited "ALL RESTRICTED APPLICATION PACKAGES" entry. The per-PR
+# sandbox tests cannot see this: they run the runner from a cargo target dir the
+# test user owns. This job, on windows-latest:
+#
+#   1. builds the harness (the ignored core/tests/plugin_runner_installed.rs)
+#      and the echo-backend example at `ref`, the commit the MSI was built from,
+#      so the harness and the installed runner speak the same IPC protocol,
+#   2. downloads `msi_asset` from release `release_tag` and installs it
+#      per-machine with msiexec, as the release smoke does,
+#   3. runs scripts/internal/verify-plugin-lpac-per-machine.ps1: ACL checks,
+#      a throw-away standard user, the harness as that user against the
+#      installed runner, and no per-plugin ACL entry leaked into the install.
+#
+# Called by release-windows-smoke.yml after every release. Reusable so a branch
+# can prove a change against a dev build first (`uses:` from a push-triggered
+# probe workflow), without waiting for a release.
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: "Release to download the MSI from (v0.1.0, dev-develop-latest)"
+        required: true
+        type: string
+      msi_asset:
+        description: "The MSI asset name in that release"
+        required: true
+        type: string
+      ref:
+        description: "Git ref to build the harness from (the MSI's commit)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  per-machine-lpac:
+    name: Plugin LPAC from a per-machine install (standard user)
+    runs-on: windows-latest
+    # A debug build of core's test and echo-backend, then a few seconds of test.
+    timeout-minutes: 60
+
+    env:
+      LOG_DIR: ${{ github.workspace }}\lpac-logs
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: plugin-lpac-per-machine
+
+      - name: Build the harness and echo-backend
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p echo-backend
+          harness="$(cargo test -p termihub-core --features plugin \
+            --test plugin_runner_installed --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true
+                       and .target.name == "plugin_runner_installed") | .executable')"
+          lib="target/debug/echo_backend.dll"
+          [ -f "$harness" ] || { echo "::error::harness not built ('$harness')"; exit 1; }
+          [ -f "$lib" ] || { echo "::error::echo-backend not built ($lib)"; exit 1; }
+          echo "harness=$(cygpath -w "$harness")" >> "$GITHUB_OUTPUT"
+          echo "lib=$(cygpath -w "$(pwd)/$lib")" >> "$GITHUB_OUTPUT"
+
+      - name: Download the MSI
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release_tag }}
+          MSI_NAME: ${{ inputs.msi_asset }}
+        run: |
+          set -euo pipefail
+          dist="$(cygpath -u "$RUNNER_TEMP")/dist"
+          mkdir -p "$dist"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dist" --pattern "$MSI_NAME"
+          [ -f "$dist/$MSI_NAME" ] || { echo "::error::$MSI_NAME not found in $TAG"; exit 1; }
+          echo "msi=$(cygpath -w "$dist/$MSI_NAME")" >> "$GITHUB_OUTPUT"
+
+      - name: Install the MSI per-machine
+        id: install
+        shell: pwsh
+        env:
+          MSI: ${{ steps.download.outputs.msi }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:LOG_DIR | Out-Null
+          $log = Join-Path $env:LOG_DIR 'msi-install.log'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', "`"$env:MSI`"", '/qn', '/norestart', '/l*v', "`"$log`""
+          )
+          # 3010 = success, reboot required.
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            Write-Output "::error::msiexec install failed with exit code $($p.ExitCode)"
+            exit 1
+          }
+          # The MSI is per-machine: its uninstall entry is under HKLM.
+          $entry = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' `
+            -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'termiHub' } | Select-Object -First 1
+          if (-not $entry) {
+            Write-Output "::error::no per-machine 'termiHub' uninstall entry after install"
+            exit 1
+          }
+          $dir = "$($entry.InstallLocation)"
+          if ([string]::IsNullOrWhiteSpace($dir)) { $dir = Join-Path $env:ProgramFiles 'termiHub' }
+          $dir = $dir.TrimEnd('\')
+          if (-not $dir.StartsWith($env:ProgramFiles, 'OrdinalIgnoreCase')) {
+            Write-Output "::error::install dir '$dir' is not under $env:ProgramFiles"
+            exit 1
+          }
+          Write-Output "install dir: $dir"
+          "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: Self-test the check's ACL logic
+        shell: pwsh
+        run: ./scripts/internal/verify-plugin-lpac-per-machine.ps1 -SelfTest
+
+      - name: Load echo-backend as a standard user through the installed runner
+        shell: pwsh
+        env:
+          DIR: ${{ steps.install.outputs.dir }}
+          HARNESS: ${{ steps.build.outputs.harness }}
+          LIB: ${{ steps.build.outputs.lib }}
+        run: |
+          ./scripts/internal/verify-plugin-lpac-per-machine.ps1 -InstallDir $env:DIR `
+            -Harness $env:HARNESS -EchoLib $env:LIB -OutDir $env:LOG_DIR
+          exit $LASTEXITCODE
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-lpac-per-machine-logs
+          path: lpac-logs/
+          if-no-files-found: ignore
+          retention-days: 14
