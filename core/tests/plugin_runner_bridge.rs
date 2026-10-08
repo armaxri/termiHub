@@ -6,14 +6,12 @@
 //! permissions, filesystem scope and connection policy.
 //!
 //! Covers an allowed connection to a local TCP echo server (the connected
-//! socket passed to the runner with `SCM_RIGHTS`, and the `StreamData` proxy
-//! fallback), a denied one, the connection ceiling, filesystem allow/deny for
-//! read / write / stat / list, a directory listing paged over several frames,
-//! and the host's denial events.
+//! socket passed to the runner — `SCM_RIGHTS` on Unix, `DuplicateHandle` on
+//! Windows, #4219 — and the `StreamData` proxy fallback), a denied one, the
+//! connection ceiling, filesystem allow/deny for read / write / stat / list, a
+//! directory listing paged over several frames, and the host's denial events.
 //!
-//! Runs on every OS (#4240). Windows passes no sockets over the runner pipe
-//! yet (#4219), so there every connection takes the `StreamData` proxy path,
-//! and the tests prove the same behaviour over it.
+//! Runs on every OS (#4240).
 #![cfg(feature = "plugin")]
 
 use std::io::{Read, Write};
@@ -158,7 +156,8 @@ fn netecho(port: u16) -> serde_json::Value {
     serde_json::json!({ "probe": "netecho", "probeHost": "127.0.0.1", "probePort": port })
 }
 
-/// The socket is passed on Unix; Windows proxies it (#4219).
+/// The socket itself reaches the runner on every OS (Windows: duplicated in,
+/// driven without Winsock, #4219).
 #[tokio::test(flavor = "multi_thread")]
 async fn an_allowed_connection_reaches_the_peer_through_a_passed_socket() {
     let work = tempfile::TempDir::new().unwrap();
@@ -167,8 +166,9 @@ async fn an_allowed_connection_reaches_the_peer_through_a_passed_socket() {
 
     assert_eq!(plugin.probe(netecho(port)).await, "NETECHO:ping");
     assert_eq!(*accepted.lock().unwrap(), 1, "the host connected once");
-    // The plugin dropped its stream: the runner released the host's slot.
     let runner = plugin.runner();
+    assert_eq!(runner.bridge_handles_passed(), 1, "passed, not proxied");
+    // The plugin dropped its stream: the runner released the host's slot.
     assert!(wait_until(WAIT, || runner.bridge_connections() == 0));
     assert!(runner.bridge_denials().is_empty());
 }
@@ -182,6 +182,7 @@ async fn the_stream_proxy_fallback_carries_the_same_connection() {
     runner.force_stream_proxy(true);
 
     assert_eq!(plugin.probe(netecho(port)).await, "NETECHO:ping");
+    assert_eq!(runner.bridge_handles_passed(), 0, "proxied, not passed");
     assert!(wait_until(WAIT, || runner.bridge_connections() == 0));
 }
 

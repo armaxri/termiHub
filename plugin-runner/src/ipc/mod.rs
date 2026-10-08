@@ -13,9 +13,11 @@
 //! * The **capability bridge** (#4183): the runner forwards each plugin bridge
 //!   call as a [`FrameKind::BridgeRequest`] and the host answers with a
 //!   [`FrameKind::BridgeReply`]. An approved connection's socket rides along
-//!   with its reply as `SCM_RIGHTS` ancillary data on Unix (`fd`); where a
-//!   handle cannot be passed, the `Stream*` kinds proxy its bytes under a
-//!   credit window ([`STREAM_WINDOW`]).
+//!   with its reply as `SCM_RIGHTS` ancillary data on Unix (`fd`); on Windows
+//!   the host duplicates it into the runner with `DuplicateHandle` and names
+//!   the handle value in the reply (`handle`, #4219). Where a handle cannot be
+//!   passed, the `Stream*` kinds proxy its bytes under a credit window
+//!   ([`STREAM_WINDOW`]).
 //!
 //! The host treats the runner as an **untrusted peer**: [`Message::decode`]
 //! rejects an unknown kind, an oversized or truncated frame and a malformed
@@ -44,6 +46,8 @@ pub use transport::ChannelStream;
 
 #[cfg(unix)]
 pub mod fd;
+#[cfg(windows)]
+pub mod handle;
 #[cfg(windows)]
 pub mod pipe;
 
@@ -184,7 +188,9 @@ frame_kinds! {
     /// Runner → host: [`BridgeRequest`], a plugin's capability-bridge call.
     BridgeRequest = 0x30, Runner;
     /// Host → runner: [`BridgeReply`]. A `HandlePassed` connection reply
-    /// carries the connected socket as ancillary data (`SCM_RIGHTS`).
+    /// carries the connected socket as ancillary data (`SCM_RIGHTS`, Unix); a
+    /// `HandleDuplicated` one names the handle the host duplicated into the
+    /// runner (Windows).
     BridgeReply = 0x31, Host;
     /// Runner → host: [`ConnRef`] — the plugin dropped a bridge connection;
     /// the host releases its connection slot (and closes a proxied socket).

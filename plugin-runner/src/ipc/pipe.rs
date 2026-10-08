@@ -21,9 +21,9 @@
 //!   event; a deadline cancels it (`CancelIoEx`) and waits for the
 //!   cancellation before its `OVERLAPPED` goes out of scope.
 //!
-//! The same overlapped `ReadFile` / `WriteFile` drive a connected socket handle
-//! the host duplicates into the runner, which is how bridge sockets will be
-//! handed over on Windows (#4219).
+//! The same overlapped `ReadFile` / `WriteFile` drive the connected socket
+//! handles the host duplicates into the runner for bridge connections
+//! ([`super::handle`], #4219).
 
 use std::io::{self, Read, Write};
 use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
@@ -339,7 +339,7 @@ fn new_event() -> io::Result<OwnedHandle> {
 ///
 /// Returns the bytes transferred; an expired deadline cancels the operation
 /// and fails with [`io::ErrorKind::TimedOut`] (unless it completed meanwhile).
-fn overlapped(
+pub(crate) fn overlapped(
     handle: HANDLE,
     timeout: Option<Duration>,
     start: impl FnOnce(*mut OVERLAPPED) -> BOOL,

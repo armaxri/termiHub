@@ -179,6 +179,13 @@ fn sample_messages() -> Vec<Message> {
             },
         }),
         Message::BridgeReply(BridgeReply {
+            request_id: 1,
+            result: BridgeResult::Connection {
+                conn_id: 11,
+                transport: StreamTransport::HandleDuplicated { handle: 0x1a4 },
+            },
+        }),
+        Message::BridgeReply(BridgeReply {
             request_id: 2,
             result: BridgeResult::Data {
                 data: b"chunk".to_vec(),

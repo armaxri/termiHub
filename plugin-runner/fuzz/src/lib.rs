@@ -11,7 +11,7 @@
 
 use std::io::{self, Read};
 
-use arbitrary::{Arbitrary, Result, Unstructured};
+use arbitrary::{Result, Unstructured};
 use termihub_plugin_runner::ipc::{
     Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
     CreateSession, FrameKind, FrameReader, Heartbeat, Hello, LoadFailed, Loaded, Log, Message,
@@ -204,10 +204,13 @@ pub fn message_of_kind(u: &mut Unstructured<'_>, kind: FrameKind) -> Result<Mess
                 max_open_files: u.arbitrary()?,
                 forbid_child_processes: u.arbitrary()?,
             },
+            sandbox: None,
+            accept_reduced_isolation: u.arbitrary()?,
         }),
         FrameKind::SandboxReport => Message::SandboxReport(SandboxReport {
             enforced: u.arbitrary()?,
             missing: u.arbitrary()?,
+            failed: u.arbitrary()?,
         }),
         FrameKind::Loaded => Message::Loaded(Loaded {
             id: u.arbitrary()?,
@@ -371,10 +374,12 @@ fn bridge_result(u: &mut Unstructured<'_>) -> Result<BridgeResult> {
         },
         1 => BridgeResult::Connection {
             conn_id: u.arbitrary()?,
-            transport: if bool::arbitrary(u)? {
-                StreamTransport::HandlePassed
-            } else {
-                StreamTransport::Proxy
+            transport: match u.int_in_range(0..=2u8)? {
+                0 => StreamTransport::HandlePassed,
+                1 => StreamTransport::HandleDuplicated {
+                    handle: u.arbitrary()?,
+                },
+                _ => StreamTransport::Proxy,
             },
         },
         2 => BridgeResult::Data {

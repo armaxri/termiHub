@@ -390,6 +390,15 @@ impl JobChild {
     }
 }
 
+/// The runner's process handle (full access, as `CreateProcessW` returned
+/// it): the host duplicates approved bridge sockets into the runner through it
+/// (#4219).
+impl AsHandle for JobChild {
+    fn as_handle(&self) -> BorrowedHandle<'_> {
+        self.process.as_handle()
+    }
+}
+
 /// The host's read end of a runner's piped stderr. A closed write end (the
 /// runner exited) reads as end of stream.
 #[derive(Debug)]

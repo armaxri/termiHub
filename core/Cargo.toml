@@ -226,6 +226,9 @@ windows-sys = { version = "0.59", features = [
     # (`K32GetProcessMemoryInfo`) to tell a hang near its job memory limit
     # from a plain hang (#4240).
     "Win32_System_ProcessStatus",
+    # The plugin bridge checks a socket's provider hands out kernel (IFS)
+    # handles before duplicating it into a runner (#4219).
+    "Win32_Networking_WinSock",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see

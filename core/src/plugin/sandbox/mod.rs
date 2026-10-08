@@ -30,8 +30,8 @@
 //!   loads the plugin (Windows: the host's job object enforces them).
 //! * Transport: a `socketpair` end inherited as descriptor 3 on Unix; on
 //!   Windows a private named pipe passed through a `CreateProcessW` handle
-//!   list, the runner inside a kill-on-close job object (#4201). Sockets are
-//!   not passed over the pipe yet (#4219): bridge connections are proxied.
+//!   list, the runner inside a kill-on-close job object (#4201). Approved
+//!   bridge sockets are duplicated into the runner (`DuplicateHandle`, #4219).
 //!
 //! * OS confinement (#4186, phase 5a): the host derives a [`SandboxPolicy`]
 //!   from the plugin's folders ([`sandbox_policy`]); the runner applies it to
