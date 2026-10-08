@@ -915,6 +915,12 @@ export function Terminal({
             flushTimer = setTimeout(flushOutput, 16);
             return;
           }
+          if (imageHoldSince !== null) {
+            frontendLog(
+              "terminal",
+              `released output held ${now - imageHoldSince}ms for inline images tab=${tabId}`
+            );
+          }
           imageHoldSince = null;
 
           // xterm.js 6's SmoothScrollableElement updates its scroll range
@@ -1527,6 +1533,12 @@ export function Terminal({
       enabled: appSettings.terminalInlineImages !== false,
       onError: (err) =>
         frontendLog("terminal", `inline images unavailable tab=${tabId}: ${errorMessage(err)}`),
+      onReady: (elapsedMs, decoderReady) =>
+        frontendLog(
+          "terminal",
+          `inline images ready tab=${tabId} after ${elapsedMs}ms` +
+            (decoderReady ? "" : " (sixel decoder wait timed out)")
+        ),
     });
     inlineImagesRef.current = inlineImages;
     const unregisterInlineImages = registerInlineImagesController(tabId, inlineImages);
