@@ -35,6 +35,7 @@ import { CloseWindowDecisionDialog } from "@/components/Terminal/CloseWindowDeci
 import { SessionRestoreDialog } from "@/components/SessionRestoreDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
+import { PluginDenialToasts } from "@/components/Plugins/PluginDenialToasts";
 import { ErrorBoundary, ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
@@ -411,6 +412,7 @@ function App() {
             onCancel={closeOpenSavedFileDialog}
           />
           <UpdateNotification />
+          <PluginDenialToasts />
           <ConfirmCloseTabDialog />
           <ConfirmSessionCloseDialog />
           <ConfirmDetachTabDialog />
