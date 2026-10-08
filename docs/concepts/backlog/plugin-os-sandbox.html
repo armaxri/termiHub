@@ -1610,11 +1610,7 @@ flowchart TD
               <tr>
                 <td>40 concurrent sessions in one plugin</td>
                 <td>no frame starvation; fairness within 2×</td>
-                <td>
-                  40 echo sessions pumping 64 MiB each through one helper at once (released
-                  together; 8 MiB finished inside one scheduler quantum on a 3-vCPU CI runner,
-                  #4233)
-                </td>
+                <td>40 echo sessions pumping 8 MiB each through one helper at once</td>
               </tr>
               <tr>
                 <td>Helper cold start (spawn + sandbox + dlopen + init)</td>

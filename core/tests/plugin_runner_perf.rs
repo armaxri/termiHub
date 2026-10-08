@@ -43,7 +43,7 @@ use plugin_runner_support::{
 };
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
-use termihub_core::plugin::sandbox::{OutputRateCap, PluginRunnerConfig};
+use termihub_core::plugin::sandbox::PluginRunnerConfig;
 use termihub_core::plugin::{InstalledPlugin, PluginHost};
 
 const LATENCY_SAMPLES: usize = 10_000;
@@ -52,12 +52,7 @@ const THROUGHPUT_TOTAL: usize = 256 * 1024 * 1024;
 const COLD_START_SAMPLES: usize = 40;
 const FAIR_SESSIONS: usize = 40;
 const FAIR_CHUNK: usize = 16 * 1024;
-/// Per fairness session. Large enough that no session can finish inside one
-/// OS scheduling quantum (~10 ms on macOS): with 8 MiB a writer thread that
-/// got a core first on a 3-vCPU CI runner finished alone (~7 ms) before the
-/// other 39 threads were scheduled at all, a 76x "spread" that measured the
-/// test's own thread scheduling rather than the channel's sharing.
-const FAIR_PER_SESSION: usize = 64 * 1024 * 1024;
+const FAIR_PER_SESSION: usize = 8 * 1024 * 1024;
 
 /// The budget table (see the module docs).
 const BUDGET_ADDED_P99: Duration = Duration::from_micros(500);
@@ -236,16 +231,7 @@ async fn out_of_process_echo_stays_within_the_budget() {
     in_host.unload(&id);
 
     let (out_host, out_registry) = host_for(&echo);
-    // The fairness run echoes 2.5 GiB within seconds, past the default output
-    // cap's 1 GiB burst; a terminal never does. Widen the burst so the run
-    // measures sharing, not the cap (whose own behaviour `peer_tests` covers).
-    let cap = OutputRateCap {
-        burst_bytes: 4 * 1024 * 1024 * 1024,
-        ..OutputRateCap::default()
-    };
-    let out_host = out_host.with_runner(Some(
-        PluginRunnerConfig::new(runner_binary()).with_output_rate_cap(cap),
-    ));
+    let out_host = out_host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
     let starts = cold_starts(&out_host, &echo.plugin, COLD_START_SAMPLES);
     let cold_p50 = percentile(&starts, 50);
     let cold_p95 = percentile(&starts, 95);
