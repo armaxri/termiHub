@@ -16,15 +16,15 @@
 //!    privileges (there is no `execve` anyway).
 //! 2. **namespaces** ([`layer::NETNS`], optional, #4237) — an unprivileged
 //!    user + network + IPC namespace: the runner's own ids mapped to
-//!    themselves, every capability the new user namespace grants dropped
-//!    again, and an empty network namespace (only a loopback interface that is
-//!    down). Entered before landlock (which would deny writing the id maps)
-//!    and seccomp (which kills `unshare`). Defence in depth behind the
-//!    seccomp `socket` denial and landlock's TCP rules. Where unprivileged user namespaces are not allowed (Ubuntu
-//!    23.10+ AppArmor restriction, `kernel.unprivileged_userns_clone = 0`,
-//!    Docker's default seccomp profile) it is skipped silently: never
-//!    `missing`, never required, so it does not change the isolation class.
-//!    See [`namespaces`].
+//!    themselves, every capability the new user namespace grants dropped again,
+//!    and an empty network namespace (no interface up, not even the loopback).
+//!    Entered before landlock (which would deny writing the id maps) and
+//!    seccomp (which kills `unshare`). Defence in depth behind the seccomp
+//!    `socket` denial and landlock's TCP rules. Where unprivileged user
+//!    namespaces are not allowed (Ubuntu 23.10+ AppArmor restriction,
+//!    `kernel.unprivileged_userns_clone = 0`, Docker's default seccomp profile)
+//!    it is skipped silently: never `missing`, never required, so it does not
+//!    change the isolation class. See [`namespaces`].
 //! 3. **landlock** ([`layer::LANDLOCK`]) — default-deny filesystem: the
 //!    install folder read (+ execute), the data folder read/write (when it
 //!    exists: the host creates it for ABI 1.1 plugins only), the system
@@ -208,11 +208,11 @@ fn is_dir(fd: &PathFd) -> bool {
 ///   creates in its data folder keep their owner; an unmapped id would make
 ///   every file creation fail with `EOVERFLOW`), `setgroups` is denied, and
 ///   every capability the new namespace grants is dropped right away.
-/// * **network** — an empty network namespace: no interface but a loopback
-///   that is down, so even a gap in the seccomp `socket` denial would reach
+/// * **network** — an empty network namespace: no interface is up (the loopback
+///   starts down), so even a gap in the seccomp `socket` denial would reach
 ///   nothing. Descriptors opened before — the IPC channel and the connected
-///   bridge sockets the host passes later with `SCM_RIGHTS` — keep working:
-///   a socket belongs to the namespace it was created in.
+///   bridge sockets the host passes later with `SCM_RIGHTS` — keep working: a
+///   socket belongs to the namespace it was created in.
 /// * **IPC** — no access to the host's System V IPC objects and POSIX message
 ///   queues.
 ///

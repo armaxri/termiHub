@@ -5,7 +5,7 @@
 //! runs single-threaded, like the runner at the point it confines itself.
 //!
 //! Where the system allows unprivileged user namespaces, it asserts that the
-//! process ends up in a fresh network namespace (only a loopback that is down,
+//! process ends up in a fresh network namespace (no interface up,
 //! no route to a listener of the original namespace), with its own ids mapped
 //! to themselves (a file it creates keeps its owner), no capabilities, its
 //! parent-death signal intact, and every socket it opened before — the
@@ -13,6 +13,10 @@
 //! Where they are not allowed (Docker's default seccomp profile, Ubuntu's
 //! AppArmor restriction) it asserts that entering is skipped cleanly and
 //! nothing changed.
+//!
+//! `TERMIHUB_EXPECT_USERNS=1` / `0` (set by the CI Docker legs) also asserts
+//! which of the two cases this system is, so a leg cannot silently cover the
+//! other one.
 
 #[cfg(not(all(
     target_os = "linux",
@@ -71,14 +75,28 @@ mod linux {
             .collect()
     }
 
-    /// The interface names of the current network namespace.
-    fn interfaces() -> Vec<String> {
-        std::fs::read_to_string("/proc/net/dev")
-            .unwrap()
-            .lines()
-            .skip(2)
-            .filter_map(|line| line.split_once(':').map(|(name, _)| name.trim().to_owned()))
-            .collect()
+    /// The interfaces of the current network namespace that are up.
+    fn interfaces_up() -> Vec<String> {
+        let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+        // SAFETY: `getifaddrs` fills `list`, freed below.
+        assert_eq!(unsafe { libc::getifaddrs(&mut list) }, 0, "getifaddrs");
+        let mut up = Vec::new();
+        let mut entry = list;
+        while !entry.is_null() {
+            // SAFETY: `entry` is a node of the list `getifaddrs` returned.
+            let ifa = unsafe { &*entry };
+            if ifa.ifa_flags & libc::IFF_UP as libc::c_uint != 0 {
+                // SAFETY: `ifa_name` is a NUL-terminated string in the list.
+                let name = unsafe { std::ffi::CStr::from_ptr(ifa.ifa_name) };
+                up.push(name.to_string_lossy().into_owned());
+            }
+            entry = ifa.ifa_next;
+        }
+        // SAFETY: `list` came from `getifaddrs` and is not used again.
+        unsafe { libc::freeifaddrs(list) };
+        up.sort();
+        up.dedup();
+        up
     }
 
     fn echo(client: &mut impl Write, server: &mut impl Read) {
@@ -90,6 +108,11 @@ mod linux {
 
     pub fn run() {
         let available = namespaces::available();
+        match std::env::var("TERMIHUB_EXPECT_USERNS").as_deref() {
+            Ok("1") => assert!(available, "user namespaces expected to be available"),
+            Ok("0") => assert!(!available, "user namespaces expected to be unavailable"),
+            _ => {}
+        }
         let data = tempfile::TempDir::new().unwrap();
         // Opened before: an outside listener, a connected TCP pair (a bridge
         // socket the host would pass in) and a Unix pair (the IPC channel).
@@ -99,6 +122,7 @@ mod linux {
         let (mut bridge_peer, _) = listener.accept().unwrap();
         let (mut ipc, mut ipc_peer) = UnixStream::pair().unwrap();
         let before = net_namespace();
+        let before_up = interfaces_up();
         // SAFETY: `prctl(PR_SET_PDEATHSIG, sig)` takes no pointers.
         unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
         // SAFETY: neither call takes arguments or can fail.
@@ -131,8 +155,14 @@ mod linux {
         std::fs::write(&file, b"x").expect("create a file under the id map");
         assert_eq!(std::fs::metadata(&file).unwrap().uid(), uid);
 
-        // Only a loopback, and it is down: the outside listener is unreachable.
-        assert_eq!(interfaces(), vec!["lo".to_owned()]);
+        // No interface is up (a fresh namespace has a loopback that is down,
+        // plus the kernel's fallback tunnel devices where those modules are
+        // loaded): the outside listener is unreachable.
+        assert!(
+            !before_up.is_empty(),
+            "the original namespace has a loopback"
+        );
+        assert_eq!(interfaces_up(), Vec::<String>::new());
         let fresh = TcpStream::connect_timeout(&address, Duration::from_secs(2));
         assert!(
             fresh.is_err(),
