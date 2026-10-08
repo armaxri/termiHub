@@ -65,6 +65,54 @@ mod tests {
         assert_eq!(counter.with(|c| *c), 80_000);
     }
 
+    /// Waiters get the lock in the order they asked for it, each handed it
+    /// directly by the previous holder.
+    #[test]
+    fn waiters_are_served_in_arrival_order() {
+        const WAITERS: usize = 6;
+        let log = Arc::new(FairMutex::new(Vec::with_capacity(WAITERS)));
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let log = Arc::clone(&log);
+            std::thread::spawn(move || {
+                log.with(|_| {
+                    held_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                });
+            })
+        };
+        held_rx.recv().unwrap();
+        let waiters: Vec<_> = (0..WAITERS)
+            .map(|id| {
+                let log = Arc::clone(&log);
+                let waiter = std::thread::spawn(move || log.with(|log| log.push(id)));
+                // Long enough for this waiter to be queued before the next.
+                std::thread::sleep(Duration::from_millis(50));
+                waiter
+            })
+            .collect();
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        for waiter in waiters {
+            waiter.join().unwrap();
+        }
+        assert_eq!(log.with(|log| log.clone()), (0..WAITERS).collect::<Vec<_>>());
+    }
+
+    /// A panic inside the critical section releases the lock for the next
+    /// caller instead of wedging every later sender.
+    #[test]
+    fn a_panicking_holder_releases_the_lock() {
+        let lock = Arc::new(FairMutex::new(0u32));
+        let panicker = {
+            let lock = Arc::clone(&lock);
+            std::thread::spawn(move || lock.with(|_| panic!("holder panics")))
+        };
+        assert!(panicker.join().is_err());
+        assert_eq!(lock.with(|v| *v + 1), 1);
+    }
+
     /// The barging case: threads that re-lock in a tight loop, each holding
     /// the lock for a moment like a channel write, take near-equal turns
     /// instead of one of them keeping the lock.
