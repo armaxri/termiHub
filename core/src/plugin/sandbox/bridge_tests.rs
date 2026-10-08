@@ -3,7 +3,7 @@
 //! frames are protocol violations.
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -671,7 +671,6 @@ fn the_connect_deadline_covers_the_policy_timeout() {
 #[cfg(unix)]
 #[test]
 fn an_approved_connection_passes_the_socket_over_the_channel() {
-    use std::net::TcpStream;
     use std::os::unix::net::UnixStream;
     use termihub_plugin_runner::ipc::fd::FdReader;
 
