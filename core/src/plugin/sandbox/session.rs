@@ -144,6 +144,12 @@ impl SandboxedSession {
         }
     }
 
+    /// Whether the runner serving this session is still running (#4188).
+    #[must_use]
+    pub fn runner_alive(&self) -> bool {
+        self.plugin.is_alive()
+    }
+
     /// Whether the session is alive (as last pushed by the runner, and the
     /// runner itself is running).
     #[must_use]

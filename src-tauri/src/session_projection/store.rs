@@ -118,6 +118,26 @@ pub struct TerminalExit {
     pub code: Option<i64>,
 }
 
+/// Why a plugin session ended because its **sandboxed plugin process** failed
+/// (#4188, plugin OS-sandbox phase 6): the plugin runner crashed, stopped
+/// responding, used too much memory or sent invalid data. The crash overlay
+/// derives its heading and detail box from it. Folded at the `terminal-exit`
+/// source by the backend (never guessed by the frontend).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSessionExit {
+    /// The plugin's manifest id (keys the `plugin-sandbox` region, for the
+    /// restart count).
+    pub plugin_id: String,
+    /// The plugin's display name, for the overlay's subheading.
+    pub plugin_name: String,
+    /// `crashed` | `notResponding` | `outOfMemory` | `invalidData`.
+    pub kind: String,
+    /// One line for the overlay's detail box ("plugin process exited: signal
+    /// SIGSEGV (segmentation fault)").
+    pub message: String,
+}
+
 /// The authoritative lifecycle record for one session.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +198,11 @@ pub struct SessionLifecycle {
     /// fresh connect and by every path that ends or restarts the session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub files_only: bool,
+    /// The session ended because its sandboxed plugin process failed (#4188).
+    /// Set by [`SessionLifecycleStore::plugin_exited`]; cleared by every fresh
+    /// (re)connect, like [`exit`](Self::exit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_exit: Option<PluginSessionExit>,
 }
 
 impl SessionLifecycle {
@@ -192,6 +217,7 @@ impl SessionLifecycle {
             backend_session_id: None,
             exit: None,
             files_only: false,
+            plugin_exit: None,
         }
     }
 }
@@ -325,6 +351,7 @@ impl SessionLifecycleStore {
             // A fresh live session clears any stale exit cause (#2615) so the region
             // never carries an exit for a connected tab.
             entry.exit = None;
+            entry.plugin_exit = None;
         }
     }
 
@@ -517,6 +544,7 @@ impl SessionLifecycleStore {
             // A restart supersedes any prior exit cause (#2615): the tab is coming
             // back, not exited.
             entry.exit = None;
+            entry.plugin_exit = None;
             entry.files_only = false;
         }
     }
@@ -743,6 +771,18 @@ impl SessionLifecycleStore {
             entry.files_only = false;
         }
         entry.exit = exit;
+    }
+
+    /// The session's sandboxed plugin process failed (#4188): record why, for
+    /// the crash overlay. Pure metadata — the accompanying drop fold settles
+    /// the status. A no-op for an unknown/removed session (SM-006).
+    pub fn plugin_exited(&self, session_id: &str, exit: PluginSessionExit) {
+        let mut inner = self.lock();
+        let Some(entry) = inner.sessions.get_mut(session_id) else {
+            return;
+        };
+        entry.plugin_exit = Some(exit);
+        inner.dirty.insert(session_id.to_string());
     }
 
     /// `files-only` (#4078) — the backend detected that the host refused the
