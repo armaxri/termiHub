@@ -221,3 +221,63 @@ fn macos_applies_seatbelt_before_the_load() {
     assert!(matches!(next(&host), Message::LoadFailed(_)));
     assert_eq!(wait_exit(&mut child).code(), Some(3));
 }
+
+/// Linux: a valid policy is enforced with landlock + seccomp before the load
+/// is attempted; the load then fails normally (the library does not exist),
+/// and the `LoadFailed` frame still reaches the host through the confined
+/// channel (#4185).
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_applies_landlock_and_seccomp_before_the_load() {
+    let report = linux_report_for(Vec::new());
+    assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+    assert_eq!(
+        report.enforced,
+        vec!["seccomp".to_owned(), "landlock".to_owned()]
+    );
+}
+
+/// Linux: the debug-only `simulate_missing` hook forces the reduced path —
+/// seccomp enforced, landlock reported missing (#4185).
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn linux_reports_reduced_isolation_without_landlock() {
+    let report = linux_report_for(vec!["landlock".to_owned()]);
+    assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+    assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
+    assert_eq!(report.missing, vec!["landlock".to_owned()]);
+}
+
+/// Run the handshake with a valid Linux policy and return the sandbox report;
+/// asserts the load then fails cleanly (`LoadFailed`, exit code 3).
+#[cfg(target_os = "linux")]
+fn linux_report_for(simulate_missing: Vec<String>) -> termihub_plugin_runner::ipc::SandboxReport {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let install = root.join("install");
+    let data = root.join("data");
+    std::fs::create_dir_all(&install).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        data_dir: Some(data.to_str().unwrap().into()),
+        simulate_missing,
+        ..SandboxPolicy::default()
+    };
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let lib = install.join("libmissing.so");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    let report = match next(&host) {
+        Message::SandboxReport(report) => report,
+        other => panic!("expected SandboxReport, got {other:?}"),
+    };
+    assert!(matches!(next(&host), Message::LoadFailed(_)));
+    assert_eq!(wait_exit(&mut child).code(), Some(3));
+    report
+}

@@ -10,11 +10,11 @@
 //! folder (also through `TMPDIR`), and a network connection through the
 //! capability bridge, whose socket the host opens and passes in.
 //!
-//! **Per OS.** macOS asserts the Seatbelt confinement (#4186). Linux (#4185)
-//! and Windows (#4187) reuse this file: until their phases land the runner
-//! reports no enforced layer, so there only the positive controls and the
-//! report are asserted, and the probe results are printed. Those phases flip
-//! [`expect_confined`] for their OS.
+//! **Per OS.** macOS asserts the Seatbelt confinement (#4186), Linux the
+//! landlock + seccomp confinement (#4185). Windows (#4187) reuses this file:
+//! until its phase lands the runner reports no enforced layer, so there only
+//! the positive controls and the report are asserted, and the probe results
+//! are printed. That phase flips [`expect_confined`] for its OS.
 //!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
@@ -60,10 +60,10 @@ const PROBE_MANIFEST: &str = r#"{
     }
 }"#;
 
-/// Whether this OS's runner must report an enforced sandbox. #4185 / #4187
-/// add Linux / Windows here.
+/// Whether this OS's runner must report an enforced sandbox. #4187 adds
+/// Windows here.
 fn expect_confined() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", target_os = "linux"))
 }
 
 /// Canary targets the plugin must not reach, owned by the test.
@@ -281,6 +281,7 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     let outside_file = canary.outside_dir.join("escaped.txt");
     let install_file = install_dir.join("escaped.txt");
     let tcp = format!("127.0.0.1:{}", canary.tcp_port);
+    let host_pid = std::process::id();
     let attempts: Vec<(&str, String)> = vec![
         ("read", canonical(&canary.secret)),
         ("list", home.clone()),
@@ -297,6 +298,11 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         ("spawn", String::new()),
         ("fork", String::new()),
         ("env", "SSH_AUTH_SOCK".to_owned()),
+        // The host's memory and environment (Linux /proc; absent elsewhere).
+        ("read", format!("/proc/{host_pid}/mem")),
+        ("read", format!("/proc/{host_pid}/environ")),
+        // A serial device.
+        ("read", "/dev/ttyS0".to_owned()),
     ];
     let mut escaped = Vec::new();
     for (op, arg) in &attempts {
@@ -431,4 +437,46 @@ fn clone_installed(installed: &InstalledEcho) -> InstalledEcho {
         plugin: installed.plugin.clone(),
         type_id: installed.type_id.clone(),
     }
+}
+
+/// Linux: a kernel without landlock (simulated with the debug-only
+/// `simulate_missing` hook) still gets seccomp — no network, no processes —
+/// but no filesystem confinement, and the report says so: **reduced**
+/// isolation, which the host gates behind `reducedIsolationAccepted` (#4188).
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_landlock_the_runner_reports_reduced_isolation() {
+    use termihub_core::plugin::sandbox::{layer, sandbox_policy};
+
+    let work = tempfile::TempDir::new().unwrap();
+    let canary = canaries(work.path());
+    let installed = Probe::install(work.path());
+    let mut policy =
+        sandbox_policy(&installed.root, &installed.plugin.manifest.id).expect("a policy");
+    policy.simulate_missing = vec![layer::LANDLOCK.to_owned()];
+    let probe_plugin = Probe::load(installed, config().with_sandbox_policy_for_tests(policy))
+        .expect("reduced isolation still loads until the acknowledgement gate (#4188)");
+    let report = probe_plugin.report();
+    assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+    assert_eq!(report.enforced, vec![layer::SECCOMP.to_owned()]);
+    assert_eq!(report.missing, vec![layer::LANDLOCK.to_owned()]);
+
+    let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;
+    // Without landlock the canary is readable: this is what "reduced" means.
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "read", &canonical(&canary.secret)).await;
+    assert!(allowed, "{line}");
+    // seccomp still closes the network and process creation.
+    let tcp = format!("127.0.0.1:{}", canary.tcp_port);
+    for (op, arg) in [
+        ("tcp", tcp.as_str()),
+        ("bind", ""),
+        ("spawn", ""),
+        ("fork", ""),
+    ] {
+        let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
+        assert!(!allowed, "seccomp must deny {op}: {line}");
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(canary.tcp_accepted.load(Ordering::SeqCst), 0);
+    conn.disconnect().await.unwrap();
 }
