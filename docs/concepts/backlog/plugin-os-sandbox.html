@@ -1689,11 +1689,15 @@ flowchart TD
           <li>
             <strong>Seccomp actions:</strong> <code>EPERM</code> for "soft" calls a plugin might
             reasonably try (<code>socket</code>, <code>connect</code>, <code>bind</code>,
-            <code>open_by_handle_at</code>). <code>KILL_PROCESS</code> for escape primitives
+            <code>listen</code>, <code>open_by_handle_at</code>, <code>fork</code> and
+            <code>clone</code> without <code>CLONE_THREAD</code> — so a plugin's
+            <code>std::process::Command</code> fails cleanly instead of ending its runner, as the
+            spike and the escape probe expect). <code>KILL_PROCESS</code> for escape primitives
             (<code>execve*</code>, <code>ptrace</code>, <code>process_vm_*</code>,
-            <code>mount</code>, <code>bpf</code>, <code>keyctl</code>, <code>perf_event_open</code>,
-            <code>io_uring_*</code>, <code>unshare</code> after setup, <code>clone</code> without
-            <code>CLONE_THREAD</code>).
+            <code>pidfd_getfd</code>, <code>mount</code>, <code>bpf</code>, <code>keyctl</code>,
+            <code>perf_event_open</code>, <code>io_uring_*</code>, <code>unshare</code>,
+            <code>setns</code>). Everything outside the allow-list answers
+            <code>ENOSYS</code> (including <code>clone3</code>, see below).
           </li>
           <li>
             <strong>Network</strong> is closed by the seccomp <code>socket()</code> denial on every
