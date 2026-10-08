@@ -82,6 +82,21 @@ async fn sftp_only_host_keeps_the_session_files_only() {
         .expect("read a root-owned file over SFTP");
     assert!(!hostname.is_empty(), "/etc/hostname is not empty");
 
+    // The file browser starts a session without a shell cwd at `~`. SFTP does
+    // not expand it (`readdir ~` answered "No such file", nightly 2026-10-07),
+    // so the browser resolves it to the login directory with absolute paths.
+    let home = browser
+        .list_dir("~")
+        .await
+        .expect("list `~` on the sftp-only host");
+    assert!(
+        home.iter().all(|e| e.path.starts_with('/')),
+        "entries under `~` carry absolute paths: {:?}",
+        home.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+    let home_dir = browser.stat("~").await.expect("stat `~`");
+    assert!(home_dir.is_directory, "`~` is the login directory");
+
     ssh.disconnect().await.expect("disconnect");
     assert!(!ssh.is_connected());
     assert!(!*watch.borrow(), "disconnect clears files-only");

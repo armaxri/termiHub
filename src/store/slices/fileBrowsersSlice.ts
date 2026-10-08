@@ -1,12 +1,14 @@
 import { StateCreator } from "zustand";
 
-import { sessionListFiles, localListDir } from "@/services/api";
+import { sessionListFiles, sessionStat, localListDir } from "@/services/api";
 import { currentFileBrowsersView, mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 
 import type { AppState, FileClipboard } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
+import type { FileEntry } from "@/types/connection";
+import { parentDirPath } from "@/utils/fileDragMove";
 
 const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
 
@@ -78,6 +80,30 @@ export function resetFileBrowserRequestStateForTest(): void {
   localPendingPath = null;
   sessionPending = null;
   sessionPaneOwner = null;
+}
+
+/**
+ * The real directory a session listing of `requested` showed. A session that
+ * reports no cwd (an SFTP-only or FTP host) starts at the symbolic home `~`,
+ * which the backend resolves; the pane must record the absolute directory, or
+ * "up", breadcrumbs and uploads (which join names onto the pane path and go
+ * through transfer channels that do not expand `~`) act on `~` literally. Every
+ * listed entry's parent is that directory; an empty home asks the backend to
+ * stat `~`, and keeps `~` when it cannot.
+ */
+export async function resolveSessionListedPath(
+  sessionId: string,
+  requested: string,
+  entries: FileEntry[]
+): Promise<string> {
+  if (requested !== "~") return requested;
+  if (entries.length > 0) return parentDirPath(entries[0].path);
+  try {
+    const home = await sessionStat(sessionId, "~");
+    return home?.path && home.path !== "~" ? home.path : requested;
+  } catch {
+    return requested;
+  }
 }
 
 /**
@@ -207,12 +233,13 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
     try {
       const entries = await sessionListFiles(sessionId, path);
+      const listedPath = await resolveSessionListedPath(sessionId, path, entries);
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
       sessionPending = null;
       sessionPaneOwner = sessionId;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "session",
-        path,
+        path: listedPath,
         entries,
       });
     } catch (err) {
@@ -241,12 +268,17 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
     mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
     try {
       const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
+      const listedPath = await resolveSessionListedPath(
+        sessionFileBrowserId,
+        sessionCurrentPath,
+        entries
+      );
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
       sessionPending = null;
       sessionPaneOwner = sessionFileBrowserId;
       mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
         pane: "session",
-        path: sessionCurrentPath,
+        path: listedPath,
         entries,
       });
     } catch (err) {
