@@ -1523,6 +1523,14 @@ executed, so treat a red Release macOS Smoke as a broken release, not a flake. L
 Release Windows arm64 Smoke is the only place the cross-compiled Windows arm64 agent
 (#3060) is ever executed.
 
+Release Windows Smoke also calls
+[Plugin LPAC (per-machine install)](../.github/workflows/plugin-lpac-per-machine.yml)
+(#4252): on its own runner it installs the same MSI per-machine, creates a throw-away
+standard user and, as that user, loads the echo-backend example through the installed
+plugin runner in its Less-Privileged AppContainer. A standard user cannot re-ACL
+`C:\Program Files\termiHub`, so this is the only place the runner is proven to start
+through the install folder's inherited "ALL RESTRICTED APPLICATION PACKAGES" entry.
+
 ### Post-Release Verification
 
 After the workflow completes:
