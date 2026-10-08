@@ -5,12 +5,12 @@
 //!   host opens is close-on-exec (std's default). There is no filesystem
 //!   rendezvous path, so nothing can squat it.
 //! * **Transport (Windows, #4201):** a private single-instance named pipe
-//!   ([`PipeStream`](termihub_plugin_runner::ipc::pipe::PipeStream)); the
+//!   (`termihub_plugin_runner::ipc::pipe::PipeStream`); the
 //!   runner's end is the only handle it inherits besides its standard handles
 //!   (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), its value passed as
 //!   `--ipc-handle`. The runner starts suspended inside a kill-on-close job
 //!   object carrying the [`ResourceLimits`], so it never outlives the host
-//!   ([`termihub_plugin_runner::process`]).
+//!   (`termihub_plugin_runner::process`).
 //! * **Environment:** scrubbed to [`PASSED_ENV`] — no `SSH_AUTH_SOCK`, no
 //!   `TERMIHUB_*`, nothing else of the host's.
 //! * **Integrity (#4202):** the bundled runner is hashed through a retained

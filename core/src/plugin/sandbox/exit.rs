@@ -273,6 +273,30 @@ mod tests {
         );
     }
 
+    /// Windows: no signals; an exception or a kill shows as the exit code.
+    #[cfg(windows)]
+    #[test]
+    fn exit_statuses_are_classified() {
+        use std::os::windows::process::ExitStatusExt;
+        let killed = std::process::ExitStatus::from_raw(1);
+        assert_eq!(
+            RunnerExitCause::from_status(Some(killed), false),
+            RunnerExitCause::Crashed {
+                signal: None,
+                exit_code: Some(1)
+            }
+        );
+        assert_eq!(
+            RunnerExitCause::from_status(Some(killed), false).describe(),
+            "plugin process exited with code 1"
+        );
+        let abort = std::process::ExitStatus::from_raw(0xC000_0409);
+        assert_eq!(
+            RunnerExitCause::from_status(Some(abort), true),
+            RunnerExitCause::OutOfMemory
+        );
+    }
+
     #[test]
     fn causes_serialize_with_a_kind_tag() {
         let json = serde_json::to_value(RunnerExitCause::Crashed {

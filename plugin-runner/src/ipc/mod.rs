@@ -1,7 +1,7 @@
 //! The host ↔ `termihub-plugin-runner` IPC protocol (#4182).
 //!
 //! One duplex byte stream per runner — an inherited `socketpair` end on Unix,
-//! an inherited private named-pipe handle on Windows ([`pipe`]); both behind
+//! an inherited private named-pipe handle on Windows (`pipe`); both behind
 //! [`ChannelStream`] — carrying length-delimited frames (see [`codec`]): `[u32 BE length][u8
 //! kind][payload]`, max 1 MiB.
 //!
@@ -13,7 +13,7 @@
 //! * The **capability bridge** (#4183): the runner forwards each plugin bridge
 //!   call as a [`FrameKind::BridgeRequest`] and the host answers with a
 //!   [`FrameKind::BridgeReply`]. An approved connection's socket rides along
-//!   with its reply as `SCM_RIGHTS` ancillary data on Unix ([`fd`]); where a
+//!   with its reply as `SCM_RIGHTS` ancillary data on Unix (`fd`); where a
 //!   handle cannot be passed, the `Stream*` kinds proxy its bytes under a
 //!   credit window ([`STREAM_WINDOW`]).
 //!

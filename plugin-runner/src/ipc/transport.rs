@@ -1,12 +1,10 @@
 //! The byte stream a runner channel rides on, as one trait over both
-//! platforms' transports (#4201): a `socketpair` end ([`UnixStream`]) on Unix,
-//! a private overlapped named pipe ([`super::pipe::PipeStream`]) on Windows.
+//! platforms' transports (#4201): a `socketpair` end (`UnixStream`) on Unix,
+//! a private overlapped named pipe (`pipe::PipeStream`) on Windows.
 //!
 //! The host's handshake, reader thread and writer, and the runner's session
 //! server, only ever use this surface, so they are the same code on every
 //! platform.
-//!
-//! [`UnixStream`]: std::os::unix::net::UnixStream
 
 use std::io::{self, Read, Write};
 use std::time::Duration;

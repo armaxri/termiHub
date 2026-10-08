@@ -179,6 +179,40 @@ pub fn kill_process(pid: u32) {
     unsafe { libc::kill(pid, libc::SIGKILL) };
 }
 
+/// Whether process `pid` still runs (Windows).
+#[cfg(windows)]
+pub fn process_exists(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+    // SAFETY: opens the process for waiting only; the handle is closed below.
+    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if process.is_null() {
+        return false;
+    }
+    // SAFETY: a zero-timeout wait on the handle we just opened.
+    let running = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
+    // SAFETY: closes the handle opened above, once.
+    unsafe { CloseHandle(process) };
+    running
+}
+
+/// Terminate `pid` the way a crash ends it (Windows).
+#[cfg(windows)]
+pub fn kill_process(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // SAFETY: opens a child process this test owns; closed below.
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    assert!(!process.is_null(), "open the runner process");
+    // SAFETY: terminates the process behind the handle, then closes it.
+    unsafe {
+        TerminateProcess(process, 0xC000_0005);
+        CloseHandle(process);
+    }
+}
+
 /// Poll `cond` every 10 ms for up to `timeout`.
 pub fn wait_until(timeout: std::time::Duration, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = std::time::Instant::now() + timeout;
