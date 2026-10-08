@@ -2,27 +2,25 @@
 //! every plugin thread that emits output or log lines.
 
 use std::io::{self, Write};
-use std::sync::Mutex;
-
-use termihub_plugin_runner::ipc::{write_encoded, Message, ProtocolError};
+use termihub_plugin_runner::ipc::{write_encoded, FairMutex, Message, ProtocolError};
 
 /// A mutex-guarded writer. Each frame goes out in one `write_all` under the
-/// lock, so frames from concurrent plugin threads never interleave.
+/// lock, so frames from concurrent plugin threads never interleave, and the
+/// lock is handed over in arrival order so they share the channel fairly.
 pub(crate) struct Channel {
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: FairMutex<Box<dyn Write + Send>>,
 }
 
 impl Channel {
     pub(crate) fn new(writer: Box<dyn Write + Send>) -> Self {
         Self {
-            writer: Mutex::new(writer),
+            writer: FairMutex::new(writer),
         }
     }
 
     /// Write one already-encoded frame.
     pub(crate) fn send_encoded(&self, frame: &[u8]) -> io::Result<()> {
-        let mut writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
-        write_encoded(&mut *writer, frame)
+        self.writer.with(|writer| write_encoded(writer, frame))
     }
 
     /// Encode and write one message.
