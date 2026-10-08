@@ -11,7 +11,6 @@ import { createRoot, Root } from "react-dom/client";
 import type { SettingsSchema } from "@/types/schema";
 import type { SavedConnection } from "@/types/connection";
 import { ConnectionSettingsForm } from "./ConnectionSettingsForm";
-import { dispatchCommand, type BridgeDeps } from "@/testbridge/dispatcher";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn().mockResolvedValue(null) }));
 vi.mock("@/services/api", () => ({ listSerialPorts: vi.fn().mockResolvedValue([]) }));
@@ -107,6 +106,7 @@ function renderForm(settings: Record<string, unknown>, connections = CONNECTIONS
   act(() => {
     root.render(
       <ConnectionSettingsForm
+        key={JSON.stringify(settings)}
         schema={SCHEMA}
         settings={settings}
         savedConnections={connections}
@@ -118,25 +118,33 @@ function renderForm(settings: Record<string, unknown>, connections = CONNECTIONS
   });
 }
 
-const bridgeDeps: BridgeDeps = {
-  root: document.body,
-  readTerminal: () => undefined,
-  scrollTerminal: () => false,
-  getTerminalViewport: () => undefined,
-  getActiveTabId: () => undefined,
-  getState: () => ({}),
-  sendTerminalInput: async () => false,
-  resizeWindow: async () => {},
-  screenshot: async () => "data:image/png;base64,AAAA",
-  emitEvent: async () => {},
-};
+/** Open the Radix select `testId` and return its rendered options' values. */
+function openOptions(testId: string): string[] {
+  const trigger = query(testId);
+  if (!trigger) throw new Error(`${testId} not found`);
+  for (let i = 0; i < 3 && document.querySelectorAll(".ui-select__item").length === 0; i++) {
+    act(() => {
+      trigger.focus();
+      trigger.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
+      );
+    });
+  }
+  return Array.from(document.querySelectorAll<HTMLElement>(".ui-select__item")).map(
+    (o) => o.dataset.value ?? ""
+  );
+}
 
-async function select(testId: string, value: string) {
-  let result: unknown;
-  await act(async () => {
-    result = await dispatchCommand({ action: "select", testId, value }, bridgeDeps);
+/** Pick the option `value` of the Radix select `testId`. */
+function choose(testId: string, value: string) {
+  openOptions(testId);
+  const option = document.querySelector<HTMLElement>(`.ui-select__item[data-value="${value}"]`);
+  if (!option) throw new Error(`option ${value} not found`);
+  act(() => {
+    option.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+    option.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+    option.click();
   });
-  return result as { ok: boolean };
 }
 
 const picker = () => query("field-fileTransferVia");
@@ -164,17 +172,17 @@ describe("ConnectionSettingsForm — VNC linked SSH file route (#4194)", () => {
     expect(picker()).toBeNull();
   });
 
-  it("lists saved SSH connections only, plus None", async () => {
+  it("lists saved SSH connections only, plus None", () => {
     renderForm({ ...direct, fileTransferVia: "" });
     expect(picker()?.textContent).toContain("None");
-    expect((await select("field-fileTransferVia", "Lab/Bastion")).ok).toBe(true);
+    expect(openOptions("field-fileTransferVia")).toEqual(["__none__", "Lab/Bastion", "Lab/Tiger"]);
+    choose("field-fileTransferVia", "Lab/Bastion");
     expect(lastSettings.fileTransferVia).toBe("Lab/Bastion");
-    expect((await select("field-fileTransferVia", "Lab/Telnet")).ok).toBe(false);
   });
 
-  it("stores None as an empty link", async () => {
+  it("stores None as an empty link", () => {
     renderForm({ ...direct, fileTransferVia: "Lab/Bastion" });
-    expect((await select("field-fileTransferVia", "__none__")).ok).toBe(true);
+    choose("field-fileTransferVia", "__none__");
     expect(lastSettings.fileTransferVia).toBe("");
   });
 

@@ -3,12 +3,18 @@ import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronRight } from "lucide-react";
 import type { SettingsSchema, SettingsGroup } from "@/types/schema";
+import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import { interpolateSettings, isFieldVisible, withSchemaDefaults } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
 import { vncPortForDisplay } from "@/utils/vncDisplayPort";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
+import { savedConnectionValues } from "./savedConnectionValues";
+
+/** Stable empty lists for the optional saved-connection props. */
+const NO_CONNECTIONS: SavedConnection[] = [];
+const NO_FOLDERS: ConnectionFolder[] = [];
 
 interface ConnectionSettingsFormProps {
   schema: SettingsSchema;
@@ -41,6 +47,13 @@ interface ConnectionSettingsFormProps {
    * `localContainerListing`.
    */
   containerListingAgentId?: string;
+  /**
+   * The saved connections (the unified view) that `savedConnection` fields
+   * list (#4194), and their folders for path labels. A picked connection's
+   * host is exposed to conditions and notices as `<key>.host`.
+   */
+  savedConnections?: SavedConnection[];
+  connectionFolders?: ConnectionFolder[];
   /**
    * Reports overall client-side validity plus a per-field error map (keyed by
    * field key) whenever validation state changes. Only currently-visible fields
@@ -76,6 +89,8 @@ export function ConnectionSettingsForm({
   availablePorts,
   localContainerListing = true,
   containerListingAgentId,
+  savedConnections = NO_CONNECTIONS,
+  connectionFolders = NO_FOLDERS,
   onValidityChange,
   hiddenFieldKeys,
   afterField,
@@ -224,11 +239,15 @@ export function ConnectionSettingsForm({
 
   // Live form values; `visibilityValues` overlays them on the schema defaults so
   // a key the saved config omits evaluates `visibleWhen` as its default (the
-  // value the field itself renders).
+  // value the field itself renders), plus the values derived from picked saved
+  // connections (`<key>.host`, #4194).
   const watchedValues = useWatch({ control });
   const visibilityValues = useMemo(
-    () => withSchemaDefaults(schema, watchedValues),
-    [schema, watchedValues]
+    () => ({
+      ...withSchemaDefaults(schema, watchedValues),
+      ...savedConnectionValues(schema, watchedValues, savedConnections),
+    }),
+    [schema, watchedValues, savedConnections]
   );
   const isShown = useCallback(
     (field: SettingsGroup["fields"][number]) =>
@@ -352,6 +371,18 @@ export function ConnectionSettingsForm({
                                 }
                               : undefined
                           }
+                          savedConnectionContext={
+                            field.fieldType.type === "savedConnection"
+                              ? {
+                                  connections: savedConnections,
+                                  folders: connectionFolders,
+                                  matchHost: matchHostOf(
+                                    field.fieldType.matchHostField,
+                                    visibilityValues
+                                  ),
+                                }
+                              : undefined
+                          }
                         />
                       )}
                     />
@@ -365,6 +396,12 @@ export function ConnectionSettingsForm({
       })}
     </div>
   );
+}
+
+/** The string value of the field `key` names, for a picker's host match. */
+function matchHostOf(key: string | undefined, values: Record<string, unknown>): string | undefined {
+  const value = key === undefined ? undefined : values[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 /**

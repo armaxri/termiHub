@@ -40,30 +40,40 @@ function account(channel: FileSideChannel): string {
 
 /**
  * The carrier line of the drop overlay: "via SFTP over the SSH tunnel
- * (arne@tiger-box)" or "via the termiHub agent on lab-pi".
+ * (arne@tiger-box)", "via SFTP over the linked SSH connection Tiger
+ * (arne@tiger-box)" (#4194) or "via the termiHub agent on lab-pi".
  */
 export function routeVia(channel: FileSideChannel): string {
-  return channel.kind === "agent"
-    ? `via the termiHub agent on ${channel.host}`
+  if (channel.kind === "agent") return `via the termiHub agent on ${channel.host}`;
+  return channel.linkedConnection
+    ? `via SFTP over the linked SSH connection ${channel.linkedConnection} (${account(channel)})`
     : `via SFTP over the SSH tunnel (${account(channel)})`;
 }
 
 /**
  * The carrier half of the popover's route line, the trust statement:
- * "SFTP via SSH tunnel (host key verified)" or "termiHub agent".
+ * "SFTP via SSH tunnel (host key verified)", "SFTP via the linked SSH
+ * connection Tiger (…, host key verified)" or "termiHub agent".
  */
 export function routeCarrier(channel: FileSideChannel): string {
-  return channel.kind === "agent"
-    ? `termiHub agent (${account(channel)})`
+  if (channel.kind === "agent") return `termiHub agent (${account(channel)})`;
+  return channel.linkedConnection
+    ? `SFTP via the linked SSH connection ${channel.linkedConnection} (${account(channel)}, host key verified)`
     : `SFTP via SSH tunnel (${account(channel)}, host key verified)`;
 }
 
 /**
  * The File Browser header's route line for a side channel (#4193):
- * "arne@tiger-box · SFTP via SSH tunnel" or "pi@lab-pi · termiHub agent".
+ * "arne@tiger-box · SFTP via SSH tunnel", "arne@tiger-box · SFTP via the
+ * linked SSH connection Tiger" (#4194) or "pi@lab-pi · termiHub agent".
  */
 export function browseRoute(channel: FileSideChannel): string {
-  const carrier = channel.kind === "agent" ? "termiHub agent" : "SFTP via SSH tunnel";
+  const carrier =
+    channel.kind === "agent"
+      ? "termiHub agent"
+      : channel.linkedConnection
+        ? `SFTP via the linked SSH connection ${channel.linkedConnection}`
+        : "SFTP via SSH tunnel";
   return `${account(channel)} · ${carrier}`;
 }
 
@@ -88,7 +98,7 @@ export function unavailableCopy(reason: FileChannelUnavailable): UnavailableCopy
     default:
       return {
         title,
-        hint: "VNC has no portable file transfer. Enable the SSH Tunnel (or host this connection under an agent) and turn on File Transfer in the connection settings.",
+        hint: "VNC has no portable file transfer. Enable the SSH Tunnel (or host this connection under an agent), or link a saved SSH connection under File Transfer in the connection settings.",
       };
   }
 }

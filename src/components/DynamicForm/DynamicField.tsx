@@ -12,6 +12,7 @@ import {
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
+import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 
 interface DynamicFieldProps {
@@ -45,6 +46,11 @@ interface DynamicFieldProps {
    */
   containerContext?: ContainerContext;
   /**
+   * Context for `savedConnection` fields (#4194): the saved connections the
+   * picker lists and the host an unset picker preselects by.
+   */
+  savedConnectionContext?: SavedConnectionContext;
+  /**
    * Overrides the base `data-testid` for this field's control and its derived
    * ids (error, browse, list items, …). Defaults to `field-<key>`, so the same
    * schema field renders with a stable, unique test id even when the field is
@@ -71,7 +77,8 @@ const LABELLESS_FIELD_TYPES: ReadonlySet<FieldType["type"]> = new Set([
  * error).
  *
  * Dispatches to the appropriate input widget (text, password, number,
- * boolean toggle, select, port, file path, key-value list, object list).
+ * boolean toggle, select, port, file path, saved connection, key-value list,
+ * object list).
  * Boolean fields use the toggle-row layout; all others use the column layout.
  */
 export function DynamicField({
@@ -83,6 +90,7 @@ export function DynamicField({
   credentialSaved,
   availablePorts,
   containerContext,
+  savedConnectionContext,
   testId,
 }: DynamicFieldProps) {
   const reactId = useId();
@@ -144,7 +152,8 @@ export function DynamicField({
           availablePorts,
           onBlur,
           platformNote != null,
-          containerContext
+          containerContext,
+          savedConnectionContext
         )}
         {field.description && (
           <p id={descriptionId} className="settings-form__hint">
@@ -185,7 +194,8 @@ function renderFieldInput(
   /** Force-disable the control because its feature is unavailable on this
    * platform (audit PROD-019). Currently only honoured by boolean toggles. */
   platformDisabled = false,
-  containerContext?: ContainerContext
+  containerContext?: ContainerContext,
+  savedConnectionContext?: SavedConnectionContext
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
@@ -270,6 +280,18 @@ function renderFieldInput(
           value={value}
           onChange={onChange}
           context={containerContext}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
+      );
+    case "savedConnection":
+      return (
+        <SavedConnectionField
+          field={field}
+          value={value}
+          onChange={onChange}
+          fieldType={fieldType}
+          context={savedConnectionContext}
           a11y={a11y}
           testIdBase={testIdBase}
         />

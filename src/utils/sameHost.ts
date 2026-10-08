@@ -1,7 +1,7 @@
 /**
- * Same-host check for a graphical session's file side channel (#4198).
+ * Same-host checks for a graphical session's file side channel (#4198, #4194).
  *
- * TypeScript twin of `is_loopback_host` / `is_same_host` in
+ * TypeScript twin of `is_loopback_host` / `is_same_host` / `is_same_named_host` in
  * `core/src/connection/graphical_files.rs`. The connection editor uses it to
  * evaluate the schema's two-field host comparison (`Condition.sameHostAs`)
  * without a backend round-trip; the live per-session verdict still comes from
@@ -118,4 +118,20 @@ export function isSameHost(target: string, fileHost: string): boolean {
   const t = withoutTrailingDots(bareHost(target));
   const f = withoutTrailingDots(bareHost(fileHost));
   return t !== "" && asciiLower(t) === asciiLower(f);
+}
+
+/**
+ * Whether `a` and `b` name the same host **as both seen from this computer**
+ * (#4194): both are loopback, or they have the same name (case-insensitive,
+ * ignoring IPv6 brackets and a trailing dot). Unlike {@link isSameHost}, a
+ * loopback name is not "the other host": a direct VNC connection to
+ * `localhost` shows this computer's desktop, not a linked SSH host's.
+ */
+export function isSameNamedHost(a: string, b: string): boolean {
+  const aLoopback = isLoopbackHost(a);
+  const bLoopback = isLoopbackHost(b);
+  if (aLoopback || bLoopback) return aLoopback && bLoopback;
+  const x = withoutTrailingDots(bareHost(a));
+  const y = withoutTrailingDots(bareHost(b));
+  return x !== "" && asciiLower(x) === asciiLower(y);
 }
