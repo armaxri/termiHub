@@ -17,7 +17,14 @@
 //!   connection slot stays reserved until the runner sends `BridgeRelease` (or
 //!   the session / runner ends).
 //! * **Filesystem.** Reads and writes move in `MAX_BRIDGE_CHUNK` pieces; the
-//!   path is re-resolved against the scope for every piece.
+//!   path is re-resolved against the scope for every piece. A `list_dir` whose
+//!   names do not fit one frame is paged (#4220): the host reads the directory
+//!   once (bounded by `MAX_LIST_DIR_ENTRIES` / `MAX_LIST_DIR_BYTES`), answers
+//!   the first page, and keeps the rest as a **snapshot** behind a one-use
+//!   continuation cursor, so a directory changing between pages never yields
+//!   duplicates or gaps. At most [`MAX_OPEN_LISTINGS`] snapshots are kept per
+//!   runner (the least recently paged one is dropped first; continuing it is
+//!   an I/O error).
 //! * **Denials** are recorded as structured [`BridgeDenial`] events per plugin
 //!   (and logged), ready for the UI phase to turn into toasts.
 //!
@@ -37,7 +44,7 @@ use std::time::{Duration, SystemTime};
 use termihub_plugin_api::{AbiVersion, PluginStatus, PluginWriteMode};
 use termihub_plugin_runner::ipc::{
     BridgeOp, BridgeReply, BridgeRequest, BridgeResult, ConnRef, Message, StreamAck, StreamChunk,
-    StreamTransport, MAX_BRIDGE_CHUNK,
+    StreamTransport, LIST_DIR_ENTRY_OVERHEAD, MAX_BRIDGE_CHUNK,
 };
 
 use crate::plugin::capabilities::{
@@ -52,6 +59,11 @@ use super::writer::ChannelWriter;
 
 /// Most bridge requests one runner may have in progress at once.
 pub(super) const MAX_IN_FLIGHT: usize = 32;
+
+/// Most paged `list_dir` snapshots one runner may hold at once (#4220). Each
+/// is bounded by `MAX_LIST_DIR_BYTES`, so a runner that starts listings and
+/// never finishes them pins at most this many.
+pub(super) const MAX_OPEN_LISTINGS: usize = 4;
 
 /// Most denial events kept per plugin (oldest dropped first).
 const MAX_DENIALS: usize = 64;
@@ -138,6 +150,14 @@ struct HostConn {
     proxy: Option<Arc<ProxyHost>>,
 }
 
+/// The unsent rest of a paged `list_dir` (#4220), behind one cursor.
+struct Listing {
+    session_id: u32,
+    /// The path as the runner first asked for it; a continuation must repeat it.
+    path: String,
+    names: VecDeque<String>,
+}
+
 /// A live session's grant plus its connection accounting.
 struct SessionBridge {
     grant: BridgeGrant,
@@ -152,6 +172,8 @@ pub(super) struct BridgeHost {
     conns: Mutex<HashMap<u64, HostConn>>,
     next_conn: AtomicU64,
     in_flight: Mutex<HashSet<u64>>,
+    listings: Mutex<HashMap<u64, Listing>>,
+    next_listing: AtomicU64,
     denials: Mutex<VecDeque<BridgeDenial>>,
     force_proxy: AtomicBool,
 }
@@ -165,6 +187,8 @@ impl BridgeHost {
             conns: Mutex::new(HashMap::new()),
             next_conn: AtomicU64::new(1),
             in_flight: Mutex::new(HashSet::new()),
+            listings: Mutex::new(HashMap::new()),
+            next_listing: AtomicU64::new(1),
             denials: Mutex::new(VecDeque::new()),
             force_proxy: AtomicBool::new(false),
         })
@@ -201,6 +225,7 @@ impl BridgeHost {
     /// connection it holds is released (a proxied one is closed).
     pub(super) fn close_session(&self, session_id: u32) {
         lock(&self.sessions).remove(&session_id);
+        lock(&self.listings).retain(|_, l| l.session_id != session_id);
         let gone: Vec<HostConn> = {
             let mut conns = lock(&self.conns);
             let ids: Vec<u64> = conns
@@ -216,6 +241,7 @@ impl BridgeHost {
     /// The runner is gone: drop every session and connection.
     pub(super) fn shutdown(&self) {
         lock(&self.sessions).clear();
+        lock(&self.listings).clear();
         let gone: Vec<HostConn> = lock(&self.conns).drain().map(|(_, c)| c).collect();
         close_conns(gone);
     }
@@ -241,6 +267,9 @@ impl BridgeHost {
     ) -> Result<(), String> {
         check_session(request.session_id)?;
         validate_op(&request.op)?;
+        if let BridgeOp::ListDir { path, cursor } = &request.op {
+            self.check_listing(request.session_id, path, *cursor)?;
+        }
         let request_id = request.request_id;
         {
             let mut in_flight = lock(&self.in_flight);
@@ -316,6 +345,27 @@ impl BridgeHost {
         }
     }
 
+    /// Untrusted-peer checks on a `list_dir` continuation: the cursor must have
+    /// been issued, and while its snapshot is live it belongs to this session
+    /// and path. A consumed, evicted or retired cursor is not a violation (the
+    /// request is answered with `Io`).
+    fn check_listing(&self, session_id: u32, path: &str, cursor: u64) -> Result<(), String> {
+        if cursor == 0 {
+            return Ok(());
+        }
+        if cursor >= self.next_listing.load(Ordering::SeqCst) {
+            return Err(format!(
+                "list_dir continuation with unissued cursor {cursor}"
+            ));
+        }
+        match lock(&self.listings).get(&cursor) {
+            Some(l) if l.session_id != session_id || l.path != path => Err(format!(
+                "list_dir cursor {cursor} replayed for another session or path"
+            )),
+            _ => Ok(()),
+        }
+    }
+
     fn check_conn_id(&self, conn_id: u64) -> Result<(), String> {
         if conn_id == 0 || conn_id >= self.next_conn.load(Ordering::SeqCst) {
             Err(format!("frame for unknown bridge connection {conn_id}"))
@@ -355,15 +405,9 @@ impl BridgeHost {
                 is_dir: m.is_dir,
                 len: m.len,
             }),
-            BridgeOp::ListDir { path } => guarded_list_dir(perms, path).and_then(|names| {
-                // The listing must fit one reply frame.
-                let size: usize = names.iter().map(|n| n.len() + 8).sum();
-                if size > MAX_BRIDGE_CHUNK {
-                    Err(PluginStatus::Io)
-                } else {
-                    Ok(BridgeResult::Entries { names })
-                }
-            }),
+            BridgeOp::ListDir { path, cursor } => {
+                self.list_page(request.session_id, perms, path, *cursor)
+            }
         };
         lock(&self.in_flight).remove(&request_id);
         match outcome {
@@ -381,6 +425,56 @@ impl BridgeHost {
                 self.reply_status(request_id, status);
             }
         }
+    }
+
+    /// One `list_dir` page (#4220): a fresh listing for cursor `0`, else the
+    /// snapshot behind `cursor`. The rest, if any, is kept under a new one-use
+    /// cursor.
+    fn list_page(
+        &self,
+        session_id: u32,
+        perms: &PermissionSet,
+        path: &str,
+        cursor: u64,
+    ) -> Result<BridgeResult, PluginStatus> {
+        let mut names: VecDeque<String> = if cursor == 0 {
+            guarded_list_dir(perms, path)?.into()
+        } else {
+            // Consumed, evicted, or its session ended.
+            lock(&self.listings)
+                .remove(&cursor)
+                .ok_or(PluginStatus::Io)?
+                .names
+        };
+        let page = take_page(&mut names)?;
+        if names.is_empty() {
+            return Ok(BridgeResult::Entries {
+                names: page,
+                next_cursor: 0,
+            });
+        }
+        let next_cursor = self.next_listing.fetch_add(1, Ordering::SeqCst);
+        let mut listings = lock(&self.listings);
+        while listings.len() >= MAX_OPEN_LISTINGS {
+            // Cursors grow with every page, so the smallest is the listing
+            // paged least recently (most likely abandoned).
+            let Some(oldest) = listings.keys().min().copied() else {
+                break;
+            };
+            listings.remove(&oldest);
+        }
+        listings.insert(
+            next_cursor,
+            Listing {
+                session_id,
+                path: path.to_owned(),
+                names,
+            },
+        );
+        Ok(BridgeResult::Entries {
+            names: page,
+            next_cursor,
+        })
     }
 
     /// Register a fresh connection and deliver it: pass the socket where the
@@ -523,7 +617,7 @@ impl BridgeHost {
             BridgeOp::ReadFile { path, .. }
             | BridgeOp::WriteFile { path, .. }
             | BridgeOp::Stat { path }
-            | BridgeOp::ListDir { path } => path.clone(),
+            | BridgeOp::ListDir { path, .. } => path.clone(),
         };
         let denial = BridgeDenial {
             plugin_id: self.plugin_id.clone(),
@@ -595,10 +689,32 @@ fn validate_op(op: &BridgeOp) -> Result<(), String> {
             }
             Ok(())
         }
-        BridgeOp::ReadFile { path, .. } | BridgeOp::Stat { path } | BridgeOp::ListDir { path } => {
-            check_path(path)
+        BridgeOp::ReadFile { path, .. }
+        | BridgeOp::Stat { path }
+        | BridgeOp::ListDir { path, .. } => check_path(path),
+    }
+}
+
+/// Move the next page of `names` off the front: as many as fit
+/// [`MAX_BRIDGE_CHUNK`], each charged its length plus
+/// [`LIST_DIR_ENTRY_OVERHEAD`]. `Io` if a single name cannot fit a page.
+fn take_page(names: &mut VecDeque<String>) -> Result<Vec<String>, PluginStatus> {
+    let mut page = Vec::new();
+    let mut size = 0usize;
+    while let Some(name) = names.front() {
+        let cost = name.len() + LIST_DIR_ENTRY_OVERHEAD;
+        if size + cost > MAX_BRIDGE_CHUNK {
+            break;
+        }
+        size += cost;
+        if let Some(name) = names.pop_front() {
+            page.push(name);
         }
     }
+    if page.is_empty() && !names.is_empty() {
+        return Err(PluginStatus::Io);
+    }
+    Ok(page)
 }
 
 fn check_path(path: &str) -> Result<(), String> {

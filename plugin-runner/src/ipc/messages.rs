@@ -310,10 +310,16 @@ pub enum BridgeOp {
         /// The path, as the plugin passed it (resolved by the host scope).
         path: String,
     },
-    /// `list_dir(path)`.
+    /// `list_dir(path)`, one page. A listing larger than one frame is paged
+    /// (#4220): the first request carries `cursor: 0`, and each later one the
+    /// `next_cursor` of the previous [`BridgeResult::Entries`]; the runner
+    /// reassembles the pages.
     ListDir {
         /// The path, as the plugin passed it (resolved by the host scope).
         path: String,
+        /// `0` starts a listing; otherwise the host-issued continuation cursor.
+        #[serde(default)]
+        cursor: u64,
     },
 }
 
@@ -378,10 +384,15 @@ pub enum BridgeResult {
         /// File size in bytes.
         len: u64,
     },
-    /// `list_dir` succeeded: the entry names (lossy UTF-8), host order.
+    /// `list_dir` succeeded: one page of entry names (lossy UTF-8), host
+    /// order.
     Entries {
         /// The entry names.
         names: Vec<String>,
+        /// `0` when this page ends the listing; otherwise the cursor that
+        /// requests the next page (#4220).
+        #[serde(default)]
+        next_cursor: u64,
     },
 }
 
