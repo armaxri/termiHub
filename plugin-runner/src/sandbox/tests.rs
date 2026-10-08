@@ -6,6 +6,7 @@ fn policy() -> SandboxPolicy {
         install_dir: "/plugins/acme".to_owned(),
         data_dir: Some("/plugins/.data/acme".to_owned()),
         denied_dirs: vec!["/Users/someone".to_owned()],
+        simulate_missing: Vec::new(),
     }
 }
 
@@ -88,6 +89,7 @@ fn paths_are_parameters_never_profile_text() {
         install_dir: hostile.to_owned(),
         data_dir: Some("/tmp/da\"ta\\(dir)".to_owned()),
         denied_dirs: vec!["/tmp/;; comment\n(allow network*)".to_owned()],
+        simulate_missing: Vec::new(),
     })
     .unwrap();
     assert!(!profile.sbpl.contains("/tmp"));
@@ -99,6 +101,7 @@ fn paths_are_parameters_never_profile_text() {
             install_dir: "/x".into(),
             data_dir: Some("/y".into()),
             denied_dirs: vec!["/z".into()],
+            simulate_missing: Vec::new(),
         })
         .unwrap()
         .sbpl,

@@ -11,14 +11,20 @@
 //!   enforced, sent before any plugin code is mapped; [`Isolation`] classifies
 //!   it and [`layer`] names the layers.
 //! * [`apply`] — the per-OS confinement of the calling process: Seatbelt on
-//!   macOS ([`macos`], #4186). Linux (landlock + seccomp, #4185) and Windows
-//!   (LPAC + job object, #4187) plug in here and report through the same type.
+//!   macOS ([`macos`], #4186), no_new_privs + landlock + seccomp on Linux
+//!   (`linux`, #4185). Windows (LPAC + job object, #4187) plugs in here and
+//!   reports through the same type.
 //!
 //! The runner applies the policy to **itself** after it opened its IPC channel
 //! and pinned the plugin library, and before `dlopen`, so every byte of plugin
 //! code runs confined. A policy that cannot be applied is reported as failed
 //! and the plugin is never loaded (there is no fallback to running unconfined).
 
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub mod linux;
 pub mod macos;
 
 use serde::{Deserialize, Serialize};
@@ -42,14 +48,26 @@ pub mod layer {
 /// The confinement layers the host requires on this platform. A runner whose
 /// report lacks one of them is treated as a failed setup and its plugin is not
 /// loaded. Platforms whose sandbox phase has not landed yet require nothing.
+///
+/// On Linux only seccomp is required: a kernel without landlock (< 5.13) runs
+/// the plugin with **reduced** isolation (landlock listed as missing), which
+/// the host gates behind the `reducedIsolationAccepted` acknowledgement.
 #[must_use]
 pub fn required_layers() -> &'static [&'static str] {
     if cfg!(target_os = "macos") {
         &[layer::SEATBELT]
+    } else if cfg!(target_os = "linux") {
+        &[layer::SECCOMP]
     } else {
         &[]
     }
 }
+
+/// Environment variable (read by the **host**, debug builds only) naming
+/// layers the runner should pretend are unavailable, comma-separated — e.g.
+/// `landlock` forces the reduced-isolation path on any kernel. It reaches the
+/// runner as [`SandboxPolicy::simulate_missing`].
+pub const SIMULATE_MISSING_ENV: &str = "TERMIHUB_SANDBOX_SIMULATE_MISSING";
 
 /// What one plugin's runner may access (host → runner, in `Configure`).
 ///
@@ -72,6 +90,12 @@ pub struct SandboxPolicy {
     /// reachable when they lie inside one of these.
     #[serde(default)]
     pub denied_dirs: Vec<String>,
+    /// Test hook: layers the runner must treat as unavailable on this system
+    /// (only `landlock` is understood, on Linux), to exercise the
+    /// reduced-isolation path on any kernel. Set by a debug-build host from
+    /// [`SIMULATE_MISSING_ENV`]; a release-build runner ignores it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub simulate_missing: Vec<String>,
 }
 
 /// Why a [`SandboxPolicy`] was refused or could not be applied.
@@ -207,9 +231,34 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     Ok(SandboxReport::enforced(&[layer::SEATBELT]))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
-    // Linux (#4185) and Windows (#4187) apply their layers here.
+    policy.validate()?;
+    let skip_landlock =
+        cfg!(debug_assertions) && policy.simulate_missing.iter().any(|l| l == layer::LANDLOCK);
+    linux::apply(policy, skip_landlock)
+}
+
+/// Linux on an architecture the seccomp filter has no syscall table for:
+/// fail closed (the runner ships for x86_64 and aarch64 only).
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
+    policy.validate()?;
+    Err(SandboxError::Apply {
+        layer: layer::SECCOMP,
+        detail: format!("no seccomp filter for {}", std::env::consts::ARCH),
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
+    // Windows (#4187) applies its layers here.
     policy.validate()?;
     Ok(SandboxReport::default())
 }

@@ -51,6 +51,14 @@ libc = "0.2"
 # the host to the runner (#4183). Same major as the agent's.
 nix = { version = "0.29", features = ["socket", "uio"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The Linux plugin sandbox (#4185): the official landlock crate (filesystem and
+# TCP rulesets, best-effort compatibility mode that reports what the running
+# kernel actually enforced) and seccompiler (AWS Firecracker; pure Rust, no
+# libseccomp) for the seccomp-bpf system-call filter. Both MIT OR Apache-2.0.
+landlock = "0.4"
+seccompiler = "0.5"
+
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"

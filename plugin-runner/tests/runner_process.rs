@@ -200,6 +200,7 @@ fn macos_applies_seatbelt_before_the_load() {
         install_dir: install.to_str().unwrap().into(),
         data_dir: Some(data.to_str().unwrap().into()),
         denied_dirs: vec![root.to_str().unwrap().into()],
+        ..SandboxPolicy::default()
     };
     let (mut child, mut host) = spawn_ok();
     assert!(matches!(next(&host), Message::Hello(_)));

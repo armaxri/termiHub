@@ -28,6 +28,7 @@ fn sample_messages() -> Vec<Message> {
                 install_dir: "/p".into(),
                 data_dir: Some("/d/x".into()),
                 denied_dirs: vec!["/home/u".into()],
+                simulate_missing: vec!["landlock".into()],
             }),
         }),
         Message::SandboxReport(SandboxReport::default()),
