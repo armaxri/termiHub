@@ -12,7 +12,8 @@
 //!   it and [`layer`] names the layers.
 //! * [`apply`] — the per-OS confinement of the calling process: Seatbelt on
 //!   macOS ([`macos`], #4186), no_new_privs + landlock + seccomp on Linux
-//!   (`linux`, #4185). On Windows (#4187) the confinement cannot be applied
+//!   (`linux`, #4185), whose `EPERM` denials are reported to the host
+//!   ([`denial`], #4236). On Windows (#4187) the confinement cannot be applied
 //!   from inside: the host starts the runner in the plugin's Less-Privileged
 //!   AppContainer and job object (`crate::appcontainer`, `crate::process`),
 //!   and [`apply`] verifies its own token and job instead (`windows`).
@@ -22,12 +23,18 @@
 //! code runs confined. A policy that cannot be applied is reported as failed
 //! and the plugin is never loaded (there is no fallback to running unconfined).
 
+pub mod denial;
 #[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 pub mod linux;
 pub mod macos;
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub mod sigsys;
 #[cfg(windows)]
 pub mod windows;
 
@@ -288,6 +295,23 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
     Ok(SandboxReport::default())
+}
+
+/// Drain the system-call denials counted since the last call into
+/// `Denied{syscall}` log frames (#4236; see [`denial`]). Empty where the
+/// sandbox does not trap denials (every platform but Linux).
+#[must_use]
+pub fn take_denial_reports() -> Vec<crate::ipc::Log> {
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    return denial::reports(sigsys::take());
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
+    Vec::new()
 }
 
 #[cfg(test)]

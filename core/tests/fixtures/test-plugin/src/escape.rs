@@ -27,6 +27,8 @@
 //! | `tmp`   | write a file in `std::env::temp_dir()`                    |
 //! | `reg`   | open the registry key `HKCU\<arg>` for reading (Windows)  |
 //! | `pipe`  | open the named pipe `<arg>` for reading and writing       |
+//! | `sockets` | call `socket()` `<arg>` times (ALLOWED = any succeeded)   |
+//! | `sigsys`  | replace the `SIGSYS` handler (Linux; #4236)             |
 //!
 //! Under a Less-Privileged AppContainer Winsock cannot start, and `std::net`
 //! panics on its first use (spike #4181): a panicking probe is caught and
@@ -103,6 +105,8 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
             .open(arg)
             .map(|_| "opened".to_owned())
             .map_err(io),
+        "sockets" => sockets(arg),
+        "sigsys" => replace_sigsys_handler(),
         other => Err(format!("unknown probe `{other}`")),
     }
 }
@@ -195,4 +199,63 @@ fn fork_child() -> Result<String, String> {
 #[cfg(not(unix))]
 fn fork_child() -> Result<String, String> {
     Err("no fork on this platform".to_owned())
+}
+
+/// Call `socket(AF_INET, SOCK_STREAM, 0)` `count` times (closing any socket
+/// that is created): the burst the denial-report rate limit must coalesce.
+#[cfg(unix)]
+fn sockets(count: &str) -> Result<String, String> {
+    extern "C" {
+        fn socket(domain: i32, kind: i32, protocol: i32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    let count: u32 = count.parse().map_err(|e| format!("bad count: {e}"))?;
+    let (mut created, mut last_error) = (0u32, None);
+    for _ in 0..count {
+        // SAFETY: plain `socket` / `close` calls with constant arguments.
+        let fd = unsafe { socket(2, 1, 0) };
+        if fd >= 0 {
+            created += 1;
+            // SAFETY: `fd` is the socket just created.
+            unsafe { close(fd) };
+        } else {
+            last_error = Some(std::io::Error::last_os_error());
+        }
+    }
+    match last_error {
+        Some(error) if created == 0 => Err(format!("{count} of {count} refused: {error}")),
+        _ => Ok(format!("{created} of {count} created")),
+    }
+}
+
+#[cfg(not(unix))]
+fn sockets(_count: &str) -> Result<String, String> {
+    Err("no BSD socket probe on this platform".to_owned())
+}
+
+/// Replace the `SIGSYS` handler with `SIG_IGN`. Under the Linux sandbox the
+/// runner's handler turns trapped denials into `EPERM` reports (#4236); a
+/// plugin must not be able to replace it.
+#[cfg(target_os = "linux")]
+fn replace_sigsys_handler() -> Result<String, String> {
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+    }
+    const SIGSYS: i32 = 31;
+    const SIG_IGN: usize = 1;
+    const SIG_ERR: usize = usize::MAX;
+    // SAFETY: `signal` with a constant signal number and `SIG_IGN`.
+    let previous = unsafe { signal(SIGSYS, SIG_IGN) };
+    if previous == SIG_ERR {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // Put the previous handler back so the escape does not linger.
+    // SAFETY: restores the value `signal` just returned.
+    unsafe { signal(SIGSYS, previous) };
+    Ok("replaced".to_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn replace_sigsys_handler() -> Result<String, String> {
+    Err("no seccomp trap on this platform".to_owned())
 }

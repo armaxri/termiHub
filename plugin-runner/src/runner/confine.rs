@@ -5,9 +5,14 @@
 //! library is mapped.
 
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
 
 use termihub_plugin_runner::ipc::{Configure, SandboxReport};
 use termihub_plugin_runner::sandbox::{self, SandboxPolicy};
+
+#[cfg(target_os = "linux")]
+use super::Channel;
 
 /// The library path to pin and `dlopen`. Under a sandbox the kernel matches
 /// resolved paths, so the path is canonicalised while that is still possible;
@@ -39,4 +44,29 @@ pub(super) fn apply(policy: &SandboxPolicy) -> SandboxReport {
         }
     }
     sandbox::apply(policy)
+}
+
+/// Linux: forward the system calls the seccomp filter refused to the host as
+/// `Denied{syscall}` log frames (#4236), drained once per
+/// [`REPORT_INTERVAL`](sandbox::denial::REPORT_INTERVAL) — at most one frame
+/// per system call per interval, carrying the number of refused calls. The
+/// thread ends when the channel fails; process exit ends it otherwise.
+#[cfg(target_os = "linux")]
+pub(super) fn spawn_denial_reporter(channel: Arc<Channel>) {
+    use termihub_plugin_runner::ipc::Message;
+
+    let spawned = std::thread::Builder::new()
+        .name("plugin-runner-denials".to_owned())
+        .spawn(move || loop {
+            std::thread::sleep(sandbox::denial::REPORT_INTERVAL);
+            for log in sandbox::take_denial_reports() {
+                if channel.send(&Message::Log(log)).is_err() {
+                    return;
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        // Reporting is best effort; the denials themselves stay enforced.
+        eprintln!("termihub-plugin-runner: no denial reporter: {error}");
+    }
 }

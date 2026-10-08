@@ -146,6 +146,12 @@ pub(crate) fn run<R: Read + Send + 'static>(
         // Never fall back to loading the plugin unconfined.
         return exit::SANDBOX_FAILED;
     }
+    // Report the confined plugin's refused system calls from its first
+    // instruction on (`plugin_init` included).
+    #[cfg(target_os = "linux")]
+    if configure.sandbox.is_some() {
+        confine::spawn_denial_reporter(Arc::clone(&channel));
+    }
     let library = match prepared.and_then(|p| {
         p.load().map_err(|e| LoadFailed {
             incompatible: e.is_incompatible(),

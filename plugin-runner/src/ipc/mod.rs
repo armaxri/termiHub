@@ -37,7 +37,7 @@ pub use messages::{
     Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
     CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize, ResourceLimits,
     SandboxReport, SessionError, SessionFailed, SessionRef, StreamAck, StreamChunk,
-    StreamTransport, WireError, WireToolchain,
+    StreamTransport, SyscallDenial, WireError, WireToolchain,
 };
 
 pub use transport::ChannelStream;

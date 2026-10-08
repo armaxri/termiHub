@@ -1036,7 +1036,12 @@ plugin-side migration callback in 0.1.
   data folder path termiHub hands you. On Linux, system calls outside the
   allow-list fail with `ENOSYS`, `socket` / `connect` / `bind` / `fork` fail
   with `EPERM`, and `execve`, `ptrace`, mounts, `io_uring` and similar escape
-  primitives end the runner. A kernel without landlock (older than 5.13)
+  primitives end the runner. Each refused `socket` / `connect` / `bind`-style
+  call is also reported to termiHub's log as `Denied{syscall}` (coalesced to
+  at most one line per call per second). The report travels through a
+  `SIGSYS` handler the runner owns: do not block `SIGSYS` in your threads (a
+  refused call on such a thread ends the runner), and installing your own
+  `SIGSYS` handler fails with `EPERM`. A kernel without landlock (older than 5.13)
   still gets the system-call filter but no file confinement; termiHub reports
   that as reduced isolation. On Windows the runner starts inside a
   per-plugin Less-Privileged AppContainer with no capabilities, inside a job
