@@ -234,7 +234,9 @@ fn address_space_bytes(pid: u32) -> Option<u64> {
     }
 }
 
-/// The resident size of process `pid` in bytes, where the platform can tell.
+/// The memory process `pid` uses, in bytes, where the platform can tell: the
+/// resident size on Linux, the physical footprint (resident + compressed +
+/// swapped) on macOS.
 #[must_use]
 pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -248,24 +250,25 @@ pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     }
     #[cfg(target_os = "macos")]
     {
-        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
-        let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_taskinfo>()).ok()?;
-        // SAFETY: `info` is writable for exactly `size` bytes; the kernel
-        // fills at most that much and returns how many bytes it wrote.
-        let written = unsafe {
-            libc::proc_pidinfo(
+        // The physical footprint, not `pti_resident_size`: under memory
+        // pressure macOS compresses or swaps a process's pages, which drops
+        // its resident size but not its footprint (#4239). The footprint is
+        // what jetsam and Activity Monitor's "Memory" column account.
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
+        // SAFETY: `info` is a writable `rusage_info_v2`, the struct the
+        // `RUSAGE_INFO_V2` flavor fills.
+        let rc = unsafe {
+            libc::proc_pid_rusage(
                 libc::c_int::try_from(pid).ok()?,
-                libc::PROC_PIDTASKINFO,
-                0,
-                info.as_mut_ptr().cast(),
-                size,
+                libc::RUSAGE_INFO_V2,
+                info.as_mut_ptr().cast::<libc::rusage_info_t>(),
             )
         };
-        if written != size {
+        if rc != 0 {
             return None;
         }
-        // SAFETY: the kernel filled the whole struct (checked above).
-        Some(unsafe { info.assume_init() }.pti_resident_size)
+        // SAFETY: the call succeeded, so the kernel filled the struct.
+        Some(unsafe { info.assume_init() }.ri_phys_footprint)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
