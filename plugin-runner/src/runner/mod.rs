@@ -6,7 +6,8 @@
 //! host → runner  Configure
 //! runner         pin the library     (digest through a held handle, CORE-034)
 //! runner         resource limits     (setrlimit, #4184)
-//! runner         OS sandbox          (Configure.sandbox: Seatbelt on macOS, #4186)
+//! runner         OS sandbox          (Configure.sandbox: Seatbelt on macOS, #4186;
+//!                                     landlock + seccomp on Linux, #4185)
 //! runner → host  SandboxReport      (then exit if the sandbox setup failed)
 //! runner         dlopen + gates      (ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)

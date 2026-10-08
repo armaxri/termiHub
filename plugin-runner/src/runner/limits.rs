@@ -34,7 +34,8 @@ pub(crate) fn apply(limits: &ResourceLimits) -> Vec<(&'static str, std::io::Erro
     }
     // On macOS `RLIMIT_NPROC` counts processes only, so 0 forbids `fork` /
     // `posix_spawn` without touching threads. Linux counts threads too; there
-    // the seccomp filter of the Linux sandbox phase (#4185) takes this over.
+    // the sandbox's seccomp filter forbids child processes instead (`fork`,
+    // `clone` without `CLONE_THREAD`; #4185), whenever the OS sandbox is on.
     #[cfg(target_os = "macos")]
     if limits.forbid_child_processes {
         if let Err(e) = lower(libc::RLIMIT_NPROC, 0) {

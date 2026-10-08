@@ -1020,10 +1020,16 @@ plugin-side migration callback in 0.1.
   child processes; it must answer the host's ping within 10 s, so do not block
   `write_input` / `resize` / `close` for long. Three crashes are restarted; the
   fourth within 10 minutes disables the plugin until the user re-enables it.
-  On macOS the runner also confines itself with an OS sandbox (Seatbelt)
-  before your library is loaded: your plugin can read its install folder,
+  On macOS and Linux the runner also confines itself with an OS sandbox
+  (Seatbelt on macOS; landlock + seccomp on Linux) before your library is
+  loaded: your plugin can read its install folder and the system libraries,
   read and write its private data folder (`HOME` and `TMPDIR` point inside
   it), and nothing else — no other files, no network sockets of its own (use
-  the bridge's `open_connection`), no child processes. Paths are matched after
-  symlinks are resolved, so use the data folder path termiHub hands you.
-  Linux and Windows follow.
+  the bridge's `open_connection`; the socket it hands you works normally), no
+  child processes. Paths are matched after symlinks are resolved, so use the
+  data folder path termiHub hands you. On Linux, system calls outside the
+  allow-list fail with `ENOSYS`, `socket` / `connect` / `bind` / `fork` fail
+  with `EPERM`, and `execve`, `ptrace`, mounts, `io_uring` and similar escape
+  primitives end the runner. A kernel without landlock (older than 5.13)
+  still gets the system-call filter but no file confinement; termiHub reports
+  that as reduced isolation. Windows follows.

@@ -30,12 +30,13 @@
 //!
 //! * OS confinement (#4186, phase 5a): the host derives a [`SandboxPolicy`]
 //!   from the plugin's folders ([`sandbox_policy`]); the runner applies it to
-//!   itself before `dlopen` (Seatbelt on macOS) and answers with a
+//!   itself before `dlopen` (Seatbelt on macOS, landlock + seccomp on Linux,
+//!   #4185) and answers with a
 //!   [`SandboxReport`]. A failed setup, or a required layer that is missing,
 //!   refuses the plugin ([`HostError::SandboxSetupFailed`](super::HostError)).
 //!
-//! **Scope so far.** OS confinement on macOS only (landlock + seccomp and LPAC
-//! are #4185 / #4187), and Windows has no transport yet. The out-of-process path is therefore
+//! **Scope so far.** OS confinement on macOS and Linux (LPAC is #4187), and
+//! Windows has no transport yet. The out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7

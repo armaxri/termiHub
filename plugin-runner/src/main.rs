@@ -15,7 +15,8 @@
 //!
 //! Between the handshake and the `dlopen` the runner confines itself with the
 //! OS sandbox the host requests in `Configure` (Seatbelt on macOS, #4186;
-//! landlock + seccomp and LPAC follow in #4185 / #4187). See
+//! no_new_privs + landlock + seccomp on Linux, #4185; LPAC follows in #4187).
+//! See
 //! `docs/concepts/backlog/plugin-os-sandbox.html`.
 
 // Windows has no runner transport yet (next slice of #4182), so the session
