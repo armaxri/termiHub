@@ -12,10 +12,12 @@ use termihub_plugin_runner::sandbox::{self, SandboxPolicy};
 /// The library path to pin and `dlopen`. Under a sandbox the kernel matches
 /// resolved paths, so the path is canonicalised while that is still possible;
 /// otherwise (or if it cannot be resolved, which the pin then reports) it is
-/// used as sent.
+/// used as sent. Windows confines by ACLs and the job object, not by path
+/// matching, so the path is used as sent there (`canonicalize` would turn it
+/// into a `\\?\` verbatim path for `LoadLibrary`).
 pub(super) fn library_path(configure: &Configure) -> PathBuf {
     let path = PathBuf::from(&configure.library_path);
-    if configure.sandbox.is_none() {
+    if configure.sandbox.is_none() || cfg!(windows) {
         return path;
     }
     std::fs::canonicalize(&path).unwrap_or(path)
