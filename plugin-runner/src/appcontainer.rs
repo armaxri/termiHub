@@ -15,7 +15,9 @@
 //! [`AppContainer::grant_object`]): read + execute on the runner itself and on
 //! the plugin's install folder, modify on its data folder. Grants are
 //! idempotent: an entry that is already there is not written again, so a
-//! respawn does not touch the ACLs.
+//! respawn does not touch the ACLs. On uninstall the profile is deleted
+//! together with the grants the host made outside the plugin's own folders
+//! ([`delete_profile_revoking`]), so the runner's ACL is left as it was.
 //!
 //! [`app_container_name`]: crate::sandbox::app_container_name
 
@@ -34,7 +36,7 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    CopySid, EqualSid, FreeSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
+    CopySid, DeleteAce, EqualSid, FreeSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
     InitializeSecurityDescriptor, SetFileSecurityW, SetSecurityDescriptorControl,
     SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION,
     INHERITED_ACE, NO_INHERITANCE, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
@@ -194,8 +196,47 @@ impl AppContainer {
 /// Delete plugin `plugin_id`'s AppContainer profile (on uninstall). A profile
 /// that does not exist is not an error.
 pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
+    delete_profile_revoking(plugin_id, &[]).map(|_| ())
+}
+
+/// A grant [`delete_profile_revoking`] could not take back, and why.
+pub type RevokeFailure = (std::path::PathBuf, io::Error);
+
+/// Delete plugin `plugin_id`'s AppContainer profile (on uninstall), first
+/// revoking its SID's explicit allow entries from each of `objects` (the
+/// runner executable and its folder, granted with
+/// [`AppContainer::grant_object`]). Only that SID's own, non-inherited entries
+/// go; every other entry, inherited ones such as "ALL RESTRICTED APPLICATION
+/// PACKAGES" included, stays as it is, and an object without such an entry is
+/// not written at all.
+///
+/// Both happen under the profile lock, so a concurrent
+/// [`AppContainer::ensure`] of the same plugin runs entirely before or after.
+/// A revoke that fails (typically refused, like the grant on a per-machine
+/// install, or a path that no longer exists) does not stop the deletion: it is
+/// returned for the caller to report. A profile that does not exist is not an
+/// error.
+pub fn delete_profile_revoking(
+    plugin_id: &str,
+    objects: &[&Path],
+) -> io::Result<Vec<RevokeFailure>> {
     let wide = to_wide(app_container_name(plugin_id).as_ref())?;
     let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut failures = Vec::new();
+    if !objects.is_empty() {
+        let mut sid: PSID = std::ptr::null_mut();
+        // SAFETY: NUL-terminated name; `sid` receives a SID freed below. The
+        // SID is derived from the name alone, so it exists with or without
+        // the profile.
+        let hr = unsafe { DeriveAppContainerSidFromAppContainerName(wide.as_ptr(), &mut sid) };
+        check_hresult(hr, "DeriveAppContainerSidFromAppContainerName")?;
+        let sid = FreedSid(sid);
+        for &object in objects {
+            if let Err(e) = revoke(sid.0, object) {
+                failures.push((object.to_owned(), e));
+            }
+        }
+    }
     // SAFETY: NUL-terminated name.
     let hr = unsafe { DeleteAppContainerProfile(wide.as_ptr()) };
     // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND / ERROR_NOT_FOUND: nothing
@@ -204,9 +245,25 @@ pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
         .into_iter()
         .any(|code| hr == hresult_from_win32(code))
     {
-        return Ok(());
+        return Ok(failures);
     }
-    check_hresult(hr, "DeleteAppContainerProfile")
+    check_hresult(hr, "DeleteAppContainerProfile")?;
+    Ok(failures)
+}
+
+/// Remove `sid`'s explicit allow entries from the DACL of `path` itself
+/// (nothing is re-propagated to a folder's contents: the entries the host
+/// grants there are not inheritable).
+fn revoke(sid: PSID, path: &Path) -> io::Result<()> {
+    let wide = to_wide(path.as_os_str())?;
+    let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let current = Dacl::of(&wide)?;
+    match current.without(sid)? {
+        Some(mut updated) => {
+            write_dacl_only(&wide, updated.as_mut_ptr(), current.inheritance_control())
+        }
+        None => Ok(()),
+    }
 }
 
 /// Where Windows records each AppContainer profile, one subkey per SID.
@@ -374,13 +431,25 @@ impl Dacl {
             // A NULL DACL grants everyone everything.
             return true;
         }
-        // SAFETY: a valid ACL inside the descriptor we hold.
-        let count = unsafe { (*self.acl).AceCount };
-        (0..u32::from(count)).any(|index| {
+        self.explicit_allows_for(sid).any(|(_, flags, mask)| {
+            u32::from(flags) & inheritance == inheritance && mask & access == access
+        })
+    }
+
+    /// The explicit (not inherited) allow entries for `sid`: index, flags and
+    /// access mask of each.
+    fn explicit_allows_for(&self, sid: PSID) -> impl Iterator<Item = (u32, u8, u32)> + '_ {
+        let count = if self.acl.is_null() {
+            0
+        } else {
+            // SAFETY: a valid ACL inside the descriptor we hold.
+            unsafe { (*self.acl).AceCount }
+        };
+        (0..u32::from(count)).filter_map(move |index| {
             let mut ace: *mut c_void = std::ptr::null_mut();
             // SAFETY: `index` is below the ACE count.
             if unsafe { GetAce(self.acl, index, &mut ace) } == 0 {
-                return false;
+                return None;
             }
             let ace = ace.cast::<ACCESS_ALLOWED_ACE>();
             // SAFETY: every ACE starts with an `ACE_HEADER`; the allowed-ACE
@@ -388,9 +457,8 @@ impl Dacl {
             let header = unsafe { (*ace).Header };
             if header.AceType != ACCESS_ALLOWED_ACE_TYPE
                 || u32::from(header.AceFlags) & INHERITED_ACE != 0
-                || u32::from(header.AceFlags) & inheritance != inheritance
             {
-                return false;
+                return None;
             }
             // SAFETY: an allowed ACE: mask, then the SID at `SidStart`.
             let (mask, ace_sid) = unsafe {
@@ -400,8 +468,37 @@ impl Dacl {
                 )
             };
             // SAFETY: both are valid SIDs.
-            mask & access == access && unsafe { EqualSid(ace_sid, sid) } != 0
+            (unsafe { EqualSid(ace_sid, sid) } != 0).then_some((index, header.AceFlags, mask))
         })
+    }
+
+    /// A copy of this DACL without `sid`'s explicit allow entries, or `None`
+    /// when it has none (or is NULL) and nothing needs writing.
+    fn without(&self, sid: PSID) -> io::Result<Option<OwnedAcl>> {
+        let doomed: Vec<u32> = self
+            .explicit_allows_for(sid)
+            .map(|(index, ..)| index)
+            .collect();
+        if doomed.is_empty() {
+            return Ok(None);
+        }
+        // SAFETY: a valid, non-NULL ACL (it has entries).
+        let size = usize::from(unsafe { (*self.acl).AclSize });
+        let mut copy = vec![0u32; size.div_ceil(4)].into_boxed_slice();
+        // SAFETY: `copy` holds at least `size` bytes, the ACL's whole extent;
+        // the two do not overlap.
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.acl.cast::<u8>(), copy.as_mut_ptr().cast(), size);
+        }
+        let mut acl = OwnedAcl(copy);
+        // Highest index first, so the lower indices stay valid.
+        for index in doomed.into_iter().rev() {
+            // SAFETY: a valid ACL we own; `index` names an entry in it.
+            if unsafe { DeleteAce(acl.as_mut_ptr(), index) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(Some(acl))
     }
 
     /// A new DACL: this one plus an allow entry for `sid`.
@@ -443,6 +540,15 @@ impl Drop for NewAcl {
     fn drop(&mut self) {
         // SAFETY: allocated by `SetEntriesInAclW`.
         unsafe { LocalFree(self.acl as HLOCAL) };
+    }
+}
+
+/// An ACL copied into memory we own (`u32` storage: an ACL is DWORD aligned).
+struct OwnedAcl(Box<[u32]>);
+
+impl OwnedAcl {
+    fn as_mut_ptr(&mut self) -> *mut ACL {
+        self.0.as_mut_ptr().cast()
     }
 }
 
@@ -540,5 +646,67 @@ mod tests {
         delete_profile(&id).unwrap();
         assert!(!profile_exists(&id).unwrap());
         delete_profile(&id).unwrap();
+    }
+
+    /// Deleting a profile revokes its SID's explicit entries from the given
+    /// objects and nothing else: another plugin's entry and the inherited
+    /// entries stay, an object without an entry is left alone, and a revoke
+    /// that fails is reported without stopping the deletion (#4263).
+    #[test]
+    fn deleting_a_profile_revokes_only_its_own_grants() {
+        let ours = format!("appcontainer-revoke-{}", std::process::id());
+        let theirs = format!("appcontainer-keep-{}", std::process::id());
+        let a = AppContainer::ensure(&ours).unwrap();
+        let b = AppContainer::ensure(&theirs).unwrap();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("runner.exe");
+        std::fs::write(&file, b"x").unwrap();
+        let wide_file = to_wide(file.as_os_str()).unwrap();
+        let wide_dir = to_wide(tmp.path().as_os_str()).unwrap();
+        let inherited = |wide: &[u16]| {
+            let dacl = Dacl::of(wide).unwrap();
+            // SAFETY: a valid ACL inside the descriptor `dacl` holds.
+            let count = unsafe { (*dacl.acl).AceCount };
+            (0..u32::from(count))
+                .filter(|&index| {
+                    let mut ace: *mut c_void = std::ptr::null_mut();
+                    // SAFETY: `index` is below the ACE count.
+                    unsafe { GetAce(dacl.acl, index, &mut ace) };
+                    // SAFETY: every ACE starts with an `ACE_HEADER`.
+                    let flags = unsafe { (*ace.cast::<ACCESS_ALLOWED_ACE>()).Header.AceFlags };
+                    u32::from(flags) & INHERITED_ACE != 0
+                })
+                .count()
+        };
+        let inherited_before = inherited(&wide_file);
+        assert!(
+            inherited_before > 0,
+            "a temp file inherits its folder's ACL"
+        );
+
+        for container in [&a, &b] {
+            container.grant_object(&file, READ_EXECUTE).unwrap();
+        }
+        b.grant_object(tmp.path(), READ_EXECUTE).unwrap();
+        let missing = tmp.path().join("no-such-runner.exe");
+
+        let failures = delete_profile_revoking(&ours, &[&file, tmp.path(), &missing]).unwrap();
+        assert!(!profile_exists(&ours).unwrap());
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert_eq!(failures[0].0, missing);
+        assert_eq!(failures[0].1.kind(), io::ErrorKind::NotFound);
+
+        let file_dacl = Dacl::of(&wide_file).unwrap();
+        assert!(!file_dacl.allows(a.sid(), READ_EXECUTE, NO_INHERITANCE));
+        assert!(file_dacl.allows(b.sid(), READ_EXECUTE, NO_INHERITANCE));
+        assert_eq!(inherited(&wide_file), inherited_before);
+        assert!(Dacl::of(&wide_dir)
+            .unwrap()
+            .allows(b.sid(), READ_EXECUTE, NO_INHERITANCE));
+
+        // Again: nothing left to revoke, nothing to delete.
+        assert!(delete_profile_revoking(&ours, &[&file]).unwrap().is_empty());
+        delete_profile(&theirs).unwrap();
     }
 }
