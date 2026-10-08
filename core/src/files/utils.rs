@@ -37,6 +37,38 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
+/// Whether `path` names the remote home directory symbolically: exactly `~`
+/// or a `~/`-prefixed path.
+///
+/// The frontend starts a session's file browser at `~` when the session reports
+/// no working directory (an SFTP-only or FTP host has no shell, hence no
+/// OSC 7). Remote protocols do not expand `~` themselves — an SFTP `readdir`
+/// of `~` answers "No such file", an FTP `LIST ~` answers `450` — so each
+/// remote browser resolves it against the login directory first. `~user` is
+/// not treated as home.
+pub fn is_home_relative(path: &str) -> bool {
+    path == "~" || path.starts_with("~/")
+}
+
+/// Rewrite a [`home-relative`](is_home_relative) `path` against the absolute
+/// `home` directory; any other path is returned unchanged.
+///
+/// `~` becomes `home` and `~/a/b` becomes `home/a/b` (without doubling a slash
+/// when `home` is `/`).
+pub fn expand_home_relative(path: &str, home: &str) -> String {
+    if !is_home_relative(path) {
+        return path.to_string();
+    }
+    let rest = path[1..].trim_start_matches('/');
+    let base = home.trim_end_matches('/');
+    match (base.is_empty(), rest.is_empty()) {
+        (true, true) => "/".to_string(),
+        (true, false) => format!("/{rest}"),
+        (false, true) => base.to_string(),
+        (false, false) => format!("{base}/{rest}"),
+    }
+}
+
 /// Format Unix permission bits as `rwxrwxrwx` string.
 pub fn format_permissions(perm: u32) -> String {
     let mut s = String::with_capacity(9);
@@ -133,6 +165,28 @@ pub fn normalize_platform_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_relative_paths_are_recognised() {
+        assert!(is_home_relative("~"));
+        assert!(is_home_relative("~/pub"));
+        assert!(!is_home_relative("~user"));
+        assert!(!is_home_relative("/home/~"));
+        assert!(!is_home_relative("pub"));
+    }
+
+    #[test]
+    fn home_relative_paths_expand_against_the_login_directory() {
+        assert_eq!(expand_home_relative("~", "/home/u"), "/home/u");
+        assert_eq!(expand_home_relative("~/", "/home/u/"), "/home/u");
+        assert_eq!(expand_home_relative("~/a/b", "/home/u"), "/home/u/a/b");
+        // A chrooted FTP login reports `/` as its directory.
+        assert_eq!(expand_home_relative("~", "/"), "/");
+        assert_eq!(expand_home_relative("~/pub", "/"), "/pub");
+        // Anything else is left alone.
+        assert_eq!(expand_home_relative("/etc", "/home/u"), "/etc");
+        assert_eq!(expand_home_relative("~other", "/home/u"), "~other");
+    }
 
     #[test]
     fn chrono_from_epoch_zero() {

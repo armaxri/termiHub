@@ -32,6 +32,7 @@ use tokio::sync::Mutex;
 
 use crate::config::{FtpConfig, FtpTransferType};
 use crate::errors::FileError;
+use crate::files::utils::{expand_home_relative, is_home_relative};
 use crate::files::{FileBrowser, FileEntry, RangedFileAccess};
 
 use super::listing_parser::{parse_list, parse_mlsd, parse_mlsd_line};
@@ -209,6 +210,26 @@ impl FtpFileBrowser {
         .map_err(|e| map_err(op_name, e))
     }
 
+    /// Resolve a [home-relative](is_home_relative) `path` (`~`, `~/…`) against
+    /// the login directory, which `PWD` reports — the browser never changes
+    /// directory, so the working directory stays the login one. FTP servers do
+    /// not expand `~` themselves (`LIST ~` answers `450 No such file`), and the
+    /// file browser starts an FTP session at `~`. Other paths pass through
+    /// without a round-trip.
+    async fn resolve_home(&self, path: &str) -> Result<String, FileError> {
+        if !is_home_relative(path) {
+            return Ok(path.to_string());
+        }
+        let home = self
+            .with_reconnect("PWD", || async {
+                let mut guard = self.locked_stream().await;
+                let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
+                stream.pwd().await
+            })
+            .await?;
+        Ok(expand_home_relative(path, &home))
+    }
+
     /// Lock the shared stream, returning a retryable "not connected" error when
     /// the slot is empty (so the retry driver reconnects).
     async fn locked_stream(&self) -> tokio::sync::MutexGuard<'_, Option<AsyncRustlsFtpStream>> {
@@ -232,6 +253,7 @@ fn split_parent(path: &str) -> (String, String) {
 #[async_trait::async_trait]
 impl FileBrowser for FtpFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
+        let path = &self.resolve_home(path).await?;
         self.with_reconnect("LIST", || async {
             let mut guard = self.locked_stream().await;
             let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
@@ -251,6 +273,7 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
+        let path = &self.resolve_home(path).await?;
         self.with_reconnect("RETR", || async {
             let mut guard = self.locked_stream().await;
             let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
@@ -267,6 +290,7 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         self.with_reconnect("STOR", || async {
             let mut guard = self.locked_stream().await;
             let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
@@ -278,6 +302,7 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         // FTP deletes files with DELE and directories with RMD, and the trait
         // does not tell us which. Try DELE first; on a *protocol* failure, treat
         // it as a directory and try RMD. A connection error propagates so the
@@ -295,6 +320,8 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
+        let from = &self.resolve_home(from).await?;
+        let to = &self.resolve_home(to).await?;
         self.with_reconnect("RNFR/RNTO", || async {
             let mut guard = self.locked_stream().await;
             let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
@@ -304,6 +331,7 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let path = &self.resolve_home(path).await?;
         // The filesystem root has no parent to list; synthesize it.
         if path == "/" || path.is_empty() {
             return Ok(FileEntry {
@@ -350,6 +378,7 @@ impl FileBrowser for FtpFileBrowser {
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         self.with_reconnect("MKD", || async {
             let mut guard = self.locked_stream().await;
             let stream = guard.as_mut().ok_or_else(reconnect::not_connected_err)?;
@@ -441,6 +470,7 @@ fn size_error(path: &str, err: FtpError) -> FileError {
 #[async_trait::async_trait]
 impl RangedFileAccess for FtpFileBrowser {
     async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
+        let path = &self.resolve_home(path).await?;
         if len == 0 {
             return Ok(Vec::new());
         }
@@ -465,6 +495,7 @@ impl RangedFileAccess for FtpFileBrowser {
     }
 
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
+        let path = &self.resolve_home(path).await?;
         self.ensure_ranged().await?;
         let result = self
             .with_reconnect("ranged STOR/APPE", || async {
@@ -652,7 +683,7 @@ mod tests {
 
     // ── Ranged access (#4113) against the in-process mock server ───────────
 
-    use super::super::mock_server::{MockFtpOptions, MockFtpServer, MockTransfer};
+    use super::super::mock_server::{MockFtpOptions, MockFtpServer, MockTransfer, MOCK_HOME};
 
     /// Deterministic, non-repeating-ish content so a misplaced slice shows.
     fn pattern(len: usize) -> Vec<u8> {
@@ -663,6 +694,30 @@ mod tests {
         let server = MockFtpServer::start(options).await;
         let browser = FtpFileBrowser::new(server.config());
         (server, browser)
+    }
+
+    /// The file browser starts an FTP session at `~` (no shell reports a cwd),
+    /// but FTP servers do not expand `~`: `LIST ~` answered `450 No such file`
+    /// and the pane never listed (nightly 2026-10-07). The browser resolves `~`
+    /// against the login directory, so entries come back with absolute paths.
+    #[tokio::test]
+    async fn home_relative_paths_resolve_against_the_login_directory() {
+        let (server, browser) = mock(MockFtpOptions::default()).await;
+        let file = format!("{MOCK_HOME}/readme.txt");
+        server.put(&file, b"hello", "20240101000000");
+
+        let entries = browser.list_dir("~").await.expect("list ~");
+        let paths: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec![file.as_str()]);
+
+        let bytes = browser.read_file("~/readme.txt").await.expect("read ~/…");
+        assert_eq!(bytes, b"hello");
+
+        browser
+            .write_file("~/new.txt", b"x")
+            .await
+            .expect("write ~/…");
+        assert_eq!(server.get(&format!("{MOCK_HOME}/new.txt")), Some(b"x".to_vec()));
     }
 
     #[tokio::test]

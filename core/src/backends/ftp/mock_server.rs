@@ -2,7 +2,8 @@
 //!
 //! Speaks just enough of RFC 959 / RFC 3659 for the transfer executor to run a
 //! real `suppaftp` client against it on loopback: login, `TYPE`, `FEAT`,
-//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR`, `APPE` and `QUIT`. Which of
+//! `SIZE`, `MDTM`, `REST`, `EPSV`/`PASV`, `RETR`, `STOR`, `APPE`, `PWD`, `MLSD`
+//! and `QUIT`. The login directory `PWD` reports is [`MOCK_HOME`]. Which of
 //! `FEAT`, `REST` and `MDTM` the server supports is configurable, so a test can
 //! stand up the server shapes the resume logic has to cope with — a modern
 //! server advertising `REST STREAM` and `MDTM`, one without `REST`, one without
@@ -20,6 +21,9 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::config::FtpConfig;
+
+/// The login directory the mock server's `PWD` reports.
+pub(crate) const MOCK_HOME: &str = "/home/user";
 
 /// Which optional commands the mock server supports.
 #[derive(Debug, Clone, Copy)]
@@ -298,6 +302,51 @@ async fn serve(
                     }
                     file.data.extend_from_slice(&received);
                 }
+                reply(&mut w, "226 transfer complete").await?;
+            }
+            "PWD" | "XPWD" => {
+                reply(&mut w, &format!("257 \"{MOCK_HOME}\" is the current directory")).await?
+            }
+            "MLSD" => {
+                // Direct children of the requested directory (the working
+                // directory when no argument is given).
+                let dir = if arg.is_empty() { MOCK_HOME } else { arg.as_str() };
+                let prefix = format!("{}/", dir.trim_end_matches('/'));
+                let listing: String = {
+                    let st = state.lock().expect("mock state");
+                    let mut names: Vec<_> = st
+                        .files
+                        .iter()
+                        .filter_map(|(path, file)| {
+                            let name = path.strip_prefix(&prefix)?;
+                            (!name.contains('/')).then(|| (name.to_string(), file.clone()))
+                        })
+                        .collect();
+                    names.sort_by(|a, b| a.0.cmp(&b.0));
+                    names
+                        .into_iter()
+                        .map(|(name, file)| {
+                            format!(
+                                "type=file;size={};modify={}; {name}\r\n",
+                                file.data.len(),
+                                file.mtime
+                            )
+                        })
+                        .collect()
+                };
+                if listing.is_empty() {
+                    reply(&mut w, "550 no such directory").await?;
+                    continue;
+                }
+                let Some(listener) = data_listener.take() else {
+                    reply(&mut w, "425 no data connection").await?;
+                    continue;
+                };
+                reply(&mut w, "150 opening data connection").await?;
+                let (mut conn, _) = listener.accept().await?;
+                let _ = conn.write_all(listing.as_bytes()).await;
+                let _ = conn.shutdown().await;
+                drop(conn);
                 reply(&mut w, "226 transfer complete").await?;
             }
             "QUIT" => {

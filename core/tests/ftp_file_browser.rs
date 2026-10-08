@@ -371,6 +371,36 @@ async fn ftp_05_anonymous_read_only() {
     ftp.disconnect().await.expect("disconnect should succeed");
 }
 
+// ── FTP-05a: `~` lists the login directory (nightly 2026-10-07) ─────────────
+//
+// The file browser starts an FTP session at `~` (no shell reports a cwd), but
+// FTP servers do not expand it: `LIST ~` answered `450 No such file` and the
+// pane never listed. Both accounts are chrooted onto the seeded tree, so `~`
+// is `/` and must show `pub` with an absolute path.
+
+#[tokio::test]
+async fn ftp_05a_home_lists_the_login_directory() {
+    require_docker!(port_ftp());
+
+    for settings in [ftpuser_settings(), anonymous_settings()] {
+        let mut ftp = connect(settings).await;
+        let browser = ftp.file_browser().expect("FTP exposes a file browser");
+
+        let home = list_by_name(browser, "~").await;
+        let pub_dir = home.get("pub").expect("`~` lists the seeded pub folder");
+        assert!(pub_dir.is_directory, "pub is a directory");
+        assert_eq!(pub_dir.path, "/pub", "entries under `~` carry absolute paths");
+
+        let welcome = browser
+            .read_file("~/pub/welcome.txt")
+            .await
+            .expect("read a `~/`-relative file");
+        assert_eq!(welcome.len(), 65);
+
+        ftp.disconnect().await.expect("disconnect should succeed");
+    }
+}
+
 // ── FTP-05b: the anonymous connection exactly as the editor saves it (#4017) ──
 //
 // The settings form writes `null` for the username field it hides while
