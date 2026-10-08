@@ -1043,4 +1043,8 @@ plugin-side migration callback in 0.1.
   refused call on such a thread ends the runner), and installing your own
   `SIGSYS` handler fails with `EPERM`. A kernel without landlock (older than 5.13)
   still gets the system-call filter but no file confinement; termiHub reports
-  that as reduced isolation. Windows follows.
+  that as reduced isolation. Where the system allows unprivileged user
+  namespaces, the Linux runner also moves into its own user and network
+  namespace (no network interface is up; your uid and gid stay the same, and
+  sockets the bridge hands you work normally); where it does not, this extra
+  layer is skipped and the isolation level is unaffected. Windows follows.
