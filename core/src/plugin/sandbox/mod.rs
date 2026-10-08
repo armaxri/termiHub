@@ -62,7 +62,7 @@ pub use policy::sandbox_policy;
 pub use session::SandboxedSession;
 pub use spawn::default_runner_path;
 pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
-pub use termihub_plugin_runner::sandbox::{Isolation, SandboxPolicy};
+pub use termihub_plugin_runner::sandbox::{layer, Isolation, SandboxPolicy};
 pub use watchdog::{
     WatchdogConfig, DEFAULT_HANG_TIMEOUT, DEFAULT_PING_INTERVAL, DEFAULT_RSS_LIMIT,
     DEFAULT_RSS_POLL_INTERVAL,

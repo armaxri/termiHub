@@ -1325,6 +1325,18 @@ impl PluginHost {
         let sandbox = if let Some(policy) = &config.sandbox_policy_override {
             Some(policy.clone())
         } else if config.os_sandbox {
+            // Linux landlock can only grant a folder that exists when the
+            // sandbox is applied, so the data folder of a plugin whose
+            // manifest declares ABI 1.1 is created now. The load gate
+            // refuses a library whose ABI differs from the manifest, so a
+            // 1.0 plugin still never gets one (#4185).
+            if options
+                .manifest_api_version
+                .and_then(AbiVersion::parse)
+                .is_some_and(|abi| abi.supports(ABI_1_1))
+            {
+                prepare_plugin_data_dir(&self.root, id)?;
+            }
             Some(super::sandbox::sandbox_policy(&self.root, id)?)
         } else {
             None

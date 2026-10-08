@@ -11,7 +11,9 @@
 use std::path::{Path, PathBuf};
 
 use termihub_plugin_runner::ipc::SandboxReport;
-use termihub_plugin_runner::sandbox::{required_layers, Isolation, SandboxPolicy};
+use termihub_plugin_runner::sandbox::{
+    required_layers, Isolation, SandboxPolicy, SIMULATE_MISSING_ENV,
+};
 
 use crate::plugin::host_context::PLUGIN_DATA_DIR_NAME;
 use crate::plugin::HostError;
@@ -46,11 +48,32 @@ pub fn sandbox_policy(plugins_root: &Path, id: &str) -> Result<SandboxPolicy, Ho
             .and_then(|home| home.to_str().map(str::to_owned))
             .into_iter()
             .collect(),
+        simulate_missing: simulate_missing(),
     };
     policy
         .validate()
         .map_err(|e| HostError::SandboxSetupFailed(e.to_string()))?;
     Ok(policy)
+}
+
+/// Debug builds only: the layers [`SIMULATE_MISSING_ENV`] asks the runner to
+/// treat as unavailable (comma-separated), to exercise the reduced-isolation
+/// path on any kernel. Always empty in a release build.
+fn simulate_missing() -> Vec<String> {
+    if !cfg!(debug_assertions) {
+        return Vec::new();
+    }
+    parse_simulate_missing(std::env::var(SIMULATE_MISSING_ENV).ok().as_deref())
+}
+
+fn parse_simulate_missing(value: Option<&str>) -> Vec<String> {
+    value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|layer| !layer.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Accept or refuse a runner's report for a requested sandbox: a failed setup,
@@ -101,6 +124,16 @@ mod tests {
         if let Some(home) = crate::config::home_directory().and_then(|h| h.canonicalize().ok()) {
             assert_eq!(policy.denied_dirs, vec![home.to_str().unwrap().to_owned()]);
         }
+    }
+
+    #[test]
+    fn the_simulate_missing_flag_is_a_trimmed_list() {
+        assert!(parse_simulate_missing(None).is_empty());
+        assert!(parse_simulate_missing(Some(" , ")).is_empty());
+        assert_eq!(
+            parse_simulate_missing(Some(" landlock, seccomp ")),
+            vec![layer::LANDLOCK.to_owned(), layer::SECCOMP.to_owned()]
+        );
     }
 
     #[test]
