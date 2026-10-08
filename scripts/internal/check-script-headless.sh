@@ -88,6 +88,7 @@ SCRIPTS=(
   "scripts/internal/harness-coverage.sh"
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"
+  "scripts/internal/plugin-ipc-fuzz.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
