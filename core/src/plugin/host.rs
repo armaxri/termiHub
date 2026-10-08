@@ -294,6 +294,13 @@ pub enum HostError {
     #[error("plugin runner failed: {0}")]
     RunnerProtocol(String),
 
+    /// The plugin runner could not confine itself with the OS sandbox (#4186):
+    /// the sandbox API failed, or a layer this platform requires was not
+    /// enforced. The plugin was never loaded and the runner was stopped; there
+    /// is no fallback to running it unconfined.
+    #[error("the plugin sandbox could not be set up: {0}")]
+    SandboxSetupFailed(String),
+
     /// The plugin runner refused or failed to load the plugin library. The
     /// message is the runner-side loader's, verbatim; `incompatible` keeps the
     /// ABI/toolchain-vs-load-error distinction the management layer relies on.
@@ -1312,7 +1319,30 @@ impl PluginHost {
                 ))
             })?
             .to_owned();
+        // The OS sandbox policy (#4186): install folder read-only, data folder
+        // read/write, the user's home denied. Built from the host's own paths,
+        // never from the manifest.
+        let sandbox = if let Some(policy) = &config.sandbox_policy_override {
+            Some(policy.clone())
+        } else if config.os_sandbox {
+            // Linux landlock can only grant a folder that exists when the
+            // sandbox is applied, so the data folder of a plugin whose
+            // manifest declares ABI 1.1 is created now. The load gate
+            // refuses a library whose ABI differs from the manifest, so a
+            // 1.0 plugin still never gets one (#4185).
+            if options
+                .manifest_api_version
+                .and_then(AbiVersion::parse)
+                .is_some_and(|abi| abi.supports(ABI_1_1))
+            {
+                prepare_plugin_data_dir(&self.root, id)?;
+            }
+            Some(super::sandbox::sandbox_policy(&self.root, id)?)
+        } else {
+            None
+        };
         let configure = termihub_plugin_runner::ipc::Configure {
+            sandbox,
             library_path,
             expected_digest: options.expected_digest.map(str::to_owned),
             manifest_api_version: options.manifest_api_version.map(str::to_owned),

@@ -30,6 +30,9 @@
 //! * The `crash-commands` feature adds input commands that misbehave on
 //!   purpose, for the out-of-process isolation tests (#4184): see
 //!   [`crash_command`].
+//! * The `escape-probe` feature adds `?probe <op> [arg]` commands that try
+//!   each operation the OS sandbox must deny, plus positive controls, for the
+//!   sandbox tests on every OS (#4186, #4185, #4187): see the `escape` module.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,8 +42,7 @@ use serde::Deserialize;
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
     AbiVersion, PluginBackend, PluginError, PluginHostBridge, PluginHostServices,
-    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend,
-    PluginWriteMode,
+    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend, PluginWriteMode,
 };
 
 /// The ABI this build reports: a faithful 1.0 plugin under `abi-1-0`, else the
@@ -68,6 +70,10 @@ impl PluginTerminalBackend for EchoBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
         #[cfg(feature = "crash-commands")]
         if let Some(reply) = crash_command(data) {
+            return self.output.send(reply.as_bytes());
+        }
+        #[cfg(feature = "escape-probe")]
+        if let Some(reply) = escape::probe_command(data) {
             return self.output.send(reply.as_bytes());
         }
         if data == b"?cancelled" {
@@ -164,8 +170,7 @@ fn crash_command(data: &[u8]) -> Option<String> {
             // Length 1, kind 0xEE (unknown): the host must kill the runner.
             // SAFETY: fd 3 is the runner's IPC channel; ManuallyDrop keeps it
             // open for the runner.
-            let mut channel =
-                std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
+            let mut channel = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
             let _ = channel.write_all(&[0, 0, 0, 1, 0xEE]);
             Some("GARBAGE_SENT".to_owned())
         }
@@ -189,6 +194,9 @@ fn crash_command(data: &[u8]) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(feature = "escape-probe")]
+mod escape;
 
 /// Read an ABI override from `var`: `"major.minor"`, or a raw packed `u32`.
 fn abi_override(var: &str) -> Option<u32> {

@@ -6,7 +6,8 @@ name: Plugin Packaging
 # it with the real PluginHost (core/tests/plugin_host_roundtrip's packaged
 # sibling, core/tests/plugin_package_load.rs). A merge job then combines the
 # per-OS packages into one fat package, verifies every platform entry's hash
-# against the library each OS built, and loads the fat package on Linux.
+# against the library each OS built, and loads the fat package on Linux. Each
+# Unix OS also runs the OS-sandbox escape probe (#4186).
 #
 # Lane policy (#3325/#3326): on a PR this runs only when the plugin surface
 # changes, and only on ubuntu + windows (macOS runners are the scarcest in the
@@ -150,6 +151,18 @@ jobs:
           TERMIHUB_PLUGIN_LIBRARY_SHA256: ${{ steps.lib.outputs.sha256 }}
         run: cargo test -p termihub-core --features plugin --test plugin_package_load -- --nocapture
 
+      # Plugin OS sandbox (#4186, #4185): the escape-probe fixture runs inside
+      # the confined plugin runner and tries every forbidden operation; each
+      # must fail while the positive controls (data folder, install folder, a
+      # bridge connection through a passed socket) succeed. macOS asserts
+      # Seatbelt, Linux landlock + seccomp (and the simulated reduced path). A
+      # safety test: never moved to the post-merge lane. Windows has no runner
+      # transport yet (#4187).
+      - name: Sandbox escape probe
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cargo test -p termihub-core --features plugin --test plugin_runner_sandbox -- --nocapture
+
       - name: Upload the per-platform package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -159,6 +172,44 @@ jobs:
             target/plugin-dist/expected-*.sha256
           retention-days: 7
           if-no-files-found: error
+
+  # Linux plugin sandbox inside a container (#4185): Docker's default seccomp
+  # profile blocks unshare / user namespaces, as many container hosts do, so
+  # this proves the runner's own landlock + seccomp setup works there — as a
+  # non-root user, the way termiHub runs — and the escape probe still passes.
+  # A safety test: never moved to the post-merge lane.
+  sandbox-docker:
+    name: Sandbox escape probe (Docker, no user namespaces)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.tests != 'false' &&
+      needs.changes.outputs.rust != 'false' }}
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Run the runner and escape-probe tests in rust:bookworm as a non-root user
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cat .github/rust-version)"
+          docker run --rm -v "$PWD:/src:ro" "rust:${version}-bookworm" bash -euo pipefail -c '
+            apt-get update -qq
+            apt-get install -y -qq pkg-config libudev-dev libssl-dev libdbus-1-dev >/dev/null
+            useradd -m -s /bin/bash probe
+            cp -r /src /home/probe/src
+            chown -R probe /home/probe/src /usr/local/cargo
+            su probe -c "
+              set -euo pipefail
+              export PATH=/usr/local/cargo/bin:\$PATH CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup
+              cd /home/probe/src
+              cargo test -p termihub-plugin-runner
+              cargo test -p termihub-core --features plugin --test plugin_runner_sandbox -- --nocapture
+            "
+          '
 
   merge:
     name: Merge into a multi-platform package
