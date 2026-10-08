@@ -146,6 +146,9 @@ pub struct DenialInfo {
     pub reason: String,
     /// When, in milliseconds since the Unix epoch.
     pub at_ms: u64,
+    /// How many refused calls this entry stands for (a kernel-level
+    /// `syscall` denial report folds repeats; 1 for a bridge denial).
+    pub count: u32,
 }
 
 impl DenialInfo {
@@ -164,13 +167,17 @@ impl DenialInfo {
             at_ms: at
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            count: 1,
         }
     }
 }
 
 impl From<&BridgeDenial> for DenialInfo {
     fn from(denial: &BridgeDenial) -> Self {
-        Self::new(denial.operation, &denial.target, &denial.reason, denial.at)
+        Self {
+            count: denial.count.max(1),
+            ..Self::new(denial.operation, &denial.target, &denial.reason, denial.at)
+        }
     }
 }
 
@@ -373,6 +380,17 @@ mod tests {
         );
         assert_eq!(json["denials"][0]["operation"], "open_connection");
         assert_eq!(json["denials"][0]["reason"], "permission");
+        assert_eq!(json["denials"][0]["count"], 1);
+        assert_eq!(
+            DenialInfo::new(
+                "connect",
+                "",
+                &DenialReason::Syscall,
+                SystemTime::UNIX_EPOCH
+            )
+            .reason,
+            "syscall"
+        );
         assert_eq!(
             DenialInfo::new(
                 "x",
