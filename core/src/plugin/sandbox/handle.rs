@@ -27,6 +27,7 @@ use serde::Serialize;
 use termihub_plugin_api::PluginError;
 use termihub_plugin_runner::ipc::{Cancel, Configure, Message, ResourceLimits};
 use termihub_plugin_runner::loader::LoadedPluginInfo;
+use termihub_plugin_runner::sandbox::SandboxPolicy;
 
 use crate::plugin::log_rate_limit::PluginLogLimiter;
 use crate::plugin::security::{RecoveryAction, MAX_RESTART_ATTEMPTS};
@@ -59,6 +60,10 @@ pub struct PluginRunnerConfig {
     /// Confine each runner with the OS sandbox (#4186). On by default; tests
     /// that need an unconfined runner turn it off.
     pub os_sandbox: bool,
+    /// Send this policy instead of the derived one (tests of the setup-failure
+    /// path only).
+    #[doc(hidden)]
+    pub sandbox_policy_override: Option<SandboxPolicy>,
 }
 
 impl PluginRunnerConfig {
@@ -75,7 +80,17 @@ impl PluginRunnerConfig {
             watchdog: WatchdogConfig::default(),
             crash_window: DEFAULT_CRASH_WINDOW,
             os_sandbox: true,
+            sandbox_policy_override: None,
         }
+    }
+
+    /// Send `policy` to the runner instead of the derived one, to exercise the
+    /// sandbox setup-failure path in tests. Never used by the application.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_sandbox_policy_for_tests(mut self, policy: SandboxPolicy) -> Self {
+        self.sandbox_policy_override = Some(policy);
+        self
     }
 
     /// Run the plugin without the OS sandbox (tests of the unconfined path).

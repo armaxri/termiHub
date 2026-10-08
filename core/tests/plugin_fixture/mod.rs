@@ -42,6 +42,8 @@ pub enum Variant {
     Abi10,
     /// `--features crash-commands`: misbehaves on command (#4184 isolation).
     Crash,
+    /// `--features escape-probe`: tries sandbox escapes on command (#4186).
+    Escape,
 }
 
 impl Variant {
@@ -52,6 +54,7 @@ impl Variant {
             Variant::NoInit => "no-init",
             Variant::Abi10 => "abi-1-0",
             Variant::Crash => "crash",
+            Variant::Escape => "escape",
         }
     }
 
@@ -61,6 +64,7 @@ impl Variant {
             Variant::NoInit => 1,
             Variant::Abi10 => 2,
             Variant::Crash => 3,
+            Variant::Escape => 4,
         }
     }
 
@@ -70,6 +74,7 @@ impl Variant {
             Variant::NoInit => &["--no-default-features"],
             Variant::Abi10 => &["--features", "abi-1-0"],
             Variant::Crash => &["--features", "crash-commands"],
+            Variant::Escape => &["--features", "escape-probe"],
         }
     }
 }
@@ -100,7 +105,8 @@ fn shared_target_dir(variant: Variant) -> PathBuf {
 /// Build `variant` into its shared target directory (once per test binary) and
 /// return the path of the shared artifact. Callers must copy it, never load it.
 fn shared_artifact(variant: Variant) -> &'static Path {
-    static BUILT: [OnceLock<PathBuf>; 4] = [
+    static BUILT: [OnceLock<PathBuf>; 5] = [
+        OnceLock::new(),
         OnceLock::new(),
         OnceLock::new(),
         OnceLock::new(),

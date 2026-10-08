@@ -32,3 +32,8 @@ abi-1-0 = []
 # `!segv`, `!abort`, `!spin`, `!alloc`, `!garbage`, `!fds`, `!spawn` make the
 # plugin misbehave on purpose. Test-only; never part of a shipped plugin.
 crash-commands = []
+# Escape-probe commands for the OS-sandbox tests (#4186, shared with #4185 /
+# #4187): input `?probe <op> [arg]` tries one operation the sandbox must deny
+# (or a positive control it must allow) and answers `PROBE <op> ALLOWED|DENIED
+# <detail>`. Test-only; never part of a shipped plugin.
+escape-probe = []
