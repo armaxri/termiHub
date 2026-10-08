@@ -113,7 +113,9 @@ fn a_link_without_a_stored_password_is_unusable_and_says_why() {
 #[test]
 fn a_locked_store_is_unusable_until_it_is_unlocked() {
     let store = RecordingStore::with(&[("Lab/Tiger", PW, "s3cret")]);
-    store.locked.store(true, std::sync::atomic::Ordering::SeqCst);
+    store
+        .locked
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     let LinkedLookup::Unusable { message, .. } = lookup(&[tiger("password")], "Lab/Tiger", &store)
     else {
         panic!("expected unusable");

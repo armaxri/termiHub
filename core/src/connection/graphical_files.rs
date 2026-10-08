@@ -31,6 +31,10 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
+/// The settings key of a direct graphical connection's linked SSH file route
+/// (#4194): the id of a saved SSH connection, or empty for none.
+pub const FILE_TRANSFER_VIA_KEY: &str = "fileTransferVia";
+
 /// How files reach the side-channel host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

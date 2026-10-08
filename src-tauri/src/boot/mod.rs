@@ -478,7 +478,14 @@ pub(crate) fn init_session_managers(
                 connection_id.to_string(),
             ),
         );
-    }));
+    }))
+    // A direct VNC connection's linked saved SSH connection (#4194) is looked
+    // up in the saved connections and the credential store.
+    .with_linked_ssh_source(std::sync::Arc::new(
+        crate::session::graphical_linked_ssh::AppLinkedSsh {
+            app: app.handle().clone(),
+        },
+    ));
     app.manage(graphical_manager);
 
     // SSH host-key verification (#1959): register the process-wide

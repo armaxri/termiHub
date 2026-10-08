@@ -9,6 +9,7 @@
 use serde::Deserialize;
 
 use crate::config::SshConfig;
+use crate::connection::graphical_files::FILE_TRANSFER_VIA_KEY;
 use crate::connection::graphical_monitors::{
     deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
     MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
@@ -629,10 +630,6 @@ fn when_vnc_host_is_ssh_host(same: bool) -> Condition {
         ..Default::default()
     }
 }
-
-/// The settings key of a direct connection's linked SSH file route (#4194):
-/// the id of a saved SSH connection, or empty for none.
-pub const FILE_TRANSFER_VIA_KEY: &str = "fileTransferVia";
 
 /// Whether the VNC `host` and the linked SSH connection's host
 /// (`fileTransferVia.host`, a value the editor derives from the picked saved

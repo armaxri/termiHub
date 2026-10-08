@@ -144,6 +144,7 @@ async fn agent_route_resolves_the_agent_host_and_desktop_folder() {
                 host: "lab-pi".to_string(),
                 user: "pi".to_string(),
                 same_host: true,
+                linked_connection: None,
             },
             agent_id: Some("agent-1".to_string()),
             default_dir: "/home/pi/Desktop".to_string(),
@@ -275,7 +276,7 @@ impl FakeLink {
     }
 
     fn found() -> Arc<Self> {
-        Self::new(LinkedLookup::Found(LinkedSshTarget {
+        Self::new(LinkedLookup::Found(Box::new(LinkedSshTarget {
             connection_id: "Lab/Tiger".to_string(),
             name: "Tiger".to_string(),
             config: SshConfig {
@@ -283,7 +284,7 @@ impl FakeLink {
                 username: "arne".to_string(),
                 ..SshConfig::default()
             },
-        }))
+        })))
     }
 }
 
@@ -641,11 +642,11 @@ mod live {
     #[async_trait::async_trait]
     impl LinkedSshSource for FixtureLink {
         fn lookup(&self, _connection_id: &str) -> LinkedLookup {
-            LinkedLookup::Found(LinkedSshTarget {
+            LinkedLookup::Found(Box::new(LinkedSshTarget {
                 connection_id: "Lab/Fixture".to_string(),
                 name: "Fixture".to_string(),
                 config: self.0.clone(),
-            })
+            }))
         }
     }
 

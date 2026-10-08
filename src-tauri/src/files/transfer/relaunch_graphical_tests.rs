@@ -35,6 +35,7 @@ fn channel(kind: FileSideChannelKind, host: &str) -> FileSideChannel {
         host: host.to_string(),
         user: "pi".to_string(),
         same_host: true,
+        linked_connection: None,
     }
 }
 
