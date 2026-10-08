@@ -476,7 +476,7 @@ impl BridgeHost {
         _reply: &Message,
         _stream: &std::net::TcpStream,
     ) -> bool {
-        // TODO(#4219): Windows passes the socket with `DuplicateHandle` into
+        // Windows (tracked in #4219) will pass the socket with `DuplicateHandle` into
         // the runner, which drives it with overlapped ReadFile/WriteFile (no
         // Winsock under LPAC). Until that transport exists `can_pass_handles`
         // is false here and every connection is proxied.

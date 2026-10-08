@@ -46,7 +46,7 @@ pub(crate) fn apply(limits: &ResourceLimits) -> Vec<(&'static str, std::io::Erro
 
 #[cfg(not(unix))]
 pub(crate) fn apply(_limits: &ResourceLimits) -> Vec<(&'static str, std::io::Error)> {
-    // TODO(#4187): the Windows sandbox puts the runner in a job object; its
+    // Windows: the sandbox phase (#4187) puts the runner in a job object; its
     // memory and active-process limits belong there.
     Vec::new()
 }
