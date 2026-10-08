@@ -71,8 +71,8 @@ pub use policy::sandbox_policy;
 pub use session::SandboxedSession;
 pub(crate) use status::SandboxOutcome;
 pub use status::{
-    DenialInfo, DenialKind, IsolationStatus, PluginExitInfo, PluginSandboxStatus, ProcessState,
-    ProcessStatus, STATUS_DENIALS,
+    DenialInfo, IsolationStatus, PluginExitInfo, PluginSandboxStatus, ProcessState, ProcessStatus,
+    STATUS_DENIALS,
 };
 pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
 pub use termihub_plugin_runner::sandbox::{layer, Isolation, SandboxPolicy};

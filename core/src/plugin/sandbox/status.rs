@@ -9,13 +9,13 @@
 //! [`PluginSandboxStatus`], the per-plugin row of the desktop's
 //! `plugin-sandbox` projection region.
 
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use termihub_plugin_runner::ipc::SandboxReport;
 use termihub_plugin_runner::sandbox::Isolation;
 
-use super::bridge::{BridgeDenial, DenialReason};
+use super::bridge::BridgeDenial;
 use super::exit::RunnerExitCause;
 use super::handle::SandboxedPluginHandle;
 use crate::plugin::HostError;
@@ -140,37 +140,47 @@ pub struct DenialInfo {
     pub operation: String,
     /// What was asked for (`host:port` or a path), sanitised.
     pub target: String,
-    /// `permission` or `resourceLimit`.
-    pub reason: DenialKind,
+    /// Why, as the camelCase name of the host's [`DenialReason`]
+    /// (`permission`, `resourceLimit`, …). A string, not a closed enum, so a
+    /// reason the host adds later reaches the UI without a lock-step change.
+    pub reason: String,
     /// When, in milliseconds since the Unix epoch.
     pub at_ms: u64,
 }
 
-/// Why a bridge request was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum DenialKind {
-    /// The plugin lacks the permission, or the path is outside its scope.
-    Permission,
-    /// A resource ceiling (concurrent connections, in-flight requests).
-    ResourceLimit,
-}
-
-impl From<&BridgeDenial> for DenialInfo {
-    fn from(denial: &BridgeDenial) -> Self {
+impl DenialInfo {
+    /// Build the UI record for a refusal of `operation` on `target` at `at`.
+    #[must_use]
+    pub fn new(
+        operation: &str,
+        target: &str,
+        reason: &impl std::fmt::Debug,
+        at: SystemTime,
+    ) -> Self {
         Self {
-            operation: denial.operation.to_owned(),
-            target: denial.target.clone(),
-            reason: match denial.reason {
-                DenialReason::Permission => DenialKind::Permission,
-                DenialReason::ResourceLimit => DenialKind::ResourceLimit,
-            },
-            at_ms: denial
-                .at
+            operation: operation.to_owned(),
+            target: target.to_owned(),
+            reason: camel_case(&format!("{reason:?}")),
+            at_ms: at
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
         }
     }
+}
+
+impl From<&BridgeDenial> for DenialInfo {
+    fn from(denial: &BridgeDenial) -> Self {
+        Self::new(denial.operation, &denial.target, &denial.reason, denial.at)
+    }
+}
+
+/// `ResourceLimit` → `resourceLimit` (a unit variant's `Debug` name).
+fn camel_case(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Everything the Settings row and the toasts show about one native plugin
@@ -278,8 +288,9 @@ fn isolation_of(report: &SandboxReport) -> IsolationStatus {
 
 #[cfg(test)]
 mod tests {
+    use super::super::bridge::DenialReason;
     use super::*;
-    use std::time::{Duration, SystemTime};
+    use std::time::Duration;
 
     #[test]
     fn a_refusal_maps_to_its_badge() {
@@ -344,14 +355,12 @@ mod tests {
                 last_exit: Some(PluginExitInfo::from(&RunnerExitCause::OutOfMemory)),
                 auto_disabled: None,
             }),
-            denials: vec![DenialInfo::from(&BridgeDenial {
-                plugin_id: "p".into(),
-                session_id: 1,
-                operation: "open_connection",
-                target: "10.0.0.12:502".into(),
-                reason: DenialReason::Permission,
-                at: SystemTime::UNIX_EPOCH + Duration::from_millis(1500),
-            })],
+            denials: vec![DenialInfo::new(
+                "open_connection",
+                "10.0.0.12:502",
+                &DenialReason::Permission,
+                SystemTime::UNIX_EPOCH + Duration::from_millis(1500),
+            )],
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["isolation"], "runnerMissing");
@@ -364,6 +373,16 @@ mod tests {
         );
         assert_eq!(json["denials"][0]["operation"], "open_connection");
         assert_eq!(json["denials"][0]["reason"], "permission");
+        assert_eq!(
+            DenialInfo::new(
+                "x",
+                "",
+                &DenialReason::ResourceLimit,
+                SystemTime::UNIX_EPOCH
+            )
+            .reason,
+            "resourceLimit"
+        );
         assert_eq!(json["denials"][0]["atMs"], 1500);
         assert!(json.get("detail").is_none());
     }
