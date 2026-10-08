@@ -1793,6 +1793,21 @@ flowchart TD
             Windows only log the denial on the plugin's own error path. This is acceptable because
             these are bugs or attacks, not user workflows.
           </li>
+          <li>
+            <strong>As built (#4236).</strong> The handler counts each trapped call in a fixed table
+            of atomics (async-signal-safe, no allocation, no system call); a runner thread drains it
+            once per second into one <code>Denied{syscall}</code> Log frame per system call with the
+            number of refused calls (the rate limit). The frame is an additive
+            <code>denied</code> field on <code>Log</code>; the host checks the name, records the
+            denial next to the bridge denials (<code>DenialReason::Syscall</code>) and logs it
+            through the plugin's log rate limiter. Process creation (<code>fork</code>,
+            <code>vfork</code>, non-thread <code>clone</code>) is <em>not</em> trapped: libc blocks
+            every signal around that <code>clone</code> (<code>posix_spawn</code>), and the kernel
+            kills a thread whose forced <code>SIGSYS</code> is blocked, so those denials stay a
+            silent <code>EPERM</code>. <code>rt_sigaction(SIGSYS, &lt;new&gt;)</code> fails with
+            <code>EPERM</code>, so a plugin cannot replace the handler to fake a success; the denied
+            call is never executed either way.
+          </li>
         </ul>
 
         <h3>Testing strategy</h3>
