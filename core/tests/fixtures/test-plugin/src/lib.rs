@@ -94,6 +94,10 @@ impl PluginTerminalBackend for EchoBackend {
     }
 }
 
+/// MiB held by the `!hoard` fixture so far.
+#[cfg(feature = "crash-commands")]
+static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Misbehave on purpose (#4184 isolation fixtures). Returns the reply line for
 /// the commands that return, `None` for ordinary input.
 ///
@@ -109,10 +113,6 @@ impl PluginTerminalBackend for EchoBackend {
 ///   IPC descriptor (3), as a hostile plugin could.
 /// * `!fds` — open `/dev/null` until it fails: `FDS:<count>`.
 /// * `!spawn` — try to start `/bin/sh`: `SPAWN_OK` or `SPAWN_DENIED`.
-/// MiB held by the `!hoard` fixture so far.
-#[cfg(feature = "crash-commands")]
-static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 #[cfg(feature = "crash-commands")]
 fn crash_command(data: &[u8]) -> Option<String> {
     match data {
