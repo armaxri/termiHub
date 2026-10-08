@@ -502,6 +502,23 @@ impl Shared {
         }
     }
 
+    /// The runner's exit code, if it exits within `wait` (diagnostics only:
+    /// the child stays in place for the regular reap).
+    pub(super) fn exit_code_within(&self, wait: Duration) -> Option<i32> {
+        let deadline = Instant::now() + wait;
+        loop {
+            {
+                let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+                match guard.as_mut()?.try_wait() {
+                    Ok(Some(status)) => return status.code(),
+                    Ok(None) if Instant::now() < deadline => {}
+                    _ => return None,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Wait up to `timeout` for the runner to exit, then kill it; always reap.
     pub(super) fn reap(&self, timeout: Duration) {
         let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());

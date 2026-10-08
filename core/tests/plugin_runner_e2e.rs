@@ -190,6 +190,8 @@ fn a_runner_that_exits_before_hello_fails_the_load() {
     match host.load(&echo.plugin) {
         Err(HostError::RunnerProtocol(detail)) => {
             assert!(detail.contains("Hello"), "{detail}");
+            // The early death names its exit code (an NTSTATUS on Windows).
+            assert!(detail.contains("exit code"), "{detail}");
         }
         other => panic!("expected RunnerProtocol, got {other:?}"),
     }

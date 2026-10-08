@@ -139,6 +139,7 @@ impl SandboxedPlugin {
                 Ok(plugin)
             }
             Err(err) => {
+                let err = with_exit_code(err, &shared);
                 shared.kill();
                 Err(err)
             }
@@ -444,6 +445,24 @@ fn handshake<S: ChannelStream>(
             "expected Loaded, got {:?}",
             other.kind()
         ))),
+    }
+}
+
+/// Name the runner's exit code (also in hex: a Windows `NTSTATUS` such as
+/// `0xc0000142` says why a process died before its `main`) in a "the runner
+/// exited" error, so an early death is diagnosable.
+fn with_exit_code(err: HostError, shared: &Shared) -> HostError {
+    match err {
+        HostError::RunnerProtocol(message) if message.contains("the runner exited") => {
+            match shared.exit_code_within(Duration::from_millis(500)) {
+                Some(code) => HostError::RunnerProtocol(format!(
+                    "{message} (exit code {code}, {:#010x})",
+                    code as u32
+                )),
+                None => HostError::RunnerProtocol(message),
+            }
+        }
+        other => other,
     }
 }
 
