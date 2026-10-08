@@ -709,4 +709,129 @@ mod tests {
         assert!(delete_profile_revoking(&ours, &[&file]).unwrap().is_empty());
         delete_profile(&theirs).unwrap();
     }
+
+    /// The raw DACL of `path` as stored (`GetFileSecurityW`, no conversion):
+    /// its inheritance control bits and the ACL bytes.
+    fn stored_dacl(path: &Path) -> (u16, Vec<u8>) {
+        use windows_sys::Win32::Security::{GetFileSecurityW, GetSecurityDescriptorDacl};
+        let wide = to_wide(path.as_os_str()).unwrap();
+        let mut needed = 0u32;
+        // SAFETY: a size query: no buffer, `needed` receives the size.
+        unsafe {
+            GetFileSecurityW(
+                wide.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
+        let descriptor: PSECURITY_DESCRIPTOR = buffer.as_mut_ptr().cast();
+        // SAFETY: `buffer` holds `needed` writable bytes.
+        let ok = unsafe {
+            GetFileSecurityW(
+                wide.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+                needed,
+                &mut needed,
+            )
+        };
+        assert_ne!(ok, 0, "{}", io::Error::last_os_error());
+        let (mut control, mut revision) = (0u16, 0u32);
+        let (mut present, mut defaulted) = (0, 0);
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: a valid self-relative descriptor; writable out-pointers.
+        unsafe {
+            GetSecurityDescriptorControl(descriptor, &mut control, &mut revision);
+            GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted);
+        }
+        assert!(present != 0 && !acl.is_null());
+        // SAFETY: a valid ACL inside `buffer`, `AclSize` bytes long.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(acl.cast::<u8>(), usize::from((*acl).AclSize)).to_vec()
+        };
+        (
+            control & (SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED),
+            bytes,
+        )
+    }
+
+    /// Rewrite the DACL of `path` with every entry explicit and only the
+    /// `control` inheritance bits: a pre-Windows-2000 style DACL (0), as a
+    /// file or folder created under a non-auto-inherited parent has, or a
+    /// protected one (`SE_DACL_PROTECTED`).
+    fn make_explicit(path: &Path, control: u16) {
+        let (_, bytes) = stored_dacl(path);
+        let mut acl = vec![0u32; bytes.len().div_ceil(4)];
+        // SAFETY: `acl` holds `bytes.len()` bytes; no overlap.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), acl.as_mut_ptr().cast(), bytes.len());
+        }
+        let acl: *mut ACL = acl.as_mut_ptr().cast();
+        // SAFETY: a valid ACL we own.
+        let count = unsafe { (*acl).AceCount };
+        for index in 0..u32::from(count) {
+            let mut ace: *mut c_void = std::ptr::null_mut();
+            // SAFETY: `index` is below the ACE count; every ACE starts with
+            // an `ACE_HEADER`, whose flags we clear the inherited bit of.
+            unsafe {
+                assert_ne!(GetAce(acl, index, &mut ace), 0);
+                let header = &mut (*ace.cast::<ACCESS_ALLOWED_ACE>()).Header;
+                header.AceFlags &= !(INHERITED_ACE as u8);
+            }
+        }
+        let wide = to_wide(path.as_os_str()).unwrap();
+        write_dacl_only(&wide, acl, control).unwrap();
+        assert_eq!(stored_dacl(path).0, control);
+    }
+
+    /// Granting an object and revoking the grant leaves its stored DACL
+    /// exactly as it was, entries, flags and protection, for a protected, an
+    /// explicit-only (legacy) and an auto-inherited DACL alike (#4263).
+    #[test]
+    fn grant_then_revoke_restores_the_stored_dacl_exactly() {
+        let id = format!("appcontainer-exact-{}", std::process::id());
+        let container = AppContainer::ensure(&id).unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let legacy_dir = tmp.path().join("legacy");
+        std::fs::create_dir(&legacy_dir).unwrap();
+        make_explicit(&legacy_dir, 0);
+        let legacy_file = tmp.path().join("legacy.exe");
+        std::fs::write(&legacy_file, b"x").unwrap();
+        make_explicit(&legacy_file, 0);
+        let protected = tmp.path().join("protected.exe");
+        std::fs::write(&protected, b"x").unwrap();
+        make_explicit(&protected, SE_DACL_PROTECTED);
+        let inherited = tmp.path().join("inherited");
+        std::fs::create_dir(&inherited).unwrap();
+
+        for path in [&legacy_dir, &legacy_file, &protected, &inherited] {
+            let before = stored_dacl(path);
+            container.grant_object(path, READ_EXECUTE).unwrap();
+            let granted = stored_dacl(path);
+            assert_eq!(
+                granted.0,
+                before.0,
+                "the grant keeps `{}`'s control",
+                path.display()
+            );
+            assert_ne!(
+                granted.1,
+                before.1,
+                "the grant reaches `{}`",
+                path.display()
+            );
+            let failures = delete_profile_revoking(&id, &[path.as_path()]).unwrap();
+            assert!(failures.is_empty(), "{failures:?}");
+            assert_eq!(
+                stored_dacl(path),
+                before,
+                "`{}` is restored",
+                path.display()
+            );
+        }
+        delete_profile(&id).unwrap();
+    }
 }
