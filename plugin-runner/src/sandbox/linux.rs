@@ -23,7 +23,10 @@
 //!    not enabled) is reported as `missing` — **reduced** isolation, which the
 //!    host gates behind the `reducedIsolationAccepted` acknowledgement (#4188).
 //! 3. **seccomp** ([`layer::SECCOMP`]) — required: if it cannot be installed
-//!    the setup fails and the plugin never loads. See [`filters`].
+//!    the setup fails and the plugin never loads. See [`filters`]. Its
+//!    `EPERM` denials of network and signal calls are reported to the host as
+//!    `Denied{syscall}` log frames through a `SIGSYS` trap
+//!    ([`super::sigsys`], #4236).
 //!
 //! Descriptors opened before the sandbox keep working: the IPC socket, the
 //! pinned library handle and the connected sockets the host passes with bridge
@@ -167,9 +170,9 @@ fn is_dir(fd: &PathFd) -> bool {
         .is_ok_and(|m| m.is_dir())
 }
 
-/// The seccomp-bpf filters (#4185). Three filters are stacked; for every
+/// The seccomp-bpf filters (#4185). Four filters are stacked; for every
 /// system call the kernel takes the most severe verdict of all of them
-/// (`KILL_PROCESS` > `ERRNO` > `ALLOW`):
+/// (`KILL_PROCESS` > `TRAP` > `ERRNO` > `ALLOW`):
 ///
 /// 1. **allow-list** — [`allowed`](filters::allowed) syscalls pass, everything else fails with
 ///    `ENOSYS` (the conventional "not available here", which libraries fall
@@ -177,12 +180,21 @@ fn is_dir(fd: &PathFd) -> bool {
 ///    pointer seccomp cannot inspect, and on `ENOSYS` glibc falls back to
 ///    `clone`, whose flags filter 2 checks.
 /// 2. **denials with `EPERM`** — "soft" calls a plugin may reasonably try and
-///    must see fail cleanly: `socket`, `connect`, `bind`, `listen`,
-///    `open_by_handle_at`, `fork` / `vfork`, `clone` without `CLONE_THREAD`
-///    (a new process) or with a namespace flag, `ioctl(TIOCSTI)` (terminal
-///    input injection), `kill` / `tgkill` of another process, `prlimit64` on
-///    another process. Using descriptors the host passed in (`read`, `write`,
-///    `sendmsg`, `recvmsg`, `shutdown`, socket options) stays allowed.
+///    must see fail cleanly. Using descriptors the host passed in (`read`,
+///    `write`, `sendmsg`, `recvmsg`, `shutdown`, socket options) stays
+///    allowed. Two filters (#4236):
+///    * [`trapped`](filters::trapped) — `socket`, `connect`, `bind`, `listen`,
+///      `open_by_handle_at`, `ioctl(TIOCSTI)` (terminal input injection),
+///      `kill` / `tgkill` of another process, `prlimit64` on another process
+///      — answered with `SECCOMP_RET_TRAP`: the `SIGSYS` handler
+///      ([`super::sigsys`]) makes the call fail with `EPERM` and counts it for
+///      the host's denial report;
+///    * [`silent`](filters::silent) — `fork` / `vfork`, `clone` without
+///      `CLONE_THREAD` (a new process) or with a namespace flag, and
+///      `rt_sigaction(SIGSYS, <new action>)` (replacing the trap handler) —
+///      answered with plain `SECCOMP_RET_ERRNO(EPERM)`, unreported: libc
+///      blocks every signal around a process-creating `clone`, where a trap
+///      would kill the runner instead of failing.
 /// 3. **denials with `KILL_PROCESS`** — escape primitives no plugin has a
 ///    reason to call: `execve*`, `ptrace`, `process_vm_*`, `pidfd_getfd`,
 ///    mounts, `bpf`, keyrings, `perf_event_open`, `io_uring_*`, `unshare`,
@@ -358,7 +370,7 @@ pub mod filters {
             libc::SYS_getsockname,
             libc::SYS_getpeername,
             libc::SYS_socketpair,
-            // Answered with EPERM by filter 2.
+            // Answered with EPERM by the trapped filter.
             libc::SYS_socket,
             libc::SYS_connect,
             libc::SYS_bind,
@@ -394,7 +406,7 @@ pub mod filters {
             libc::SYS_alarm,
             libc::SYS_pause,
             libc::SYS_arch_prctl,
-            // Answered with EPERM by filter 2.
+            // Answered with EPERM by the silent filter.
             libc::SYS_fork,
             libc::SYS_vfork,
         ]);
@@ -512,9 +524,11 @@ pub mod filters {
         )
     }
 
-    /// Filter 2: the `EPERM` denials. `pid` is the runner's own process id
-    /// (the only target `kill`, `tgkill` and `prlimit64` may name).
-    pub fn eperm(pid: u32) -> Result<BpfProgram, SandboxError> {
+    /// Filter 2a: the reported `EPERM` denials, answered with
+    /// `SECCOMP_RET_TRAP` (the `SIGSYS` handler returns `EPERM`). `pid` is
+    /// the runner's own process id (the only target `kill`, `tgkill` and
+    /// `prlimit64` may name). Covers exactly [`super::super::sigsys::trapped`].
+    pub fn trapped(pid: u32) -> Result<BpfProgram, SandboxError> {
         let pid = u64::from(pid);
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = [
             libc::SYS_socket,
@@ -526,26 +540,6 @@ pub mod filters {
         .into_iter()
         .map(|nr| (nr, Vec::new()))
         .collect();
-        #[cfg(target_arch = "x86_64")]
-        for nr in [libc::SYS_fork, libc::SYS_vfork] {
-            rules.insert(nr, Vec::new());
-        }
-        // A new process (no CLONE_THREAD), or any new namespace.
-        let thread = libc::CLONE_THREAD as u64;
-        let mut clone = vec![rule(vec![condition(
-            0,
-            SeccompCmpOp::MaskedEq(thread),
-            0,
-        )?])?];
-        for &flag in CLONE_NAMESPACES {
-            let flag = flag as u64;
-            clone.push(rule(vec![condition(
-                0,
-                SeccompCmpOp::MaskedEq(flag),
-                flag,
-            )?])?);
-        }
-        rules.insert(libc::SYS_clone, clone);
         // Typing into the controlling terminal of another process.
         rules.insert(
             libc::SYS_ioctl,
@@ -570,6 +564,48 @@ pub mod filters {
                 condition(0, SeccompCmpOp::Ne, 0)?,
                 condition(0, SeccompCmpOp::Ne, pid)?,
             ])?],
+        );
+        compile(rules, SeccompAction::Allow, SeccompAction::Trap)
+    }
+
+    /// Filter 2b: the unreported `EPERM` denials — process creation (where
+    /// libc blocks every signal, so a trap would kill instead of fail) and
+    /// replacing the `SIGSYS` handler the trapped filter relies on.
+    pub fn silent() -> Result<BpfProgram, SandboxError> {
+        let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+        #[cfg(target_arch = "x86_64")]
+        for nr in [libc::SYS_fork, libc::SYS_vfork] {
+            rules.insert(nr, Vec::new());
+        }
+        // A new process (no CLONE_THREAD), or any new namespace.
+        let thread = libc::CLONE_THREAD as u64;
+        let mut clone = vec![rule(vec![condition(
+            0,
+            SeccompCmpOp::MaskedEq(thread),
+            0,
+        )?])?];
+        for &flag in CLONE_NAMESPACES {
+            let flag = flag as u64;
+            clone.push(rule(vec![condition(
+                0,
+                SeccompCmpOp::MaskedEq(flag),
+                flag,
+            )?])?);
+        }
+        rules.insert(libc::SYS_clone, clone);
+        // `rt_sigaction(SIGSYS, act, …)` with a new action: a plugin handler
+        // could make a trapped call look successful. Querying (`act` = NULL)
+        // stays allowed. The signal number is an `int`: compare 32 bits.
+        let sigsys = SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            libc::SIGSYS as u64,
+        )
+        .map_err(|e| failed(&e))?;
+        rules.insert(
+            libc::SYS_rt_sigaction,
+            vec![rule(vec![sigsys, condition(1, SeccompCmpOp::Ne, 0)?])?],
         );
         compile(
             rules,
@@ -605,13 +641,15 @@ pub mod filters {
         ]
     }
 
-    /// Install every filter on all threads of this process. Requires
-    /// `PR_SET_NO_NEW_PRIVS` (set first by the caller).
+    /// Install the `SIGSYS` handler, then every filter on all threads of
+    /// this process. Requires `PR_SET_NO_NEW_PRIVS` (set first by the
+    /// caller).
     ///
     /// The allow-list goes last: it does not allow `seccomp` itself, so no
     /// filter can be installed after it (not by us, not by the plugin).
     pub fn install() -> Result<(), SandboxError> {
-        let mut programs = vec![eperm(std::process::id())?, kill_list()?];
+        super::super::sigsys::install_handler()?;
+        let mut programs = vec![trapped(std::process::id())?, silent()?, kill_list()?];
         #[cfg(target_arch = "x86_64")]
         programs.push(x32_guard());
         programs.push(allow_list()?);
@@ -631,7 +669,8 @@ mod tests {
     #[test]
     fn every_filter_compiles_for_this_architecture() {
         assert!(!filters::allow_list().unwrap().is_empty());
-        assert!(!filters::eperm(std::process::id()).unwrap().is_empty());
+        assert!(!filters::trapped(std::process::id()).unwrap().is_empty());
+        assert!(!filters::silent().unwrap().is_empty());
         assert!(!filters::kill_list().unwrap().is_empty());
     }
 
@@ -645,6 +684,19 @@ mod tests {
                 !unique.contains(&nr),
                 "syscall {nr} is both allowed and killed"
             );
+        }
+    }
+
+    /// Every trapped call must pass the allow-list (otherwise the plugin
+    /// would see `ENOSYS` there instead of the trapped `EPERM`) and none may
+    /// be killed.
+    #[test]
+    fn every_trapped_call_passes_the_allow_list() {
+        let allowed: HashSet<_> = filters::allowed().into_iter().collect();
+        let killed: HashSet<_> = filters::killed().into_iter().collect();
+        for nr in super::super::sigsys::trapped() {
+            assert!(allowed.contains(nr), "trapped syscall {nr} is not allowed");
+            assert!(!killed.contains(nr), "trapped syscall {nr} is killed");
         }
     }
 

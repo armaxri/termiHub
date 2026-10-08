@@ -208,6 +208,7 @@ unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr)
             level,
             message: String::from_utf8_lossy(bytes).into_owned(),
             truncated: message.len > MAX_LOG_MESSAGE_BYTES,
+            denied: None,
         });
         // A dropped line (channel gone) still reports `Ok`, as the host does.
         let _ = state.channel.send(&log);

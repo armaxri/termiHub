@@ -136,13 +136,21 @@ static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 ///   on a background thread (so pings keep flowing): `HOARDING`.
 /// * `!hoarded` — how many MiB the hoard holds so far: `HOARDED:<MiB>`.
 /// * `!garbage` — write a frame of an unknown kind straight onto the runner's
-///   IPC descriptor (3), as a hostile plugin could.
-/// * `!fds` — open `/dev/null` until it fails: `FDS:<count>`.
-/// * `!spawn` — try to start `/bin/sh`: `SPAWN_OK` or `SPAWN_DENIED`.
-/// * `!fdstat:<n>` — what descriptor `<n>` is in the runner (#4203):
+///   IPC channel, as a hostile plugin could: descriptor 3 on Unix, the
+///   inherited pipe handle named by `--ipc-handle` on Windows.
+/// * `!fds` — open `/dev/null` until it fails: `FDS:<count>` (Unix; Windows
+///   has no per-process handle cap to probe).
+/// * `!spawn` — try to start a shell (`/bin/sh`; `cmd.exe` from the system
+///   directory on Windows): `SPAWN_OK`, `SPAWN_DENIED`, or `SPAWN_MISSING`
+///   when the shell does not exist (so a missing binary never passes for a
+///   denial).
+/// * `!fdstat:<n>` — what descriptor `<n>` is in the runner (#4203, Unix):
 ///   `FDSTAT:CLOSED`, `FDSTAT:<dev>:<ino>`, or `FDSTAT:ERR:<error>`.
 ///
 /// `!flood:<MiB>` is handled by the backend itself (it needs the output).
+///
+/// On Windows `!segv` is an access violation (`0xC0000005`) and `!abort` a
+/// fail-fast (`0xC0000409`): the exception codes the runner exits with.
 #[cfg(feature = "crash-commands")]
 fn crash_command(data: &[u8]) -> Option<String> {
     match data {
@@ -198,6 +206,9 @@ fn crash_command(data: &[u8]) -> Option<String> {
             let _ = channel.write_all(&[0, 0, 0, 1, 0xEE]);
             Some("GARBAGE_SENT".to_owned())
         }
+        #[cfg(windows)]
+        b"!garbage" => Some(win::write_garbage_frame()),
+        #[cfg(unix)]
         b"!fds" => {
             let mut held = Vec::new();
             while let Ok(file) = std::fs::File::open("/dev/null") {
@@ -228,14 +239,125 @@ fn crash_command(data: &[u8]) -> Option<String> {
                 Err(e) => format!("FDSTAT:ERR:{e}"),
             })
         }
-        b"!spawn" => match std::process::Command::new("/bin/sh")
-            .args(["-c", "exit 0"])
-            .status()
-        {
-            Ok(_) => Some("SPAWN_OK".to_owned()),
-            Err(_) => Some("SPAWN_DENIED".to_owned()),
-        },
+        b"!spawn" => {
+            #[cfg(unix)]
+            let mut command = std::process::Command::new("/bin/sh");
+            #[cfg(unix)]
+            command.args(["-c", "exit 0"]);
+            #[cfg(windows)]
+            let mut command = std::process::Command::new(win::cmd_exe());
+            #[cfg(windows)]
+            command.args(["/c", "exit 0"]);
+            match command.status() {
+                Ok(_) => Some("SPAWN_OK".to_owned()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Some("SPAWN_MISSING".to_owned())
+                }
+                Err(_) => Some("SPAWN_DENIED".to_owned()),
+            }
+        }
         _ => None,
+    }
+}
+
+/// The Windows halves of the crash commands: no `windows-sys` here (the
+/// fixture builds offline from its own tiny dependency set), so the four
+/// kernel32 calls are declared by hand.
+#[cfg(all(feature = "crash-commands", windows))]
+mod win {
+    use std::ffi::c_void;
+    use std::path::PathBuf;
+
+    type Handle = *mut c_void;
+
+    /// `OVERLAPPED`, with the offset union spelled as its two `u32` halves.
+    #[repr(C)]
+    struct Overlapped {
+        internal: usize,
+        internal_high: usize,
+        offset: u32,
+        offset_high: u32,
+        event: Handle,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateEventW(
+            attributes: *const c_void,
+            manual_reset: i32,
+            initial_state: i32,
+            name: *const u16,
+        ) -> Handle;
+        fn WriteFile(
+            file: Handle,
+            buffer: *const u8,
+            len: u32,
+            written: *mut u32,
+            overlapped: *mut Overlapped,
+        ) -> i32;
+        fn GetOverlappedResult(
+            file: Handle,
+            overlapped: *const Overlapped,
+            transferred: *mut u32,
+            wait: i32,
+        ) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    /// `ERROR_IO_PENDING`: the overlapped write was queued.
+    const ERROR_IO_PENDING: i32 = 997;
+
+    /// The runner's channel handle: the value after `--ipc-handle` on its
+    /// command line (an inherited handle keeps its value).
+    fn channel_handle() -> Option<Handle> {
+        let mut args = std::env::args().skip_while(|a| a != "--ipc-handle");
+        args.next()?;
+        let value: usize = args.next()?.parse().ok()?;
+        Some(value as Handle)
+    }
+
+    /// Write a frame of an unknown kind (length 1, kind 0xEE) onto the
+    /// runner's pipe. The pipe is overlapped, so the write carries its own
+    /// event and waits for completion.
+    pub(super) fn write_garbage_frame() -> String {
+        let Some(pipe) = channel_handle() else {
+            return "GARBAGE_NO_CHANNEL".to_owned();
+        };
+        let frame = [0u8, 0, 0, 1, 0xEE];
+        // SAFETY: a fresh unnamed manual-reset event, closed below.
+        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+        if event.is_null() {
+            return "GARBAGE_FAILED".to_owned();
+        }
+        let mut overlapped = Overlapped {
+            internal: 0,
+            internal_high: 0,
+            offset: 0,
+            offset_high: 0,
+            event,
+        };
+        let mut written = 0u32;
+        // SAFETY: `pipe` is the runner's open channel handle; `frame` and
+        // `overlapped` outlive the operation, which is waited for below
+        // before either goes out of scope.
+        let sent = unsafe {
+            let ok = WriteFile(pipe, frame.as_ptr(), 5, &mut written, &mut overlapped) != 0;
+            ok || (std::io::Error::last_os_error().raw_os_error() == Some(ERROR_IO_PENDING)
+                && GetOverlappedResult(pipe, &overlapped, &mut written, 1) != 0)
+        };
+        // SAFETY: closes the event created above, once.
+        unsafe { CloseHandle(event) };
+        if sent {
+            "GARBAGE_SENT".to_owned()
+        } else {
+            "GARBAGE_FAILED".to_owned()
+        }
+    }
+
+    /// `cmd.exe` by full path: the runner's environment has no `PATH`.
+    pub(super) fn cmd_exe() -> PathBuf {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        PathBuf::from(root).join("System32").join("cmd.exe")
     }
 }
 

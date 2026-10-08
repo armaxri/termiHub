@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use termihub_plugin_runner::ipc::{
-    Alive, Heartbeat, Hello, Log, Message, SessionRef, PROTOCOL_VERSION,
+    Alive, Heartbeat, Hello, Log, Message, SessionRef, SyscallDenial, PROTOCOL_VERSION,
 };
+use termihub_plugin_runner::sandbox::denial::denial_log;
 
 use super::*;
 use crate::plugin::sandbox::OutputRateCap;
@@ -41,6 +42,7 @@ fn log(session_id: Option<u32>, level: u32, message: String) -> Message {
         level,
         message,
         truncated: false,
+        denied: None,
     })
 }
 
@@ -122,6 +124,49 @@ fn log_lines_are_bounded_and_levels_checked() {
     // Within the wire bound but over the message bound: emitted, truncated.
     let long = "y".repeat(MAX_LOG_MESSAGE_BYTES + 10);
     assert!(shared.dispatch(log(None, 3, long)).is_ok());
+}
+
+#[test]
+fn syscall_denial_reports_are_recorded_with_the_bridge_denials() {
+    let shared = shared();
+    assert!(shared
+        .dispatch(Message::Log(denial_log("socket", 3)))
+        .is_ok());
+    assert!(shared
+        .dispatch(Message::Log(denial_log("connect", 1)))
+        .is_ok());
+    let denials = shared.bridge.denials();
+    assert_eq!(denials.len(), 2);
+    assert_eq!(denials[0].operation, "socket");
+    assert_eq!(denials[0].reason, super::super::DenialReason::Syscall);
+    assert_eq!(denials[0].count, 3);
+    assert_eq!(denials[0].session_id, 0);
+    assert_eq!(denials[0].plugin_id, "probe");
+    assert!(denials[0].target.is_empty());
+    assert_eq!(denials[1].operation, "connect");
+    assert_eq!(denials[1].count, 1);
+}
+
+#[test]
+fn malformed_syscall_denial_reports_are_violations() {
+    let shared = shared();
+    let report = |syscall: &str, count| {
+        let mut log = denial_log("socket", 1);
+        log.denied = Some(SyscallDenial {
+            syscall: syscall.to_owned(),
+            count,
+        });
+        Message::Log(log)
+    };
+    // Not a reported (trapped) system call: forged by a hostile runner.
+    assert!(shared.dispatch(report("execve", 1)).is_err());
+    assert!(shared.dispatch(report(&"x".repeat(10_000), 1)).is_err());
+    assert!(shared.dispatch(report("socket", 0)).is_err());
+    assert!(shared.bridge.denials().is_empty());
+    // A known report still needs a valid level.
+    let mut bad_level = denial_log("socket", 1);
+    bad_level.level = 0;
+    assert!(shared.dispatch(Message::Log(bad_level)).is_err());
 }
 
 #[test]
