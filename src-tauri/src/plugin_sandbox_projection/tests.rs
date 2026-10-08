@@ -57,26 +57,21 @@ fn registry() -> Arc<Mutex<ConnectionTypeRegistry>> {
 }
 
 #[test]
-fn an_in_process_host_projects_no_sandbox() {
+fn an_idle_host_projects_no_plugins() {
     let tmp = tempfile::TempDir::new().unwrap();
     let host = PluginHost::new(tmp.path(), registry());
-    assert_eq!(
-        snapshot(&host),
-        json!({ "outOfProcess": false, "plugins": {} })
-    );
+    assert_eq!(snapshot(&host), json!({ "plugins": {} }));
 }
 
 #[test]
 fn a_refused_plugin_is_projected_with_its_badge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let host = PluginHost::new(tmp.path(), registry()).with_runner(Some(PluginRunnerConfig::new(
-        tmp.path().join("missing-runner"),
-    )));
+    let host = PluginHost::new(tmp.path(), registry())
+        .with_runner(PluginRunnerConfig::new(tmp.path().join("missing-runner")));
     let plugin = trusted_plugin(tmp.path());
     assert!(host.load(&plugin).is_err());
 
     let view = snapshot(&host);
-    assert_eq!(view["outOfProcess"], true);
     assert_eq!(view["plugins"]["acme"]["isolation"], "runnerMissing");
     assert!(view["plugins"]["acme"]["detail"].is_string());
     assert_eq!(view["plugins"]["acme"]["denials"], json!([]));
@@ -89,9 +84,8 @@ fn a_refused_plugin_is_projected_with_its_badge() {
 #[test]
 fn publishing_an_unchanged_host_emits_nothing() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let host = PluginHost::new(tmp.path(), registry()).with_runner(Some(PluginRunnerConfig::new(
-        tmp.path().join("missing-runner"),
-    )));
+    let host = PluginHost::new(tmp.path(), registry())
+        .with_runner(PluginRunnerConfig::new(tmp.path().join("missing-runner")));
     let projector = Projector::new();
     projector.register_region(PLUGIN_SANDBOX_REGION, snapshot(&host));
     assert_eq!(

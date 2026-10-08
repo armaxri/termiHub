@@ -121,7 +121,7 @@ pub struct PluginIndexEntry {
     pub homepage: Option<String>,
     /// The plugin ABI (`"major.minor"`) the listed version needs from the host.
     pub min_host_abi: String,
-    /// Whether the plugin ships native (in-process) code.
+    /// Whether the plugin ships native code (run in a sandboxed plugin process).
     #[serde(default)]
     pub native: bool,
     /// The build-toolchain record of the native library (ABI 1.1, PLG-013).

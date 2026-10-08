@@ -380,14 +380,15 @@
       <header class="concept-header">
         <h1>OS Sandbox for Native Plugin Backends</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented · pre-v1.0 requirement</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue:
             <a href="https://github.com/armaxri/termiHub/issues/3769">#3769</a> (SEC-002)</span
           >
           <span>Related: #3296 (hash-bound trust ack), PLG-004 (terminal-only), ADR-15</span>
           <span>Phase 0 spike: <a href="#spike">#4181 results</a></span>
-          <span><code>docs/concepts/backlog/plugin-os-sandbox.html</code></span>
+          <span><code>docs/concepts/implemented/plugin-os-sandbox.html</code></span>
+          <span>Decision record: ADR-19 (<code>docs/architecture.md</code>)</span>
         </div>
       </header>
 
@@ -1236,7 +1237,7 @@ flowchart LR
           <li>
             There is <strong>no "run unsandboxed" switch</strong> for users. A toggle back to
             in-process would bring back the inverted trust model SEC-002 describes. The in-process
-            path survives only as a debug-build developer flag until it is removed (phase 7).
+            path survived only as a debug-build developer flag until phase 7 removed it (#4189).
           </li>
           <li>
             The <strong>ABI 1.0 toolchain acceptance</strong> stays required. The helper's FFI
@@ -1466,8 +1467,8 @@ flowchart TD
                 <td><code>core/src/plugin/host.rs</code></td>
                 <td>
                   <code>PluginHost</code> drives a <code>SandboxedPlugin</code> (helper handle)
-                  instead of an in-process <code>LoadedLibrary</code>. The in-process path stays
-                  behind a debug-only flag until phase 7, then is deleted.
+                  instead of an in-process <code>LoadedLibrary</code>. The in-process path stayed
+                  behind a debug-only flag until phase 7, which deleted it (#4189).
                 </td>
               </tr>
               <tr>
@@ -1872,8 +1873,8 @@ flowchart TD
         <h3>Rollout and phased plan (sized into issues)</h3>
         <p>
           Native plugins are default-off and no third-party plugin has shipped, so the switch can be
-          direct: no dual-mode period for users. Each phase lands green and behind the debug flag
-          until phase 7 flips it.
+          direct: no dual-mode period for users. Each phase landed green and behind the debug flag
+          until phase 7 removed the in-process path and the flag. All phases are done.
         </p>
         <div class="table-wrap">
           <table>
@@ -1899,24 +1900,25 @@ flowchart TD
               </tr>
               <tr>
                 <td>1</td>
-                <td>Native plugins load in a sandboxed helper process</td>
                 <td>
-                  The runner path (phases 1–5a, Linux phase 4) is in place but opt-in for debug
-                  builds; release builds still <code>dlopen</code> in process
+                  <strong>Out-of-process host without OS sandbox:</strong> the
+                  <code>plugin-runner</code> crate, IPC codec + protocol, ABI shim (output sender,
+                  services, cancellation), <code>SandboxedBackend</code>, lifecycle, idle reap,
+                  parent-death, the sidecar in the bundle. The echo and ABI tests pass through it.
+                  <strong>Done</strong> (#4182).
                 </td>
-                <td>Missing (by plan)</td>
-                <td>Phase 7 flips the default, then re-sync</td>
+                <td>L</td>
+                <td>0</td>
               </tr>
               <tr>
                 <td>2</td>
-                <td>Disclosure describes the sandbox</td>
                 <td>
-                  <code>NATIVE_TRUST_DISCLOSURE</code> carries the new sandbox copy; while plugins
-                  still run in process the UI shows <code>NATIVE_TRUST_DISCLOSURE_IN_PROCESS</code>
-                  ("no operating-system sandbox") so the disclosure stays honest
+                  <strong>Bridge over IPC:</strong> the bridge service in the host, socket-handle
+                  passing (proxy fallback), file operations, denial events.
+                  <strong>Done</strong> (#4183).
                 </td>
-                <td>Deliberate, until phase 7</td>
-                <td>Drop the in-process copy with the in-process path in phase 7</td>
+                <td>M</td>
+                <td>1</td>
               </tr>
               <tr>
                 <td>3</td>
@@ -1965,14 +1967,14 @@ flowchart TD
               </tr>
               <tr>
                 <td>7</td>
-                <td>Kernel-level denials logged best-effort, without a toast</td>
                 <td>
-                  Only bridge denials raise the rate-limited toast; kernel-level
-                  (<code>syscall</code>) denials from #4236 are log-only and listed in the Settings
-                  row as "Blocked system call: &lt;name&gt; (×N)" (#4247)
+                  <strong>Cut-over:</strong> remove the in-process load path and debug flag, add
+                  ADR-19, amend ADR-15, update SECURITY.md and <code>plugin-authoring.md</code>,
+                  re-word <code>security.rs</code>/<code>capabilities.rs</code> docs, close SEC-002.
+                  <strong>Done</strong> (#4189).
                 </td>
-                <td>Matches</td>
-                <td>—</td>
+                <td>S</td>
+                <td>4, 5a, 5b, 6</td>
               </tr>
               <tr>
                 <td>8</td>
@@ -2351,9 +2353,10 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> phase 6 UI (#4188), 2026-10-08 ·
-          <strong>Status:</strong> partially implemented (out-of-process path behind the debug
-          opt-in until phase 7)
+          <strong>Last synced:</strong> phase 7 cut-over (#4189), 2026-10-08 ·
+          <strong>Status:</strong> implemented — every native plugin runs in a sandboxed
+          <code>termihub-plugin-runner</code>; the in-process path and its debug flag are gone.
+          Open: per-machine install check on Windows (#4252) and macOS fairness (#4260)
         </p>
         <div class="table-wrap">
           <table>
@@ -2370,16 +2373,23 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
               <tr>
                 <td>1</td>
                 <td>Native plugins load in a sandboxed helper process</td>
-                <td><code>core/src/plugin/host.rs</code> <code>dlopen</code>s in-process</td>
-                <td>Missing</td>
-                <td>Implement phases 0–7, then re-sync</td>
+                <td>
+                  <code>PluginHost</code> always loads through <code>termihub-plugin-runner</code>;
+                  the in-process <code>LoadedLibrary</code> path and the
+                  <code>TERMIHUB_PLUGIN_OUT_OF_PROCESS</code> debug flag were removed (#4189)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>Disclosure describes the sandbox</td>
-                <td><code>NATIVE_TRUST_DISCLOSURE</code> says "no operating-system sandbox"</td>
-                <td>Correct for today</td>
-                <td>Rewrite in phase 6</td>
+                <td>
+                  <code>NATIVE_TRUST_DISCLOSURE</code> carries the sandbox copy (#4188); the
+                  in-process variant was removed with the in-process path (#4189)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>3</td>
@@ -2388,10 +2398,12 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
                   passing, landlock + seccomp)
                 </td>
                 <td>
-                  Proven by throwaway prototypes in the Phase 0 spike (#4181); no product code
+                  Implemented as recorded in Spike results: Linux (#4185), macOS (#4186), Windows
+                  LPAC (#4187) and the Windows transport and socket handoff (#4201, #4219); the
+                  escape probes run per OS on every PR
                 </td>
-                <td>Decided</td>
-                <td>Implement in phases 1, 2, 4, 5a and 5b as recorded in Spike results</td>
+                <td>Matches</td>
+                <td>—</td>
               </tr>
               <tr>
                 <td>4</td>
@@ -2402,8 +2414,7 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
                 <td>
                   Implemented from the <code>plugin-sandbox</code> projection region
                   (<code>NativePluginRow</code>, <code>NativePluginSandboxStatus</code>);
-                  <code>reducedIsolationAccepted</code> is enforced by the runner and the host. An
-                  in-process build shows "Not sandboxed" and no chips
+                  <code>reducedIsolationAccepted</code> is enforced by the runner and the host
                 </td>
                 <td>Matches</td>
                 <td>—</td>
@@ -2436,12 +2447,12 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
                 <td>7</td>
                 <td>Kernel-level denials logged best-effort, without a toast</td>
                 <td>
-                  Bridge denials raise the rate-limited toast. The toast copy also handles a
-                  <code>syscall</code> reason with a count ("blocked system call: connect (×4)"), so
-                  kernel denials reported through the same list by #4236 would be toasted too
+                  Only bridge denials raise the rate-limited toast; kernel-level
+                  (<code>syscall</code>) denials from #4236 are log-only and listed in the Settings
+                  row as "Blocked system call: &lt;name&gt; (×N)" (#4247)
                 </td>
-                <td>Divergence once #4236 lands</td>
-                <td>Decide whether kernel denials toast (concept: log only) when #4236 lands</td>
+                <td>Matches</td>
+                <td>—</td>
               </tr>
             </tbody>
           </table>

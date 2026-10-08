@@ -2,7 +2,7 @@
 //!
 //! * **Transport (Unix):** `UnixStream::pair()`; the runner's end is inherited
 //!   as descriptor 3 and nothing else is passed. Std opens descriptors
-//!   close-on-exec, but a library (or a plugin loaded in process) may not, so
+//!   close-on-exec, but a library linked into the host may not, so
 //!   the forked child marks every descriptor above 3 close-on-exec before the
 //!   `exec` (#4203): the runner starts holding exactly 0–3. There is no
 //!   filesystem rendezvous path, so nothing can squat it.
@@ -196,7 +196,7 @@ fn start(
         .env_clear()
         .envs(scrubbed_env())
         .stdin(Stdio::null())
-        // Plugin stdout goes where it went in-process: the host's. Stderr is
+        // Plugin stdout goes to the host's stdout. Stderr is
         // forwarded there line by line by the host (#4184), which watches it
         // for a plugin's allocation failure under the memory limit.
         .stdout(Stdio::inherit())

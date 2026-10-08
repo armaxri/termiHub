@@ -720,14 +720,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "nativePluginsEnabled",
-    label: "Enable Native (In-Process) Plugins",
+    label: "Enable Native Plugins",
     description:
-      "Off by default: native plugins run in-process with full app privileges and no OS sandbox. Each must be trusted individually before it loads (SEC-002/PLG-006).",
+      "Off by default: native plugins run in a separate, sandboxed process. Each must be trusted individually before it loads (PLG-006).",
     category: "plugins",
     keywords: [
       "plugin",
       "native",
-      "in-process",
+      "sandbox",
       "backend",
       "security",
       "trust",

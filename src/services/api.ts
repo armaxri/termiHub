@@ -3256,9 +3256,9 @@ export async function revokeTrustedPublisher(keyId: string): Promise<void> {
 
 // ─── Native-plugin trust gate (SEC-002 / PLG-006 / ARCH-008) ─────────────────
 //
-// Native (in-process) plugins run with the full privileges of the app and no OS
-// sandbox, so they are default-OFF and load only after an explicit per-plugin
-// trust acknowledgment bound to the exact backend-library hash.
+// Native plugins are third-party native code. They run in a sandboxed plugin
+// process (ADR-19), stay default-OFF, and load only after an explicit
+// per-plugin trust acknowledgment bound to the exact backend-library hash.
 
 /** Fetch the native-plugin trust state (global switch, disclosure, acknowledgments). */
 export async function getNativePluginTrust(): Promise<NativePluginTrust> {

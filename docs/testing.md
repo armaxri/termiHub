@@ -1374,8 +1374,11 @@ use **Run workflow** before that):
   concept's budget table and fails on any breach: p99 echo latency added ≤ 0.5 ms,
   single-session throughput ≥ 100 MB/s, 40 concurrent sessions with no starvation
   and a fairness spread ≤ 2×, helper cold start ≤ 150 ms p95 and idle RSS ≤ 15 MiB.
-  The relative throughput ("% of in-process") is reported only, because the
-  in-process echo is a memory copy. Run locally:
+  "Latency added" is measured against a test-only in-process baseline: the test
+  opens the same plugin with the runner's own loader and calls it directly
+  (termiHub itself has no in-process path since ADR-19). The relative throughput
+  ("% of in-process") is reported only, because the in-process echo is a memory
+  copy. Run locally:
 
   ```bash
   cargo test -p termihub-core --features plugin --release \

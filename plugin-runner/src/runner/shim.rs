@@ -1,5 +1,5 @@
 //! The ABI shim: the real 1.x ABI objects the runner hands a plugin, each one
-//! backed by the IPC channel instead of in-process host state.
+//! backed by the IPC channel to the host.
 //!
 //! * [`output_sender`] — a `PluginOutputSender` whose `send` writes one
 //!   `Output` frame straight to the channel (no thread hop on the hot path).

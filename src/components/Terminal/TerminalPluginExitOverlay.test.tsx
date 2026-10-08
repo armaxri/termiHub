@@ -22,7 +22,7 @@ import {
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { PluginSandboxView } from "@/store/pluginSandboxBridge";
 
-let mockSandbox: PluginSandboxView = { outOfProcess: true, plugins: {} };
+let mockSandbox: PluginSandboxView = { plugins: {} };
 vi.mock("@/store/usePluginSandbox", () => ({
   usePluginSandbox: () => mockSandbox,
 }));
@@ -53,7 +53,7 @@ describe("TerminalPluginExitOverlay (#4188)", () => {
     root = createRoot(container);
     transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
-    mockSandbox = { outOfProcess: true, plugins: {} };
+    mockSandbox = { plugins: {} };
     useAppStore.setState({ terminalViewMode: {}, reconnectTerminal, closeTab });
     reconnectTerminal.mockReset();
     closeTab.mockReset();
@@ -78,7 +78,6 @@ describe("TerminalPluginExitOverlay (#4188)", () => {
 
   it("shows the crash variant with the plugin, the restart count and the signal", async () => {
     mockSandbox = {
-      outOfProcess: true,
       plugins: {
         acme: {
           isolation: "full",
@@ -119,7 +118,6 @@ describe("TerminalPluginExitOverlay (#4188)", () => {
 
   it("disables Restart session once the plugin was disabled after crashes", async () => {
     mockSandbox = {
-      outOfProcess: true,
       plugins: {
         acme: {
           isolation: "full",

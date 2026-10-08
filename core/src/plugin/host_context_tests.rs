@@ -1,7 +1,9 @@
-//! Unit tests for the host side of the ABI 1.1 host context (#3576).
+//! Unit tests for the host side of the ABI 1.1 host context (#3576): the
+//! runner log pipeline and the plugin data directory.
 
 use super::*;
 use crate::plugin::log_rate_limit::LogRateLimitConfig;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// A limiter whose clock never advances, so the burst never refills.
@@ -15,121 +17,6 @@ fn frozen_limiter(burst: u32) -> Arc<PluginLogLimiter> {
         },
         Box::new(move || t0),
     ))
-}
-
-fn state(id: &str) -> (Arc<ServicesState>, Arc<AtomicBool>) {
-    let shutdown = Arc::new(AtomicBool::new(false));
-    (
-        ServicesState::new(
-            id.to_owned(),
-            Arc::clone(&shutdown),
-            Arc::new(PluginLogLimiter::default()),
-        ),
-        shutdown,
-    )
-}
-
-#[test]
-fn handles_share_the_state_and_release_it_exactly() {
-    let (state, _shutdown) = state("echo");
-    assert_eq!(Arc::strong_count(&state), 1);
-    let handle = ServicesState::handle(&state);
-    assert_eq!(Arc::strong_count(&state), 2);
-    let clone = handle.clone();
-    assert_eq!(Arc::strong_count(&state), 3);
-    drop(handle);
-    drop(clone);
-    assert_eq!(Arc::strong_count(&state), 1);
-}
-
-#[test]
-fn cancellation_is_sticky_and_covers_session_and_plugin() {
-    let (state, shutdown) = state("echo");
-    let handle = ServicesState::handle(&state);
-    assert!(!handle.is_cancelled());
-    state.cancel();
-    assert!(handle.is_cancelled());
-
-    let (other, shutdown_other) = state_pair_sharing(&shutdown);
-    let other_handle = ServicesState::handle(&other);
-    assert!(!other_handle.is_cancelled());
-    shutdown_other.store(true, Ordering::SeqCst);
-    assert!(
-        other_handle.is_cancelled(),
-        "plugin shutdown cancels every session"
-    );
-}
-
-fn state_pair_sharing(shutdown: &Arc<AtomicBool>) -> (Arc<ServicesState>, Arc<AtomicBool>) {
-    (
-        ServicesState::new(
-            "echo".to_owned(),
-            Arc::clone(shutdown),
-            Arc::new(PluginLogLimiter::default()),
-        ),
-        Arc::clone(shutdown),
-    )
-}
-
-#[test]
-fn a_handle_outliving_the_host_side_stays_valid() {
-    // The plugin may keep a handle after the host dropped its own state Arc
-    // (e.g. a detached worker thread): calls stay memory-safe.
-    let (state, _shutdown) = state("echo");
-    let handle = ServicesState::handle(&state);
-    state.cancel();
-    drop(state);
-    assert!(handle.is_cancelled());
-    handle.info("still fine");
-}
-
-#[test]
-fn null_contexts_are_refused_not_dereferenced() {
-    // SAFETY: null is explicitly tolerated by every callback.
-    unsafe {
-        services_retain(std::ptr::null_mut());
-        services_release(std::ptr::null_mut());
-        assert!(services_is_cancelled(std::ptr::null_mut()));
-        assert_eq!(
-            services_log(std::ptr::null_mut(), 3, FfiStr::new("x")),
-            PluginStatus::Other
-        );
-    }
-}
-
-#[test]
-fn log_rejects_an_unknown_level() {
-    let (state, _shutdown) = state("echo");
-    let handle = ServicesState::handle(&state);
-    let ctx = Arc::as_ptr(&state).cast_mut().cast::<c_void>();
-    for bad in [0, 6, u32::MAX] {
-        // SAFETY: `handle` keeps `ctx` alive.
-        let status = unsafe { services_log(ctx, bad, FfiStr::new("x")) };
-        assert_eq!(status, PluginStatus::InvalidConfig, "level {bad}");
-    }
-    // SAFETY: as above.
-    assert_eq!(
-        unsafe { services_log(ctx, 3, FfiStr::new("ok")) },
-        PluginStatus::Ok
-    );
-    drop(handle);
-}
-
-#[test]
-fn log_reads_at_most_the_bound_of_an_oversized_message() {
-    let (state, _shutdown) = state("echo");
-    let handle = ServicesState::handle(&state);
-    let ctx = Arc::as_ptr(&state).cast_mut().cast::<c_void>();
-    // A message that claims to be far longer than its real buffer: the host
-    // must read only the bounded prefix, which here is fully backed.
-    let buf = vec![b'a'; MAX_LOG_MESSAGE_BYTES];
-    let lying = FfiStr {
-        ptr: buf.as_ptr(),
-        len: usize::MAX,
-    };
-    // SAFETY: only the first MAX_LOG_MESSAGE_BYTES bytes (all backed) are read.
-    assert_eq!(unsafe { services_log(ctx, 3, lying) }, PluginStatus::Ok);
-    drop(handle);
 }
 
 #[test]
@@ -152,64 +39,48 @@ fn sanitize_strips_control_characters_replaces_bad_utf8_and_marks_truncation() {
     );
 }
 
-/// Log `n` lines through the FFI callback of `state`, asserting each is `Ok`.
-fn log_n(state: &Arc<ServicesState>, n: usize) {
-    let ctx = Arc::as_ptr(state).cast_mut().cast::<c_void>();
-    for i in 0..n {
-        // SAFETY: the caller's `state` Arc keeps `ctx` alive for the call.
-        let status = unsafe { services_log(ctx, 3, FfiStr::new("flood")) };
-        assert_eq!(
-            status,
-            PluginStatus::Ok,
-            "line {i}: dropped lines still report Ok"
-        );
+/// Forward `n` runner log lines of plugin `id` through `limiter`.
+fn log_n(limiter: &PluginLogLimiter, id: &str, n: usize) {
+    for _ in 0..n {
+        emit_runner_log(limiter, id, 3, b"flood", false);
     }
 }
 
 #[test]
-fn log_callback_drops_a_flood_but_still_reports_ok() {
+fn a_runner_log_flood_is_dropped_past_the_burst() {
     let limiter = frozen_limiter(5);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let state = ServicesState::new("echo".to_owned(), shutdown, Arc::clone(&limiter));
-    log_n(&state, 50);
+    log_n(&limiter, "echo", 50);
     assert_eq!(limiter.pending_suppressed(), 45, "5 accepted, 45 dropped");
 }
 
 #[test]
-fn sessions_of_one_plugin_share_its_log_budget() {
+fn an_unknown_runner_log_level_is_dropped_without_charging_the_budget() {
+    let limiter = frozen_limiter(1);
+    for bad in [0, 6, u32::MAX] {
+        emit_runner_log(&limiter, "echo", bad, b"x", false);
+    }
+    assert_eq!(limiter.pending_suppressed(), 0);
+    // The budget is intact: the one valid line is accepted, the next dropped.
+    log_n(&limiter, "echo", 2);
+    assert_eq!(limiter.pending_suppressed(), 1);
+}
+
+#[test]
+fn an_oversized_runner_log_line_is_bounded() {
+    // A runner that forwards more than the bound is cut at the bound, never
+    // panics, and still costs one line.
     let limiter = frozen_limiter(5);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let a = ServicesState::new(
-        "echo".to_owned(),
-        Arc::clone(&shutdown),
-        Arc::clone(&limiter),
-    );
-    let b = ServicesState::new("echo".to_owned(), shutdown, Arc::clone(&limiter));
-    log_n(&a, 3);
-    log_n(&b, 3);
-    assert_eq!(
-        limiter.pending_suppressed(),
-        1,
-        "a second session adds no budget"
-    );
+    let long = vec![b'a'; MAX_LOG_MESSAGE_BYTES * 2];
+    emit_runner_log(&limiter, "echo", 3, &long, true);
+    assert_eq!(limiter.pending_suppressed(), 0);
 }
 
 #[test]
 fn a_flooding_plugin_does_not_starve_another_plugin() {
     let noisy = frozen_limiter(5);
     let quiet = frozen_limiter(5);
-    let noisy_state = ServicesState::new(
-        "noisy".to_owned(),
-        Arc::new(AtomicBool::new(false)),
-        Arc::clone(&noisy),
-    );
-    let quiet_state = ServicesState::new(
-        "quiet".to_owned(),
-        Arc::new(AtomicBool::new(false)),
-        Arc::clone(&quiet),
-    );
-    log_n(&noisy_state, 1000);
-    log_n(&quiet_state, 5);
+    log_n(&noisy, "noisy", 1000);
+    log_n(&quiet, "quiet", 5);
     assert_eq!(noisy.pending_suppressed(), 995);
     assert_eq!(
         quiet.pending_suppressed(),

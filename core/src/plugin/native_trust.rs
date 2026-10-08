@@ -4,13 +4,13 @@
 //!
 //! # Why this exists
 //!
-//! A native plugin backend is a dynamic library loaded **in the host process**
-//! ([`super::host::PluginHost`]): once `dlopen`'d it runs with the *full
-//! privileges of termiHub itself* and there is **no OS-level sandbox** around it
-//! (that hardening is deferred to pre-v1.0). Before this gate, a native plugin
+//! A native plugin backend is third-party native code. It runs in its own
+//! sandboxed runner process ([`super::host::PluginHost`], ADR-19), which limits
+//! what it can *reach* — but not what it *shows* in its terminal, and reduced
+//! isolation on some hosts is possible. Before this gate, a native plugin
 //! loaded automatically as soon as it was installed and enabled — an
 //! **inverted trust model** where install-time consent silently authorized
-//! arbitrary in-process code on every later launch.
+//! arbitrary native code on every later launch.
 //!
 //! This module inverts that back to *explicit, fail-closed* consent:
 //!
@@ -63,28 +63,6 @@ pub const NATIVE_TRUST_DISCLOSURE: &str = "Native plugins run in a separate, san
      A plugin can only use its own data folder and the access listed below; termiHub checks every \
      network or file request it makes. Only trust plugins from sources you trust: a plugin still \
      controls what appears in its terminal.";
-
-/// The disclosure shown while native plugins still load **inside termiHub**
-/// (no out-of-process runner: the in-process path, which survives only until
-/// the sandbox cut-over, concept phase 7). States the honest posture: full
-/// application privileges and no OS sandbox.
-pub const NATIVE_TRUST_DISCLOSURE_IN_PROCESS: &str = "Native plugins run inside termiHub with \
-     the full privileges of the application itself. There is no operating-system sandbox around \
-     them, so a native plugin can read and modify anything termiHub can — your connections, \
-     credentials, and files. Only enable and trust native plugins you have obtained from a source \
-     you trust.";
-
-/// The disclosure that matches how native plugins run on this host:
-/// [`NATIVE_TRUST_DISCLOSURE`] when they run out of process in the sandbox,
-/// [`NATIVE_TRUST_DISCLOSURE_IN_PROCESS`] otherwise.
-#[must_use]
-pub fn native_trust_disclosure(out_of_process: bool) -> &'static str {
-    if out_of_process {
-        NATIVE_TRUST_DISCLOSURE
-    } else {
-        NATIVE_TRUST_DISCLOSURE_IN_PROCESS
-    }
-}
 
 /// Errors persisting the native-plugin trust store. Read failures never surface
 /// as an error — an unreadable store **fails closed** to "nothing trusted" (see
@@ -147,7 +125,7 @@ pub struct AckAcceptances {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeTrustDoc {
-    /// Whether native (in-process) plugins may load at all. **Absent → `false`**:
+    /// Whether native plugins may load at all. **Absent → `false`**:
     /// the default, and every fail-closed path, is "native plugins off".
     #[serde(default)]
     native_plugins_enabled: bool,
@@ -187,7 +165,7 @@ impl NativeTrustStore {
         Self { path, doc }
     }
 
-    /// Whether native (in-process) plugins are enabled globally. `false` by
+    /// Whether native plugins are enabled globally. `false` by
     /// default and whenever the store could not be read.
     #[must_use]
     pub fn is_native_enabled(&self) -> bool {
@@ -545,15 +523,9 @@ mod tests {
     }
 
     #[test]
-    fn the_disclosure_matches_how_plugins_run() {
-        assert_eq!(native_trust_disclosure(true), NATIVE_TRUST_DISCLOSURE);
+    fn the_disclosure_describes_the_sandbox() {
         assert!(NATIVE_TRUST_DISCLOSURE.contains("sandboxed process"));
         assert!(NATIVE_TRUST_DISCLOSURE.contains("what appears in its terminal"));
-        let in_process = native_trust_disclosure(false);
-        assert!(
-            in_process.contains("no operating-system sandbox"),
-            "{in_process}"
-        );
     }
 
     #[test]

@@ -3,10 +3,11 @@
 //!
 //! The plugin gets the unchanged 1.x [`PluginHostBridge`]; every callback is
 //! forwarded to the host as a `BridgeRequest` frame and blocks (with a per-call
-//! deadline) on the matching `BridgeReply`. The host runs the very same
-//! `PermissionSet` / `FilesystemScope` / `ConnectionPolicy` guards as the
-//! in-process bridge, so the runner enforces nothing itself and holds no
-//! permission state — it could not be trusted to.
+//! deadline) on the matching `BridgeReply`. The host runs the
+//! `PermissionSet` / `FilesystemScope` / `ConnectionPolicy` guards, so the
+//! runner enforces nothing itself and holds no permission state — it could not
+//! be trusted to. The runner only adapts each status to the plugin's ABI
+//! (#3373).
 //!
 //! * **Network.** An approved `open_connection` comes back either as the
 //!   connected socket itself (`SCM_RIGHTS` on Unix, popped from the channel's
@@ -35,7 +36,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
 use termihub_plugin_api::{
-    FfiByteSlice, FfiOwnedBytes, FfiStr, PluginFileMetadata, PluginHostBridge,
+    AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, PluginFileMetadata, PluginHostBridge,
     PluginHostBridgeVTable, PluginStatus, PluginTcpStream, PluginTcpStreamVTable, PluginWriteMode,
 };
 #[cfg(unix)]
@@ -288,18 +289,25 @@ struct SessionBridge {
     session_id: u32,
     client: Arc<BridgeClient>,
     connect_deadline: Duration,
+    /// The ABI the plugin was built against. Every status a callback returns
+    /// is downgraded for it (#3373): a plugin built for an older minor cannot
+    /// decode a `PluginStatus` discriminant appended after it was compiled.
+    plugin_abi: AbiVersion,
 }
 
-/// Build the IPC-backed bridge for one session.
+/// Build the IPC-backed bridge for one session of a plugin built against ABI
+/// `plugin_abi`.
 pub(crate) fn session_bridge(
     session_id: u32,
     client: &Arc<BridgeClient>,
     connect_deadline: Duration,
+    plugin_abi: AbiVersion,
 ) -> PluginHostBridge {
     let ctx = Box::into_raw(Box::new(SessionBridge {
         session_id,
         client: Arc::clone(client),
         connect_deadline,
+        plugin_abi,
     }))
     .cast::<c_void>();
     // SAFETY: `ctx` is a leaked `Box<SessionBridge>` that every callback in
@@ -316,7 +324,10 @@ static IPC_BRIDGE: PluginHostBridgeVTable = PluginHostBridgeVTable {
 };
 
 /// Run one callback body against the session context behind `ctx`, containing
-/// panics. A null context is refused with `Other`.
+/// panics, and downgrade the status for the plugin's ABI
+/// ([`PluginStatus::for_peer`], #3373). A null context is refused with `Other`
+/// undowngraded: without a context the plugin's ABI is unknown, and `Other` is
+/// a 1.0 variant every 1.x peer decodes.
 ///
 /// # Safety
 ///
@@ -331,6 +342,7 @@ unsafe fn with_session(
     };
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(bridge)))
         .unwrap_or(PluginStatus::Panic)
+        .for_peer(bridge.plugin_abi)
 }
 
 /// Read a plugin-supplied string, refusing invalid UTF-8 (the ABI promises
@@ -643,7 +655,7 @@ impl DirListing {
 
 /// The ABI's `list_dir` framing (CORE-035): a `u32_le` count, then each name
 /// as a `u32_le` length and its bytes. Must stay in lockstep with
-/// `PluginHostBridge::list_dir`'s decoder and core's in-process encoder.
+/// `PluginHostBridge::list_dir`'s decoder.
 fn encode_dir_entries(names: &[String]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&u32::try_from(names.len()).unwrap_or(u32::MAX).to_le_bytes());
@@ -947,6 +959,48 @@ mod tests {
         assert_eq!(outcome, Err(PluginStatus::ResourceLimit));
         assert!(listing.bytes > MAX_LIST_DIR_BYTES);
         assert!(listing.names.len() * name.len() <= MAX_LIST_DIR_BYTES);
+    }
+
+    /// A session bridge for a plugin built against `abi`, over a channel
+    /// that discards everything.
+    fn test_bridge(abi: AbiVersion) -> SessionBridge {
+        let channel = Arc::new(super::super::channel::Channel::new(Box::new(
+            std::io::sink(),
+        )));
+        SessionBridge {
+            session_id: 1,
+            #[cfg(unix)]
+            client: BridgeClient::new(channel, None),
+            #[cfg(not(unix))]
+            client: BridgeClient::new(channel),
+            connect_deadline: DEFAULT_CONNECT_DEADLINE,
+            plugin_abi: abi,
+        }
+    }
+
+    #[test]
+    fn every_status_is_downgraded_for_the_plugins_abi() {
+        // #3373: the status a callback returns, a contained panic included, is
+        // what the plugin's own ABI can decode.
+        for abi in [AbiVersion::new(1, 0), AbiVersion::new(1, 1)] {
+            let mut bridge = test_bridge(abi);
+            let ctx = std::ptr::addr_of_mut!(bridge).cast::<c_void>();
+            for status in [
+                PluginStatus::Ok,
+                PluginStatus::PermissionDenied,
+                PluginStatus::ResourceLimit,
+            ] {
+                // SAFETY: `ctx` points at a live `SessionBridge` for the call.
+                let got = unsafe { with_session(ctx, |_| status) };
+                assert_eq!(got, status.for_peer(abi));
+            }
+            // SAFETY: as above.
+            let got = unsafe { with_session(ctx, |_| panic!("contained")) };
+            assert_eq!(got, PluginStatus::Panic.for_peer(abi));
+        }
+        // SAFETY: a null context is refused without a dereference.
+        let got = unsafe { with_session(std::ptr::null_mut(), |_| PluginStatus::Ok) };
+        assert_eq!(got, PluginStatus::Other);
     }
 
     #[test]

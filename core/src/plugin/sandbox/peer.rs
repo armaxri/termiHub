@@ -227,8 +227,8 @@ impl Shared {
                         .unwrap_or_else(|e| e.into_inner())
                         .clone();
                 })?;
-                // No subscriber yet (or a dropped receiver): drop the chunk, as
-                // the in-process path does. Blocking here (outside every lock)
+                // No subscriber yet (or a dropped receiver): drop the chunk,
+                // matching the other backends. Blocking here (outside every lock)
                 // backpressures the runner through the socket.
                 if let Some(sender) = subscriber {
                     let _ = sender.blocking_send(data);

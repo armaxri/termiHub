@@ -1,38 +1,21 @@
 //! Host side of the ABI 1.1 **host context** (PLG-014, #3576): the per-plugin
-//! data directory, the target-tagged log callback, and the cancellation signal a
-//! native backend receives through
-//! [`PluginHostContext`](termihub_plugin_api::PluginHostContext).
+//! data directory and the target-tagged log pipeline behind the
+//! [`PluginHostContext`](termihub_plugin_api::PluginHostContext) a native
+//! backend receives.
 //!
-//! # FFI safety of the callbacks
-//!
-//! The services table below is called by plugin code, from any plugin thread,
-//! for as long as the plugin keeps a handle. Every callback therefore:
-//!
-//! * tolerates a null context (returns a failure status / `false`, never
-//!   dereferences it);
-//! * runs its body inside [`std::panic::catch_unwind`], so no host panic can
-//!   unwind into plugin frames;
-//! * treats plugin-supplied data as untrusted — the log level is a validated
-//!   `u32`, the message is read only up to [`MAX_LOG_MESSAGE_BYTES`], decoded
-//!   lossily and stripped of control characters;
-//! * is **rate-limited per plugin** by a [`PluginLogLimiter`] shared by every
-//!   session of the plugin (see [`super::log_rate_limit`]): excess lines are
-//!   dropped with an `Ok` status and reported by one summary line per window.
-//!
-//! The context is an [`Arc`]'d [`ServicesState`] whose strong count is the
-//! handle count: `retain`/`release` map to `Arc::increment_strong_count` /
-//! `decrement_strong_count`, so the state lives exactly as long as the last
-//! handle (host or plugin) and is freed by the host's own allocator.
+//! The context itself — services table, cancellation flag — lives in the
+//! plugin's runner process (ADR-19); the runner forwards every log line over
+//! IPC and the host emits it here ([`emit_runner_log`]). Plugin-supplied data
+//! is untrusted: the log level is a validated `u32`, the message is bounded to
+//! [`MAX_LOG_MESSAGE_BYTES`], decoded lossily and stripped of control
+//! characters, and every line is **rate-limited per plugin** by a
+//! [`PluginLogLimiter`](super::log_rate_limit::PluginLogLimiter) shared by
+//! every session of the plugin (see [`super::log_rate_limit`]): excess lines
+//! are dropped and reported by one summary line per window.
 
-use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
-use termihub_plugin_api::{
-    FfiStr, PluginHostServices, PluginHostServicesVTable, PluginLogLevel, PluginStatus,
-    MAX_LOG_MESSAGE_BYTES,
-};
+use termihub_plugin_api::{PluginLogLevel, MAX_LOG_MESSAGE_BYTES};
 
 use super::log_rate_limit::{emit_suppression_summary, PluginLogLimiter};
 use super::manifest::is_valid_plugin_id;
@@ -51,147 +34,9 @@ pub const PLUGIN_DATA_DIR_NAME: &str = ".data";
 /// Marker appended to a log message the host truncated.
 const TRUNCATED_MARKER: &str = " …[truncated]";
 
-/// Shared state behind one session's services handles.
-pub(crate) struct ServicesState {
-    /// The host-trusted plugin id (from the manifest), used as the log tag —
-    /// the plugin cannot choose it.
-    plugin_id: String,
-    /// Set when this session is torn down.
-    session_cancelled: AtomicBool,
-    /// Set when the whole plugin is unloaded; shared by all its sessions.
-    plugin_shutdown: Arc<AtomicBool>,
-    /// The plugin-wide log rate limiter; shared by all its sessions so opening
-    /// more sessions does not raise the plugin's log budget.
-    log_limiter: Arc<PluginLogLimiter>,
-}
-
-impl ServicesState {
-    /// Create the state for one session of plugin `plugin_id`, observing the
-    /// plugin-wide `plugin_shutdown` flag and charging its log lines to the
-    /// plugin-wide `log_limiter`.
-    pub(crate) fn new(
-        plugin_id: String,
-        plugin_shutdown: Arc<AtomicBool>,
-        log_limiter: Arc<PluginLogLimiter>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            plugin_id,
-            session_cancelled: AtomicBool::new(false),
-            plugin_shutdown,
-            log_limiter,
-        })
-    }
-
-    /// Cancel this session (sticky).
-    pub(crate) fn cancel(&self) {
-        self.session_cancelled.store(true, Ordering::SeqCst);
-    }
-
-    /// Whether this session or its plugin has been cancelled.
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.session_cancelled.load(Ordering::SeqCst) || self.plugin_shutdown.load(Ordering::SeqCst)
-    }
-
-    /// Build a new FFI handle owning one reference on `state`.
-    pub(crate) fn handle(state: &Arc<Self>) -> PluginHostServices {
-        let ctx = Arc::into_raw(Arc::clone(state)).cast_mut().cast::<c_void>();
-        // SAFETY: `ctx` carries the one strong reference just leaked, which the
-        // handle adopts and `services_release` gives back; every callback in
-        // `SERVICES_VTABLE` interprets `ctx` as exactly an `Arc<ServicesState>`
-        // pointer and is safe to call from any thread.
-        unsafe { PluginHostServices::from_raw(ctx, &SERVICES_VTABLE) }
-    }
-}
-
-/// The host's services table — a static, so its address is stable for the
-/// process lifetime (plugins may keep handles past any one session).
-static SERVICES_VTABLE: PluginHostServicesVTable = PluginHostServicesVTable {
-    retain: services_retain,
-    release: services_release,
-    log: services_log,
-    is_cancelled: services_is_cancelled,
-};
-
-/// Borrow the state behind a services `ctx`, or `None` for null.
-///
-/// # Safety
-///
-/// A non-null `ctx` must be a pointer from [`ServicesState::handle`] on which
-/// the caller holds a live reference.
-unsafe fn state<'a>(ctx: *mut c_void) -> Option<&'a ServicesState> {
-    // SAFETY: caller contract; `as_ref` handles null.
-    unsafe { ctx.cast::<ServicesState>().cast_const().as_ref() }
-}
-
-unsafe extern "C" fn services_retain(ctx: *mut c_void) {
-    if ctx.is_null() {
-        return;
-    }
-    let _ = std::panic::catch_unwind(|| {
-        // SAFETY: the caller holds a live reference on `ctx`, an
-        // `Arc<ServicesState>` pointer, so incrementing is valid.
-        unsafe { Arc::increment_strong_count(ctx.cast::<ServicesState>().cast_const()) };
-    });
-}
-
-unsafe extern "C" fn services_release(ctx: *mut c_void) {
-    if ctx.is_null() {
-        return;
-    }
-    let _ = std::panic::catch_unwind(|| {
-        // SAFETY: releases exactly the reference the caller owns; the last
-        // release drops the state with the host's allocator.
-        unsafe { Arc::decrement_strong_count(ctx.cast::<ServicesState>().cast_const()) };
-    });
-}
-
-unsafe extern "C" fn services_is_cancelled(ctx: *mut c_void) -> bool {
-    std::panic::catch_unwind(|| {
-        // SAFETY: the caller holds a live reference on `ctx` (or it is null).
-        unsafe { state(ctx) }.is_none_or(ServicesState::is_cancelled)
-    })
-    // A panic here should be impossible; report "cancelled" so a plugin winds
-    // down rather than running on after a host fault.
-    .unwrap_or(true)
-}
-
-unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr) -> PluginStatus {
-    std::panic::catch_unwind(|| {
-        // SAFETY: the caller holds a live reference on `ctx` (or it is null).
-        let Some(state) = (unsafe { state(ctx) }) else {
-            return PluginStatus::Other;
-        };
-        let Some(level) = PluginLogLevel::from_wire(level) else {
-            return PluginStatus::InvalidConfig;
-        };
-        // Rate limit before touching the message: a dropped line costs no read,
-        // no allocation. Dropped lines still report `Ok` (documented in the
-        // plugin API) — a plugin cannot usefully react to a dropped log line.
-        let admission = state.log_limiter.admit(&state.plugin_id);
-        if let Some(count) = admission.summary {
-            emit_suppression_summary(&state.plugin_id, count);
-        }
-        if !admission.emit {
-            return PluginStatus::Ok;
-        }
-        // Read at most MAX_LOG_MESSAGE_BYTES of the plugin's buffer, never past.
-        let bounded = message.len.min(MAX_LOG_MESSAGE_BYTES);
-        let bytes: &[u8] = if bounded == 0 || message.ptr.is_null() {
-            &[]
-        } else {
-            // SAFETY: the plugin promises `ptr` is valid for `len` bytes for the
-            // call; we read a prefix of that range only.
-            unsafe { std::slice::from_raw_parts(message.ptr, bounded) }
-        };
-        let text = sanitize_log_message(bytes, message.len > MAX_LOG_MESSAGE_BYTES);
-        emit_plugin_log(level, &state.plugin_id, &text);
-        PluginStatus::Ok
-    })
-    .unwrap_or(PluginStatus::Panic)
-}
-
-/// Emit one log line a plugin runner forwarded (#4182) through the same
-/// pipeline as the in-process services callback: the plugin-wide rate limit,
+/// Emit one log line a plugin runner forwarded (#4182): the plugin-wide rate
+/// limit (shared by every session of the plugin, so more sessions add no
+/// budget),
 /// sanitisation (control characters, invalid UTF-8, truncation marker) and the
 /// host-trusted `[<id>]` tag. `bytes` must already be bounded to
 /// [`MAX_LOG_MESSAGE_BYTES`]; an invalid `level` is dropped.

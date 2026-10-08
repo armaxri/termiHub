@@ -8,22 +8,15 @@ import type { NativeAckInfo } from "./NativeAckInfo";
  */
 export type NativePluginTrust = { 
 /**
- * Whether native (in-process) plugins are enabled globally. `false` by
- * default and whenever the store cannot be read (fail closed).
+ * Whether native plugins are enabled globally. `false` by default and
+ * whenever the store cannot be read (fail closed).
  */
 enabled: boolean, 
 /**
  * The plain-language disclosure the UI must show before enabling/trusting a
- * native plugin — the sandboxed wording when native plugins run out of
- * process, the in-process (no OS sandbox) wording otherwise (#4188).
+ * native plugin: they run in a sandboxed process (#4188, ADR-19).
  */
 disclosure: string, 
-/**
- * Whether native plugins run out of process in the OS sandbox on this
- * build (the debug opt-in until the phase-7 cut-over) — the UI shows the
- * isolation badges only then.
- */
-outOfProcess: boolean, 
 /**
  * Every recorded per-plugin acknowledgment, sorted by plugin id.
  */

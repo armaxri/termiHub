@@ -148,7 +148,10 @@ pub fn install_plugin_tagged(work: &Path, tag: &str, lib: &Path, manifest: &str)
 /// A host over `echo`'s root sharing a fresh registry.
 pub fn host_for(echo: &InstalledEcho) -> (PluginHost, Arc<Mutex<ConnectionTypeRegistry>>) {
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    (PluginHost::new(&echo.root, Arc::clone(&registry)), registry)
+    let host = PluginHost::new(&echo.root, Arc::clone(&registry)).with_runner(
+        termihub_core::plugin::sandbox::PluginRunnerConfig::new(runner_binary()),
+    );
+    (host, registry)
 }
 
 /// Create an unconnected session of `type_id`.

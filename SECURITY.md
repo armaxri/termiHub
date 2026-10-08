@@ -70,6 +70,9 @@ include:
   enable interception or impersonation.
 - Leaking sensitive data through logs, crash reports, workspace files, or the
   embedded servers.
+- Escaping the native plugin sandbox (see below): a native plugin that reaches
+  files, the network, other processes or termiHub's own memory beyond what its
+  sandbox and granted permissions allow.
 
 The following are **not** security vulnerabilities and should be filed as normal
 [GitHub issues](https://github.com/armaxri/termiHub/issues):
@@ -83,3 +86,35 @@ The following are **not** security vulnerabilities and should be filed as normal
 
 When in doubt, treat it as a potential security issue and report it privately —
 we would rather review an extra report than miss a real one.
+
+## Native Plugin Sandbox
+
+Native plugin backends are native code, so termiHub never loads them into its own
+process. Each enabled native plugin runs in its own `termihub-plugin-runner`
+helper process, confined by the operating system before any plugin code runs:
+
+- **Linux:** `no_new_privs`, landlock, a seccomp filter, and a private user and
+  network namespace where the system allows it.
+- **macOS:** a Seatbelt profile.
+- **Windows:** a per-plugin Less-Privileged AppContainer with no capabilities,
+  inside a job object.
+
+A sandboxed plugin can read its install folder and the system libraries, and
+read and write only its private data folder (`HOME` and `TMPDIR` point there).
+It cannot open other files, create network sockets, start programs, or reach
+devices, the clipboard or the SSH agent. Network and file access that its
+declared `network` / `filesystem` permissions grant goes through termiHub's
+capability bridge, which checks every request before performing it. A crash,
+hang or runaway allocation ends only that plugin's sessions.
+
+If full isolation is unavailable (mostly a Linux kernel without landlock), the
+plugin loads only after the user accepts reduced isolation for that exact build.
+If the sandbox cannot be set up, the plugin does not load; there is no setting
+to run a plugin without it. Native plugins remain off by default, and each one
+still needs the user's trust acknowledgement, because the sandbox limits what a
+plugin can reach, not what it draws in its own terminal. The design is ADR-19 in
+[`docs/architecture.md`](docs/architecture.md); plugin authors find the rules in
+[`docs/plugin-authoring.md`](docs/plugin-authoring.md#the-plugin-sandbox).
+
+The sandbox raises the cost of an attack; it does not protect against kernel or
+operating-system vulnerabilities.

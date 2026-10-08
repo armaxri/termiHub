@@ -8,6 +8,8 @@
 //! it exists, else — for a test binary under `target/<profile>/deps/` — the one
 //! in `target/<profile>/`. `$TERMIHUB_PLUGIN_RUNNER` overrides both in debug
 //! builds ([`debug_runner_config_from_env`](super::debug_runner_config_from_env)).
+//! There is no fallback: when no runner can be found or the bundled one fails
+//! its check, native plugins are refused, never loaded into termiHub.
 //!
 //! **Integrity** (concept failure mode "Helper binary missing or tampered").
 //! Exactly like the RDP sidecar (#1762), the build embeds the SHA-256 of the
@@ -59,7 +61,7 @@ pub fn default_runner_path() -> Option<PathBuf> {
 /// Log, once at startup, where the bundled runner is expected and the digest
 /// it is held to. This also keeps the embedded digest in the shipped binary in
 /// every build, so `scripts/internal/verify-plugin-runner-bundle.sh` can check
-/// a bundle's runner against it even while release builds never spawn one.
+/// a bundle's runner against it.
 pub fn log_bundled_runner() {
     tracing::info!(
         path = ?bundled_runner_path(),

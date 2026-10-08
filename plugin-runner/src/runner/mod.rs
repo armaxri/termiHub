@@ -387,7 +387,12 @@ impl Server {
         } else {
             Duration::from_millis(connect_deadline_ms)
         };
-        let bridge = bridge::session_bridge(session_id, &self.bridge, connect_deadline);
+        let bridge = bridge::session_bridge(
+            session_id,
+            &self.bridge,
+            connect_deadline,
+            self.library.info().abi_version,
+        );
         let (result, services) = if self.library.supports(ABI_1_1) {
             let state = SessionServices::new(
                 session_id,

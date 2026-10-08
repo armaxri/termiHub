@@ -1,13 +1,13 @@
 /**
  * Pure presentation helpers for the native-plugin sandbox status in Settings →
- * Plugins (#4188, concept `docs/concepts/backlog/plugin-os-sandbox.html`,
+ * Plugins (#4188, concept `docs/concepts/implemented/plugin-os-sandbox.html`,
  * "UI Interface" and "Failure modes"). They turn the `plugin-sandbox` region
  * row (plus the installed-plugin record) into the badge, process line, access
  * chips and warning copy the row renders, so every state is unit-testable
  * without rendering.
  */
 
-import type { PluginSandboxStatus, PluginSandboxView } from "@/store/pluginSandboxBridge";
+import type { PluginSandboxStatus } from "@/store/pluginSandboxBridge";
 import type { InstalledPlugin } from "@/types/plugin";
 
 /** The tone of a status indicator (maps to `settings-panel__status-indicator--*`). */
@@ -97,27 +97,17 @@ export function autoDisabledReason(
 
 /**
  * The isolation badge for a trusted native plugin, or `undefined` when there
- * is nothing to say (an untrusted plugin, or a sandboxed build that has not
- * tried to load it yet).
+ * is nothing to say (an untrusted plugin, or one the host has not tried to
+ * load yet). Every native plugin runs in a sandboxed process (ADR-19).
  */
 export function isolationBadge(
   plugin: InstalledPlugin,
   status: PluginSandboxStatus | undefined,
-  view: PluginSandboxView,
   trusted: boolean
 ): IsolationBadge | undefined {
   const disabled = autoDisabledReason(plugin, status);
   if (disabled) return { kind: "disabled", tone: "error", label: disabled };
   if (!trusted) return undefined;
-  if (!view.outOfProcess) {
-    return {
-      kind: "notSandboxed",
-      tone: "checking",
-      label: "Not sandboxed",
-      detail:
-        "This build runs native plugins inside termiHub, without an operating-system sandbox.",
-    };
-  }
   switch (status?.isolation) {
     case "full":
       return {

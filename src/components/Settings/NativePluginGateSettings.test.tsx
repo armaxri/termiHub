@@ -1,6 +1,6 @@
 /**
  * NativePluginGateSettings (SEC-002 / PLG-006 / ARCH-008): the default-off gate
- * plus per-plugin trust acknowledgment for native (in-process) plugins. These
+ * plus per-plugin trust acknowledgment for native plugins. These
  * tests pin that the disclosure + global toggle render and reflect the fetched
  * state, that flipping the toggle persists via `setNativePluginsEnabled`, that
  * only native plugins are listed, and that the per-plugin control reflects (and
@@ -29,7 +29,7 @@ vi.mock("@/services/api", () => ({
   enablePlugin: (id: string) => enablePlugin(id),
 }));
 
-let mockSandbox: PluginSandboxView = { outOfProcess: false, plugins: {} };
+let mockSandbox: PluginSandboxView = { plugins: {} };
 vi.mock("@/store/usePluginSandbox", () => ({
   usePluginSandbox: () => mockSandbox,
 }));
@@ -107,12 +107,11 @@ describe("NativePluginGateSettings", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockPlugins = [];
-    mockSandbox = { outOfProcess: false, plugins: {} };
+    mockSandbox = { plugins: {} };
     vi.clearAllMocks();
     getNativePluginTrust.mockResolvedValue({
       enabled: false,
-      disclosure: "Native plugins run with full application privileges and no OS sandbox.",
-      outOfProcess: false,
+      disclosure: "Native plugins run in a separate, sandboxed process.",
       acknowledged: [],
     });
   });
@@ -125,7 +124,7 @@ describe("NativePluginGateSettings", () => {
   it("renders the disclosure and a default-off global toggle", async () => {
     await renderFlushed();
     expect(query("settings-native-plugin-gate")).not.toBeNull();
-    expect(query("native-plugin-disclosure")!.textContent).toContain("no OS sandbox");
+    expect(query("native-plugin-disclosure")!.textContent).toContain("sandboxed process");
     expect(query("settings-native-plugins-enabled")!.getAttribute("aria-checked")).toBe("false");
   });
 
@@ -133,7 +132,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [],
     });
     await renderFlushed();
@@ -150,7 +148,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [],
     });
     mockPlugins = [plugin("echo", "Echo", true), plugin("dark", "Dark Theme", false)];
@@ -166,7 +163,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [
         {
           id: "echo",
@@ -190,7 +186,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [],
     });
     mockPlugins = [plugin("echo", "Echo", true, "1.1")];
@@ -206,7 +201,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [],
     });
     mockPlugins = [plugin("old", "Old", true, "1.0")];
@@ -222,7 +216,6 @@ describe("NativePluginGateSettings", () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,
       disclosure: "d",
-      outOfProcess: false,
       acknowledged: [
         {
           id: "old",
@@ -245,7 +238,6 @@ describe("NativePluginGateSettings", () => {
     const trustedEcho = {
       enabled: true,
       disclosure: "Native plugins run in a separate, sandboxed process.",
-      outOfProcess: true,
       acknowledged: [
         {
           id: "echo",
@@ -259,7 +251,6 @@ describe("NativePluginGateSettings", () => {
 
     function withStatus(status: Partial<PluginSandboxStatus>) {
       mockSandbox = {
-        outOfProcess: true,
         plugins: {
           echo: { isolation: "full", enforced: [], missing: [], denials: [], ...status },
         },
@@ -275,7 +266,7 @@ describe("NativePluginGateSettings", () => {
       mockPlugins = [plugin("echo", "Echo", true)];
     });
 
-    it("drops the Advanced framing when plugins run sandboxed", async () => {
+    it("titles the section Native Plugins without an Advanced framing", async () => {
       withStatus({ isolation: "full", enforced: ["seatbelt"] });
       await renderFlushed();
       const section = query("settings-native-plugin-gate")!;
@@ -319,15 +310,6 @@ describe("NativePluginGateSettings", () => {
       expect(query("native-plugin-load-reduced-echo")).toBeNull();
     });
 
-    it("shows Not sandboxed for an in-process build", async () => {
-      mockSandbox = { outOfProcess: false, plugins: {} };
-      getNativePluginTrust.mockResolvedValue({ ...trustedEcho, outOfProcess: false });
-      await renderFlushed();
-      expect(badge()!.textContent).toContain("Not sandboxed");
-      expect(query("native-plugin-access-echo")).toBeNull();
-      expect(query("native-plugin-process-echo")).toBeNull();
-    });
-
     it("shows Not sandboxed for a runner without OS confinement", async () => {
       withStatus({
         isolation: "unconfined",
@@ -353,7 +335,7 @@ describe("NativePluginGateSettings", () => {
     });
 
     it("shows Disabled after 3 crashes with Re-enable, which re-enables the plugin", async () => {
-      mockSandbox = { outOfProcess: true, plugins: {} };
+      mockSandbox = { plugins: {} };
       mockPlugins = [
         {
           ...plugin("echo", "Echo", true),

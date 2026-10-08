@@ -118,7 +118,7 @@ fn load(
     }
     let installed = install_plugin(work, &lib, &manifest.to_string());
     let (host, registry) = host_for(&installed);
-    let host = host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
     host.load(&installed.plugin)
         .expect("the runner loads the fixture");
     Loaded {

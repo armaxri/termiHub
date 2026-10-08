@@ -239,8 +239,7 @@ impl Probe {
 
     fn load(installed: InstalledEcho, config: PluginRunnerConfig) -> Result<Self, HostError> {
         let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-        let host =
-            PluginHost::new(&installed.root, Arc::clone(&registry)).with_runner(Some(config));
+        let host = PluginHost::new(&installed.root, Arc::clone(&registry)).with_runner(config);
         host.load(&installed.plugin)?;
         Ok(Self {
             installed,
@@ -532,7 +531,7 @@ fn a_sandbox_setup_failure_leaves_the_plugin_unloaded() {
     };
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
     let host = PluginHost::new(&installed.root, Arc::clone(&registry))
-        .with_runner(Some(config().with_sandbox_policy_for_tests(broken)));
+        .with_runner(config().with_sandbox_policy_for_tests(broken));
     match host.load(&installed.plugin) {
         Err(HostError::SandboxSetupFailed(detail)) => {
             assert!(detail.contains("not absolute"), "{detail}");
@@ -617,8 +616,8 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
 
     // Fail closed: a plain trust acknowledgement does not load it.
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(&installed.root, Arc::clone(&registry))
-        .with_runner(Some(config_for(&policy)));
+    let host =
+        PluginHost::new(&installed.root, Arc::clone(&registry)).with_runner(config_for(&policy));
     match host.load(&installed.plugin) {
         Err(HostError::ReducedIsolationNotAccepted { missing }) => {
             assert_eq!(missing, vec![layer::LANDLOCK.to_owned()]);

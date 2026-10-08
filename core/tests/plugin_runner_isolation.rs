@@ -100,7 +100,7 @@ fn fixture(config: PluginRunnerConfig) -> Fixture {
     assert_eq!(crash.root, echo.root);
 
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(&crash.root, Arc::clone(&registry)).with_runner(Some(config));
+    let host = PluginHost::new(&crash.root, Arc::clone(&registry)).with_runner(config);
     host.load(&crash.plugin).expect("the crash fixture loads");
     host.load(&echo.plugin).expect("echo-backend loads");
     Fixture {

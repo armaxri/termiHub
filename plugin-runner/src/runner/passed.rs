@@ -1,7 +1,7 @@
 //! The plugin-facing [`PluginTcpStream`] over a bridge socket the host
 //! duplicated into this runner (Windows, #4219).
 //!
-//! The plugin sees the same 1.x stream it gets on Unix and in process: an
+//! The plugin sees the same 1.x stream it gets on Unix: an
 //! opaque `state` plus `read` / `write` / `destroy`. Behind it is a
 //! [`SocketStream`] — the socket driven as an overlapped file handle, never
 //! through Winsock (which cannot start under LPAC) — and the connection's

@@ -5,11 +5,14 @@ The 2026-09 full-stack audit raised **668 findings** across 38 angles
 `audit/<angle>/` carries its final `status` in the frontmatter; this page is
 the roll-up.
 
+Updated 2026-10-08: SEC-002 moved from deferred to fixed — native plugins now run only
+out of process in an OS sandbox (ADR-19, #4189).
+
 | Status   | Count | Meaning                                                           |
 | -------- | ----: | ----------------------------------------------------------------- |
-| fixed    |   621 | Landed on `develop`, referenced by PR/issue in the finding file   |
+| fixed    |   622 | Landed on `develop`, referenced by PR/issue in the finding file   |
 | wontfix  |    21 | Deliberately kept as-is, with a recorded reason                   |
-| deferred |    15 | Real, but held back by a maintainer decision or tracked elsewhere |
+| deferred |    14 | Real, but held back by a maintainer decision or tracked elsewhere |
 | partial  |     1 | Half done; the other half waits on a maintainer decision          |
 | open     |    10 | Marketing/content work that needs the maintainer's voice          |
 
@@ -45,7 +48,6 @@ These need product voice and assets, not code:
 | ------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | CI-008, PKG-004    | Code signing / notarization: unsigned-beta decision; signing planned before v1.0                                      |
 | I18N-012, I18N-017 | English-only, left-to-right beta (maintainer decision 2026-09-25); the string-matching logic bugs were fixed          |
-| SEC-002            | Native plugins run in-process; plugin trust-model decision (JS plugins ship as experimental)                          |
 | SUP-004, WA-CI-012 | Unmaintained-crate advisories stay ungated by policy; every one is enumerated with a rationale (#3055, tracked #3054) |
 | SUP-006, CI-016    | Yanked-crate gate kept on purpose (it caught real yanks); the recurring manual fix is tracked in #2645                |
 | WA-CI-014          | Pre-release RustCrypto stack accepted; tracked in #3734 until stable releases exist                                   |

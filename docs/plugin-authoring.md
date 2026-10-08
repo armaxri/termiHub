@@ -178,10 +178,10 @@ flowchart TD
 Registers a new connection type backed by a native dynamic library (see
 [Native backends](#native-backends-and-the-abi)).
 
-> **Default-off, trusted per plugin.** A native backend runs in-process with the
-> app's full privileges and no OS sandbox, so it does not load just because it is
-> installed and enabled. The user must turn on **Settings → Plugins → Native
-> Plugins (Advanced)** _and_ explicitly trust the plugin there. The trust
+> **Default-off, trusted per plugin.** A native backend runs native code, even
+> though it runs in its own [sandboxed process](#the-plugin-sandbox), so it does not
+> load just because it is installed and enabled. The user must turn on **Settings → Plugins → Native
+> Plugins** _and_ explicitly trust the plugin there. The trust
 > acknowledgement is bound to a SHA-256 hash of the library file, so rebuilding or
 > replacing the library requires trusting it again. Until both conditions hold,
 > the host refuses to load the backend.
@@ -483,6 +483,95 @@ if let Some(ctx) = &ctx {
 
 A plugin built for ABI 1.0 never receives a context (nor a data directory)
 and must not read it.
+
+### The plugin sandbox
+
+termiHub never loads a native backend into its own process. Each enabled native
+plugin runs in its own helper process, `termihub-plugin-runner`, which ships with
+termiHub and is checked against a digest built into the app before it starts. The
+runner loads your unchanged library and speaks the same 1.x ABI to it, so your
+plugin needs no rebuild and no code change: the ABI is not bumped. Before any of
+your code is mapped, the runner is confined by the operating system:
+
+| OS      | Confinement                                                                                                                              |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux   | `no_new_privs`, landlock (files; TCP on Linux 6.7+), a seccomp filter, and a private user + network namespace where the system allows it |
+| macOS   | A Seatbelt profile the runner applies to itself                                                                                          |
+| Windows | A per-plugin Less-Privileged AppContainer with no capabilities, inside a job object                                                      |
+
+**What your plugin may do directly:**
+
+- read its install folder and the system libraries;
+- read and write its private data folder (`<plugins>/.data/<id>`, the
+  `data_dir` of the [host context](#the-host-context-abi-11)). `HOME` and
+  `TMPDIR` point inside it (on Windows also `TMP`, `TEMP` and `USERPROFILE`), so
+  temporary files land where the plugin may write. A plugin built for ABI 1.0
+  has no data folder and so can write nowhere;
+- talk to termiHub over its terminal I/O and the capability bridge.
+
+**What fails:**
+
+- **Files outside those folders.** Direct `std::fs` access to anything else
+  (your home folder, `~/.ssh`, termiHub's configuration) fails with a permission
+  error. Paths are matched after symlinks are resolved, so use the data folder
+  path termiHub hands you.
+- **Network sockets of your own.** Direct `std::net` use fails: `socket` /
+  `connect` / `bind` return `EPERM` on Linux, the network is denied on macOS,
+  and on Windows Winsock cannot start inside the AppContainer, so `std::net`
+  panics on first use. Reach the network only through the bridge.
+- **Starting programs.** `fork`, `exec` and `std::process::Command` fail (on
+  Windows with `ERROR_CHILD_PROCESS_BLOCKED`); on Linux `execve`, `ptrace`,
+  mounts, `io_uring` and similar escape primitives end the runner.
+- **Devices, the clipboard, the GUI and the SSH agent.** None are reachable.
+
+**Use the capability bridge** for everything your declared
+[permissions](#permissions) grant. `open_connection` needs `network`;
+`read_file`, `write_file`, `stat_path` and `list_dir` need `filesystem` and a
+path inside the declared roots. termiHub checks each request against the
+permissions, the path scope and the connection policy, then performs it. For an
+approved `open_connection` termiHub connects and hands your plugin the connected
+socket, which works normally; use it only through the stream the bridge returns
+(its `Read` / `Write`), never by converting it to a `std::net` socket. Large
+`read_file` / `write_file` calls move in 512 KiB pieces, so a `write_file` larger
+than that is not atomic. A large `list_dir` arrives in pages taken from one
+snapshot of the directory and is returned whole; a directory of more than
+1,048,576 entries (or 16 MiB of names) is refused with `ResourceLimit`. Refusals
+return `PermissionDenied` (or `ResourceLimit`).
+
+**Limits and crashes.** A crash, hang or runaway allocation ends only your
+plugin's sessions, never termiHub. The runner is limited to 512 MiB of address
+space on Linux (a 1 GiB resident-size cap on macOS, 512 MiB of committed memory
+on Windows), 256 open descriptors (not on Windows) and no child processes. It
+must answer the host's ping within 10 s, so do not block `write_input` /
+`resize` / `close` for long. Three crashes are restarted; the fourth within 10
+minutes disables the plugin until the user re-enables it.
+
+**Linux details.** System calls outside the allow-list fail with `ENOSYS`. Each
+refused `socket` / `connect` / `bind`-style call is reported to termiHub's log as
+`Denied{syscall}` (at most one line per call per second) through a `SIGSYS`
+handler the runner owns: do not block `SIGSYS` in your threads (a refused call on
+such a thread ends the runner), and installing your own `SIGSYS` handler fails
+with `EPERM`. The user and network namespace (no network interface up; your uid
+and gid stay the same) is skipped where the system does not allow unprivileged
+user namespaces, without changing the isolation level.
+
+**Reduced isolation.** If a layer is unavailable — mostly a Linux kernel without
+landlock (older than 5.13), which still gets the system-call filter but no file
+confinement — termiHub reports reduced isolation and loads the plugin only after
+the user accepts it for that exact build (Settings → Plugins → _Load with reduced
+isolation…_). If the sandbox cannot be set up at all, the plugin does not load:
+there is no fallback to running it without a sandbox, and no setting to turn the
+sandbox off.
+
+**What users see.** Settings → Plugins shows each plugin's isolation, process
+status and access summary; a crash ends the plugin's sessions with an overlay
+that names the cause, and a refused bridge request shows a rate-limited toast
+plus a Log Viewer entry.
+
+The sandbox limits what a plugin can reach, not what it draws in its own
+terminal, so native plugins stay default-off and each one still needs the
+user's hash-bound trust acknowledgement. The design is ADR-19 in
+[`architecture.md`](architecture.md).
 
 ### The SDK is internal for 0.1
 
@@ -994,70 +1083,12 @@ plugin-side migration callback in 0.1.
   see [`core/tests/plugin_package_load.rs`](../core/tests/plugin_package_load.rs).
   Mirror it for your own plugin to catch packaging and trust-gate problems before
   your users do.
-- **Out of process (preview):** termiHub is moving native backends into a
-  separate `termihub-plugin-runner` process (the plugin OS-sandbox rollout,
-  [#3769](https://github.com/armaxri/termiHub/issues/3769)); your library and
-  the ABI stay exactly the same. A **debug** build of termiHub runs plugins that
-  way when started with `TERMIHUB_PLUGIN_OUT_OF_PROCESS=1` (build the runner
-  first with `cargo build -p termihub-plugin-runner`; it lands next to the app
-  binary, or point `TERMIHUB_PLUGIN_RUNNER` at it). Installed termiHub builds
-  already ship the runner next to the app and verify it before use, but do not
-  run plugins through it yet. Windows runs the runner too: it talks to
-  termiHub over a private named pipe and lives in a job object that ends it
-  with termiHub. The capability
-  bridge works unchanged there: the runner forwards each call to termiHub, which applies the same permission, path-scope and
-  connection-policy checks and, for an approved `open_connection`, connects
-  and hands your plugin the connected socket. Large `read_file` / `write_file`
-  calls are moved in 512 KiB pieces; a `write_file` larger than that is
-  therefore not atomic. A large `list_dir` arrives in pages taken from one
-  snapshot of the directory and is returned whole, in the same format; a
-  directory of more than 1,048,576 entries (or 16 MiB of names) is refused
-  with `ResourceLimit`, in process too. Refusals still return
-  `PermissionDenied` (or `ResourceLimit`).
-  [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
-  the echo example this way, and
+- **Through the sandbox:** termiHub always runs your backend in a sandboxed
+  `termihub-plugin-runner` process (see [The plugin sandbox](#the-plugin-sandbox)),
+  so test it that way. A debug build of termiHub finds the cargo-built runner by
+  itself once you build it with `cargo build -p termihub-plugin-runner`; to use
+  another runner binary, point `TERMIHUB_PLUGIN_RUNNER` at it (debug builds and
+  tests only). [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs)
+  drives the echo example through the runner, and
   [`core/tests/plugin_runner_bridge.rs`](../core/tests/plugin_runner_bridge.rs)
-  the bridge. Out of process, a crash, hang or runaway allocation ends only your
-  plugin's sessions: the runner is limited to 512 MiB of address space on Linux
-  (a 1 GiB resident-size cap on macOS, 512 MiB of committed memory on
-  Windows), 256 open descriptors (not on Windows) and, on macOS and Windows,
-  no child processes; it must answer the host's ping within 10 s, so do not block
-  `write_input` / `resize` / `close` for long. Three crashes are restarted; the
-  fourth within 10 minutes disables the plugin until the user re-enables it.
-  On macOS and Linux the runner also confines itself with an OS sandbox
-  (Seatbelt on macOS; landlock + seccomp on Linux) before your library is
-  loaded: your plugin can read its install folder and the system libraries,
-  read and write its private data folder (`HOME` and `TMPDIR` point inside
-  it), and nothing else — no other files, no network sockets of its own (use
-  the bridge's `open_connection`; the socket it hands you works normally), no
-  child processes. Paths are matched after symlinks are resolved, so use the
-  data folder path termiHub hands you. On Linux, system calls outside the
-  allow-list fail with `ENOSYS`, `socket` / `connect` / `bind` / `fork` fail
-  with `EPERM`, and `execve`, `ptrace`, mounts, `io_uring` and similar escape
-  primitives end the runner. Each refused `socket` / `connect` / `bind`-style
-  call is also reported to termiHub's log as `Denied{syscall}` (coalesced to
-  at most one line per call per second). The report travels through a
-  `SIGSYS` handler the runner owns: do not block `SIGSYS` in your threads (a
-  refused call on such a thread ends the runner), and installing your own
-  `SIGSYS` handler fails with `EPERM`. A kernel without landlock (older than 5.13)
-  still gets the system-call filter but no file confinement; termiHub reports
-  that as reduced isolation and loads the plugin only after the user accepts
-  it for that exact build (Settings → Plugins → _Load with reduced
-  isolation…_). Where the system allows unprivileged user namespaces, the
-  Linux runner also moves into its own user and network namespace (no network
-  interface is up; your uid and gid stay the same, and sockets the bridge
-  hands you work normally); where it does not, this extra layer is skipped and
-  the isolation level is unaffected. On Windows the runner starts inside a
-  per-plugin Less-Privileged AppContainer with no capabilities, inside a job
-  object: it can read its install folder and the system libraries, read and
-  write its data folder (`HOME`, `TMP` and `TEMP` point inside it), and
-  nothing else — not your user profile, not `HKCU\Software`, no network, no
-  child processes (`ERROR_CHILD_PROCESS_BLOCKED`). Winsock cannot start there,
-  so `std::net` panics on first use: reach the network only through the
-  bridge. The bridge's connected socket still reaches the runner directly:
-  termiHub duplicates it into the runner, which reads and writes it as a plain
-  handle, so use it only through the stream the bridge returns (its `Read` /
-  `Write`), never by converting it to a `std::net` socket. Settings → Plugins shows each plugin's isolation, process status and
-  access summary; a crash ends the plugin's sessions with an overlay that
-  names the cause, and a refused bridge request shows a rate-limited toast
-  plus a Log Viewer entry.
+  the capability bridge.

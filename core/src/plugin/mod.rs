@@ -6,10 +6,11 @@
 //! [`PluginManager`] management layer (§4/§12) that installs, scans, and tracks
 //! installed plugins.
 //!
-//! It also provides the **native host loader** (#1995): [`PluginHost`] opens a
-//! plugin's backend dynamic library over the stable ABI
-//! ([`termihub_plugin_api`]), validates its version, and registers the resulting
-//! [`PluginConnectionType`] into a [`ConnectionTypeRegistry`]. The management
+//! It also provides the **native host loader** (#1995): [`PluginHost`] runs a
+//! plugin's backend dynamic library in its own sandboxed
+//! `termihub-plugin-runner` process (ADR-19, [`sandbox`]) — never in termiHub
+//! itself — over the stable ABI ([`termihub_plugin_api`]), and registers the
+//! resulting [`PluginConnectionType`] into a [`ConnectionTypeRegistry`]. The management
 //! layer stays decoupled from loading through the [`PluginLifecycleHook`] seam:
 //! [`HostLifecycleHook`] wires a [`PluginHost`] into that seam so enabling or
 //! disabling a plugin loads or unloads its backend. JS/theme registration and
@@ -75,7 +76,6 @@ mod package;
 mod platform;
 mod plugin_index;
 mod plugin_state;
-mod runtime;
 pub mod sandbox;
 mod security;
 mod settings_migration;
@@ -86,19 +86,15 @@ mod update_check;
 mod version_change;
 
 pub use abi_check::PackWarning;
-pub use capabilities::{
-    build_host_bridge, build_host_bridge_with_policy, ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT,
-    DEFAULT_MAX_CONNECTIONS,
-};
-pub use connection::{config_schema_to_settings_schema, PluginConnectionType, SessionHostContext};
+pub use capabilities::{ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT, DEFAULT_MAX_CONNECTIONS};
+pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use fat_pack::{
     merge_packages, package_platform_entries, platform_library_map, MultiPlatformPackError,
     PlatformEntry,
 };
 pub use host::{
-    find_backend_library, load_backend_library, load_backend_library_for_manifest,
-    load_backend_library_with, select_backend_library, BackendLoadOptions, HostError,
-    HostLifecycleHook, LoadedLibrary, LoadedPluginInfo, PluginHost,
+    find_backend_library, select_backend_library, BackendLoadOptions, HostError, HostLifecycleHook,
+    LoadedPluginInfo, PluginHost,
 };
 pub use host_context::{
     prepare_plugin_data_dir, remove_plugin_data_dir, PluginDataDirError, PLUGIN_DATA_DIR_NAME,
@@ -124,9 +120,8 @@ pub use manifest::{
     ThemeEntry, ThemeExtension, WidgetPosition,
 };
 pub use native_trust::{
-    native_library_hash, native_trust_disclosure, AckAcceptances, NativeAck, NativeTrustError,
-    NativeTrustStore, NATIVE_TRUST_DISCLOSURE, NATIVE_TRUST_DISCLOSURE_IN_PROCESS,
-    NATIVE_TRUST_FILE_NAME,
+    native_library_hash, AckAcceptances, NativeAck, NativeTrustError, NativeTrustStore,
+    NATIVE_TRUST_DISCLOSURE, NATIVE_TRUST_FILE_NAME,
 };
 pub use pack::{
     pack_plugin, pack_plugin_signed, pack_plugin_with_report, sign_package, PackedPlugin,
