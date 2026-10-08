@@ -246,6 +246,25 @@ struct Routed {
     file_route: AgentFileRoute,
 }
 
+/// Told the saved connection of a session an automatic reconnect brought
+/// back to `Active` (#4230), so waiting side-channel transfers of that
+/// connection can resume. Installed once at boot
+/// ([`GraphicalSessionManager::with_reactivated_hook`]).
+pub type ReactivatedHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Called by a session's frame pump when its reconnected generation goes
+/// `Reconnecting` → `Active` (#4230).
+pub(crate) type OnReactivated = Arc<dyn Fn() + Send + Sync>;
+
+/// What a reconnected generation's frame pump needs to lift the session back
+/// to `Active` on its first admitted frame (#3364).
+pub(crate) struct Activation {
+    /// The session's lifecycle state machine.
+    pub(crate) state: Arc<Mutex<SessionStateMachine>>,
+    /// Told once the session is `Active` again (#4230).
+    pub(crate) on_active: Option<OnReactivated>,
+}
+
 /// Manages live graphical remote-desktop sessions.
 #[derive(Clone)]
 pub struct GraphicalSessionManager {
@@ -256,6 +275,9 @@ pub struct GraphicalSessionManager {
     /// Backoff jitter source handed to every session's reconnect loop
     /// (SM-020, #3730). Production draws from the thread RNG; tests pin it.
     jitter: fn() -> f64,
+    /// Told when an automatic reconnect brings a session of a saved
+    /// connection back to `Active` (#4230).
+    reactivated: Option<ReactivatedHook>,
 }
 
 impl GraphicalSessionManager {
@@ -267,7 +289,47 @@ impl GraphicalSessionManager {
             registry,
             trust_store,
             jitter: termihub_core::reconnect_backoff::system_jitter,
+            reactivated: None,
         }
+    }
+
+    /// Install the hook told the saved connection of a session an automatic
+    /// reconnect brought back to `Active` (#4230). A fresh connect does not
+    /// call it — `remote_desktop_connect` raises that trigger itself — and a
+    /// session not bound to a saved connection never does.
+    pub fn with_reactivated_hook(mut self, hook: ReactivatedHook) -> Self {
+        self.reactivated = Some(hook);
+        self
+    }
+
+    /// The callback a session's supervisor runs when an automatic reconnect
+    /// lifts `session_id` back to `Active` (#4230): it looks up the saved
+    /// connection the session is bound to and tells the hook. `None` when no
+    /// hook is installed.
+    fn on_reactivated(&self, session_id: &str) -> Option<OnReactivated> {
+        let hook = self.reactivated.clone()?;
+        // Weak: the supervisor task must not keep the session map alive.
+        let sessions = Arc::downgrade(&self.sessions);
+        let session_id = session_id.to_string();
+        Some(Arc::new(move || {
+            let (Some(sessions), hook, session_id) =
+                (sessions.upgrade(), hook.clone(), session_id.clone())
+            else {
+                return;
+            };
+            // Not app-owned (#3105): a one-shot lookup that ends on its own.
+            tokio::spawn(async move {
+                let saved = sessions
+                    .lock()
+                    .await
+                    .get(&session_id)
+                    .and_then(|s| s.saved_connection_id.clone());
+                if let Some(connection_id) = saved {
+                    debug!(session_id, connection_id, "graphical session reconnected");
+                    hook(&connection_id);
+                }
+            });
+        }))
     }
 
     /// Replace the reconnect backoff jitter source — for deterministic
@@ -485,6 +547,7 @@ impl GraphicalSessionManager {
             held: held.clone(),
             forward_error,
             jitter: self.jitter,
+            on_reactivated: self.on_reactivated(&session_id),
             sink,
         };
         // Not app-owned (#3105): session-scoped; aborted with the session on close.
@@ -1088,24 +1151,29 @@ pub(crate) fn emit_state<S: GraphicalEventSink>(
 ///
 /// `activate` is set for a reconnected generation (#3364): its first admitted
 /// frame proves the reconnect, so the machine goes `Reconnecting` → `Active`
-/// (emitted before that frame, lifting the overlay).
+/// (emitted before that frame, lifting the overlay), and its
+/// [`Activation::on_active`] runs (#4230).
 pub(crate) async fn frame_pump<S: GraphicalEventSink>(
     session_id: String,
     mut frames: termihub_core::connection::FrameReceiver,
     sink: S,
-    mut activate: Option<Arc<Mutex<SessionStateMachine>>>,
+    mut activate: Option<Activation>,
 ) -> PumpEnd {
     let mut guard = FrameGuard::new();
     let mut end = PumpEnd::default();
     while let Some(frame) = frames.recv().await {
         match guard.admit(&session_id, frame) {
             FrameVerdict::Emit(frame) => {
-                if let Some(state) = activate.take() {
-                    let mut sm = state.lock().await;
+                if let Some(activation) = activate.take() {
+                    let mut sm = activation.state.lock().await;
                     if sm.state() == GraphicalState::Reconnecting {
                         sm.transport_up();
                         let active = sm.activated();
                         emit_state(&sink, &session_id, active, 0, None);
+                        // Waiting side-channel transfers may resume (#4230).
+                        if let Some(on_active) = &activation.on_active {
+                            on_active();
+                        }
                     }
                 }
                 end.painted = true;

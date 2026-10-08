@@ -22,7 +22,9 @@
 //! open yet (#4205, [`super::relaunch_graphical`]) waits for a graphical
 //! session of its saved VNC connection to become active
 //! ([`WaitTrigger::GraphicalSessionActive`], from `remote_desktop_connect`,
-//! which returns once the session is active).
+//! which returns once the session is active, and from a running session that
+//! an automatic reconnect brought back to `Active`, #4230). Both may fire for
+//! the same row; the first takes it off the list, so it resumes once.
 //!
 //! The resume goes through the normal resume path
 //! ([`super::relaunch::resume_or_relaunch`]) inside the unattended scope

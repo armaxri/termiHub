@@ -357,14 +357,28 @@ fn fake_registry(ctl: &Arc<Control>) -> ConnectionTypeRegistry {
 /// [`open`], with the initial connect scripted as `first` (which must let
 /// `connect()` return `Ok`).
 async fn open_first(settings: serde_json::Value, first: Dial, redials: Vec<Dial>) -> Harness {
+    open_with(settings, first, redials, None).await
+}
+
+/// [`open_first`], on a manager with `hook` installed as its
+/// reactivation hook (#4230) when given.
+async fn open_with(
+    settings: serde_json::Value,
+    first: Dial,
+    redials: Vec<Dial>,
+    hook: Option<crate::session::graphical_manager::ReactivatedHook>,
+) -> Harness {
     let ctl = Arc::new(Control::default());
     let registry = fake_registry(&ctl);
     ctl.script([first]);
     ctl.script(redials);
     // A draw of 0 never shortens a window: the nominal (worst-case) schedule.
-    let mgr =
+    let mut mgr =
         GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()))
             .with_jitter(|| 0.0);
+    if let Some(hook) = hook {
+        mgr = mgr.with_reactivated_hook(hook);
+    }
     let sink = Sink::default();
     let sid = mgr
         .connect(FAKE, settings, sink.clone())
@@ -968,3 +982,7 @@ async fn initial_connect_auth_rejection_emits_auth_failed() {
 /// Held-input release tests (#3402), sharing this file's fake backend.
 #[path = "graphical_held_input_session_tests.rs"]
 mod held_input;
+
+/// Waiting side-channel transfers resuming on an automatic reconnect (#4230).
+#[path = "graphical_reconnect_resume_tests.rs"]
+mod reconnect_resume;
