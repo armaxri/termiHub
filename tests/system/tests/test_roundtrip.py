@@ -89,6 +89,34 @@ def test_press_key_modifiers_round_trip(bridge):
     assert received[1]["ctrl"] is True and received[1]["shift"] is True
 
 
+def test_drag_to_modifiers_and_observe_round_trip(bridge):
+    """``drag_to`` sends held modifiers + observe ids and returns the snapshot."""
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+        plain = driver.drag_to("file-row-a.txt", "file-row-dest")
+        seen = driver.drag_to(
+            "file-row-a.txt",
+            "file-row-dest",
+            alt=True,
+            observe=["file-row-dest", "file-browser-drag-chip"],
+        )
+
+    assert plain is None
+    assert handler.recorded["dragTos"] == [
+        {"from": "file-row-a.txt", "to": "file-row-dest"},
+        {
+            "from": "file-row-a.txt",
+            "to": "file-row-dest",
+            # Only the held key is sent; unheld ones stay off the wire.
+            "modifiers": {"alt": True},
+            "observe": ["file-row-dest", "file-browser-drag-chip"],
+        },
+    ]
+    assert seen["file-row-dest"]["attributes"]["data-drop-highlight"] == "valid"
+    assert seen["file-browser-drag-chip"]["exists"] is True
+
+
 def test_sample_canvas_round_trip(bridge):
     # Echo the command back inside the sample so the wire shape is asserted too.
     received = []

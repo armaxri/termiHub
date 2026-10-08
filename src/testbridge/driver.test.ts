@@ -61,6 +61,27 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "dragTo", fromTestId: "tab-1", toTestId: "tab-2" }]);
   });
 
+  it("maps dragTo modifiers + observe to the command and unwraps the observations", async () => {
+    const observed = { "file-row-dest": { exists: true, text: "dest", attributes: {} } };
+    const { transport, sent } = scriptedTransport({
+      dragTo: { ok: true, action: "dragTo", value: observed },
+    });
+    const value = await new InAppBridgeDriver(transport).dragTo("file-row-a", "file-row-dest", {
+      modifiers: { alt: true },
+      observe: ["file-row-dest"],
+    });
+    expect(value).toEqual(observed);
+    expect(sent).toEqual([
+      {
+        action: "dragTo",
+        fromTestId: "file-row-a",
+        toTestId: "file-row-dest",
+        modifiers: { alt: true },
+        observe: ["file-row-dest"],
+      },
+    ]);
+  });
+
   it("maps getComputedStyle to a command and unwraps the value", async () => {
     const { transport, sent } = scriptedTransport({
       getComputedStyle: { ok: true, action: "getComputedStyle", value: "col-resize" },

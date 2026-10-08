@@ -40,10 +40,16 @@ thiserror = { workspace = true }
 # SHA-256 of the pinned library handle (CORE-034), rendered as `sha256:<hex>`.
 sha2 = "0.10"
 hex = "0.4"
+# Compact byte strings in the MessagePack bridge frames (file data, proxied
+# stream bytes) instead of one integer per byte.
+serde_bytes = "0.11"
 
 [target.'cfg(unix)'.dependencies]
 # `prctl(PR_SET_PDEATHSIG)` on Linux so the runner never outlives the host.
 libc = "0.2"
+# `sendmsg` / `recvmsg` with `SCM_RIGHTS` to pass connected bridge sockets from
+# the host to the runner (#4183). Same major as the agent's.
+nix = { version = "0.29", features = ["socket", "uio"] }
 
 [dev-dependencies]
 proptest = "1"
@@ -52,3 +58,8 @@ tempfile = "3"
 [target.'cfg(unix)'.dev-dependencies]
 # `dup2` / `fcntl` to hand the runner its channel as fd 3 in the process tests.
 libc = "0.2"
+
+# `serde_bytes` is only referenced from `#[serde(with = "serde_bytes")]`
+# attribute strings, which cargo-machete's name scan cannot see.
+[package.metadata.cargo-machete]
+ignored = ["serde_bytes"]

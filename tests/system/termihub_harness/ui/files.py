@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from .. import deadlines
+from .. import deadlines, timing
 from ..bridge import BridgeError
 from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
@@ -177,9 +177,12 @@ class FilesUi(FileBrowserPathReads):
         navigation resets it), so the two mechanisms compose. Call
         :meth:`clear_entry_filter` when a test needs the whole listing back.
         """
-        # A UI poll loop, so it takes the same contended-webview slow category as
-        # SystemTest.wait (#3660; see deadlines.py).
-        deadline = time.monotonic() + deadlines.ui_budget(timeout)
+        # Its own UI poll loop (not SystemTest.wait), so it records its own
+        # timing sample under a named op and takes that op's deadline (#4216).
+        op = deadlines.FILE_ROW_OP
+        budget = deadlines.ui_budget(timeout, op)
+        started = time.monotonic()
+        deadline = started + budget
         next_refresh = 0.0  # refresh immediately on the first tick
         while time.monotonic() < deadline:
             now = time.monotonic()
@@ -192,8 +195,10 @@ class FilesUi(FileBrowserPathReads):
             if self.driver.exists(self.FILTER):
                 self.filter_entries(name)
             if self.file_row_exists(name):
+                timing.record(op, time.monotonic() - started, budget)
                 return
             time.sleep(0.5)  # the directory only changes on a refresh, so poll gently
+        timing.record(op, time.monotonic() - started, budget, timed_out=True)
         raise AssertionError(f"timed out waiting for file row {name!r}")
 
     # -- filter ------------------------------------------------------------------

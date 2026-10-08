@@ -27,9 +27,12 @@ dedicated CWD-aware tests below *do* exercise cwd-following (against ``/tmp`` /
 ``/etc``) and wait for the displayed path to settle.
 
 **Journeys (#4007).** A multi-selection delete that hits an undeletable folder
-keeps going and removes the rest (#1348 / #1394), and a pointer drag of a file
-onto a folder row moves it there (PROD-006, #3454) — both asserted on the real
-filesystem, not just the listing.
+keeps going and removes the rest (#1348 / #1394), and drag-to-move (PROD-006,
+#3454): a pointer drag of a file onto a folder row highlights the row and shows
+the "Move" chip mid-drag, then moves the file; a drop on a breadcrumb segment
+moves it up; a folder dropped on its own row is marked refused and stays put;
+and an Alt-held drag copies instead. All asserted on the real filesystem, not
+just the listing (the SFTP twin is ``test_file_browser_drag_sftp_live.py``).
 
 Not ported (kept as manual tests in docs/testing.md): three-dots row-menu vs
 context-menu styling parity and other pure-visual checks; the rename inline-input
@@ -58,6 +61,9 @@ from termihub_harness import (
 from termihub_harness.shell import is_absolute_path
 
 pytestmark = pytest.mark.integration
+
+#: The floating chip that follows a file-browser drag ("Move …" / "Copy …").
+DRAG_CHIP = "file-browser-drag-chip"
 
 # The temp dir is seeded with enough entries that the file browser's virtualizer
 # (``@tanstack/react-virtual``, ~33 rows mounted at the default sidebar height)
@@ -369,29 +375,46 @@ class TestFileBrowserLocal(
         self.switch_to_connections_sidebar()
 
     # ── Drag-to-move (PROD-006, #3454) ──────────────────────────────────────
-    def test_dragging_a_file_onto_a_folder_moves_it(self):
-        """A pointer drag of a file row released on a folder row moves the file.
+    def _drag_fixture(self, tag: str) -> tuple[Path, Path]:
+        """A fresh browser listing a ``<prefix>dest`` folder and ``<prefix>file.txt``.
 
-        ``drag_to`` drives dnd-kit's PointerSensor past its 8px activation
-        distance and releases over the folder row; a plain drag (no Alt) is a
-        move, so the file leaves the workspace and lands in the folder intact.
+        Filters the listing to the pair so both rows are mounted side by side
+        (the workspace is seeded past the virtualizer's window).
         """
         self._fresh_temp_browser()
-        prefix = f"e2e_fb_{unique_name('dm')}_"
+        prefix = f"e2e_fb_{unique_name(tag)}_"
         workspace = Path(self._workspace)
         dest = workspace / f"{prefix}dest"
         source = workspace / f"{prefix}file.txt"
         dest.mkdir()
         source.write_text("drag me\n")
         self.wait_for_file_row(source.name)
-        self.filter_entries(prefix)  # both rows mounted, side by side
+        self.filter_entries(prefix)
         self.wait(
             lambda: self.file_row_exists(source.name) and self.file_row_exists(dest.name),
             what="the file and folder rows",
         )
+        return source, dest
 
-        self.driver.drag_to(file_row_testid(source.name), file_row_testid(dest.name))
+    def test_dragging_a_file_onto_a_folder_moves_it(self):
+        """A pointer drag of a file row released on a folder row moves the file.
 
+        ``drag_to`` drives dnd-kit's PointerSensor past its 8px activation
+        distance and releases over the folder row; a plain drag (no Alt) is a
+        move, so the file leaves the workspace and lands in the folder intact.
+        While the pointer hovers the folder (``observe``), the row is highlighted
+        as a valid drop and the chip says "Move".
+        """
+        source, dest = self._drag_fixture("dm")
+        dest_row = file_row_testid(dest.name)
+
+        seen = self.driver.drag_to(
+            file_row_testid(source.name), dest_row, observe=[dest_row, DRAG_CHIP]
+        )
+
+        assert seen[dest_row]["attributes"].get("data-drop-highlight") == "valid"
+        assert seen[DRAG_CHIP]["exists"], "no drag chip while dragging"
+        assert seen[DRAG_CHIP]["text"] == f'Move "{source.name}"'
         moved = dest / source.name
         self.wait(
             lambda: moved.is_file() and not source.exists(),
@@ -403,4 +426,63 @@ class TestFileBrowserLocal(
             lambda: not self.file_row_exists(source.name),
             what="the moved file to leave the listing",
         )
+        self.switch_to_connections_sidebar()
+
+    def test_dropping_a_file_on_a_breadcrumb_moves_it_up(self):
+        """A file dragged onto an ancestor's breadcrumb segment moves up into it."""
+        self._fresh_temp_browser()
+        prefix = f"e2e_fb_{unique_name('dc')}_"
+        workspace = Path(self._workspace)
+        sub = workspace / f"{prefix}sub"
+        source = sub / f"{prefix}file.txt"
+        sub.mkdir()
+        source.write_text("drag me up\n")
+        self.enter_directory(sub.name)
+        self.wait_for_file_row(source.name)
+        crumb = f"file-browser-crumb-{self._workspace_name}"
+        self.wait(lambda: self.driver.exists(crumb), what="the workspace's breadcrumb")
+
+        seen = self.driver.drag_to(file_row_testid(source.name), crumb, observe=[crumb])
+
+        assert seen[crumb]["attributes"].get("data-drop-highlight") == "valid"
+        moved = workspace / source.name
+        self.wait(
+            lambda: moved.is_file() and not source.exists(),
+            what="the file to move up into the workspace",
+        )
+        assert moved.read_text() == "drag me up\n"
+        self.switch_to_connections_sidebar()
+
+    def test_dropping_a_folder_on_itself_is_refused(self):
+        """A folder dragged onto its own row turns it red and moves nothing."""
+        _, dest = self._drag_fixture("ds")
+        (dest / "inside.txt").write_text("stay\n")
+        dest_row = file_row_testid(dest.name)
+
+        seen = self.driver.drag_to(dest_row, dest_row, observe=[dest_row])
+
+        assert seen[dest_row]["attributes"].get("data-drop-highlight") == "invalid"
+        # Give a (wrongly) accepted move time to land before asserting it did not.
+        self.refresh_file_browser()
+        self.wait(lambda: self.file_row_exists(dest.name), what="the folder row to list")
+        assert dest.is_dir() and (dest / "inside.txt").read_text() == "stay\n"
+        assert not (dest / dest.name).exists()
+        self.switch_to_connections_sidebar()
+
+    def test_alt_dragging_a_file_onto_a_folder_copies_it(self):
+        """Holding Alt for the drag copies the file: it stays and a twin lands."""
+        source, dest = self._drag_fixture("da")
+        dest_row = file_row_testid(dest.name)
+
+        seen = self.driver.drag_to(
+            file_row_testid(source.name), dest_row, alt=True, observe=[DRAG_CHIP]
+        )
+
+        assert seen[DRAG_CHIP]["text"] == f'Copy "{source.name}"'
+        copied = dest / source.name
+        self.wait(lambda: copied.is_file(), what="the copy to land in the folder")
+        self.wait(
+            lambda: copied.read_text() == "drag me\n", what="the copy to finish writing"
+        )
+        assert source.is_file() and source.read_text() == "drag me\n"
         self.switch_to_connections_sidebar()

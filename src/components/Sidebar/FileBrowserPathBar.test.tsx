@@ -11,8 +11,9 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-function queryAll(testId: string): HTMLElement[] {
-  return Array.from(container.querySelectorAll(`[data-testid="${testId}"]`));
+/** Every breadcrumb segment (`file-browser-crumb-<label>`), in order. */
+function crumbsAll(): HTMLElement[] {
+  return Array.from(container.querySelectorAll('[data-testid^="file-browser-crumb-"]'));
 }
 
 function render(currentPath: string, onNavigate = vi.fn()) {
@@ -56,21 +57,27 @@ describe("FileBrowserPathBar", () => {
 
   it("renders one clickable breadcrumb per path segment", () => {
     render("/usr/local");
-    const crumbs = queryAll("file-browser-crumb");
+    const crumbs = crumbsAll();
     // "/", "usr", "local"
     expect(crumbs.map((c) => c.textContent)).toEqual(["/", "usr", "local"]);
+    // Each segment carries its own id, so a drag can target one ancestor.
+    expect(crumbs.map((c) => c.dataset.testid)).toEqual([
+      "file-browser-crumb-/",
+      "file-browser-crumb-usr",
+      "file-browser-crumb-local",
+    ]);
   });
 
   it("navigates to a crumb's cumulative path when an ancestor crumb is clicked", () => {
     const onNavigate = render("/usr/local");
-    const crumbs = queryAll("file-browser-crumb");
+    const crumbs = crumbsAll();
     act(() => crumbs[1].click()); // "usr"
     expect(onNavigate).toHaveBeenCalledWith("/usr");
   });
 
   it("disables the crumb for the current path (no navigation on click)", () => {
     const onNavigate = render("/usr/local");
-    const crumbs = queryAll("file-browser-crumb");
+    const crumbs = crumbsAll();
     const last = crumbs[crumbs.length - 1] as HTMLButtonElement;
     expect(last.disabled).toBe(true);
     act(() => last.click());

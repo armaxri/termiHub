@@ -188,10 +188,25 @@ def dispatcher_like(
             recorded["pressedKeys"].append(command["key"])
             return {"ok": True, "action": "pressKey"}
         if action == "dragTo":
-            recorded["dragTos"].append(
-                {"from": command["fromTestId"], "to": command["toTestId"]}
-            )
-            return {"ok": True, "action": "dragTo"}
+            drag = {"from": command["fromTestId"], "to": command["toTestId"]}
+            # Held modifiers / mid-drag observe only appear when requested.
+            for key in ("modifiers", "observe"):
+                if key in command:
+                    drag[key] = command[key]
+            recorded["dragTos"].append(drag)
+            if "observe" not in command:
+                return {"ok": True, "action": "dragTo"}
+            # Report every observed id as a present element carrying a valid drop
+            # highlight — the shape the dispatcher's mid-drag snapshot returns.
+            observed = {
+                test_id: {
+                    "exists": True,
+                    "text": "",
+                    "attributes": {"data-testid": test_id, "data-drop-highlight": "valid"},
+                }
+                for test_id in command["observe"]
+            }
+            return {"ok": True, "action": "dragTo", "value": observed}
         if action == "drag":
             recorded["drags"].append(
                 {"testId": command["testId"], "dx": command["dx"], "dy": command.get("dy")}
