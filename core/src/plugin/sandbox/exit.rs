@@ -29,7 +29,9 @@ pub enum RunnerExitCause {
     Crashed {
         /// The terminating signal (Unix).
         signal: Option<i32>,
-        /// The exit code, when it exited normally.
+        /// The exit code, when it exited normally. Windows has no signals: a
+        /// crash shows here as its exception code (`0xC0000005` for an
+        /// access violation, `0xC0000409` for an abort).
         exit_code: Option<i32>,
     },
     /// It stopped answering pings or missed a call deadline and was killed.
@@ -68,7 +70,10 @@ impl RunnerExitCause {
             RunnerExitCause::Crashed {
                 exit_code: Some(code),
                 ..
-            } => format!("plugin process exited with code {code}"),
+            } => match windows_exception(*code) {
+                Some(exception) => format!("plugin process crashed: {exception}"),
+                None => format!("plugin process exited with code {code}"),
+            },
             RunnerExitCause::Crashed { .. } => "plugin process exited".to_owned(),
             RunnerExitCause::NotResponding => "the plugin stopped responding".to_owned(),
             RunnerExitCause::OutOfMemory => "the plugin used too much memory".to_owned(),
@@ -129,6 +134,31 @@ fn signal_name(signal: i32) -> Option<&'static str> {
         let _ = signal;
         None
     }
+}
+
+/// A Windows exception exit code (an `NTSTATUS` of error severity, what a
+/// process ended by an unhandled exception or a fail-fast exits with) as
+/// `exception 0xC0000005 (access violation)`; `None` for an ordinary exit
+/// code. Unix exit codes (0–255) never match.
+#[must_use]
+fn windows_exception(code: i32) -> Option<String> {
+    let status = u32::from_ne_bytes(code.to_ne_bytes());
+    if status & 0xC000_0000 != 0xC000_0000 {
+        return None;
+    }
+    let name = match status {
+        0xC000_0005 => Some("access violation"),
+        0xC000_001D => Some("illegal instruction"),
+        0xC000_0094 => Some("integer division by zero"),
+        0xC000_00FD => Some("stack overflow"),
+        // `__fastfail`, which Rust's `std::process::abort` uses.
+        0xC000_0409 => Some("fail-fast abort"),
+        _ => None,
+    };
+    Some(match name {
+        Some(name) => format!("exception 0x{status:08X} ({name})"),
+        None => format!("exception 0x{status:08X}"),
+    })
 }
 
 /// The reason persisted and shown when the budget is spent.
@@ -294,6 +324,32 @@ mod tests {
         assert_eq!(
             RunnerExitCause::from_status(Some(abort), true),
             RunnerExitCause::OutOfMemory
+        );
+    }
+
+    #[test]
+    fn windows_exception_codes_are_named() {
+        let crashed = |code: u32| RunnerExitCause::Crashed {
+            signal: None,
+            exit_code: Some(i32::from_ne_bytes(code.to_ne_bytes())),
+        };
+        assert_eq!(
+            crashed(0xC000_0005).describe(),
+            "plugin process crashed: exception 0xC0000005 (access violation)"
+        );
+        assert_eq!(
+            crashed(0xC000_0409).describe(),
+            "plugin process crashed: exception 0xC0000409 (fail-fast abort)"
+        );
+        assert_eq!(
+            crashed(0xC000_0135).describe(),
+            "plugin process crashed: exception 0xC0000135"
+        );
+        // Ordinary exit codes (and a warning-severity status) stay codes.
+        assert_eq!(crashed(3).describe(), "plugin process exited with code 3");
+        assert_eq!(
+            crashed(0x8000_0003).describe(),
+            "plugin process exited with code -2147483645"
         );
     }
 

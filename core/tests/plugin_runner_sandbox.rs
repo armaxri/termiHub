@@ -60,6 +60,16 @@ const PROBE_MANIFEST: &str = r#"{
     }
 }"#;
 
+/// Linux: whether the runner can enter its optional user + net namespace
+/// here (#4237): probed in a throw-away child, exactly as the runner does.
+#[cfg(target_os = "linux")]
+fn netns_available() -> bool {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    return termihub_plugin_runner::sandbox::linux::namespaces::available();
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    false
+}
+
 /// Whether this OS's runner must report an enforced sandbox. #4187 adds
 /// Windows here.
 fn expect_confined() -> bool {
@@ -249,6 +259,18 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     let report = probe_plugin.report();
     if expect_confined() {
         assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+        // The optional namespace layer (#4237) is listed exactly where this
+        // system allows unprivileged user namespaces; either way the escape
+        // attempts below must all fail.
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            report
+                .enforced
+                .iter()
+                .any(|l| l == termihub_core::plugin::sandbox::layer::NETNS),
+            netns_available(),
+            "{report:?}"
+        );
     } else {
         assert_eq!(report.isolation(), Isolation::Unconfined, "{report:?}");
     }
@@ -500,7 +522,11 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
         .expect("reduced isolation loads once it is accepted (#4188)");
     let report = probe_plugin.report();
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
-    assert_eq!(report.enforced, vec![layer::SECCOMP.to_owned()]);
+    let mut enforced = vec![layer::SECCOMP.to_owned()];
+    if netns_available() {
+        enforced.push(layer::NETNS.to_owned());
+    }
+    assert_eq!(report.enforced, enforced);
     assert_eq!(report.missing, vec![layer::LANDLOCK.to_owned()]);
 
     let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;

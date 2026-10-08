@@ -78,6 +78,12 @@ windows-sys = { version = "0.59", features = [
 landlock = "0.4"
 seccompiler = "0.5"
 
+# The namespace layer entered for real (#4237): `unshare(CLONE_NEWUSER)` needs
+# a single-threaded process, which libtest's thread-per-test harness is not.
+[[test]]
+name = "linux_namespaces"
+harness = false
+
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"

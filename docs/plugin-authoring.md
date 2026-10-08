@@ -1045,7 +1045,11 @@ plugin-side migration callback in 0.1.
   still gets the system-call filter but no file confinement; termiHub reports
   that as reduced isolation and loads the plugin only after the user accepts
   it for that exact build (Settings → Plugins → _Load with reduced
-  isolation…_). Windows follows. Settings → Plugins shows each plugin's
-  isolation, process status and access summary; a crash ends the plugin's
-  sessions with an overlay that names the cause, and a refused bridge request
-  shows a rate-limited toast plus a Log Viewer entry.
+  isolation…_). Where the system allows unprivileged user namespaces, the
+  Linux runner also moves into its own user and network namespace (no network
+  interface is up; your uid and gid stay the same, and sockets the bridge
+  hands you work normally); where it does not, this extra layer is skipped and
+  the isolation level is unaffected. Windows follows. Settings → Plugins shows
+  each plugin's isolation, process status and access summary; a crash ends the
+  plugin's sessions with an overlay that names the cause, and a refused bridge
+  request shows a rate-limited toast plus a Log Viewer entry.

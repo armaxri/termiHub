@@ -10,7 +10,15 @@
 //! other plugin's sessions are unaffected, and that the backend records the
 //! right exit cause per session; the crash budget restarts three crashes and
 //! auto-disables the plugin on the fourth, persisting the reason.
-#![cfg(all(feature = "plugin", unix))]
+//!
+//! Runs on every OS (#4240). The limits come from different places: Linux
+//! applies `RLIMIT_AS` / `RLIMIT_NOFILE`, macOS `RLIMIT_NOFILE` /
+//! `RLIMIT_NPROC` plus the host's footprint poll, and Windows starts the runner
+//! inside a job object carrying a per-process committed-memory limit and an
+//! active-process limit of one (#4201). Windows has no signals: a crash ends
+//! the runner with its exception code instead, and it has no per-process
+//! handle cap, so the descriptor test is Unix-only.
+#![cfg(feature = "plugin")]
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,6 +38,14 @@ use termihub_core::plugin::sandbox::{
 use termihub_core::plugin::{PluginHost, PluginManager, PluginState};
 
 const WAIT: Duration = Duration::from_secs(10);
+
+/// `STATUS_ACCESS_VIOLATION`: what a null write ends a Windows process with.
+#[cfg(windows)]
+const ACCESS_VIOLATION: i32 = i32::from_ne_bytes(0xC000_0005_u32.to_ne_bytes());
+/// `STATUS_STACK_BUFFER_OVERRUN`: the code of a `__fastfail`, which Rust's
+/// `std::process::abort` uses on Windows.
+#[cfg(windows)]
+const FAIL_FAST: i32 = i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes());
 
 const CRASH_MANIFEST: &str = r#"{
     "id": "crash-fixture",
@@ -167,8 +183,9 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
     let (echo, mut echo_rx) = connect(&f.registry, &f.echo.type_id).await;
     assert_echo_alive(echo.as_ref(), &mut echo_rx, "before").await;
 
-    // 1: segfault.
+    // 1: segfault (an access violation on Windows).
     let cause = crash_with(&f, "!segv").await;
+    #[cfg(unix)]
     assert!(
         matches!(
             cause,
@@ -179,6 +196,20 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
         ),
         "{cause:?}"
     );
+    #[cfg(windows)]
+    {
+        assert_eq!(
+            cause,
+            RunnerExitCause::Crashed {
+                signal: None,
+                exit_code: Some(ACCESS_VIOLATION)
+            }
+        );
+        assert_eq!(
+            cause.describe(),
+            "plugin process crashed: exception 0xC0000005 (access violation)"
+        );
+    }
     assert!(wait_until(WAIT, || crashes(&f) == 1));
     assert_echo_alive(echo.as_ref(), &mut echo_rx, "after segv").await;
 
@@ -193,15 +224,20 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
         assert_eq!(fresh.plugin_runner_alive(), Some(true));
     }
 
-    // 2: abort (what a `panic = "abort"` plugin does).
+    // 2: abort (what a `panic = "abort"` plugin does): SIGABRT, or a
+    // fail-fast on Windows.
     let cause = crash_with(&f, "!abort").await;
-    assert_eq!(
-        cause,
-        RunnerExitCause::Crashed {
-            signal: Some(libc::SIGABRT),
-            exit_code: None
-        }
-    );
+    #[cfg(unix)]
+    let expected = RunnerExitCause::Crashed {
+        signal: Some(libc::SIGABRT),
+        exit_code: None,
+    };
+    #[cfg(windows)]
+    let expected = RunnerExitCause::Crashed {
+        signal: None,
+        exit_code: Some(FAIL_FAST),
+    };
+    assert_eq!(cause, expected);
     assert!(wait_until(WAIT, || crashes(&f) == 2));
     assert_echo_alive(echo.as_ref(), &mut echo_rx, "after abort").await;
 
@@ -264,8 +300,9 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
 }
 
 /// The memory limits the out-of-memory tests run under: Linux enforces the
-/// 512 MiB address-space cap; macOS has none, so the host's resident-size
-/// poll ends the runner there.
+/// 512 MiB address-space cap, Windows the same 512 MiB as the job object's
+/// committed-memory limit; macOS has none, so the host's resident-size poll
+/// ends the runner there.
 fn memory_limited(watchdog: WatchdogConfig, rss_limit: u64) -> PluginRunnerConfig {
     default_config()
         .with_limits(ResourceLimits {
@@ -309,8 +346,9 @@ async fn a_hang_close_to_the_memory_limit_is_out_of_memory() {
     let f = fixture(memory_limited(fast_watchdog(), 512 * 1024 * 1024));
     let (conn, mut rx) = connect(&f.registry, &f.crash.type_id).await;
     // ~90 % of the limit. On Linux the runner's own address space (libraries,
-    // stacks, malloc arenas) counts too, so the hoard may instead hit the cap
-    // and abort: that is out of memory as well.
+    // stacks, malloc arenas) counts too, and on Windows its own committed
+    // memory, so the hoard may instead hit the cap and abort: that is out of
+    // memory as well. On Windows the hang verdict reads the commit charge.
     let mib = if cfg!(target_os = "linux") { 420 } else { 460 };
     conn.write(format!("!hoard:{mib}").as_bytes()).unwrap();
     assert_eq!(read_line(&mut rx).await, "HOARDING");
@@ -348,6 +386,9 @@ async fn a_hang_close_to_the_memory_limit_is_out_of_memory() {
     f.host.unload(&f.echo.plugin.manifest.id);
 }
 
+/// Unix only: Windows has no per-process handle cap (a job object carries
+/// none), so `max_open_files` does not apply there.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_plugin_runs_under_the_descriptor_limit() {
     let f = fixture(default_config());
@@ -370,17 +411,50 @@ async fn the_plugin_runs_under_the_descriptor_limit() {
     f.host.unload(&f.crash.plugin.manifest.id);
 }
 
-/// macOS enforces "no child processes" with `RLIMIT_NPROC`; on Linux that
-/// limit also counts threads, so it waits for the seccomp phase.
-#[cfg(target_os = "macos")]
-#[tokio::test(flavor = "multi_thread")]
-async fn the_plugin_cannot_start_child_processes() {
-    let f = fixture(default_config());
+/// The `!spawn` reply of a crash-fixture runner started with `config`.
+#[cfg(any(target_os = "macos", windows))]
+async fn spawn_reply(config: PluginRunnerConfig) -> String {
+    let f = fixture(config);
     let (conn, mut rx) = connect(&f.registry, &f.crash.type_id).await;
     conn.write(b"!spawn").unwrap();
-    assert_eq!(read_line(&mut rx).await, "SPAWN_DENIED");
+    let reply = read_line(&mut rx).await;
     drop(conn);
     f.host.unload(&f.crash.plugin.manifest.id);
+    f.host.unload(&f.echo.plugin.manifest.id);
+    reply
+}
+
+/// macOS enforces "no child processes" with `RLIMIT_NPROC`, Windows with the
+/// job object's active-process limit of one (#4201); on Linux `RLIMIT_NPROC`
+/// also counts threads, so the seccomp filter of the OS sandbox does it
+/// there (`plugin_runner_sandbox.rs`).
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plugin_cannot_start_child_processes() {
+    assert_eq!(spawn_reply(default_config()).await, "SPAWN_DENIED");
+}
+
+/// The positive control: the OS sandbox off and child processes allowed, the
+/// same fixture starts its shell, so the denial above is the limit's doing
+/// (not a shell missing from the runner's scrubbed environment).
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test(flavor = "multi_thread")]
+async fn without_the_limit_the_plugin_starts_a_child_process() {
+    let config = default_config()
+        .without_os_sandbox()
+        .with_limits(ResourceLimits {
+            forbid_child_processes: false,
+            ..ResourceLimits::plugin_defaults()
+        });
+    assert_eq!(spawn_reply(config).await, "SPAWN_OK");
+}
+
+/// The limit alone, the OS sandbox off: still no child process.
+#[cfg(any(target_os = "macos", windows))]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_child_process_limit_holds_without_the_os_sandbox() {
+    let config = default_config().without_os_sandbox();
+    assert_eq!(spawn_reply(config).await, "SPAWN_DENIED");
 }
 
 #[tokio::test(flavor = "multi_thread")]
