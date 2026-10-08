@@ -135,11 +135,17 @@ mod platform {
         // not a pipe is refused without being touched.
         let stream = match unsafe { PipeStream::from_inherited(handle) } {
             Ok(stream) => stream,
-            Err(_) => return runner::exit::PROTOCOL,
+            Err(error) => {
+                eprintln!("termihub-plugin-runner: the inherited channel is unusable: {error}");
+                return runner::exit::PROTOCOL;
+            }
         };
         let writer = match stream.try_clone() {
             Ok(writer) => writer,
-            Err(_) => return runner::exit::PROTOCOL,
+            Err(error) => {
+                eprintln!("termihub-plugin-runner: cloning the channel failed: {error}");
+                return runner::exit::PROTOCOL;
+            }
         };
         let channel = Arc::new(Channel::new(Box::new(writer)));
         // No handle passing over the pipe yet (#4219): bridge connections are

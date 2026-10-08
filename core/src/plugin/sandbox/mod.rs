@@ -37,21 +37,26 @@
 //!   from the plugin's folders ([`sandbox_policy`]); the runner applies it to
 //!   itself before `dlopen` (Seatbelt on macOS, landlock + seccomp on Linux,
 //!   #4185) and answers with a
-//!   [`SandboxReport`]. A failed setup, or a required layer that is missing,
-//!   refuses the plugin ([`HostError::SandboxSetupFailed`](super::HostError)).
+//!   [`SandboxReport`]. On Windows (#4187) the host starts the runner in the
+//!   plugin's Less-Privileged AppContainer with zero capabilities, inside its
+//!   job object, and the runner verifies that before `dlopen`. A failed
+//!   setup, or a required layer that is missing, refuses the plugin
+//!   ([`HostError::SandboxSetupFailed`](super::HostError)).
 //!
 //! * Status for the UI (#4188, phase 6): [`PluginSandboxStatus`] — the
 //!   isolation badge, process state and recent bridge denials — and the
 //!   `reducedIsolationAccepted` gate: reduced isolation loads only with the
 //!   hash-bound acknowledgement.
 //!
-//! **Scope so far.** OS confinement on macOS and Linux (LPAC is #4187). The
-//! out-of-process path is therefore
+//! **Scope so far.** OS confinement on macOS, Linux and Windows. The
+//! out-of-process path is
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
 //! cut-over. See `docs/concepts/backlog/plugin-os-sandbox.html`.
 
+#[cfg(windows)]
+mod appcontainer;
 mod bridge;
 mod client;
 mod exit;
@@ -67,6 +72,8 @@ mod status;
 mod watchdog;
 mod writer;
 
+#[cfg(windows)]
+pub(crate) use appcontainer::remove_profile as remove_app_container_profile;
 pub use bridge::{BridgeDenial, BridgeGrant, DenialReason};
 pub use client::SandboxedPlugin;
 pub use exit::{auto_disable_reason, CrashBudget, RunnerExitCause, DEFAULT_CRASH_WINDOW};

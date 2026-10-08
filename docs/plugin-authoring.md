@@ -1049,7 +1049,14 @@ plugin-side migration callback in 0.1.
   Linux runner also moves into its own user and network namespace (no network
   interface is up; your uid and gid stay the same, and sockets the bridge
   hands you work normally); where it does not, this extra layer is skipped and
-  the isolation level is unaffected. Windows follows. Settings → Plugins shows
-  each plugin's isolation, process status and access summary; a crash ends the
-  plugin's sessions with an overlay that names the cause, and a refused bridge
-  request shows a rate-limited toast plus a Log Viewer entry.
+  the isolation level is unaffected. On Windows the runner starts inside a
+  per-plugin Less-Privileged AppContainer with no capabilities, inside a job
+  object: it can read its install folder and the system libraries, read and
+  write its data folder (`HOME`, `TMP` and `TEMP` point inside it), and
+  nothing else — not your user profile, not `HKCU\Software`, no network, no
+  child processes (`ERROR_CHILD_PROCESS_BLOCKED`). Winsock cannot start there,
+  so `std::net` panics on first use: reach the network only through the
+  bridge. Settings → Plugins shows each plugin's isolation, process status and
+  access summary; a crash ends the plugin's sessions with an overlay that
+  names the cause, and a refused bridge request shows a rate-limited toast
+  plus a Log Viewer entry.

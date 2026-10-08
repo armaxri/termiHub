@@ -10,6 +10,8 @@
 //!   private named pipe on Windows).
 //! * `process` (Windows) — starting a runner inside a kill-on-close job object
 //!   with an explicit inherited-handle list; Unix spawns through `std`.
+//! * `appcontainer` (Windows) — the per-plugin Less-Privileged AppContainer
+//!   the host starts the runner in, and its folder grants (#4187).
 //! * [`sandbox`] — the OS-neutral sandbox policy and report, and the per-OS
 //!   confinement the runner applies to itself before `dlopen` (#4186).
 //!
@@ -17,6 +19,8 @@
 //! proxies the frozen 1.x C ABI over [`ipc`]; the plugin is not rebuilt and the
 //! ABI is not bumped.
 
+#[cfg(windows)]
+pub mod appcontainer;
 pub mod ipc;
 pub mod loader;
 #[cfg(windows)]

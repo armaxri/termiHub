@@ -25,8 +25,14 @@
 //! | `fork`  | `fork()` (Unix; the child exits at once)                  |
 //! | `env`   | read the environment variable `<arg>` (ALLOWED = set)     |
 //! | `tmp`   | write a file in `std::env::temp_dir()`                    |
+//! | `reg`   | open the registry key `HKCU\<arg>` for reading (Windows)  |
+//! | `pipe`  | open the named pipe `<arg>` for reading and writing       |
 //! | `sockets` | call `socket()` `<arg>` times (ALLOWED = any succeeded)   |
 //! | `sigsys`  | replace the `SIGSYS` handler (Linux; #4236)             |
+//!
+//! Under a Less-Privileged AppContainer Winsock cannot start, and `std::net`
+//! panics on its first use (spike #4181): a panicking probe is caught and
+//! reported as `DENIED panicked: …`, so the plugin keeps answering.
 
 use std::io::Write;
 use std::time::Duration;
@@ -36,7 +42,14 @@ pub(crate) fn probe_command(data: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(data).ok()?;
     let rest = text.strip_prefix("?probe ")?;
     let (op, arg) = rest.split_once(' ').unwrap_or((rest, ""));
-    let outcome = run(op, arg);
+    let outcome = std::panic::catch_unwind(|| run(op, arg)).unwrap_or_else(|panic| {
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("unknown panic");
+        Err(format!("panicked: {message}"))
+    });
     Some(match outcome {
         Ok(detail) => format!("PROBE {op} ALLOWED {detail}"),
         Err(error) => format!("PROBE {op} DENIED {error}"),
@@ -85,6 +98,13 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
                 .map(|()| path.display().to_string())
                 .map_err(io)
         }
+        "reg" => open_hkcu_key(arg),
+        "pipe" => std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(arg)
+            .map(|_| "opened".to_owned())
+            .map_err(io),
         "sockets" => sockets(arg),
         "sigsys" => replace_sigsys_handler(),
         other => Err(format!("unknown probe `{other}`")),
@@ -101,6 +121,41 @@ fn unix_connect(path: &str) -> Result<String, String> {
 #[cfg(not(unix))]
 fn unix_connect(_path: &str) -> Result<String, String> {
     Err("no Unix sockets on this platform".to_owned())
+}
+
+#[cfg(windows)]
+fn open_hkcu_key(subkey: &str) -> Result<String, String> {
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(
+            key: isize,
+            subkey: *const u16,
+            options: u32,
+            desired: u32,
+            result: *mut isize,
+        ) -> u32;
+        fn RegCloseKey(key: isize) -> u32;
+    }
+    /// `HKEY_CURRENT_USER` (`0x80000001`, sign-extended).
+    const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
+    /// `KEY_READ`.
+    const KEY_READ: u32 = 0x2_0019;
+    let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut key = 0isize;
+    // SAFETY: a predefined root key, a NUL-terminated subkey, an out-pointer
+    // for a key closed below.
+    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, KEY_READ, &mut key) };
+    if status != 0 {
+        return Err(std::io::Error::from_raw_os_error(status as i32).to_string());
+    }
+    // SAFETY: the key opened above, closed once.
+    unsafe { RegCloseKey(key) };
+    Ok("opened".to_owned())
+}
+
+#[cfg(not(windows))]
+fn open_hkcu_key(_subkey: &str) -> Result<String, String> {
+    Err("no registry on this platform".to_owned())
 }
 
 fn spawn_shell() -> Result<String, String> {

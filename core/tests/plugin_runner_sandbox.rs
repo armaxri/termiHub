@@ -11,17 +11,22 @@
 //! capability bridge, whose socket the host opens and passes in.
 //!
 //! **Per OS.** macOS asserts the Seatbelt confinement (#4186), Linux the
-//! landlock + seccomp confinement (#4185). Windows (#4187) reuses this file:
-//! until its phase lands the runner reports no enforced layer, so there only
-//! the positive controls and the report are asserted, and the probe results
-//! are printed. That phase flips [`expect_confined`] for its OS.
+//! landlock + seccomp confinement (#4185), Windows the Less-Privileged
+//! AppContainer + job object (#4187). Windows swaps the Unix-only probes
+//! (`/etc/hosts`, `/proc`, Unix sockets, `fork`) for its own: listing
+//! `%USERPROFILE%`, opening `HKCU\Software` (other applications' saved
+//! sessions; a plain AppContainer could, an LPAC cannot) and connecting to a
+//! named pipe that stands in for the ADR-13 spawn pipe. System files such as
+//! `System32\drivers\etc\hosts` stay readable to every AppContainer, which
+//! is expected and harmless (spike #4181), so they are not probed there.
 //!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
-#![cfg(all(feature = "plugin", unix))]
+#![cfg(feature = "plugin")]
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
+#[cfg(unix)]
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -70,10 +75,9 @@ fn netns_available() -> bool {
     false
 }
 
-/// Whether this OS's runner must report an enforced sandbox. #4187 adds
-/// Windows here.
+/// Whether this OS's runner must report an enforced sandbox.
 fn expect_confined() -> bool {
-    cfg!(any(target_os = "macos", target_os = "linux"))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 /// Canary targets the plugin must not reach, owned by the test.
@@ -87,8 +91,14 @@ struct Canaries {
     tcp_accepted: Arc<AtomicUsize>,
     /// A Unix socket (stands in for `SSH_AUTH_SOCK` / the ADR-13 spawn socket)
     /// and how many connections it accepted.
+    #[cfg(unix)]
     unix_path: PathBuf,
+    #[cfg(unix)]
     unix_accepted: Arc<AtomicUsize>,
+    /// Windows: a named pipe with the default security of the test's user
+    /// (stands in for the ADR-13 spawn pipe), kept listening.
+    #[cfg(windows)]
+    pipe: CanaryPipe,
 }
 
 fn canaries(work: &Path) -> Canaries {
@@ -107,23 +117,91 @@ fn canaries(work: &Path) -> Canaries {
         }
     });
 
-    let unix_path = work.join("agent.sock");
-    let unix = UnixListener::bind(&unix_path).unwrap();
-    let unix_accepted = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&unix_accepted);
-    std::thread::spawn(move || {
-        for _ in unix.incoming().flatten() {
-            counter.fetch_add(1, Ordering::SeqCst);
-        }
-    });
+    #[cfg(unix)]
+    let (unix_path, unix_accepted) = {
+        let unix_path = work.join("agent.sock");
+        let unix = UnixListener::bind(&unix_path).unwrap();
+        let unix_accepted = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&unix_accepted);
+        std::thread::spawn(move || {
+            for _ in unix.incoming().flatten() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        (unix_path, unix_accepted)
+    };
     Canaries {
         secret,
         outside_dir,
         tcp_port,
         tcp_accepted,
+        #[cfg(unix)]
         unix_path,
+        #[cfg(unix)]
         unix_accepted,
+        #[cfg(windows)]
+        pipe: CanaryPipe::listen(),
     }
+}
+
+/// Windows: a listening named pipe with the creating user's default DACL.
+#[cfg(windows)]
+struct CanaryPipe {
+    name: String,
+    _server: std::os::windows::io::OwnedHandle,
+}
+
+#[cfg(windows)]
+impl CanaryPipe {
+    fn listen() -> Self {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{
+            CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+        // Tests run in parallel in one process and the clock is coarse, so a
+        // per-process counter (not the time) keeps every canary's name unique;
+        // with one instance allowed, a reused name would fail the create.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = format!(
+            r"\\.\pipe\termihub-escape-canary-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        );
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: a NUL-terminated name; default security; the handle is
+        // owned below.
+        let raw = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                1,
+                4096,
+                4096,
+                0,
+                std::ptr::null(),
+            )
+        };
+        assert!(
+            raw != INVALID_HANDLE_VALUE,
+            "create the canary pipe `{name}`: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: a fresh handle from `CreateNamedPipeW`.
+        let server = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(raw) };
+        Self {
+            name,
+            _server: server,
+        }
+    }
+}
+
+/// The user's home folder, as the plugin would look for it.
+fn home_dir() -> String {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var(var).unwrap_or_else(|_| "/".to_owned())
 }
 
 /// A local TCP echo server for the bridge's positive control.
@@ -287,7 +365,7 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     ));
     let install_dir = PathBuf::from(canonical(&probe_plugin.install_dir()));
     let manifest = install_dir.join("manifest.json");
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
+    let home = home_dir();
 
     // --- Positive controls: the sandbox is not simply broken. ---
     let data_file = data_dir.join("probe-data.txt");
@@ -313,29 +391,21 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     let outside_file = canary.outside_dir.join("escaped.txt");
     let install_file = install_dir.join("escaped.txt");
     let tcp = format!("127.0.0.1:{}", canary.tcp_port);
-    let host_pid = std::process::id();
-    let attempts: Vec<(&str, String)> = vec![
+    let mut attempts: Vec<(&str, String)> = vec![
         ("read", canonical(&canary.secret)),
         ("list", home.clone()),
-        ("read", "/etc/hosts".to_owned()),
         (
             "write",
-            format!("{}/escaped.txt", canonical(&canary.outside_dir)),
+            canonical(&canary.outside_dir) + std::path::MAIN_SEPARATOR_STR + "escaped.txt",
         ),
         ("write", install_file.display().to_string()),
         ("tcp", tcp),
-        ("unix", canonical(&canary.unix_path)),
         ("bind", String::new()),
         ("dns", "localhost".to_owned()),
         ("spawn", String::new()),
-        ("fork", String::new()),
         ("env", "SSH_AUTH_SOCK".to_owned()),
-        // The host's memory and environment (Linux /proc; absent elsewhere).
-        ("read", format!("/proc/{host_pid}/mem")),
-        ("read", format!("/proc/{host_pid}/environ")),
-        // A serial device.
-        ("read", "/dev/ttyS0".to_owned()),
     ];
+    attempts.extend(os_escape_attempts(&canary));
     let mut escaped = Vec::new();
     for (op, arg) in &attempts {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
@@ -350,6 +420,7 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         // Give a late connection a moment to land, then require none.
         std::thread::sleep(Duration::from_millis(200));
         assert_eq!(canary.tcp_accepted.load(Ordering::SeqCst), 0);
+        #[cfg(unix)]
         assert_eq!(canary.unix_accepted.load(Ordering::SeqCst), 0);
     }
     conn.disconnect().await.unwrap();
@@ -366,6 +437,35 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     bridged.disconnect().await.unwrap();
 }
 
+/// The escape attempts only this OS has: Unix sockets, `fork`, `/etc/hosts`,
+/// the host's `/proc` entries (Linux; absent elsewhere) and a serial device.
+#[cfg(unix)]
+fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
+    let host_pid = std::process::id();
+    vec![
+        ("unix", canonical(&canary.unix_path)),
+        ("fork", String::new()),
+        ("read", "/etc/hosts".to_owned()),
+        // The host's memory and environment (Linux /proc; absent elsewhere).
+        ("read", format!("/proc/{host_pid}/mem")),
+        ("read", format!("/proc/{host_pid}/environ")),
+        // A serial device.
+        ("read", "/dev/ttyS0".to_owned()),
+    ]
+}
+
+/// The escape attempts only Windows has: `HKCU\Software`, where other
+/// applications keep saved sessions (an LPAC must not open it, a plain
+/// AppContainer could), the stand-in ADR-13 pipe, and a serial device.
+#[cfg(windows)]
+fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
+    vec![
+        ("reg", "Software".to_owned()),
+        ("pipe", canary.pipe.name.clone()),
+        ("read", r"\\.\COM1".to_owned()),
+    ]
+}
+
 /// Control run: without the sandbox the same probes escape, so every denial
 /// above is the sandbox's doing (the scrubbed environment still hides
 /// `SSH_AUTH_SOCK`, and DNS needs a network, so neither is asserted here).
@@ -379,16 +479,25 @@ async fn without_the_sandbox_the_probes_escape() {
     let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;
     let tcp = format!("127.0.0.1:{}", canary.tcp_port);
     let outside_file = canary.outside_dir.join("escaped.txt");
-    for (op, arg) in [
+    let mut controls = vec![
         ("read", canonical(&canary.secret)),
-        ("read", "/etc/hosts".to_owned()),
         ("write", outside_file.display().to_string()),
         ("tcp", tcp),
-        ("unix", canonical(&canary.unix_path)),
         ("bind", String::new()),
         ("spawn", String::new()),
+    ];
+    #[cfg(unix)]
+    controls.extend([
+        ("read", "/etc/hosts".to_owned()),
+        ("unix", canonical(&canary.unix_path)),
         ("fork", String::new()),
-    ] {
+    ]);
+    #[cfg(windows)]
+    controls.extend([
+        ("reg", "Software".to_owned()),
+        ("pipe", canary.pipe.name.clone()),
+    ]);
+    for (op, arg) in controls {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
         assert!(allowed, "the control probe should escape: {line}");
     }

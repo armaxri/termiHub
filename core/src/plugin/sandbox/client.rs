@@ -32,7 +32,7 @@ use super::bridge::{BridgeDenial, BridgeGrant};
 use super::exit::RunnerExitCause;
 use super::handle::PluginRunnerConfig;
 use super::peer::{ExitHook, Reply, SessionSlot, Shared};
-use super::spawn::{spawn_runner, RunnerChild, Spawned};
+use super::spawn::{spawn_runner, RunnerChild, RunnerSandbox, Spawned};
 use super::writer::ChannelWriter;
 
 /// How long the runner may take to say `Hello` after spawn.
@@ -77,7 +77,14 @@ impl SandboxedPlugin {
         let Spawned {
             mut child,
             mut stream,
-        } = spawn_runner(&config.runner_path, &configure.limits)?;
+        } = spawn_runner(
+            &config.runner_path,
+            &configure.limits,
+            configure.sandbox.as_ref().map(|policy| RunnerSandbox {
+                plugin_id: &configure.plugin_id,
+                policy,
+            }),
+        )?;
         let stderr = child.stderr.take();
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
         shared.set_output_rate_cap(config.output_rate_cap);
@@ -132,6 +139,7 @@ impl SandboxedPlugin {
                 Ok(plugin)
             }
             Err(err) => {
+                let err = with_exit_code(err, &shared);
                 shared.kill();
                 Err(err)
             }
@@ -437,6 +445,24 @@ fn handshake<S: ChannelStream>(
             "expected Loaded, got {:?}",
             other.kind()
         ))),
+    }
+}
+
+/// Name the runner's exit code (also in hex: a Windows `NTSTATUS` such as
+/// `0xc0000142` says why a process died before its `main`) in a "the runner
+/// exited" error, so an early death is diagnosable.
+fn with_exit_code(err: HostError, shared: &Shared) -> HostError {
+    match err {
+        HostError::RunnerProtocol(message) if message.contains("the runner exited") => {
+            match shared.exit_code_within(Duration::from_millis(500)) {
+                Some(code) => HostError::RunnerProtocol(format!(
+                    "{message} (exit code {code}, {:#010x})",
+                    code as u32
+                )),
+                None => HostError::RunnerProtocol(message),
+            }
+        }
+        other => other,
     }
 }
 

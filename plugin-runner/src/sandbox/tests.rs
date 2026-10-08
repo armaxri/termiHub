@@ -209,3 +209,22 @@ fn an_invalid_policy_is_reported_as_failed_not_ignored() {
     let report = apply(&SandboxPolicy::default());
     assert_eq!(report.isolation(), Isolation::Failed);
 }
+
+#[test]
+fn app_container_names_are_deterministic_and_short() {
+    let name = app_container_name("acme.ssh-tools");
+    assert_eq!(name, app_container_name("acme.ssh-tools"));
+    assert_ne!(name, app_container_name("acme.ssh-tool"));
+    let hash = name.strip_prefix("termiHub.Plugin.").expect("the prefix");
+    assert_eq!(hash.len(), 16);
+    assert!(hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    // Profile names are limited to 64 characters.
+    assert!(name.len() <= 64);
+}
+
+#[test]
+fn windows_requires_the_appcontainer_layer() {
+    if cfg!(windows) {
+        assert_eq!(required_layers(), &[layer::APPCONTAINER]);
+    }
+}

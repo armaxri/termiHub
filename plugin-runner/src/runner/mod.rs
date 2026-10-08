@@ -123,7 +123,8 @@ pub(crate) fn run<R: Read + Send + 'static>(
         protocol_version: PROTOCOL_VERSION,
         pid: std::process::id(),
     });
-    if channel.send(&hello).is_err() {
+    if let Err(error) = channel.send(&hello) {
+        eprintln!("termihub-plugin-runner: sending Hello failed: {error:?}");
         return exit::PROTOCOL;
     }
     let configure = match next_message(&mut frames) {
