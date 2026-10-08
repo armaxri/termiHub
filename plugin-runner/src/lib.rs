@@ -7,6 +7,8 @@
 //!   `plugin_init` → toolchain rule).
 //! * [`ipc`] — the length-delimited frame protocol between the host and a
 //!   runner process.
+//! * [`sandbox`] — the OS-neutral sandbox policy and report, and the per-OS
+//!   confinement the runner applies to itself before `dlopen` (#4186).
 //!
 //! The runner binary itself (`src/main.rs`) loads exactly one plugin and
 //! proxies the frozen 1.x C ABI over [`ipc`]; the plugin is not rebuilt and the
@@ -14,3 +16,4 @@
 
 pub mod ipc;
 pub mod loader;
+pub mod sandbox;

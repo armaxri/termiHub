@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use termihub_plugin_runner::ipc::{
     Configure, FrameReader, Message, ResourceLimits, Sender, IPC_FD, PROTOCOL_ARG, PROTOCOL_VERSION,
 };
+use termihub_plugin_runner::sandbox::{Isolation, SandboxPolicy};
 
 const RUNNER: &str = env!("CARGO_BIN_EXE_termihub-plugin-runner");
 
@@ -107,6 +108,7 @@ fn a_library_that_cannot_load_is_reported_then_the_runner_exits() {
         host_version: "0.0.0".into(),
         // The limits are applied before the load, so they must not break it.
         limits: ResourceLimits::plugin_defaults(),
+        sandbox: None,
     });
     host.write_all(&configure.encode().unwrap()).unwrap();
     assert!(matches!(next(&host), Message::SandboxReport(_)));
@@ -143,4 +145,80 @@ fn a_frame_only_the_runner_may_send_is_a_violation() {
     };
     host.write_all(&bogus.encode().unwrap()).unwrap();
     assert_eq!(wait_exit(&mut child).code(), Some(2));
+}
+
+fn configure_with(library_path: &str, sandbox: Option<SandboxPolicy>) -> Message {
+    Message::Configure(Configure {
+        library_path: library_path.into(),
+        expected_digest: None,
+        manifest_api_version: None,
+        accept_unverified_toolchain: false,
+        plugin_id: "sandboxed".into(),
+        host_version: "0.0.0".into(),
+        limits: ResourceLimits::plugin_defaults(),
+        sandbox,
+    })
+}
+
+/// A policy the runner cannot apply is reported as failed and the plugin is
+/// never loaded: no `LoadFailed`, no `Loaded`, a distinct exit code (#4186).
+#[test]
+fn a_sandbox_that_cannot_be_applied_never_loads_the_plugin() {
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let policy = SandboxPolicy {
+        install_dir: "relative/install".into(),
+        ..SandboxPolicy::default()
+    };
+    host.write_all(
+        &configure_with("/definitely/not/a/plugin.so", Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Failed, "{report:?}");
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert_eq!(wait_exit(&mut child).code(), Some(4));
+}
+
+/// macOS: a valid policy is enforced with Seatbelt before the load is even
+/// attempted; the load then fails normally (the library does not exist).
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_applies_seatbelt_before_the_load() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let install = root.join("install");
+    let data = root.join("data");
+    std::fs::create_dir_all(&install).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        data_dir: Some(data.to_str().unwrap().into()),
+        denied_dirs: vec![root.to_str().unwrap().into()],
+    };
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let lib = install.join("libmissing.dylib");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+            assert_eq!(report.enforced, vec!["seatbelt".to_owned()]);
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert!(matches!(next(&host), Message::LoadFailed(_)));
+    assert_eq!(wait_exit(&mut child).code(), Some(3));
+    // HOME / TMPDIR were pointed into the data folder.
+    assert!(data.join("tmp").is_dir());
 }
