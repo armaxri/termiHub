@@ -25,6 +25,7 @@
 //! other side may send.
 
 pub mod codec;
+pub mod fair;
 pub mod messages;
 pub mod transport;
 
@@ -42,6 +43,7 @@ pub use messages::{
     StreamTransport, SyscallDenial, WireError, WireToolchain,
 };
 
+pub use fair::FairMutex;
 pub use transport::ChannelStream;
 
 #[cfg(unix)]

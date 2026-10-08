@@ -213,6 +213,45 @@ pub fn kill_process(pid: u32) {
     }
 }
 
+/// The resident set of process `pid` in KiB (Unix, via `ps`).
+#[cfg(unix)]
+pub fn rss_kib(pid: u32) -> Option<u64> {
+    let out = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// The working set of process `pid` in KiB (Windows): the physical memory it
+/// holds, the counterpart of the Unix resident set.
+#[cfg(windows)]
+pub fn rss_kib(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let size = u32::try_from(std::mem::size_of::<PROCESS_MEMORY_COUNTERS>()).ok()?;
+    // SAFETY: opens a child process this test owns for querying only; the
+    // handle is closed below.
+    let process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    // SAFETY: an all-zero `PROCESS_MEMORY_COUNTERS` is a valid value.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    // SAFETY: `counters` is writable for `size` bytes.
+    let ok = unsafe { K32GetProcessMemoryInfo(process, &mut counters, size) };
+    // SAFETY: closes the handle opened above, once.
+    unsafe { CloseHandle(process) };
+    (ok != 0).then(|| u64::try_from(counters.WorkingSetSize / 1024).unwrap_or(u64::MAX))
+}
+
 /// Poll `cond` every 10 ms for up to `timeout`.
 pub fn wait_until(timeout: std::time::Duration, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = std::time::Instant::now() + timeout;

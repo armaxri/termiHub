@@ -7,13 +7,19 @@
 //! senders never interleave, and a frame carrying a descriptor is ordered with
 //! respect to every other frame — which is what lets the runner match passed
 //! descriptors to replies in FIFO order.
+//!
+//! The lock is handed over in arrival order ([`FairMutex`]): with a plain
+//! mutex a session writing in a loop barged back in ahead of the others, and
+//! 40 concurrent echo sessions saw a 2.3x (Linux) to 21x (Windows) spread in
+//! throughput (#4233).
 
 use std::io::{self, Write};
-use std::sync::Mutex;
+
+use termihub_plugin_runner::ipc::FairMutex;
 
 /// A mutex-guarded writer over the channel.
 pub(super) struct ChannelWriter {
-    inner: Mutex<Box<dyn Write + Send>>,
+    inner: FairMutex<Box<dyn Write + Send>>,
     /// A second handle on the same socket for `sendmsg` with `SCM_RIGHTS`;
     /// only ever used while `inner` is locked. `None` in unit tests.
     #[cfg(unix)]
@@ -30,7 +36,7 @@ impl ChannelWriter {
     #[cfg(any(test, not(unix)))]
     pub(super) fn new(inner: Box<dyn Write + Send>) -> Self {
         Self {
-            inner: Mutex::new(inner),
+            inner: FairMutex::new(inner),
             #[cfg(unix)]
             fd_stream: None,
             #[cfg(windows)]
@@ -43,7 +49,7 @@ impl ChannelWriter {
     pub(super) fn for_channel(stream: super::spawn::HostChannel) -> io::Result<Self> {
         let fd_stream = stream.try_clone()?;
         Ok(Self {
-            inner: Mutex::new(Box::new(stream)),
+            inner: FairMutex::new(Box::new(stream)),
             fd_stream: Some(fd_stream),
         })
     }
@@ -65,9 +71,10 @@ impl ChannelWriter {
 
     /// Write one already-encoded frame.
     pub(super) fn write_frame(&self, frame: &[u8]) -> io::Result<()> {
-        let mut writer = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        writer.write_all(frame)?;
-        writer.flush()
+        self.inner.with(|writer| {
+            writer.write_all(frame)?;
+            writer.flush()
+        })
     }
 
     /// Whether this writer can pass descriptors.
@@ -123,8 +130,9 @@ impl ChannelWriter {
             ));
         };
         // Hold the frame lock so nothing interleaves with the descriptor frame.
-        let mut writer = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        writer.flush()?;
-        termihub_plugin_runner::ipc::fd::send_with_fd(stream, frame, fd)
+        self.inner.with(|writer| {
+            writer.flush()?;
+            termihub_plugin_runner::ipc::fd::send_with_fd(stream, frame, fd)
+        })
     }
 }

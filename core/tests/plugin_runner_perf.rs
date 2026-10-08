@@ -10,6 +10,10 @@
 //! | helper cold start               | ≤ 150 ms p95 (spawn + handshake + init) |
 //! | idle helper memory              | ≤ 15 MiB RSS                            |
 //!
+//! The fairness spread is asserted on runners with at least
+//! [`FAIRNESS_MIN_CORES`] cores and reported below that; starvation is asserted
+//! everywhere.
+//!
 //! Every budget breach is collected and reported together, then fails the
 //! test, so one nightly run names every regression. The budgets are absolute
 //! ceilings rather than "within 20 % of the last run": a hosted CI runner
@@ -22,7 +26,9 @@
 //! (concept re-baselined in #4190).
 //!
 //! Ignored by default (timing-sensitive, and only meaningful optimised); the
-//! nightly `plugin-sandbox-nightly.yml` lane runs it on Linux and macOS. Run:
+//! nightly `plugin-sandbox-nightly.yml` lane runs it on Linux, macOS and
+//! Windows (#4233; there the runner starts in its LPAC AppContainer under a job
+//! object, and "RSS" is the runner's working set). Run:
 //!
 //! ```text
 //! cargo test -p termihub-core --features plugin --release \
@@ -30,14 +36,14 @@
 //! ```
 //!
 //! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
-#![cfg(all(feature = "plugin", unix))]
+#![cfg(feature = "plugin")]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 mod plugin_runner_support;
 use plugin_runner_support::{
-    host_for, install_echo, kill_process, new_connection, runner_binary, wait_until,
+    host_for, install_echo, kill_process, new_connection, rss_kib, runner_binary, wait_until,
 };
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
@@ -58,6 +64,14 @@ const BUDGET_MB_PER_S: f64 = 100.0;
 const BUDGET_COLD_START_P95: Duration = Duration::from_millis(150);
 const BUDGET_IDLE_RSS_KIB: u64 = 15 * 1024;
 const BUDGET_FAIRNESS: f64 = 2.0;
+/// Cores the fairness spread needs to be a measurement of the channel: a
+/// writer, the runner's reader and main loop, and the host's reader all run hot
+/// at once. On fewer cores (the 3-vCPU macOS runner) the OS hands the 40
+/// writer threads CPU in ~10 ms batches and single writes stall 50-80 ms, so
+/// the spread ranks the threads' CPU time, not their share of the channel
+/// (#4233 measured 37-77x there, 1.0x on 4+ cores); it is then reported, and
+/// starvation is still asserted.
+const FAIRNESS_MIN_CORES: usize = 4;
 /// A session of the 40 that has not finished by then is starved.
 const STARVATION_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -101,29 +115,49 @@ async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
     }
     samples.sort();
     let (p50, p99) = (percentile(&samples, 50), percentile(&samples, 99));
-    let mb_per_s = pump(conn, rx, THROUGHPUT_CHUNK, THROUGHPUT_TOTAL)
-        .await
-        .expect("echo keeps flowing");
+    let mb_per_s = pump(
+        conn,
+        rx,
+        THROUGHPUT_CHUNK,
+        THROUGHPUT_TOTAL,
+        Arc::new(Barrier::new(1)),
+    )
+    .await
+    .expect("echo keeps flowing");
     Measured { p50, p99, mb_per_s }
 }
 
 /// Write `total` bytes in `chunk`-sized writes from a blocking thread while
 /// draining the echo; return MB/s, or `None` if the echo stopped.
-async fn pump(conn: Shared, mut rx: OutputReceiver, chunk: usize, total: usize) -> Option<f64> {
-    let start = Instant::now();
+///
+/// The writer starts once every pump sharing `start` is ready, and the rate is
+/// timed from that common release: otherwise the first writers of a fairness
+/// run would pump alone while the others' threads are still being created (a
+/// 3-vCPU CI runner showed one session at 936 MB/s, near the solo rate, next
+/// to 25 MB/s ones), which measures thread start-up skew, not sharing.
+async fn pump(
+    conn: Shared,
+    mut rx: OutputReceiver,
+    chunk: usize,
+    total: usize,
+    start: Arc<Barrier>,
+) -> Option<f64> {
     let writer = tokio::task::spawn_blocking(move || {
+        start.wait();
+        let released = Instant::now();
         let data = vec![b'a'; chunk];
         for _ in 0..total / chunk {
             conn.lock().unwrap().write(&data).unwrap();
         }
+        released
     });
     let mut received = 0usize;
     while received < total {
         received += rx.recv().await?.len();
     }
-    let elapsed = start.elapsed();
-    writer.await.unwrap();
-    Some(total as f64 / 1_000_000.0 / elapsed.as_secs_f64())
+    let done = Instant::now();
+    let released = writer.await.unwrap();
+    Some(total as f64 / 1_000_000.0 / (done - released).as_secs_f64())
 }
 
 /// `n` cold starts (spawn + handshake + dlopen + init) by loading and
@@ -153,14 +187,6 @@ fn cold_starts(host: &PluginHost, plugin: &InstalledPlugin, n: usize) -> Vec<Dur
     samples
 }
 
-fn rss_kib(pid: u32) -> Option<u64> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
-}
-
 fn runner_pid(host: &PluginHost, id: &str) -> u32 {
     host.sandboxed_plugin(id)
         .and_then(|h| h.running())
@@ -175,13 +201,15 @@ async fn fairness(registry: &Registry, type_id: &str) -> Vec<Option<f64>> {
     for _ in 0..FAIR_SESSIONS {
         sessions.push(session(registry, type_id).await);
     }
+    let start = Arc::new(Barrier::new(FAIR_SESSIONS));
     let pumps: Vec<_> = sessions
         .into_iter()
         .map(|(conn, rx)| {
+            let start = Arc::clone(&start);
             tokio::spawn(async move {
                 tokio::time::timeout(
                     STARVATION_TIMEOUT,
-                    pump(conn, rx, FAIR_CHUNK, FAIR_PER_SESSION),
+                    pump(conn, rx, FAIR_CHUNK, FAIR_PER_SESSION, start),
                 )
                 .await
                 .ok()
@@ -268,10 +296,18 @@ async fn out_of_process_echo_stays_within_the_budget() {
     let slowest = finished.iter().copied().fold(f64::INFINITY, f64::min);
     let fastest = finished.iter().copied().fold(0.0, f64::max);
     let spread = fastest / slowest;
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    let fairness_asserted = cores >= FAIRNESS_MIN_CORES;
     println!(
         "{FAIR_SESSIONS} sessions  slowest {slowest:.0} MB/s | fastest {fastest:.0} MB/s | \
          spread {spread:.2}x | starved {starved}"
     );
+    if !fairness_asserted {
+        println!(
+            "({cores} cores < {FAIRNESS_MIN_CORES}: the spread measures CPU scheduling of the \
+             writer threads here; reported, not asserted. Starvation is still asserted.)"
+        );
+    }
 
     write_report(&serde_json::json!({
         "latency_p99_added_us": added_p99.as_micros() as u64,
@@ -282,6 +318,8 @@ async fn out_of_process_echo_stays_within_the_budget() {
         "idle_rss_kib": idle_rss,
         "fair_sessions": FAIR_SESSIONS,
         "fair_spread": spread,
+        "fair_spread_asserted": fairness_asserted,
+        "cores": cores,
         "fair_starved": starved,
         "release": !cfg!(debug_assertions),
     }));
@@ -312,13 +350,13 @@ async fn out_of_process_echo_stays_within_the_budget() {
             breaches.push(format!("idle RSS {kib} KiB > {BUDGET_IDLE_RSS_KIB} KiB"));
         }
         Some(_) => {}
-        None => breaches.push("idle RSS could not be measured (ps)".to_owned()),
+        None => breaches.push("idle RSS could not be measured".to_owned()),
     }
     if starved > 0 {
         breaches.push(format!(
             "{starved} of {FAIR_SESSIONS} sessions starved (> {STARVATION_TIMEOUT:?})"
         ));
-    } else if spread > BUDGET_FAIRNESS {
+    } else if fairness_asserted && spread > BUDGET_FAIRNESS {
         breaches.push(format!("fairness spread {spread:.2}x > {BUDGET_FAIRNESS}x"));
     }
     assert!(
