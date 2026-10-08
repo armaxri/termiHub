@@ -10,6 +10,13 @@
 //! command line as `--ipc-handle <value>` ([`IPC_HANDLE_ARG`]) — an inherited
 //! handle keeps its value in the child — never as a name or a path.
 //!
+//! The handle list needs the listed handles to be inheritable, so the child's
+//! copies are made inheritable for the duration of one spawn only (fresh
+//! duplicates, closed right after). A `std::process::Command` spawned on
+//! another host thread inside that window could still inherit them, because
+//! `std` lists no handles; the only effect is a delayed end of stream on the
+//! host's side (the watchdog still ends a runner that stops answering).
+//!
 //! The process starts suspended, is assigned to a fresh job object, and only
 //! then resumed, so not one instruction of it runs outside the job:
 //!
