@@ -1610,7 +1610,11 @@ flowchart TD
               <tr>
                 <td>40 concurrent sessions in one plugin</td>
                 <td>no frame starvation; fairness within 2×</td>
-                <td>40 echo sessions pumping 8 MiB each through one helper at once</td>
+                <td>
+                  40 echo sessions pumping 8 MiB each through one helper at once, released together;
+                  the spread is asserted on 4+ cores (on the 3-vCPU macOS runner it ranks the writer
+                  threads' CPU time, #4233)
+                </td>
               </tr>
               <tr>
                 <td>Helper cold start (spawn + sandbox + dlopen + init)</td>
