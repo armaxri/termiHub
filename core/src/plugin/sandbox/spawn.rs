@@ -90,9 +90,11 @@ fn spawn_checked(
         .env_clear()
         .envs(scrubbed_env())
         .stdin(Stdio::null())
-        // Plugin stdout/stderr go where they went in-process: the host's.
+        // Plugin stdout goes where it went in-process: the host's. Stderr is
+        // forwarded there line by line by the host (#4184), which watches it
+        // for a plugin's allocation failure under the memory limit.
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
     // SAFETY: the closure runs in the forked child before `exec` and only calls
     // the async-signal-safe `dup2` / `fcntl` on descriptors it was handed.
     unsafe {
@@ -109,7 +111,7 @@ fn spawn_checked(
             Ok(())
         });
     }
-    let mut child = command.spawn().map_err(|e| unavailable(e.to_string()))?;
+    let mut child = spawn_command(command).map_err(|e| unavailable(e.to_string()))?;
     // The runner owns its end now; the host must not keep a copy, or the
     // runner's death would never surface as end-of-stream.
     drop(runner_end);
@@ -126,6 +128,46 @@ fn spawn_checked(
         child,
         stream: host_end,
     })
+}
+
+/// Linux: the runner's `PR_SET_PDEATHSIG` fires when the *thread* that forked
+/// it exits, not the host process. Every runner is therefore forked from one
+/// long-lived spawner thread, so a runner started from a short-lived thread
+/// (crash recovery, a blocking-pool worker) does not die with that thread.
+#[cfg(target_os = "linux")]
+fn spawn_command(command: std::process::Command) -> std::io::Result<Child> {
+    use std::sync::mpsc::{channel, sync_channel, Sender, SyncSender};
+    use std::sync::OnceLock;
+
+    type Request = (std::process::Command, SyncSender<std::io::Result<Child>>);
+    static SPAWNER: OnceLock<Option<Sender<Request>>> = OnceLock::new();
+    let spawner = SPAWNER.get_or_init(|| {
+        let (tx, rx) = channel::<Request>();
+        std::thread::Builder::new()
+            .name("plugin-runner-spawner".to_owned())
+            .spawn(move || {
+                for (mut command, reply) in rx {
+                    let _ = reply.send(command.spawn());
+                }
+            })
+            .ok()
+            .map(|_| tx)
+    });
+    let Some(spawner) = spawner else {
+        return Err(std::io::Error::other("no plugin-runner spawner thread"));
+    };
+    let (reply, result) = sync_channel(1);
+    spawner
+        .send((command, reply))
+        .map_err(|_| std::io::Error::other("the plugin-runner spawner thread is gone"))?;
+    result
+        .recv()
+        .map_err(|_| std::io::Error::other("the plugin-runner spawner thread is gone"))?
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn spawn_command(mut command: std::process::Command) -> std::io::Result<Child> {
+    command.spawn()
 }
 
 /// Send/receive buffer size requested for each end of the channel.

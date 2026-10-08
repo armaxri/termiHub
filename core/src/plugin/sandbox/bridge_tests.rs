@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use termihub_plugin_api::{PluginStatus, CURRENT_PLUGIN_ABI_VERSION};
 use termihub_plugin_runner::ipc::{
     BridgeOp, BridgeReply, BridgeRequest, BridgeResult, ConnRef, FrameReader, Message, Sender,
-    StreamAck, StreamChunk, StreamTransport,
+    StreamAck, StreamChunk, StreamTransport, LIST_DIR_ENTRY_OVERHEAD,
 };
 
 use super::*;
@@ -212,11 +212,15 @@ fn filesystem_requests_are_answered_inside_the_scope_only() {
         id,
         BridgeOp::ListDir {
             path: path_str(&root),
+            cursor: 0,
         },
     )
     .unwrap();
     match h.reply_to(6) {
-        BridgeResult::Entries { mut names } => {
+        BridgeResult::Entries {
+            mut names,
+            next_cursor: 0,
+        } => {
             names.sort();
             assert_eq!(names, ["data.txt", "new.txt"]);
         }
@@ -274,6 +278,125 @@ fn large_files_are_read_in_chunks() {
             eof: true
         }
     );
+}
+
+/// A directory of `count` files with `width`-byte names.
+fn wide_dir(count: usize, width: usize) -> tempfile::TempDir {
+    let tmp = tempfile::TempDir::new().unwrap();
+    for i in 0..count {
+        std::fs::write(tmp.path().join(format!("{i:0width$}")), b"").unwrap();
+    }
+    tmp
+}
+
+fn list(path: &str, cursor: u64) -> BridgeOp {
+    BridgeOp::ListDir {
+        path: path.to_owned(),
+        cursor,
+    }
+}
+
+/// One `list_dir` page: its names and the continuation cursor.
+fn page(h: &mut Harness, request_id: u64) -> (Vec<String>, u64) {
+    match h.reply_to(request_id) {
+        BridgeResult::Entries { names, next_cursor } => (names, next_cursor),
+        other => panic!("expected entries, got {other:?}"),
+    }
+}
+
+#[test]
+fn large_listings_are_paged_from_a_snapshot() {
+    let mut h = Harness::new();
+    // 3000 names of 200 bytes: over one chunk, so at least two pages.
+    let tmp = wide_dir(3000, 200);
+    let id = h.session(fs_perms(tmp.path()));
+    let path = path_str(tmp.path());
+
+    h.request(1, id, list(&path, 0)).unwrap();
+    let (mut names, mut cursor) = page(&mut h, 1);
+    assert_ne!(cursor, 0, "a listing over one frame is paged");
+    let charged: usize = names
+        .iter()
+        .map(|n| n.len() + LIST_DIR_ENTRY_OVERHEAD)
+        .sum();
+    assert!(charged <= MAX_BRIDGE_CHUNK);
+    // A file created between pages is not in this listing (snapshot).
+    std::fs::write(tmp.path().join("late"), b"").unwrap();
+    let first_cursor = cursor;
+    let mut request_id = 2;
+    while cursor != 0 {
+        h.request(request_id, id, list(&path, cursor)).unwrap();
+        let (more, next) = page(&mut h, request_id);
+        assert!(!more.is_empty());
+        names.extend(more);
+        cursor = next;
+        request_id += 1;
+    }
+    names.sort();
+    let expected: Vec<String> = (0..3000).map(|i| format!("{i:0200}")).collect();
+    assert_eq!(names, expected);
+    assert!(lock(&h.shared.bridge.listings).is_empty());
+
+    // A cursor is single-use: replaying a consumed one is an I/O error, not a
+    // violation.
+    h.request(request_id, id, list(&path, first_cursor))
+        .unwrap();
+    assert_eq!(status(&h.reply_to(request_id)), PluginStatus::Io);
+}
+
+#[test]
+fn hostile_list_dir_continuations_are_violations() {
+    let mut h = Harness::new();
+    let tmp = wide_dir(3000, 200);
+    let id = h.session(fs_perms(tmp.path()));
+    let other = h.session(fs_perms(tmp.path()));
+    let path = path_str(tmp.path());
+    // A cursor the host never issued.
+    for cursor in [1, 7, u64::MAX] {
+        assert!(h.request(1, id, list(&path, cursor)).is_err());
+    }
+    h.request(2, id, list(&path, 0)).unwrap();
+    let (_, cursor) = page(&mut h, 2);
+    assert_ne!(cursor, 0);
+    // A live cursor replayed for another session, or for another path.
+    assert!(h.request(3, other, list(&path, cursor)).is_err());
+    let elsewhere = path_str(&tmp.path().join("sub"));
+    assert!(h.request(4, id, list(&elsewhere, cursor)).is_err());
+    // The snapshot is untouched: its owner continues it.
+    h.request(5, id, list(&path, cursor)).unwrap();
+    page(&mut h, 5);
+}
+
+#[test]
+fn abandoned_listings_are_bounded_and_dropped_with_their_session() {
+    let mut h = Harness::new();
+    let tmp = wide_dir(3000, 200);
+    let id = h.session(fs_perms(tmp.path()));
+    let path = path_str(tmp.path());
+    // Start more listings than the host keeps; the least recently paged one
+    // is dropped.
+    let mut cursors = Vec::new();
+    for request_id in 1..=(MAX_OPEN_LISTINGS as u64 + 1) {
+        h.request(request_id, id, list(&path, 0)).unwrap();
+        cursors.push(page(&mut h, request_id).1);
+    }
+    assert_eq!(lock(&h.shared.bridge.listings).len(), MAX_OPEN_LISTINGS);
+    h.request(100, id, list(&path, cursors[0])).unwrap();
+    assert_eq!(status(&h.reply_to(100)), PluginStatus::Io);
+    // Retiring the session drops the rest.
+    h.shared.bridge.close_session(id);
+    assert!(lock(&h.shared.bridge.listings).is_empty());
+}
+
+#[test]
+fn a_small_listing_is_one_page_and_keeps_no_state() {
+    let mut h = Harness::new();
+    let tmp = wide_dir(10, 4);
+    let id = h.session(fs_perms(tmp.path()));
+    h.request(1, id, list(&path_str(tmp.path()), 0)).unwrap();
+    let (names, cursor) = page(&mut h, 1);
+    assert_eq!((names.len(), cursor), (10, 0));
+    assert!(lock(&h.shared.bridge.listings).is_empty());
 }
 
 #[test]
