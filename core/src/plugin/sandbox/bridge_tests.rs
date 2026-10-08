@@ -680,7 +680,7 @@ fn an_approved_connection_passes_the_socket_over_the_channel() {
         Arc::new(PluginLogLimiter::default()),
     );
     let (host_end, runner_end) = UnixStream::pair().unwrap();
-    let writer = Arc::new(ChannelWriter::unix(host_end).unwrap());
+    let writer = Arc::new(ChannelWriter::for_channel(host_end).unwrap());
     shared
         .bridge
         .attach(writer, CURRENT_PLUGIN_ABI_VERSION, Arc::downgrade(&shared));

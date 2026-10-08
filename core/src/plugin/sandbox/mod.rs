@@ -26,10 +26,14 @@
 //!   [`RunnerExitCause`]; a [`CrashBudget`] respawns after three crashes and
 //!   auto-disables on the fourth; a watchdog detects hangs (ping/pong) and, on
 //!   macOS, excess memory; the runner applies [`ResourceLimits`] before it
-//!   loads the plugin.
+//!   loads the plugin (Windows: the host's job object enforces them).
+//! * Transport: a `socketpair` end inherited as descriptor 3 on Unix; on
+//!   Windows a private named pipe passed through a `CreateProcessW` handle
+//!   list, the runner inside a kill-on-close job object (#4201). Sockets are
+//!   not passed over the pipe yet (#4219): bridge connections are proxied.
 //!
 //! **Scope so far.** No OS confinement yet (Seatbelt / landlock + seccomp /
-//! LPAC are phases 4–5), and Windows has no transport yet. The out-of-process path is therefore
+//! LPAC are phases 4–5). The out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
