@@ -196,3 +196,25 @@ tests:
       - "The second drop keeps both files (name (1).ext)"
     verification: manual
     tags: [os-native]
+
+  - id: MT-RD-11
+    release_gate: true
+    manual_reason: "a real OS drag-and-drop onto a direct VNC session plus a live host-key prompt cannot be synthesised by the harness"
+    name: "Upload over a linked SSH connection on a direct VNC session"
+    pr: 4266
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save an SSH connection to the VNC desktop host with its password saved"
+      - "Create a direct VNC connection (SSH Tunnel off) to that host; turn on File Transfer"
+      - "Check the File transfer via picker, then pick another saved SSH connection on a different host"
+      - "Pick the matching connection again, save, connect, and drop a file on the VNC screen"
+      - "Delete the linked SSH connection, reconnect the VNC session and open the Files popover"
+    expected:
+      - "The picker preselects the SSH connection on the VNC host"
+      - "Picking the other connection shows a warning naming both hosts"
+      - "The overlay names the SSH host and 'the linked SSH connection'; the file lands in ~/Desktop there"
+      - "After the delete, file transfer shows as unavailable; nothing crashes"
+    verification: manual
+    tags: [os-native]
