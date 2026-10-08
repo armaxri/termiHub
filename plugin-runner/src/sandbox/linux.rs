@@ -607,11 +607,14 @@ pub mod filters {
 
     /// Install every filter on all threads of this process. Requires
     /// `PR_SET_NO_NEW_PRIVS` (set first by the caller).
+    ///
+    /// The allow-list goes last: it does not allow `seccomp` itself, so no
+    /// filter can be installed after it (not by us, not by the plugin).
     pub fn install() -> Result<(), SandboxError> {
-        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
-        let mut programs = vec![allow_list()?, eperm(std::process::id())?, kill_list()?];
+        let mut programs = vec![eperm(std::process::id())?, kill_list()?];
         #[cfg(target_arch = "x86_64")]
         programs.push(x32_guard());
+        programs.push(allow_list()?);
         for program in &programs {
             apply_filter_all_threads(program).map_err(|e| failed(&e))?;
         }
