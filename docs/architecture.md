@@ -1159,16 +1159,16 @@ binary. `core/build.rs` embeds the staged file's SHA-256 (release profile only) 
 hashes it through a retained handle, spawns through that handle and re-hashes it
 after the spawn (`core/src/plugin/sandbox/locate.rs`, reusing the runner loader's
 `PinnedLibrary`), and refuses a missing or tampered one with "Plugin runner is
-missing — reinstall termiHub". A runner picked explicitly (the debug override
-`TERMIHUB_PLUGIN_RUNNER`, tests) and debug builds, which resolve the cargo-built
+missing — reinstall termiHub". A runner picked explicitly (the debug-build and test override
+`TERMIHUB_PLUGIN_RUNNER`) and debug builds, which resolve the cargo-built
 runner, skip the check. On macOS the build script ad-hoc signs the staged runner
 under its installed name, so the release's inside-out re-sign of the `.app` is
 byte-identical and the digest still matches. `scripts/internal/verify-plugin-runner-bundle.sh`
 checks that a bundle's runner starts and matches the digest the app embeds:
 `build.yml` (PR), `dev-build.yml` / `release.yml` (target dir, AppImage, `.deb`,
-re-signed `.app`), the release install smokes and `release-check`. Release builds
-still never spawn it: out-of-process plugins stay a debug-build opt-in until the
-plugin OS-sandbox cut-over (#3769).
+re-signed `.app`), the release install smokes and `release-check`. Every build runs
+native plugins only through the runner (ADR-19, #4189); there is no in-process load
+path left to fall back to.
 
 The Windows **agent** binaries (#4175: `termihub-agent-windows-x64.exe` /
 `-arm64.exe`) link it statically too, because the desktop deploys them to remote hosts
@@ -3147,8 +3147,14 @@ through.
 
 ### ADR-15: Native Plugin ABI Frozen at 1.0 with Major/Minor Compatibility
 
-**Context:** Native terminal-backend plugins are `cdylib`s loaded in-process through the
-hand-rolled `#[repr(C)]` ABI in `termihub-plugin-api`. Before the 0.1 release that ABI was a single
+> **Amended by ADR-19 (2026-10-08, #4189).** This ADR was written while native plugins were
+> `dlopen`ed into the termiHub process. Since ADR-19 they load only inside a sandboxed
+> `termihub-plugin-runner` helper process; the ABI, its version gate and the toolchain rule below
+> are unchanged and are now enforced by the runner's loader. Where the text below says
+> "in-process", read it as the historical reason for a decision, not as the current loading model.
+
+**Context:** Native terminal-backend plugins are `cdylib`s loaded (at the time, in-process) through
+the hand-rolled `#[repr(C)]` ABI in `termihub-plugin-api`. Before the 0.1 release that ABI was a single
 `u32` counter checked by **exact equality** and bumped on every layout change (it reached `4` via
 issues #2018, #2024 and #2030), while the manifest carried a second, independent `apiVersion` (`"1.0"`) that
 never moved (audit findings PLG-001/002/003). An auto-updating host on an exact-match ABI orphans
@@ -3187,7 +3193,8 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   and reached by pointer, so a 1.0 plugin writes/reads only its unchanged prefix. The host reads the
   toolchain fields and builds a context only when the plugin's ABI `supports(1.1)`.
   `abi_layout.rs` pins the new offsets; `abi_minor_compat.rs` drives the 1.1 host types with a
-  1.0-shaped plugin, and `core/tests/plugin_abi_1_1.rs` does the same across a real `dlopen`.
+  1.0-shaped plugin, and `core/tests/plugin_abi_1_1.rs` does the same across a real `dlopen` (the
+  runner's loader for the toolchain gate, the host and its sandboxed runner for the context).
 - **Toolchain rule: exact match, fail closed.** A plugin at 1.1+ loads only if its rustc (release
   **and** commit hash) and panic strategy equal the host's own record. Layouts are `#[repr(C)]` and
   toolchain-independent, but the host's panic containment (a `panic = "abort"` plugin turns any panic
@@ -3197,7 +3204,9 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   malformed record on either side refuses. Both halves are captured by the SDK itself (a build script
   runs the compiler's `rustc -vV`; `cfg!(panic)`), so authors cannot forget them.
 - **ABI 1.0 plugins: refused unless explicitly accepted.** A 1.0 plugin cannot prove its toolchain.
-  Warn-and-allow was rejected: native plugins run in-process, and under the ventilator-grade bar an
+  Warn-and-allow was rejected: native plugins then ran in-process (since ADR-19 they run in a
+  sandboxed helper, where a toolchain fault still ends every session of the plugin), and under the
+  ventilator-grade bar an
   unverifiable reliability risk must be an informed, recorded decision, not a log line. Refusing
   outright was rejected too, since it would break the append-only promise. So a 1.0 plugin loads —
   and then behaves exactly as under 1.0 (no context, no data directory) — only when its **hash-bound
@@ -3233,7 +3242,8 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
   is permanent. File browsing, monitoring and graphical sessions each carry a large, stateful
   contract (paths and transfers, polling and units, framebuffers and input) that would have to be
   designed, frozen and security-reviewed before 0.1 with no plugin yet asking for it. Reconnect for
-  an in-process native backend additionally needs a defined re-create/resume protocol and
+  a native backend (in-process at the time, a sandboxed runner since ADR-19) additionally needs a
+  defined re-create/resume protocol and
   cancellation semantics under the ventilator-grade bar. Shipping terminal-only keeps the frozen
   surface to the one contract that is exercised end to end today.
 - **How it grows.** Append-only, opt-in, per surface: a later minor adds a host-owned capability
@@ -3245,12 +3255,12 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
 - **Dogfooding (PLG-005).** The coverage that stands in for a first-party plugin is the per-OS
   package-then-load lane (`.github/workflows/plugin-packaging.yml`, #3508): on ubuntu, windows and
   macOS it builds `examples/plugins/echo-backend` with the real packer, installs the
-  `.termihub-plugin` through `PluginManager`, satisfies the hash-bound trust gate, `dlopen`s it
-  through the real `PluginHost`, asserts the terminal-only capabilities, connects, echoes I/O,
+  `.termihub-plugin` through `PluginManager`, satisfies the hash-bound trust gate, loads it
+  through the real `PluginHost` (in the sandboxed runner since ADR-19), asserts the terminal-only capabilities, connects, echoes I/O,
   disconnects and unloads (`core/tests/plugin_package_load.rs`); a merge job repeats this on
   Linux with the combined multi-platform package. `core/tests/plugin_abi_1_1.rs` covers toolchain enforcement,
   the host context and 1.0 compatibility across a real `dlopen`, and
-  `core/tests/plugin_host_roundtrip.rs` the unpackaged load path. **Moving a first-party built-in
+  `core/tests/plugin_host_roundtrip.rs` the loader's ABI gates on an unpackaged library. **Moving a first-party built-in
   backend onto the ABI is deferred together with the ceiling:** the built-ins worth porting (SSH, local
   shell) rely on the file browser, monitoring and reconnect the ceiling excludes, so porting one now
   would regress it; that becomes worthwhile once the capability tables above exist.
@@ -3319,7 +3329,8 @@ terminal sessions for people who expect nothing to leave their machine.
 ### ADR-17: Plugin Discovery via a Curated, Checksum-Carrying Index over HTTPS
 
 **Context:** Plugins could only be installed from a local file (audit PROD-048). Users need an
-in-app way to find plugins, but termiHub loads native code in-process, so discovery must not
+in-app way to find plugins, but termiHub loads native code (in-process at the time; in a sandboxed
+helper since ADR-19), so discovery must not
 become a new way to install or trust something the user did not review. The webview's CSP
 forbids it from fetching remote content, so any network access has to happen in the backend.
 
@@ -3441,6 +3452,66 @@ still passes its own signature and acknowledgement gates.
   filesystem attacker can forge a pin for _their_ key.
 - Losing or leaking the private key needs a new key and new desktop builds (`--force`); plugins
   signed with the old key then verify as first-party only in desktops that still carry it.
+
+### ADR-19: Native plugins run out of process in an OS sandbox
+
+**Status:** Accepted (2026-10-08, #4189) — closes audit finding SEC-002; tracker #3769
+
+**Context:** Until this decision a native plugin backend (a `cdylib` speaking the frozen 1.x C ABI
+of ADR-15) was `dlopen`ed into the main termiHub process. Once loaded it could read the decrypted
+credential vault from memory, use `SSH_AUTH_SOCK`, read `~/.ssh`, open any socket and tamper with
+every live session; the permission model and the capability bridge only mediated what a
+_cooperating_ plugin routed through them (audit SEC-002, "inverted trust model"). For 0.1 the risk
+was contained by policy only: native plugins default-off, a hash-bound trust acknowledgement
+(#3296) and a terminal-only ceiling (PLG-004). The maintainer decided on 2026-09-25 that a real OS
+sandbox is a pre-v1.0 requirement and approved the concept
+([`plugin-os-sandbox.html`](concepts/implemented/plugin-os-sandbox.html)) as designed on 2026-10-06.
+
+**Decision:**
+
+- **One sandboxed helper process per plugin, and no other way to load one.** A small dedicated
+  sidecar, `termihub-plugin-runner` (`plugin-runner/`), loads the unchanged plugin library inside
+  itself and serves the 1.x ABI over a framed IPC channel (an inherited socket pair on Unix, a
+  private named pipe on Windows). The host no longer `dlopen`s any native plugin: the in-process
+  load path and the debug-build developer flag that kept it reachable were removed (#4189). There is
+  no user-facing "run unsandboxed" switch. Per-session and per-publisher helpers were rejected
+  (process count and changed ABI semantics; a shared, union-of-permissions profile).
+- **Deny by default, mediate through the host.** The runner confines itself before any plugin code
+  is mapped — Linux: `no_new_privs`, landlock, seccomp, and an optional user + network namespace;
+  macOS: a Seatbelt profile (`sandbox_init_with_parameters`); Windows: the host starts it in a
+  per-plugin Less-Privileged AppContainer with no capabilities inside a kill-on-close job object.
+  The plugin may read its install folder and the system libraries and read/write only its data
+  folder (`<plugins>/.data/<id>`, where `HOME` and `TMPDIR` point); it cannot open other files,
+  create sockets, start processes or reach devices. Declared `network` / `filesystem` permissions
+  are served only by the capability bridge, which now runs in the host across the IPC boundary;
+  an approved connection is passed to the runner as a connected socket handle.
+- **Fail closed.** The runner reports the layers it actually enforced before `dlopen`. If a layer is
+  missing (mostly a Linux kernel without landlock) the plugin loads only with the hash-bound
+  `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. A missing or
+  tampered bundled runner (checked against a digest compiled into the app) disables native plugins.
+- **Crash isolation.** A crash, `panic = "abort"`, hang (ping deadline) or resource-limit breach
+  ends only that plugin's sessions; `RestartTracker` restarts it up to three times, then
+  auto-disables it. Idle runners are reaped after five minutes.
+- **Unchanged:** the ABI (no version bump; the SDK stays `publish = false`), the ABI and toolchain
+  gates of ADR-15 (now run by the runner's loader), the global native-plugins default-off toggle
+  for 1.0, and the per-plugin trust acknowledgement — the sandbox limits what a plugin can reach,
+  not what it draws in its own terminal.
+
+**Consequences:**
+
+- A compromised or malicious native plugin can no longer read termiHub's memory, the user's files
+  outside its data folder or the SSH agent, nor open network connections the user did not allow.
+  Escape probes for each OS run on every PR, an IPC fuzz and performance gate on the nightly lane
+  (#4190, #4233).
+- Plugin authors see three behaviour changes, documented in
+  [`plugin-authoring.md`](plugin-authoring.md#the-plugin-sandbox): direct `std::net` / `std::fs`
+  outside the data folder fails with a permission error (use the bridge), no process spawning, and
+  `HOME` / `TMPDIR` point into the data folder. No third-party plugin had shipped, so there was no
+  dual-mode period.
+- Each enabled plugin costs one process; terminal I/O crosses a socket (budget: at most +0.5 ms p99
+  echo latency, an absolute throughput floor instead of a ratio, #4190).
+- The sandbox raises the cost of an attack; it does not protect against kernel or OS escapes.
+  Follow-ups: a Windows per-machine install check (#4252) and macOS scheduling fairness (#4260).
 
 ---
 
