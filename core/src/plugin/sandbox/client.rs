@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 
 use termihub_plugin_api::PluginError;
 use termihub_plugin_runner::ipc::{
-    ChannelStream, Configure, FrameReader, Message, ProtocolError, Sender, PROTOCOL_VERSION,
+    ChannelStream, Configure, FrameReader, Message, ProtocolError, SandboxReport, Sender,
+    PROTOCOL_VERSION,
 };
 use termihub_plugin_runner::loader::check_library_abi;
 use termihub_plugin_runner::loader::LoadedPluginInfo;
@@ -50,6 +51,7 @@ pub(super) const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// A running plugin runner, after a successful handshake.
 pub struct SandboxedPlugin {
     info: LoadedPluginInfo,
+    sandbox: SandboxReport,
     writer: Arc<ChannelWriter>,
     shared: Arc<Shared>,
 }
@@ -90,7 +92,7 @@ impl SandboxedPlugin {
             }
         }
         match handshake(&mut stream, configure) {
-            Ok(info) => {
+            Ok((info, sandbox)) => {
                 let _ = stream.set_read_timeout(None);
                 let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
                 let reader = stream
@@ -116,12 +118,14 @@ impl SandboxedPlugin {
                     .inspect_err(|_| shared.kill())?;
                 let plugin = Arc::new(Self {
                     info,
+                    sandbox,
                     writer,
                     shared,
                 });
                 super::watchdog::spawn(
                     Arc::downgrade(&plugin),
                     config.watchdog,
+                    configure.limits.address_space_bytes,
                     &configure.plugin_id,
                 );
                 Ok(plugin)
@@ -137,6 +141,14 @@ impl SandboxedPlugin {
     #[must_use]
     pub fn info(&self) -> &LoadedPluginInfo {
         &self.info
+    }
+
+    /// What OS confinement the runner reported before it loaded the plugin
+    /// (#4186): the enforced layers, or empty when none was requested or this
+    /// platform has none yet.
+    #[must_use]
+    pub fn sandbox_report(&self) -> &SandboxReport {
+        &self.sandbox
     }
 
     /// Why the runner ended, once it did (or while the host is ending it).
@@ -370,7 +382,7 @@ impl Drop for CallGuard<'_> {
 fn handshake<S: ChannelStream>(
     stream: &mut S,
     configure: &Configure,
-) -> Result<LoadedPluginInfo, HostError> {
+) -> Result<(LoadedPluginInfo, SandboxReport), HostError> {
     let protocol = |what: &str| HostError::RunnerProtocol(what.to_owned());
     match next_frame(stream, HELLO_TIMEOUT, "Hello")? {
         Message::Hello(hello) if hello.protocol_version == PROTOCOL_VERSION => {}
@@ -388,15 +400,22 @@ fn handshake<S: ChannelStream>(
     stream
         .write_all(&frame)
         .map_err(|e| protocol(&format!("sending Configure: {e}")))?;
-    match next_frame(stream, LOAD_TIMEOUT, "SandboxReport")? {
-        Message::SandboxReport(_) => {}
+    let sandbox = match next_frame(stream, LOAD_TIMEOUT, "SandboxReport")? {
+        // A requested sandbox must be in force before the plugin is mapped;
+        // the caller kills the runner on `Err`, so it never loads (#4186).
+        Message::SandboxReport(report) => {
+            if configure.sandbox.is_some() {
+                super::policy::check_report(&report)?;
+            }
+            report
+        }
         other => {
             return Err(protocol(&format!(
                 "expected SandboxReport, got {:?}",
                 other.kind()
             )))
         }
-    }
+    };
     match next_frame(stream, LOAD_TIMEOUT, "Loaded")? {
         Message::Loaded(loaded) => {
             let info = loaded.into_info();
@@ -407,7 +426,7 @@ fn handshake<S: ChannelStream>(
                 termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION,
                 configure.manifest_api_version.as_deref(),
             )?;
-            Ok(info)
+            Ok((info, sandbox))
         }
         Message::LoadFailed(failed) => Err(HostError::RunnerLoad {
             incompatible: failed.incompatible,

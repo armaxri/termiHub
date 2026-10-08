@@ -17,9 +17,11 @@
 //! gone) and — on Linux — when the parent dies (`PR_SET_PDEATHSIG`); on Windows
 //! the host's kill-on-close job object ends it with the host.
 //!
-//! Phase 1 applies **no OS sandbox** yet; the per-OS confinement (Seatbelt,
-//! landlock + seccomp, LPAC) lands in later phases between the handshake and
-//! the `dlopen`. See `docs/concepts/backlog/plugin-os-sandbox.html`.
+//! Between the handshake and the `dlopen` the runner confines itself with the
+//! OS sandbox the host requests in `Configure` (Seatbelt on macOS, #4186;
+//! no_new_privs + landlock + seccomp on Linux, #4185; LPAC follows in #4187).
+//! See
+//! `docs/concepts/backlog/plugin-os-sandbox.html`.
 
 mod runner;
 

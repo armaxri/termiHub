@@ -22,7 +22,9 @@
 //!
 //! * `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — the job handle lives in
 //!   [`JobChild`]; when the host process exits (cleanly or not) the system
-//!   closes it and kills the runner, and so does dropping the [`JobChild`].
+//!   closes it and kills the runner, and so does dropping the [`JobChild`]
+//!   (the system reports exit code 0 for that kill; [`JobChild::kill`]
+//!   reports [`KILLED_EXIT_CODE`]).
 //! * `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION` — a crashing plugin ends
 //!   the runner at once instead of waiting on the error-reporting dialog.
 //! * The [`ResourceLimits`] (#4184): `address_space_bytes` becomes the job's

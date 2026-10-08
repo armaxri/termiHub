@@ -10,6 +10,8 @@
 //!   private named pipe on Windows).
 //! * `process` (Windows) — starting a runner inside a kill-on-close job object
 //!   with an explicit inherited-handle list; Unix spawns through `std`.
+//! * [`sandbox`] — the OS-neutral sandbox policy and report, and the per-OS
+//!   confinement the runner applies to itself before `dlopen` (#4186).
 //!
 //! The runner binary itself (`src/main.rs`) loads exactly one plugin and
 //! proxies the frozen 1.x C ABI over [`ipc`]; the plugin is not rebuilt and the
@@ -19,5 +21,6 @@ pub mod ipc;
 pub mod loader;
 #[cfg(windows)]
 pub mod process;
+pub mod sandbox;
 #[cfg(windows)]
 mod win;

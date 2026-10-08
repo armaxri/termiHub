@@ -91,13 +91,54 @@ enum Beat {
 }
 
 /// Start the watchdog thread for `plugin`.
-pub(super) fn spawn(plugin: Weak<SandboxedPlugin>, config: WatchdogConfig, plugin_id: &str) {
+/// `address_space_limit` is the runner's `RLIMIT_AS` (Linux), used to tell a
+/// hang from a runner busy running out of memory.
+pub(super) fn spawn(
+    plugin: Weak<SandboxedPlugin>,
+    config: WatchdogConfig,
+    address_space_limit: Option<u64>,
+    plugin_id: &str,
+) {
     let _ = std::thread::Builder::new()
         .name(format!("plugin-runner-watchdog-{plugin_id}"))
-        .spawn(move || run(&plugin, config));
+        .spawn(move || run(&plugin, config, address_space_limit));
 }
 
-fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig) {
+/// The share of a memory limit above which a stalled runner counts as out of
+/// memory rather than hung (#4239).
+const MEMORY_PRESSURE_PERCENT: u64 = 85;
+
+/// Whether `used` is close enough to `limit` to call it memory pressure.
+fn near(used: u64, limit: u64) -> bool {
+    used.saturating_mul(100) >= limit.saturating_mul(MEMORY_PRESSURE_PERCENT)
+}
+
+/// Why a runner that stopped answering pings is killed: out of memory when it
+/// is close to a memory limit (it is stalled on allocation, or about to fail
+/// one), else not responding.
+fn hang_cause(
+    pid: Option<u32>,
+    config: &WatchdogConfig,
+    address_space_limit: Option<u64>,
+) -> RunnerExitCause {
+    let Some(pid) = pid else {
+        return RunnerExitCause::NotResponding;
+    };
+    let rss_pressure = config
+        .rss_limit
+        .zip(resident_bytes(pid))
+        .is_some_and(|(limit, rss)| near(rss, limit));
+    let address_space_pressure = address_space_limit
+        .zip(address_space_bytes(pid))
+        .is_some_and(|(limit, used)| near(used, limit));
+    if rss_pressure || address_space_pressure {
+        RunnerExitCause::OutOfMemory
+    } else {
+        RunnerExitCause::NotResponding
+    }
+}
+
+fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig, address_space_limit: Option<u64>) {
     let tick = config.tick();
     let mut next_ping = Instant::now() + config.ping_interval;
     let mut next_poll = Instant::now();
@@ -116,7 +157,10 @@ fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig) {
                 let _ = plugin.send(&Message::Ping(Heartbeat { nonce }));
             }
             Beat::Hang => {
-                end(&plugin, RunnerExitCause::NotResponding);
+                end(
+                    &plugin,
+                    hang_cause(plugin.pid(), &config, address_space_limit),
+                );
                 return;
             }
             Beat::Wait => {}
@@ -171,7 +215,28 @@ fn heartbeat(shared: &Shared, now: Instant, next_ping: Instant, hang_timeout: Du
     }
 }
 
-/// The resident size of process `pid` in bytes, where the platform can tell.
+/// The address space (virtual size) of process `pid` in bytes — what
+/// `RLIMIT_AS` caps. Linux only; elsewhere `None`.
+#[must_use]
+fn address_space_bytes(pid: u32) -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+        let pages: u64 = statm.split_whitespace().next()?.parse().ok()?;
+        // SAFETY: `sysconf` has no preconditions.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        Some(pages.saturating_mul(u64::try_from(page).ok()?))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+/// The memory process `pid` uses, in bytes, where the platform can tell: the
+/// resident size on Linux, the physical footprint (resident + compressed +
+/// swapped) on macOS.
 #[must_use]
 pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -185,24 +250,25 @@ pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
     }
     #[cfg(target_os = "macos")]
     {
-        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
-        let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_taskinfo>()).ok()?;
-        // SAFETY: `info` is writable for exactly `size` bytes; the kernel
-        // fills at most that much and returns how many bytes it wrote.
-        let written = unsafe {
-            libc::proc_pidinfo(
+        // The physical footprint, not `pti_resident_size`: under memory
+        // pressure macOS compresses or swaps a process's pages, which drops
+        // its resident size but not its footprint (#4239). The footprint is
+        // what jetsam and Activity Monitor's "Memory" column account.
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v2>::zeroed();
+        // SAFETY: `info` is a writable `rusage_info_v2`, the struct the
+        // `RUSAGE_INFO_V2` flavor fills.
+        let rc = unsafe {
+            libc::proc_pid_rusage(
                 libc::c_int::try_from(pid).ok()?,
-                libc::PROC_PIDTASKINFO,
-                0,
-                info.as_mut_ptr().cast(),
-                size,
+                libc::RUSAGE_INFO_V2,
+                info.as_mut_ptr().cast::<libc::rusage_info_t>(),
             )
         };
-        if written != size {
+        if rc != 0 {
             return None;
         }
-        // SAFETY: the kernel filled the whole struct (checked above).
-        Some(unsafe { info.assume_init() }.pti_resident_size)
+        // SAFETY: the call succeeded, so the kernel filled the struct.
+        Some(unsafe { info.assume_init() }.ri_phys_footprint)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -264,6 +330,42 @@ mod tests {
         // An answered ping clears it; the next one gets the next nonce.
         shared.heartbeat.lock().unwrap().outstanding_since = None;
         assert_eq!(heartbeat(&shared, t0 + hang * 3, t0, hang), Beat::Ping(2));
+    }
+
+    #[test]
+    fn a_stalled_runner_near_its_memory_limit_is_out_of_memory() {
+        assert!(near(86, 100));
+        assert!(near(100, 100));
+        assert!(!near(50, 100));
+        let me = Some(std::process::id());
+        let quiet = WatchdogConfig {
+            rss_limit: None,
+            ..WatchdogConfig::default()
+        };
+        // No limit, or far below one: a plain hang.
+        assert_eq!(hang_cause(me, &quiet, None), RunnerExitCause::NotResponding);
+        assert_eq!(
+            hang_cause(None, &quiet, Some(1)),
+            RunnerExitCause::NotResponding
+        );
+        assert_eq!(
+            hang_cause(me, &quiet, Some(u64::MAX)),
+            RunnerExitCause::NotResponding
+        );
+        // A limit this process already exceeds: out of memory.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let tight = WatchdogConfig {
+                rss_limit: Some(1024),
+                ..WatchdogConfig::default()
+            };
+            assert_eq!(hang_cause(me, &tight, None), RunnerExitCause::OutOfMemory);
+        }
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            hang_cause(me, &quiet, Some(1024)),
+            RunnerExitCause::OutOfMemory
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

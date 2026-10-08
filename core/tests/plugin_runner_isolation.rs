@@ -260,24 +260,34 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
     f.host.unload(&f.echo.plugin.manifest.id);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn unbounded_allocation_is_killed_as_out_of_memory() {
-    // Linux enforces the address-space cap; macOS has none, so the host's
-    // resident-size poll ends it. A small limit keeps the test light.
-    let config = default_config()
+/// The memory limits the out-of-memory tests run under: Linux enforces the
+/// 512 MiB address-space cap; macOS has none, so the host's resident-size
+/// poll ends the runner there.
+fn memory_limited(watchdog: WatchdogConfig, rss_limit: u64) -> PluginRunnerConfig {
+    default_config()
         .with_limits(ResourceLimits {
             address_space_bytes: Some(512 * 1024 * 1024),
             ..ResourceLimits::plugin_defaults()
         })
         .with_watchdog(WatchdogConfig {
-            rss_limit: if cfg!(target_os = "macos") {
-                Some(128 * 1024 * 1024)
-            } else {
-                None
-            },
+            rss_limit: cfg!(target_os = "macos").then_some(rss_limit),
             rss_poll_interval: Duration::from_millis(50),
+            ..watchdog
+        })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unbounded_allocation_is_killed_as_out_of_memory() {
+    // The allocation loop runs inside a plugin call, so the runner also stops
+    // answering pings. A hang timeout far beyond the test's wait keeps the
+    // memory path the only one that can end it (#4239): no timer race.
+    let config = memory_limited(
+        WatchdogConfig {
+            hang_timeout: Duration::from_secs(600),
             ..fast_watchdog()
-        });
+        },
+        128 * 1024 * 1024,
+    );
     let f = fixture(config);
     let (echo, mut echo_rx) = connect(&f.registry, &f.echo.type_id).await;
 
@@ -285,6 +295,52 @@ async fn unbounded_allocation_is_killed_as_out_of_memory() {
     assert_eq!(cause, RunnerExitCause::OutOfMemory);
     assert!(wait_until(WAIT, || crashes(&f) == 1));
     assert_echo_alive(echo.as_ref(), &mut echo_rx, "after alloc").await;
+    f.host.unload(&f.crash.plugin.manifest.id);
+    f.host.unload(&f.echo.plugin.manifest.id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hang_close_to_the_memory_limit_is_out_of_memory() {
+    // The plugin holds ~90 % of its memory limit and then stops answering:
+    // the hang verdict reports out of memory, not "not responding" (#4239).
+    let f = fixture(memory_limited(fast_watchdog(), 512 * 1024 * 1024));
+    let (conn, mut rx) = connect(&f.registry, &f.crash.type_id).await;
+    // ~90 % of the limit. On Linux the runner's own address space (libraries,
+    // stacks, malloc arenas) counts too, so the hoard may instead hit the cap
+    // and abort: that is out of memory as well.
+    let mib = if cfg!(target_os = "linux") { 420 } else { 460 };
+    conn.write(format!("!hoard:{mib}").as_bytes()).unwrap();
+    assert_eq!(read_line(&mut rx).await, "HOARDING");
+    // The hoard grows on a plugin thread, so pings keep being answered.
+    let done = format!("HOARDED:{mib}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut hoarded = false;
+    while conn.is_connected() {
+        if conn.write(b"!hoarded").is_err() {
+            break;
+        }
+        match tokio::time::timeout(WAIT, rx.recv()).await {
+            Ok(Some(chunk)) if chunk == done.as_bytes() => {
+                hoarded = true;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => break,
+            Err(_) => panic!("no answer from the hoarding plugin"),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the hoard never finished"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    if hoarded {
+        // Now stall: the hang verdict sees the memory pressure.
+        conn.write(b"!spin").unwrap();
+    }
+    assert!(wait_until(WAIT, || conn.plugin_exit_cause().is_some()));
+    assert_eq!(conn.plugin_exit_cause(), Some(RunnerExitCause::OutOfMemory));
+    drop(conn);
     f.host.unload(&f.crash.plugin.manifest.id);
     f.host.unload(&f.echo.plugin.manifest.id);
 }

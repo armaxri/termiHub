@@ -24,8 +24,19 @@ fn sample_messages() -> Vec<Message> {
             plugin_id: "x".into(),
             host_version: "1.2.3".into(),
             limits: ResourceLimits::plugin_defaults(),
+            sandbox: Some(crate::sandbox::SandboxPolicy {
+                install_dir: "/p".into(),
+                data_dir: Some("/d/x".into()),
+                denied_dirs: vec!["/home/u".into()],
+                simulate_missing: vec!["landlock".into()],
+            }),
         }),
         Message::SandboxReport(SandboxReport::default()),
+        Message::SandboxReport(SandboxReport {
+            enforced: vec!["seatbelt".into()],
+            missing: vec!["landlock".into()],
+            failed: Some("boom".into()),
+        }),
         Message::Loaded(Loaded {
             id: "x".into(),
             name: "X".into(),
@@ -546,9 +557,34 @@ fn a_configure_without_limits_decodes_as_unlimited() {
     match read_all(&frame).pop() {
         Some(Message::Configure(configure)) => {
             assert_eq!(configure.limits, ResourceLimits::default());
+            assert_eq!(configure.sandbox, None, "an older host requests no sandbox");
             assert_eq!(configure.plugin_id, "x");
         }
         other => panic!("expected Configure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_sandbox_report_without_failed_decodes_as_not_failed() {
+    // The `SandboxReport` shape before #4186 (no `failed` field).
+    #[derive(serde::Serialize)]
+    struct ReportV1 {
+        enforced: Vec<String>,
+        missing: Vec<String>,
+    }
+    let payload = rmp_serde::to_vec_named(&ReportV1 {
+        enforced: vec!["seccomp".into()],
+        missing: Vec::new(),
+    })
+    .unwrap();
+    let frame = encode_frame(FrameKind::SandboxReport as u8, &[&payload]).unwrap();
+    let frames = FrameReader::new(Cursor::new(frame)).read_frame().unwrap();
+    match Message::decode_from_peer(frames.unwrap(), Sender::Host) {
+        Ok(Message::SandboxReport(report)) => {
+            assert_eq!(report.failed, None);
+            assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
     }
 }
 

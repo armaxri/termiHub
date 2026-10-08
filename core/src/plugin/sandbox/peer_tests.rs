@@ -173,15 +173,17 @@ fn the_first_recorded_cause_wins_and_reaches_the_exit_hook() {
     assert_eq!(shared.exit_cause(), None);
     shared.violation("bad frame");
     shared.set_pending_cause(RunnerExitCause::Stopped);
+    // Not final until the runner is reaped.
+    assert_eq!(shared.exit_cause(), None);
+    // Reaping makes it final and runs the hook once.
+    shared.finish(None);
+    shared.finish(None);
     assert_eq!(
         shared.exit_cause(),
         Some(RunnerExitCause::InvalidData {
             detail: "bad frame".into()
         })
     );
-    // Reaping makes it final and runs the hook once.
-    shared.finish(None);
-    shared.finish(None);
     assert_eq!(seen.lock().unwrap().clone(), shared.exit_cause());
     assert!(shared.dead.load(Ordering::SeqCst));
 
@@ -247,4 +249,32 @@ fn a_vanished_runner_is_an_exit_not_invalid_data() {
     assert!(runner_went_away(&ProtocolError::Truncated));
     assert!(!runner_went_away(&ProtocolError::UnknownKind(0xEE)));
     assert!(!runner_went_away(&ProtocolError::FrameTooLarge(1 << 30)));
+}
+
+#[test]
+fn out_of_memory_evidence_beats_a_racing_hang_verdict() {
+    // #4239: the watchdog declared a hang, but the runner reported a failed
+    // allocation before it went: the overlay must say out of memory.
+    let shared = shared();
+    shared.expect_stderr();
+    shared.set_pending_cause(RunnerExitCause::NotResponding);
+    Arc::clone(&shared).forward_stderr(&b"memory allocation of 1048576 bytes failed\n"[..]);
+    shared.finish(None);
+    assert_eq!(shared.exit_cause(), Some(RunnerExitCause::OutOfMemory));
+
+    // Without the evidence the hang stands.
+    let hung = self::shared();
+    hung.set_pending_cause(RunnerExitCause::NotResponding);
+    hung.finish(None);
+    assert_eq!(hung.exit_cause(), Some(RunnerExitCause::NotResponding));
+
+    // Only a hang gives way: a violation or a host stop keeps its cause.
+    assert_eq!(
+        prefer_memory_evidence(RunnerExitCause::Stopped, true),
+        RunnerExitCause::Stopped
+    );
+    assert!(matches!(
+        prefer_memory_evidence(RunnerExitCause::InvalidData { detail: "x".into() }, true),
+        RunnerExitCause::InvalidData { .. }
+    ));
 }

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use termihub_plugin_api::{AbiVersion, PanicStrategy, PluginError, PluginStatus, Toolchain};
 
 use crate::loader::LoadedPluginInfo;
+use crate::sandbox::SandboxPolicy;
 
 /// Runner → host, first frame: who is speaking and which protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +44,12 @@ pub struct Configure {
     /// Absent (an older host) means no limits.
     #[serde(default)]
     pub limits: ResourceLimits,
+    /// The OS sandbox the runner applies to itself after pinning the library
+    /// and before `dlopen` (#4186). Chosen by the host from the plugin's
+    /// folders, never by the manifest. Absent (an older host, or a test
+    /// harness) means no confinement.
+    #[serde(default)]
+    pub sandbox: Option<SandboxPolicy>,
 }
 
 /// Process resource limits for a runner (#4184, concept "Crash isolation and
@@ -63,9 +70,10 @@ pub struct ResourceLimits {
     pub max_open_files: Option<u64>,
     /// Forbid starting child processes. Enforced with `RLIMIT_NPROC = 0` on
     /// macOS, where it counts processes only. On Linux `RLIMIT_NPROC` also
-    /// counts threads (which plugins need), so it is left to the seccomp
-    /// filter of the Linux sandbox phase (#4185). On Windows the host's job
-    /// object enforces it as an active-process limit of 1 (#4201).
+    /// counts threads (which plugins need), so there the OS sandbox's seccomp
+    /// filter forbids child processes whenever the sandbox is on (#4185). On
+    /// Windows the host's job object enforces it as an active-process limit
+    /// of 1 (#4201).
     #[serde(default)]
     pub forbid_child_processes: bool,
 }
@@ -89,14 +97,19 @@ impl ResourceLimits {
 }
 
 /// Runner → host: which confinement layers the runner applied before loading
-/// any plugin code. Phase 1 (#4182) applies none, so both lists are empty; the
-/// per-OS sandbox phases fill them in.
+/// any plugin code (names: [`crate::sandbox::layer`]). Empty lists mean nothing
+/// is enforced (no policy, or no sandbox phase for this platform yet); see
+/// [`crate::sandbox::Isolation`] for how the host reads it. A runner whose
+/// setup failed sends `failed` and exits without loading the plugin.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SandboxReport {
     /// Layers that are enforced (e.g. `seatbelt`, `landlock`, `seccomp`).
     pub enforced: Vec<String>,
     /// Layers that were requested but are unavailable on this system.
     pub missing: Vec<String>,
+    /// Why setting the sandbox up failed, if it did (`SandboxSetupFailed`).
+    #[serde(default)]
+    pub failed: Option<String>,
 }
 
 /// The build toolchain as it crosses the wire.

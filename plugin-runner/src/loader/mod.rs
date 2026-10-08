@@ -363,11 +363,34 @@ pub fn symbol_name(sym: &[u8]) -> String {
 /// 4. Resolve `create_backend` and `shutdown`.
 ///
 /// On any failure the (partially) opened library is dropped, so a rejected
-/// plugin leaves nothing loaded.
+/// plugin leaves nothing loaded. This is [`prepare_plugin_library`] followed by
+/// [`PreparedLibrary::load`]; the runner splits the two to confine itself in
+/// between (#4186).
 pub fn load_plugin_library(
     library_path: &Path,
     options: &BackendLoadOptions<'_>,
 ) -> Result<PluginLibrary, LoadError> {
+    prepare_plugin_library(library_path, options)?.load()
+}
+
+/// A plugin library whose bytes are pinned (step 1 of
+/// [`load_plugin_library`]) but which is not mapped yet: no plugin code has
+/// run. The runner applies its OS sandbox at this point, then calls
+/// [`load`](Self::load).
+#[derive(Debug)]
+pub struct PreparedLibrary {
+    library_path: PathBuf,
+    pinned: Option<PinnedLibrary>,
+    manifest_api_version: Option<String>,
+    accept_unverified_toolchain: bool,
+}
+
+/// Pin and verify `library_path` against `options.expected_digest` (when set),
+/// without mapping it. Fails closed like [`load_plugin_library`].
+pub fn prepare_plugin_library(
+    library_path: &Path,
+    options: &BackendLoadOptions<'_>,
+) -> Result<PreparedLibrary, LoadError> {
     let BackendLoadOptions {
         expected_digest,
         manifest_api_version,
@@ -378,6 +401,38 @@ pub fn load_plugin_library(
     let pinned = expected_digest
         .map(|expected| PinnedLibrary::open_verified(library_path, expected))
         .transpose()?;
+    Ok(PreparedLibrary {
+        library_path: library_path.to_owned(),
+        pinned,
+        manifest_api_version: manifest_api_version.map(str::to_owned),
+        accept_unverified_toolchain,
+    })
+}
+
+impl PreparedLibrary {
+    /// Map the pinned library and run steps 2–4 of [`load_plugin_library`].
+    pub fn load(self) -> Result<PluginLibrary, LoadError> {
+        let Self {
+            library_path,
+            pinned,
+            manifest_api_version,
+            accept_unverified_toolchain,
+        } = self;
+        load_prepared(
+            &library_path,
+            pinned,
+            manifest_api_version.as_deref(),
+            accept_unverified_toolchain,
+        )
+    }
+}
+
+fn load_prepared(
+    library_path: &Path,
+    pinned: Option<PinnedLibrary>,
+    manifest_api_version: Option<&str>,
+    accept_unverified_toolchain: bool,
+) -> Result<PluginLibrary, LoadError> {
     let open_path = match &pinned {
         Some(pin) => pin.load_path()?,
         None => library_path.to_owned(),

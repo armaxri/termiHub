@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use termihub_plugin_runner::ipc::{
     Configure, FrameReader, Message, ResourceLimits, Sender, PROTOCOL_ARG, PROTOCOL_VERSION,
 };
+use termihub_plugin_runner::sandbox::{Isolation, SandboxPolicy};
 
 const RUNNER: &str = env!("CARGO_BIN_EXE_termihub-plugin-runner");
 
@@ -148,6 +149,7 @@ fn a_library_that_cannot_load_is_reported_then_the_runner_exits() {
         host_version: "0.0.0".into(),
         // The limits are applied before the load, so they must not break it.
         limits: ResourceLimits::plugin_defaults(),
+        sandbox: None,
     });
     host.write_all(&configure.encode().unwrap()).unwrap();
     assert!(matches!(next(&host), Message::SandboxReport(_)));
@@ -186,17 +188,154 @@ fn a_frame_only_the_runner_may_send_is_a_violation() {
     assert_eq!(wait_exit(&mut child).code(), Some(2));
 }
 
+fn configure_with(library_path: &str, sandbox: Option<SandboxPolicy>) -> Message {
+    Message::Configure(Configure {
+        library_path: library_path.into(),
+        expected_digest: None,
+        manifest_api_version: None,
+        accept_unverified_toolchain: false,
+        plugin_id: "sandboxed".into(),
+        host_version: "0.0.0".into(),
+        limits: ResourceLimits::plugin_defaults(),
+        sandbox,
+    })
+}
+
+/// A policy the runner cannot apply is reported as failed and the plugin is
+/// never loaded: no `LoadFailed`, no `Loaded`, a distinct exit code (#4186).
+#[test]
+fn a_sandbox_that_cannot_be_applied_never_loads_the_plugin() {
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let policy = SandboxPolicy {
+        install_dir: "relative/install".into(),
+        ..SandboxPolicy::default()
+    };
+    host.write_all(
+        &configure_with("/definitely/not/a/plugin.so", Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Failed, "{report:?}");
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert_eq!(wait_exit(&mut child).code(), Some(4));
+}
+
+/// macOS: a valid policy is enforced with Seatbelt before the load is even
+/// attempted; the load then fails normally (the library does not exist).
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_applies_seatbelt_before_the_load() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let install = root.join("install");
+    let data = root.join("data");
+    std::fs::create_dir_all(&install).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        data_dir: Some(data.to_str().unwrap().into()),
+        denied_dirs: vec![root.to_str().unwrap().into()],
+        ..SandboxPolicy::default()
+    };
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let lib = install.join("libmissing.dylib");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+            assert_eq!(report.enforced, vec!["seatbelt".to_owned()]);
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert!(matches!(next(&host), Message::LoadFailed(_)));
+    assert_eq!(wait_exit(&mut child).code(), Some(3));
+}
+
+/// Linux: a valid policy is enforced with landlock + seccomp before the load
+/// is attempted; the load then fails normally (the library does not exist),
+/// and the `LoadFailed` frame still reaches the host through the confined
+/// channel (#4185).
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_applies_landlock_and_seccomp_before_the_load() {
+    let report = linux_report_for(Vec::new());
+    assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+    assert_eq!(
+        report.enforced,
+        vec!["seccomp".to_owned(), "landlock".to_owned()]
+    );
+}
+
+/// Linux: the debug-only `simulate_missing` hook forces the reduced path —
+/// seccomp enforced, landlock reported missing (#4185).
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn linux_reports_reduced_isolation_without_landlock() {
+    let report = linux_report_for(vec!["landlock".to_owned()]);
+    assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+    assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
+    assert_eq!(report.missing, vec!["landlock".to_owned()]);
+}
+
+/// Run the handshake with a valid Linux policy and return the sandbox report;
+/// asserts the load then fails cleanly (`LoadFailed`, exit code 3).
+#[cfg(target_os = "linux")]
+fn linux_report_for(simulate_missing: Vec<String>) -> termihub_plugin_runner::ipc::SandboxReport {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let install = root.join("install");
+    let data = root.join("data");
+    std::fs::create_dir_all(&install).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        data_dir: Some(data.to_str().unwrap().into()),
+        simulate_missing,
+        ..SandboxPolicy::default()
+    };
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let lib = install.join("libmissing.so");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    let report = match next(&host) {
+        Message::SandboxReport(report) => report,
+        other => panic!("expected SandboxReport, got {other:?}"),
+    };
+    assert!(matches!(next(&host), Message::LoadFailed(_)));
+    assert_eq!(wait_exit(&mut child).code(), Some(3));
+    report
+}
+
 /// The job object, not end of stream, ends the runner when the host drops its
 /// handle on it (what happens to every host handle when the host process
-/// dies): the channel stays open here, and the exit code is the kill code.
+/// dies). The channel stays open throughout, so the runner had no reason of
+/// its own to exit: its death within the deadline is the job's kill.
+/// (`KILL_ON_JOB_CLOSE` terminates with exit code 0, so the code itself cannot
+/// tell the two apart; holding the channel open is what does.)
 #[cfg(windows)]
 #[test]
 fn the_runner_dies_with_its_job_object() {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-        PROCESS_SYNCHRONIZE,
+        OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
     };
 
     let (child, host) = spawn_ok();
@@ -212,18 +351,22 @@ fn the_runner_dies_with_its_job_object() {
     assert!(!raw.is_null(), "open the runner process");
     // SAFETY: a fresh handle from `OpenProcess`.
     let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+    // Still running with its channel open.
+    // SAFETY: a zero-timeout wait on a process handle we own.
+    assert_eq!(
+        unsafe { WaitForSingleObject(process.as_raw_handle(), 0) },
+        WAIT_TIMEOUT,
+        "the runner exited before its job was closed"
+    );
     drop(child);
     // SAFETY: waits on a process handle we own.
     let waited = unsafe { WaitForSingleObject(process.as_raw_handle(), 5_000) };
     assert_eq!(waited, WAIT_OBJECT_0, "the runner outlived its job");
-    let mut code = 0u32;
-    // SAFETY: reads the exit code of a process handle we own.
-    assert_ne!(
-        unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) },
-        0
+    // The host's end only now sees the runner gone.
+    assert!(
+        FrameReader::new(&host).read_frame().unwrap().is_none(),
+        "end of stream after the kill"
     );
-    assert_eq!(code, termihub_plugin_runner::process::KILLED_EXIT_CODE);
-    drop(host);
 }
 
 /// Only the channel and the standard handles cross into the runner: an

@@ -30,6 +30,9 @@
 //! * The `crash-commands` feature adds input commands that misbehave on
 //!   purpose, for the out-of-process isolation tests (#4184): see
 //!   [`crash_command`].
+//! * The `escape-probe` feature adds `?probe <op> [arg]` commands that try
+//!   each operation the OS sandbox must deny, plus positive controls, for the
+//!   sandbox tests on every OS (#4186, #4185, #4187): see the `escape` module.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,8 +42,7 @@ use serde::Deserialize;
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
     AbiVersion, PluginBackend, PluginError, PluginHostBridge, PluginHostServices,
-    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend,
-    PluginWriteMode,
+    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend, PluginWriteMode,
 };
 
 /// The ABI this build reports: a faithful 1.0 plugin under `abi-1-0`, else the
@@ -70,6 +72,10 @@ impl PluginTerminalBackend for EchoBackend {
         if let Some(reply) = crash_command(data) {
             return self.output.send(reply.as_bytes());
         }
+        #[cfg(feature = "escape-probe")]
+        if let Some(reply) = escape::probe_command(data) {
+            return self.output.send(reply.as_bytes());
+        }
         if data == b"?cancelled" {
             let reply = match &self.services {
                 Some(services) => format!("CANCELLED:{}", services.is_cancelled()),
@@ -94,13 +100,21 @@ impl PluginTerminalBackend for EchoBackend {
     }
 }
 
+/// MiB held by the `!hoard` fixture so far.
+#[cfg(feature = "crash-commands")]
+static HOARDED_MIB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Misbehave on purpose (#4184 isolation fixtures). Returns the reply line for
 /// the commands that return, `None` for ordinary input.
 ///
 /// * `!segv` — write through a null pointer (SIGSEGV).
 /// * `!abort` — `std::process::abort()` (SIGABRT, like `panic = "abort"`).
 /// * `!spin` — spin forever on the runner's request thread (a hang).
-/// * `!alloc` — allocate and touch memory without bound, ~1 GiB/s.
+/// * `!alloc` — allocate and touch memory without bound, 4 MiB per ms at
+///   most.
+/// * `!hoard:<MiB>` — allocate and keep `<MiB>` MiB of incompressible memory
+///   on a background thread (so pings keep flowing): `HOARDING`.
+/// * `!hoarded` — how many MiB the hoard holds so far: `HOARDED:<MiB>`.
 /// * `!garbage` — write a frame of an unknown kind straight onto the runner's
 ///   IPC descriptor (3), as a hostile plugin could.
 /// * `!fds` — open `/dev/null` until it fails: `FDS:<count>`.
@@ -121,18 +135,42 @@ fn crash_command(data: &[u8]) -> Option<String> {
             let mut hoard: Vec<Vec<u8>> = Vec::new();
             loop {
                 // Touch every page so the memory is resident, not just mapped.
-                hoard.push(vec![0x5a; 1024 * 1024]);
+                hoard.push(vec![0x5a; 4 * 1024 * 1024]);
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
         }
+        _ if data.starts_with(b"!hoard:") => {
+            let mib: usize = std::str::from_utf8(&data[b"!hoard:".len()..])
+                .ok()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            std::thread::spawn(move || {
+                let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+                for _ in 0..mib {
+                    // Pseudo-random words: the OS cannot compress or dedupe
+                    // the pages away, so they stay resident.
+                    let chunk: Vec<u64> = (0..128 * 1024)
+                        .map(|_| {
+                            state ^= state << 13;
+                            state ^= state >> 7;
+                            state ^= state << 17;
+                            state
+                        })
+                        .collect();
+                    std::mem::forget(chunk);
+                    HOARDED_MIB.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+            Some("HOARDING".to_owned())
+        }
+        b"!hoarded" => Some(format!("HOARDED:{}", HOARDED_MIB.load(Ordering::SeqCst))),
         #[cfg(unix)]
         b"!garbage" => {
             use std::os::fd::FromRawFd;
             // Length 1, kind 0xEE (unknown): the host must kill the runner.
             // SAFETY: fd 3 is the runner's IPC channel; ManuallyDrop keeps it
             // open for the runner.
-            let mut channel =
-                std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
+            let mut channel = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
             let _ = channel.write_all(&[0, 0, 0, 1, 0xEE]);
             Some("GARBAGE_SENT".to_owned())
         }
@@ -156,6 +194,9 @@ fn crash_command(data: &[u8]) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(feature = "escape-probe")]
+mod escape;
 
 /// Read an ABI override from `var`: `"major.minor"`, or a raw packed `u32`.
 fn abi_override(var: &str) -> Option<u32> {

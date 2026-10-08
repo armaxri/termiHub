@@ -4,9 +4,12 @@
 //! ```text
 //! runner → host  Hello
 //! host → runner  Configure
-//! runner → host  SandboxReport      (phase 1: nothing enforced yet)
+//! runner         pin the library     (digest through a held handle, CORE-034)
 //! runner         resource limits     (setrlimit, #4184)
-//! runner         load_plugin_library (digest pin, ABI gate, init, toolchain)
+//! runner         OS sandbox          (Configure.sandbox: Seatbelt on macOS, #4186;
+//!                                     landlock + seccomp on Linux, #4185)
+//! runner → host  SandboxReport      (then exit if the sandbox setup failed)
+//! runner         dlopen + gates      (ABI gate, init, toolchain)
 //! runner → host  Loaded | LoadFailed (then exit)
 //! ...            CreateSession / Input / Resize / Close / Cancel / Ping
 //! runner ⇄ host  BridgeRequest / BridgeReply, Stream* (any time, any thread)
@@ -26,12 +29,12 @@
 
 mod bridge;
 mod channel;
+mod confine;
 mod limits;
 mod shim;
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -43,7 +46,9 @@ use termihub_plugin_runner::ipc::{
     Resize, SandboxReport, Sender, SessionError, SessionFailed, SessionRef, WireError,
     MAX_PAYLOAD_LEN, PROTOCOL_VERSION, SESSION_ID_LEN,
 };
-use termihub_plugin_runner::loader::{load_plugin_library, BackendLoadOptions, PluginLibrary};
+use termihub_plugin_runner::loader::{
+    prepare_plugin_library, BackendLoadOptions, PluginLibrary, PreparedLibrary,
+};
 
 use bridge::BridgeClient;
 pub(crate) use channel::Channel;
@@ -68,6 +73,9 @@ pub(crate) mod exit {
     pub const PROTOCOL: i32 = 2;
     /// The plugin failed to load; `LoadFailed` was sent first.
     pub const LOAD_FAILED: i32 = 3;
+    /// The OS sandbox could not be applied; a failed `SandboxReport` was sent
+    /// first and the plugin was never loaded.
+    pub const SANDBOX_FAILED: i32 = 4;
     /// Bad command line (wrong protocol version, missing flag).
     pub const USAGE: i32 = 64;
 }
@@ -118,19 +126,32 @@ pub(crate) fn run<R: Read + Send + 'static>(
         Ok(None) => return exit::OK,
         Ok(Some(_)) | Err(()) => return exit::PROTOCOL,
     };
-    // Phase 1: no confinement yet. The per-OS phases apply it here, after the
-    // channel is open and before any plugin code is mapped.
-    if channel
-        .send(&Message::SandboxReport(SandboxReport::default()))
-        .is_err()
-    {
-        return exit::PROTOCOL;
-    }
-    // Resource limits (#4184) bind the plugin from its first mapped byte.
+    // Pin the library first (its bytes are verified through a handle the
+    // sandbox cannot take away), then bind the resource limits (#4184), then
+    // confine this process (#4186) — all before any plugin code is mapped. A
+    // pin failure is reported after the sandbox report, as the protocol orders.
+    let prepared = prepare(&configure);
     for (limit, error) in limits::apply(&configure.limits) {
         eprintln!("termihub-plugin-runner: could not apply {limit}: {error}");
     }
-    let library = match load(&configure) {
+    let report = match &configure.sandbox {
+        Some(policy) => confine::apply(policy),
+        None => SandboxReport::default(),
+    };
+    let sandbox_failed = report.failed.is_some();
+    if channel.send(&Message::SandboxReport(report)).is_err() {
+        return exit::PROTOCOL;
+    }
+    if sandbox_failed {
+        // Never fall back to loading the plugin unconfined.
+        return exit::SANDBOX_FAILED;
+    }
+    let library = match prepared.and_then(|p| {
+        p.load().map_err(|e| LoadFailed {
+            incompatible: e.is_incompatible(),
+            message: e.to_string(),
+        })
+    }) {
         Ok(library) => library,
         Err(failed) => {
             let _ = channel.send(&Message::LoadFailed(failed));
@@ -153,6 +174,10 @@ pub(crate) fn run<R: Read + Send + 'static>(
 }
 
 /// What the reader thread hands the main loop.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one value per host frame, moved once; boxing would allocate per Input frame"
+)]
 enum Inbound {
     /// A host frame for the main loop.
     Message(Message),
@@ -216,13 +241,15 @@ fn next_message<R: Read>(frames: &mut FrameReader<R>) -> Result<Option<Message>,
     }
 }
 
-fn load(configure: &Configure) -> Result<PluginLibrary, LoadFailed> {
+/// Pin and verify the plugin library (no plugin code runs yet).
+fn prepare(configure: &Configure) -> Result<PreparedLibrary, LoadFailed> {
     let options = BackendLoadOptions {
         expected_digest: configure.expected_digest.as_deref(),
         manifest_api_version: configure.manifest_api_version.as_deref(),
         accept_unverified_toolchain: configure.accept_unverified_toolchain,
     };
-    load_plugin_library(Path::new(&configure.library_path), &options).map_err(|e| LoadFailed {
+    let path = confine::library_path(configure);
+    prepare_plugin_library(&path, &options).map_err(|e| LoadFailed {
         incompatible: e.is_incompatible(),
         message: e.to_string(),
     })
