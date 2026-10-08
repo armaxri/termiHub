@@ -1,0 +1,194 @@
+name: Plugin Sandbox Hardening (nightly)
+
+# Phase 8 of the plugin OS-sandbox rollout (#4190, concept
+# docs/concepts/backlog/plugin-os-sandbox.html -> "Testing"):
+#
+# * plugin-ipc-fuzz — the cargo-fuzz targets over the host <-> plugin-runner
+#   frame protocol (plugin-runner/fuzz/), 60 s each, on a corpus cached between
+#   runs. The host treats the runner as an untrusted peer, so its decoder is
+#   fuzzed in both directions plus a structured round trip.
+# * plugin-sandbox-perf — the performance gate (core/tests/plugin_runner_perf.rs,
+#   release build): echo latency, throughput, 40-session fairness, helper cold
+#   start and idle RSS against the concept's budget table. Any breach fails.
+#
+# Both are timing- or time-budget-bound, so they stay off the per-PR lane, like
+# system-integration.yml. They are NOT part of the release-candidate gate: a
+# perf run on a shared hosted runner is evidence, not a release blocker.
+#
+# NOTE: GitHub runs scheduled workflows from the DEFAULT branch's copy of this
+# file (main). Until this file reaches main, the schedule below does nothing;
+# use "Run workflow" (workflow_dispatch) to run it on develop meanwhile. The
+# recipes live in the checked-out tree (scripts/internal/plugin-ipc-fuzz.sh and
+# the test itself), so a scheduled run still grades develop's code.
+
+on:
+  schedule:
+    # develop — daily ~05:35 UTC (after system-integration's 05:05 start).
+    - cron: "35 5 * * *"
+    # main — weekly, Wednesday ~05:35 UTC.
+    - cron: "35 5 * * 3"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Which branch(es) to grade"
+        type: choice
+        options: [both, develop, main]
+        default: develop
+      fuzz_seconds:
+        description: "Seconds per fuzz target"
+        type: string
+        default: "60"
+
+concurrency:
+  group: plugin-sandbox-nightly-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
+  cancel-in-progress: true
+
+# Checkout, build, test, cache and upload artifacts only.
+permissions:
+  contents: read
+
+jobs:
+  # Which branch(es) this run grades: the daily cron -> develop, the Wednesday
+  # cron -> main, a manual dispatch -> the chosen input.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      branches: ${{ steps.pick.outputs.branches }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          BRANCH: ${{ github.event.inputs.branch }}
+        run: |
+          if [ "$EVENT" = "schedule" ]; then
+            case "$SCHEDULE" in
+              "35 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
+            esac
+          else
+            case "$BRANCH" in
+              main) echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
+              both) echo 'branches=["main","develop"]' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
+  plugin-ipc-fuzz:
+    needs: setup
+    name: Plugin IPC fuzz (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    # Toolchain + cargo-fuzz install, an ASan build and 3 x 60 s of fuzzing.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Install the pinned nightly toolchain
+        # libFuzzer's sanitizer flags are nightly-only; the date is pinned in
+        # plugin-runner/fuzz/nightly-toolchain (CI-005: no floating toolchain).
+        run: |
+          toolchain="$(scripts/internal/plugin-ipc-fuzz.sh --print-toolchain)"
+          rustup toolchain install "$toolchain" --profile minimal
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache the fuzz build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: plugin-runner/fuzz
+
+      - name: Restore the fuzz corpus
+        # Grow the corpus across nights: restore the newest one for this
+        # branch, save under a fresh key at the end. gen-seeds re-adds the real
+        # encoder's frames every run, so a cold cache still starts seeded.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: plugin-runner/fuzz/corpus
+          key: plugin-ipc-fuzz-corpus-${{ matrix.branch }}-${{ github.run_id }}
+          restore-keys: plugin-ipc-fuzz-corpus-${{ matrix.branch }}-
+
+      - name: Fuzz the plugin IPC frame protocol
+        env:
+          FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '60' }}
+        run: scripts/internal/plugin-ipc-fuzz.sh --seconds "$FUZZ_SECONDS"
+
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-ipc-fuzz-artifacts-${{ matrix.branch }}
+          path: plugin-runner/fuzz/artifacts/
+          if-no-files-found: ignore
+
+  plugin-sandbox-perf:
+    needs: setup
+    name: Plugin sandbox perf gate (${{ matrix.os }} · ${{ matrix.branch }})
+    runs-on: ${{ matrix.os }}
+    # A release build of core's test plus the runner and echo-backend, then a
+    # ~1 minute measurement.
+    timeout-minutes: 45
+    strategy:
+      # Each OS is independent evidence.
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+        # The out-of-process host is Unix-only today (the test is
+        # `cfg(unix)`); Windows joins with the AppContainer phase (5b).
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run the performance gate (release)
+        env:
+          TERMIHUB_PERF_REPORT: ${{ runner.temp }}/plugin-sandbox-perf.json
+        run: >-
+          cargo test -p termihub-core --features plugin --release
+          --test plugin_runner_perf -- --ignored --nocapture
+
+      - name: Summarise the measurements
+        if: always()
+        shell: bash
+        env:
+          REPORT: ${{ runner.temp }}/plugin-sandbox-perf.json
+          LEG: ${{ matrix.os }} · ${{ matrix.branch }}
+        run: |
+          {
+            echo "### Plugin sandbox perf ($LEG)"
+            echo
+            if [ -f "$REPORT" ]; then
+              echo '```json'
+              cat "$REPORT"
+              echo
+              echo '```'
+            else
+              echo "No report written (the test failed before measuring)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-sandbox-perf-${{ matrix.os }}-${{ matrix.branch }}
+          path: ${{ runner.temp }}/plugin-sandbox-perf.json
+          if-no-files-found: ignore
