@@ -204,7 +204,7 @@ pub(crate) enum LinkedLookup {
         /// Why, phrased to follow "File transfer to {host} is unavailable: ".
         message: String,
         /// Set when the user can fix it by entering the secret (#4265).
-        secret: Option<LinkedSecretRequest>,
+        secret: Option<Box<LinkedSecretRequest>>,
     },
     /// The connection, ready to connect.
     Found(Box<LinkedSshTarget>),
@@ -352,7 +352,7 @@ async fn resolve_linked_route(route: &LinkedFileRoute, linked: &LinkedResolver) 
         } => {
             cache.held = None;
             let channel = linked_ssh_channel(&route.target_host, &host, &user, &name);
-            return LinkedRoute::Degraded(channel, message, secret);
+            return LinkedRoute::Degraded(channel, message, secret.map(|s| *s));
         }
         LinkedLookup::Found(target) => target,
     };

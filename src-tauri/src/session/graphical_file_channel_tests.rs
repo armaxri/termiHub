@@ -469,7 +469,7 @@ async fn link_without_a_stored_secret_is_degraded_with_the_reason() {
         host: "tiger-box".to_string(),
         user: "arne".to_string(),
         message: "no password is saved for it".to_string(),
-        secret: Some(password_request()),
+        secret: Some(Box::new(password_request())),
     });
     let (result, _) = resolve_file_channel_routed(
         &ctx(linked_settings(), None),

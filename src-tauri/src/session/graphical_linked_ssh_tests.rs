@@ -172,7 +172,7 @@ fn secret_request(lookup: LinkedLookup) -> LinkedSecretRequest {
         LinkedLookup::Unusable {
             secret: Some(request),
             ..
-        } => request,
+        } => *request,
         LinkedLookup::Unusable { message, .. } => panic!("unusable without a request: {message}"),
         _ => panic!("expected an unusable link asking for its secret"),
     }

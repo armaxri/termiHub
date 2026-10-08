@@ -99,7 +99,7 @@ pub(crate) fn lookup_linked(
                 };
                 let mut lookup = unusable(conn, message);
                 if let LinkedLookup::Unusable { secret, .. } = &mut lookup {
-                    *secret = Some(request);
+                    *secret = Some(Box::new(request));
                 }
                 return lookup;
             }
