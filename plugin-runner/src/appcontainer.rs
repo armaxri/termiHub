@@ -36,10 +36,11 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    CopySid, DeleteAce, EqualSid, FreeSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
-    InitializeSecurityDescriptor, SetFileSecurityW, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION,
-    INHERITED_ACE, NO_INHERITANCE, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
+    CopySid, DeleteAce, EqualSid, FreeSid, GetAce, GetFileSecurityW, GetLengthSid,
+    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
+    SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE,
+    ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION, INHERITED_ACE, NO_INHERITANCE,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
     SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
@@ -164,7 +165,14 @@ impl AppContainer {
     fn grant(&self, path: &Path, access: u32, inheritance: ACE_FLAGS) -> io::Result<()> {
         let wide = to_wide(path.as_os_str())?;
         let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let current = Dacl::of(&wide)?;
+        // An object-only grant is a plain rewrite of the DACL as stored; a
+        // tree grant goes through `SetNamedSecurityInfoW`, which recomputes
+        // the inherited part anyway, so it starts from the same API's view.
+        let current = if inheritance == NO_INHERITANCE {
+            Dacl::stored(&wide)?
+        } else {
+            Dacl::of(&wide)?
+        };
         if current.allows(self.sid(), access, inheritance) {
             return Ok(());
         }
@@ -257,7 +265,7 @@ pub fn delete_profile_revoking(
 fn revoke(sid: PSID, path: &Path) -> io::Result<()> {
     let wide = to_wide(path.as_os_str())?;
     let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let current = Dacl::of(&wide)?;
+    let current = Dacl::stored(&wide)?;
     match current.without(sid)? {
         Some(mut updated) => {
             write_dacl_only(&wide, updated.as_mut_ptr(), current.inheritance_control())
@@ -386,9 +394,20 @@ fn sid_to_string(sid: PSID) -> io::Result<String> {
 struct Dacl {
     descriptor: PSECURITY_DESCRIPTOR,
     acl: *mut ACL,
+    /// The buffer `descriptor` lives in, for [`Dacl::stored`]; `None` when
+    /// `GetNamedSecurityInfoW` allocated it (freed on drop).
+    stored: Option<Box<[u64]>>,
 }
 
 impl Dacl {
+    /// The DACL as `GetNamedSecurityInfoW` reports it. For an object whose
+    /// DACL is not auto-inherited (entries copied from its parent without the
+    /// inherited flag, as Windows creates files under such a folder), the
+    /// API converts it: the entries the parent would pass on come back marked
+    /// inherited, the descriptor auto-inherited. Fine for
+    /// `SetNamedSecurityInfoW`, which recomputes inheritance anyway, but
+    /// written back as is it changes the object (#4263): use [`Dacl::stored`]
+    /// for a plain rewrite.
     fn of(path: &[u16]) -> io::Result<Self> {
         let mut acl: *mut ACL = std::ptr::null_mut();
         let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
@@ -407,7 +426,66 @@ impl Dacl {
             )
         };
         win32_result(status)?;
-        Ok(Self { descriptor, acl })
+        Ok(Self {
+            descriptor,
+            acl,
+            stored: None,
+        })
+    }
+
+    /// The DACL exactly as stored on the object (`GetFileSecurityW`, no
+    /// conversion), for a plain rewrite with [`write_dacl_only`] that changes
+    /// nothing but the entries the caller adds or removes.
+    fn stored(path: &[u16]) -> io::Result<Self> {
+        let mut needed = 0u32;
+        // SAFETY: NUL-terminated path; a size query (no buffer).
+        unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // `u64` storage: a self-relative descriptor's fields need alignment.
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)].into_boxed_slice();
+        let descriptor: PSECURITY_DESCRIPTOR = buffer.as_mut_ptr().cast();
+        // SAFETY: `buffer` holds at least `needed` writable bytes.
+        if unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let (mut present, mut defaulted) = (0, 0);
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: a valid self-relative descriptor in `buffer`; writable
+        // out-pointers. `acl` points into `buffer`, which `Self` keeps (a
+        // boxed slice does not move with its owner).
+        if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if present == 0 {
+            // No DACL at all grants everyone everything, like a NULL one.
+            acl = std::ptr::null_mut();
+        }
+        Ok(Self {
+            descriptor,
+            acl,
+            stored: Some(buffer),
+        })
     }
 
     /// The descriptor's DACL inheritance bits (auto-inherited, protected),
@@ -526,8 +604,10 @@ impl Dacl {
 
 impl Drop for Dacl {
     fn drop(&mut self) {
-        // SAFETY: allocated by `GetNamedSecurityInfoW`.
-        unsafe { LocalFree(self.descriptor as HLOCAL) };
+        if self.stored.is_none() {
+            // SAFETY: allocated by `GetNamedSecurityInfoW`.
+            unsafe { LocalFree(self.descriptor as HLOCAL) };
+        }
     }
 }
 
@@ -572,8 +652,15 @@ fn write_dacl_only(path: &[u16], acl: *mut ACL, control: u16) -> io::Result<()> 
     if unsafe { SetSecurityDescriptorControl(raw, bits, control & bits) } == 0 {
         return Err(io::Error::last_os_error());
     }
+    // A protected DACL is written as protected explicitly; an unprotected one
+    // with no extra flag, so the system does not recompute its inherited part.
+    let information = if control & SE_DACL_PROTECTED != 0 {
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION
+    } else {
+        DACL_SECURITY_INFORMATION
+    };
     // SAFETY: NUL-terminated path; a valid absolute descriptor.
-    if unsafe { SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION, raw) } == 0 {
+    if unsafe { SetFileSecurityW(path.as_ptr(), information, raw) } == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -713,7 +800,6 @@ mod tests {
     /// The raw DACL of `path` as stored (`GetFileSecurityW`, no conversion):
     /// its inheritance control bits and the ACL bytes.
     fn stored_dacl(path: &Path) -> (u16, Vec<u8>) {
-        use windows_sys::Win32::Security::{GetFileSecurityW, GetSecurityDescriptorDacl};
         let wide = to_wide(path.as_os_str()).unwrap();
         let mut needed = 0u32;
         // SAFETY: a size query: no buffer, `needed` receives the size.
