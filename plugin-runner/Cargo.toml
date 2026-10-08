@@ -43,6 +43,9 @@ hex = "0.4"
 # Compact byte strings in the MessagePack bridge frames (file data, proxied
 # stream bytes) instead of one integer per byte.
 serde_bytes = "0.11"
+# Fair (hand-over) unlocks for the channel writers, so concurrent senders take
+# turns instead of one barging back in (#4233); already in the tree via tokio.
+parking_lot = "0.12"
 
 [target.'cfg(unix)'.dependencies]
 # `prctl(PR_SET_PDEATHSIG)` on Linux so the runner never outlives the host.
