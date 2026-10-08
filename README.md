@@ -271,9 +271,11 @@ moves files over the side channel the VNC connection already has:
   SSH connection under **File Transfer → File transfer via**. termiHub then opens that
   connection's own SSH session — its saved password or key, its jump hosts, and the usual
   host-key check — and moves files over SFTP on it. Files land on **that connection's host**.
-  The picker preselects an SSH connection on the VNC host, and warns when the hosts differ. The
-  password must be saved in the SSH connection; if it is deleted, file transfer is unavailable
-  until you pick another one.
+  The picker preselects an SSH connection on the VNC host, and warns when the hosts differ. If
+  no password or key passphrase is saved for it, termiHub asks for it the first time you open
+  **Files**, drop files or click **Retry** (with **Save password**, as when connecting) and keeps
+  it for that VNC session. If the SSH connection is deleted, file transfer is unavailable until
+  you pick another one.
 - **Direct connection** — a VNC connection with none of these has no file transfer.
 
 Precedence when more than one applies: agent, then SSH tunnel, then the linked SSH connection.

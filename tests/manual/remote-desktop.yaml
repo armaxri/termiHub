@@ -218,3 +218,25 @@ tests:
       - "After the delete, file transfer shows as unavailable; nothing crashes"
     verification: manual
     tags: [os-native]
+
+  - id: MT-RD-12
+    release_gate: true
+    manual_reason: "the password prompt over a live VNC session and a real OS drop onto it cannot be synthesised by the harness"
+    name: "Linked SSH connection without a saved password asks when the user acts"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save an SSH connection to the VNC desktop host with password auth and no saved password"
+      - "Link it under File transfer via on a direct VNC connection with File Transfer on, and connect"
+      - "Wait a few seconds without touching anything"
+      - "Open the Files popover, cancel the password prompt"
+      - "Click Retry, enter the password with Save password checked"
+      - "Drop a file on the VNC screen"
+    expected:
+      - "Nothing is asked while the session starts; the Files button shows a warning dot"
+      - "Opening Files asks for the SSH password; after the cancel the popover keeps the reason and no error toast appears"
+      - "After Retry and the password, the route line names the SSH host and the folder"
+      - "The file uploads without another prompt; the SSH connection now has its password saved"
+    verification: manual
+    tags: [os-native]

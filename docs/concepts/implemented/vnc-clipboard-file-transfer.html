@@ -1431,12 +1431,19 @@ flowchart LR
             tunnel, no agent) names a saved SSH connection in <code>fileTransferVia</code> ("File
             transfer via" in the editor; the picker lists saved SSH connections only, plus None, and
             an unset picker preselects one whose host is the VNC host). The session opens that
-            connection's own SSH session — its stored password or key passphrase, read without
-            prompting (a secret that is not stored, or a locked store, degrades the route with the
-            reason), its jump hosts, and the usual host-key trust — and moves files over SFTP on it.
-            The session is reused for the VNC session's lifetime and dropped as soon as the link no
-            longer resolves. The file host is the linked connection's host; it is "the desktop host"
-            only when both names denote the same host <em>as seen from this computer</em>
+            connection's own SSH session — its stored password or key passphrase, its jump hosts,
+            and the usual host-key trust — and moves files over SFTP on it. When no secret is saved
+            (or the credential store is locked) the route is degraded with the reason and asks for
+            it only when the user acts (#4265): opening the Files popover, dropping files or
+            clicking Retry opens the unlock dialog or the usual password prompt, with "Save
+            password" as in a normal connect (none for a shared named credential). The entered
+            secret is kept in memory for the VNC session only; a rejected one is asked for again
+            with the reason, and a cancel leaves the route degraded without further messages.
+            Session start and the transfer relaunch after a restart never ask — a relaunch keeps
+            waiting. The session is reused for the VNC session's lifetime and dropped as soon as the
+            link no longer resolves. The file host is the linked connection's host; it is "the
+            desktop host" only when both names denote the same host
+            <em>as seen from this computer</em>
             (both loopback, or the same name) — a loopback VNC host is this computer, so it never
             matches a remote SSH host. The editor warns, naming both hosts, when they differ. The
             link follows the SSH connection when it is renamed or moved; an agent-hosted VNC
@@ -1817,6 +1824,7 @@ sequenceDiagram
                 <td>
                   A direct VNC connection with a linked SSH connection supports the phase 2 and 3
                   flows; route-resolution tests cover the linked case and the host-mismatch warning.
+                  A link without a saved secret asks for it on a user action (#4265).
                 </td>
               </tr>
             </tbody>
@@ -1872,9 +1880,10 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> Phase 4 (#4194), 2026-10-08, against <code>develop</code> at
-          <code>027ae00c8</code> plus the #4194 branch · <strong>Status:</strong> implemented — all
-          four phases are on <code>develop</code>; no open divergences
+          <strong>Last synced:</strong> Phase 4 password prompt (#4265), 2026-10-08, against
+          <code>develop</code> at <code>cde55de97</code> plus the #4265 branch ·
+          <strong>Status:</strong> implemented — all four phases are on <code>develop</code>; no
+          open divergences
         </p>
         <div class="table-wrap">
           <table>
@@ -1951,13 +1960,17 @@ sequenceDiagram
               </tr>
               <tr>
                 <td>6</td>
-                <td>Linked route needs no prompt mid-session</td>
+                <td>Linked route asks for a missing secret only when the user acts</td>
                 <td>
-                  The link's secret is read from the credential store without prompting; a missing
-                  secret or a locked store degrades the route with the reason. The link follows the
-                  SSH connection's renames and moves
+                  The link's secret is read from the credential store; a missing secret or a locked
+                  store degrades the route with the reason and a <code>needsSecret</code> request
+                  (<code>LinkedSecretRequest</code>). The Files popover, Retry and a drop ask with
+                  the usual prompt or unlock dialog (<code>askLinkedSshSecret</code>), Save password
+                  stores under the linked connection, and <code>remote_desktop_file_channel</code>
+                  keeps the entered secret for the session; session start and the relaunch never ask
+                  (#4265). The link follows the SSH connection's renames and moves
                 </td>
-                <td>Undocumented</td>
+                <td>Matches</td>
                 <td>Concept updated (Route resolution)</td>
               </tr>
             </tbody>
