@@ -37,6 +37,8 @@ use termihub_core::protocol::methods::{
     CONNECTION_FILES_READ_RANGE, CONNECTION_FILES_STAT, CONNECTION_FILES_WRITE_RANGE,
 };
 
+use crate::files::transfer::persist::PersistedGraphicalTarget;
+use crate::files::transfer::TransferPersistenceManager;
 use crate::terminal::agent_manager::AgentRpcClient;
 
 /// How many numbered names (`name (1)` … `name (N)`) a clash may try before
@@ -365,6 +367,11 @@ impl AgentHostFiles {
         Self { agent_id, agents }
     }
 
+    /// The agent whose host file system this addresses.
+    pub(crate) fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+
     /// Run one request on the blocking pool (agent RPCs park their thread).
     /// `params` is one of the shared `Files*Params` DTOs with
     /// `connection_id: None` — the agent host's own file system.
@@ -574,12 +581,19 @@ pub struct RemoteDesktopUploadStarted {
 
 /// Enqueue every placed file on the Transfers queue under `session_id` and
 /// spawn its executor over `carrier`. Returns the queued items.
+///
+/// With `persist`, each upload is first recorded in the durable queue with
+/// the side channel's identity (#4205) — before its executor starts, so even
+/// a file that finishes at once is pruned rather than left behind — and an
+/// upload cut off by quitting the app resumes from its checkpoint once a
+/// session of the same VNC connection is back.
 pub(crate) fn start_uploads(
     carrier: &UploadCarrier,
     session_id: &str,
     files: Vec<PlacedFile>,
     registry: &TransferRegistry,
     sink: &ProgressSink,
+    persist: Option<(&TransferPersistenceManager, &PersistedGraphicalTarget)>,
 ) -> Vec<RemoteDesktopUploadItem> {
     files
         .into_iter()
@@ -595,41 +609,30 @@ pub(crate) fn start_uploads(
                 &file.remote,
                 0,
             );
+            if let Some((pm, target)) = persist {
+                pm.record_registration(
+                    &transfer_id,
+                    session_id,
+                    TransferDirection::Upload,
+                    &name,
+                    &file.remote,
+                    Some(local_path.clone()),
+                    0,
+                );
+                pm.record_graphical_target(&transfer_id, target.clone());
+            }
             let (registry, sink) = (registry.clone(), sink.clone());
             let (remote, local) = (file.remote.clone(), local_path.clone());
-            match carrier.clone() {
-                UploadCarrier::Sftp(browser) => {
-                    tokio::spawn(async move {
-                        termihub_core::files::transfer::sftp::run_sftp_transfer(
-                            browser,
-                            TransferDirection::Upload,
-                            remote,
-                            local,
-                            handle,
-                            registry,
-                            sink,
-                            termihub_core::files::transfer::sftp::DEFAULT_RESUME_MODE,
-                            0,
-                        )
-                        .await;
-                    });
-                }
-                UploadCarrier::Agent(files) => {
-                    tokio::spawn(async move {
-                        termihub_core::files::transfer::ranged::run_ranged_transfer(
-                            files,
-                            TransferDirection::Upload,
-                            remote,
-                            local,
-                            handle,
-                            registry,
-                            sink,
-                            0,
-                        )
-                        .await;
-                    });
-                }
-            }
+            tokio::spawn(crate::files::transfer::relaunch::run_side_channel_transfer(
+                carrier.clone(),
+                TransferDirection::Upload,
+                remote,
+                local,
+                handle,
+                registry,
+                sink,
+                0,
+            ));
             RemoteDesktopUploadItem {
                 transfer_id,
                 local_path,

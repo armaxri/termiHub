@@ -18,17 +18,25 @@
 //! it, and the relaunch's resolution of both ends decides — if the other end
 //! is still not live, the row pauses again and keeps waiting on both.
 //!
+//! A relaunched **graphical side-channel** transfer whose VNC session is not
+//! open yet (#4205, [`super::relaunch_graphical`]) waits for a graphical
+//! session of its saved VNC connection to become active
+//! ([`WaitTrigger::GraphicalSessionActive`], from `remote_desktop_connect`,
+//! which returns once the session is active).
+//!
 //! The resume goes through the normal resume path
 //! ([`super::relaunch::resume_or_relaunch`]) inside the unattended scope
 //! (#3527), so it never prompts. If the secret is still missing, the relaunch
 //! pauses the row again with the same reason and puts it back on the list.
 //!
 //! Only transfers on the list resume. A row is added only when its relaunch was
-//! blocked for credentials, and it leaves the list when the user resumes,
-//! pauses or cancels it. A transfer that already has a live handle (it runs,
-//! or the user paused it after it ran again) is never resumed from here. The
-//! list is in memory only; after a restart every row is an ordinary paused row
-//! again.
+//! blocked (credentials, an agent or VNC session), and it leaves the list when
+//! the user resumes, pauses or cancels it. A transfer that already has a live
+//! handle (it runs, or the user paused it after it ran again) is never resumed
+//! from here. The list is in memory only; after a restart every row is an
+//! ordinary paused row again — except a VNC side-channel transfer the quit cut
+//! off, which is put back on the list at startup to wait for its VNC
+//! connection ([`super::relaunch_graphical::park_interrupted`], #4205).
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -56,6 +64,9 @@ pub(crate) enum WaitTrigger {
         agent_id: String,
         definition_id: Option<String>,
     },
+    /// A graphical (VNC) session of this saved connection became active
+    /// (#4205).
+    GraphicalSessionActive(String),
 }
 
 /// What a waiting transfer needs before its relaunch can succeed.
@@ -66,6 +77,8 @@ enum WaitFor {
     /// A session on one of these agent ends (#4114): one for an agent-hosted
     /// transfer, one or two for a remote-to-remote copy (#4115, #4158).
     AgentSession(Vec<AgentEnd>),
+    /// An active graphical session of this saved VNC connection (#4205).
+    GraphicalSession(String),
 }
 
 /// One agent end a waiting transfer needs: a session on this agent, for this
@@ -141,6 +154,9 @@ fn matches_trigger(wait: &WaitFor, trigger: &WaitTrigger) -> bool {
                 definition_id,
             },
         ) => ends.iter().any(|end| end.matches(agent_id, definition_id)),
+        (WaitFor::GraphicalSession(waiting), WaitTrigger::GraphicalSessionActive(opened)) => {
+            waiting == opened
+        }
         _ => false,
     }
 }
@@ -165,7 +181,8 @@ fn saved_connections(record: &PersistedTransfer) -> Vec<String> {
 /// Record the outcome of a blocked relaunch: a transfer paused for credentials
 /// waits for its connection to open or the store to unlock; an agent-hosted
 /// transfer whose session is not live waits for a matching agent session to
-/// open (#4114). Any other outcome, or a transfer with nothing to wait for,
+/// open (#4114); a graphical side-channel transfer waits for a session of its
+/// VNC connection to become active (#4205). Any other outcome, or a transfer with nothing to wait for,
 /// does not wait.
 pub(crate) fn note_blocked(
     waits: &CredentialWaits,
@@ -201,6 +218,13 @@ pub(crate) fn note_blocked(
             }
             WaitFor::AgentSession(ends)
         }
+        // A side-channel transfer waits for its VNC connection (#4205).
+        RelaunchBlocked::GraphicalSessionUnavailable => match &record.graphical {
+            Some(graphical) if !graphical.connection_id.is_empty() => {
+                WaitFor::GraphicalSession(graphical.connection_id.clone())
+            }
+            _ => return,
+        },
         RelaunchBlocked::Failed(_) => return,
     };
     waits.lock().insert(record.transfer_id.clone(), wait);

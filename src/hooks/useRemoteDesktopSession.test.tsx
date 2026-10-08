@@ -205,12 +205,36 @@ describe("useRemoteDesktopSession", () => {
     await flush();
 
     expect(mockedConnect).toHaveBeenCalledOnce();
-    expect(mockedConnect).toHaveBeenCalledWith("mock-remote-desktop", {
-      host: "mock.local",
-      viewOnly: false,
-      scaleMode: "fit",
-    });
+    expect(mockedConnect).toHaveBeenCalledWith(
+      "mock-remote-desktop",
+      {
+        host: "mock.local",
+        viewOnly: false,
+        scaleMode: "fit",
+      },
+      undefined
+    );
     expect(h.get().sessionId).toBe("rd-1");
+  });
+
+  it("names the saved connection the tab was opened from (#4205)", async () => {
+    const tabId = useAppStore
+      .getState()
+      .addTab(
+        "Mock RD",
+        "mock-remote-desktop",
+        { type: "mock-remote-desktop", config: { host: "mock.local" } },
+        { contentType: "remote-desktop", connectionId: "Lab/pi-desktop" }
+      );
+    renderSession(tabId);
+
+    await flush();
+
+    expect(mockedConnect).toHaveBeenCalledWith(
+      "mock-remote-desktop",
+      { host: "mock.local" },
+      "Lab/pi-desktop"
+    );
   });
 
   it("keeps authFailed when the first connect is rejected as an auth failure (#3390)", async () => {
@@ -725,7 +749,8 @@ describe("useRemoteDesktopSession — fixed resolution (PROD-026)", () => {
     expect(mockedConnect).toHaveBeenCalledTimes(2);
     expect(mockedConnect).toHaveBeenLastCalledWith(
       "mock-remote-desktop",
-      expect.objectContaining(FIXED)
+      expect.objectContaining(FIXED),
+      undefined
     );
     act(() => h.get().resize(1024, 768));
     expect(mockedResize).not.toHaveBeenCalled();

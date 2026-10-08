@@ -28,7 +28,7 @@
 //! canvas freezes on its last frame until Reclaim requests a full frame.
 
 use serde_json::Value;
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::debug;
 
 use termihub_core::connection::{InputEvent, RemoteClipboardFile};
@@ -223,18 +223,38 @@ pub(crate) async fn gated_remote_clipboard_files(
 /// A connection hosted under an agent (its settings carry `agentId`, #3241)
 /// runs its VNC/RDP backend here and tunnels the TCP transport through the
 /// agent's port forwarding; any other connection dials directly.
+///
+/// `saved_connection_id` names the saved connection the tab was opened from
+/// (#4205): the session is bound to it, so its file side-channel transfers are
+/// persisted and — after a restart — resume once a session of the same
+/// connection is active again. Absent for an unsaved connection.
 #[tauri::command]
 pub async fn remote_desktop_connect(
     type_id: String,
     settings: Value,
+    saved_connection_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<String, TerminalError> {
     let agents = Some(agent_manager.inner().clone());
-    manager
-        .connect_routed(&type_id, settings, agents, app_handle)
-        .await
+    let session_id = manager
+        .connect_routed(&type_id, settings, agents, app_handle.clone())
+        .await?;
+    // Remember the saved connection (#4205): a side-channel transfer records
+    // it, and the transfers a restart cut off wait for a session of it.
+    if let Some(connection_id) = saved_connection_id.filter(|id| !id.is_empty()) {
+        manager
+            .bind_saved_connection(&session_id, &connection_id)
+            .await;
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
+            &app_handle,
+            crate::files::transfer::relaunch_auto::WaitTrigger::GraphicalSessionActive(
+                connection_id,
+            ),
+        );
+    }
+    Ok(session_id)
 }
 
 /// Resolve a graphical session's file-transfer side channel (#4191, concept
@@ -286,7 +306,7 @@ pub async fn remote_desktop_upload(
         .await?;
     let requests: Arc<dyn AgentRequests> = Arc::new(rpc);
     let (carrier, side_channel, default_dir) = upload_carrier(channel, ssh, requests).await?;
-    let host = side_channel.host;
+    let host = side_channel.host.clone();
     let plan = tokio::task::spawn_blocking(move || plan_local(&local_paths))
         .await
         .map_err(|e| TerminalError::InternalError(format!("upload planning failed: {e}")))?;
@@ -295,8 +315,24 @@ pub async fn remote_desktop_upload(
         .await
         .map_err(|e| carrier.error(format!("Cannot upload to {host}: {e}")))?;
     let placement = place(destination.as_ref(), &dest_dir, plan).await;
-    let sink = crate::files::transfer::app_progress_sink(app_handle);
-    let transfers = start_uploads(&carrier, &session_id, placement.files, &registry, &sink);
+    // Persisted with the side channel's identity when the session came from a
+    // saved connection, so an upload cut off by quitting resumes (#4205).
+    let persist = app_handle.try_state::<crate::files::transfer::TransferPersistenceManager>();
+    let target = crate::files::transfer::relaunch_graphical::side_channel_target(
+        manager.saved_connection_of(&session_id).await.as_deref(),
+        &side_channel,
+        &carrier,
+    );
+    let persist = persist.as_deref().zip(target.as_ref());
+    let sink = crate::files::transfer::app_progress_sink(app_handle.clone());
+    let transfers = start_uploads(
+        &carrier,
+        &session_id,
+        placement.files,
+        &registry,
+        &sink,
+        persist,
+    );
     Ok(RemoteDesktopUploadStarted {
         dest_dir,
         host,
@@ -373,7 +409,9 @@ fn carrier_error(
 }
 
 /// Why uploads are refused for an `unavailable` channel.
-fn unavailable_message(reason: termihub_core::connection::FileChannelUnavailable) -> String {
+pub(crate) fn unavailable_message(
+    reason: termihub_core::connection::FileChannelUnavailable,
+) -> String {
     use termihub_core::connection::FileChannelUnavailable as Reason;
     match reason {
         Reason::Disabled => "File transfer is turned off for this connection",

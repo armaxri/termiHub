@@ -37,6 +37,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::graphical_upload::{AgentHostFiles, UploadCarrier};
+use crate::files::transfer::persist::PersistedGraphicalTarget;
 
 /// A file browser shared between the registry and the commands using it.
 pub(crate) type SharedFileBrowser = Arc<dyn FileBrowser + Send + Sync>;
@@ -67,20 +68,44 @@ impl UploadCarrier {
 /// up, insert or remove — never across an `await`.
 #[derive(Clone, Default)]
 pub struct SideChannelBrowsers {
-    map: Arc<StdMutex<HashMap<String, UploadCarrier>>>,
+    map: Arc<StdMutex<HashMap<String, SideChannelEntry>>>,
+}
+
+/// One registered side channel: its carrier and, when the graphical session
+/// was opened from a saved connection, the identity its transfers persist
+/// (#4205).
+#[derive(Clone)]
+struct SideChannelEntry {
+    carrier: UploadCarrier,
+    target: Option<PersistedGraphicalTarget>,
 }
 
 impl SideChannelBrowsers {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, UploadCarrier>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, SideChannelEntry>> {
         self.map
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Register (or replace) the side channel of graphical session
-    /// `session_id`.
+    /// `session_id`, without a persisted identity: its transfers are not
+    /// resumed after a restart.
+    #[cfg(test)]
     pub(crate) fn register(&self, session_id: &str, carrier: UploadCarrier) {
-        self.lock().insert(session_id.to_string(), carrier);
+        self.register_with_target(session_id, carrier, None);
+    }
+
+    /// Register (or replace) the side channel of graphical session
+    /// `session_id`; with `target`, its queued transfers are persisted under
+    /// that identity so they resume after a restart (#4205).
+    pub(crate) fn register_with_target(
+        &self,
+        session_id: &str,
+        carrier: UploadCarrier,
+        target: Option<PersistedGraphicalTarget>,
+    ) {
+        self.lock()
+            .insert(session_id.to_string(), SideChannelEntry { carrier, target });
     }
 
     /// Drop the side channel of `session_id`; `true` when one was open.
@@ -90,7 +115,14 @@ impl SideChannelBrowsers {
 
     /// The side channel of `session_id`, if one is open.
     pub(crate) fn get(&self, session_id: &str) -> Option<UploadCarrier> {
-        self.lock().get(session_id).cloned()
+        self.lock().get(session_id).map(|e| e.carrier.clone())
+    }
+
+    /// The identity a transfer over the side channel of `session_id`
+    /// persists (#4205): `None` when none is open or its session was not
+    /// opened from a saved connection.
+    pub(crate) fn target(&self, session_id: &str) -> Option<PersistedGraphicalTarget> {
+        self.lock().get(session_id).and_then(|e| e.target.clone())
     }
 }
 
