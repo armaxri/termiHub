@@ -56,10 +56,37 @@ describe("classify", () => {
       "rustdoc",
     ]);
     expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
-    expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
-    expect(on(classify(["plugin-runner/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
-    expect(on(classify(["rust-toolchain.toml"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(classify(["plugin-api/src/lib.rs"])).toMatchObject({ rust: true, agent: true });
+    expect(classify(["plugin-runner/src/lib.rs"])).toMatchObject({ rust: true, agent: true });
+    expect(classify(["rust-toolchain.toml"])).toMatchObject({ rust: true, agent: true });
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true, agent: true });
+  });
+
+  it("flags plugin_fuzz for anything the plugin-runner fuzz crate builds from (#4257)", () => {
+    const fuzz = ["rust", "agent", "rustdoc", "plugin_fuzz"];
+    expect(on(classify(["plugin-runner/src/ipc/messages.rs"]))).toEqual(fuzz);
+    expect(on(classify(["plugin-runner/fuzz/src/lib.rs"]))).toEqual(fuzz);
+    expect(on(classify(["plugin-runner/fuzz/fuzz_targets/host_decode.rs"]))).toEqual(fuzz);
+    expect(classify(["plugin-runner/Cargo.toml"])).toMatchObject({ deps: true, plugin_fuzz: true });
+    expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(fuzz);
+    expect(on(classify(["rust-toolchain.toml"]))).toEqual(fuzz);
+    expect(on(classify([".cargo/config.toml"]))).toEqual(fuzz);
+    expect(classify(["Cargo.toml"])).toMatchObject({ rust: true, plugin_fuzz: true });
+  });
+
+  it("does not flag plugin_fuzz for Rust the fuzz crate does not build from", () => {
+    expect(classify(["core/src/lib.rs"]).plugin_fuzz).toBe(false);
+    expect(classify(["agent/src/main.rs"]).plugin_fuzz).toBe(false);
+    expect(classify(["src-tauri/src/lib.rs"]).plugin_fuzz).toBe(false);
+    expect(classify(["core/Cargo.toml"]).plugin_fuzz).toBe(false);
+    // The fuzz crate keeps its own lockfile; the workspace one does not feed it.
+    expect(classify(["Cargo.lock"]).plugin_fuzz).toBe(false);
+    expect(classify(["src/main.tsx"]).plugin_fuzz).toBe(false);
+  });
+
+  it("narrows a comment-only plugin-runner change off the fuzz check", () => {
+    const path = "plugin-runner/src/ipc/messages.rs";
+    expect(on(classify([path], { commentOnly: new Set([path]) }))).toEqual(["rustdoc"]);
   });
 
   it("does not flag agent for Rust the agent does not build from", () => {

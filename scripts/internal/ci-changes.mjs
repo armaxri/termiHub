@@ -35,6 +35,9 @@
  *   rustdoc   workspace Rust sources changed at all, code or comments: gates
  *             `cargo fmt --check` + the Rustdoc (-D warnings) job (#3903). Always
  *             a superset of `rust`.
+ *   plugin_fuzz anything the workspace-excluded plugin-runner/fuzz crate compiles
+ *             from (plugin-runner/, plugin-api/, workspace manifest/toolchain):
+ *             gates its stable clippy check (#4257). Always a subset of `rust`.
  *
  * Comment-only Rust changes (#3903). With `--base <rev> --head <rev>`, each
  * changed workspace `.rs` file whose changed lines are ALL whole-line `//`
@@ -79,6 +82,7 @@ export const AREAS = [
   "agent",
   "workflows",
   "rustdoc",
+  "plugin_fuzz",
 ];
 
 /** Every OS the "Run Tests" matrix knows about (the post-merge set). */
@@ -104,6 +108,14 @@ const RUST_FILES = new Set(["Cargo.toml", "Cargo.lock", "deny.toml", "Cross.toml
 // the agent does not build from them.
 const AGENT_ROOTS = ["agent/", "core/", "plugin-api/", "plugin-runner/", "vendor/", ".cargo/"];
 const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
+
+// What the workspace-excluded plugin-runner/fuzz crate compiles from (#4257): the
+// fuzz crate itself (under plugin-runner/), the plugin-runner crate whose IPC
+// types its message generator constructs, plugin-api (whose types those IPC
+// messages embed), and the workspace manifest/cargo config/toolchain that
+// plugin-runner inherits. Cargo.lock is not here: the fuzz crate has its own.
+const PLUGIN_FUZZ_ROOTS = ["plugin-runner/", "plugin-api/", ".cargo/"];
+const PLUGIN_FUZZ_FILES = new Set(["Cargo.toml"]);
 
 const FRONTEND_ROOTS = ["src/", "public/"];
 const FRONTEND_FILES = new Set([
@@ -262,6 +274,13 @@ export function classify(paths, { commentOnly = new Set() } = {}) {
       path.startsWith("rust-toolchain")
     ) {
       flags.agent = true;
+    }
+    if (
+      startsWithAny(path, PLUGIN_FUZZ_ROOTS) ||
+      PLUGIN_FUZZ_FILES.has(path) ||
+      path.startsWith("rust-toolchain")
+    ) {
+      flags.plugin_fuzz = true;
     }
   }
   if (flags.rust) flags.rustdoc = true;
