@@ -1,37 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
+import { usePluginSandbox } from "@/store/usePluginSandbox";
 import {
   acknowledgeNativePlugin,
+  enablePlugin,
   getNativePluginTrust,
   revokeNativePluginTrust,
   setNativePluginsEnabled,
 } from "@/services/api";
 import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
-import { Button, EmptyState, Toggle, toast } from "@/components/ui";
+import { EmptyState, Toggle, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsField } from "./SettingsField";
+import { NativePluginRow } from "./NativePluginRow";
 
 /**
- * Whether a native plugin was built for an ABI that predates the build-toolchain
- * record (native ABI 1.0, #3576). termiHub cannot verify such a plugin's
- * compiler, so it loads only when the user explicitly accepts that when trusting
- * it. The manifest `apiVersion` is a host-checked mirror of the library's ABI.
- */
-function predatesToolchainRecord(plugin: InstalledPlugin): boolean {
-  const [major, minor] = plugin.manifest.apiVersion.split(".").map(Number);
-  return major === 1 && minor === 0;
-}
-
-/**
- * Settings → Plugins → the native (in-process) plugin trust gate
- * (SEC-002 / PLG-006 / ARCH-008).
+ * Settings → Plugins → the native plugin trust gate (SEC-002 / PLG-006 /
+ * ARCH-008) and sandbox status (#4188).
  *
- * Native plugin backends are dynamic libraries loaded **in the app process** with
- * termiHub's full privileges and no OS sandbox. To invert the former install-time
- * trust model, they are:
+ * Native plugin backends are dynamic libraries. Until the sandbox cut-over they
+ * load **in the app process** with termiHub's full privileges; with the
+ * out-of-process runner (a debug opt-in for now) each runs in its own sandboxed
+ * process, and every row shows its isolation, process status and access from
+ * the backend `plugin-sandbox` region. To invert the former install-time trust
+ * model, they are:
  *
  * 1. **Default-OFF globally** — no native plugin loads unless this switch is on;
  * 2. **Per-plugin acknowledged** — even then, each native plugin loads only after
@@ -44,6 +39,7 @@ function predatesToolchainRecord(plugin: InstalledPlugin): boolean {
  */
 export function NativePluginGateSettings() {
   const plugins = useAppStore((s) => s.plugins);
+  const sandbox = usePluginSandbox();
   const [trust, setTrust] = useState<NativePluginTrust | null>(null);
 
   const load = useCallback(async () => {
@@ -92,9 +88,10 @@ export function NativePluginGateSettings() {
   );
 
   const handleTrust = useCallback(
-    async (id: string, name: string, acceptUnverifiedToolchain: boolean) => {
+    async (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
+      const name = plugin.manifest.name;
       try {
-        await acknowledgeNativePlugin(id, { acceptUnverifiedToolchain });
+        await acknowledgeNativePlugin(plugin.manifest.id, { acceptUnverifiedToolchain });
         await load();
         toast.success(`Trusted and loaded ${name}`);
       } catch (err) {
@@ -105,10 +102,48 @@ export function NativePluginGateSettings() {
     [load]
   );
 
-  const handleRevoke = useCallback(
-    async (id: string, name: string) => {
+  const handleAcceptReducedIsolation = useCallback(
+    async (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
+      const name = plugin.manifest.name;
       try {
-        await revokeNativePluginTrust(id);
+        await acknowledgeNativePlugin(plugin.manifest.id, {
+          acceptUnverifiedToolchain,
+          acceptReducedIsolation: true,
+        });
+        await load();
+        toast.success(`Loaded ${name} with reduced isolation`);
+      } catch (err) {
+        toast.error(`Failed to load ${name}: ${errorMessage(err)}`);
+        throw err;
+      }
+    },
+    [load]
+  );
+
+  const handleRestart = useCallback(
+    async (plugin: InstalledPlugin, reenable: boolean) => {
+      const name = plugin.manifest.name;
+      try {
+        // Enabling re-runs the load path: a running plugin restarts, one
+        // disabled after crashes gets a fresh crash budget.
+        await enablePlugin(plugin.manifest.id);
+        await load();
+        toast.success(reenable ? `Re-enabled ${name}` : `Restarted ${name}`);
+      } catch (err) {
+        toast.error(
+          `Failed to ${reenable ? "re-enable" : "restart"} ${name}: ${errorMessage(err)}`
+        );
+        throw err;
+      }
+    },
+    [load]
+  );
+
+  const handleRevoke = useCallback(
+    async (plugin: InstalledPlugin) => {
+      const name = plugin.manifest.name;
+      try {
+        await revokeNativePluginTrust(plugin.manifest.id);
         await load();
         toast.success(`Revoked trust for ${name}`);
       } catch (err) {
@@ -120,12 +155,21 @@ export function NativePluginGateSettings() {
   );
 
   const enabled = trust?.enabled ?? false;
+  const outOfProcess = trust?.outOfProcess === true || sandbox.outOfProcess;
 
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-native-plugin-gate">
         <h3 className="settings-panel__section-title">
-          <ShieldAlert size={16} aria-hidden="true" /> Native Plugins (Advanced)
+          {outOfProcess ? (
+            <>
+              <ShieldCheck size={16} aria-hidden="true" /> Native Plugins
+            </>
+          ) : (
+            <>
+              <ShieldAlert size={16} aria-hidden="true" /> Native Plugins (Advanced)
+            </>
+          )}
         </h3>
         <p className="settings-panel__description" data-testid="native-plugin-disclosure">
           {trust?.disclosure ??
@@ -133,7 +177,7 @@ export function NativePluginGateSettings() {
         </p>
 
         <SettingsField
-          label="Enable Native (In-Process) Plugins"
+          label={outOfProcess ? "Enable Native Plugins" : "Enable Native (In-Process) Plugins"}
           hint="Off by default. Even when enabled, each native plugin must be trusted individually below before it loads. Theme and JavaScript plugins are unaffected by this setting."
           hintVariant="warning"
         >
@@ -159,65 +203,19 @@ export function NativePluginGateSettings() {
           />
         ) : (
           <ul className="settings-panel__file-list">
-            {nativePlugins.map((p) => {
-              const id = p.manifest.id;
-              const legacyAbi = predatesToolchainRecord(p);
-              const ack = acknowledgments.get(id);
-              // A 1.0 plugin trusted without the toolchain acceptance is still
-              // refused by the host, so it is offered for (re-)trust.
-              const isTrusted =
-                ack !== undefined && (!legacyAbi || ack.unverifiedToolchainAccepted);
-              return (
-                <li
-                  key={id}
-                  className="settings-panel__file-item"
-                  data-testid={`native-plugin-row-${id}`}
-                >
-                  <div>
-                    <span className="settings-panel__subsection-title">{p.manifest.name}</span>{" "}
-                    <span className="settings-panel__description">
-                      · {isTrusted ? "trusted" : "not trusted"}
-                    </span>
-                    {legacyAbi && (
-                      <p
-                        className="settings-panel__description"
-                        data-testid={`native-plugin-toolchain-warning-${id}`}
-                      >
-                        Built for plugin ABI 1.0: termiHub cannot verify which compiler built it,
-                        and a mismatched build can crash termiHub. Trusting it also accepts this
-                        risk. Ask the author for a build for ABI 1.1 or later.
-                      </p>
-                    )}
-                  </div>
-                  {isTrusted ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon={<ShieldX size={14} />}
-                      onClick={() => handleRevoke(id, p.manifest.name)}
-                      errorToast={false}
-                      aria-label={`Revoke trust for ${p.manifest.name}`}
-                      data-testid={`native-plugin-revoke-${id}`}
-                    >
-                      Revoke
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      icon={<ShieldCheck size={14} />}
-                      onClick={() => handleTrust(id, p.manifest.name, legacyAbi)}
-                      disabled={!enabled}
-                      errorToast={false}
-                      aria-label={`Trust ${p.manifest.name}`}
-                      data-testid={`native-plugin-trust-${id}`}
-                    >
-                      Trust &amp; Load
-                    </Button>
-                  )}
-                </li>
-              );
-            })}
+            {nativePlugins.map((p) => (
+              <NativePluginRow
+                key={p.manifest.id}
+                plugin={p}
+                ack={acknowledgments.get(p.manifest.id)}
+                nativeEnabled={enabled}
+                sandbox={sandbox}
+                onTrust={handleTrust}
+                onAcceptReducedIsolation={handleAcceptReducedIsolation}
+                onRestart={handleRestart}
+                onRevoke={handleRevoke}
+              />
+            ))}
           </ul>
         )}
       </div>

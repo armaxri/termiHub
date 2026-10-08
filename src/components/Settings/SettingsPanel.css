@@ -334,6 +334,60 @@
   color: var(--text-secondary);
 }
 
+.settings-panel__status-indicator--error {
+  color: var(--color-error);
+}
+
+/* === Native plugin sandbox status (#4188) === */
+.native-plugin-row {
+  align-items: flex-start;
+}
+
+.native-plugin-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.native-plugin-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--spacing-xs);
+}
+
+.native-plugin-sandbox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.native-plugin-sandbox__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.native-plugin-sandbox__indicator {
+  margin-bottom: 0;
+}
+
+.native-plugin-sandbox__warning,
+.native-plugin-sandbox__detail {
+  margin: 0;
+}
+
+.native-plugin-sandbox__warning {
+  color: var(--color-warning);
+}
+
+.native-plugin-sandbox__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
 /* === Inline dialog === */
 .settings-panel__inline-dialog {
   display: flex;
