@@ -206,6 +206,7 @@ async fn disconnected_agent_is_degraded_not_an_error() {
         channel,
         agent_id,
         message,
+        ..
     } = result
     else {
         panic!("expected degraded, got {result:?}");
@@ -246,6 +247,7 @@ async fn ssh_route_without_a_live_tunnel_session_is_degraded() {
         channel,
         agent_id,
         message,
+        ..
     } = result
     else {
         panic!("expected degraded, got {result:?}");
@@ -259,24 +261,39 @@ async fn ssh_route_without_a_live_tunnel_session_is_degraded() {
 // --- Linked saved SSH connection (#4194) ---
 
 /// A fake saved-connection store for the linked route: what `lookup` answers,
-/// and how often the route was looked up or connected.
+/// how a connect fails, and how often the route was looked up or connected
+/// (with the user-entered secrets the lookups were handed).
 struct FakeLink {
     lookup: LinkedLookup,
+    connect_error: LinkedConnectError,
     lookups: AtomicUsize,
     connects: AtomicUsize,
+    supplied: std::sync::Mutex<Vec<Option<String>>>,
 }
 
 impl FakeLink {
     fn new(lookup: LinkedLookup) -> Arc<Self> {
+        Self::failing(
+            lookup,
+            LinkedConnectError {
+                message: "Connection refused by tiger-box".to_string(),
+                auth_rejected: false,
+            },
+        )
+    }
+
+    fn failing(lookup: LinkedLookup, connect_error: LinkedConnectError) -> Arc<Self> {
         Arc::new(Self {
             lookup,
+            connect_error,
             lookups: AtomicUsize::new(0),
             connects: AtomicUsize::new(0),
+            supplied: std::sync::Mutex::new(Vec::new()),
         })
     }
 
-    fn found() -> Arc<Self> {
-        Self::new(LinkedLookup::Found(Box::new(LinkedSshTarget {
+    fn target(ask_again: Option<LinkedSecretRequest>) -> LinkedLookup {
+        LinkedLookup::Found(Box::new(LinkedSshTarget {
             connection_id: "Lab/Tiger".to_string(),
             name: "Tiger".to_string(),
             config: SshConfig {
@@ -284,20 +301,51 @@ impl FakeLink {
                 username: "arne".to_string(),
                 ..SshConfig::default()
             },
-        })))
+            ask_again,
+        }))
+    }
+
+    fn found() -> Arc<Self> {
+        Self::new(Self::target(None))
+    }
+
+    fn supplied(&self) -> Vec<Option<String>> {
+        self.supplied.lock().unwrap().clone()
     }
 }
 
 #[async_trait::async_trait]
 impl LinkedSshSource for FakeLink {
-    fn lookup(&self, _connection_id: &str) -> LinkedLookup {
+    fn lookup(&self, _connection_id: &str, supplied: Option<&str>) -> LinkedLookup {
         self.lookups.fetch_add(1, Ordering::SeqCst);
+        self.supplied
+            .lock()
+            .unwrap()
+            .push(supplied.map(str::to_string));
         self.lookup.clone()
     }
 
-    async fn connect(&self, config: &SshConfig) -> Result<LinkedSshConnection, String> {
+    async fn connect(
+        &self,
+        _config: &SshConfig,
+    ) -> Result<LinkedSshConnection, LinkedConnectError> {
         self.connects.fetch_add(1, Ordering::SeqCst);
-        Err(format!("Connection refused by {}", config.host))
+        Err(self.connect_error.clone())
+    }
+}
+
+/// What the Tiger link asks for when no password is saved (#4265).
+fn password_request() -> LinkedSecretRequest {
+    LinkedSecretRequest {
+        connection_id: "Lab/Tiger".to_string(),
+        source_file: None,
+        kind: LinkedSecretKind::Password,
+        auth_method: "password".to_string(),
+        host: "tiger-box".to_string(),
+        username: "arne".to_string(),
+        store_locked: false,
+        can_save: true,
+        rejected: false,
     }
 }
 
@@ -358,10 +406,12 @@ async fn linked_connection_that_cannot_connect_is_degraded_on_its_own_host() {
         channel,
         agent_id,
         message,
+        needs_secret,
     } = result
     else {
         panic!("expected degraded, got {result:?}");
     };
+    assert_eq!(needs_secret, None, "a refused host is not a missing secret");
     assert_eq!(channel.kind, FileSideChannelKind::Ssh);
     assert_eq!(channel.host, "tiger-box", "labels name the real file host");
     assert_eq!(channel.user, "arne");
@@ -419,6 +469,7 @@ async fn link_without_a_stored_secret_is_degraded_with_the_reason() {
         host: "tiger-box".to_string(),
         user: "arne".to_string(),
         message: "no password is saved for it".to_string(),
+        secret: Some(password_request()),
     });
     let (result, _) = resolve_file_channel_routed(
         &ctx(linked_settings(), None),
@@ -428,7 +479,10 @@ async fn link_without_a_stored_secret_is_degraded_with_the_reason() {
     )
     .await;
     let RemoteDesktopFileChannel::Degraded {
-        channel, message, ..
+        channel,
+        message,
+        needs_secret,
+        ..
     } = result
     else {
         panic!("expected degraded, got {result:?}");
@@ -436,7 +490,107 @@ async fn link_without_a_stored_secret_is_degraded_with_the_reason() {
     assert_eq!(channel.host, "tiger-box");
     assert_eq!(channel.linked_connection.as_deref(), Some("Tiger"));
     assert!(message.contains("no password is saved"), "{message}");
+    // #4265: the answer asks for the password; only the UI, on a user action,
+    // turns that into a prompt.
+    assert_eq!(needs_secret, Some(password_request()));
     assert_eq!(link.connects.load(Ordering::SeqCst), 0);
+}
+
+/// Resolve the linked Office-PC route against `link` with `resolver`'s cache.
+async fn resolve_linked(link: &LinkedResolver) -> RemoteDesktopFileChannel {
+    resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        BackendSideChannel::default(),
+        None,
+        Some(link),
+    )
+    .await
+    .0
+}
+
+/// #4265: without a supplied secret the lookup gets none — resolution itself
+/// never asks anybody (unattended callers such as the transfer relaunch
+/// resolve exactly like this).
+#[tokio::test]
+async fn resolution_without_a_supplied_secret_hands_none_to_the_lookup() {
+    let link = FakeLink::found();
+    let resolver = resolver(&link);
+    resolve_linked(&resolver).await;
+    assert_eq!(link.supplied(), vec![None]);
+}
+
+/// A secret the user entered is handed to every later lookup of the session,
+/// so a reconnect of the linked SSH session never asks again.
+#[tokio::test]
+async fn a_supplied_secret_is_kept_for_the_session() {
+    let link = FakeLink::found();
+    let resolver = resolver(&link);
+    resolver.cache.supply_secret("typed".to_string()).await;
+    resolve_linked(&resolver).await;
+    resolve_linked(&resolver).await;
+    assert_eq!(
+        link.supplied(),
+        vec![Some("typed".to_string()), Some("typed".to_string())]
+    );
+}
+
+/// A user-entered secret the server rejects is dropped, and the answer asks
+/// for it again, marked as rejected so the prompt can say why.
+#[tokio::test]
+async fn a_rejected_supplied_secret_is_dropped_and_asked_for_again() {
+    let link = FakeLink::failing(
+        FakeLink::target(Some(password_request())),
+        LinkedConnectError {
+            message: "Authentication failed".to_string(),
+            auth_rejected: true,
+        },
+    );
+    let resolver = resolver(&link);
+    resolver.cache.supply_secret("wrong".to_string()).await;
+    let RemoteDesktopFileChannel::Degraded {
+        message,
+        needs_secret,
+        ..
+    } = resolve_linked(&resolver).await
+    else {
+        panic!("expected degraded");
+    };
+    assert!(message.contains("Authentication failed"), "{message}");
+    let request = needs_secret.expect("asked for again");
+    assert!(request.rejected);
+    resolve_linked(&resolver).await;
+    assert_eq!(
+        link.supplied(),
+        vec![Some("wrong".to_string()), None],
+        "the rejected secret is not tried again"
+    );
+}
+
+/// A user-entered secret whose host is merely unreachable is kept: a Retry
+/// reconnects with it instead of asking again.
+#[tokio::test]
+async fn an_unreachable_host_keeps_the_supplied_secret() {
+    let link = FakeLink::new(FakeLink::target(Some(password_request())));
+    let resolver = resolver(&link);
+    resolver.cache.supply_secret("typed".to_string()).await;
+    let RemoteDesktopFileChannel::Degraded { needs_secret, .. } = resolve_linked(&resolver).await
+    else {
+        panic!("expected degraded");
+    };
+    assert_eq!(needs_secret, None);
+    resolve_linked(&resolver).await;
+    assert_eq!(link.supplied()[1].as_deref(), Some("typed"));
+}
+
+/// A link that no longer resolves drops the session's entered secret with it.
+#[tokio::test]
+async fn a_deleted_link_drops_the_supplied_secret() {
+    let link = FakeLink::new(LinkedLookup::Missing);
+    let resolver = resolver(&link);
+    resolver.cache.supply_secret("typed".to_string()).await;
+    resolve_linked(&resolver).await;
+    resolve_linked(&resolver).await;
+    assert_eq!(link.supplied(), vec![Some("typed".to_string()), None]);
 }
 
 #[tokio::test]
@@ -641,11 +795,12 @@ mod live {
 
     #[async_trait::async_trait]
     impl LinkedSshSource for FixtureLink {
-        fn lookup(&self, _connection_id: &str) -> LinkedLookup {
+        fn lookup(&self, _connection_id: &str, _supplied: Option<&str>) -> LinkedLookup {
             LinkedLookup::Found(Box::new(LinkedSshTarget {
                 connection_id: "Lab/Fixture".to_string(),
                 name: "Fixture".to_string(),
                 config: self.0.clone(),
+                ask_again: None,
             }))
         }
     }

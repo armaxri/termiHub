@@ -108,6 +108,7 @@ fn live_side_channels_are_classified_by_status() {
         channel: channel(SSH, "lab-pi"),
         agent_id: None,
         message: "SFTP is not enabled".to_string(),
+        needs_secret: None,
     };
     assert_eq!(
         LiveSideChannel::of(&degraded),
@@ -124,6 +125,34 @@ fn live_side_channels_are_classified_by_status() {
         LiveSideChannel::Refused(message) => assert!(message.contains("turned off"), "{message}"),
         other => panic!("expected Refused, got {other:?}"),
     }
+}
+
+/// #4265: a linked route waiting for the user's password is only worth
+/// waiting for — an unattended relaunch never asks for it, and keeps the row
+/// paused until the user enters it in the session.
+#[tokio::test]
+async fn a_channel_waiting_for_a_password_keeps_the_relaunch_paused() {
+    use crate::session::graphical_file_channel::{LinkedSecretKind, LinkedSecretRequest};
+    let waiting = RemoteDesktopFileChannel::Degraded {
+        channel: channel(SSH, "lab-pi"),
+        agent_id: None,
+        message: "no password is saved for the linked SSH connection".to_string(),
+        needs_secret: Some(LinkedSecretRequest {
+            connection_id: "Lab/Pi".to_string(),
+            source_file: None,
+            kind: LinkedSecretKind::Password,
+            auth_method: "password".to_string(),
+            host: "lab-pi".to_string(),
+            username: "pi".to_string(),
+            store_locked: false,
+            can_save: true,
+            rejected: false,
+        }),
+    };
+    let live = LiveSideChannel::of(&waiting);
+    assert!(matches!(live, LiveSideChannel::Degraded { .. }), "{live:?}");
+    let err = resolve(vec![(live, "session-1")]).await.unwrap_err();
+    assert_eq!(err, RelaunchBlocked::GraphicalSessionUnavailable);
 }
 
 /// The SSH route records no agent even when one is passed; the agent route
