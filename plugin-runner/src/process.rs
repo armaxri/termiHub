@@ -193,18 +193,20 @@ impl RunnerCommand {
     /// arguments. The caller should close its copy of `channel` afterwards, so
     /// the runner's exit surfaces as end of stream.
     pub fn spawn(&self, channel: BorrowedHandle<'_>) -> io::Result<JobChild> {
-        let job = create_job(&self.limits)?;
-        let stdin = null_device(GENERIC_READ)?;
-        let (stdout, _) = child_stdio(self.stdout, STD_OUTPUT_HANDLE, GENERIC_WRITE)?;
-        let (stderr, stderr_read) = child_stdio(self.stderr, STD_ERROR_HANDLE, GENERIC_WRITE)?;
-        let channel = inheritable_copy(channel)?;
+        let job = create_job(&self.limits).map_err(context("creating the job object"))?;
+        let stdin = null_device(GENERIC_READ).map_err(context("opening NUL for stdin"))?;
+        let (stdout, _) = child_stdio(self.stdout, STD_OUTPUT_HANDLE, GENERIC_WRITE)
+            .map_err(context("preparing stdout"))?;
+        let (stderr, stderr_read) = child_stdio(self.stderr, STD_ERROR_HANDLE, GENERIC_WRITE)
+            .map_err(context("preparing stderr"))?;
+        let channel = inheritable_copy(channel).map_err(context("duplicating the channel"))?;
 
         let mut args = self.args.clone();
         args.push(IPC_HANDLE_ARG.into());
         args.push(handle_value(channel.as_handle()).to_string().into());
         let application = to_wide(self.program.as_os_str())?;
         let mut command_line = command_line(&self.program, &args)?;
-        let environment = environment_block(&self.env)?;
+        let environment = environment_block(&self.child_env())?;
         let current_dir = match &self.current_dir {
             Some(dir) => Some(to_wide(dir.as_os_str())?),
             None => None,
@@ -216,7 +218,8 @@ impl RunnerCommand {
             .collect();
         inherited.sort_unstable();
         inherited.dedup();
-        let mut attributes = AttributeList::new(inherited, self.app_container.as_ref())?;
+        let mut attributes = AttributeList::new(inherited, self.app_container.as_ref())
+            .map_err(context("building the process attribute list"))?;
 
         // SAFETY: all-zero is a valid `STARTUPINFOEXW` to fill in.
         let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
@@ -253,20 +256,20 @@ impl RunnerCommand {
             )
         };
         if created == 0 {
-            return Err(io::Error::last_os_error());
+            return Err(context("CreateProcessW")(io::Error::last_os_error()));
         }
         let process = owned(info.hProcess)?;
         let thread = owned(info.hThread)?;
         // SAFETY: both handles are valid and ours.
         if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process.as_raw_handle()) } == 0 {
-            let error = io::Error::last_os_error();
+            let error = context("assigning the runner to its job")(io::Error::last_os_error());
             // SAFETY: still suspended: it never ran; end it.
             unsafe { TerminateProcess(process.as_raw_handle(), KILLED_EXIT_CODE) };
             return Err(error);
         }
         // SAFETY: the primary thread we created suspended.
         if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
-            let error = io::Error::last_os_error();
+            let error = context("resuming the runner")(io::Error::last_os_error());
             // SAFETY: ends the (still suspended) process through its job.
             unsafe { TerminateJobObject(job.as_raw_handle(), KILLED_EXIT_CODE) };
             return Err(error);
@@ -280,6 +283,40 @@ impl RunnerCommand {
             stderr: stderr_read.map(ChildStderr::from),
         })
     }
+}
+
+/// Host variables an AppContainer process creation reads from the child's
+/// environment block: `CreateProcessW` redirects `LOCALAPPDATA`, `TEMP` and
+/// `TMP` into the container's own folder and fails with
+/// `ERROR_ENVVAR_NOT_FOUND` (203) when the block lacks them (#4187). The
+/// runner points `TMP` / `TEMP` / `USERPROFILE` at its data folder before
+/// any plugin code runs.
+const APP_CONTAINER_ENV: &[&str] = &["LOCALAPPDATA", "APPDATA", "USERPROFILE", "TEMP", "TMP"];
+
+impl RunnerCommand {
+    /// The child's environment: the configured variables, plus (for an
+    /// AppContainer) the host's [`APP_CONTAINER_ENV`] ones it does not set.
+    fn child_env(&self) -> Vec<(OsString, OsString)> {
+        let mut env = self.env.clone();
+        if self.app_container.is_some() {
+            for name in APP_CONTAINER_ENV {
+                let set = env
+                    .iter()
+                    .any(|(key, _)| key.eq_ignore_ascii_case(OsStr::new(name)));
+                if !set {
+                    if let Some(value) = std::env::var_os(name) {
+                        env.push(((*name).into(), value));
+                    }
+                }
+            }
+        }
+        env
+    }
+}
+
+/// Prefix an error with the spawn step that failed.
+fn context(step: &'static str) -> impl Fn(io::Error) -> io::Error {
+    move |error| io::Error::new(error.kind(), format!("{step}: {error}"))
 }
 
 /// A running runner and the job that bounds it. Dropping it closes the job,
@@ -736,6 +773,27 @@ mod tests {
         assert_eq!(line(r"C:\r.exe", &[r"a\ b\"]), r#""C:\r.exe" "a\ b\\""#);
         assert_eq!(line(r"C:\r.exe", &[r#"a\"b"#]), r#""C:\r.exe" "a\\\"b""#);
         assert!(command_line(Path::new("C:\\\"x"), &[]).is_err());
+    }
+
+    /// An AppContainer spawn carries the variables `CreateProcessW` redirects
+    /// (missing ones fail it with error 203), without overriding set ones.
+    #[test]
+    fn an_app_container_child_gets_the_redirected_variables() {
+        let mut command = RunnerCommand::new(r"C:\r.exe");
+        command.envs([("TMP", r"C:\mine")]);
+        assert_eq!(command.child_env().len(), 1, "no container: no additions");
+        let id = format!("process-env-{}", std::process::id());
+        command.app_container(AppContainer::ensure(&id).unwrap());
+        let env = command.child_env();
+        crate::appcontainer::delete_profile(&id).unwrap();
+        let value = |name: &str| {
+            env.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(OsStr::new(name)))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(value("TMP"), Some(r"C:\mine".into()));
+        assert_eq!(value("LOCALAPPDATA"), std::env::var_os("LOCALAPPDATA"));
+        assert_eq!(value("USERPROFILE"), std::env::var_os("USERPROFILE"));
     }
 
     #[test]
