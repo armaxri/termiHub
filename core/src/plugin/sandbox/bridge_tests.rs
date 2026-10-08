@@ -741,6 +741,66 @@ fn an_approved_connection_passes_the_socket_over_the_channel() {
     assert_eq!(shared.bridge.handles_passed(), 1);
 }
 
+/// Unix: a passed socket is counted before its reply is sent. The runner may
+/// use the socket, and the host see its output, the moment the reply lands, so
+/// a count bumped only after the send raced a caller that checked it then
+/// (#4262: the escape probe's "handed, not proxied" check saw 0). Here the
+/// channel is full, so the reply's send blocks: the count must already be 1.
+#[cfg(unix)]
+#[test]
+fn a_passed_socket_is_counted_before_its_reply_is_sent() {
+    use std::os::unix::net::UnixStream;
+
+    let shared = Shared::new(
+        "probe".to_owned(),
+        None,
+        Arc::new(PluginLogLimiter::default()),
+    );
+    let (host_end, runner_end) = UnixStream::pair().unwrap();
+    // Fill the channel so the next frame's write blocks.
+    let mut filler = host_end.try_clone().unwrap();
+    filler.set_nonblocking(true).unwrap();
+    while filler.write(&[0u8; 4096]).is_ok() {}
+    filler.set_nonblocking(false).unwrap();
+    let writer = Arc::new(ChannelWriter::for_channel(host_end).unwrap());
+    shared
+        .bridge
+        .attach(writer, CURRENT_PLUGIN_ABI_VERSION, Arc::downgrade(&shared));
+    let id = shared.next_session.fetch_add(1, Ordering::SeqCst);
+    shared.bridge.open_session(
+        id,
+        BridgeGrant::new(
+            PermissionSet::from_parts([PluginPermission::Network], &[]),
+            ConnectionPolicy::default(),
+        ),
+    );
+    shared
+        .dispatch(Message::BridgeRequest(BridgeRequest {
+            request_id: 7,
+            session_id: id,
+            op: BridgeOp::OpenConnection {
+                host: "127.0.0.1".into(),
+                port: echo_server(),
+            },
+        }))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while shared.bridge.handles_passed() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let counted = shared.bridge.handles_passed() == 1;
+    // Drain the channel so the blocked reply goes out either way.
+    std::thread::spawn(move || {
+        let mut sink = [0u8; 65536];
+        let mut runner_end = runner_end;
+        while matches!(runner_end.read(&mut sink), Ok(n) if n > 0) {}
+    });
+    assert!(
+        counted,
+        "the pass was counted only after its reply was sent"
+    );
+}
+
 /// Windows (#4219): a harness that duplicates sockets into "the runner" —
 /// this very process, standing in for it.
 #[cfg(windows)]
