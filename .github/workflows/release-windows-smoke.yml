@@ -239,6 +239,17 @@ jobs:
           "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
           "product_code=$productCode" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
+      # The plugin runner (#4202) is bundled next to termihub.exe like the RDP
+      # helper. It must start without a VC++ redistributable (static CRT,
+      # #4172) and match the digest the app embeds, or the app would refuse it.
+      - name: Verify the installed plugin runner
+        shell: bash
+        env:
+          EXE: ${{ steps.install.outputs.exe }}
+        run: |
+          set -euo pipefail
+          scripts/internal/verify-plugin-runner-bundle.sh "$(cygpath -u "$EXE")"
+
       - name: Run termihub.exe --version
         shell: pwsh
         env:

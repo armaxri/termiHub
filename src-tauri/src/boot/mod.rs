@@ -228,6 +228,9 @@ pub(crate) fn init_plugin_host(
     #[cfg(debug_assertions)]
     let plugin_host =
         plugin_host.with_runner(termihub_core::plugin::sandbox::debug_runner_config_from_env());
+    // Every build logs the bundled runner (#4202); the release bundle check
+    // relies on its embedded digest being in the binary.
+    termihub_core::plugin::sandbox::log_bundled_runner();
     let plugin_host = std::sync::Arc::new(plugin_host);
     app.manage(termihub_core::plugin::PluginManager::with_hook(
         plugins_root,

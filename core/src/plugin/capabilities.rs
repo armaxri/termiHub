@@ -32,6 +32,9 @@ use termihub_plugin_api::{
     AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginHostBridgeVTable,
     PluginStatus, PluginTcpStream, CURRENT_PLUGIN_ABI_VERSION,
 };
+use termihub_plugin_runner::ipc::{
+    LIST_DIR_ENTRY_OVERHEAD, MAX_LIST_DIR_BYTES, MAX_LIST_DIR_ENTRIES,
+};
 
 use super::manifest::ConnectionPolicyManifest;
 use super::security::{PermissionError, PermissionSet};
@@ -460,16 +463,46 @@ pub(crate) fn guarded_stat(
 
 /// `list_dir`: the entry names (lossy UTF-8) of an in-scope directory, in the
 /// host's directory order.
+///
+/// Bounded (#4220): a directory with more than [`MAX_LIST_DIR_ENTRIES`]
+/// entries, or whose names exceed [`MAX_LIST_DIR_BYTES`] (each charged its
+/// length plus [`LIST_DIR_ENTRY_OVERHEAD`]), is refused with
+/// [`PluginStatus::ResourceLimit`] while it is read, so the host never holds an
+/// unbounded listing — in process and over plugin IPC alike.
 pub(crate) fn guarded_list_dir(
     permissions: &PermissionSet,
     path: &str,
 ) -> Result<Vec<String>, PluginStatus> {
     let resolved = scoped(permissions, path)?;
     let read_dir = std::fs::read_dir(&resolved).map_err(|_| PluginStatus::Io)?;
-    Ok(read_dir
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect())
+    collect_bounded(
+        read_dir
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned()),
+        MAX_LIST_DIR_ENTRIES,
+        MAX_LIST_DIR_BYTES,
+    )
+}
+
+/// Collect directory entry names, refusing with
+/// [`PluginStatus::ResourceLimit`] as soon as more than `max_entries` arrive or
+/// their charged size (length plus [`LIST_DIR_ENTRY_OVERHEAD`] each) passes
+/// `max_bytes`.
+fn collect_bounded(
+    names: impl Iterator<Item = String>,
+    max_entries: usize,
+    max_bytes: usize,
+) -> Result<Vec<String>, PluginStatus> {
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    for name in names {
+        bytes = bytes.saturating_add(name.len().saturating_add(LIST_DIR_ENTRY_OVERHEAD));
+        if out.len() >= max_entries || bytes > max_bytes {
+            return Err(PluginStatus::ResourceLimit);
+        }
+        out.push(name);
+    }
+    Ok(out)
 }
 
 /// Collapse a guarded operation's outcome into the status a callback returns,
@@ -1441,5 +1474,28 @@ mod tests {
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(b"c");
         assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn a_listing_past_its_bounds_is_a_resource_limit() {
+        let names = |n: usize| (0..n).map(|i| format!("e{i}"));
+        // At the entry bound it is returned; one more is refused.
+        assert_eq!(collect_bounded(names(3), 3, usize::MAX).unwrap().len(), 3);
+        assert_eq!(
+            collect_bounded(names(4), 3, usize::MAX),
+            Err(PluginStatus::ResourceLimit)
+        );
+        // Each name is charged its length plus the per-entry overhead.
+        let cost = 2 + LIST_DIR_ENTRY_OVERHEAD;
+        assert_eq!(collect_bounded(names(5), 100, 5 * cost).unwrap().len(), 5);
+        assert_eq!(
+            collect_bounded(names(5), 100, 5 * cost - 1),
+            Err(PluginStatus::ResourceLimit)
+        );
+        // An endless directory stops at the bound instead of exhausting memory.
+        assert_eq!(
+            collect_bounded((0..).map(|i: u64| i.to_string()), 1000, usize::MAX),
+            Err(PluginStatus::ResourceLimit)
+        );
     }
 }

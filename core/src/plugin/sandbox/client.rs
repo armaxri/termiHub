@@ -6,10 +6,13 @@
 //! frame is validated (length cap and known kind in the codec; direction, known
 //! session id, log bounds here), and any violation kills the runner. Its
 //! sessions then report not-alive; the host and every other plugin keep running.
+//!
+//! Each runner also gets a watchdog (#4184, [`super::watchdog`]) for hangs and
+//! memory, and its stderr is forwarded through the host so an allocation
+//! failure under `RLIMIT_AS` is recognised as out of memory.
 
 #[cfg(unix)]
 use std::io::Write;
-use std::path::Path;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver};
@@ -29,7 +32,9 @@ use crate::plugin::log_rate_limit::PluginLogLimiter;
 use crate::plugin::HostError;
 
 use super::bridge::{BridgeDenial, BridgeGrant};
-use super::peer::{Reply, SessionSlot, Shared};
+use super::exit::RunnerExitCause;
+use super::handle::PluginRunnerConfig;
+use super::peer::{ExitHook, Reply, SessionSlot, Shared};
 use super::spawn::{spawn_runner, Spawned};
 use super::writer::ChannelWriter;
 
@@ -69,15 +74,15 @@ impl SandboxedPlugin {
     /// No runner transport on this platform yet (Windows: next slice of #4182).
     #[cfg(not(unix))]
     pub(super) fn spawn(
-        runner: &Path,
+        config: &PluginRunnerConfig,
         _configure: &Configure,
         _log_limiter: Arc<PluginLogLimiter>,
     ) -> Result<Arc<Self>, HostError> {
-        let Spawned { mut child } = spawn_runner(runner)?;
+        let Spawned { mut child } = spawn_runner(&config.runner_path)?;
         let _ = child.kill();
         let _ = child.wait();
         Err(HostError::RunnerUnavailable {
-            path: runner.to_owned(),
+            path: config.runner_path.clone(),
             detail: "no runner transport on this platform".to_owned(),
         })
     }
@@ -87,12 +92,24 @@ impl SandboxedPlugin {
     /// the manifest mirror (untrusted peer). Any failure kills the runner.
     #[cfg(unix)]
     pub(super) fn spawn(
-        runner: &Path,
+        config: &PluginRunnerConfig,
         configure: &Configure,
         log_limiter: Arc<PluginLogLimiter>,
     ) -> Result<Arc<Self>, HostError> {
-        let Spawned { child, stream } = spawn_runner(runner)?;
+        let Spawned { mut child, stream } = spawn_runner(&config.runner_path)?;
+        let stderr = child.stderr.take();
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
+        if let Some(stderr) = stderr {
+            shared.expect_stderr();
+            let forwarder = Arc::clone(&shared);
+            let spawned = std::thread::Builder::new()
+                .name(format!("plugin-runner-stderr-{}", configure.plugin_id))
+                .spawn(move || forwarder.forward_stderr(stderr));
+            if spawned.is_err() {
+                shared.kill();
+                return Err(HostError::RunnerProtocol("stderr thread".to_owned()));
+            }
+        }
         match handshake(&stream, configure) {
             Ok(info) => {
                 let _ = stream.set_read_timeout(None);
@@ -118,11 +135,17 @@ impl SandboxedPlugin {
                     .spawn(move || reader_shared.read_loop(reader))
                     .map_err(|e| HostError::RunnerProtocol(format!("reader thread: {e}")))
                     .inspect_err(|_| shared.kill())?;
-                Ok(Arc::new(Self {
+                let plugin = Arc::new(Self {
                     info,
                     writer,
                     shared,
-                }))
+                });
+                super::watchdog::spawn(
+                    Arc::downgrade(&plugin),
+                    config.watchdog,
+                    &configure.plugin_id,
+                );
+                Ok(plugin)
             }
             Err(err) => {
                 shared.kill();
@@ -135,6 +158,35 @@ impl SandboxedPlugin {
     #[must_use]
     pub fn info(&self) -> &LoadedPluginInfo {
         &self.info
+    }
+
+    /// Why the runner ended, once it did (or while the host is ending it).
+    #[must_use]
+    pub fn exit_cause(&self) -> Option<RunnerExitCause> {
+        self.shared.exit_cause()
+    }
+
+    /// Install the hook that receives the final exit cause (runs at once if
+    /// the runner already ended).
+    pub(super) fn set_exit_hook(&self, hook: ExitHook) {
+        self.shared.set_exit_hook(hook);
+    }
+
+    /// The peer state (watchdog).
+    pub(super) fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
+    /// Kill the runner for `cause` (a missed call deadline, …).
+    pub(super) fn kill_for(&self, cause: RunnerExitCause) {
+        self.shared.kill_for(cause);
+    }
+
+    /// Count a request with its own deadline as in flight until the guard
+    /// drops: the hang verdict waits for it.
+    pub(super) fn call_in_flight(&self) -> CallGuard<'_> {
+        self.shared.calls_in_flight.fetch_add(1, Ordering::SeqCst);
+        CallGuard(&self.shared)
     }
 
     /// Whether the runner is still running and talking.
@@ -188,8 +240,17 @@ impl SandboxedPlugin {
             return Err(PluginError::NotAlive);
         }
         self.writer.write_frame(frame).map_err(|e| {
-            self.shared
-                .violation(&format!("writing to the runner failed: {e}"));
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) {
+                // Stalled past the write timeout: it stopped reading.
+                self.shared.kill_for(RunnerExitCause::NotResponding);
+            } else {
+                // The channel broke: the runner is gone or going. Its reader
+                // thread classifies the exit; make sure it does end.
+                self.shared.kill();
+            }
             PluginError::NotAlive
         })
     }
@@ -273,6 +334,9 @@ impl SandboxedPlugin {
     /// every session, `Shutdown`, then kill whatever is still running. The
     /// host never waits on a plugin without a deadline.
     pub fn shutdown(&self) {
+        // Whatever happens from here on is the host's doing, not a crash
+        // (unless the runner already ended with a recorded cause).
+        self.shared.set_pending_cause(RunnerExitCause::Stopped);
         if self.is_alive() {
             let _ = self.send(&Message::Cancel(termihub_plugin_runner::ipc::Cancel {
                 session_id: None,
@@ -313,6 +377,16 @@ impl Drop for SandboxedPlugin {
     }
 }
 
+/// Marks a request with its own deadline as in flight (see
+/// [`SandboxedPlugin::call_in_flight`]).
+pub(super) struct CallGuard<'a>(&'a Shared);
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        self.0.calls_in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Run the startup sequence on the calling thread, bounded by deadlines.
 #[cfg(unix)]
 fn handshake(
@@ -322,9 +396,11 @@ fn handshake(
     let protocol = |what: &str| HostError::RunnerProtocol(what.to_owned());
     let mut frames = FrameReader::new(stream);
     let mut next = |timeout: Duration, waiting_for: &str| -> Result<Message, HostError> {
+        // macOS refuses socket options once the peer is gone (EINVAL), so a
+        // runner that already exited can fail here rather than at the read.
         stream
             .set_read_timeout(Some(timeout))
-            .map_err(|e| protocol(&e.to_string()))?;
+            .map_err(|e| protocol(&format!("waiting for {waiting_for}: {e}")))?;
         match frames.read_frame() {
             Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Host)
                 .map_err(|e| protocol(&format!("waiting for {waiting_for}: {e}"))),

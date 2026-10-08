@@ -17,7 +17,9 @@
 //!   sends `BridgeRelease`, which frees the host's connection slot.
 //! * **Filesystem.** `read_file` / `write_file` / `stat_path` / `list_dir` are
 //!   answered by the host; files larger than one frame are moved in
-//!   [`MAX_BRIDGE_CHUNK`] pieces.
+//!   [`MAX_BRIDGE_CHUNK`] pieces, and a directory listing larger than one frame
+//!   arrives in pages that are reassembled here (#4220) before the plugin sees
+//!   it in the unchanged ABI framing.
 //!
 //! The reader thread ([`super::run`]) routes `BridgeReply` and `Stream*`
 //! frames here; plugin threads block in [`BridgeClient::call`]. Every callback
@@ -38,7 +40,8 @@ use termihub_plugin_api::{
 use termihub_plugin_runner::ipc::fd::FdQueue;
 use termihub_plugin_runner::ipc::{
     BridgeOp, BridgeReply, BridgeRequest, BridgeResult, ConnRef, Message, StreamAck, StreamChunk,
-    StreamTransport, MAX_BRIDGE_CHUNK, STREAM_WINDOW,
+    StreamTransport, LIST_DIR_ENTRY_OVERHEAD, MAX_BRIDGE_CHUNK, MAX_LIST_DIR_BYTES,
+    MAX_LIST_DIR_ENTRIES, STREAM_WINDOW,
 };
 
 use super::channel::Channel;
@@ -188,9 +191,9 @@ impl BridgeClient {
             }
             #[cfg(not(unix))]
             StreamTransport::HandlePassed => {
-                // TODO(#4219): Windows handle passing (DuplicateHandle +
+                // Windows handle passing (DuplicateHandle +
                 // overlapped ReadFile/WriteFile) lands with the Windows
-                // transport; until then the host only offers `Proxy` here.
+                // transport (#4219); until then the host only offers `Proxy` here.
                 drop(guard);
                 None
             }
@@ -551,25 +554,71 @@ unsafe extern "C" fn ipc_list_dir(
             Ok(path) => path,
             Err(status) => return status,
         };
-        match b
-            .client
-            .call(b.session_id, BridgeOp::ListDir { path }, FS_DEADLINE)
-        {
-            Ok(Completion {
-                result: BridgeResult::Entries { names },
-                ..
-            }) => {
-                let encoded = encode_dir_entries(&names);
-                // SAFETY: `out_entries` is the plugin's valid, writable out-parameter.
-                unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
-                PluginStatus::Ok
+        let mut listing = DirListing::default();
+        let mut cursor = 0;
+        loop {
+            let op = BridgeOp::ListDir {
+                path: path.clone(),
+                cursor,
+            };
+            match b.client.call(b.session_id, op, FS_DEADLINE) {
+                Ok(Completion {
+                    result: BridgeResult::Entries { names, next_cursor },
+                    ..
+                }) => {
+                    if let Err(status) = listing.add_page(names, next_cursor) {
+                        return status;
+                    }
+                    if next_cursor == 0 {
+                        break;
+                    }
+                    cursor = next_cursor;
+                }
+                Ok(other) => return status_of(&other.result),
+                Err(status) => return status,
             }
-            Ok(other) => status_of(&other.result),
-            Err(status) => status,
         }
+        let encoded = encode_dir_entries(&listing.names);
+        // SAFETY: `out_entries` is the plugin's valid, writable out-parameter.
+        unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
+        PluginStatus::Ok
     };
     // SAFETY: `ctx` is the context this bridge was built with (or null).
     unsafe { with_session(ctx, body) }
+}
+
+/// A `list_dir` reassembled from its pages (#4220), bounded like the host's
+/// listing so a misbehaving host cannot make the runner grow without limit.
+#[derive(Default)]
+struct DirListing {
+    names: Vec<String>,
+    bytes: usize,
+}
+
+impl DirListing {
+    /// Append one page. `ResourceLimit` past [`MAX_LIST_DIR_ENTRIES`] /
+    /// [`MAX_LIST_DIR_BYTES`]; `Io` for a page over one chunk, or an empty
+    /// page that does not end the listing (it would never progress).
+    fn add_page(&mut self, names: Vec<String>, next_cursor: u64) -> Result<(), PluginStatus> {
+        if names.is_empty() && next_cursor != 0 {
+            return Err(PluginStatus::Io);
+        }
+        let page: usize = names
+            .iter()
+            .map(|n| n.len().saturating_add(LIST_DIR_ENTRY_OVERHEAD))
+            .fold(0, usize::saturating_add);
+        if page > MAX_BRIDGE_CHUNK {
+            return Err(PluginStatus::Io);
+        }
+        self.bytes = self.bytes.saturating_add(page);
+        if self.names.len().saturating_add(names.len()) > MAX_LIST_DIR_ENTRIES
+            || self.bytes > MAX_LIST_DIR_BYTES
+        {
+            return Err(PluginStatus::ResourceLimit);
+        }
+        self.names.extend(names);
+        Ok(())
+    }
 }
 
 /// The ABI's `list_dir` framing (CORE-035): a `u32_le` count, then each name
@@ -829,6 +878,55 @@ mod tests {
         assert_eq!(status_from_wire(9), PluginStatus::ResourceLimit);
         assert_eq!(status_from_wire(-1), PluginStatus::Other);
         assert_eq!(status_from_wire(10_000), PluginStatus::Other);
+    }
+
+    #[test]
+    fn dir_listing_pages_reassemble_in_order() {
+        let mut listing = DirListing::default();
+        listing
+            .add_page(vec!["a".into(), "b".into()], 7)
+            .expect("first page");
+        listing.add_page(vec!["c".into()], 0).expect("last page");
+        assert_eq!(listing.names, ["a", "b", "c"]);
+        // An empty directory is one empty, final page.
+        DirListing::default()
+            .add_page(Vec::new(), 0)
+            .expect("an empty listing");
+    }
+
+    #[test]
+    fn a_hostile_listing_is_refused() {
+        // An empty page that claims more would never progress.
+        assert_eq!(
+            DirListing::default().add_page(Vec::new(), 3),
+            Err(PluginStatus::Io)
+        );
+        // A page over one chunk is not something the host sends.
+        let oversized = vec!["x".repeat(MAX_BRIDGE_CHUNK)];
+        assert_eq!(
+            DirListing::default().add_page(oversized, 0),
+            Err(PluginStatus::Io)
+        );
+        // Endless continuation pages stop at the entry bound...
+        let mut listing = DirListing::default();
+        let page = MAX_BRIDGE_CHUNK / (1 + LIST_DIR_ENTRY_OVERHEAD);
+        let mut outcome = Ok(());
+        while outcome.is_ok() {
+            outcome = listing.add_page(vec!["x".into(); page], 1);
+        }
+        assert_eq!(outcome, Err(PluginStatus::ResourceLimit));
+        assert!(listing.names.len() <= MAX_LIST_DIR_ENTRIES);
+        // ...and at the byte bound.
+        let mut listing = DirListing::default();
+        let name = "y".repeat(1000);
+        let page = MAX_BRIDGE_CHUNK / (name.len() + LIST_DIR_ENTRY_OVERHEAD);
+        let mut outcome = Ok(());
+        while outcome.is_ok() {
+            outcome = listing.add_page(vec![name.clone(); page], 1);
+        }
+        assert_eq!(outcome, Err(PluginStatus::ResourceLimit));
+        assert!(listing.bytes > MAX_LIST_DIR_BYTES);
+        assert!(listing.names.len() * name.len() <= MAX_LIST_DIR_BYTES);
     }
 
     #[test]

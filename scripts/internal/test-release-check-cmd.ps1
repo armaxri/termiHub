@@ -19,8 +19,10 @@
                    a FAIL with its own message (the last with the dispatch
                    command).
       bundle       build.cmd / smoke-test.cmd replaced by stubs: installer glob
-                   hit, no installer, failed build, failed smoke test, and the
-                   exact smoke-test.cmd argument.
+                   hit, no installer, failed build, failed smoke test, the
+                   exact smoke-test.cmd argument, and the bundled plugin runner
+                   check (#4202: a stand-in runner compiled with csc.exe; runner
+                   missing, digest not embedded).
       bundle-real  (-RealBundle) the real build.cmd + smoke-test.cmd; slow, run
                    by the workflow only on workflow_dispatch.
 
@@ -227,6 +229,7 @@ if ($RealBundle) {
     $smokeCmd = Join-Path $RepoRoot 'scripts\smoke-test.cmd'
     $bundleDir = Join-Path $RepoRoot 'target\release\bundle'
     $appExe = Join-Path $RepoRoot 'target\release\termihub.exe'
+    $runnerExe = Join-Path $RepoRoot 'target\release\termihub-plugin-runner.exe'
     $smokeArgs = Join-Path $RepoRoot 'target\release-check-smoke-args.txt'
     $buildBackup = Get-Content -LiteralPath $buildCmd -Raw
     $smokeBackup = Get-Content -LiteralPath $smokeCmd -Raw
@@ -234,10 +237,31 @@ if ($RealBundle) {
         throw 'target\release already holds a build; refusing to overwrite it with stub artifacts.'
     }
 
-    function Set-BuildStub([int]$Exit, [string[]]$Installers) {
+    # A stand-in plugin runner (#4202): like the real one it exits 64 (usage)
+    # on `--protocol 0`. Compiled with the .NET Framework csc.exe every Windows
+    # image ships; the stub app embeds its SHA-256 the way core/build.rs does.
+    $stubDir = Join-Path ([System.IO.Path]::GetTempPath()) ('stub-runner-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stubDir | Out-Null
+    $stubRunner = Join-Path $stubDir 'termihub-plugin-runner.exe'
+    $stubSource = Join-Path $stubDir 'StubRunner.cs'
+    Set-Content -LiteralPath $stubSource -Value ('public static class StubRunner { public static int Main(string[] a) { ' +
+        'return a.Length == 2 && a[0] == "--protocol" && a[1] == "0" ? 64 : 0; } }')
+    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    & $csc /nologo /target:exe "/out:$stubRunner" $stubSource
+    if ($LASTEXITCODE -ne 0) { throw "csc.exe failed to build the stand-in plugin runner ($LASTEXITCODE)" }
+    $runnerDigest = (Get-FileHash -Algorithm SHA256 -LiteralPath $stubRunner).Hash.ToLowerInvariant()
+
+    function Set-BuildStub([int]$Exit, [string[]]$Installers, [switch]$NoRunner, [switch]$NoDigest) {
         $lines = @('@echo off', 'echo [stub build.cmd]', 'cd /d "%~dp0\.."')
         $lines += 'if not exist target\release mkdir target\release'
-        $lines += 'echo stub> target\release\termihub.exe'
+        if ($NoDigest) {
+            $lines += 'echo stub> target\release\termihub.exe'
+        } else {
+            $lines += "echo stub $runnerDigest> target\release\termihub.exe"
+        }
+        if (-not $NoRunner) {
+            $lines += "copy /y `"$stubRunner`" target\release\termihub-plugin-runner.exe >nul"
+        }
         foreach ($i in $Installers) {
             $dir = Split-Path $i -Parent
             $lines += "if not exist `"$dir`" mkdir `"$dir`""
@@ -255,7 +279,7 @@ if ($RealBundle) {
         )
     }
     function Reset-Artifacts {
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $bundleDir, $appExe, $smokeArgs
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $bundleDir, $appExe, $runnerExe, $smokeArgs
     }
 
     try {
@@ -264,7 +288,7 @@ if ($RealBundle) {
         Set-SmokeStub 0
         $r = Invoke-ReleaseCheck 'bundle'
         Assert-Result 'bundle (stub): msi + nsis produced, smoke passes' $r 0 `
-            -Expect @('[stub build.cmd]', 'PASS: Bundle build produced target\release\bundle\', '[stub smoke-test.cmd] "target\release\termihub.exe"', 'PASS: Smoke test passed against target\release\termihub.exe', 'RESULT: READY') `
+            -Expect @('[stub build.cmd]', 'PASS: Bundle build produced target\release\bundle\', 'PASS: Bundled plugin runner starts and matches the embedded digest', '[stub smoke-test.cmd] "target\release\termihub.exe"', 'PASS: Smoke test passed against target\release\termihub.exe', 'RESULT: READY') `
             -Reject @('FAIL:')
         $passed = if (Test-Path $smokeArgs) { (Get-Content -LiteralPath $smokeArgs -Raw).Trim() } else { '<not called>' }
         if ($passed -ne 'target\release\termihub.exe') {
@@ -283,6 +307,19 @@ if ($RealBundle) {
         $r = Invoke-ReleaseCheck 'bundle'
         Assert-Result 'bundle (stub): nsis only' $r 0 `
             -Expect @('PASS: Bundle build produced target\release\bundle\nsis\termiHub_0.0.0_x64-setup.exe') -Reject @('FAIL:')
+
+        Reset-Artifacts
+        Set-BuildStub 0 @('target\release\bundle\msi\termiHub_0.0.0_x64_en-US.msi') -NoRunner
+        $r = Invoke-ReleaseCheck 'bundle'
+        Assert-Result 'bundle (stub): plugin runner missing' $r 1 `
+            -Expect @('FAIL: Bundled plugin runner check failed', 'RESULT: NOT READY') -Reject @('PASS: Bundled plugin runner')
+
+        Reset-Artifacts
+        Set-BuildStub 0 @('target\release\bundle\msi\termiHub_0.0.0_x64_en-US.msi') -NoDigest
+        $r = Invoke-ReleaseCheck 'bundle'
+        Assert-Result 'bundle (stub): plugin runner digest not embedded' $r 1 `
+            -Expect @('not embedded in', 'FAIL: Bundled plugin runner check failed', 'RESULT: NOT READY') `
+            -Reject @('PASS: Bundled plugin runner')
 
         Reset-Artifacts
         Set-BuildStub 0 @()
@@ -306,6 +343,7 @@ if ($RealBundle) {
         Set-Content -LiteralPath $buildCmd -Value $buildBackup -NoNewline
         Set-Content -LiteralPath $smokeCmd -Value $smokeBackup -NoNewline
         Reset-Artifacts
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $stubDir
     }
 }
 

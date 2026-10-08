@@ -87,8 +87,9 @@ tests/system/test-inventory.json
 # RDP sidecar (#1747) is an excluded crate with its own target dir
 /rdp-sidecar/target/
 
-# RDP sidecar binaries staged for Tauri `externalBin` bundling (#1754). Built by
-# scripts/build-rdp-sidecar.sh --tauri-externalbin; never checked in. The
+# Sidecar binaries staged for Tauri `externalBin` bundling: the RDP helper
+# (#1754, scripts/build-rdp-sidecar.sh --tauri-externalbin) and the plugin runner
+# (#4202, scripts/build-plugin-runner.sh --tauri-externalbin); never checked in. The
 # sideloaded Windows ConPTY host (binaries/conpty/, #4121) is staged here too, by
 # scripts/internal/fetch-conpty.sh. The
 # directory itself is kept (via .gitkeep) because core/build.rs watches it: a

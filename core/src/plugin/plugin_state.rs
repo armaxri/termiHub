@@ -85,6 +85,11 @@ pub(crate) struct PluginStateRecord {
     /// without a native backend and for installs that predate schema v2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_backend: Option<VerifiedBackend>,
+    /// Why the host auto-disabled the plugin (#4184, "Disabled after 3
+    /// crashes"); set together with `enabled = false`, cleared on re-enable.
+    /// An additive optional field: older builds carry it forward unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_disabled_reason: Option<String>,
     /// Unknown per-record fields, carried forward unchanged.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -189,6 +194,33 @@ pub(crate) fn write(plugins_root: &Path, store: &StateStore) -> Result<(), State
     Ok(())
 }
 
+/// Persist that the host auto-disabled plugin `id` for `reason` (#4184):
+/// `enabled = false` plus the reason, read-modify-written atomically. A plugin
+/// without a record (installed before records existed) gets one.
+///
+/// The host calls this from its crash handling, outside the manager's lock;
+/// the manager's own updates are short read-modify-writes too, so the window
+/// for a lost update is a few milliseconds around a fourth crash.
+pub(crate) fn record_auto_disable(
+    plugins_root: &Path,
+    id: &str,
+    reason: &str,
+) -> Result<(), StateError> {
+    let mut store = read(plugins_root)?;
+    let record = store.plugins.entry(id.to_owned()).or_insert_with(|| {
+        let installed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        PluginStateRecord {
+            installed_at,
+            ..PluginStateRecord::default()
+        }
+    });
+    record.enabled = false;
+    record.auto_disabled_reason = Some(reason.to_owned());
+    write(plugins_root, &store)
+}
+
 /// The `version` of the file at `path`, when it exists and parses. Accepts a
 /// number or a numeric string, like the desktop stores.
 fn on_disk_version(path: &Path) -> Option<u32> {
@@ -218,8 +250,40 @@ mod tests {
                 sha256: "sha256:lib".into(),
                 signer_trusted: true,
             }),
+            auto_disabled_reason: None,
             extra: Map::new(),
         }
+    }
+
+    #[test]
+    fn an_auto_disable_is_persisted_with_its_reason() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut store = StateStore::default();
+        store.plugins.insert("p".into(), record());
+        write(tmp.path(), &store).unwrap();
+
+        record_auto_disable(tmp.path(), "p", "Disabled after 3 crashes").unwrap();
+        let back = read_record(tmp.path(), "p").unwrap().unwrap();
+        assert!(!back.enabled);
+        assert_eq!(
+            back.auto_disabled_reason.as_deref(),
+            Some("Disabled after 3 crashes")
+        );
+        // Everything else is kept.
+        assert_eq!(back.verified_backend, record().verified_backend);
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(state_path(tmp.path())).unwrap())
+                .unwrap();
+        assert_eq!(
+            raw["plugins"]["p"]["autoDisabledReason"],
+            "Disabled after 3 crashes"
+        );
+
+        // A plugin without a record gets one.
+        record_auto_disable(tmp.path(), "q", "r").unwrap();
+        let q = read_record(tmp.path(), "q").unwrap().unwrap();
+        assert!(!q.enabled);
+        assert!(q.installed_at > 0);
     }
 
     #[test]

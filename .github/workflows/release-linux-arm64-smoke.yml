@@ -88,6 +88,12 @@ jobs:
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout code
+        # For scripts/internal/verify-plugin-runner-bundle.sh (#4202).
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: scripts/internal
+
       - name: Download Linux arm64 release asset
         id: download
         env:
@@ -124,6 +130,15 @@ jobs:
           [ -n "$BIN" ] || { echo "::error::termihub not on PATH after .deb install"; exit 1; }
           echo "Installed binary: $BIN"
           echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+
+      # The plugin runner (#4202) ships next to termihub. It must start and
+      # match the digest the app embeds, or the app would refuse it as tampered.
+      - name: Verify the bundled plugin runner
+        env:
+          BIN: ${{ steps.deb.outputs.bin }}
+        run: |
+          set -euo pipefail
+          scripts/internal/verify-plugin-runner-bundle.sh "$(readlink -f "$BIN")"
 
       - name: Assert headless --version
         id: version

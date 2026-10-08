@@ -40,6 +40,8 @@ pub enum Variant {
     NoInit,
     /// `--features abi-1-0`: a faithful ABI 1.0 plugin.
     Abi10,
+    /// `--features crash-commands`: misbehaves on command (#4184 isolation).
+    Crash,
 }
 
 impl Variant {
@@ -49,6 +51,7 @@ impl Variant {
             Variant::Default => "default",
             Variant::NoInit => "no-init",
             Variant::Abi10 => "abi-1-0",
+            Variant::Crash => "crash",
         }
     }
 
@@ -57,6 +60,7 @@ impl Variant {
             Variant::Default => 0,
             Variant::NoInit => 1,
             Variant::Abi10 => 2,
+            Variant::Crash => 3,
         }
     }
 
@@ -65,6 +69,7 @@ impl Variant {
             Variant::Default => &[],
             Variant::NoInit => &["--no-default-features"],
             Variant::Abi10 => &["--features", "abi-1-0"],
+            Variant::Crash => &["--features", "crash-commands"],
         }
     }
 }
@@ -95,7 +100,12 @@ fn shared_target_dir(variant: Variant) -> PathBuf {
 /// Build `variant` into its shared target directory (once per test binary) and
 /// return the path of the shared artifact. Callers must copy it, never load it.
 fn shared_artifact(variant: Variant) -> &'static Path {
-    static BUILT: [OnceLock<PathBuf>; 3] = [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    static BUILT: [OnceLock<PathBuf>; 4] = [
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+    ];
     BUILT[variant.index()].get_or_init(|| {
         let target_dir = shared_target_dir(variant);
         let status = Command::new(env!("CARGO"))

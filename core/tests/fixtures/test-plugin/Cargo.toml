@@ -28,3 +28,7 @@ export-init = []
 # Build a faithful ABI 1.0 plugin (#3576): reports ABI 1.0, writes only the 1.0
 # PluginInfo prefix, never reads the 1.1 host context.
 abi-1-0 = []
+# Crash and hang commands for the plugin-runner isolation tests (#4184): input
+# `!segv`, `!abort`, `!spin`, `!alloc`, `!garbage`, `!fds`, `!spawn` make the
+# plugin misbehave on purpose. Test-only; never part of a shipped plugin.
+crash-commands = []
