@@ -47,7 +47,7 @@ use termihub_core::plugin::{InstalledPlugin, PluginHost};
 const LATENCY_SAMPLES: usize = 10_000;
 const THROUGHPUT_CHUNK: usize = 64 * 1024;
 const THROUGHPUT_TOTAL: usize = 256 * 1024 * 1024;
-const COLD_START_SAMPLES: usize = 20;
+const COLD_START_SAMPLES: usize = 40;
 const FAIR_SESSIONS: usize = 40;
 const FAIR_CHUNK: usize = 16 * 1024;
 const FAIR_PER_SESSION: usize = 8 * 1024 * 1024;
@@ -128,7 +128,18 @@ async fn pump(conn: Shared, mut rx: OutputReceiver, chunk: usize, total: usize) 
 
 /// `n` cold starts (spawn + handshake + dlopen + init) by loading and
 /// unloading the plugin out of process; sorted.
+///
+/// One unmeasured start goes first: the very first exec of a freshly built
+/// binary pays a one-off OS assessment (Gatekeeper on macOS, ~300 ms, see the
+/// concept's spike results) that a user meets once per install, not per start.
 fn cold_starts(host: &PluginHost, plugin: &InstalledPlugin, n: usize) -> Vec<Duration> {
+    let first = Instant::now();
+    host.load(plugin).expect("load out of process");
+    host.unload(&plugin.manifest.id);
+    println!(
+        "first start of the fresh runner binary {:?} (not measured)",
+        first.elapsed()
+    );
     let mut samples: Vec<Duration> = (0..n)
         .map(|_| {
             let start = Instant::now();
@@ -213,18 +224,21 @@ async fn out_of_process_echo_stays_within_the_budget() {
     );
 
     out_host.load(&echo.plugin).unwrap();
-    // A respawn after a crash: the same sequence plus the first session.
+    // A respawn after a crash: kill the runner, then time until the first new
+    // session is up (the host respawns on demand or eagerly; either counts).
     let handle = out_host
         .sandboxed_plugin(&id)
         .expect("loaded out of process");
-    kill_process(runner_pid(&out_host, &id));
+    let crashed = runner_pid(&out_host, &id);
+    let respawn = Instant::now();
+    kill_process(crashed);
     assert!(wait_until(Duration::from_secs(5), || handle
         .running()
-        .is_none()));
-    let respawn = Instant::now();
+        .and_then(|p| p.pid())
+        != Some(crashed)));
     drop(session(&out_registry, &echo.type_id).await);
     println!(
-        "runner respawn + first session (spawn + handshake + dlopen + init + create) {:?}",
+        "runner respawn after a crash + first session {:?}",
         respawn.elapsed()
     );
     // Idle: loaded, its only session closed, nothing in flight.
