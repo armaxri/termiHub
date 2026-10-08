@@ -717,7 +717,10 @@ mod tests {
             .write_file("~/new.txt", b"x")
             .await
             .expect("write ~/…");
-        assert_eq!(server.get(&format!("{MOCK_HOME}/new.txt")), Some(b"x".to_vec()));
+        assert_eq!(
+            server.get(&format!("{MOCK_HOME}/new.txt")),
+            Some(b"x".to_vec())
+        );
     }
 
     #[tokio::test]

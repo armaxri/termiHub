@@ -389,7 +389,10 @@ async fn ftp_05a_home_lists_the_login_directory() {
         let home = list_by_name(browser, "~").await;
         let pub_dir = home.get("pub").expect("`~` lists the seeded pub folder");
         assert!(pub_dir.is_directory, "pub is a directory");
-        assert_eq!(pub_dir.path, "/pub", "entries under `~` carry absolute paths");
+        assert_eq!(
+            pub_dir.path, "/pub",
+            "entries under `~` carry absolute paths"
+        );
 
         let welcome = browser
             .read_file("~/pub/welcome.txt")

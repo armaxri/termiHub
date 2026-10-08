@@ -305,12 +305,20 @@ async fn serve(
                 reply(&mut w, "226 transfer complete").await?;
             }
             "PWD" | "XPWD" => {
-                reply(&mut w, &format!("257 \"{MOCK_HOME}\" is the current directory")).await?
+                reply(
+                    &mut w,
+                    &format!("257 \"{MOCK_HOME}\" is the current directory"),
+                )
+                .await?
             }
             "MLSD" => {
                 // Direct children of the requested directory (the working
                 // directory when no argument is given).
-                let dir = if arg.is_empty() { MOCK_HOME } else { arg.as_str() };
+                let dir = if arg.is_empty() {
+                    MOCK_HOME
+                } else {
+                    arg.as_str()
+                };
                 let prefix = format!("{}/", dir.trim_end_matches('/'));
                 let listing: String = {
                     let st = state.lock().expect("mock state");
