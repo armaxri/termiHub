@@ -41,6 +41,7 @@ import {
   effectiveExitedMap,
   effectiveExitInfo,
   effectiveFilesOnly,
+  effectivePluginExit,
   effectiveReconnecting,
   effectiveReconnectingMap,
   effectiveReconnectTriggerError,
@@ -49,6 +50,7 @@ import {
   onSessionView,
   type ProjectedSessionLifecycle,
   type SessionLifecycleView,
+  type PluginSessionExit,
 } from "@/store/sessionBridge";
 import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
 
@@ -156,6 +158,9 @@ export interface ProjectedSessionLifecycleSlice {
   /** True when the host refused the shell but SFTP works (#4078): the tab shows
    * the "no shell" info panel ({@link effectiveFilesOnly}). */
   filesOnly: boolean;
+  /** Why the session's sandboxed plugin process failed, while it is ended
+   * (#4188) — the plugin crash overlay's source ({@link effectivePluginExit}). */
+  pluginExit: PluginSessionExit | undefined;
 }
 
 /**
@@ -220,6 +225,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       exitInfo: effectiveExitInfo(p),
       exited: effectiveExited(p),
       filesOnly: effectiveFilesOnly(p),
+      pluginExit: effectivePluginExit(p),
     };
   }, [projected]);
 }

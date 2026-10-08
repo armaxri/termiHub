@@ -1263,3 +1263,37 @@
   flex-direction: row;
   align-items: center;
 }
+
+/* === Chip (read-only label pill, #4188) === */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xxs) var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ui-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-chip__icon {
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+
+.ui-chip--denied {
+  color: var(--text-secondary);
+  background-color: transparent;
+}
+
+.ui-chip--denied .ui-chip__label {
+  text-decoration: line-through;
+}

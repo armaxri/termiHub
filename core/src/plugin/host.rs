@@ -62,7 +62,10 @@ use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
 use super::plugin_state::{self, PluginStateRecord};
-use super::sandbox::{AutoDisableHook, PluginHealth, PluginRunnerConfig, SandboxedPluginHandle};
+use super::sandbox::{
+    AutoDisableHook, PluginHealth, PluginRunnerConfig, PluginSandboxStatus, SandboxOutcome,
+    SandboxedPluginHandle,
+};
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 use super::signer_change::PackageSigner;
 use super::trust_store::TrustStore;
@@ -300,6 +303,21 @@ pub enum HostError {
     /// is no fallback to running it unconfined.
     #[error("the plugin sandbox could not be set up: {0}")]
     SandboxSetupFailed(String),
+
+    /// This system cannot apply every OS sandbox layer to the plugin (reduced
+    /// isolation, e.g. Linux without landlock), and the user has not accepted
+    /// that for this exact library (`reducedIsolationAccepted`, #4188). The
+    /// plugin was never loaded; it loads once the hash-bound acknowledgement
+    /// records the acceptance.
+    #[error(
+        "isolation unavailable on this system (missing: {}); the plugin loads only after \
+         you accept reduced isolation",
+        missing.join(", ")
+    )]
+    ReducedIsolationNotAccepted {
+        /// The sandbox layers the runner could not enforce.
+        missing: Vec<String>,
+    },
 
     /// The plugin runner refused or failed to load the plugin library. The
     /// message is the runner-side loader's, verbatim; `incompatible` keeps the
@@ -981,6 +999,11 @@ pub struct PluginHost {
     /// `termihub-plugin-runner` (#4182) instead of being `dlopen`ed here.
     /// Opt-in until the plugin OS-sandbox cut-over (concept phase 7).
     runner: Option<PluginRunnerConfig>,
+    /// Why the last out-of-process load of a plugin was refused before it
+    /// loaded (reduced isolation not accepted, sandbox setup failed, runner
+    /// missing), for the Settings row (#4188). Cleared on the next load or
+    /// unload of that plugin.
+    sandbox_refusals: Mutex<HashMap<String, SandboxOutcome>>,
 }
 
 impl PluginHost {
@@ -998,6 +1021,7 @@ impl PluginHost {
             recovery: Mutex::new(HashMap::new()),
             host_version: env!("CARGO_PKG_VERSION").to_owned(),
             runner: None,
+            sandbox_refusals: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1150,6 +1174,10 @@ impl PluginHost {
         // explicit acceptance of that (PLG-013, ADR-15). Never relaxes the
         // exact-match check for a plugin that does report its toolchain.
         let accept_unverified_toolchain = trust.accepts_unverified_toolchain(&id, &library_sha256);
+        // Reduced sandbox isolation loads only with the same hash-bound
+        // acknowledgement's explicit `reducedIsolationAccepted` (#4188); the
+        // runner and the host both refuse it otherwise.
+        let accept_reduced_isolation = trust.accepts_reduced_isolation(&id, &library_sha256);
 
         // Bind the exact library bytes about to be loaded (CORE-034, #2796):
         // re-verify the extracted plugin against its co-located signature, anchor
@@ -1165,9 +1193,10 @@ impl PluginHost {
         };
         let runtime = match &self.runner {
             None => PluginRuntime::InProcess(load_backend_library_with(&lib_path, &options)?),
-            Some(config) => {
-                PluginRuntime::Sandboxed(self.start_runner(config, &id, &lib_path, &options)?)
-            }
+            Some(config) => PluginRuntime::Sandboxed(
+                self.start_runner(config, &id, &lib_path, &options, accept_reduced_isolation)
+                    .inspect_err(|e| self.record_refusal(&id, e))?,
+            ),
         };
 
         // ABI 1.1 host context (PLG-014): a private, host-created data directory
@@ -1287,6 +1316,59 @@ impl PluginHost {
         })
     }
 
+    /// Remember why an out-of-process load of `id` was refused, when the
+    /// Settings row explains that refusal (#4188).
+    fn record_refusal(&self, id: &str, error: &HostError) {
+        if let Some(outcome) = SandboxOutcome::from_error(error) {
+            self.sandbox_refusals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id.to_owned(), outcome);
+        }
+    }
+
+    /// The sandbox status of native plugin `id` for the Settings row (#4188):
+    /// its isolation, runner process state and recent bridge denials while it
+    /// is loaded out of process, or why its last out-of-process load was
+    /// refused. `None` for a plugin loaded in process, or not loaded and not
+    /// refused.
+    #[must_use]
+    pub fn sandbox_status(&self, id: &str) -> Option<PluginSandboxStatus> {
+        if let Some(handle) = self.sandboxed_plugin(id) {
+            return Some(PluginSandboxStatus::loaded(&handle));
+        }
+        self.sandbox_refusals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(id)
+            .map(PluginSandboxStatus::refused)
+    }
+
+    /// [`sandbox_status`](Self::sandbox_status) of every plugin that has one —
+    /// loaded out of process, or refused before it loaded — sorted by id.
+    #[must_use]
+    pub fn sandbox_statuses(&self) -> Vec<(String, PluginSandboxStatus)> {
+        let mut ids: Vec<String> = self
+            .loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        ids.extend(
+            self.sandbox_refusals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .keys()
+                .cloned(),
+        );
+        ids.sort();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|id| self.sandbox_status(&id).map(|status| (id, status)))
+            .collect()
+    }
+
     /// The health of out-of-process plugin `id` (crash count, last exit,
     /// auto-disable reason), when it is loaded out of process.
     #[must_use]
@@ -1309,6 +1391,7 @@ impl PluginHost {
         id: &str,
         lib_path: &Path,
         options: &BackendLoadOptions<'_>,
+        accept_reduced_isolation: bool,
     ) -> Result<Arc<SandboxedPluginHandle>, HostError> {
         let library_path = lib_path
             .to_str()
@@ -1350,6 +1433,7 @@ impl PluginHost {
             plugin_id: id.to_owned(),
             host_version: self.host_version.clone(),
             limits: config.limits,
+            accept_reduced_isolation,
         };
         SandboxedPluginHandle::start(
             config.clone(),
@@ -1391,6 +1475,10 @@ impl PluginHost {
     /// from it has also been dropped. A no-op if the id is not loaded.
     pub fn unload(&self, id: &str) {
         self.active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
+        self.sandbox_refusals
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
@@ -1650,6 +1738,53 @@ mod tests {
             other => panic!("expected NativePluginNotTrusted, got {other:?}"),
         }
         assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn a_refused_out_of_process_load_is_reported_until_unload() {
+        // A trusted native plugin whose runner cannot be started: the Settings
+        // row says "Plugin runner is missing" (#4188), until the plugin is
+        // unloaded (disabled / revoked).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+        let host = PluginHost::new(tmp.path().to_path_buf(), registry).with_runner(Some(
+            PluginRunnerConfig::new(tmp.path().join("no-such-runner")),
+        ));
+        let hash = write_dummy_backend(tmp.path(), "host-sec");
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust.acknowledge("host-sec", hash).unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        assert!(matches!(
+            host.load(&plugin),
+            Err(HostError::RunnerUnavailable { .. })
+        ));
+        assert!(host.sandbox_status("theme-only").is_none());
+        let status = host
+            .sandbox_status("host-sec")
+            .expect("the refusal is recorded");
+        assert_eq!(
+            status.isolation,
+            super::super::sandbox::IsolationStatus::RunnerMissing
+        );
+        assert_eq!(host.sandbox_statuses().len(), 1);
+        host.unload("host-sec");
+        assert!(host.sandbox_status("host-sec").is_none());
+        assert!(host.sandbox_statuses().is_empty());
+    }
+
+    #[test]
+    fn an_in_process_plugin_has_no_sandbox_status() {
+        let (host, tmp) = test_host();
+        write_dummy_backend(tmp.path(), "host-sec");
+        NativeTrustStore::load(tmp.path())
+            .set_native_enabled(true)
+            .unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        // Refused by the trust gate — not a sandbox refusal.
+        assert!(host.load(&plugin).is_err());
+        assert!(host.sandbox_status("host-sec").is_none());
+        assert!(!host.runs_out_of_process());
     }
 
     #[test]

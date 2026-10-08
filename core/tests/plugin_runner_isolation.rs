@@ -166,6 +166,8 @@ async fn crash_with(f: &Fixture, command: &str) -> RunnerExitCause {
     );
     let cause = victim.plugin_exit_cause().unwrap();
     assert_eq!(bystander.plugin_exit_cause(), Some(cause.clone()));
+    // The session owner can tell the runner died (#4188 crash overlay).
+    assert_eq!(victim.plugin_runner_alive(), Some(false));
     cause
 }
 
@@ -220,6 +222,7 @@ async fn crashes_are_isolated_counted_and_the_fourth_auto_disables() {
         fresh.write(b"hello").unwrap();
         assert_eq!(read_line(&mut rx).await, "hello");
         assert_eq!(fresh.plugin_exit_cause(), None);
+        assert_eq!(fresh.plugin_runner_alive(), Some(true));
     }
 
     // 2: abort (what a `panic = "abort"` plugin does): SIGABRT, or a

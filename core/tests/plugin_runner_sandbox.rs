@@ -583,11 +583,13 @@ fn clone_installed(installed: &InstalledEcho) -> InstalledEcho {
 /// Linux: a kernel without landlock (simulated with the debug-only
 /// `simulate_missing` hook) still gets seccomp — no network, no processes —
 /// but no filesystem confinement, and the report says so: **reduced**
-/// isolation, which the host gates behind `reducedIsolationAccepted` (#4188).
+/// isolation, which loads only with the hash-bound `reducedIsolationAccepted`
+/// acknowledgement (#4188).
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_landlock_the_runner_reports_reduced_isolation() {
-    use termihub_core::plugin::sandbox::{layer, sandbox_policy};
+    use termihub_core::plugin::sandbox::{layer, sandbox_policy, IsolationStatus};
+    use termihub_core::plugin::{native_library_hash, AckAcceptances, NativeTrustStore};
 
     let work = tempfile::TempDir::new().unwrap();
     let canary = canaries(work.path());
@@ -595,8 +597,38 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
     let mut policy =
         sandbox_policy(&installed.root, &installed.plugin.manifest.id).expect("a policy");
     policy.simulate_missing = vec![layer::LANDLOCK.to_owned()];
-    let probe_plugin = Probe::load(installed, config().with_sandbox_policy_for_tests(policy))
-        .expect("reduced isolation still loads until the acknowledgement gate (#4188)");
+    let config_for =
+        |policy: &SandboxPolicy| config().with_sandbox_policy_for_tests(policy.clone());
+
+    // Fail closed: a plain trust acknowledgement does not load it.
+    let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+    let host = PluginHost::new(&installed.root, Arc::clone(&registry))
+        .with_runner(Some(config_for(&policy)));
+    match host.load(&installed.plugin) {
+        Err(HostError::ReducedIsolationNotAccepted { missing }) => {
+            assert_eq!(missing, vec![layer::LANDLOCK.to_owned()]);
+        }
+        other => panic!("expected ReducedIsolationNotAccepted, got {other:?}"),
+    }
+    let id = installed.plugin.manifest.id.clone();
+    let status = host.sandbox_status(&id).expect("the refusal is recorded");
+    assert_eq!(status.isolation, IsolationStatus::Unavailable);
+    assert!(!host.is_loaded(&id));
+
+    // Accept reduced isolation for this exact library: now it loads.
+    let hash = native_library_hash(&installed.root, &id).unwrap();
+    NativeTrustStore::load(&installed.root)
+        .acknowledge_with(
+            &id,
+            hash,
+            AckAcceptances {
+                reduced_isolation: true,
+                ..AckAcceptances::default()
+            },
+        )
+        .unwrap();
+    let probe_plugin = Probe::load(installed, config_for(&policy))
+        .expect("reduced isolation loads once it is accepted (#4188)");
     let report = probe_plugin.report();
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
     let mut enforced = vec![layer::SECCOMP.to_owned()];

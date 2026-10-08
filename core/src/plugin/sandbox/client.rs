@@ -414,7 +414,7 @@ fn handshake<S: ChannelStream>(
         // the caller kills the runner on `Err`, so it never loads (#4186).
         Message::SandboxReport(report) => {
             if configure.sandbox.is_some() {
-                super::policy::check_report(&report)?;
+                super::policy::check_report(&report, configure.accept_reduced_isolation)?;
             }
             report
         }

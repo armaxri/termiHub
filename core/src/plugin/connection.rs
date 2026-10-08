@@ -577,6 +577,13 @@ impl ConnectionType for PluginConnectionType {
         }
     }
 
+    fn plugin_runner_alive(&self) -> Option<bool> {
+        match self.backend.as_ref()? {
+            ActiveBackend::Sandboxed(session) => Some(session.runner_alive()),
+            ActiveBackend::InProcess(_) => None,
+        }
+    }
+
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         let backend = self
             .backend

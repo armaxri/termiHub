@@ -40,6 +40,7 @@ use super::remote_proxy::{ReattachOutcome, RemoteProxy, CORRELATION_ID_KEY};
 use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
 use super::session_log::{default_session_log_path, desktop_clock};
 use super::ssh_keyboard_interactive::with_prompt_owner;
+use crate::session_projection::store::PluginSessionExit;
 
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 50;
@@ -207,6 +208,12 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// shows the "no shell" info panel. Default no-op for test emitters; the
     /// production `AppHandle` folds it into the `session-lifecycle` store.
     fn fold_files_only(&self, _tab_id: &str) {}
+
+    /// Fold why a plugin session's **sandboxed plugin process** failed
+    /// (#4188), keyed by the tab id, for the crash overlay. Default no-op for
+    /// test emitters; the production `AppHandle` folds it into the
+    /// `session-lifecycle` store.
+    fn fold_plugin_exit(&self, _tab_id: &str, _exit: PluginSessionExit) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -291,6 +298,11 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
     fn fold_files_only(&self, tab_id: &str) {
         use crate::session_projection::projection::fold_session_transition;
         fold_session_transition(self, |store| store.files_only(tab_id));
+    }
+
+    fn fold_plugin_exit(&self, tab_id: &str, exit: PluginSessionExit) {
+        use crate::session_projection::projection::fold_session_transition;
+        fold_session_transition(self, |store| store.plugin_exited(tab_id, exit));
     }
 }
 
@@ -2313,6 +2325,19 @@ impl SessionManager {
             emitter.emit_output(&event);
         }
 
+        // A genuine drop of a plugin session served out of process: learn why
+        // its plugin runner failed before the session entry is removed (#4188).
+        // Only a still-bound session (not a deliberate close) is inspected.
+        let bound = session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(session_id);
+        let plugin_exit = if bound {
+            plugin_exit::await_plugin_exit(session_id, sessions).await
+        } else {
+            None
+        };
+
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
             exit_code: None,
@@ -2335,6 +2360,9 @@ impl SessionManager {
         if let Some(binding) = &drop_binding {
             if let Some(fold) = drop_fold_for(exit_event.exit_code, binding.resilient) {
                 emitter.fold_session_drop(&binding.tab_id, fold);
+            }
+            if let Some(exit) = plugin_exit {
+                emitter.fold_plugin_exit(&binding.tab_id, exit);
             }
         }
 
@@ -2383,6 +2411,9 @@ mod saved_connections;
 
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
+
+/// Plugin-process exits for the crash overlay (#4188).
+mod plugin_exit;
 
 #[cfg(test)]
 mod tests;

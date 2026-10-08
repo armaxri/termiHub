@@ -17,10 +17,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    check_host_platform, host_target_triple, native_library_hash, validate_package, InstallOptions,
-    InstalledPlugin, NativeTrustStore, PluginHost, PluginManager, PluginManagerError,
-    PluginManifest, SignerChange, TrustAssessment, TrustLevel, TrustedPublisher, VersionChange,
-    NATIVE_TRUST_DISCLOSURE,
+    check_host_platform, host_target_triple, native_library_hash, native_trust_disclosure,
+    validate_package, AckAcceptances, InstallOptions, InstalledPlugin, NativeTrustStore,
+    PluginHost, PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment,
+    TrustLevel, TrustedPublisher, VersionChange,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -31,6 +31,9 @@ pub const EVENT_PLUGINS_CHANGED: &str = "plugin-changed";
 /// listener must never fail the command).
 fn emit_changed(app: &AppHandle) {
     let _ = app.emit(EVENT_PLUGINS_CHANGED, ());
+    // Reflect a trust / enable / revoke at once in the sandbox status (#4188)
+    // rather than on the publisher's next tick.
+    crate::plugin_sandbox_projection::publish(app);
 }
 
 /// List every installed plugin with its current state.
@@ -373,6 +376,9 @@ pub struct NativeAckInfo {
     /// Whether the user explicitly accepted an unverifiable build toolchain
     /// (native ABI 1.0 plugins, #3576).
     pub unverified_toolchain_accepted: bool,
+    /// Whether the user explicitly accepted reduced sandbox isolation on this
+    /// system (`reducedIsolationAccepted`, #4188).
+    pub reduced_isolation_accepted: bool,
 }
 
 /// The native-plugin trust state for the Settings surface (SEC-002 / PLG-006 /
@@ -387,8 +393,13 @@ pub struct NativePluginTrust {
     /// default and whenever the store cannot be read (fail closed).
     pub enabled: bool,
     /// The plain-language disclosure the UI must show before enabling/trusting a
-    /// native plugin (in-process, full privileges, no OS sandbox).
+    /// native plugin — the sandboxed wording when native plugins run out of
+    /// process, the in-process (no OS sandbox) wording otherwise (#4188).
     pub disclosure: String,
+    /// Whether native plugins run out of process in the OS sandbox on this
+    /// build (the debug opt-in until the phase-7 cut-over) — the UI shows the
+    /// isolation badges only then.
+    pub out_of_process: bool,
     /// Every recorded per-plugin acknowledgment, sorted by plugin id.
     pub acknowledged: Vec<NativeAckInfo>,
 }
@@ -396,7 +407,10 @@ pub struct NativePluginTrust {
 /// Return the native-plugin trust state: the global switch, the disclosure, and
 /// the recorded per-plugin acknowledgments.
 #[tauri::command]
-pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePluginTrust {
+pub fn get_native_plugin_trust(
+    manager: State<'_, PluginManager>,
+    host: State<'_, Arc<PluginHost>>,
+) -> NativePluginTrust {
     let store = NativeTrustStore::load(manager.root());
     let acknowledged = store
         .acknowledgments()
@@ -406,11 +420,14 @@ pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePlugi
             library_sha256: ack.library_sha256,
             acknowledged_at: ack.acknowledged_at,
             unverified_toolchain_accepted: ack.unverified_toolchain_accepted,
+            reduced_isolation_accepted: ack.reduced_isolation_accepted,
         })
         .collect();
+    let out_of_process = host.runs_out_of_process();
     NativePluginTrust {
         enabled: store.is_native_enabled(),
-        disclosure: NATIVE_TRUST_DISCLOSURE.to_owned(),
+        disclosure: native_trust_disclosure(out_of_process).to_owned(),
+        out_of_process,
         acknowledged,
     }
 }
@@ -451,10 +468,16 @@ pub fn set_native_plugins_enabled(
 /// built for native ABI 1.0, which the host otherwise refuses (#3576, ADR-15).
 /// Absent means `false`; the host never uses it to relax the exact toolchain
 /// check of a plugin that does report its toolchain.
+///
+/// `accept_reduced_isolation` records the user's explicit acceptance that this
+/// system cannot apply every OS sandbox layer to the plugin
+/// (`reducedIsolationAccepted`, #4188). Absent means `false`: a plugin whose
+/// runner reports reduced isolation then stays unloaded.
 #[tauri::command]
 pub fn acknowledge_native_plugin(
     id: String,
     accept_unverified_toolchain: Option<bool>,
+    accept_reduced_isolation: Option<bool>,
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstalledPlugin, String> {
@@ -462,10 +485,13 @@ pub fn acknowledge_native_plugin(
     let hash = native_library_hash(manager.root(), &id).map_err(|e| e.to_string())?;
     let mut store = NativeTrustStore::load(manager.root());
     store
-        .acknowledge_with_toolchain_acceptance(
+        .acknowledge_with(
             &id,
             hash,
-            accept_unverified_toolchain.unwrap_or(false),
+            AckAcceptances {
+                unverified_toolchain: accept_unverified_toolchain.unwrap_or(false),
+                reduced_isolation: accept_reduced_isolation.unwrap_or(false),
+            },
         )
         .map_err(|e| e.to_string())?;
     // Drive the load path now that the plugin is trusted (re-runs on_enable →

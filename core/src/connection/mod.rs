@@ -341,6 +341,16 @@ pub trait ConnectionType: Send {
     fn plugin_exit_cause(&self) -> Option<crate::plugin::sandbox::RunnerExitCause> {
         None
     }
+
+    /// Whether the plugin runner serving this session is still running:
+    /// `Some(alive)` for a plugin session served out of process, `None` for an
+    /// in-process plugin and every other backend (#4188). Lets the session
+    /// owner tell "the runner died, its exit cause is being classified" from
+    /// "the session ended on its own" without waiting.
+    #[cfg(feature = "plugin")]
+    fn plugin_runner_alive(&self) -> Option<bool> {
+        None
+    }
 }
 
 #[cfg(test)]
