@@ -36,7 +36,7 @@ homepage?: string,
  */
 minHostAbi: string, 
 /**
- * Whether the plugin ships native (in-process) code.
+ * Whether the plugin ships native code (run in a sandboxed plugin process).
  */
 native: boolean, 
 /**

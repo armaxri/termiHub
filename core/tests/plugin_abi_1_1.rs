@@ -1,9 +1,14 @@
-//! End-to-end tests for native plugin ABI **1.1** (#3576, PLG-013/PLG-014),
-//! across a real `dlopen` of the fixture `cdylib`:
+//! End-to-end tests for native plugin ABI **1.1** (#3576, PLG-013/PLG-014)
+//! with the fixture `cdylib`:
 //!
 //! * **Toolchain enforcement** — a plugin reporting another rustc, another
 //!   panic strategy, or no toolchain at all is refused; the matching one loads.
-//! * **Host context** — an ABI 1.1 session receives the app version, a private
+//!   Driven through the plugin runner's loader directly (the gate the runner
+//!   applies before any plugin code runs), because the fixture reads its
+//!   toolchain overrides from an environment the runner's scrubbed spawn does
+//!   not pass on.
+//! * **Host context** — through the real host and its sandboxed plugin runner
+//!   (ADR-19), an ABI 1.1 session receives the app version, a private
 //!   host-created data directory, a working log callback and a cancellation
 //!   flag that flips on plugin unload.
 //! * **ABI 1.0 compatibility** — a faithful 1.0 build of the fixture (the
@@ -23,20 +28,20 @@ use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionType, ConnectionTypeRegistry};
 use termihub_core::plugin::{
-    load_backend_library, load_backend_library_with, native_library_hash, parse_manifest,
-    AbiVersion, BackendLoadOptions, HostError, InstalledPlugin, LoadedLibrary, NativeTrustStore,
-    PermissionSet, PluginConnectionType, PluginHost, PluginPermission, PluginState,
-    ToolchainIncompatibility, CURRENT_PLUGIN_ABI_VERSION, PLUGIN_DATA_DIR_NAME,
+    native_library_hash, parse_manifest, AbiVersion, BackendLoadOptions, HostError,
+    InstalledPlugin, NativeTrustStore, PluginHost, PluginState, ToolchainIncompatibility,
+    CURRENT_PLUGIN_ABI_VERSION, PLUGIN_DATA_DIR_NAME,
 };
+use termihub_plugin_runner::loader::{load_plugin_library, PluginLibrary};
 
-fn connection(lib: &Arc<LoadedLibrary>) -> PluginConnectionType {
-    PluginConnectionType::new(
-        Arc::clone(lib),
-        "test-echo".into(),
-        "Test Echo".into(),
-        termihub_core::connection::SettingsSchema { groups: vec![] },
-        PermissionSet::from_parts([PluginPermission::Terminal], &[]),
-    )
+/// Open `path` with the runner's loader — the exact gate sequence the
+/// sandboxed runner applies — mapping its error as the host does.
+fn load_with(path: &Path, options: &BackendLoadOptions<'_>) -> Result<PluginLibrary, HostError> {
+    load_plugin_library(path, options).map_err(HostError::from)
+}
+
+fn load(path: &Path) -> Result<PluginLibrary, HostError> {
+    load_with(path, &BackendLoadOptions::default())
 }
 
 async fn next_line(rx: &mut termihub_core::connection::OutputReceiver) -> String {
@@ -61,9 +66,7 @@ fn with_env<T>(vars: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
     out
 }
 
-fn expect_toolchain_refusal(
-    result: Result<Arc<LoadedLibrary>, HostError>,
-) -> ToolchainIncompatibility {
+fn expect_toolchain_refusal(result: Result<PluginLibrary, HostError>) -> ToolchainIncompatibility {
     match result {
         Err(HostError::IncompatibleToolchain(detail)) => detail,
         Err(other) => panic!("expected IncompatibleToolchain, got {other:?}"),
@@ -74,25 +77,23 @@ fn expect_toolchain_refusal(
 #[tokio::test]
 async fn abi_1_1_end_to_end() {
     // One test, sequential scenarios: the toolchain overrides are process-wide.
-    abi_1_1_plugin_toolchain_and_host_context_round_trip().await;
-    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(None).await;
-    // The same scenario, unchanged, through the out-of-process runner (#4182).
-    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(Some(
+    abi_1_1_plugin_toolchain_is_enforced();
+    host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(
         termihub_core::plugin::sandbox::PluginRunnerConfig::new(
             plugin_runner_support::runner_binary(),
         ),
-    ))
+    )
     .await;
 }
 
-async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
+fn abi_1_1_plugin_toolchain_is_enforced() {
     let work = tempfile::TempDir::new().unwrap();
     let lib_path = fixture_library(Variant::Default, work.path());
 
     // --- Toolchain enforcement across a real dlopen. ---
     let detail = expect_toolchain_refusal(with_env(
         &[("TERMIHUB_TEST_PLUGIN_RUSTC", "0.0.1 (0123456789abcdef)")],
-        || load_backend_library(&lib_path, None),
+        || load(&lib_path),
     ));
     assert!(matches!(
         detail,
@@ -102,7 +103,7 @@ async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
 
     let detail =
         expect_toolchain_refusal(with_env(&[("TERMIHUB_TEST_PLUGIN_PANIC", "abort")], || {
-            load_backend_library(&lib_path, None)
+            load(&lib_path)
         }));
     assert!(matches!(
         detail,
@@ -112,7 +113,7 @@ async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
     // A plugin claiming 1.1 but reporting no toolchain fails closed — and the
     // 1.0 acceptance does not rescue it.
     let detail = expect_toolchain_refusal(with_env(&[("TERMIHUB_TEST_PLUGIN_RUSTC", "")], || {
-        load_backend_library_with(
+        load_with(
             &lib_path,
             &BackendLoadOptions {
                 accept_unverified_toolchain: true,
@@ -126,7 +127,7 @@ async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
     ));
 
     // The matching toolchain loads and is recorded.
-    let lib = load_backend_library(&lib_path, None).expect("matching toolchain loads");
+    let lib = load(&lib_path).expect("matching toolchain loads");
     assert_eq!(lib.info().abi_version, CURRENT_PLUGIN_ABI_VERSION);
     let toolchain = lib
         .info()
@@ -134,26 +135,6 @@ async fn abi_1_1_plugin_toolchain_and_host_context_round_trip() {
         .clone()
         .expect("1.1 reports a toolchain");
     assert!(toolchain.is_known(), "{toolchain}");
-
-    // --- Host context, without a host-resolved data dir (direct load). ---
-    let mut conn = connection(&lib);
-    let mut rx = conn.subscribe_output();
-    conn.connect(serde_json::json!({ "probe": "context" }))
-        .await
-        .expect("connect");
-    let line = next_line(&mut rx).await;
-    assert_eq!(
-        line,
-        format!("CTX:{}|-|false|false|true", env!("CARGO_PKG_VERSION"))
-    );
-    conn.write(b"?cancelled").unwrap();
-    assert_eq!(next_line(&mut rx).await, "CANCELLED:false");
-
-    // Unloading the plugin cancels every live session.
-    lib.signal_shutdown();
-    conn.write(b"?cancelled").unwrap();
-    assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
-    conn.disconnect().await.unwrap();
 }
 
 fn manifest(id: &str, api: &str) -> String {
@@ -206,9 +187,8 @@ fn session(registry: &Arc<Mutex<ConnectionTypeRegistry>>, id: &str) -> Box<dyn C
 }
 
 async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(
-    runner: Option<termihub_core::plugin::sandbox::PluginRunnerConfig>,
+    runner: termihub_core::plugin::sandbox::PluginRunnerConfig,
 ) {
-    let out_of_process = runner.is_some();
     let work = tempfile::TempDir::new().unwrap();
     let v1_1 = fixture_library(Variant::Default, work.path());
     let v1_0 = fixture_library(Variant::Abi10, work.path());
@@ -243,21 +223,17 @@ async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(
         "the plugin owns its dir"
     );
 
-    if out_of_process {
-        // Out of process, unload ends the sessions (bounded stop); the
-        // plugin-wide cancellation it starts with is observable before that.
-        host.sandboxed_plugin("echo-new")
-            .expect("served by the runner")
-            .signal_shutdown();
-        conn.write(b"?cancelled").unwrap();
-        assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
-        host.unload("echo-new");
-        assert!(!conn.is_connected(), "unload stops the runner");
-    } else {
-        host.unload("echo-new");
-        conn.write(b"?cancelled").unwrap();
-        assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
-    }
+    conn.write(b"?cancelled").unwrap();
+    assert_eq!(next_line(&mut rx).await, "CANCELLED:false");
+    // Unload ends the sessions (bounded stop); the plugin-wide cancellation it
+    // starts with is observable before that.
+    host.sandboxed_plugin("echo-new")
+        .expect("served by the runner")
+        .signal_shutdown();
+    conn.write(b"?cancelled").unwrap();
+    assert_eq!(next_line(&mut rx).await, "CANCELLED:true");
+    host.unload("echo-new");
+    assert!(!conn.is_connected(), "unload stops the runner");
     conn.disconnect().await.unwrap();
     drop(conn);
 
@@ -265,16 +241,15 @@ async fn host_hands_a_1_1_plugin_its_context_and_keeps_a_1_0_plugin_unchanged(
     let old = install(&root, &v1_0, "echo-old", "1.0");
     trust(&root, "echo-old", false);
     match host.load(&old) {
-        Err(HostError::UnverifiedToolchain { abi }) => assert_eq!(abi, AbiVersion::new(1, 0)),
-        // Out of process the runner's loader refuses it, with the same message.
-        Err(err @ HostError::RunnerLoad { .. }) if out_of_process => assert_eq!(
+        // The runner's loader refuses it, with the host's message.
+        Err(err @ HostError::RunnerLoad { .. }) => assert_eq!(
             err.to_string(),
             HostError::UnverifiedToolchain {
                 abi: AbiVersion::new(1, 0)
             }
             .to_string()
         ),
-        Err(other) => panic!("expected UnverifiedToolchain, got {other:?}"),
+        Err(other) => panic!("expected the runner's UnverifiedToolchain refusal, got {other:?}"),
         Ok(()) => panic!("a 1.0 plugin must not load without the acceptance"),
     }
     assert!(!host.is_loaded("echo-old"));

@@ -221,13 +221,16 @@ pub(crate) fn init_plugin_host(
         std::sync::Arc::clone(&connection_registry),
     )
     .with_host_version(env!("CARGO_PKG_VERSION"));
-    // Out-of-process native plugins (#4182, plugin OS-sandbox phase 1) are a
-    // debug-build developer opt-in until the phase-7 cut-over:
-    // TERMIHUB_PLUGIN_OUT_OF_PROCESS=1 (runner from TERMIHUB_PLUGIN_RUNNER, or
-    // the sidecar next to the executable). Release builds never read it.
+    // Every native plugin runs in its own sandboxed termihub-plugin-runner
+    // (ADR-19): the bundled sidecar next to the executable, or the cargo-built
+    // one in a debug build. There is no in-process path and no switch to run a
+    // plugin unsandboxed. A debug build may name a different runner binary
+    // with TERMIHUB_PLUGIN_RUNNER; release builds never read it.
     #[cfg(debug_assertions)]
-    let plugin_host =
-        plugin_host.with_runner(termihub_core::plugin::sandbox::debug_runner_config_from_env());
+    let plugin_host = match termihub_core::plugin::sandbox::debug_runner_config_from_env() {
+        Some(runner) => plugin_host.with_runner(runner),
+        None => plugin_host,
+    };
     // Every build logs the bundled runner (#4202); the release bundle check
     // relies on its embedded digest being in the binary.
     termihub_core::plugin::sandbox::log_bundled_runner();

@@ -49,7 +49,7 @@ async fn echo_backend_round_trips_through_the_runner() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
     let (host, registry) = host_for(&echo);
-    let host = host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
     host.load(&echo.plugin)
         .expect("the runner loads echo-backend");
     assert!(host.is_loaded(&echo.plugin.manifest.id));
@@ -109,7 +109,7 @@ async fn a_crashed_runner_ends_its_sessions_and_respawns_for_the_next() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
     let (host, registry) = host_for(&echo);
-    let host = host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
     host.load(&echo.plugin).unwrap();
     let handle = host.sandboxed_plugin(&echo.plugin.manifest.id).unwrap();
 
@@ -144,9 +144,9 @@ async fn an_idle_runner_is_reaped_and_respawned_lazily() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
     let (host, registry) = host_for(&echo);
-    let host = host.with_runner(Some(
+    let host = host.with_runner(
         PluginRunnerConfig::new(runner_binary()).with_idle_timeout(Duration::from_millis(200)),
-    ));
+    );
     host.load(&echo.plugin).unwrap();
     let handle = host.sandboxed_plugin(&echo.plugin.manifest.id).unwrap();
     let pid = handle.running().unwrap().pid().unwrap();
@@ -172,7 +172,7 @@ fn a_missing_runner_fails_the_load() {
     let echo = install_echo(work.path());
     let (host, _registry) = host_for(&echo);
     let missing = work.path().join("no-such-runner");
-    let host = host.with_runner(Some(PluginRunnerConfig::new(&missing)));
+    let host = host.with_runner(PluginRunnerConfig::new(&missing));
     match host.load(&echo.plugin) {
         Err(HostError::RunnerUnavailable { path, .. }) => assert_eq!(path, missing),
         other => panic!("expected RunnerUnavailable, got {other:?}"),
@@ -186,7 +186,7 @@ fn a_runner_that_exits_before_hello_fails_the_load() {
     let echo = install_echo(work.path());
     let (host, _registry) = host_for(&echo);
     // A program that is not the runner and exits at once: EOF before `Hello`.
-    let host = host.with_runner(Some(PluginRunnerConfig::new(not_a_runner())));
+    let host = host.with_runner(PluginRunnerConfig::new(not_a_runner()));
     match host.load(&echo.plugin) {
         Err(HostError::RunnerProtocol(detail)) => {
             assert!(detail.contains("Hello"), "{detail}");
@@ -234,7 +234,7 @@ fn a_library_the_runner_refuses_fails_the_load_with_the_loader_message() {
     let lib = fixture_library(Variant::NoInit, work.path());
     let plugin = install_plugin(work.path(), &lib, FIXTURE_MANIFEST);
     let (host, _registry) = host_for(&plugin);
-    let host = host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
     match host.load(&plugin.plugin) {
         Err(err @ HostError::RunnerLoad { .. }) => {
             assert!(!err.is_incompatible(), "{err:?}");
@@ -255,7 +255,7 @@ fn an_unaccepted_abi_1_0_plugin_is_refused_by_the_runner() {
     let manifest = FIXTURE_MANIFEST.replace("\"apiVersion\": \"1.1\"", "\"apiVersion\": \"1.0\"");
     let plugin = install_plugin(work.path(), &lib, &manifest);
     let (host, _registry) = host_for(&plugin);
-    let host = host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
     match host.load(&plugin.plugin) {
         Err(HostError::RunnerLoad { message, .. }) => {
             assert!(

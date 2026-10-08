@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod plugin_fixture;
+mod plugin_runner_support;
 use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::ConnectionTypeRegistry;
@@ -30,6 +31,11 @@ use termihub_core::plugin::{
     sign_digests, signing_key_from_base64, HostError, InstallOptions, InstalledPlugin,
     NativeTrustStore, PluginHost, PluginManager, SigningKeyFile, TrustStore, SIGNATURE_FILE_NAME,
 };
+
+/// The sandboxed plugin runner every native plugin runs in (ADR-19).
+fn runner() -> termihub_core::plugin::sandbox::PluginRunnerConfig {
+    termihub_core::plugin::sandbox::PluginRunnerConfig::new(plugin_runner_support::runner_binary())
+}
 
 const PLUGIN_ID: &str = "integrity-echo";
 
@@ -108,7 +114,7 @@ impl Fixture {
 
     fn load(&self, plugin: &InstalledPlugin) -> Result<(), HostError> {
         let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-        let host = PluginHost::new(self.root(), registry);
+        let host = PluginHost::new(self.root(), registry).with_runner(runner());
         let result = host.load(plugin);
         host.unload(PLUGIN_ID);
         result

@@ -19,7 +19,6 @@ import { PluginDenialToasts } from "./PluginDenialToasts";
 
 function withDenials(atMs: number[]): PluginSandboxView {
   return {
-    outOfProcess: true,
     plugins: {
       sniffer: {
         isolation: "full",
@@ -93,7 +92,6 @@ describe("PluginDenialToasts (#4188)", () => {
     mockView = withDenials([]);
     render();
     mockView = {
-      outOfProcess: true,
       plugins: {
         sniffer: {
           isolation: "full",

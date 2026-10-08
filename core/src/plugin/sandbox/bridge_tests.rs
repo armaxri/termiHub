@@ -1,5 +1,5 @@
 //! The host bridge service against hand-written runner frames (#4183): the
-//! guards answer exactly as in process, denials are recorded, and hostile
+//! guards answer per the session's grant, denials are recorded, and hostile
 //! frames are protocol violations.
 
 use std::io::{Read, Write};

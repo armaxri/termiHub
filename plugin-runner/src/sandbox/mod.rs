@@ -1,5 +1,5 @@
 //! The OS-neutral sandbox contract shared by the host and the runner (plugin
-//! OS-sandbox phases 4–5, concept `docs/concepts/backlog/plugin-os-sandbox.html`).
+//! OS-sandbox phases 4–5, concept `docs/concepts/implemented/plugin-os-sandbox.html`).
 //!
 //! * [`SandboxPolicy`] — what one plugin's runner may touch, derived by the host
 //!   from the plugin's install and data folders and sent in `Configure`. It is

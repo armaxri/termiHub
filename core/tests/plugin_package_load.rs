@@ -5,7 +5,8 @@
 //! **installed** through [`PluginManager`] (validation, host-platform check,
 //! extraction), the native-plugin trust gate is satisfied by acknowledging the
 //! hash [`native_library_hash`] reports for the *selected* library, then
-//! [`PluginHost`] `dlopen`s it and a session echoes input back.
+//! [`PluginHost`] runs it in its sandboxed plugin runner (ADR-19) and a session
+//! echoes input back.
 //!
 //! Two sources for the package:
 //!
@@ -119,27 +120,24 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
     trust.set_native_enabled(true).unwrap();
     trust.acknowledge(&id, hash).unwrap();
 
-    load_and_echo(&root, &installed, &backend.connection_type, None).await;
-    // The same load + session, unchanged, through the out-of-process plugin
-    // runner (#4182).
     load_and_echo(
         &root,
         &installed,
         &backend.connection_type,
-        Some(termihub_core::plugin::sandbox::PluginRunnerConfig::new(
+        termihub_core::plugin::sandbox::PluginRunnerConfig::new(
             plugin_runner_support::runner_binary(),
-        )),
+        ),
     )
     .await;
 }
 
-/// Load `installed` through a fresh [`PluginHost`] (in process, or through the
-/// runner) and echo through one session.
+/// Load `installed` through a fresh [`PluginHost`] running `runner` and echo
+/// through one session.
 async fn load_and_echo(
     root: &Path,
     installed: &termihub_core::plugin::InstalledPlugin,
     connection_type: &str,
-    runner: Option<termihub_core::plugin::sandbox::PluginRunnerConfig>,
+    runner: termihub_core::plugin::sandbox::PluginRunnerConfig,
 ) {
     let id = installed.manifest.id.clone();
     // Load through the real host and run a session.

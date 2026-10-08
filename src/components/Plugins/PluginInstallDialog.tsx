@@ -249,12 +249,12 @@ export function PluginInstallDialog({
         <div className="plugin-install__native" data-testid="plugin-install-native-warning">
           <Cpu className="plugin-install__native-icon" aria-hidden="true" />
           <div>
-            <span className="plugin-install__native-title">Native code — runs unsandboxed</span>{" "}
+            <span className="plugin-install__native-title">Native code — runs sandboxed</span>{" "}
             <span className="plugin-install__native-desc">
-              — this plugin includes a native terminal backend that loads into termiHub and runs
-              with full application privileges. It is not sandboxed: once enabled it can access
-              anything termiHub can — your files, network, and credentials — regardless of the
-              permissions listed below. Only install native plugins from sources you trust.
+              — this plugin includes a native terminal backend. It runs in a separate, sandboxed
+              process that can only use its own data folder and the access listed below; termiHub
+              checks every network or file request it makes. It still controls what appears in its
+              terminal, so only install native plugins from sources you trust.
             </span>
           </div>
         </div>

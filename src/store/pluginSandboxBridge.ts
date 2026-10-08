@@ -78,13 +78,11 @@ export interface PluginSandboxStatus {
 
 /** The region view model (twin of Rust `PluginSandboxView`). */
 export interface PluginSandboxView {
-  /** Whether native plugins run out of process on this build. */
-  outOfProcess: boolean;
   plugins: Record<string, PluginSandboxStatus>;
 }
 
 /** The view before the region arrives: no sandbox information. */
-export const EMPTY_SANDBOX_VIEW: PluginSandboxView = { outOfProcess: false, plugins: {} };
+export const EMPTY_SANDBOX_VIEW: PluginSandboxView = { plugins: {} };
 
 let transportInstance: Transport | null = null;
 let regionClient: ProjectionClient | null = null;
@@ -144,10 +142,7 @@ export function ensurePluginSandboxSubscribed(): Promise<ProjectionClient> {
     const client = new ProjectionClient(transport(), PLUGIN_SANDBOX_REGION);
     client.onChange((state) => {
       const view = (state.view ?? EMPTY_SANDBOX_VIEW) as Partial<PluginSandboxView>;
-      commit(
-        { outOfProcess: view.outOfProcess === true, plugins: view.plugins ?? {} },
-        state.version
-      );
+      commit({ plugins: view.plugins ?? {} }, state.version);
     });
     startPromise = client
       .start()

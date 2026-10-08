@@ -184,7 +184,7 @@ impl std::fmt::Debug for SandboxedPluginHandle {
 
 impl SandboxedPluginHandle {
     /// Spawn the first runner (the load-time gates run now, so an incompatible
-    /// or broken plugin fails `PluginHost::load` exactly as in process) and
+    /// or broken plugin fails `PluginHost::load` itself) and
     /// start the idle reaper.
     pub(crate) fn start(
         config: PluginRunnerConfig,

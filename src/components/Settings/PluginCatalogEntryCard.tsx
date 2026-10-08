@@ -126,7 +126,7 @@ export function PluginCatalogEntryCard({
         {entry.native && (
           <span
             className="plugin-catalog__badge plugin-catalog__badge--warn"
-            title="Runs native code in-process. Needs Settings → Plugins → native plugins enabled and a per-plugin trust acknowledgement."
+            title="Runs native code in a sandboxed plugin process. Needs Settings → Plugins → native plugins enabled and a per-plugin trust acknowledgement."
             data-testid={`plugin-catalog-native-${entry.id}`}
           >
             <Cpu size={12} aria-hidden="true" /> Native

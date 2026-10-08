@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { InstalledPlugin } from "@/types/plugin";
-import type { PluginSandboxStatus, PluginSandboxView } from "@/store/pluginSandboxBridge";
+import type { PluginSandboxStatus } from "@/store/pluginSandboxBridge";
 import {
   accessChips,
   isolationBadge,
@@ -22,15 +22,13 @@ function plugin(overrides: Record<string, unknown> = {}): InstalledPlugin {
   } as unknown as InstalledPlugin;
 }
 
-const sandboxed: PluginSandboxView = { outOfProcess: true, plugins: {} };
-
 function status(overrides: Partial<PluginSandboxStatus>): PluginSandboxStatus {
   return { isolation: "full", enforced: [], missing: [], denials: [], ...overrides };
 }
 
 describe("nativePluginSandbox helpers", () => {
   it("has no badge for an untrusted plugin", () => {
-    expect(isolationBadge(plugin(), undefined, sandboxed, false)).toBeUndefined();
+    expect(isolationBadge(plugin(), undefined, false)).toBeUndefined();
   });
 
   it("maps every isolation to its badge", () => {
@@ -43,7 +41,7 @@ describe("nativePluginSandbox helpers", () => {
       ["runnerMissing", "Plugin runner is missing — reinstall termiHub", "error"],
     ];
     for (const [isolation, label, tone] of cases) {
-      const badge = isolationBadge(plugin(), status({ isolation }), sandboxed, true);
+      const badge = isolationBadge(plugin(), status({ isolation }), true);
       expect(badge?.label).toBe(label);
       expect(badge?.tone).toBe(tone);
     }
@@ -61,7 +59,6 @@ describe("nativePluginSandbox helpers", () => {
           autoDisabled: "Disabled after 3 crashes",
         },
       }),
-      sandboxed,
       true
     );
     expect(badge).toMatchObject({ kind: "disabled", label: "Disabled after 3 crashes" });
@@ -82,7 +79,6 @@ describe("nativePluginSandbox helpers", () => {
     const badge = isolationBadge(
       plugin(),
       status({ isolation: "full", enforced: ["seccomp", "landlock", "netns"] }),
-      sandboxed,
       true
     );
     expect(badge?.kind).toBe("isolated");

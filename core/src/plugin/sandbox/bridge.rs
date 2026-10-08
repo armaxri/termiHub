@@ -1,10 +1,9 @@
 //! The host's capability-bridge **service** for one plugin runner (#4183,
 //! plugin OS-sandbox phase 2).
 //!
-//! An out-of-process plugin reaches the network and its declared paths only
-//! through this service: the runner forwards each `PluginHostBridge` call as a
-//! `BridgeRequest` frame, and the host answers it with the very same guarded
-//! operations the in-process bridge runs
+//! A native plugin reaches the network and its declared paths only through
+//! this service: the runner forwards each `PluginHostBridge` call as a
+//! `BridgeRequest` frame, and the host answers it with the guarded operations
 //! ([`guarded_connect`](crate::plugin::capabilities) and friends) against the
 //! session's `PermissionSet`, `FilesystemScope` and `ConnectionPolicy`. One
 //! enforcement point, identical on every OS; the runner holds no permission

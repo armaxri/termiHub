@@ -63,7 +63,7 @@ export function NativePluginRow({
   // the host, so it is offered for (re-)trust.
   const isTrusted = ack !== undefined && (!legacyAbi || ack.unverifiedToolchainAccepted);
   const status: PluginSandboxStatus | undefined = sandbox.plugins[id];
-  const badge = isolationBadge(plugin, status, sandbox, isTrusted);
+  const badge = isolationBadge(plugin, status, isTrusted);
   const missing = status?.missing ?? [];
 
   const handleConfirmReduced = useCallback(async () => {

@@ -6,11 +6,16 @@
 //! [`super::host::PluginHost`] wires it into the load/execute path. Nothing here
 //! performs I/O, so it is exhaustively unit-testable.
 //!
-//! # What is enforceable today
+//! # The enforcement boundary
 //!
-//! A native plugin backend runs as a dynamic library **in the host process**, so
-//! the host cannot intercept a plugin's own syscalls. What it *can* do — and what
-//! this module implements — is:
+//! A native plugin backend runs in its own `termihub-plugin-runner` process,
+//! confined by the operating-system sandbox before the library is loaded
+//! (ADR-19, [`super::sandbox`]): landlock + seccomp on Linux, Seatbelt on
+//! macOS, a Less-Privileged AppContainer on Windows. The OS refuses the
+//! plugin's own syscalls outside its data folder and install folder — direct
+//! sockets, file access elsewhere, spawning processes — so the capability
+//! bridge is its only route to the network and to its declared paths. This
+//! module is the policy that bridge (and the load gate) applies:
 //!
 //! * **Permission consistency at load** — a plugin whose declared extensions need
 //!   a permission it did not request is refused ([`PermissionSet::check_consistency`]),
@@ -32,9 +37,9 @@
 //! * **An error-recovery counter** ([`RestartTracker`]) — bounded auto-restart of
 //!   a crashing plugin, then auto-disable.
 //!
-//! Signing proves **provenance and integrity**; it does not sandbox a plugin's
-//! syscalls. The in-process direct-syscall surface documented above stays out of
-//! scope (concept "Non-Goals").
+//! Signing proves **provenance and integrity**; containment is the sandbox's
+//! job. What the sandbox does not cover is what a trusted plugin *shows*: it
+//! still draws its own terminal (concept "Non-Goals").
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};

@@ -1,10 +1,10 @@
 //! Shared library half of `termihub-plugin-runner` (#4182, plugin OS-sandbox
-//! phase 1, concept `docs/concepts/backlog/plugin-os-sandbox.html`).
+//! phase 1, concept `docs/concepts/implemented/plugin-os-sandbox.html`).
 //!
-//! * [`loader`] — open, verify and gate a native plugin library. Used by the
-//!   in-process host in `termihub-core` *and* by the runner binary, so both
-//!   enforce the identical sequence (digest pin → ABI gate → manifest mirror →
-//!   `plugin_init` → toolchain rule).
+//! * [`loader`] — open, verify and gate a native plugin library: the runner
+//!   binary's load sequence (digest pin → ABI gate → manifest mirror →
+//!   `plugin_init` → toolchain rule). termiHub itself never loads a plugin
+//!   (ADR-19); its tests reuse the loader as an in-process baseline only.
 //! * [`ipc`] — the length-delimited frame protocol between the host and a
 //!   runner process, and the channel it rides on (a `socketpair` on Unix, a
 //!   private named pipe on Windows).

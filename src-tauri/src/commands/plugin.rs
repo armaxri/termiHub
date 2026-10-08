@@ -17,10 +17,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    check_host_platform, host_target_triple, native_library_hash, native_trust_disclosure,
-    validate_package, AckAcceptances, InstallOptions, InstalledPlugin, NativeTrustStore,
-    PluginHost, PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment,
-    TrustLevel, TrustedPublisher, VersionChange,
+    check_host_platform, host_target_triple, native_library_hash, validate_package, AckAcceptances,
+    InstallOptions, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
+    PluginManagerError, PluginManifest, SignerChange, TrustAssessment, TrustLevel,
+    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -389,17 +389,12 @@ pub struct NativeAckInfo {
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct NativePluginTrust {
-    /// Whether native (in-process) plugins are enabled globally. `false` by
-    /// default and whenever the store cannot be read (fail closed).
+    /// Whether native plugins are enabled globally. `false` by default and
+    /// whenever the store cannot be read (fail closed).
     pub enabled: bool,
     /// The plain-language disclosure the UI must show before enabling/trusting a
-    /// native plugin — the sandboxed wording when native plugins run out of
-    /// process, the in-process (no OS sandbox) wording otherwise (#4188).
+    /// native plugin: they run in a sandboxed process (#4188, ADR-19).
     pub disclosure: String,
-    /// Whether native plugins run out of process in the OS sandbox on this
-    /// build (the debug opt-in until the phase-7 cut-over) — the UI shows the
-    /// isolation badges only then.
-    pub out_of_process: bool,
     /// Every recorded per-plugin acknowledgment, sorted by plugin id.
     pub acknowledged: Vec<NativeAckInfo>,
 }
@@ -407,10 +402,7 @@ pub struct NativePluginTrust {
 /// Return the native-plugin trust state: the global switch, the disclosure, and
 /// the recorded per-plugin acknowledgments.
 #[tauri::command]
-pub fn get_native_plugin_trust(
-    manager: State<'_, PluginManager>,
-    host: State<'_, Arc<PluginHost>>,
-) -> NativePluginTrust {
+pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePluginTrust {
     let store = NativeTrustStore::load(manager.root());
     let acknowledged = store
         .acknowledgments()
@@ -423,11 +415,9 @@ pub fn get_native_plugin_trust(
             reduced_isolation_accepted: ack.reduced_isolation_accepted,
         })
         .collect();
-    let out_of_process = host.runs_out_of_process();
     NativePluginTrust {
         enabled: store.is_native_enabled(),
-        disclosure: native_trust_disclosure(out_of_process).to_owned(),
-        out_of_process,
+        disclosure: NATIVE_TRUST_DISCLOSURE.to_owned(),
         acknowledged,
     }
 }

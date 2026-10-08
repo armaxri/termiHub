@@ -83,7 +83,7 @@ pub const SESSION_ID_LEN: usize = 4;
 pub const MAX_BRIDGE_CHUNK: usize = 512 * 1024;
 
 /// Most entries one `list_dir` bridge call returns (#4220). Applied by the host
-/// while it reads the directory (in process and over IPC alike) and re-checked
+/// while it reads the directory and re-checked
 /// by the runner while it reassembles pages; a larger directory is refused with
 /// `PluginStatus::ResourceLimit`.
 pub const MAX_LIST_DIR_ENTRIES: usize = 1 << 20;

@@ -1,13 +1,14 @@
-//! The native plugin **library loader**, shared by the in-process host
-//! (`termihub_core::plugin::PluginHost`) and the out-of-process
-//! `termihub-plugin-runner` (#4182).
+//! The native plugin **library loader** of `termihub-plugin-runner` (#4182).
+//! termiHub itself never loads a plugin library (ADR-19); the host's
+//! `termihub_core::plugin::PluginHost` maps this loader's errors and tests use
+//! it as a direct in-process baseline.
 //!
 //! It owns everything between "a path to a plugin's backend library" and "a
 //! library whose entry points may be called": the verify-then-load digest pin
 //! (CORE-034, [`PinnedLibrary`]), `dlopen`, the ABI version gate, the manifest mirror check
 //! (PLG-002), `termihub_plugin_init`, and the toolchain rule (PLG-013, ADR-15).
-//! Keeping it in one place means the runner enforces exactly the gates the host
-//! always has — there is no second, drifting copy.
+//! Keeping it in one place means there is no second, drifting copy of the
+//! gates.
 //!
 //! The ordering is deliberate: nothing in the plugin is called before the ABI
 //! gate passes, and no entry point beyond `plugin_init` is resolved before the

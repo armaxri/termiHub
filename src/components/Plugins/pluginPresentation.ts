@@ -188,9 +188,10 @@ export function hasSettings(manifest: PluginManifest): boolean {
 /**
  * True when the plugin ships **native code** — a `terminalBackend` extension is a
  * compiled Rust dynamic library (see {@link PluginExtensions.terminalBackend}).
- * Native code loads into the termiHub process itself: it runs **unsandboxed with
- * full application privileges**, so the install/trust prompt must call this out
- * explicitly regardless of the coarse permissions the manifest lists. The other
+ * Native code runs in its own sandboxed plugin process (ADR-19), but it is
+ * still third-party native code that draws its own terminal, so the
+ * install/trust prompt must call this out explicitly alongside the coarse
+ * permissions the manifest lists. The other
  * extension points (protocol parsers, themes, status-bar widgets) are JS/JSON
  * data and carry no native-code risk.
  */

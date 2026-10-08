@@ -355,7 +355,7 @@
   font-weight: 600;
 }
 
-/* Native-code (unsandboxed) warning — shown when the package ships a native
+/* Native-code warning — shown when the package ships a native
    terminal backend (Rust dynamic library). Warning tone, separate from the
    provenance banner so it is impossible to miss. */
 .plugin-install__native {

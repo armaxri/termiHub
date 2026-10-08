@@ -1,6 +1,6 @@
 //! Performance gate of the out-of-process plugin host (#4182, #4190), measured
 //! with the real `echo-backend` example plugin against the concept's budget
-//! ("Performance budget" in `docs/concepts/backlog/plugin-os-sandbox.html`):
+//! ("Performance budget" in `docs/concepts/implemented/plugin-os-sandbox.html`):
 //!
 //! | Metric                          | Budget                                  |
 //! | ------------------------------- | --------------------------------------- |
@@ -20,7 +20,18 @@
 //! varies far more than 20 % from run to run, so a stored baseline would either
 //! flap or be loose enough to say nothing.
 //!
-//! Throughput has no relative budget: the in-process "baseline" of the echo
+//! **The in-process baseline.** "p99 added" is the runner's p99 minus the p99
+//! of the same echo plugin called directly in this test process. termiHub has
+//! no in-process plugin path any more (ADR-19), so the baseline is built here,
+//! test-only: [`DirectEcho`] opens the plugin with the runner's own loader
+//! ([`termihub_plugin_runner::loader`], the gates the runner applies), hands it
+//! a deny-all bridge, and relays its output through a forwarding thread onto a
+//! tokio channel — the shape the removed in-process host had, so the budget
+//! keeps measuring what the process boundary adds, against the same baseline
+//! as before the cut-over (#4189). A fixed baseline number was rejected: it
+//! would not track the machine the gate runs on.
+//!
+//! Throughput has no relative budget: the in-process baseline of the echo
 //! plugin is a plain memory copy (tens of GB/s) that no cross-process transport
 //! can approach, so the old "≥ 80 % of in-process" figure is reported only
 //! (concept re-baselined in #4190).
@@ -38,17 +49,27 @@
 //! Set `TERMIHUB_PERF_REPORT=<file>` to also write the numbers as JSON.
 #![cfg(feature = "plugin")]
 
+use std::ffi::c_void;
+use std::path::Path;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::{Duration, Instant};
 
 mod plugin_runner_support;
 use plugin_runner_support::{
-    host_for, install_echo, kill_process, new_connection, rss_kib, runner_binary, wait_until,
+    echo_backend_library, host_for, install_echo, kill_process, new_connection, rss_kib,
+    runner_binary, wait_until,
 };
 
-use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::output::OUTPUT_CHANNEL_CAPACITY;
 use termihub_core::plugin::sandbox::PluginRunnerConfig;
-use termihub_core::plugin::{InstalledPlugin, PluginHost};
+use termihub_core::plugin::{BackendLoadOptions, InstalledPlugin, PluginHost};
+
+use termihub_plugin_api::{
+    FfiByteSlice, FfiOwnedBytes, FfiStr, LoadedBackend, PluginFileMetadata, PluginHostBridge,
+    PluginHostBridgeVTable, PluginOutputSender, PluginStatus, PluginTcpStream, PluginWriteMode,
+};
+use termihub_plugin_runner::loader::{load_plugin_library, PluginLibrary};
 
 const LATENCY_SAMPLES: usize = 10_000;
 const THROUGHPUT_CHUNK: usize = 64 * 1024;
@@ -75,10 +96,92 @@ const FAIRNESS_MIN_CORES: usize = 4;
 /// A session of the 40 that has not finished by then is starved.
 const STARVATION_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// `ConnectionType` is `Send` but not `Sync`; the throughput pump writes from
-/// another thread, so the session sits behind an (uncontended) mutex.
-type Shared = Arc<Mutex<Box<dyn ConnectionType>>>;
+/// Terminal input into one echo session. A runner session is a
+/// `ConnectionType`, which is `Send` but not `Sync`, so it sits behind an
+/// (uncontended) mutex the throughput pump also writes through.
+type Shared = Arc<dyn Fn(&[u8]) + Send + Sync>;
 type Registry = Arc<Mutex<ConnectionTypeRegistry>>;
+
+// --- The test-only in-process baseline (see the module docs) ---------------
+
+/// The echo plugin called directly in this process: the baseline "p99 added"
+/// is measured against. Field order is drop order — the backend is destroyed
+/// while the library is still mapped.
+struct DirectEcho {
+    backend: Mutex<LoadedBackend>,
+    _library: PluginLibrary,
+}
+
+/// Every bridge call is refused: the echo plugin never makes one.
+unsafe extern "C" fn deny_connect(
+    _: *mut c_void,
+    _: FfiStr,
+    _: u16,
+    _: *mut PluginTcpStream,
+) -> PluginStatus {
+    PluginStatus::PermissionDenied
+}
+unsafe extern "C" fn deny_read(_: *mut c_void, _: FfiStr, _: *mut FfiOwnedBytes) -> PluginStatus {
+    PluginStatus::PermissionDenied
+}
+unsafe extern "C" fn deny_write(
+    _: *mut c_void,
+    _: FfiStr,
+    _: FfiByteSlice,
+    _: PluginWriteMode,
+) -> PluginStatus {
+    PluginStatus::PermissionDenied
+}
+unsafe extern "C" fn deny_stat(
+    _: *mut c_void,
+    _: FfiStr,
+    _: *mut PluginFileMetadata,
+) -> PluginStatus {
+    PluginStatus::PermissionDenied
+}
+static DENY_ALL: PluginHostBridgeVTable = PluginHostBridgeVTable {
+    open_connection: deny_connect,
+    read_file: deny_read,
+    write_file: deny_write,
+    stat_path: deny_stat,
+    list_dir: deny_read,
+};
+
+impl DirectEcho {
+    /// Load the echo library at `path` with the runner's loader and open one
+    /// session whose output is relayed onto a tokio channel by a forwarding
+    /// thread.
+    fn open(path: &Path) -> (Arc<Self>, OutputReceiver) {
+        let library =
+            load_plugin_library(path, &BackendLoadOptions::default()).expect("direct load");
+        let (std_tx, std_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
+        std::thread::spawn(move || {
+            while let Ok(chunk) = std_rx.recv() {
+                if tx.blocking_send(chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        // SAFETY: the null context is never dereferenced, every callback in
+        // `DENY_ALL` ignores it, and there is no destructor to run.
+        let bridge = unsafe { PluginHostBridge::from_raw(std::ptr::null_mut(), &DENY_ALL, None) };
+        let backend = library
+            .create_backend_with_context(
+                r#"{"echoPrefix":""}"#,
+                "{}",
+                PluginOutputSender::from_sender(std_tx),
+                bridge,
+                None,
+            )
+            .expect("direct session");
+        let echo = Arc::new(Self {
+            backend: Mutex::new(backend),
+            _library: library,
+        });
+        (echo, rx)
+    }
+}
 
 struct Measured {
     p50: Duration,
@@ -92,7 +195,9 @@ async fn session(registry: &Registry, type_id: &str) -> (Shared, OutputReceiver)
     conn.connect(serde_json::json!({ "echoPrefix": "" }))
         .await
         .expect("connect");
-    (Arc::new(Mutex::new(conn)), rx)
+    let conn = Mutex::new(conn);
+    let write: Shared = Arc::new(move |data: &[u8]| conn.lock().unwrap().write(data).unwrap());
+    (write, rx)
 }
 
 fn percentile(sorted: &[Duration], pct: usize) -> Duration {
@@ -102,13 +207,13 @@ fn percentile(sorted: &[Duration], pct: usize) -> Duration {
 async fn measure(conn: Shared, mut rx: OutputReceiver) -> Measured {
     // Warm up.
     for _ in 0..200 {
-        conn.lock().unwrap().write(b"w").unwrap();
+        conn(b"w");
         rx.recv().await.unwrap();
     }
     let mut samples = Vec::with_capacity(LATENCY_SAMPLES);
     for _ in 0..LATENCY_SAMPLES {
         let start = Instant::now();
-        conn.lock().unwrap().write(b"x").unwrap();
+        conn(b"x");
         let chunk = rx.recv().await.unwrap();
         samples.push(start.elapsed());
         assert_eq!(chunk, b"x");
@@ -147,7 +252,7 @@ async fn pump(
         let released = Instant::now();
         let data = vec![b'a'; chunk];
         for _ in 0..total / chunk {
-            conn.lock().unwrap().write(&data).unwrap();
+            conn(&data);
         }
         released
     });
@@ -231,19 +336,21 @@ async fn out_of_process_echo_stays_within_the_budget() {
     let echo = install_echo(work.path());
     let id = echo.plugin.manifest.id.clone();
 
-    let (in_host, in_registry) = host_for(&echo);
     let warm = Instant::now();
-    in_host.load(&echo.plugin).unwrap();
+    let (direct, rx) = DirectEcho::open(&echo_backend_library(work.path()));
     println!(
-        "in-process load (trust + digest + dlopen + init) {:?}",
+        "in-process baseline load (test-only direct dlopen + init + session) {:?}",
         warm.elapsed()
     );
-    let (conn, rx) = session(&in_registry, &echo.type_id).await;
-    let inproc = measure(conn, rx).await;
-    in_host.unload(&id);
+    let baseline = Arc::clone(&direct);
+    let write: Shared = Arc::new(move |data: &[u8]| {
+        baseline.backend.lock().unwrap().write_input(data).unwrap();
+    });
+    let inproc = measure(write, rx).await;
+    drop(direct);
 
     let (out_host, out_registry) = host_for(&echo);
-    let out_host = out_host.with_runner(Some(PluginRunnerConfig::new(runner_binary())));
+    let out_host = out_host.with_runner(PluginRunnerConfig::new(runner_binary()));
     let starts = cold_starts(&out_host, &echo.plugin, COLD_START_SAMPLES);
     let cold_p50 = percentile(&starts, 50);
     let cold_p95 = percentile(&starts, 95);

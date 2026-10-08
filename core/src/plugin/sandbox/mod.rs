@@ -1,14 +1,14 @@
-//! Out-of-process native plugin hosting (#4182, plugin OS-sandbox phase 1).
+//! Out-of-process, OS-sandboxed native plugin hosting (#4182, ADR-19).
 //!
-//! Instead of `dlopen`ing a native plugin into termiHub, the host can run it in
-//! a dedicated `termihub-plugin-runner` sidecar process, one per enabled
-//! plugin, and talk to it over a private framed IPC channel (protocol:
-//! [`termihub_plugin_runner::ipc`]). The plugin library is unchanged and is
-//! loaded by the runner through the very same loader and gates the in-process
-//! host uses ([`termihub_plugin_runner::loader`]).
+//! termiHub never `dlopen`s a native plugin into itself. The host runs every
+//! native plugin in a dedicated `termihub-plugin-runner` sidecar process, one
+//! per enabled plugin, and talks to it over a private framed IPC channel
+//! (protocol: [`termihub_plugin_runner::ipc`]). The plugin library is
+//! unchanged and is loaded by the runner, after it confined itself, through the
+//! shared loader and its gates ([`termihub_plugin_runner::loader`]).
 //!
 //! * [`SandboxedPluginHandle`] — one enabled plugin: spawns the runner at load
-//!   (so load-time refusals surface exactly as in process), respawns it lazily
+//!   (so load-time refusals surface from `PluginHost::load`), respawns it lazily
 //!   after an idle reap or a crash, and stops it with a bounded sequence
 //!   (cancel → close every session → `Shutdown` → kill) on unload.
 //! * [`SandboxedPlugin`] — one running runner: handshake, frame validation
@@ -20,7 +20,7 @@
 //!
 //! * The capability bridge is served by the host over the channel
 //!   ([`BridgeGrant`], phase 2, #4183): the runner forwards each bridge call,
-//!   the host runs the same permission / scope / policy guards as in process,
+//!   the host runs the permission / scope / policy guards,
 //!   passes approved sockets to the runner (`SCM_RIGHTS`) or proxies them, and
 //!   records every refusal as a [`BridgeDenial`].
 //! * Crash isolation (#4184, phase 3): every runner exit gets a
@@ -48,12 +48,11 @@
 //!   `reducedIsolationAccepted` gate: reduced isolation loads only with the
 //!   hash-bound acknowledgement.
 //!
-//! **Scope so far.** OS confinement on macOS, Linux and Windows. The
-//! out-of-process path is
-//! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
-//! desktop enables it only in debug builds via an environment flag
-//! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
-//! cut-over. See `docs/concepts/backlog/plugin-os-sandbox.html`.
+//! **The only model.** Since the phase-7 cut-over (#4189) this is the one way
+//! native plugins run: there is no in-process load path and no user switch to
+//! run a plugin unsandboxed. A debug build may point the host at a different
+//! runner binary ([`debug_runner_config_from_env`]). See ADR-19 and
+//! `docs/concepts/implemented/plugin-os-sandbox.html`.
 
 #[cfg(windows)]
 mod appcontainer;
@@ -95,34 +94,23 @@ pub use watchdog::{
     DEFAULT_RSS_POLL_INTERVAL,
 };
 
-/// Environment flag that opts a **debug build** into out-of-process plugins.
-pub const OUT_OF_PROCESS_ENV: &str = "TERMIHUB_PLUGIN_OUT_OF_PROCESS";
-
 /// Environment override for the runner binary (debug builds, tests).
 pub const RUNNER_PATH_ENV: &str = "TERMIHUB_PLUGIN_RUNNER";
 
-/// The runner configuration a debug build opts into: `Some` when
-/// [`OUT_OF_PROCESS_ENV`] is `1`, using [`RUNNER_PATH_ENV`] or else
-/// [`default_runner_path`] (the bundled sidecar, or the cargo-built runner).
-/// The desktop calls this only under `cfg(debug_assertions)`, so a release
-/// build never reads the flag.
+/// The runner configuration a debug build overrides the default with: `Some`
+/// when [`RUNNER_PATH_ENV`] names a runner binary. It only changes *which*
+/// runner runs the plugins — every native plugin runs in one either way. The
+/// desktop calls this only under `cfg(debug_assertions)`, so a release build
+/// always uses the bundled, digest-checked runner.
 #[must_use]
 pub fn debug_runner_config_from_env() -> Option<PluginRunnerConfig> {
-    runner_config_from(
-        std::env::var(OUT_OF_PROCESS_ENV).ok().as_deref(),
-        std::env::var_os(RUNNER_PATH_ENV).map(std::path::PathBuf::from),
-    )
+    runner_config_from(std::env::var_os(RUNNER_PATH_ENV).map(std::path::PathBuf::from))
 }
 
-fn runner_config_from(
-    flag: Option<&str>,
-    runner: Option<std::path::PathBuf>,
-) -> Option<PluginRunnerConfig> {
-    if flag != Some("1") {
-        return None;
-    }
-    let path = runner.or_else(default_runner_path)?;
-    Some(PluginRunnerConfig::new(path))
+fn runner_config_from(runner: Option<std::path::PathBuf>) -> Option<PluginRunnerConfig> {
+    runner
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(PluginRunnerConfig::new)
 }
 
 #[cfg(test)]
@@ -130,18 +118,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_debug_flag_must_be_exactly_one() {
-        let runner = Some(std::path::PathBuf::from("/x/runner"));
-        assert!(runner_config_from(None, runner.clone()).is_none());
-        assert!(runner_config_from(Some("0"), runner.clone()).is_none());
-        assert!(runner_config_from(Some("true"), runner.clone()).is_none());
-        let config = runner_config_from(Some("1"), runner).expect("enabled");
+    fn the_debug_override_names_a_runner_or_nothing() {
+        assert!(runner_config_from(None).is_none());
+        assert!(runner_config_from(Some(std::path::PathBuf::new())).is_none());
+        let config =
+            runner_config_from(Some(std::path::PathBuf::from("/x/runner"))).expect("override");
         assert_eq!(config.runner_path, std::path::PathBuf::from("/x/runner"));
         assert_eq!(config.idle_timeout, DEFAULT_IDLE_TIMEOUT);
-        // Without an override the sidecar next to the executable is used.
-        assert_eq!(
-            runner_config_from(Some("1"), None).map(|c| c.runner_path),
-            default_runner_path()
-        );
+        assert!(config.os_sandbox, "an override never turns the sandbox off");
     }
 }

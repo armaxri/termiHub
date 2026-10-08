@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { usePluginSandbox } from "@/store/usePluginSandbox";
@@ -21,11 +21,9 @@ import { NativePluginRow } from "./NativePluginRow";
  * Settings → Plugins → the native plugin trust gate (SEC-002 / PLG-006 /
  * ARCH-008) and sandbox status (#4188).
  *
- * Native plugin backends are dynamic libraries. Until the sandbox cut-over they
- * load **in the app process** with termiHub's full privileges; with the
- * out-of-process runner (a debug opt-in for now) each runs in its own sandboxed
- * process, and every row shows its isolation, process status and access from
- * the backend `plugin-sandbox` region. To invert the former install-time trust
+ * Native plugin backends are dynamic libraries. Each runs in its own sandboxed
+ * plugin process (ADR-19), and every row shows its isolation, process status
+ * and access from the backend `plugin-sandbox` region. To invert the former install-time trust
  * model, they are:
  *
  * 1. **Default-OFF globally** — no native plugin loads unless this switch is on;
@@ -155,29 +153,19 @@ export function NativePluginGateSettings() {
   );
 
   const enabled = trust?.enabled ?? false;
-  const outOfProcess = trust?.outOfProcess === true || sandbox.outOfProcess;
 
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-native-plugin-gate">
         <h3 className="settings-panel__section-title">
-          {outOfProcess ? (
-            <>
-              <ShieldCheck size={16} aria-hidden="true" /> Native Plugins
-            </>
-          ) : (
-            <>
-              <ShieldAlert size={16} aria-hidden="true" /> Native Plugins (Advanced)
-            </>
-          )}
+          <ShieldCheck size={16} aria-hidden="true" /> Native Plugins
         </h3>
         <p className="settings-panel__description" data-testid="native-plugin-disclosure">
-          {trust?.disclosure ??
-            "Native plugins run inside termiHub with full application privileges and no operating-system sandbox."}
+          {trust?.disclosure ?? "Native plugins run in a separate, sandboxed process."}
         </p>
 
         <SettingsField
-          label={outOfProcess ? "Enable Native Plugins" : "Enable Native (In-Process) Plugins"}
+          label="Enable Native Plugins"
           hint="Off by default. Even when enabled, each native plugin must be trusted individually below before it loads. Theme and JavaScript plugins are unaffected by this setting."
           hintVariant="warning"
         >

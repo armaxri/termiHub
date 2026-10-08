@@ -22,7 +22,6 @@ function denial(atMs: number, overrides: Partial<PluginDenial> = {}): PluginDeni
 
 function view(denials: PluginDenial[]): PluginSandboxView {
   return {
-    outOfProcess: true,
     plugins: { sniffer: { isolation: "full", enforced: [], missing: [], denials } },
   };
 }
@@ -75,7 +74,7 @@ describe("DenialToastLimiter", () => {
 
   it("toasts a plugin that appears after the first view", () => {
     const limiter = new DenialToastLimiter();
-    limiter.observe({ outOfProcess: true, plugins: {} }, 0, nameOf);
+    limiter.observe({ plugins: {} }, 0, nameOf);
     expect(limiter.observe(view([denial(1)]), 1, nameOf)).toHaveLength(1);
   });
 });

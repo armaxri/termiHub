@@ -1,9 +1,8 @@
 //! End-to-end test that a plugin-provided backend becomes a usable connection
 //! type (#1999).
 //!
-//! Where `plugin_host_roundtrip.rs` (#1995) exercises loading a library and
-//! driving a [`PluginConnectionType`] directly, this test drives the remaining
-//! *wiring*: it loads plugins through the real [`PluginHost`] into a shared
+//! Where `plugin_host_roundtrip.rs` (#1995) exercises the loader's gates, this
+//! test drives the *wiring*: it loads plugins through the real [`PluginHost`] into a shared
 //! [`ConnectionTypeRegistry`] and then, using only the registry (the same path
 //! the desktop `SessionManager` takes), it
 //!
@@ -15,8 +14,9 @@
 //!   distinct, load-order-independent `plugin:<id>:<type>` ids (PLG-007), and
 //! * confirms sessions are independent — closing one leaves the other running.
 //!
-//! Like the round-trip test it builds the real `cdylib` fixture with `cargo` and
-//! genuinely `dlopen`s it, and is gated on the `plugin` feature.
+//! It builds the real `cdylib` fixture with `cargo`; the host runs it in the
+//! sandboxed plugin runner (ADR-19), which genuinely `dlopen`s it. Gated on the
+//! `plugin` feature.
 #![cfg(feature = "plugin")]
 
 use std::path::Path;
@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod plugin_fixture;
+mod plugin_runner_support;
 use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
@@ -31,6 +32,11 @@ use termihub_core::plugin::{
     native_library_hash, parse_manifest, HostLifecycleHook, InstalledPlugin, NativeTrustStore,
     PluginHost, PluginManager, PluginState,
 };
+
+/// The sandboxed plugin runner every native plugin runs in (ADR-19).
+fn runner() -> termihub_core::plugin::sandbox::PluginRunnerConfig {
+    termihub_core::plugin::sandbox::PluginRunnerConfig::new(plugin_runner_support::runner_binary())
+}
 
 /// Stable registry ids of the two colliding `echo` fixture plugins (PLG-007).
 const ECHO_A: &str = "plugin:echo-a:echo";
@@ -247,7 +253,7 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
     std::fs::create_dir_all(&root).unwrap();
 
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner());
 
     // Load two plugins that BOTH declare connectionType "echo". Each registers
     // under its own stable namespaced id (PLG-007) — neither takes the bare name.
@@ -331,7 +337,7 @@ async fn plugin_type_ids_do_not_depend_on_load_order() {
         termihub_core::connection::register_core_backends(&mut builtin);
         let had_ssh = builtin.has_type("ssh");
         let registry = Arc::new(Mutex::new(builtin));
-        let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+        let host = PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner());
         for plugin in order {
             host.load(plugin).expect("plugin should load");
         }
@@ -386,7 +392,7 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
     // Nothing toggles either plugin — this is a cold start with both persisted as
     // enabled (no state file → enabled by default).
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = Arc::new(PluginHost::new(root.clone(), Arc::clone(&registry)));
+    let host = Arc::new(PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner()));
     let manager = PluginManager::with_hook(
         root.clone(),
         Arc::new(HostLifecycleHook::new(Arc::clone(&host))),
@@ -439,7 +445,7 @@ async fn sessions_are_independent_so_closing_one_leaves_the_other_running() {
     std::fs::create_dir_all(&root).unwrap();
 
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner());
     host.load(&install(&root, &lib, "echo-a", "Echo A", "echo"))
         .expect("plugin should load");
 
@@ -495,7 +501,7 @@ async fn declared_plugin_settings_are_delivered_to_the_backend_at_connect() {
     );
 
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner());
     let plugin = install_with_manifest(
         &root,
         &lib,
@@ -524,7 +530,7 @@ async fn a_plugin_without_declared_settings_still_creates_a_session() {
     std::fs::create_dir_all(&root).unwrap();
 
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
-    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry)).with_runner(runner());
     // `install` uses the settings-less manifest; no plugin-settings.json is written.
     host.load(&install(&root, &lib, "echo-a", "Echo A", "echo"))
         .expect("plugin should load");

@@ -348,7 +348,7 @@ pub struct Heartbeat {
 
 /// Runner → host: one capability-bridge call a plugin made through the 1.x
 /// `PluginHostBridge`. The host checks it against the session's permissions
-/// exactly as the in-process bridge does and answers with a [`BridgeReply`]
+/// and answers with a [`BridgeReply`]
 /// carrying the same `request_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgeRequest {

@@ -41,7 +41,6 @@ describe("pluginSandboxBridge (#4188)", () => {
 
   it("subscribes to the plugin-sandbox region and fans the view out", async () => {
     const view: PluginSandboxView = {
-      outOfProcess: true,
       plugins: {
         acme: { isolation: "reduced", enforced: ["seccomp"], missing: ["landlock"], denials: [] },
       },
@@ -61,6 +60,6 @@ describe("pluginSandboxBridge (#4188)", () => {
     setPluginSandboxTransportForTest(new FixedTransport(null));
     expect(currentPluginSandboxView()).toBe(EMPTY_SANDBOX_VIEW);
     await ensurePluginSandboxSubscribed();
-    expect(currentPluginSandboxView()).toEqual({ outOfProcess: false, plugins: {} });
+    expect(currentPluginSandboxView()).toEqual({ plugins: {} });
   });
 });

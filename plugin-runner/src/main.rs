@@ -21,7 +21,7 @@
 //! OS sandbox the host requests in `Configure` (Seatbelt on macOS, #4186;
 //! no_new_privs + landlock + seccomp on Linux, #4185; LPAC follows in #4187).
 //! See
-//! `docs/concepts/backlog/plugin-os-sandbox.html`.
+//! `docs/concepts/implemented/plugin-os-sandbox.html`.
 
 mod runner;
 

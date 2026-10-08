@@ -12,7 +12,6 @@
 //!
 //! ```json
 //! {
-//!   "outOfProcess": true,
 //!   "plugins": {
 //!     "<pluginId>": {
 //!       "isolation": "full" | "reduced" | "unconfined" | "unavailable"
@@ -28,9 +27,8 @@
 //! }
 //! ```
 //!
-//! A plugin loaded **in process** (the default until the sandbox cut-over;
-//! the out-of-process path is a debug opt-in) has no entry, and
-//! `outOfProcess` is `false`.
+//! Every native plugin runs in a sandboxed runner (ADR-19); a plugin that is
+//! neither loaded nor refused in its sandbox setup has no entry.
 //!
 //! # Publishing
 //!
@@ -64,20 +62,14 @@ pub const PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginSandboxView {
-    /// Whether native plugins run out of process on this build.
-    pub out_of_process: bool,
     /// Per-plugin status, keyed by plugin id.
     pub plugins: BTreeMap<String, PluginSandboxStatus>,
 }
 
 /// The view for a host's current state.
 #[must_use]
-pub fn build_view(
-    out_of_process: bool,
-    statuses: Vec<(String, PluginSandboxStatus)>,
-) -> PluginSandboxView {
+pub fn build_view(statuses: Vec<(String, PluginSandboxStatus)>) -> PluginSandboxView {
     PluginSandboxView {
-        out_of_process,
         plugins: statuses.into_iter().collect(),
     }
 }
@@ -85,7 +77,7 @@ pub fn build_view(
 /// The region snapshot for `host`.
 #[must_use]
 pub fn snapshot(host: &PluginHost) -> Value {
-    let view = build_view(host.runs_out_of_process(), host.sandbox_statuses());
+    let view = build_view(host.sandbox_statuses());
     serde_json::to_value(view).unwrap_or(Value::Null)
 }
 
