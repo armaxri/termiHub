@@ -12,10 +12,15 @@
 //!
 //! * **Network.** An approved `open_connection` is connected by the host, which
 //!   then passes the connected socket to the runner with the reply
-//!   (`SCM_RIGHTS` on Unix). Where a handle cannot be passed the host keeps the
-//!   socket and proxies it ([`super::proxy`]). Either way the session's
-//!   connection slot stays reserved until the runner sends `BridgeRelease` (or
-//!   the session / runner ends).
+//!   (`SCM_RIGHTS` on Unix; on Windows it duplicates the socket into the
+//!   runner with `DuplicateHandle` and names the handle in the reply, #4219 —
+//!   the runner drives it as a file handle, never through Winsock). Where a
+//!   handle cannot be passed (a socket that is not a kernel handle, a failed
+//!   duplication) the host keeps the socket and proxies it ([`super::proxy`]).
+//!   Either way the session's connection slot stays reserved until the runner
+//!   sends `BridgeRelease` (or the session / runner ends). On Windows the host
+//!   keeps its own handle on a passed socket until then and shuts it down at
+//!   release, which also ends the runner's copy.
 //! * **Filesystem.** Reads and writes move in `MAX_BRIDGE_CHUNK` pieces; the
 //!   path is re-resolved against the scope for every piece. A `list_dir` whose
 //!   names do not fit one frame is paged (#4220): the host reads the directory
@@ -161,6 +166,34 @@ struct HostConn {
     _slot: ConnectionGuard,
     /// The relay, for a proxied connection.
     proxy: Option<Arc<ProxyHost>>,
+    /// The host's own handle on a socket duplicated into the runner
+    /// (Windows): shut down on release, which ends the runner's copy too.
+    #[cfg(windows)]
+    passed: Option<std::net::TcpStream>,
+}
+
+/// How a fresh connection reaches the runner.
+enum Delivery {
+    /// The socket rides along with the reply (`SCM_RIGHTS`).
+    #[cfg(unix)]
+    Fd,
+    /// The socket was duplicated into the runner as this handle value.
+    #[cfg(windows)]
+    Duplicated(u64),
+    /// The host keeps the socket and relays its bytes.
+    Proxy(Arc<ProxyHost>),
+}
+
+impl Delivery {
+    fn transport(&self) -> StreamTransport {
+        match self {
+            #[cfg(unix)]
+            Delivery::Fd => StreamTransport::HandlePassed,
+            #[cfg(windows)]
+            Delivery::Duplicated(handle) => StreamTransport::HandleDuplicated { handle: *handle },
+            Delivery::Proxy(_) => StreamTransport::Proxy,
+        }
+    }
 }
 
 /// The unsent rest of a paged `list_dir` (#4220), behind one cursor.
@@ -189,6 +222,8 @@ pub(super) struct BridgeHost {
     next_listing: AtomicU64,
     denials: Mutex<VecDeque<BridgeDenial>>,
     force_proxy: AtomicBool,
+    /// Connections whose socket was handed to the runner (not proxied).
+    passed: AtomicU64,
 }
 
 impl BridgeHost {
@@ -204,6 +239,7 @@ impl BridgeHost {
             next_listing: AtomicU64::new(1),
             denials: Mutex::new(VecDeque::new()),
             force_proxy: AtomicBool::new(false),
+            passed: AtomicU64::new(0),
         })
     }
 
@@ -267,6 +303,12 @@ impl BridgeHost {
     /// Connections currently handed out (diagnostics and tests).
     pub(super) fn open_connections(&self) -> usize {
         lock(&self.conns).len()
+    }
+
+    /// Connections whose socket was handed to the runner rather than proxied,
+    /// since it started (diagnostics and tests).
+    pub(super) fn handles_passed(&self) -> u64 {
+        self.passed.load(Ordering::SeqCst)
     }
 
     // -- runner frames --------------------------------------------------
@@ -512,37 +554,60 @@ impl BridgeHost {
         };
         let conn_id = self.next_conn.fetch_add(1, Ordering::SeqCst);
         let pass = attached.writer.can_pass_handles() && !self.force_proxy.load(Ordering::SeqCst);
-        let transport = if pass {
-            StreamTransport::HandlePassed
-        } else {
-            StreamTransport::Proxy
+        let delivery = match pass.then(|| self.pass(attached, &stream)).flatten() {
+            Some(delivery) => delivery,
+            None => match stream.try_clone() {
+                Ok(socket) => Delivery::Proxy(ProxyHost::new(conn_id, socket)),
+                Err(_) => {
+                    self.reply_status(request_id, PluginStatus::Io);
+                    return;
+                }
+            },
         };
-        let proxy = (!pass)
-            .then(|| stream.try_clone().ok())
-            .flatten()
-            .map(|socket| ProxyHost::new(conn_id, socket));
-        if !pass && proxy.is_none() {
-            self.reply_status(request_id, PluginStatus::Io);
-            return;
-        }
+        let proxy = match &delivery {
+            Delivery::Proxy(proxy) => Some(Arc::clone(proxy)),
+            #[cfg(unix)]
+            Delivery::Fd => None,
+            #[cfg(windows)]
+            Delivery::Duplicated(_) => None,
+        };
+        // Windows keeps its handle on a passed socket (shut down at release);
+        // otherwise the host keeps no copy: the runner or the proxy owns it.
+        #[cfg(windows)]
+        let (passed, stream) = match delivery {
+            Delivery::Duplicated(_) => (Some(stream), None),
+            Delivery::Proxy(_) => (None, Some(stream)),
+        };
         lock(&self.conns).insert(
             conn_id,
             HostConn {
                 session_id,
                 _slot: slot,
                 proxy: proxy.clone(),
+                #[cfg(windows)]
+                passed,
             },
         );
         let reply = Message::BridgeReply(BridgeReply {
             request_id,
-            result: BridgeResult::Connection { conn_id, transport },
+            result: BridgeResult::Connection {
+                conn_id,
+                transport: delivery.transport(),
+            },
         });
-        let sent = if pass {
-            self.send_with_socket(attached, &reply, &stream)
-        } else {
-            self.send(&reply)
+        let sent = match delivery {
+            #[cfg(unix)]
+            Delivery::Fd => self.send_with_socket(attached, &reply, &stream),
+            #[cfg(windows)]
+            Delivery::Duplicated(handle) => {
+                let sent = self.send(&reply);
+                if !sent {
+                    attached.writer.close_in_runner(handle);
+                }
+                sent
+            }
+            Delivery::Proxy(_) => self.send(&reply),
         };
-        // The host keeps no copy of a passed socket: the runner owns it now.
         drop(stream);
         if !sent {
             if let Some(gone) = lock(&self.conns).remove(&conn_id) {
@@ -550,9 +615,44 @@ impl BridgeHost {
             }
             return;
         }
-        if let Some(proxy) = proxy {
+        match proxy {
             // Only after the reply, so no `StreamData` precedes it.
-            proxy.start(self.frame_sink());
+            Some(proxy) => proxy.start(self.frame_sink()),
+            None => {
+                self.passed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Unix: the socket can always ride along with the reply.
+    #[cfg(unix)]
+    fn pass(&self, _attached: &Attached, _stream: &std::net::TcpStream) -> Option<Delivery> {
+        Some(Delivery::Fd)
+    }
+
+    /// Windows: duplicate the socket into the runner. `None` (proxy instead)
+    /// for a socket that is not a kernel handle (a non-IFS layered provider)
+    /// or a failed duplication.
+    #[cfg(windows)]
+    fn pass(&self, attached: &Attached, stream: &std::net::TcpStream) -> Option<Delivery> {
+        if !winsock::is_kernel_handle(stream) {
+            tracing::debug!(
+                target: crate::plugin::PLUGIN_LOG_TARGET,
+                plugin = %self.plugin_id,
+                "bridge socket is not a kernel handle; proxying it"
+            );
+            return None;
+        }
+        match attached.writer.duplicate_into_runner(stream) {
+            Ok(handle) => Some(Delivery::Duplicated(handle)),
+            Err(e) => {
+                tracing::debug!(
+                    target: crate::plugin::PLUGIN_LOG_TARGET,
+                    plugin = %self.plugin_id,
+                    "duplicating a bridge socket into the runner failed ({e}); proxying it"
+                );
+                None
+            }
         }
     }
 
@@ -574,20 +674,6 @@ impl BridgeHost {
                 false
             }
         }
-    }
-
-    #[cfg(not(unix))]
-    fn send_with_socket(
-        &self,
-        _attached: &Attached,
-        _reply: &Message,
-        _stream: &std::net::TcpStream,
-    ) -> bool {
-        // Windows (tracked in #4219) will pass the socket with `DuplicateHandle` into
-        // the runner, which drives it with overlapped ReadFile/WriteFile (no
-        // Winsock under LPAC). Until that transport exists `can_pass_handles`
-        // is false here and every connection is proxied.
-        false
     }
 
     fn frame_sink(&self) -> FrameSink {
@@ -626,8 +712,8 @@ impl BridgeHost {
         }
     }
 
-    /// Only the Unix socket hand-over kills from here; Windows proxies every
-    /// connection until #4219.
+    /// Only the Unix socket hand-over kills from here (a Windows reply that
+    /// fails to send kills through [`write_or_kill`]).
     #[cfg(unix)]
     fn kill(&self, reason: &str) {
         if let Some(shared) = self.attached.get().and_then(|a| a.shared.upgrade()) {
@@ -713,6 +799,41 @@ fn close_conns(conns: Vec<HostConn>) {
         if let Some(proxy) = &conn.proxy {
             proxy.close();
         }
+        // Ends the runner's duplicate too: it is the same connection.
+        #[cfg(windows)]
+        if let Some(socket) = &conn.passed {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// Which sockets can be handed to the runner as a plain file handle.
+#[cfg(windows)]
+mod winsock {
+    use std::os::windows::io::AsRawSocket;
+
+    use windows_sys::Win32::Networking::WinSock::{
+        getsockopt, SOCKET, SOL_SOCKET, SO_PROTOCOL_INFOW, WSAPROTOCOL_INFOW, XP1_IFS_HANDLES,
+    };
+
+    /// Whether `stream`'s provider hands out kernel (IFS) handles — the only
+    /// kind `ReadFile` / `WriteFile` can drive in the runner. A non-IFS
+    /// layered provider's socket is proxied instead.
+    pub(super) fn is_kernel_handle(stream: &std::net::TcpStream) -> bool {
+        // SAFETY: an all-zero `WSAPROTOCOL_INFOW` is a valid out-buffer.
+        let mut info: WSAPROTOCOL_INFOW = unsafe { std::mem::zeroed() };
+        let mut len = i32::try_from(std::mem::size_of::<WSAPROTOCOL_INFOW>()).unwrap_or(i32::MAX);
+        // SAFETY: `info` is writable for `len` bytes; the socket is open.
+        let rc = unsafe {
+            getsockopt(
+                stream.as_raw_socket() as SOCKET,
+                SOL_SOCKET,
+                SO_PROTOCOL_INFOW,
+                std::ptr::addr_of_mut!(info).cast(),
+                &mut len,
+            )
+        };
+        rc == 0 && info.dwServiceFlags1 & XP1_IFS_HANDLES != 0
     }
 }
 

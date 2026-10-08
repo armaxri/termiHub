@@ -42,13 +42,18 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        Self::with_writer(ChannelWriter::new)
+    }
+
+    /// A harness whose writer `make` builds over the capture.
+    fn with_writer(make: impl FnOnce(Box<dyn Write + Send>) -> ChannelWriter) -> Self {
         let shared = Shared::new(
             "probe".to_owned(),
             None,
             Arc::new(PluginLogLimiter::default()),
         );
         let out = Capture::default();
-        let writer = Arc::new(ChannelWriter::new(Box::new(out.clone())));
+        let writer = Arc::new(make(Box::new(out.clone())));
         shared
             .bridge
             .attach(writer, CURRENT_PLUGIN_ABI_VERSION, Arc::downgrade(&shared));
@@ -637,6 +642,8 @@ fn a_stream_frame_for_a_passed_socket_is_a_violation() {
             session_id: id,
             _slot: slots.try_reserve().unwrap(),
             proxy: None,
+            #[cfg(windows)]
+            passed: None,
         },
     );
     drop(sock);
@@ -731,6 +738,127 @@ fn an_approved_connection_passes_the_socket_over_the_channel() {
     assert_eq!(&got, b"hello");
     // The slot stays reserved until the runner releases it.
     assert_eq!(shared.bridge.open_connections(), 1);
+    assert_eq!(shared.bridge.handles_passed(), 1);
+}
+
+/// Windows (#4219): a harness that duplicates sockets into "the runner" —
+/// this very process, standing in for it.
+#[cfg(windows)]
+fn duplicating_harness() -> Harness {
+    use std::os::windows::io::BorrowedHandle;
+    // SAFETY: the current-process pseudo handle is always valid.
+    let this = unsafe {
+        BorrowedHandle::borrow_raw(windows_sys::Win32::System::Threading::GetCurrentProcess())
+    }
+    .try_clone_to_owned()
+    .unwrap();
+    Harness::with_writer(|out| ChannelWriter::new(out).passing_into(this))
+}
+
+/// Windows: open a connection to `port` and adopt the handle the host
+/// duplicated for it, as the runner does.
+#[cfg(windows)]
+fn open_duplicated(
+    h: &mut Harness,
+    session_id: u32,
+    port: u16,
+) -> (u64, termihub_plugin_runner::ipc::handle::SocketStream) {
+    use termihub_plugin_runner::ipc::handle::{adopt, SocketStream};
+    h.request(
+        1,
+        session_id,
+        BridgeOp::OpenConnection {
+            host: "127.0.0.1".into(),
+            port,
+        },
+    )
+    .unwrap();
+    match h.reply_to(1) {
+        BridgeResult::Connection {
+            conn_id,
+            transport: StreamTransport::HandleDuplicated { handle },
+        } => {
+            // SAFETY: the host duplicated this handle into this process for
+            // this reply.
+            let socket = unsafe { adopt(handle) }.expect("a socket handle");
+            (conn_id, SocketStream::new(socket))
+        }
+        other => panic!("expected a duplicated socket, got {other:?}"),
+    }
+}
+
+/// Windows: an approved connection's socket is duplicated into the runner and
+/// works there as a plain file handle; stream frames for it are a violation,
+/// and its release shuts the connection down.
+#[cfg(windows)]
+#[test]
+fn an_approved_connection_duplicates_the_socket_into_the_runner() {
+    let mut h = duplicating_harness();
+    let id = h.session(PermissionSet::from_parts([PluginPermission::Network], &[]));
+    let (conn_id, mut sock) = open_duplicated(&mut h, id, echo_server());
+    sock.write_all(b"hello").unwrap();
+    let mut got = [0u8; 5];
+    sock.read_exact(&mut got).unwrap();
+    assert_eq!(&got, b"hello");
+    assert_eq!(h.shared.bridge.open_connections(), 1);
+    assert_eq!(h.shared.bridge.handles_passed(), 1);
+    // The runner must not relay bytes for a connection it was handed.
+    assert!(h
+        .shared
+        .dispatch(Message::StreamWrite(StreamChunk {
+            conn_id,
+            data: vec![1],
+        }))
+        .is_err());
+    // Release frees the slot and ends the connection under the runner's copy.
+    h.shared
+        .dispatch(Message::BridgeRelease(ConnRef { conn_id }))
+        .unwrap();
+    assert_eq!(h.shared.bridge.open_connections(), 0);
+    assert!(matches!(sock.read(&mut got), Ok(0) | Err(_)));
+}
+
+/// Windows: closing the session ends a passed connection the plugin still
+/// holds — a blocked read in the runner returns.
+#[cfg(windows)]
+#[test]
+fn closing_the_session_ends_a_duplicated_socket() {
+    let mut h = duplicating_harness();
+    let id = h.session(PermissionSet::from_parts([PluginPermission::Network], &[]));
+    let (_conn_id, sock) = open_duplicated(&mut h, id, echo_server());
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 8];
+        (&sock).read(&mut buf)
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    h.shared.bridge.close_session(id);
+    assert!(matches!(reader.join().unwrap(), Ok(0) | Err(_)));
+    assert_eq!(h.shared.bridge.open_connections(), 0);
+}
+
+/// Windows: the forced relay still proxies where duplication is possible.
+#[cfg(windows)]
+#[test]
+fn a_forced_proxy_does_not_duplicate_the_socket() {
+    let mut h = duplicating_harness();
+    h.shared.bridge.set_force_proxy(true);
+    let id = h.session(PermissionSet::from_parts([PluginPermission::Network], &[]));
+    h.request(
+        1,
+        id,
+        BridgeOp::OpenConnection {
+            host: "127.0.0.1".into(),
+            port: echo_server(),
+        },
+    )
+    .unwrap();
+    match h.reply_to(1) {
+        BridgeResult::Connection { transport, .. } => {
+            assert_eq!(transport, StreamTransport::Proxy);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(h.shared.bridge.handles_passed(), 0);
 }
 
 /// Concatenate encoded frames into one byte stream, as the runner would send
