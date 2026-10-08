@@ -39,8 +39,8 @@ use crate::session::agent_port_forward::{
 };
 use crate::session::frame_guard::{CursorGuard, FrameGuard, FrameVerdict};
 use crate::session::graphical_file_channel::{
-    resolve_file_channel, AgentFileRoute, AgentFiles, BackendSideChannel, FileChannelContext,
-    RemoteDesktopFileChannel,
+    resolve_file_channel_routed, AgentFileRoute, AgentFiles, BackendSideChannel,
+    FileChannelContext, LinkedResolver, LinkedSshCache, LinkedSshSource, RemoteDesktopFileChannel,
 };
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
@@ -234,6 +234,9 @@ struct GraphicalSession {
     /// connect; a side-channel transfer records it so a relaunch after a
     /// restart can wait for a session of the same connection.
     saved_connection_id: Option<String>,
+    /// The SSH session of the saved SSH connection a direct session links as
+    /// its file route (#4194), once opened; dropped with the session.
+    linked_ssh: LinkedSshCache,
 }
 
 /// What an agent-routed connect hands the shared connect path (#3241).
@@ -278,6 +281,9 @@ pub struct GraphicalSessionManager {
     /// Told when an automatic reconnect brings a session of a saved
     /// connection back to `Active` (#4230).
     reactivated: Option<ReactivatedHook>,
+    /// Where a direct session's linked saved SSH connection (#4194) is looked
+    /// up; without it a link counts as no route.
+    linked_ssh: Option<Arc<dyn LinkedSshSource>>,
 }
 
 impl GraphicalSessionManager {
@@ -290,7 +296,15 @@ impl GraphicalSessionManager {
             trust_store,
             jitter: termihub_core::reconnect_backoff::system_jitter,
             reactivated: None,
+            linked_ssh: None,
         }
+    }
+
+    /// Install where a direct session's linked saved SSH connection is looked
+    /// up (#4194) — the app's saved connections and credential store.
+    pub(crate) fn with_linked_ssh_source(mut self, source: Arc<dyn LinkedSshSource>) -> Self {
+        self.linked_ssh = Some(source);
+        self
     }
 
     /// Install the hook told the saved connection of a session an automatic
@@ -565,6 +579,7 @@ impl GraphicalSessionManager {
             _forward: routed.map(|r| r.forward),
             file_channel,
             saved_connection_id: None,
+            linked_ssh: LinkedSshCache::default(),
         };
         self.sessions
             .lock()
@@ -607,7 +622,8 @@ impl GraphicalSessionManager {
     }
 
     /// Resolve a session's file-transfer side channel (#4191): the route
-    /// (agent over SSH tunnel), `user@host`, and the default folder — or why
+    /// (agent, then SSH tunnel, then a linked saved SSH connection — #4194),
+    /// `user@host`, and the default folder — or why
     /// there is none (setting off, view-only, no route). Re-resolved on every
     /// call against the session's current backend, so a VNC reconnect (a new
     /// backend and tunnel) is picked up without extra bookkeeping.
@@ -621,9 +637,9 @@ impl GraphicalSessionManager {
             .map(|(channel, _)| channel)
     }
 
-    /// [`file_channel`](Self::file_channel) plus the tunnel's authenticated SSH
-    /// session (when the backend has one), for opening the SFTP channel an
-    /// upload runs on (#4192).
+    /// [`file_channel`](Self::file_channel) plus the authenticated SSH session
+    /// of an SSH route — the tunnel's, or the linked saved SSH connection's
+    /// (#4194) — for opening the SFTP channel an upload runs on (#4192).
     pub(crate) async fn file_channel_with_session(
         &self,
         session_id: &str,
@@ -635,12 +651,16 @@ impl GraphicalSessionManager {
         ),
         TerminalError,
     > {
-        let (ctx, connection) = {
+        let (ctx, connection, linked_cache) = {
             let sessions = self.sessions.lock().await;
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-            (session.file_channel.clone(), session.connection.clone())
+            (
+                session.file_channel.clone(),
+                session.connection.clone(),
+                session.linked_ssh.clone(),
+            )
         };
         let backend = {
             let conn = connection.lock().await;
@@ -651,8 +671,11 @@ impl GraphicalSessionManager {
                 })
                 .unwrap_or_default()
         };
-        let ssh = backend.session.clone();
-        Ok((resolve_file_channel(&ctx, backend, agents).await, ssh))
+        let linked = self.linked_ssh.clone().map(|source| LinkedResolver {
+            source,
+            cache: linked_cache,
+        });
+        Ok(resolve_file_channel_routed(&ctx, backend, agents, linked.as_ref()).await)
     }
 
     /// Deliver the user's verdict for a pending certificate prompt (#1767).

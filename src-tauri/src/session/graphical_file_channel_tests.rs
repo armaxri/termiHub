@@ -3,8 +3,10 @@
 //! the Docker-gated integration test in `graphical_file_channel_live_tests`).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::json;
+use termihub_core::config::SshConfig;
 
 use super::*;
 
@@ -68,6 +70,7 @@ fn ssh_backend(target_is_loopback: bool) -> BackendSideChannel {
             host: "tiger-box".to_string(),
             user: "arne".to_string(),
             same_host: target_is_loopback,
+            linked_connection: None,
         }),
         session: None,
     }
@@ -141,6 +144,7 @@ async fn agent_route_resolves_the_agent_host_and_desktop_folder() {
                 host: "lab-pi".to_string(),
                 user: "pi".to_string(),
                 same_host: true,
+                linked_connection: None,
             },
             agent_id: Some("agent-1".to_string()),
             default_dir: "/home/pi/Desktop".to_string(),
@@ -252,6 +256,258 @@ async fn ssh_route_without_a_live_tunnel_session_is_degraded() {
     assert!(message.contains("tiger-box"), "{message}");
 }
 
+// --- Linked saved SSH connection (#4194) ---
+
+/// A fake saved-connection store for the linked route: what `lookup` answers,
+/// and how often the route was looked up or connected.
+struct FakeLink {
+    lookup: LinkedLookup,
+    lookups: AtomicUsize,
+    connects: AtomicUsize,
+}
+
+impl FakeLink {
+    fn new(lookup: LinkedLookup) -> Arc<Self> {
+        Arc::new(Self {
+            lookup,
+            lookups: AtomicUsize::new(0),
+            connects: AtomicUsize::new(0),
+        })
+    }
+
+    fn found() -> Arc<Self> {
+        Self::new(LinkedLookup::Found(Box::new(LinkedSshTarget {
+            connection_id: "Lab/Tiger".to_string(),
+            name: "Tiger".to_string(),
+            config: SshConfig {
+                host: "tiger-box".to_string(),
+                username: "arne".to_string(),
+                ..SshConfig::default()
+            },
+        })))
+    }
+}
+
+#[async_trait::async_trait]
+impl LinkedSshSource for FakeLink {
+    fn lookup(&self, _connection_id: &str) -> LinkedLookup {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        self.lookup.clone()
+    }
+
+    async fn connect(&self, config: &SshConfig) -> Result<LinkedSshConnection, String> {
+        self.connects.fetch_add(1, Ordering::SeqCst);
+        Err(format!("Connection refused by {}", config.host))
+    }
+}
+
+fn resolver(link: &Arc<FakeLink>) -> LinkedResolver {
+    LinkedResolver {
+        source: link.clone(),
+        cache: LinkedSshCache::default(),
+    }
+}
+
+/// A direct VNC connection to `office-pc` linked to the saved SSH connection
+/// `Lab/Tiger`, with file transfer on.
+fn linked_settings() -> Value {
+    json!({
+        "host": "office-pc",
+        "fileTransfer": true,
+        "fileTransferVia": "Lab/Tiger",
+    })
+}
+
+#[test]
+fn context_reads_the_link_only_for_a_direct_connection() {
+    let link = |settings: Value, agent| ctx(settings, agent).linked;
+    assert_eq!(
+        link(linked_settings(), None),
+        Some(LinkedFileRoute {
+            connection_id: "Lab/Tiger".to_string(),
+            target_host: "office-pc".to_string(),
+        })
+    );
+    let mut tunnelled = linked_settings();
+    tunnelled["useSshTunnel"] = json!(true);
+    assert_eq!(link(tunnelled, None), None, "an SSH tunnel is the route");
+    assert_eq!(
+        link(linked_settings(), agent_route("office-pc")),
+        None,
+        "an agent-hosted connection uses the agent"
+    );
+    let mut blank = linked_settings();
+    blank["fileTransferVia"] = json!("  ");
+    assert_eq!(link(blank, None), None, "no link chosen");
+    let mut null = linked_settings();
+    null["fileTransferVia"] = Value::Null;
+    assert_eq!(link(null, None), None);
+}
+
+#[tokio::test]
+async fn linked_connection_that_cannot_connect_is_degraded_on_its_own_host() {
+    let link = FakeLink::found();
+    let (result, session) = resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        BackendSideChannel::default(),
+        None,
+        Some(&resolver(&link)),
+    )
+    .await;
+    let RemoteDesktopFileChannel::Degraded {
+        channel,
+        agent_id,
+        message,
+    } = result
+    else {
+        panic!("expected degraded, got {result:?}");
+    };
+    assert_eq!(channel.kind, FileSideChannelKind::Ssh);
+    assert_eq!(channel.host, "tiger-box", "labels name the real file host");
+    assert_eq!(channel.user, "arne");
+    assert_eq!(channel.linked_connection.as_deref(), Some("Tiger"));
+    assert!(!channel.same_host, "office-pc is not tiger-box");
+    assert_eq!(agent_id, None);
+    assert!(message.contains("tiger-box"), "{message}");
+    assert!(message.contains("Connection refused"), "{message}");
+    assert!(session.is_none());
+    assert_eq!(link.connects.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn linked_connection_on_the_vnc_host_is_the_desktop_host() {
+    let link = FakeLink::found();
+    let mut settings = linked_settings();
+    settings["host"] = json!("Tiger-Box");
+    let (result, _) = resolve_file_channel_routed(
+        &ctx(settings, None),
+        BackendSideChannel::default(),
+        None,
+        Some(&resolver(&link)),
+    )
+    .await;
+    let RemoteDesktopFileChannel::Degraded { channel, .. } = result else {
+        panic!("expected degraded, got {result:?}");
+    };
+    assert!(channel.same_host);
+}
+
+#[tokio::test]
+async fn deleted_link_falls_back_to_no_route() {
+    let link = FakeLink::new(LinkedLookup::Missing);
+    let (result, session) = resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        BackendSideChannel::default(),
+        None,
+        Some(&resolver(&link)),
+    )
+    .await;
+    assert_eq!(
+        result,
+        RemoteDesktopFileChannel::Unavailable {
+            reason: FileChannelUnavailable::NoRoute
+        }
+    );
+    assert!(session.is_none(), "no stale route");
+    assert_eq!(link.connects.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn link_without_a_stored_secret_is_degraded_with_the_reason() {
+    let link = FakeLink::new(LinkedLookup::Unusable {
+        name: "Tiger".to_string(),
+        host: "tiger-box".to_string(),
+        user: "arne".to_string(),
+        message: "no password is saved for it".to_string(),
+    });
+    let (result, _) = resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        BackendSideChannel::default(),
+        None,
+        Some(&resolver(&link)),
+    )
+    .await;
+    let RemoteDesktopFileChannel::Degraded {
+        channel, message, ..
+    } = result
+    else {
+        panic!("expected degraded, got {result:?}");
+    };
+    assert_eq!(channel.host, "tiger-box");
+    assert_eq!(channel.linked_connection.as_deref(), Some("Tiger"));
+    assert!(message.contains("no password is saved"), "{message}");
+    assert_eq!(link.connects.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn link_is_not_looked_up_when_file_transfer_is_off_or_view_only() {
+    let link = FakeLink::found();
+    for (key, reason) in [
+        ("fileTransfer", FileChannelUnavailable::Disabled),
+        ("viewOnly", FileChannelUnavailable::ViewOnly),
+    ] {
+        let mut settings = linked_settings();
+        settings[key] = json!(key == "viewOnly");
+        let (result, _) = resolve_file_channel_routed(
+            &ctx(settings, None),
+            BackendSideChannel::default(),
+            None,
+            Some(&resolver(&link)),
+        )
+        .await;
+        assert_eq!(result, RemoteDesktopFileChannel::Unavailable { reason });
+    }
+    assert_eq!(link.lookups.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn tunnel_and_agent_routes_win_over_a_link() {
+    let link = FakeLink::found();
+    // A tunnel channel the backend offers wins even with a link in the
+    // settings (the context drops the link for a tunnelled connection).
+    let (result, _) = resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        ssh_backend(false),
+        None,
+        Some(&resolver(&link)),
+    )
+    .await;
+    let RemoteDesktopFileChannel::Degraded { channel, .. } = result else {
+        panic!("expected the tunnel route (degraded without a session), got {result:?}");
+    };
+    assert_eq!(channel.host, "tiger-box");
+    assert_eq!(channel.linked_connection, None, "the tunnel, not the link");
+    let (result, _) = resolve_file_channel_routed(
+        &ctx(linked_settings(), agent_route("127.0.0.1")),
+        BackendSideChannel::default(),
+        agents(FakeAgent::with_desktop(true)),
+        Some(&resolver(&link)),
+    )
+    .await;
+    let RemoteDesktopFileChannel::Ready { channel, .. } = result else {
+        panic!("expected the agent route, got {result:?}");
+    };
+    assert_eq!(channel.kind, FileSideChannelKind::Agent);
+    assert_eq!(link.lookups.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn link_without_a_saved_connection_store_is_no_route() {
+    let (result, _) = resolve_file_channel_routed(
+        &ctx(linked_settings(), None),
+        BackendSideChannel::default(),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(
+        result,
+        RemoteDesktopFileChannel::Unavailable {
+            reason: FileChannelUnavailable::NoRoute
+        }
+    );
+}
+
 #[test]
 fn context_reads_policy_and_trimmed_folder() {
     let c = ctx(
@@ -273,6 +529,7 @@ fn contract_serializes_with_a_status_tag() {
             host: "tiger-box".to_string(),
             user: "arne".to_string(),
             same_host: true,
+            linked_connection: None,
         },
         agent_id: None,
         default_dir: "/home/arne/Desktop".to_string(),
@@ -377,5 +634,71 @@ mod live {
             "{default_dir}"
         );
         vnc.disconnect().await.expect("disconnect");
+    }
+
+    /// The saved `ssh-password` fixture linked to a direct VNC connection.
+    struct FixtureLink(SshConfig);
+
+    #[async_trait::async_trait]
+    impl LinkedSshSource for FixtureLink {
+        fn lookup(&self, _connection_id: &str) -> LinkedLookup {
+            LinkedLookup::Found(Box::new(LinkedSshTarget {
+                connection_id: "Lab/Fixture".to_string(),
+                name: "Fixture".to_string(),
+                config: self.0.clone(),
+            }))
+        }
+    }
+
+    /// The linked route end to end (#4194): a direct VNC connection linked to
+    /// a saved SSH connection opens its own SSH session, reads the default
+    /// folder over SFTP, and reuses that session on the next resolution.
+    #[tokio::test]
+    async fn linked_ssh_route_resolves_ready_and_reuses_its_session() {
+        let ssh_port = env_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201);
+        if !fixture_ready("ssh-password", ssh_port) {
+            return;
+        }
+        trust_fixture_host_keys();
+        let link = LinkedResolver {
+            source: Arc::new(FixtureLink(SshConfig {
+                host: "127.0.0.1".to_string(),
+                port: ssh_port,
+                username: "testuser".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("testpass".to_string()),
+                ..SshConfig::default()
+            })),
+            cache: LinkedSshCache::default(),
+        };
+        let settings = json!({
+            "host": "office-pc",
+            "fileTransfer": true,
+            "fileTransferVia": "Lab/Fixture",
+        });
+        let context = ctx(settings, None);
+        let (result, first) =
+            resolve_file_channel_routed(&context, BackendSideChannel::default(), None, Some(&link))
+                .await;
+        let RemoteDesktopFileChannel::Ready {
+            channel,
+            default_dir,
+            ..
+        } = result
+        else {
+            panic!("expected ready, got {result:?}");
+        };
+        assert_eq!(channel.kind, FileSideChannelKind::Ssh);
+        assert_eq!(channel.host, "127.0.0.1");
+        assert_eq!(channel.linked_connection.as_deref(), Some("Fixture"));
+        assert!(!channel.same_host, "office-pc is not the SSH host");
+        assert!(default_dir.starts_with("/home/testuser"), "{default_dir}");
+        let (_, second) =
+            resolve_file_channel_routed(&context, BackendSideChannel::default(), None, Some(&link))
+                .await;
+        assert!(
+            Arc::ptr_eq(&first.expect("session"), &second.expect("session")),
+            "the linked session is reused"
+        );
     }
 }

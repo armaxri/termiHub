@@ -398,14 +398,26 @@ pub(crate) fn follow_jump_host_refs(settings: &mut Value, remap: &ConnectionIdRe
     changed
 }
 
-/// [`follow_jump_host_refs`] over every connection's settings; returns whether
-/// any reference changed.
+/// Re-point a graphical connection's linked SSH file route
+/// (`fileTransferVia`, #4194) along `remap`. Returns whether it changed. An
+/// empty link (none chosen) never matches.
+pub(crate) fn follow_file_route_ref(settings: &mut Value, remap: &ConnectionIdRemap) -> bool {
+    use termihub_core::connection::graphical_files::FILE_TRANSFER_VIA_KEY;
+    match settings.get_mut(FILE_TRANSFER_VIA_KEY) {
+        Some(Value::String(id)) if !id.is_empty() => remap.apply(id),
+        _ => false,
+    }
+}
+
+/// [`follow_jump_host_refs`] and [`follow_file_route_ref`] over every
+/// connection's settings; returns whether any reference changed.
 pub(crate) fn follow_jump_host_refs_in(
     connections: &mut [SavedConnection],
     remap: &ConnectionIdRemap,
 ) -> bool {
     connections.iter_mut().fold(false, |changed, conn| {
-        follow_jump_host_refs(&mut conn.config.settings, remap) | changed
+        let settings = &mut conn.config.settings;
+        follow_jump_host_refs(settings, remap) | follow_file_route_ref(settings, remap) | changed
     })
 }
 
@@ -984,6 +996,35 @@ mod tests {
         assert_eq!(settings, before);
         let mut no_chain = json!({ "host": "t" });
         assert!(!follow_jump_host_refs(&mut no_chain, &remap(&[("a", "b")])));
+    }
+
+    /// #4194: a VNC connection's linked SSH file route (`fileTransferVia`)
+    /// follows the SSH connection's id like a jump-host reference does.
+    #[test]
+    fn follow_jump_host_refs_in_follows_a_linked_file_route() {
+        let mut conns = vec![
+            ssh_conn("Lab/Tiger", "Tiger", json!({ "host": "tiger-box" })),
+            ssh_conn(
+                "Desk",
+                "Desk",
+                json!({ "host": "office-pc", "fileTransferVia": "Lab/Tiger" }),
+            ),
+            ssh_conn(
+                "Other",
+                "Other",
+                json!({ "host": "o", "fileTransferVia": "" }),
+            ),
+        ];
+        assert!(follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("Lab/Tiger", "Net/Tiger")])
+        ));
+        assert_eq!(conns[1].config.settings["fileTransferVia"], "Net/Tiger");
+        assert_eq!(conns[2].config.settings["fileTransferVia"], "");
+        assert!(!follow_file_route_ref(
+            &mut conns[1].config.settings,
+            &remap(&[("zz", "yy")])
+        ));
     }
 
     #[test]

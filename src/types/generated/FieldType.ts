@@ -25,7 +25,15 @@ options: Array<SelectOption>, } | { "type": "port" } | { "type": "serialPort" } 
 /**
  * Whether to accept files, directories, or both.
  */
-kind: FilePathKind, } | { "type": "keyValueList" } | { "type": "objectList", 
+kind: FilePathKind, } | { "type": "savedConnection", 
+/**
+ * The connection type id the picker lists (e.g. `"ssh"`).
+ */
+connectionType: string, 
+/**
+ * Key of the field whose host an unset picker preselects by.
+ */
+matchHostField?: string, } | { "type": "keyValueList" } | { "type": "objectList", 
 /**
  * Fields for each object in the list.
  */

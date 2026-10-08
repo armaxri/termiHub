@@ -4,6 +4,7 @@ pub mod frame_guard;
 pub mod graphical_browse;
 pub mod graphical_file_channel;
 pub mod graphical_held_input;
+pub mod graphical_linked_ssh;
 pub mod graphical_manager;
 pub mod graphical_supervisor;
 pub mod graphical_upload;

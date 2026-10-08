@@ -1658,6 +1658,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           }
           localContainerListing={!isAgentDefinitionMode}
           containerListingAgentId={isAgentDefinitionMode ? existingAgent?.id : undefined}
+          savedConnections={connections}
+          connectionFolders={folders}
         />
       )}
 

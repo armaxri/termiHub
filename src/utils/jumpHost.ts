@@ -242,10 +242,25 @@ export function sshJumpHostOptions(
   folders: ConnectionFolder[],
   excludeId?: string
 ): SavedConnectionOption[] {
+  return savedConnectionOptions(connections, folders, "ssh", excludeId);
+}
+
+/**
+ * Saved connections of type `typeId` offered by a saved-connection picker —
+ * a jump-host hop, or a schema `savedConnection` field such as a VNC
+ * connection's linked SSH file route (#4194) — labelled and ordered as
+ * {@link sshJumpHostOptions} describes, ambiguous ids flagged.
+ */
+export function savedConnectionOptions(
+  connections: SavedConnection[],
+  folders: ConnectionFolder[],
+  typeId: string,
+  excludeId?: string
+): SavedConnectionOption[] {
   const byId = new Map<string, SavedConnectionOption>();
   const ambiguous = ambiguousConnectionIds(connections);
   for (const c of connections) {
-    if (c.config.type !== "ssh" || c.id === excludeId || byId.has(c.id)) continue;
+    if (c.config.type !== typeId || c.id === excludeId || byId.has(c.id)) continue;
     byId.set(c.id, { id: c.id, label: connectionPathLabel(c, folders) });
   }
   return [...byId.values()]

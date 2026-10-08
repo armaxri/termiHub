@@ -1,0 +1,77 @@
+{
+  "operation": "namesSameHost",
+  "cases": [
+    {
+      "name": "equal names",
+      "input": "tiger-box",
+      "args": {
+        "otherHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "case-insensitive",
+      "input": "Tiger-Box",
+      "args": {
+        "otherHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "trailing dot",
+      "input": "tiger-box.",
+      "args": {
+        "otherHost": "tiger-box"
+      },
+      "expected": true
+    },
+    {
+      "name": "bracketed IPv6 loopback and localhost",
+      "input": "[::1]",
+      "args": {
+        "otherHost": "localhost"
+      },
+      "expected": true
+    },
+    {
+      "name": "two loopback addresses",
+      "input": "127.0.0.1",
+      "args": {
+        "otherHost": "127.1.2.3"
+      },
+      "expected": true
+    },
+    {
+      "name": "loopback target is this computer, not the SSH host",
+      "input": "localhost",
+      "args": {
+        "otherHost": "tiger-box"
+      },
+      "expected": false
+    },
+    {
+      "name": "loopback file host is this computer",
+      "input": "tiger-box",
+      "args": {
+        "otherHost": "localhost"
+      },
+      "expected": false
+    },
+    {
+      "name": "different names",
+      "input": "office-pc",
+      "args": {
+        "otherHost": "tiger-box"
+      },
+      "expected": false
+    },
+    {
+      "name": "an empty name is no host",
+      "input": "",
+      "args": {
+        "otherHost": ""
+      },
+      "expected": false
+    }
+  ]
+}

@@ -9,6 +9,7 @@
 use serde::Deserialize;
 
 use crate::config::SshConfig;
+use crate::connection::graphical_files::FILE_TRANSFER_VIA_KEY;
 use crate::connection::graphical_monitors::{
     deserialize_monitor_count, deserialize_monitor_rects, monitor_fields, resolve_monitor_layout,
     MonitorLayout, MonitorMode, MonitorRect, MONITORS_SINGLE,
@@ -630,10 +631,25 @@ fn when_vnc_host_is_ssh_host(same: bool) -> Condition {
     }
 }
 
+/// Whether the VNC `host` and the linked SSH connection's host
+/// (`fileTransferVia.host`, a value the editor derives from the picked saved
+/// connection) name the same host as seen from this computer (#4194). Core
+/// never derives that value, so here the comparison sees an unset side and
+/// counts the hosts as the same.
+fn when_vnc_host_is_linked_host(same: bool) -> Condition {
+    Condition {
+        field: "host".to_string(),
+        equals: serde_json::json!(same),
+        same_name_as: Some(format!("{FILE_TRANSFER_VIA_KEY}.host")),
+        ..Default::default()
+    }
+}
+
 /// The "File Transfer" group (#3770, #4191): the opt-in plus the default
 /// folder, after SSH Tunnel. Off by default. The notice says where files land;
 /// the live route (SSH vs agent host, and whether that is the desktop host) is
-/// resolved per session by `remote_desktop_file_channel`.
+/// resolved per session by `remote_desktop_file_channel`. A direct connection
+/// may link a saved SSH connection as its route (#4194).
 fn file_transfer_group() -> SettingsGroup {
     SettingsGroup {
         collapsed: false,
@@ -665,14 +681,45 @@ fn file_transfer_group() -> SettingsGroup {
                 ..field("fileTransferDir", "Default folder", FieldType::Text)
             },
             SettingsField {
+                placeholder: Some("None".to_string()),
                 description: Some(
-                    "Files go to the SSH tunnel host (or the agent host), as that \
-                     host's user. If the VNC host is not localhost or that same \
-                     host, files land on the SSH/agent host, not on the desktop."
+                    "A direct connection has no side channel of its own: link a saved \
+                     SSH connection to move files over SFTP on its host, with its \
+                     usual sign-in and host-key check."
                         .to_string(),
                 ),
                 visible_when: Some(Condition {
-                    any_of: vec![when_tunnel_is(false), when_vnc_host_is_ssh_host(true)],
+                    all_of: vec![when_tunnel_is(false)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
+                ..field(
+                    FILE_TRANSFER_VIA_KEY,
+                    "File transfer via",
+                    FieldType::SavedConnection {
+                        connection_type: "ssh".to_string(),
+                        match_host_field: Some("host".to_string()),
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "Files go to the SSH tunnel host, the agent host, or — for a \
+                     direct connection — the linked SSH connection's host, as that \
+                     host's user. If that is not the VNC desktop host, files land \
+                     there, not on the desktop."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    any_of: vec![
+                        Condition {
+                            all_of: vec![when_vnc_host_is_linked_host(true)],
+                            ..when_tunnel_is(false)
+                        },
+                        Condition {
+                            all_of: vec![when_vnc_host_is_ssh_host(true)],
+                            ..when_tunnel_is(true)
+                        },
+                    ],
                     ..when_file_transfer_enabled().unwrap_or_default()
                 }),
                 ..field(
@@ -696,6 +743,25 @@ fn file_transfer_group() -> SettingsGroup {
                 }),
                 ..field(
                     "fileTransferHostWarning",
+                    "",
+                    FieldType::Notice {
+                        severity: NoticeSeverity::Warning,
+                    },
+                )
+            },
+            SettingsField {
+                description: Some(
+                    "Files would go to {{fileTransferVia.host}}, the host of the linked \
+                     SSH connection, not to the desktop host {{host}}. Uploads land \
+                     there, as that connection's user."
+                        .to_string(),
+                ),
+                visible_when: Some(Condition {
+                    all_of: vec![when_tunnel_is(false), when_vnc_host_is_linked_host(false)],
+                    ..when_file_transfer_enabled().unwrap_or_default()
+                }),
+                ..field(
+                    "fileTransferViaHostWarning",
                     "",
                     FieldType::Notice {
                         severity: NoticeSeverity::Warning,
@@ -1198,8 +1264,10 @@ mod tests {
         assert!(toggle.visible_when.is_none());
         for key in [
             "fileTransferDir",
+            "fileTransferVia",
             "fileTransferRouteNotice",
             "fileTransferHostWarning",
+            "fileTransferViaHostWarning",
         ] {
             let f = group.fields.iter().find(|f| f.key == key).unwrap();
             let cond = f.visible_when.as_ref().unwrap();
@@ -1262,6 +1330,96 @@ mod tests {
         assert_eq!(shown(off), (false, false));
         let warning_text = warning.description.as_deref().unwrap();
         assert!(warning_text.contains("{{sshHost}}") && warning_text.contains("{{host}}"));
+    }
+
+    /// #4194: a direct connection (no SSH tunnel) offers a "File transfer via"
+    /// picker of saved SSH connections, preselecting one on the VNC host, and
+    /// warns when the linked connection's host is not the VNC host. The
+    /// linked host reaches the condition as the form-derived
+    /// `fileTransferVia.host` value; core never derives it, so the warning stays
+    /// hidden here unless the value is supplied.
+    #[test]
+    fn direct_connection_offers_a_linked_ssh_file_route() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let schema = vnc_settings_schema();
+        let group = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "fileTransfer")
+            .unwrap();
+        let field = |key: &str| group.fields.iter().find(|f| f.key == key).unwrap();
+        let picker = field("fileTransferVia");
+        assert_eq!(picker.label, "File transfer via");
+        assert!(!picker.required);
+        match &picker.field_type {
+            FieldType::SavedConnection {
+                connection_type,
+                match_host_field,
+            } => {
+                assert_eq!(connection_type, "ssh");
+                assert_eq!(match_host_field.as_deref(), Some("host"));
+            }
+            other => panic!("expected a saved-connection picker, got {other:?}"),
+        }
+        let warning = field("fileTransferViaHostWarning");
+        assert!(matches!(
+            warning.field_type,
+            FieldType::Notice {
+                severity: NoticeSeverity::Warning
+            }
+        ));
+        let shown = |settings: serde_json::Value| {
+            let map = settings.as_object().unwrap().clone();
+            (
+                is_field_visible(picker, &map),
+                is_field_visible(warning, &map),
+            )
+        };
+        let mismatch = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "office-pc", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        let info = field("fileTransferRouteNotice");
+        assert!(
+            !is_field_visible(info, mismatch.as_object().unwrap()),
+            "the warning replaces the info notice"
+        );
+        assert_eq!(shown(mismatch), (true, true));
+        let same = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "Tiger-Box", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert!(is_field_visible(info, same.as_object().unwrap()));
+        assert_eq!(shown(same), (true, false));
+        let loopback_desktop = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "localhost", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(shown(loopback_desktop), (true, true));
+        let unlinked = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false, "host": "office-pc",
+        });
+        assert_eq!(shown(unlinked), (true, false));
+        let tunnelled = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": true,
+            "host": "office-pc", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(
+            shown(tunnelled),
+            (false, false),
+            "only for direct connections"
+        );
+        let off = serde_json::json!({
+            "fileTransfer": false, "useSshTunnel": false,
+            "host": "office-pc", "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(shown(off), (false, false));
+        let text = warning.description.as_deref().unwrap();
+        assert!(text.contains("{{fileTransferVia.host}}") && text.contains("{{host}}"));
     }
 
     #[test]

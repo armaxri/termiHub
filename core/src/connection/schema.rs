@@ -98,6 +98,10 @@ pub struct SettingsField {
 ///   one field to a constant: the value checked against `equals` (a boolean)
 ///   is whether `field` names the same host as the field `same_host_as`, by
 ///   [`is_same_host`](crate::connection::graphical_files::is_same_host).
+/// - [`same_name_as`](Condition::same_name_as) is the same two-field host
+///   comparison with both hosts seen from this computer, by
+///   [`is_same_named_host`](crate::connection::graphical_files::is_same_named_host)
+///   (#4194): a loopback name is this computer, never the other host.
 /// - [`all_of`](Condition::all_of) adds conditions that must all hold too.
 /// - [`any_of`](Condition::any_of) adds conditions of which at least one must
 ///   hold (ignored when empty).
@@ -125,6 +129,15 @@ pub struct Condition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub same_host_as: Option<String>,
+    /// Key of a second field whose value is compared with `field`'s value as a
+    /// host name, both as seen from this computer: the comparison is `true`
+    /// when both are loopback or have the same name. As with
+    /// [`same_host_as`](Condition::same_host_as), an unset or empty side
+    /// compares as the same host. The key may name a value the form derives
+    /// rather than a field, e.g. `fileTransferVia.host` (#4194).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub same_name_as: Option<String>,
     /// Further conditions that must all hold as well.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<Condition>>", optional))]
@@ -183,6 +196,24 @@ pub enum FieldType {
     FilePath {
         /// Whether to accept files, directories, or both.
         kind: FilePathKind,
+    },
+    /// Saved-connection picker (#4194): a select listing the saved connections
+    /// of type `connection_type` (plus "None"), storing the chosen connection's
+    /// id as a plain string — an empty string means none. An id whose
+    /// connection was deleted is kept and flagged rather than dropped.
+    ///
+    /// The UI exposes the picked connection's host to visibility conditions
+    /// and notice placeholders as the derived value `<key>.host`. When
+    /// `match_host_field` names a field, an unset picker preselects a
+    /// connection whose host is that field's host.
+    #[serde(rename_all = "camelCase")]
+    SavedConnection {
+        /// The connection type id the picker lists (e.g. `"ssh"`).
+        connection_type: String,
+        /// Key of the field whose host an unset picker preselects by.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        match_host_field: Option<String>,
     },
     /// List of key-value string pairs (e.g., environment variables).
     KeyValueList,
@@ -436,6 +467,46 @@ mod tests {
         assert_eq!(json, serde_json::json!({"type": "dockerContainer"}));
         let back: FieldType = serde_json::from_value(json).unwrap();
         assert!(matches!(back, FieldType::DockerContainer));
+    }
+
+    #[test]
+    fn field_type_saved_connection_serialization() {
+        let ft = FieldType::SavedConnection {
+            connection_type: "ssh".to_string(),
+            match_host_field: Some("host".to_string()),
+        };
+        let json = serde_json::to_value(&ft).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "savedConnection",
+                "connectionType": "ssh",
+                "matchHostField": "host",
+            })
+        );
+        let back: FieldType = serde_json::from_value(
+            serde_json::json!({"type": "savedConnection", "connectionType": "ssh"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            back,
+            FieldType::SavedConnection { ref connection_type, match_host_field: None }
+                if connection_type == "ssh"
+        ));
+    }
+
+    #[test]
+    fn condition_same_name_as_round_trips_and_is_omitted_when_unset() {
+        let cond = Condition {
+            field: "host".to_string(),
+            equals: serde_json::json!(false),
+            same_name_as: Some("fileTransferVia.host".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cond).unwrap();
+        assert_eq!(json["sameNameAs"], "fileTransferVia.host");
+        let plain = serde_json::to_value(Condition::default()).unwrap();
+        assert!(plain.get("sameNameAs").is_none());
     }
 
     #[test]

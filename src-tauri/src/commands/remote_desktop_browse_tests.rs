@@ -55,6 +55,7 @@ fn side_channel(kind: FileSideChannelKind) -> FileSideChannel {
         host: "lab-pi".to_string(),
         user: "pi".to_string(),
         same_host: true,
+        linked_connection: None,
     }
 }
 

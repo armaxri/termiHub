@@ -8,7 +8,7 @@
 
 import type { SettingsSchema, SettingsField, Condition } from "@/types/schema";
 import type { PasswordPromptInfo } from "@/types/generated/PasswordPromptInfo";
-import { isSameHost } from "./sameHost";
+import { isSameHost, isSameNamedHost } from "./sameHost";
 
 // Generated via ts-rs from the Rust `PasswordPromptInfo` in
 // `core/src/connection/schema_defaults.rs` (#3088).
@@ -85,6 +85,8 @@ export function isFieldVisible(field: SettingsField, settings: Record<string, un
  * - Basic rule: `settings[field]` equals `equals` (JSON comparison).
  * - `sameHostAs`: `equals` is compared with whether `settings[field]` names the
  *   same host as `settings[sameHostAs]` ({@link hostsCompareSame}).
+ * - `sameNameAs`: the same comparison with both hosts seen from this computer
+ *   (`isSameNamedHost`, #4194).
  * - `allOf`: every sub-condition must hold too.
  * - `anyOf`: when non-empty, at least one sub-condition must hold.
  */
@@ -94,7 +96,18 @@ export function evaluateCondition(
 ): boolean {
   let primary: boolean;
   if (condition.sameHostAs !== undefined) {
-    const same = hostsCompareSame(settings[condition.field], settings[condition.sameHostAs]);
+    const same = hostsCompareSame(
+      settings[condition.field],
+      settings[condition.sameHostAs],
+      isSameHost
+    );
+    primary = condition.equals === same;
+  } else if (condition.sameNameAs !== undefined) {
+    const same = hostsCompareSame(
+      settings[condition.field],
+      settings[condition.sameNameAs],
+      isSameNamedHost
+    );
     primary = condition.equals === same;
   } else {
     // Use JSON comparison for robust value matching (handles strings, numbers, booleans)
@@ -110,26 +123,31 @@ export function evaluateCondition(
 }
 
 /**
- * The host comparison behind `Condition.sameHostAs`: whether `target` names the
- * same host as `fileHost` (see `isSameHost`). When either side is unset, not a
- * string, or blank the hosts cannot be shown to differ, so they compare as the
- * same host.
+ * The host comparison behind `Condition.sameHostAs` and `Condition.sameNameAs`:
+ * whether `target` names the same host as `fileHost` by `same` (`isSameHost` or
+ * `isSameNamedHost`). When either side is unset, not a string, or blank the
+ * hosts cannot be shown to differ, so they compare as the same host.
  */
-function hostsCompareSame(target: unknown, fileHost: unknown): boolean {
+function hostsCompareSame(
+  target: unknown,
+  fileHost: unknown,
+  same: (target: string, fileHost: string) => boolean
+): boolean {
   const text = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
   const t = text(target);
   const f = text(fileHost);
   if (t === null || f === null) return true;
-  return isSameHost(t, f);
+  return same(t, f);
 }
 
 /**
  * Substitute `{{fieldKey}}` placeholders in a notice message with the current
  * setting values (#4198). Strings, numbers and booleans render as text; an
- * unset or structured value renders as empty.
+ * unset or structured value renders as empty. A key may be dotted, naming a
+ * value the form derives (e.g. `fileTransferVia.host`, #4194).
  */
 export function interpolateSettings(template: string, settings: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key: string) => {
+  return template.replace(/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g, (_, key: string) => {
     const value = settings[key];
     if (typeof value === "string") return value.trim();
     if (typeof value === "number" || typeof value === "boolean") return String(value);

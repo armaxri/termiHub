@@ -20,6 +20,13 @@ const AGENT_TUNNELLED_GRAPHICAL_TYPES: readonly string[] = ["vnc", "rdp"];
  */
 const UNSUPPORTED_GROUP_KEYS: readonly string[] = ["sshTunnel"];
 
+/**
+ * Fields dropped from a tunnelled type: a linked saved SSH connection as the
+ * file route (#4194) applies only to a direct connection — under an agent,
+ * files travel through the agent.
+ */
+const UNSUPPORTED_FIELD_KEYS: readonly string[] = ["fileTransferVia", "fileTransferViaHostWarning"];
+
 /** Whether `typeId` is a graphical type an agent carries by tunnelling. */
 export function isAgentTunnelledGraphicalType(typeId: string): boolean {
   return AGENT_TUNNELLED_GRAPHICAL_TYPES.includes(typeId);
@@ -29,7 +36,8 @@ export function isAgentTunnelledGraphicalType(typeId: string): boolean {
  * The connection types the editor offers under an agent: the agent's own
  * registry plus this computer's VNC/RDP types (when this build has them), which
  * run here and tunnel through the agent. Their schema drops the SSH tunnel
- * group. Types the agent already reports are left as the agent describes them.
+ * group and the linked-SSH file route. Types the agent already reports are
+ * left as the agent describes them.
  */
 export function withAgentTunnelledTypes(
   agentTypes: ConnectionTypeInfo[],
@@ -47,7 +55,12 @@ export function withAgentTunnelledTypes(
       ...t,
       schema: {
         ...t.schema,
-        groups: t.schema.groups.filter((g) => !UNSUPPORTED_GROUP_KEYS.includes(g.key)),
+        groups: t.schema.groups
+          .filter((g) => !UNSUPPORTED_GROUP_KEYS.includes(g.key))
+          .map((g) => ({
+            ...g,
+            fields: g.fields.filter((f) => !UNSUPPORTED_FIELD_KEYS.includes(f.key)),
+          })),
       },
     }));
   return [...agentTypes, ...tunnelled];

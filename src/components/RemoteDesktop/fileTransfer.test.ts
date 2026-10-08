@@ -40,6 +40,13 @@ import {
 
 const SSH: FileSideChannel = { kind: "ssh", host: "tiger-box", user: "arne", sameHost: true };
 const AGENT: FileSideChannel = { kind: "agent", host: "lab-pi", user: "pi", sameHost: true };
+const LINKED: FileSideChannel = {
+  kind: "ssh",
+  host: "tiger-box",
+  user: "arne",
+  sameHost: false,
+  linkedConnection: "Tiger",
+};
 
 function started(ids: string[], extra: Partial<RemoteDesktopUploadStarted> = {}) {
   return {
@@ -74,7 +81,16 @@ describe("file transfer copy", () => {
     expect(browseRoute(AGENT)).toBe("pi@lab-pi · termiHub agent");
   });
 
+  it("names a linked SSH connection as the carrier, not a tunnel (#4194)", () => {
+    expect(routeVia(LINKED)).toBe("via SFTP over the linked SSH connection Tiger (arne@tiger-box)");
+    expect(routeCarrier(LINKED)).toBe(
+      "SFTP via the linked SSH connection Tiger (arne@tiger-box, host key verified)"
+    );
+    expect(browseRoute(LINKED)).toBe("arne@tiger-box · SFTP via the linked SSH connection Tiger");
+  });
+
   it("says why there is no transfer and how to enable it", () => {
+    expect(unavailableCopy("noRoute").hint).toContain("link a saved SSH connection");
     expect(unavailableCopy("noRoute").hint).toContain("Enable the SSH Tunnel");
     expect(unavailableCopy("disabled").hint).toContain("Turn on File Transfer");
     expect(unavailableCopy("viewOnly").hint).toContain("View-only");

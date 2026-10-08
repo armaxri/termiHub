@@ -400,6 +400,125 @@
       },
       "args": { "settings": { "a": 1, "b": 2, "c": 4 } },
       "expected": false
+    },
+    {
+      "name": "sameNameAs: differing names satisfy equals false",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": {
+          "type": "notice",
+          "severity": "warning"
+        },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameNameAs": "fileTransferVia.host",
+          "equals": false
+        }
+      },
+      "args": {
+        "settings": {
+          "host": "office-pc",
+          "fileTransferVia.host": "tiger-box"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameNameAs: a loopback target is not a named remote host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": {
+          "type": "notice",
+          "severity": "warning"
+        },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameNameAs": "fileTransferVia.host",
+          "equals": false
+        }
+      },
+      "args": {
+        "settings": {
+          "host": "localhost",
+          "fileTransferVia.host": "tiger-box"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameNameAs: equal names (case, trailing dot) are the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": {
+          "type": "notice",
+          "severity": "warning"
+        },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameNameAs": "fileTransferVia.host",
+          "equals": true
+        }
+      },
+      "args": {
+        "settings": {
+          "host": "Tiger-Box.",
+          "fileTransferVia.host": "tiger-box"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameNameAs: two loopback names are the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": {
+          "type": "notice",
+          "severity": "warning"
+        },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameNameAs": "fileTransferVia.host",
+          "equals": true
+        }
+      },
+      "args": {
+        "settings": {
+          "host": "127.0.0.1",
+          "fileTransferVia.host": "localhost"
+        }
+      },
+      "expected": true
+    },
+    {
+      "name": "sameNameAs: a missing side compares as the same host",
+      "input": {
+        "key": "n",
+        "label": "",
+        "fieldType": {
+          "type": "notice",
+          "severity": "warning"
+        },
+        "required": false,
+        "visibleWhen": {
+          "field": "host",
+          "sameNameAs": "fileTransferVia.host",
+          "equals": false
+        }
+      },
+      "args": {
+        "settings": {
+          "host": "office-pc"
+        }
+      },
+      "expected": false
     }
   ]
 }
