@@ -306,6 +306,24 @@ pub struct Log {
     pub message: String,
     /// Whether the runner cut the plugin's message to the bound.
     pub truncated: bool,
+    /// Set when this line reports system calls the OS sandbox refused
+    /// (`Denied{syscall}`, #4236) rather than a plugin's own log line. The
+    /// host records it as a denial event and logs its own text for it; an
+    /// older host ignores the field and logs `message` as usual.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denied: Option<SyscallDenial>,
+}
+
+/// System calls the OS sandbox refused with `EPERM` (Linux seccomp, #4236),
+/// coalesced per call over one report interval of the runner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyscallDenial {
+    /// The system call's name: one of
+    /// [`REPORTED_SYSCALLS`](crate::sandbox::denial::REPORTED_SYSCALLS). The
+    /// host refuses any other name (untrusted peer).
+    pub syscall: String,
+    /// How many calls were refused since the previous report (at least 1).
+    pub count: u32,
 }
 
 /// `Ping` / `Pong` payload.
