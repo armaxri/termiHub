@@ -421,3 +421,109 @@ fn the_runner_inherits_no_stray_handle() {
     drop(host);
     assert_eq!(wait_exit(&mut child).code(), Some(0));
 }
+
+/// Windows: a sandbox requested of a runner the host did **not** start in an
+/// AppContainer is refused, not reported as enforced: the runner verifies its
+/// own token before the load (#4187).
+#[cfg(windows)]
+#[test]
+fn windows_refuses_a_policy_outside_an_appcontainer() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let install = tmp.path().join("install");
+    std::fs::create_dir_all(&install).unwrap();
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        ..SandboxPolicy::default()
+    };
+    let (mut child, mut host) = spawn_ok();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let lib = install.join("missing.dll");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Failed, "{report:?}");
+            let failed = report.failed.unwrap_or_default();
+            assert!(failed.contains("not inside an AppContainer"), "{failed}");
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert_eq!(wait_exit(&mut child).code(), Some(4));
+}
+
+/// Windows: the runner started in a per-plugin Less-Privileged AppContainer
+/// inside its job (#4187) verifies both and reports the sandbox as fully
+/// enforced before the load; the load then fails normally (the library does
+/// not exist), and that reply still crosses the inherited pipe.
+#[cfg(windows)]
+#[test]
+fn windows_starts_the_runner_in_an_lpac_inside_its_job() {
+    use std::os::windows::io::AsHandle;
+    use std::path::Path;
+
+    use termihub_plugin_runner::appcontainer::{
+        delete_profile, AppContainer, MODIFY, READ_EXECUTE,
+    };
+    use termihub_plugin_runner::ipc::pipe::PipeStream;
+    use termihub_plugin_runner::ipc::ChannelStream;
+    use termihub_plugin_runner::process::RunnerCommand;
+
+    let id = format!("runner-process-lpac-{}", std::process::id());
+    let container = AppContainer::ensure(&id).unwrap();
+    let runner = Path::new(RUNNER);
+    let runner_dir = runner.parent().unwrap();
+    container.grant_object(runner_dir, READ_EXECUTE).unwrap();
+    container.grant_object(runner, READ_EXECUTE).unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let install = tmp.path().join("install");
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(&install).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    container.grant_tree(&install, READ_EXECUTE).unwrap();
+    container.grant_tree(&data, MODIFY).unwrap();
+
+    let (mut host, end) = PipeStream::pair_with_access(&[container.sid_string()]).unwrap();
+    let system_root = std::env::var_os("SystemRoot").expect("SystemRoot is set");
+    let mut child = RunnerCommand::new(RUNNER)
+        .arg(PROTOCOL_ARG)
+        .arg(PROTOCOL_VERSION.to_string())
+        .envs([("SystemRoot", system_root)])
+        .limits(ResourceLimits::plugin_defaults())
+        .app_container(container.clone())
+        .current_dir(runner_dir)
+        .spawn(end.as_handle())
+        .unwrap();
+    drop(end);
+    host.set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    assert!(matches!(next(&host), Message::Hello(_)));
+    let policy = SandboxPolicy {
+        install_dir: install.to_str().unwrap().into(),
+        data_dir: Some(data.to_str().unwrap().into()),
+        ..SandboxPolicy::default()
+    };
+    let lib = install.join("missing.dll");
+    host.write_all(
+        &configure_with(lib.to_str().unwrap(), Some(policy))
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+    match next(&host) {
+        Message::SandboxReport(report) => {
+            assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+            assert_eq!(
+                report.enforced,
+                vec!["appcontainer".to_owned(), "job-object".to_owned()]
+            );
+        }
+        other => panic!("expected SandboxReport, got {other:?}"),
+    }
+    assert!(matches!(next(&host), Message::LoadFailed(_)));
+    assert_eq!(wait_exit(&mut child).code(), Some(3));
+    delete_profile(&id).unwrap();
+}

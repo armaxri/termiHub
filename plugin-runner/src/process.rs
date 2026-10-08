@@ -34,7 +34,20 @@
 //!   runner itself). Windows has no per-process open-handle cap, so
 //!   `max_open_files` does not apply here.
 //!
+//! With an [`AppContainer`] ([`RunnerCommand::app_container`], #4187) the
+//! runner also starts confined, from its first instruction:
+//!
+//! * `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` — inside the plugin's
+//!   AppContainer with **zero capabilities** (no network, no user profile);
+//! * `PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY` = opt-out — a
+//!   **less-privileged** AppContainer (LPAC): what grants "ALL APPLICATION
+//!   PACKAGES" (e.g. `HKCU\Software`) is closed to it too;
+//! * `PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY` = restricted — it cannot
+//!   create processes (`ERROR_CHILD_PROCESS_BLOCKED`), before the job's
+//!   process limit even applies.
+//!
 //! [`ResourceLimits`]: crate::ipc::ResourceLimits
+//! [`AppContainer`]: crate::appcontainer::AppContainer
 
 use std::ffi::{c_void, OsStr, OsString};
 use std::fs::File;
@@ -50,7 +63,7 @@ use windows_sys::Win32::Foundation::{
     GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0,
     WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -67,9 +80,15 @@ use windows_sys::Win32::System::Threading::{
     InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
     WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
     EXTENDED_STARTUPINFO_PRESENT, INFINITE, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+    PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+};
+use windows_sys::Win32::System::WindowsProgramming::{
+    PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT, PROCESS_CREATION_CHILD_PROCESS_RESTRICTED,
 };
 
+use crate::appcontainer::AppContainer;
 use crate::ipc::pipe::handle_value;
 use crate::ipc::{ResourceLimits, IPC_HANDLE_ARG};
 use crate::win::{is_os_error, owned, to_wide};
@@ -99,6 +118,8 @@ pub struct RunnerCommand {
     stdout: ChildStdio,
     stderr: ChildStdio,
     limits: ResourceLimits,
+    app_container: Option<AppContainer>,
+    current_dir: Option<PathBuf>,
 }
 
 impl RunnerCommand {
@@ -112,6 +133,8 @@ impl RunnerCommand {
             stdout: ChildStdio::Null,
             stderr: ChildStdio::Null,
             limits: ResourceLimits::default(),
+            app_container: None,
+            current_dir: None,
         }
     }
 
@@ -150,6 +173,21 @@ impl RunnerCommand {
         self
     }
 
+    /// Start the runner confined to `container`: a less-privileged
+    /// AppContainer with zero capabilities that cannot create processes (see
+    /// the module docs). Its SID must already be granted the runner's folder.
+    pub fn app_container(&mut self, container: AppContainer) -> &mut Self {
+        self.app_container = Some(container);
+        self
+    }
+
+    /// The runner's working directory (default: the host's). A confined
+    /// runner needs one its AppContainer may open.
+    pub fn current_dir(&mut self, dir: impl Into<PathBuf>) -> &mut Self {
+        self.current_dir = Some(dir.into());
+        self
+    }
+
     /// Start the runner with `channel` as its only inherited handle besides
     /// its standard handles; `--ipc-handle <value>` is appended to the
     /// arguments. The caller should close its copy of `channel` afterwards, so
@@ -167,6 +205,10 @@ impl RunnerCommand {
         let application = to_wide(self.program.as_os_str())?;
         let mut command_line = command_line(&self.program, &args)?;
         let environment = environment_block(&self.env)?;
+        let current_dir = match &self.current_dir {
+            Some(dir) => Some(to_wide(dir.as_os_str())?),
+            None => None,
+        };
 
         let mut inherited: Vec<HANDLE> = [&channel, &stdin, &stdout, &stderr]
             .iter()
@@ -174,7 +216,7 @@ impl RunnerCommand {
             .collect();
         inherited.sort_unstable();
         inherited.dedup();
-        let mut attributes = AttributeList::with_handle_list(inherited)?;
+        let mut attributes = AttributeList::new(inherited, self.app_container.as_ref())?;
 
         // SAFETY: all-zero is a valid `STARTUPINFOEXW` to fill in.
         let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
@@ -188,8 +230,9 @@ impl RunnerCommand {
         let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
         // SAFETY: every pointer is valid for the call: the NUL-terminated
         // application name, the mutable NUL-terminated command line, the
-        // double-NUL-terminated UTF-16 environment block, and `startup`, whose
-        // attribute list (and the handle array it points to) outlives it.
+        // double-NUL-terminated UTF-16 environment block, the NUL-terminated
+        // working directory (or NULL), and `startup`, whose attribute list
+        // (and every value it points to) outlives it.
         let created = unsafe {
             CreateProcessW(
                 application.as_ptr(),
@@ -202,7 +245,9 @@ impl RunnerCommand {
                     | EXTENDED_STARTUPINFO_PRESENT
                     | CREATE_NO_WINDOW,
                 environment.as_ptr().cast::<c_void>(),
-                std::ptr::null(),
+                current_dir
+                    .as_ref()
+                    .map_or(std::ptr::null(), |dir| dir.as_ptr()),
                 &startup.StartupInfo,
                 &mut info,
             )
@@ -551,44 +596,100 @@ fn environment_block(vars: &[(OsString, OsString)]) -> io::Result<Vec<u16>> {
     Ok(block)
 }
 
-/// A `PROC_THREAD_ATTRIBUTE_LIST` carrying one `HANDLE_LIST`. The system keeps
-/// a pointer to the handle array, so both live here until the spawn is done.
+/// A `PROC_THREAD_ATTRIBUTE_LIST` carrying the `HANDLE_LIST` and, for an
+/// AppContainer, its security capabilities and the LPAC and child-process
+/// policies. The system keeps pointers to the values, not copies, so all of
+/// them live here, on the heap, until the spawn is done.
 struct AttributeList {
     buffer: Vec<usize>,
     handles: Box<[HANDLE]>,
+    /// The AppContainer whose SID `capabilities` points to.
+    container: Option<AppContainer>,
+    capabilities: Box<SECURITY_CAPABILITIES>,
+    /// `[all-application-packages policy, child-process policy]`.
+    policies: Box<[u32; 2]>,
 }
 
 impl AttributeList {
-    fn with_handle_list(handles: Vec<HANDLE>) -> io::Result<Self> {
+    fn new(handles: Vec<HANDLE>, container: Option<&AppContainer>) -> io::Result<Self> {
+        let count = if container.is_some() { 4 } else { 1 };
         let mut size = 0usize;
         // Sizing call: expected to fail with the needed size.
         // SAFETY: a null list with a size out-pointer only queries the size.
-        unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut size) };
+        unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), count, 0, &mut size) };
         if size == 0 {
             return Err(io::Error::last_os_error());
         }
-        // `usize` storage keeps the opaque list pointer-aligned.
-        let buffer = vec![0usize; size.div_ceil(std::mem::size_of::<usize>())];
+        let container = container.cloned();
+        let capabilities = Box::new(SECURITY_CAPABILITIES {
+            AppContainerSid: container
+                .as_ref()
+                .map_or(std::ptr::null_mut(), AppContainer::sid),
+            // Zero capabilities: no network, no user profile, nothing.
+            Capabilities: std::ptr::null_mut(),
+            CapabilityCount: 0,
+            Reserved: 0,
+        });
         let mut list = Self {
-            buffer,
+            // `usize` storage keeps the opaque list pointer-aligned.
+            buffer: vec![0usize; size.div_ceil(std::mem::size_of::<usize>())],
             handles: handles.into_boxed_slice(),
+            container,
+            capabilities,
+            policies: Box::new([
+                PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT,
+                PROCESS_CREATION_CHILD_PROCESS_RESTRICTED,
+            ]),
         };
         let raw = list.buffer.as_mut_ptr().cast::<c_void>();
         // SAFETY: `raw` points at `size` writable bytes.
-        if unsafe { InitializeProcThreadAttributeList(raw, 1, 0, &mut size) } == 0 {
+        if unsafe { InitializeProcThreadAttributeList(raw, count, 0, &mut size) } == 0 {
             // Not initialised: nothing for `Drop` to delete.
             list.buffer = Vec::new();
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: the list is initialised; `handles` is heap-stable and lives
-        // as long as the list (the system stores the pointer, not a copy).
+        // Raw pointers into the boxes: their heap contents never move.
+        let handles = list.handles.as_ptr().cast::<c_void>();
+        let handles_size = std::mem::size_of_val::<[HANDLE]>(&list.handles);
+        list.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, handles_size)?;
+        if list.container.is_some() {
+            let capabilities =
+                std::ptr::from_ref::<SECURITY_CAPABILITIES>(&list.capabilities).cast::<c_void>();
+            let packages = std::ptr::from_ref(&list.policies[0]).cast::<c_void>();
+            let children = std::ptr::from_ref(&list.policies[1]).cast::<c_void>();
+            list.set(
+                PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                capabilities,
+                std::mem::size_of::<SECURITY_CAPABILITIES>(),
+            )?;
+            let policy_size = std::mem::size_of::<u32>();
+            list.set(
+                PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY,
+                packages,
+                policy_size,
+            )?;
+            list.set(
+                PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY,
+                children,
+                policy_size,
+            )?;
+        }
+        Ok(list)
+    }
+
+    /// Add one attribute whose value (`size` bytes at `value`) lives in
+    /// `self`, so it stays valid as long as the list.
+    fn set(&mut self, attribute: u32, value: *const c_void, size: usize) -> io::Result<()> {
+        let list = self.as_mut_ptr();
+        // SAFETY: the list is initialised with room for every attribute set;
+        // `value` points at `size` bytes owned by `self` (heap-stable).
         let ok = unsafe {
             UpdateProcThreadAttribute(
-                raw,
+                list,
                 0,
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-                list.handles.as_ptr().cast::<c_void>(),
-                std::mem::size_of_val::<[HANDLE]>(&list.handles),
+                attribute as usize,
+                value,
+                size,
                 std::ptr::null_mut(),
                 std::ptr::null(),
             )
@@ -596,7 +697,7 @@ impl AttributeList {
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(list)
+        Ok(())
     }
 
     fn as_mut_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
