@@ -6,7 +6,10 @@
 //!   enforce the identical sequence (digest pin → ABI gate → manifest mirror →
 //!   `plugin_init` → toolchain rule).
 //! * [`ipc`] — the length-delimited frame protocol between the host and a
-//!   runner process.
+//!   runner process, and the channel it rides on (a `socketpair` on Unix, a
+//!   private named pipe on Windows).
+//! * `process` (Windows) — starting a runner inside a kill-on-close job object
+//!   with an explicit inherited-handle list; Unix spawns through `std`.
 //! * [`sandbox`] — the OS-neutral sandbox policy and report, and the per-OS
 //!   confinement the runner applies to itself before `dlopen` (#4186).
 //!
@@ -16,4 +19,8 @@
 
 pub mod ipc;
 pub mod loader;
+#[cfg(windows)]
+pub mod process;
 pub mod sandbox;
+#[cfg(windows)]
+mod win;

@@ -11,19 +11,16 @@
 //! memory, and its stderr is forwarded through the host so an allocation
 //! failure under `RLIMIT_AS` is recognised as out of memory.
 
-#[cfg(unix)]
-use std::io::Write;
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use termihub_plugin_api::PluginError;
-use termihub_plugin_runner::ipc::{Configure, FrameReader, Message, SandboxReport, Sender};
-#[cfg(unix)]
-use termihub_plugin_runner::ipc::{ProtocolError, PROTOCOL_VERSION};
-#[cfg(unix)]
+use termihub_plugin_runner::ipc::{
+    ChannelStream, Configure, FrameReader, Message, ProtocolError, SandboxReport, Sender,
+    PROTOCOL_VERSION,
+};
 use termihub_plugin_runner::loader::check_library_abi;
 use termihub_plugin_runner::loader::LoadedPluginInfo;
 
@@ -35,14 +32,12 @@ use super::bridge::{BridgeDenial, BridgeGrant};
 use super::exit::RunnerExitCause;
 use super::handle::PluginRunnerConfig;
 use super::peer::{ExitHook, Reply, SessionSlot, Shared};
-use super::spawn::{spawn_runner, Spawned};
+use super::spawn::{spawn_runner, RunnerChild, Spawned};
 use super::writer::ChannelWriter;
 
 /// How long the runner may take to say `Hello` after spawn.
-#[cfg(unix)]
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the runner may take to load the plugin (digest, `dlopen`, init).
-#[cfg(unix)]
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 /// Deadline for a `Close` reply (the concept's 2 s close budget).
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -50,7 +45,6 @@ pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// `create_backend` may legitimately connect to a device or a server first.
 pub(super) const CREATE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a write to a stalled runner may block before it is killed.
-#[cfg(unix)]
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the runner gets to exit after `Shutdown` before it is killed.
 pub(super) const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -72,32 +66,18 @@ impl std::fmt::Debug for SandboxedPlugin {
 }
 
 impl SandboxedPlugin {
-    /// No runner transport on this platform yet (Windows: next slice of #4182).
-    #[cfg(not(unix))]
-    pub(super) fn spawn(
-        config: &PluginRunnerConfig,
-        _configure: &Configure,
-        _log_limiter: Arc<PluginLogLimiter>,
-    ) -> Result<Arc<Self>, HostError> {
-        let Spawned { mut child } = spawn_runner(&config.runner_path)?;
-        let _ = child.kill();
-        let _ = child.wait();
-        Err(HostError::RunnerUnavailable {
-            path: config.runner_path.clone(),
-            detail: "no runner transport on this platform".to_owned(),
-        })
-    }
-
     /// Spawn `runner`, hand it `configure`, and wait (bounded) until the plugin
     /// is loaded. The runner's report is re-checked against this host's ABI and
     /// the manifest mirror (untrusted peer). Any failure kills the runner.
-    #[cfg(unix)]
     pub(super) fn spawn(
         config: &PluginRunnerConfig,
         configure: &Configure,
         log_limiter: Arc<PluginLogLimiter>,
     ) -> Result<Arc<Self>, HostError> {
-        let Spawned { mut child, stream } = spawn_runner(&config.runner_path)?;
+        let Spawned {
+            mut child,
+            mut stream,
+        } = spawn_runner(&config.runner_path, &configure.limits)?;
         let stderr = child.stderr.take();
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
         if let Some(stderr) = stderr {
@@ -111,7 +91,7 @@ impl SandboxedPlugin {
                 return Err(HostError::RunnerProtocol("stderr thread".to_owned()));
             }
         }
-        match handshake(&stream, configure) {
+        match handshake(&mut stream, configure) {
             Ok((info, sandbox)) => {
                 let _ = stream.set_read_timeout(None);
                 let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
@@ -119,7 +99,7 @@ impl SandboxedPlugin {
                     .try_clone()
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
                     .inspect_err(|_| shared.kill())?;
-                let writer = ChannelWriter::unix(stream)
+                let writer = ChannelWriter::for_channel(stream)
                     .map(Arc::new)
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
                     .inspect_err(|_| shared.kill())?;
@@ -214,7 +194,7 @@ impl SandboxedPlugin {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
-            .map(Child::id)
+            .map(RunnerChild::id)
     }
 
     /// Number of open sessions.
@@ -399,38 +379,12 @@ impl Drop for CallGuard<'_> {
 }
 
 /// Run the startup sequence on the calling thread, bounded by deadlines.
-#[cfg(unix)]
-fn handshake(
-    stream: &std::os::unix::net::UnixStream,
+fn handshake<S: ChannelStream>(
+    stream: &mut S,
     configure: &Configure,
 ) -> Result<(LoadedPluginInfo, SandboxReport), HostError> {
     let protocol = |what: &str| HostError::RunnerProtocol(what.to_owned());
-    let mut frames = FrameReader::new(stream);
-    let mut next = |timeout: Duration, waiting_for: &str| -> Result<Message, HostError> {
-        // macOS refuses socket options once the peer is gone (EINVAL), so a
-        // runner that already exited can fail here rather than at the read.
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|e| protocol(&format!("waiting for {waiting_for}: {e}")))?;
-        match frames.read_frame() {
-            Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Host)
-                .map_err(|e| protocol(&format!("waiting for {waiting_for}: {e}"))),
-            Ok(None) => Err(protocol(&format!(
-                "the runner exited while the host was waiting for {waiting_for}"
-            ))),
-            Err(ProtocolError::Io(e))
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                Err(protocol(&format!("timed out waiting for {waiting_for}")))
-            }
-            Err(e) => Err(protocol(&format!("waiting for {waiting_for}: {e}"))),
-        }
-    };
-
-    match next(HELLO_TIMEOUT, "Hello")? {
+    match next_frame(stream, HELLO_TIMEOUT, "Hello")? {
         Message::Hello(hello) if hello.protocol_version == PROTOCOL_VERSION => {}
         Message::Hello(hello) => {
             return Err(protocol(&format!(
@@ -443,11 +397,10 @@ fn handshake(
     let frame = Message::Configure(configure.clone())
         .encode()
         .map_err(|e| protocol(&e.to_string()))?;
-    let mut writer = stream;
-    writer
+    stream
         .write_all(&frame)
         .map_err(|e| protocol(&format!("sending Configure: {e}")))?;
-    let sandbox = match next(LOAD_TIMEOUT, "SandboxReport")? {
+    let sandbox = match next_frame(stream, LOAD_TIMEOUT, "SandboxReport")? {
         // A requested sandbox must be in force before the plugin is mapped;
         // the caller kills the runner on `Err`, so it never loads (#4186).
         Message::SandboxReport(report) => {
@@ -463,7 +416,7 @@ fn handshake(
             )))
         }
     };
-    match next(LOAD_TIMEOUT, "Loaded")? {
+    match next_frame(stream, LOAD_TIMEOUT, "Loaded")? {
         Message::Loaded(loaded) => {
             let info = loaded.into_info();
             // Re-apply the ABI gate + manifest mirror host-side: the runner ran
@@ -482,6 +435,40 @@ fn handshake(
         other => Err(protocol(&format!(
             "expected Loaded, got {:?}",
             other.kind()
+        ))),
+    }
+}
+
+/// Read the next runner frame within `timeout` (`waiting_for` names it in
+/// errors).
+fn next_frame<S: ChannelStream>(
+    stream: &mut S,
+    timeout: Duration,
+    waiting_for: &str,
+) -> Result<Message, HostError> {
+    // macOS refuses socket options once the peer is gone (EINVAL), so a
+    // runner that already exited can fail here rather than at the read.
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| HostError::RunnerProtocol(format!("waiting for {waiting_for}: {e}")))?;
+    match FrameReader::new(&mut *stream).read_frame() {
+        Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Host)
+            .map_err(|e| HostError::RunnerProtocol(format!("waiting for {waiting_for}: {e}"))),
+        Ok(None) => Err(HostError::RunnerProtocol(format!(
+            "the runner exited while the host was waiting for {waiting_for}"
+        ))),
+        Err(ProtocolError::Io(e))
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Err(HostError::RunnerProtocol(format!(
+                "timed out waiting for {waiting_for}"
+            )))
+        }
+        Err(e) => Err(HostError::RunnerProtocol(format!(
+            "waiting for {waiting_for}: {e}"
         ))),
     }
 }

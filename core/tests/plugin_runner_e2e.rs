@@ -7,7 +7,7 @@
 //! (spawn on load, bounded stop on unload, idle reap + lazy respawn, crash →
 //! sessions end → respawn), and handshake failures (missing runner, a runner
 //! that exits before `Hello`, a library the runner refuses).
-#![cfg(all(feature = "plugin", unix))]
+#![cfg(feature = "plugin")]
 
 use std::time::Duration;
 
@@ -185,13 +185,23 @@ fn a_runner_that_exits_before_hello_fails_the_load() {
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
     let (host, _registry) = host_for(&echo);
-    // `true` ignores its arguments and exits at once: EOF before `Hello`.
-    let host = host.with_runner(Some(PluginRunnerConfig::new("/usr/bin/true")));
+    // A program that is not the runner and exits at once: EOF before `Hello`.
+    let host = host.with_runner(Some(PluginRunnerConfig::new(not_a_runner())));
     match host.load(&echo.plugin) {
         Err(HostError::RunnerProtocol(detail)) => {
             assert!(detail.contains("Hello"), "{detail}");
         }
         other => panic!("expected RunnerProtocol, got {other:?}"),
+    }
+}
+
+/// A program that refuses the runner's arguments and exits at once: `true`
+/// on Unix, this test binary on Windows (libtest rejects `--protocol`).
+fn not_a_runner() -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::env::current_exe().expect("the test binary")
+    } else {
+        std::path::PathBuf::from("/usr/bin/true")
     }
 }
 

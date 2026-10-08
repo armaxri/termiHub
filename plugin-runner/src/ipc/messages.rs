@@ -60,7 +60,8 @@ pub struct Configure {
 pub struct ResourceLimits {
     /// Cap on the runner's address space in bytes (`RLIMIT_AS`, Linux only:
     /// macOS does not enforce it, so the host polls the runner's resident size
-    /// there instead). `None` leaves it unlimited.
+    /// there instead). On Windows the host's job object enforces it as the
+    /// per-process committed-memory limit (#4201). `None` leaves it unlimited.
     #[serde(default)]
     pub address_space_bytes: Option<u64>,
     /// Cap on open file descriptors (`RLIMIT_NOFILE`). `None` leaves it as
@@ -70,7 +71,9 @@ pub struct ResourceLimits {
     /// Forbid starting child processes. Enforced with `RLIMIT_NPROC = 0` on
     /// macOS, where it counts processes only. On Linux `RLIMIT_NPROC` also
     /// counts threads (which plugins need), so there the OS sandbox's seccomp
-    /// filter forbids child processes whenever the sandbox is on (#4185).
+    /// filter forbids child processes whenever the sandbox is on (#4185). On
+    /// Windows the host's job object enforces it as an active-process limit
+    /// of 1 (#4201).
     #[serde(default)]
     pub forbid_child_processes: bool,
 }

@@ -51,6 +51,25 @@ libc = "0.2"
 # the host to the runner (#4183). Same major as the agent's.
 nix = { version = "0.29", features = ["socket", "uio"] }
 
+[target.'cfg(windows)'.dependencies]
+# The Windows transport (#4201): a private overlapped named pipe driven with
+# ReadFile / WriteFile (never Winsock: it cannot start under LPAC), the runner
+# spawned by a hand-written `CreateProcessW` with an explicit handle list, inside
+# a kill-on-close job object that also carries the resource limits. Same
+# version as core's.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # The Linux plugin sandbox (#4185): the official landlock crate (filesystem and
 # TCP rulesets, best-effort compatibility mode that reports what the running

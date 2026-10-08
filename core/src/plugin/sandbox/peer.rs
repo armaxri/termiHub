@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
@@ -27,6 +26,7 @@ use crate::plugin::log_rate_limit::PluginLogLimiter;
 use super::bridge::BridgeHost;
 use super::client::EXIT_TIMEOUT;
 use super::exit::RunnerExitCause;
+use super::spawn::RunnerChild;
 
 /// Upper bound on a `Log` line as the runner may send it: the 8 KiB message
 /// bound, after lossy UTF-8 decoding (each invalid byte → 3-byte U+FFFD).
@@ -88,7 +88,7 @@ pub(super) struct Shared {
     /// it was never allocated (a violation).
     pub(super) next_session: AtomicU32,
     pub(super) dead: AtomicBool,
-    pub(super) child: Mutex<Option<Child>>,
+    pub(super) child: Mutex<Option<RunnerChild>>,
     pub(super) log_limiter: Arc<PluginLogLimiter>,
     /// When the session count last dropped to zero (idle reaping).
     pub(super) idle_since: Mutex<Option<Instant>>,
@@ -114,7 +114,7 @@ impl Shared {
     /// State for a runner whose process is `child` (`None` in unit tests).
     pub(super) fn new(
         plugin_id: String,
-        child: Option<Child>,
+        child: Option<RunnerChild>,
         log_limiter: Arc<PluginLogLimiter>,
     ) -> Arc<Self> {
         Arc::new(Self {
