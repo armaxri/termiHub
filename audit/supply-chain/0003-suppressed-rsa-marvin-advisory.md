@@ -26,7 +26,7 @@ pre-release `0.10.0-rc.18` (see SUP-002), pulled transitively via `ssh-key`.
 Suppressing a live cryptographic advisory is a deliberate risk acceptance, not a
 neutral config choice. The documented rationale is sound on its face — the code
 only extracts raw RSA key components and rebuilds them via OpenSSL, and never
-performs RSA decryption *through* this crate, so the padding-oracle timing
+performs RSA decryption _through_ this crate, so the padding-oracle timing
 channel is claimed not to apply. That reasoning is plausible but load-bearing:
 it is only valid as long as no code path ever routes an RSA private-key
 operation through the `rsa` crate. There is no automated guard that this stays

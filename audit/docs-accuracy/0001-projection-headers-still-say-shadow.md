@@ -50,7 +50,7 @@ Uniformly-stale "shadow / not authoritative" headers:
   L16-17 `//! The store is **not yet authoritative** …`.
 - `src-tauri/src/agents_projection/mod.rs:1,13-17` — `//! Shadow agents authority` /
   `//! This step is deliberately **not** authoritative. … nothing in the live UI subscribes
-  to or renders the agents region`.
+to or renders the agents region`.
 - `src-tauri/src/connections_projection/mod.rs:1,28-31`, `session_projection/mod.rs:1,12-15`,
   `settings_projection/mod.rs:1,38-44`, `transfers_projection/mod.rs:1,32-36`,
   `file_browser_projection/mod.rs:1,29-33`, `layout/mod.rs:1,11-16` — same "Shadow … not
@@ -64,13 +64,13 @@ Uniformly-stale "shadow / not authoritative" headers:
 
 - `broadcast_projection`: `projection.rs:55` `//! Now driving the live UI` and `lib.rs:9-10`
   `Now drives the live UI`, but `mod.rs:1,29-35` still `//! Shadow broadcast-membership
-  authority` / `//! This step is deliberately **not authoritative**`.
+authority` / `//! This step is deliberately **not authoritative**`.
 - `workflow_projection`: `mod.rs:37-42` says the cut landed and `store.rs:23` agrees the store
   is authoritative, but `lib.rs:106-111` still says `not yet driving the live UI` and
   `mod.rs:1` still titles it `//! Shadow workflow-run authority`.
 - `restore_cohort_projection`: `lib.rs:61-66` `The sole source of truth driving the live UI's
-  aggregate summary toast`, but `mod.rs:29-34` / `projection.rs:39-44` still `//! # Shadow
-  mode … not driving the live UI`.
+aggregate summary toast`, but `mod.rs:29-34` / `projection.rs:39-44` still `//! # Shadow
+mode … not driving the live UI`.
 
 ## Recommendation
 

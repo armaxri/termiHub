@@ -46,8 +46,8 @@ so the "proactive" mitigation can itself silently no-op.
 - `deny.toml:21-25` — `yanked = "deny"`, described as "the headline gate".
 - `docs/ci-yanked-crate-runbook.md` — the recurrence table and the manual
   5-minute fix path; §"Should the yanked check be a hard gate" records the
-  fallback (split the yanked check into its own non-fail-fast job) as *not yet
-  adopted*.
+  fallback (split the yanked check into its own non-fail-fast job) as _not yet
+  adopted_.
 - `.github/workflows/cargo-update-lockfile.yml:38-45` — weekly cron + fixed
   automation branch; the runbook notes the `GITHUB_TOKEN`/CI-trigger caveat.
 

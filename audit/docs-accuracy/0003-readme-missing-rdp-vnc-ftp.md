@@ -39,7 +39,7 @@ user-facing completeness gap on the primary landing document, and it disagrees w
 - CHANGELOG.md:19 (the `[0.1.0]` summary) explicitly ships "SFTP/**FTP** file transfer, embedded
   servers, network diagnostics, and **remote-desktop (VNC/RDP)** connections".
 - Backends are compiled by default: `src-tauri/Cargo.toml:18` `default = ["ftp",
-  "mock-remote-desktop", "vnc", "rdp-sidecar"]`.
+"mock-remote-desktop", "vnc", "rdp-sidecar"]`.
 - Registered as real connection types: `src-tauri/src/session/registry.rs:96-116` (VNC → `vnc`,
   RDP → `rdp`); FTP backend in `core/src/backends/ftp/`.
 - VNC/RDP are gated behind the existing experimental-features flag (shown only when

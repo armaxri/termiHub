@@ -35,8 +35,8 @@ arm/cancel/cleanup dance independently:
 The individual pattern is trivial, but replicating it by hand is where the subtle
 bugs live: **leaked timers that outlive unmount**. There is direct in-repo evidence
 of this class of bug — `src/test/setup.ts:53` documents a shim that exists precisely
-because a component leaves a *"debounced `setTimeout` that its cleanup never
-clears… That leaked timer fires"* during tests. Each hand-rolled copy has to
+because a component leaves a _"debounced `setTimeout` that its cleanup never
+clears… That leaked timer fires"_ during tests. Each hand-rolled copy has to
 independently get flush-on-unmount and cancel-on-dep-change right; several combine
 it with manual "flush the last pending write" logic (SettingsPanel) that is easy to
 get wrong and is safety-relevant when it guards persistence of user settings.

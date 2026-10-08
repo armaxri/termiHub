@@ -56,7 +56,7 @@ sits in the tree.
   `src-tauri/src/terminal/xserver/types.rs:23` (`WINGET_INSTALL_VCXSRV_COMMAND`).
 - Unchecked counsel gate: `docs/licensing.md:11-16` "treat the VcXsrv download path as
   not-yet-cleared for release"; checklist `docs/licensing.md:79` `- [ ] **Counsel has confirmed**
-  …` remains unchecked — but there is no download path to clear.
+…` remains unchecked — but there is no download path to clear.
 
 ## Recommendation
 

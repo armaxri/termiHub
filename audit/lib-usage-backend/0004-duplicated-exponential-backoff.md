@@ -19,6 +19,7 @@ evidence:
 ---
 
 ## What
+
 At least **eight** separate places compute a capped exponential backoff delay,
 each hand-rolling the `base * factor^n` (clamped) math with its own give-up /
 jitter / cap semantics:
@@ -35,6 +36,7 @@ jitter / cap semantics:
 - `agent/src/monitoring/mod.rs:288` — bounded exponential re-open.
 
 ## Why it matters
+
 This is more a **code-duplication / maintenance** observation than a missing-crate
 one, and the honest buy-vs-build verdict is nuanced:
 
@@ -49,12 +51,14 @@ one, and the honest buy-vs-build verdict is nuanced:
   units. That divergence is the actual cost.
 
 ## Evidence
+
 See the `evidence` list; `rg "exponential backoff"` and `rg "saturating_pow|checked_shl|2u64.pow|powi"`
 across the three crates enumerate them. Note `agent_manager.rs:2626` uses
 `2u64.pow(attempt)` (non-saturating) — a large `attempt` would panic in a debug
 build, a latent sharp edge the others avoid.
 
 ## Recommendation
+
 **low priority; consolidate rather than add a crate.** Extract one small internal
 helper — e.g. `termihub_core::backoff::capped_exponential(attempt, base, factor,
 cap, jitter)` returning a `Duration` — and route the ad-hoc call sites through it
@@ -63,7 +67,7 @@ shared delay fn). This removes the overflow-handling divergence and the
 `2u64.pow` panic edge with no new dependency.
 
 A crate (`backon`, `tokio-retry`, `exponential-backoff`) is **optional** and only
-worth it if the team also wants the retry *driver* (sleep + execute + give-up
+worth it if the team also wants the retry _driver_ (sleep + execute + give-up
 loop), which some sites hand-roll too — but those loops are entangled with
 domain state (session lifecycle, tunnel redrive), so keeping the driver in-house
 and sharing only the delay math is the pragmatic call.

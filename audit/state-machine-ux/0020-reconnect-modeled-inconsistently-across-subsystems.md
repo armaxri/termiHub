@@ -18,6 +18,7 @@ evidence:
 ---
 
 ## What
+
 The same underlying event — a transport drop and its recovery — is modeled with at least
 three materially different state vocabularies, plus two adjacent parallel machines, authored
 by different migration phases and stitched together only informally:
@@ -39,6 +40,7 @@ Adjacent parallel machines: tunnels `TunnelStatus{…,error}` (`tunnel.ts:76`), 
 `TerminalAutoReconnectState` loop (`src/types/terminal.ts:215`).
 
 ## Why it matters
+
 - **Correctness:** #3 cannot represent `SessionLost`, so the primary compact status indicator
   lies about lost sessions (SM-011). No single source stitches #2 (the richest) into #3 (what
   the UI reads).
@@ -51,10 +53,12 @@ Adjacent parallel machines: tunnels `TunnelStatus{…,error}` (`tunnel.ts:76`), 
   what is conceptually one "last-poll-succeeded" signal (`OpenConnectionsModal.tsx:1164-1177`).
 
 ## Evidence
+
 See the six evidence pointers above; grep confirms `remoteStates` is never a region and no
 `setRemoteState` call exists on the `SessionLost`/`Failed` paths.
 
 ## Recommendation
+
 Converge on one canonical connection-lifecycle vocabulary and one backoff/retry policy shared
 by session, agent, tunnel, monitoring, and remote-desktop (a single enum + one
 `reconnect_backoff` engine, region-authoritative). As the concrete first step, render every

@@ -34,8 +34,8 @@ The flat sidebars re-implement the same stateful logic inline rather than sharin
 - **Import-from-file flow.** `MacroSidebar.tsx:150-167`, `WorkflowSidebar.tsx:193-225`,
   `WorkspaceSidebar.tsx:121-139` — same `open()` → `readTextFile()` → count-toast structure.
 - **Delete-confirm machinery.** Every sidebar re-implements `pendingDelete` useState + `handleDelete`
-  + `handleConfirmDelete` + a ConfirmDialog: TunnelSidebar.tsx:36,108-115, MacroSidebar.tsx:59,169-189,
-  WorkflowSidebar.tsx:83,227-247, WorkspaceSidebar.tsx:30,59-81, EmbeddedServerSidebar.tsx:48,117-141.
+  - `handleConfirmDelete` + a ConfirmDialog: TunnelSidebar.tsx:36,108-115, MacroSidebar.tsx:59,169-189,
+    WorkflowSidebar.tsx:83,227-247, WorkspaceSidebar.tsx:30,59-81, EmbeddedServerSidebar.tsx:48,117-141.
 
 ## Why it matters
 

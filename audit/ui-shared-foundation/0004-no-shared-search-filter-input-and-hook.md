@@ -26,7 +26,7 @@ evidence:
 At least ~15 components implement their own "search box + query state + filter" UI. There is a
 shared **filter/match logic** layer in `src/utils/` (`connectionSearch.ts`, `agentTreeSearch.ts`,
 `connectionSearch`) and shared **result-list keyboard nav** hooks (`useRovingListNav`,
-`useFlatRovingNav`), but there is **no shared search-*input* primitive** and no shared hook that
+`useFlatRovingNav`), but there is **no shared search-_input_ primitive** and no shared hook that
 bundles "query state + debounce + clear button + filtered result". So each feature re-hand-rolls:
 
 - a raw `<input>` (often with a magnifier icon + clear button) styled per-component, and

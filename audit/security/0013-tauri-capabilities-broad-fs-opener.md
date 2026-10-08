@@ -37,7 +37,7 @@ access, and to open arbitrary paths — no directory allowlist. The CSP also car
 ## Why it matters
 
 Defense-in-depth. The app's own commands mediate most file access, but these
-capability grants are a *parallel*, unscoped path straight from webview JS to the
+capability grants are a _parallel_, unscoped path straight from webview JS to the
 OS via the Tauri core plugins. If any XSS or a compromised frontend dependency ever
 runs in the webview (none found today — see SEC-012 — but this is the layer that
 contains such a compromise), unscoped `fs:allow-read-text-file` /

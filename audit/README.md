@@ -12,7 +12,7 @@ closed independently.
 
 ## Layout
 
-```
+```text
 audit/
   README.md            <- this file
   AUDIT-PLAN.md        <- the expert roster + live status of each angle

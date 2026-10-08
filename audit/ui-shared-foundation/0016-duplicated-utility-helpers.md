@@ -28,7 +28,7 @@ Several small display/logic helpers are copy-pasted between sibling features ins
 - **`slugify*`** — `MacroSidebar.tsx:25-31` `slugifyMacroName` ≡ `WorkflowSidebar.tsx:29-35` `slugifyWorkflowName`.
 - **ID generation** — `MacroSidebar.tsx:16-22` `generateMacroId()` ≡ `WorkflowSidebar.tsx:20-26`
   `generateWorkflowId()` (same `crypto.randomUUID()` + fallback), while `EmbeddedServerSidebar.tsx:76`
-  and `TunnelSidebar.tsx:55` inline a *different* ad-hoc scheme (`` `srv-${Date.now()}-…` ``) — two
+  and `TunnelSidebar.tsx:55` inline a _different_ ad-hoc scheme (`` `srv-${Date.now()}-…` ``) — two
   competing id conventions.
 - **`formatBytes`** — `EmbeddedServerItem.tsx:43-47` defines a local copy even though
   `utils/formatters.ts:4` exports one (which `TunnelListItem.tsx:20` correctly imports).
