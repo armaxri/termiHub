@@ -35,6 +35,7 @@ use crate::plugin::HostError;
 
 use super::client::SandboxedPlugin;
 use super::exit::{auto_disable_reason, CrashBudget, RunnerExitCause, DEFAULT_CRASH_WINDOW};
+use super::rate::OutputRateCap;
 use super::watchdog::WatchdogConfig;
 
 /// Default idle time after which a session-free runner is shut down.
@@ -57,6 +58,9 @@ pub struct PluginRunnerConfig {
     pub watchdog: WatchdogConfig,
     /// A plugin's crash budget resets after this long without a crash.
     pub crash_window: Duration,
+    /// The cap on the runner's output across its sessions (#4203); exceeding
+    /// it kills the runner.
+    pub output_rate_cap: OutputRateCap,
     /// Confine each runner with the OS sandbox (#4186). On by default; tests
     /// that need an unconfined runner turn it off.
     pub os_sandbox: bool,
@@ -70,7 +74,8 @@ impl PluginRunnerConfig {
     /// Run plugins through `runner_path` with the concept's defaults: 5 min
     /// idle reap, 512 MiB / 256 descriptors / no child processes, ping every
     /// 5 s with a 10 s timeout, a 1 GiB resident-size poll on macOS, a
-    /// 10-minute crash window, and the OS sandbox on.
+    /// 10-minute crash window, a 512 MiB/s output cap (1 GiB burst), and the
+    /// OS sandbox on.
     #[must_use]
     pub fn new(runner_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -79,6 +84,7 @@ impl PluginRunnerConfig {
             limits: ResourceLimits::plugin_defaults(),
             watchdog: WatchdogConfig::default(),
             crash_window: DEFAULT_CRASH_WINDOW,
+            output_rate_cap: OutputRateCap::default(),
             os_sandbox: true,
             sandbox_policy_override: None,
         }
@@ -118,6 +124,13 @@ impl PluginRunnerConfig {
     #[must_use]
     pub fn with_watchdog(mut self, watchdog: WatchdogConfig) -> Self {
         self.watchdog = watchdog;
+        self
+    }
+
+    /// Override the output rate cap (tests use a small one).
+    #[must_use]
+    pub fn with_output_rate_cap(mut self, cap: OutputRateCap) -> Self {
+        self.output_rate_cap = cap;
         self
     }
 }

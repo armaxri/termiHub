@@ -10,6 +10,7 @@ use termihub_plugin_runner::ipc::{
 use termihub_plugin_runner::sandbox::denial::denial_log;
 
 use super::*;
+use crate::plugin::sandbox::OutputRateCap;
 
 fn shared() -> Arc<Shared> {
     Shared::new(
@@ -322,4 +323,60 @@ fn out_of_memory_evidence_beats_a_racing_hang_verdict() {
         prefer_memory_evidence(RunnerExitCause::InvalidData { detail: "x".into() }, true),
         RunnerExitCause::InvalidData { .. }
     ));
+}
+
+#[test]
+fn output_beyond_the_rate_cap_across_sessions_is_a_violation() {
+    let shared = shared();
+    // A rate far below what the test can produce: only the burst counts.
+    shared.set_output_rate_cap(OutputRateCap {
+        bytes_per_second: 1,
+        burst_bytes: 1000,
+    });
+    let (a, _alive_a, _rx_a) = register(&shared);
+    let (b, _alive_b, _rx_b) = register(&shared);
+    let output = |session_id, len| Message::Output {
+        session_id,
+        data: vec![b'x'; len],
+    };
+    // The cap is per runner: two sessions share one budget.
+    shared.dispatch(output(a, 600)).unwrap();
+    shared.dispatch(output(b, 400)).unwrap();
+    let err = shared.dispatch(output(b, 10)).unwrap_err();
+    assert!(err.contains("output rate cap"), "{err}");
+}
+
+#[test]
+fn undelivered_output_counts_against_the_cap() {
+    let shared = shared();
+    shared.set_output_rate_cap(OutputRateCap {
+        bytes_per_second: 1,
+        burst_bytes: 100,
+    });
+    // A retired session's late output is dropped, but still metered: a
+    // runner cannot flood the host through a session nobody reads.
+    let (id, _alive, _rx) = register(&shared);
+    shared.retire(id);
+    let flood = || Message::Output {
+        session_id: id,
+        data: vec![0; 60],
+    };
+    shared.dispatch(flood()).unwrap();
+    assert!(shared.dispatch(flood()).is_err());
+}
+
+#[test]
+fn the_default_cap_lets_a_large_burst_through() {
+    let shared = shared();
+    let (id, _alive, mut rx) = register(&shared);
+    // 64 MiB at once (the perf gate's 256 MiB run is chunked the same way).
+    for _ in 0..1024 {
+        shared
+            .dispatch(Message::Output {
+                session_id: id,
+                data: vec![0; 64 * 1024],
+            })
+            .unwrap();
+        let _ = rx.try_recv();
+    }
 }

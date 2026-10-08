@@ -12,8 +12,9 @@
 //!   after an idle reap or a crash, and stops it with a bounded sequence
 //!   (cancel → close every session → `Shutdown` → kill) on unload.
 //! * [`SandboxedPlugin`] — one running runner: handshake, frame validation
-//!   (the runner is an untrusted peer; any violation kills it), session
-//!   multiplexing by host-assigned id.
+//!   (the runner is an untrusted peer; any violation kills it, and so does
+//!   output beyond its [`OutputRateCap`], #4203), session multiplexing by
+//!   host-assigned id.
 //! * [`SandboxedSession`] — the out-of-process counterpart of
 //!   `LoadedBackend` behind `PluginConnectionType`.
 //!
@@ -54,6 +55,7 @@ mod locate;
 mod peer;
 mod policy;
 mod proxy;
+mod rate;
 mod session;
 mod spawn;
 mod watchdog;
@@ -66,6 +68,7 @@ pub(crate) use handle::AutoDisableHook;
 pub use handle::{PluginHealth, PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
 pub use locate::{default_runner_path, log_bundled_runner, RUNNER_BIN_NAME, RUNNER_MISSING};
 pub use policy::sandbox_policy;
+pub use rate::OutputRateCap;
 pub use session::SandboxedSession;
 pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
 pub use termihub_plugin_runner::sandbox::{layer, Isolation, SandboxPolicy};

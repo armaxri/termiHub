@@ -29,8 +29,9 @@ export-init = []
 # PluginInfo prefix, never reads the 1.1 host context.
 abi-1-0 = []
 # Crash and hang commands for the plugin-runner isolation tests (#4184): input
-# `!segv`, `!abort`, `!spin`, `!alloc`, `!garbage`, `!fds`, `!spawn` make the
-# plugin misbehave on purpose. Test-only; never part of a shipped plugin.
+# `!segv`, `!abort`, `!spin`, `!alloc`, `!garbage`, `!fds`, `!spawn`, `!fdstat`,
+# `!flood` make the plugin misbehave on purpose (#4203 adds the last two).
+# Test-only; never part of a shipped plugin.
 crash-commands = []
 # Escape-probe commands for the OS-sandbox tests (#4186, shared with #4185 /
 # #4187): input `?probe <op> [arg]` tries one operation the sandbox must deny

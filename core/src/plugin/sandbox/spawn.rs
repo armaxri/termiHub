@@ -1,9 +1,11 @@
 //! Host-side spawn of a `termihub-plugin-runner` process (#4182).
 //!
 //! * **Transport (Unix):** `UnixStream::pair()`; the runner's end is inherited
-//!   as descriptor 3 and nothing else is passed — every other descriptor the
-//!   host opens is close-on-exec (std's default). There is no filesystem
-//!   rendezvous path, so nothing can squat it.
+//!   as descriptor 3 and nothing else is passed. Std opens descriptors
+//!   close-on-exec, but a library (or a plugin loaded in process) may not, so
+//!   the forked child marks every descriptor above 3 close-on-exec before the
+//!   `exec` (#4203): the runner starts holding exactly 0–3. There is no
+//!   filesystem rendezvous path, so nothing can squat it.
 //! * **Transport (Windows, #4201):** a private single-instance named pipe
 //!   (`termihub_plugin_runner::ipc::pipe::PipeStream`); the
 //!   runner's end is the only handle it inherits besides its standard handles
@@ -137,8 +139,9 @@ fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Sp
         // for a plugin's allocation failure under the memory limit.
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
-    // SAFETY: the closure runs in the forked child before `exec` and only calls
-    // the async-signal-safe `dup2` / `fcntl` on descriptors it was handed.
+    // SAFETY: the closure runs in the forked child before `exec` and only makes
+    // async-signal-safe system calls (`dup2`, `fcntl`, `getrlimit`,
+    // `close_range`) on descriptors of its own process; it allocates nothing.
     unsafe {
         command.pre_exec(move || {
             if runner_fd == IPC_FD {
@@ -150,6 +153,7 @@ fn start(exec_path: &Path, runner: &Path, _limits: &ResourceLimits) -> Result<Sp
                 // `dup2` leaves the new descriptor without close-on-exec.
                 return Err(std::io::Error::last_os_error());
             }
+            cloexec_above(IPC_FD);
             Ok(())
         });
     }
@@ -236,6 +240,195 @@ fn spawn_command(command: std::process::Command) -> std::io::Result<std::process
 #[cfg(all(unix, not(target_os = "linux")))]
 fn spawn_command(mut command: std::process::Command) -> std::io::Result<std::process::Child> {
     command.spawn()
+}
+
+/// Mark every descriptor above `last_kept` close-on-exec, in the forked child
+/// before `exec` (#4203): whatever the host process holds without
+/// close-on-exec — a library's descriptor, a racing `fork` elsewhere — never
+/// reaches the runner.
+///
+/// Marking instead of closing keeps the descriptors `exec` itself still needs:
+/// std's close-on-exec error pipe, and on Linux the pinned runner image that
+/// is executed as `/proc/self/fd/<n>` ([`super::locate`]). `exec` then closes
+/// them all.
+///
+/// Linux uses `close_range(CLOSE_RANGE_CLOEXEC)` (5.11+), else walks
+/// `/proc/self/fd`; macOS lists the open descriptors with `proc_pidinfo`.
+/// Either falls back to a loop up to the descriptor limit (slow when that
+/// limit is high, hence last).
+///
+/// # Safety
+///
+/// Async-signal-safe: system calls only, no allocation (buffers are on the
+/// stack); callable between `fork` and `exec`.
+#[cfg(unix)]
+unsafe fn cloexec_above(last_kept: libc::c_int) {
+    let first = last_kept.saturating_add(1);
+    // SAFETY: forwarded caller contract.
+    if unsafe { cloexec_listed(first) } {
+        return;
+    }
+    // SAFETY: `fcntl` on a descriptor that is not open fails with `EBADF`,
+    // which is ignored.
+    unsafe {
+        for fd in first..descriptor_ceiling() {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+    }
+}
+
+/// Linux: `close_range(first, ~0, CLOSE_RANGE_CLOEXEC)`, or else every
+/// descriptor listed in `/proc/self/fd` (read with raw `getdents64` into a
+/// stack buffer, [`cloexec_proc_fd`]). `false` when neither is available.
+///
+/// # Safety
+///
+/// As [`cloexec_above`].
+#[cfg(target_os = "linux")]
+unsafe fn cloexec_listed(first: libc::c_int) -> bool {
+    // SAFETY: a plain system call on this process's descriptor table.
+    let ranged = unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            libc::c_uint::try_from(first).unwrap_or(libc::c_uint::MAX),
+            libc::c_uint::MAX,
+            libc::CLOSE_RANGE_CLOEXEC,
+        )
+    };
+    // SAFETY: forwarded caller contract.
+    ranged == 0 || unsafe { cloexec_proc_fd(first) }
+}
+
+/// Linux without `close_range`: mark every descriptor listed in
+/// `/proc/self/fd` from `first` on. `false` when `/proc` cannot be read.
+///
+/// # Safety
+///
+/// As [`cloexec_above`].
+#[cfg(target_os = "linux")]
+unsafe fn cloexec_proc_fd(first: libc::c_int) -> bool {
+    // SAFETY: the path is a NUL-terminated literal.
+    let dir = unsafe {
+        libc::open(
+            c"/proc/self/fd".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dir < 0 {
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    let mut complete = false;
+    loop {
+        // SAFETY: `buf` is writable for its whole length.
+        let read = unsafe { libc::syscall(libc::SYS_getdents64, dir, buf.as_mut_ptr(), buf.len()) };
+        let Ok(read) = usize::try_from(read) else {
+            break;
+        };
+        if read == 0 {
+            complete = true;
+            break;
+        }
+        // `struct linux_dirent64`: d_ino (8), d_off (8), d_reclen (2),
+        // d_type (1), then the NUL-terminated name.
+        let mut at = 0;
+        while at + 19 < read {
+            let reclen = usize::from(u16::from_ne_bytes([buf[at + 16], buf[at + 17]]));
+            if reclen == 0 {
+                break;
+            }
+            let fd = parse_fd(&buf[at + 19..(at + reclen).min(read)]);
+            if let Some(fd) = fd.filter(|&fd| fd >= first && fd != dir) {
+                // SAFETY: `fcntl` on one of this process's descriptors.
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+            }
+            at += reclen;
+        }
+    }
+    // SAFETY: `dir` is the descriptor opened above.
+    unsafe { libc::close(dir) };
+    complete
+}
+
+/// The descriptor number a `/proc/self/fd` entry name spells (up to its NUL).
+#[cfg(target_os = "linux")]
+fn parse_fd(name: &[u8]) -> Option<libc::c_int> {
+    let mut fd: libc::c_int = 0;
+    let mut digits = 0;
+    for &b in name.iter().take_while(|&&b| b != 0) {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        fd = fd
+            .checked_mul(10)?
+            .checked_add(libc::c_int::from(b - b'0'))?;
+        digits += 1;
+    }
+    (digits > 0).then_some(fd)
+}
+
+/// macOS: every open descriptor, listed by `proc_pidinfo(PROC_PIDLISTFDS)`
+/// into a stack buffer. `false` when the list does not fit (or fails).
+///
+/// # Safety
+///
+/// As [`cloexec_above`].
+#[cfg(target_os = "macos")]
+unsafe fn cloexec_listed(first: libc::c_int) -> bool {
+    const SLOTS: usize = 2048;
+    let mut fds = [libc::proc_fdinfo {
+        proc_fd: 0,
+        proc_fdtype: 0,
+    }; SLOTS];
+    let size = std::mem::size_of_val(&fds);
+    // SAFETY: `fds` is writable for `size` bytes; `getpid` is the child's.
+    let listed = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDLISTFDS,
+            0,
+            fds.as_mut_ptr().cast(),
+            libc::c_int::try_from(size).unwrap_or(libc::c_int::MAX),
+        )
+    };
+    let Ok(listed) = usize::try_from(listed) else {
+        return false;
+    };
+    // A full buffer may have been truncated: let the caller loop instead.
+    if listed == 0 || listed >= size {
+        return false;
+    }
+    for info in &fds[..listed / std::mem::size_of::<libc::proc_fdinfo>()] {
+        if info.proc_fd >= first {
+            // SAFETY: `fcntl` on one of this process's descriptors.
+            unsafe { libc::fcntl(info.proc_fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
+    }
+    true
+}
+
+/// No listing on other Unixes: the caller loops.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+unsafe fn cloexec_listed(_first: libc::c_int) -> bool {
+    false
+}
+
+/// Upper bound (exclusive) of the fallback loop: the soft `RLIMIT_NOFILE`,
+/// capped so an unlimited limit cannot make the child spin.
+#[cfg(unix)]
+fn descriptor_ceiling() -> libc::c_int {
+    const CAP: libc::rlim_t = 1 << 20;
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `limit` is a valid, writable `rlimit`.
+    let soft = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        limit.rlim_cur.min(CAP)
+    } else {
+        CAP
+    };
+    libc::c_int::try_from(soft).unwrap_or(libc::c_int::MAX)
 }
 
 /// Send/receive buffer size requested for each end of the channel.
@@ -333,6 +526,81 @@ mod tests {
             Err(e) => panic!("pinned spawn failed: {e}"),
         };
         assert!(child.wait().unwrap().success());
+    }
+
+    /// Whether a shell started with `pre_exec` still holds descriptor `fd`
+    /// (a high number the shell never uses itself).
+    #[cfg(unix)]
+    fn child_sees(fd: libc::c_int, pre_exec: Option<unsafe fn(libc::c_int)>) -> bool {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("[ -e /dev/fd/{fd} ] && echo SEEN || echo GONE"));
+        if let Some(sweep) = pre_exec {
+            // SAFETY: `sweep` is async-signal-safe (see `cloexec_above`).
+            unsafe {
+                command.pre_exec(move || {
+                    sweep(IPC_FD);
+                    Ok(())
+                });
+            }
+        }
+        let out = command.output().expect("sh runs");
+        match String::from_utf8_lossy(&out.stdout).trim() {
+            "SEEN" => true,
+            "GONE" => false,
+            other => panic!("unexpected probe output {other:?}"),
+        }
+    }
+
+    /// A descriptor the host holds without close-on-exec, at a number no
+    /// shell uses for itself.
+    #[cfg(unix)]
+    fn stray_descriptor() -> std::os::fd::OwnedFd {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let file = tempfile::tempfile().unwrap();
+        // SAFETY: `F_DUPFD` returns a new descriptor (close-on-exec clear)
+        // that the `OwnedFd` takes ownership of.
+        unsafe {
+            let fd = libc::fcntl(file.as_raw_fd(), libc::F_DUPFD, 400);
+            assert!(fd >= 400, "F_DUPFD failed");
+            std::os::fd::OwnedFd::from_raw_fd(fd)
+        }
+    }
+
+    #[cfg(unix)]
+    use termihub_plugin_runner::ipc::IPC_FD;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_descriptor_sweep_hides_stray_descriptors_from_the_child() {
+        use std::os::fd::AsRawFd;
+        let stray = stray_descriptor();
+        let fd = stray.as_raw_fd();
+        // Control: without the sweep the child inherits it.
+        assert!(child_sees(fd, None), "the probe cannot see the stray fd");
+        assert!(!child_sees(fd, Some(cloexec_above)));
+        #[cfg(target_os = "linux")]
+        {
+            // The pre-5.11 path, exercised directly.
+            unsafe fn proc_walk(first: libc::c_int) {
+                // SAFETY: forwarded caller contract.
+                assert!(unsafe { cloexec_proc_fd(first + 1) });
+            }
+            assert!(!child_sees(fd, Some(proc_walk)));
+            assert_eq!(parse_fd(b"123\0"), Some(123));
+            assert_eq!(parse_fd(b".\0"), None);
+            assert_eq!(parse_fd(b"99999999999999\0"), None);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            unsafe fn listed(first: libc::c_int) {
+                // SAFETY: forwarded caller contract.
+                assert!(unsafe { cloexec_listed(first + 1) });
+            }
+            assert!(!child_sees(fd, Some(listed)));
+        }
     }
 
     /// Windows: a copy of `where.exe` stands in for the runner (it refuses the
