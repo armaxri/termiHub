@@ -102,6 +102,17 @@ fn sample_messages() -> Vec<Message> {
             level: 3,
             message: "hi".into(),
             truncated: false,
+            denied: None,
+        }),
+        Message::Log(Log {
+            session_id: None,
+            level: 2,
+            message: "Denied{syscall: socket}".into(),
+            truncated: false,
+            denied: Some(SyscallDenial {
+                syscall: "socket".into(),
+                count: 3,
+            }),
         }),
         Message::Ping(Heartbeat { nonce: 9 }),
         Message::Pong(Heartbeat { nonce: 9 }),
@@ -644,14 +655,18 @@ fn arb_message() -> impl Strategy<Value = Message> {
             proptest::option::of(any::<u32>()),
             any::<u32>(),
             ".{0,200}",
-            any::<bool>()
+            any::<bool>(),
+            proptest::option::of((".{0,32}", any::<u32>()))
         )
-            .prop_map(|(session_id, level, message, truncated)| Message::Log(Log {
-                session_id,
-                level,
-                message,
-                truncated,
-            })),
+            .prop_map(|(session_id, level, message, truncated, denied)| {
+                Message::Log(Log {
+                    session_id,
+                    level,
+                    message,
+                    truncated,
+                    denied: denied.map(|(syscall, count)| SyscallDenial { syscall, count }),
+                })
+            }),
         proptest::option::of(any::<u32>())
             .prop_map(|session_id| Message::Cancel(Cancel { session_id })),
         any::<u64>().prop_map(|nonce| Message::Ping(Heartbeat { nonce })),

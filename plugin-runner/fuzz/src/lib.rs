@@ -16,7 +16,7 @@ use termihub_plugin_runner::ipc::{
     Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
     CreateSession, FrameKind, FrameReader, Heartbeat, Hello, LoadFailed, Loaded, Log, Message,
     ProtocolError, Resize, ResourceLimits, SandboxReport, Sender, SessionError, SessionFailed,
-    SessionRef, StreamAck, StreamChunk, StreamTransport, WireError, WireToolchain,
+    SessionRef, StreamAck, StreamChunk, StreamTransport, SyscallDenial, WireError, WireToolchain,
 };
 
 /// Read and decode every frame in `data` as the side `me` (the receiver).
@@ -271,6 +271,14 @@ pub fn message_of_kind(u: &mut Unstructured<'_>, kind: FrameKind) -> Result<Mess
             level: u.arbitrary()?,
             message: u.arbitrary()?,
             truncated: u.arbitrary()?,
+            denied: if u.arbitrary()? {
+                Some(SyscallDenial {
+                    syscall: u.arbitrary()?,
+                    count: u.arbitrary()?,
+                })
+            } else {
+                None
+            },
         }),
         FrameKind::Ping => Message::Ping(Heartbeat {
             nonce: u.arbitrary()?,
