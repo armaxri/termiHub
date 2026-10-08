@@ -282,10 +282,14 @@ ts-rs = "12"
 [target.'cfg(windows)'.dev-dependencies]
 # `tests/sideloaded_conpty.rs` (#4130): preload the staged `conpty.dll` by full
 # path (`LoadLibraryW`) and turn on VT output in its PTY child (console APIs).
+# `tests/plugin_runner_sandbox.rs` (#4187): a canary named pipe the sandboxed
+# plugin must not open.
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
 ] }
 
 [features]
