@@ -1,7 +1,7 @@
 name: Plugin Sandbox Hardening (nightly)
 
 # Phase 8 of the plugin OS-sandbox rollout (#4190, concept
-# docs/concepts/backlog/plugin-os-sandbox.html -> "Testing"):
+# docs/concepts/implemented/plugin-os-sandbox.html -> "Testing"):
 #
 # * plugin-ipc-fuzz — the cargo-fuzz targets over the host <-> plugin-runner
 #   frame protocol (plugin-runner/fuzz/), 60 s each, on a corpus cached between
