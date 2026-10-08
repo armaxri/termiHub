@@ -371,10 +371,12 @@ fn bridge_result(u: &mut Unstructured<'_>) -> Result<BridgeResult> {
         },
         1 => BridgeResult::Connection {
             conn_id: u.arbitrary()?,
-            transport: if bool::arbitrary(u)? {
-                StreamTransport::HandlePassed
-            } else {
-                StreamTransport::Proxy
+            transport: match u.int_in_range(0..=2u8)? {
+                0 => StreamTransport::HandlePassed,
+                1 => StreamTransport::HandleDuplicated {
+                    handle: u.arbitrary()?,
+                },
+                _ => StreamTransport::Proxy,
             },
         },
         2 => BridgeResult::Data {
