@@ -1004,9 +1004,7 @@ plugin-side migration callback in 0.1.
   already ship the runner next to the app and verify it before use, but do not
   run plugins through it yet. Windows runs the runner too: it talks to
   termiHub over a private named pipe and lives in a job object that ends it
-  with termiHub; an approved connection is relayed through termiHub there
-  instead of being handed over (until
-  [#4219](https://github.com/armaxri/termiHub/issues/4219)). The capability
+  with termiHub. The capability
   bridge works unchanged there: the runner forwards each call to termiHub, which applies the same permission, path-scope and
   connection-policy checks and, for an approved `open_connection`, connects
   and hands your plugin the connected socket. Large `read_file` / `write_file`
@@ -1056,7 +1054,10 @@ plugin-side migration callback in 0.1.
   nothing else — not your user profile, not `HKCU\Software`, no network, no
   child processes (`ERROR_CHILD_PROCESS_BLOCKED`). Winsock cannot start there,
   so `std::net` panics on first use: reach the network only through the
-  bridge. Settings → Plugins shows each plugin's isolation, process status and
+  bridge. The bridge's connected socket still reaches the runner directly:
+  termiHub duplicates it into the runner, which reads and writes it as a plain
+  handle, so use it only through the stream the bridge returns (its `Read` /
+  `Write`), never by converting it to a `std::net` socket. Settings → Plugins shows each plugin's isolation, process status and
   access summary; a crash ends the plugin's sessions with an overlay that
   names the cause, and a refused bridge request shows a rate-limited toast
   plus a Log Viewer entry.
