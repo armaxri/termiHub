@@ -47,6 +47,18 @@ describe("agentGraphicalTunnel (#3241)", () => {
     expect(desktopTypes[1].schema.groups).toHaveLength(2);
   });
 
+  it("drops the linked SSH file route, which only applies to direct connections (#4194)", () => {
+    const vnc = type("vnc", true, ["fileTransfer"]);
+    vnc.schema.groups[0].fields = [
+      "fileTransfer",
+      "fileTransferVia",
+      "fileTransferViaHostWarning",
+    ].map((key) => ({ key, label: key, fieldType: { type: "text" }, required: false }));
+    const merged = withAgentTunnelledTypes([], [vnc]);
+    expect(merged[0].schema.groups[0].fields.map((f) => f.key)).toEqual(["fileTransfer"]);
+    expect(vnc.schema.groups[0].fields).toHaveLength(3);
+  });
+
   it("offers nothing extra when this build has no graphical types", () => {
     const agentTypes = [type("local", false)];
     expect(withAgentTunnelledTypes(agentTypes, [type("ssh", false)])).toEqual(agentTypes);

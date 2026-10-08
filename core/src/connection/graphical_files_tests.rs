@@ -6,6 +6,7 @@ fn ssh(host: &str, target: &str) -> FileSideChannel {
         host: host.to_string(),
         user: "arne".to_string(),
         same_host: is_same_host(target, host),
+        linked_connection: None,
     }
 }
 
@@ -15,7 +16,14 @@ fn agent(host: &str, target: &str) -> FileSideChannel {
         host: host.to_string(),
         user: "pi".to_string(),
         same_host: is_same_host(target, host),
+        linked_connection: None,
     }
+}
+
+/// A saved SSH connection named `Tiger` on `host`, linked to a direct VNC
+/// connection to `vnc_host` (#4194).
+fn linked(vnc_host: &str, host: &str) -> FileSideChannel {
+    linked_ssh_channel(vnc_host, host, "arne", "Tiger")
 }
 
 const ON: FileChannelPolicy = FileChannelPolicy {
@@ -25,7 +33,8 @@ const ON: FileChannelPolicy = FileChannelPolicy {
 
 #[test]
 fn tunnel_to_loopback_is_the_desktop_host() {
-    let channel = resolve_file_side_channel(ON, None, Some(ssh("tiger-box", "localhost"))).unwrap();
+    let channel =
+        resolve_file_side_channel(ON, None, Some(ssh("tiger-box", "localhost")), None).unwrap();
     assert_eq!(channel.kind, FileSideChannelKind::Ssh);
     assert_eq!(channel.host, "tiger-box");
     assert!(channel.same_host);
@@ -34,7 +43,7 @@ fn tunnel_to_loopback_is_the_desktop_host() {
 #[test]
 fn tunnel_through_a_gateway_is_not_the_desktop_host() {
     let channel =
-        resolve_file_side_channel(ON, None, Some(ssh("bastion.corp", "10.0.4.17"))).unwrap();
+        resolve_file_side_channel(ON, None, Some(ssh("bastion.corp", "10.0.4.17")), None).unwrap();
     assert_eq!(channel.kind, FileSideChannelKind::Ssh);
     assert_eq!(
         channel.host, "bastion.corp",
@@ -45,7 +54,8 @@ fn tunnel_through_a_gateway_is_not_the_desktop_host() {
 
 #[test]
 fn agent_route_resolves_to_the_agent_host() {
-    let channel = resolve_file_side_channel(ON, Some(agent("lab-pi", "127.0.0.1")), None).unwrap();
+    let channel =
+        resolve_file_side_channel(ON, Some(agent("lab-pi", "127.0.0.1")), None, None).unwrap();
     assert_eq!(channel.kind, FileSideChannelKind::Agent);
     assert_eq!(channel.host, "lab-pi");
     assert!(channel.same_host);
@@ -57,6 +67,7 @@ fn agent_wins_over_the_tunnel() {
         ON,
         Some(agent("lab-pi", "localhost")),
         Some(ssh("tiger-box", "localhost")),
+        None,
     )
     .unwrap();
     assert_eq!(channel.kind, FileSideChannelKind::Agent);
@@ -66,9 +77,67 @@ fn agent_wins_over_the_tunnel() {
 #[test]
 fn direct_connection_has_no_route() {
     assert_eq!(
-        resolve_file_side_channel(ON, None, None),
+        resolve_file_side_channel(ON, None, None, None),
         Err(FileChannelUnavailable::NoRoute)
     );
+}
+
+#[test]
+fn linked_ssh_connection_is_the_route_of_a_direct_connection() {
+    let channel =
+        resolve_file_side_channel(ON, None, None, Some(linked("tiger-box", "tiger-box"))).unwrap();
+    assert_eq!(
+        channel.kind,
+        FileSideChannelKind::Ssh,
+        "a linked route is SSH"
+    );
+    assert_eq!(channel.host, "tiger-box");
+    assert_eq!(channel.user, "arne");
+    assert_eq!(channel.linked_connection.as_deref(), Some("Tiger"));
+    assert!(channel.same_host);
+}
+
+#[test]
+fn agent_and_tunnel_both_win_over_a_linked_connection() {
+    let channel = resolve_file_side_channel(
+        ON,
+        Some(agent("lab-pi", "localhost")),
+        Some(ssh("tiger-box", "localhost")),
+        Some(linked("office-pc", "other-box")),
+    )
+    .unwrap();
+    assert_eq!(channel.kind, FileSideChannelKind::Agent, "agent first");
+    let channel = resolve_file_side_channel(
+        ON,
+        None,
+        Some(ssh("tiger-box", "localhost")),
+        Some(linked("office-pc", "other-box")),
+    )
+    .unwrap();
+    assert_eq!(channel.host, "tiger-box", "then the tunnel");
+    assert_eq!(channel.linked_connection, None);
+}
+
+#[test]
+fn linked_connection_on_another_host_is_not_the_desktop_host() {
+    let channel = linked("office-pc", "tiger-box");
+    assert_eq!(channel.host, "tiger-box", "labels name the real file host");
+    assert!(!channel.same_host);
+    // A direct VNC target is seen from this computer, so `localhost` is this
+    // computer — not the linked SSH host.
+    assert!(!linked("localhost", "tiger-box").same_host);
+    assert!(linked("Tiger-Box.", "tiger-box").same_host);
+    assert!(linked("127.0.0.1", "localhost").same_host);
+}
+
+#[test]
+fn named_hosts_compare_by_name_or_both_loopback() {
+    assert!(is_same_named_host("tiger-box", "TIGER-BOX"));
+    assert!(is_same_named_host("[::1]", "localhost"));
+    assert!(!is_same_named_host("localhost", "tiger-box"));
+    assert!(!is_same_named_host("tiger-box", "localhost"));
+    assert!(!is_same_named_host("office-pc", "tiger-box"));
+    assert!(!is_same_named_host("", ""), "an empty name is no host");
 }
 
 #[test]
@@ -78,7 +147,12 @@ fn view_only_is_refused_even_with_a_route() {
         view_only: true,
     };
     assert_eq!(
-        resolve_file_side_channel(policy, None, Some(ssh("tiger-box", "localhost"))),
+        resolve_file_side_channel(
+            policy,
+            None,
+            Some(ssh("tiger-box", "localhost")),
+            Some(linked("office-pc", "tiger-box"))
+        ),
         Err(FileChannelUnavailable::ViewOnly)
     );
 }
@@ -90,7 +164,12 @@ fn setting_off_is_refused_even_with_a_route() {
         view_only: true,
     };
     assert_eq!(
-        resolve_file_side_channel(policy, Some(agent("lab-pi", "localhost")), None),
+        resolve_file_side_channel(
+            policy,
+            Some(agent("lab-pi", "localhost")),
+            None,
+            Some(linked("office-pc", "tiger-box"))
+        ),
         Err(FileChannelUnavailable::Disabled),
         "off is reported before view-only"
     );
@@ -184,6 +263,16 @@ fn channel_serializes_camel_case() {
             "host": "tiger-box",
             "user": "arne",
             "sameHost": true,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(linked("office-pc", "tiger-box")).unwrap(),
+        serde_json::json!({
+            "kind": "ssh",
+            "host": "tiger-box",
+            "user": "arne",
+            "sameHost": false,
+            "linkedConnection": "Tiger",
         })
     );
     assert_eq!(

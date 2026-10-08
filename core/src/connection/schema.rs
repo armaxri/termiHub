@@ -439,6 +439,46 @@ mod tests {
     }
 
     #[test]
+    fn field_type_saved_connection_serialization() {
+        let ft = FieldType::SavedConnection {
+            connection_type: "ssh".to_string(),
+            match_host_field: Some("host".to_string()),
+        };
+        let json = serde_json::to_value(&ft).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "savedConnection",
+                "connectionType": "ssh",
+                "matchHostField": "host",
+            })
+        );
+        let back: FieldType = serde_json::from_value(
+            serde_json::json!({"type": "savedConnection", "connectionType": "ssh"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            back,
+            FieldType::SavedConnection { ref connection_type, match_host_field: None }
+                if connection_type == "ssh"
+        ));
+    }
+
+    #[test]
+    fn condition_same_name_as_round_trips_and_is_omitted_when_unset() {
+        let cond = Condition {
+            field: "host".to_string(),
+            equals: serde_json::json!(false),
+            same_name_as: Some("fileTransferVia.host".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&cond).unwrap();
+        assert_eq!(json["sameNameAs"], "fileTransferVia.host");
+        let plain = serde_json::to_value(Condition::default()).unwrap();
+        assert!(plain.get("sameNameAs").is_none());
+    }
+
+    #[test]
     fn field_type_file_path_serialization() {
         let ft = FieldType::FilePath {
             kind: FilePathKind::Directory,

@@ -3,17 +3,17 @@
  *
  * `core/tests/schema_defaults_golden.rs` replays the fixtures under
  * `core/tests/fixtures/golden/schema_defaults/` against the Rust port. This
- * suite replays the `isFieldVisible` and `isSameHost` files against the
- * TypeScript implementations, so the condition grammar (`sameHostAs`, `allOf`,
- * `anyOf`) and the same-host rule are pinned to one set of expected values on
- * both sides.
+ * suite replays the `isFieldVisible`, `isSameHost` and `namesSameHost` files
+ * against the TypeScript implementations, so the condition grammar
+ * (`sameHostAs`, `sameNameAs`, `allOf`, `anyOf`) and both host rules are pinned
+ * to one set of expected values on both sides.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SettingsField } from "@/types/schema";
 import { isFieldVisible } from "./schemaDefaults";
-import { isSameHost } from "./sameHost";
+import { isSameHost, isSameNamedHost } from "./sameHost";
 
 interface GoldenCase {
   name: string;
@@ -41,5 +41,11 @@ describe("isFieldVisible golden vectors", () => {
 describe("isSameHost golden vectors", () => {
   it.each(load("is_same_host.json").map((c) => [c.name, c] as const))("%s", (_, c) => {
     expect(isSameHost(c.input as string, c.args.fileHost as string)).toBe(c.expected);
+  });
+});
+
+describe("isSameNamedHost golden vectors", () => {
+  it.each(load("names_same_host.json").map((c) => [c.name, c] as const))("%s", (_, c) => {
+    expect(isSameNamedHost(c.input as string, c.args.otherHost as string)).toBe(c.expected);
   });
 });

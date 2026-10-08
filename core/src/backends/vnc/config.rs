@@ -1198,8 +1198,10 @@ mod tests {
         assert!(toggle.visible_when.is_none());
         for key in [
             "fileTransferDir",
+            "fileTransferVia",
             "fileTransferRouteNotice",
             "fileTransferHostWarning",
+            "fileTransferViaHostWarning",
         ] {
             let f = group.fields.iter().find(|f| f.key == key).unwrap();
             let cond = f.visible_when.as_ref().unwrap();
@@ -1262,6 +1264,96 @@ mod tests {
         assert_eq!(shown(off), (false, false));
         let warning_text = warning.description.as_deref().unwrap();
         assert!(warning_text.contains("{{sshHost}}") && warning_text.contains("{{host}}"));
+    }
+
+    /// #4194: a direct connection (no SSH tunnel) offers a "File transfer via"
+    /// picker of saved SSH connections, preselecting one on the VNC host, and
+    /// warns when the linked connection's host is not the VNC host. The
+    /// linked host reaches the condition as the form-derived
+    /// `fileTransferVia.host` value; core never derives it, so the warning stays
+    /// hidden here unless the value is supplied.
+    #[test]
+    fn direct_connection_offers_a_linked_ssh_file_route() {
+        use crate::connection::schema_defaults::is_field_visible;
+        let schema = vnc_settings_schema();
+        let group = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "fileTransfer")
+            .unwrap();
+        let field = |key: &str| group.fields.iter().find(|f| f.key == key).unwrap();
+        let picker = field("fileTransferVia");
+        assert_eq!(picker.label, "File transfer via");
+        assert!(!picker.required);
+        match &picker.field_type {
+            FieldType::SavedConnection {
+                connection_type,
+                match_host_field,
+            } => {
+                assert_eq!(connection_type, "ssh");
+                assert_eq!(match_host_field.as_deref(), Some("host"));
+            }
+            other => panic!("expected a saved-connection picker, got {other:?}"),
+        }
+        let warning = field("fileTransferViaHostWarning");
+        assert!(matches!(
+            warning.field_type,
+            FieldType::Notice {
+                severity: NoticeSeverity::Warning
+            }
+        ));
+        let shown = |settings: serde_json::Value| {
+            let map = settings.as_object().unwrap().clone();
+            (
+                is_field_visible(picker, &map),
+                is_field_visible(warning, &map),
+            )
+        };
+        let mismatch = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "office-pc", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        let info = field("fileTransferRouteNotice");
+        assert!(
+            !is_field_visible(info, mismatch.as_object().unwrap()),
+            "the warning replaces the info notice"
+        );
+        assert_eq!(shown(mismatch), (true, true));
+        let same = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "Tiger-Box", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert!(is_field_visible(info, same.as_object().unwrap()));
+        assert_eq!(shown(same), (true, false));
+        let loopback_desktop = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false,
+            "host": "localhost", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(shown(loopback_desktop), (true, true));
+        let unlinked = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": false, "host": "office-pc",
+        });
+        assert_eq!(shown(unlinked), (true, false));
+        let tunnelled = serde_json::json!({
+            "fileTransfer": true, "useSshTunnel": true,
+            "host": "office-pc", "fileTransferVia": "Lab/Tiger",
+            "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(
+            shown(tunnelled),
+            (false, false),
+            "only for direct connections"
+        );
+        let off = serde_json::json!({
+            "fileTransfer": false, "useSshTunnel": false,
+            "host": "office-pc", "fileTransferVia.host": "tiger-box",
+        });
+        assert_eq!(shown(off), (false, false));
+        let text = warning.description.as_deref().unwrap();
+        assert!(text.contains("{{fileTransferVia.host}}") && text.contains("{{host}}"));
     }
 
     #[test]

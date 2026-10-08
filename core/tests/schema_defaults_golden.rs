@@ -15,7 +15,7 @@ mod support;
 
 use serde_json::{json, Map, Value};
 use support::golden::{from, run_golden_suite};
-use termihub_core::connection::graphical_files::is_same_host;
+use termihub_core::connection::graphical_files::{is_same_host, is_same_named_host};
 use termihub_core::connection::schema::{SettingsField, SettingsSchema};
 use termihub_core::connection::schema_defaults::{
     build_defaults, filter_credential_fields, filter_runtime_options,
@@ -51,6 +51,10 @@ fn run_case(operation: &str, case: &Value) -> Value {
         "isSameHost" => json!(is_same_host(
             input.as_str().expect("target string"),
             args["fileHost"].as_str().expect("fileHost string"),
+        )),
+        "namesSameHost" => json!(is_same_named_host(
+            input.as_str().expect("host string"),
+            args["otherHost"].as_str().expect("otherHost string"),
         )),
         "findPasswordPromptInfo" => prompt_to_value(find_password_prompt_info(
             &from::<SettingsSchema>(input),

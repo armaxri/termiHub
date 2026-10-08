@@ -986,6 +986,35 @@ mod tests {
         assert!(!follow_jump_host_refs(&mut no_chain, &remap(&[("a", "b")])));
     }
 
+    /// #4194: a VNC connection's linked SSH file route (`fileTransferVia`)
+    /// follows the SSH connection's id like a jump-host reference does.
+    #[test]
+    fn follow_jump_host_refs_in_follows_a_linked_file_route() {
+        let mut conns = vec![
+            ssh_conn("Lab/Tiger", "Tiger", json!({ "host": "tiger-box" })),
+            ssh_conn(
+                "Desk",
+                "Desk",
+                json!({ "host": "office-pc", "fileTransferVia": "Lab/Tiger" }),
+            ),
+            ssh_conn(
+                "Other",
+                "Other",
+                json!({ "host": "o", "fileTransferVia": "" }),
+            ),
+        ];
+        assert!(follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("Lab/Tiger", "Net/Tiger")])
+        ));
+        assert_eq!(conns[1].config.settings["fileTransferVia"], "Net/Tiger");
+        assert_eq!(conns[2].config.settings["fileTransferVia"], "");
+        assert!(!follow_file_route_ref(
+            &mut conns[1].config.settings,
+            &remap(&[("zz", "yy")])
+        ));
+    }
+
     #[test]
     fn follow_jump_host_refs_in_reports_whether_any_connection_changed() {
         let mut conns = vec![

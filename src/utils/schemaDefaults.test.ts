@@ -518,4 +518,10 @@ describe("interpolateSettings", () => {
   it("leaves text without placeholders unchanged", () => {
     expect(interpolateSettings("plain {text}", {})).toBe("plain {text}");
   });
+
+  it("substitutes dotted keys, the form-derived saved-connection values (#4194)", () => {
+    expect(
+      interpolateSettings("to {{fileTransferVia.host}}", { "fileTransferVia.host": "tiger-box" })
+    ).toBe("to tiger-box");
+  });
 });
