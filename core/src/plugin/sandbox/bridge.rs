@@ -302,6 +302,14 @@ impl BridgeHost {
         Ok(())
     }
 
+    /// Whether a bridge request is being served. The plugin call that made it
+    /// is blocked on the runner's request thread until the reply, so the hang
+    /// watchdog defers its verdict meanwhile (#4184): each request has its own
+    /// deadline (the policy's connect timeout).
+    pub(super) fn has_in_flight(&self) -> bool {
+        !lock(&self.in_flight).is_empty()
+    }
+
     /// A `BridgeRelease`: the plugin dropped a connection.
     pub(super) fn release(&self, conn: ConnRef) -> Result<(), String> {
         self.check_conn_id(conn.conn_id)?;
@@ -562,7 +570,7 @@ impl BridgeHost {
         _reply: &Message,
         _stream: &std::net::TcpStream,
     ) -> bool {
-        // TODO(#4219): Windows passes the socket with `DuplicateHandle` into
+        // Windows (tracked in #4219) will pass the socket with `DuplicateHandle` into
         // the runner, which drives it with overlapped ReadFile/WriteFile (no
         // Winsock under LPAC). Until that transport exists `can_pass_handles`
         // is false here and every connection is proxied.

@@ -23,6 +23,7 @@ fn sample_messages() -> Vec<Message> {
             accept_unverified_toolchain: false,
             plugin_id: "x".into(),
             host_version: "1.2.3".into(),
+            limits: ResourceLimits::plugin_defaults(),
         }),
         Message::SandboxReport(SandboxReport::default()),
         Message::Loaded(Loaded {
@@ -518,6 +519,45 @@ fn wire_errors_map_back_to_plugin_errors() {
         message: "m".into(),
     };
     assert!(matches!(unknown.into_error(), PluginError::Other(m) if m == "m"));
+}
+
+#[test]
+fn a_configure_without_limits_decodes_as_unlimited() {
+    // The `Configure` shape before #4184 (no `limits` field).
+    #[derive(serde::Serialize)]
+    struct ConfigureV1 {
+        library_path: String,
+        expected_digest: Option<String>,
+        manifest_api_version: Option<String>,
+        accept_unverified_toolchain: bool,
+        plugin_id: String,
+        host_version: String,
+    }
+    let old = ConfigureV1 {
+        library_path: "/p/libx.so".into(),
+        expected_digest: None,
+        manifest_api_version: None,
+        accept_unverified_toolchain: false,
+        plugin_id: "x".into(),
+        host_version: "1.0.0".into(),
+    };
+    let payload = rmp_serde::to_vec_named(&old).unwrap();
+    let frame = encode_frame(FrameKind::Configure as u8, &[&payload]).unwrap();
+    match read_all(&frame).pop() {
+        Some(Message::Configure(configure)) => {
+            assert_eq!(configure.limits, ResourceLimits::default());
+            assert_eq!(configure.plugin_id, "x");
+        }
+        other => panic!("expected Configure, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_default_limits_match_the_concept() {
+    let limits = ResourceLimits::plugin_defaults();
+    assert_eq!(limits.address_space_bytes, Some(512 * 1024 * 1024));
+    assert_eq!(limits.max_open_files, Some(256));
+    assert!(limits.forbid_child_processes);
 }
 
 /// A reader that hands out at most `chunk` bytes per `read`, to exercise

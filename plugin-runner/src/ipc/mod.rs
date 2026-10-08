@@ -33,8 +33,9 @@ pub use codec::{
 };
 pub use messages::{
     Alive, BridgeOp, BridgeReply, BridgeRequest, BridgeResult, Cancel, Configure, ConnRef,
-    CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize, SandboxReport, SessionError,
-    SessionFailed, SessionRef, StreamAck, StreamChunk, StreamTransport, WireError, WireToolchain,
+    CreateSession, Heartbeat, Hello, LoadFailed, Loaded, Log, Resize, ResourceLimits,
+    SandboxReport, SessionError, SessionFailed, SessionRef, StreamAck, StreamChunk,
+    StreamTransport, WireError, WireToolchain,
 };
 
 #[cfg(unix)]

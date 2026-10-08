@@ -1014,4 +1014,9 @@ plugin-side migration callback in 0.1.
   [`core/tests/plugin_runner_e2e.rs`](../core/tests/plugin_runner_e2e.rs) drives
   the echo example this way, and
   [`core/tests/plugin_runner_bridge.rs`](../core/tests/plugin_runner_bridge.rs)
-  the bridge.
+  the bridge. Out of process, a crash, hang or runaway allocation ends only your
+  plugin's sessions: the runner is limited to 512 MiB of address space on Linux
+  (a 1 GiB resident-size cap on macOS), 256 open descriptors and, on macOS, no
+  child processes; it must answer the host's ping within 10 s, so do not block
+  `write_input` / `resize` / `close` for long. Three crashes are restarted; the
+  fourth within 10 minutes disables the plugin until the user re-enables it.

@@ -332,6 +332,15 @@ pub trait ConnectionType: Send {
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         None
     }
+
+    /// Why a plugin session served out of process ended on its own (#4184):
+    /// the cause of its plugin runner's exit (crash, not responding, out of
+    /// memory, invalid data), for the crash overlay. `None` while connected,
+    /// after a [`disconnect`](Self::disconnect), and for every other backend.
+    #[cfg(feature = "plugin")]
+    fn plugin_exit_cause(&self) -> Option<crate::plugin::sandbox::RunnerExitCause> {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -27,6 +27,9 @@
 //! * The `context` probe (ABI 1.1 builds) reports the host context it received
 //!   and logs through it; writing `?cancelled` to such a session reports the
 //!   cancellation flag (PLG-014).
+//! * The `crash-commands` feature adds input commands that misbehave on
+//!   purpose, for the out-of-process isolation tests (#4184): see
+//!   [`crash_command`].
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,6 +66,10 @@ struct EchoBackend {
 
 impl PluginTerminalBackend for EchoBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
+        #[cfg(feature = "crash-commands")]
+        if let Some(reply) = crash_command(data) {
+            return self.output.send(reply.as_bytes());
+        }
         if data == b"?cancelled" {
             let reply = match &self.services {
                 Some(services) => format!("CANCELLED:{}", services.is_cancelled()),
@@ -84,6 +91,69 @@ impl PluginTerminalBackend for EchoBackend {
 
     fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
+    }
+}
+
+/// Misbehave on purpose (#4184 isolation fixtures). Returns the reply line for
+/// the commands that return, `None` for ordinary input.
+///
+/// * `!segv` — write through a null pointer (SIGSEGV).
+/// * `!abort` — `std::process::abort()` (SIGABRT, like `panic = "abort"`).
+/// * `!spin` — spin forever on the runner's request thread (a hang).
+/// * `!alloc` — allocate and touch memory without bound, ~1 GiB/s.
+/// * `!garbage` — write a frame of an unknown kind straight onto the runner's
+///   IPC descriptor (3), as a hostile plugin could.
+/// * `!fds` — open `/dev/null` until it fails: `FDS:<count>`.
+/// * `!spawn` — try to start `/bin/sh`: `SPAWN_OK` or `SPAWN_DENIED`.
+#[cfg(feature = "crash-commands")]
+fn crash_command(data: &[u8]) -> Option<String> {
+    match data {
+        b"!segv" => {
+            // SAFETY: deliberately not — this is the segfault fixture.
+            unsafe { std::ptr::null_mut::<u8>().write_volatile(1) };
+            None
+        }
+        b"!abort" => std::process::abort(),
+        b"!spin" => loop {
+            std::hint::spin_loop();
+        },
+        b"!alloc" => {
+            let mut hoard: Vec<Vec<u8>> = Vec::new();
+            loop {
+                // Touch every page so the memory is resident, not just mapped.
+                hoard.push(vec![0x5a; 1024 * 1024]);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        #[cfg(unix)]
+        b"!garbage" => {
+            use std::os::fd::FromRawFd;
+            // Length 1, kind 0xEE (unknown): the host must kill the runner.
+            // SAFETY: fd 3 is the runner's IPC channel; ManuallyDrop keeps it
+            // open for the runner.
+            let mut channel =
+                std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(3) });
+            let _ = channel.write_all(&[0, 0, 0, 1, 0xEE]);
+            Some("GARBAGE_SENT".to_owned())
+        }
+        b"!fds" => {
+            let mut held = Vec::new();
+            while let Ok(file) = std::fs::File::open("/dev/null") {
+                held.push(file);
+                if held.len() > 100_000 {
+                    break;
+                }
+            }
+            Some(format!("FDS:{}", held.len()))
+        }
+        b"!spawn" => match std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .status()
+        {
+            Ok(_) => Some("SPAWN_OK".to_owned()),
+            Err(_) => Some("SPAWN_DENIED".to_owned()),
+        },
+        _ => None,
     }
 }
 
