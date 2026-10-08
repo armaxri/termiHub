@@ -12,8 +12,10 @@
 //!   it and [`layer`] names the layers.
 //! * [`apply`] — the per-OS confinement of the calling process: Seatbelt on
 //!   macOS ([`macos`], #4186), no_new_privs + landlock + seccomp on Linux
-//!   (`linux`, #4185). Windows (LPAC + job object, #4187) plugs in here and
-//!   reports through the same type.
+//!   (`linux`, #4185). On Windows (#4187) the confinement cannot be applied
+//!   from inside: the host starts the runner in the plugin's Less-Privileged
+//!   AppContainer and job object (`crate::appcontainer`, `crate::process`),
+//!   and [`apply`] verifies its own token and job instead (`windows`).
 //!
 //! The runner applies the policy to **itself** after it opened its IPC channel
 //! and pinned the plugin library, and before `dlopen`, so every byte of plugin
@@ -26,6 +28,8 @@
 ))]
 pub mod linux;
 pub mod macos;
+#[cfg(windows)]
+pub mod windows;
 
 use serde::{Deserialize, Serialize};
 
@@ -51,16 +55,31 @@ pub mod layer {
 ///
 /// On Linux only seccomp is required: a kernel without landlock (< 5.13) runs
 /// the plugin with **reduced** isolation (landlock listed as missing), which
-/// the host gates behind the `reducedIsolationAccepted` acknowledgement.
+/// the host gates behind the `reducedIsolationAccepted` acknowledgement. On
+/// Windows the LPAC is required; a runner outside a job object reports it as
+/// missing (reduced).
 #[must_use]
 pub fn required_layers() -> &'static [&'static str] {
     if cfg!(target_os = "macos") {
         &[layer::SEATBELT]
     } else if cfg!(target_os = "linux") {
         &[layer::SECCOMP]
+    } else if cfg!(windows) {
+        &[layer::APPCONTAINER]
     } else {
         &[]
     }
+}
+
+/// Windows: the AppContainer profile name of plugin `plugin_id`,
+/// `termiHub.Plugin.<first 16 hex digits of sha256(id)>` — deterministic, so
+/// every start of the plugin reuses its profile, and the uninstall finds it.
+/// Pure, so it is tested on every OS.
+#[must_use]
+pub fn app_container_name(plugin_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = hex::encode(Sha256::digest(plugin_id.as_bytes()));
+    format!("termiHub.Plugin.{}", &digest[..16])
 }
 
 /// Environment variable (read by the **host**, debug builds only) naming
@@ -256,9 +275,17 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     })
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Windows: the host started this process confined; verify that it really is
+/// (an LPAC token with no capabilities, inside a job) before any plugin code
+/// is mapped (#4187).
+#[cfg(windows)]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
-    // Windows (#4187) applies its layers here.
+    policy.validate()?;
+    windows::verify()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
     Ok(SandboxReport::default())
 }
