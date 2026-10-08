@@ -9,8 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:24
   - .github/workflows/release.yml:463
-status: deferred
-resolution: "release-domain — no release version-drift gate: scripts/release-check.sh + scripts/internal/check-tauri-version-drift.mjs EXIST but no workflow references them; version taken verbatim from tag (release.yml:7). Real contained gap (add a gating first job) but release.yml is not per-PR-verifiable + release is maintainer-owned — surface as a small release-hardening item rather than grind blind"
+status: fixed
+resolution: "#3904 (closes #3901) — release.yml verify-version job runs scripts/release-check.sh --versions-only --expect-version <tag>; every build job needs it directly. Per-PR: Frontend Code Quality runs release-check.sh --versions-only. Wiring pinned by scripts/internal/release-version-gate.test.mjs"
 ---
 
 ## What

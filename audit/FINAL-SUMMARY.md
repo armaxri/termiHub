@@ -52,7 +52,6 @@ These need product voice and assets, not code:
 | SUP-006, CI-016    | Yanked-crate gate kept on purpose (it caught real yanks); the recurring manual fix is tracked in #2645                |
 | WA-CI-014          | Pre-release RustCrypto stack accepted; tracked in #3734 until stable releases exist                                   |
 | CI-001, TIN-001    | The full integration/E2E lane runs nightly, not per PR (slim PR lane, #3325); per-PR static guards were added         |
-| CI-009             | Release version-drift gate — being wired now (#3901 / PR #3904)                                                       |
 | CONC-008           | Per-session RDP/VNC mutex is intentional protocol serialization (#2991)                                               |
 | PERF-011           | Full-viewport repaint is the fix for the #1849 stale-rows bug; already off with the default WebGL renderer            |
 
