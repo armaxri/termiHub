@@ -56,6 +56,10 @@
 # `if ($LASTEXITCODE -ne 0) { exit 1 }` guard in a fresh pwsh, must exit 0 when
 # they pass (also after a native command exited non-zero) and 1 when they fail.
 #
+# Next to it, verify-rdp-helper-bundle.sh (#4222) runs on a stub app and helper:
+# it must pass a helper whose SHA-256 the app embeds and fail a rewritten (e.g.
+# re-signed), missing or unembedded one. Its failures count as bundle checks.
+#
 # Wired into the `Shell Script Quality` CI job. Run it from anywhere:
 #   scripts/internal/check-script-headless.sh
 
@@ -86,6 +90,7 @@ SCRIPTS=(
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
+  "scripts/internal/verify-rdp-helper-bundle.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
   "scripts/package-plugin.sh"
@@ -538,6 +543,44 @@ guard_run "passes a binary without the marker" 0 "$TB/release-app"
 guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
 guard_run "refuses a missing binary" 2 "$TB/missing"
 test_bridge_and_earlier_failures="$failures"
+
+# --- Bundled RDP helper check (#4222) ---
+# The stub app embeds the helper's SHA-256 between NUL bytes, as core/build.rs
+# embeds it into the real binary's read-only data. Appending a byte stands in
+# for a signing step that rewrote the helper after staging.
+RHB="scripts/internal/verify-rdp-helper-bundle.sh"
+RH="$LC/rdp-helper-bundle"
+mkdir -p "$RH/ok" "$RH/rewritten" "$RH/bare"
+printf '#!/bin/sh\nexit 0\n' >"$RH/ok/termihub-rdp-helper"
+chmod +x "$RH/ok/termihub-rdp-helper"
+rh_digest() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-64
+}
+printf 'app\0%s\0binary' "$(rh_digest "$RH/ok/termihub-rdp-helper")" >"$RH/ok/termihub"
+cp "$RH/ok/termihub" "$RH/ok/termihub-rdp-helper" "$RH/rewritten/"
+printf '\0' >>"$RH/rewritten/termihub-rdp-helper"
+printf 'app\0no digest\0binary' >"$RH/bare/termihub"
+rhb_run() { # <label> <expected exit> <args...>
+  local label="$1" want="$2" out rc=0
+  shift 2
+  out="$(bash "$RHB" "$@" 2>&1)" || rc=$?
+  if [ "$rc" -eq "$want" ]; then
+    echo "ok    RDP helper bundle check: ${label} (exit ${rc})"
+  else
+    echo "::error file=${RHB}::RDP helper bundle check: ${label}: expected exit ${want}, got ${rc}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+rhb_run "passes a bundled helper the app embeds" 0 "$RH/ok/termihub"
+rhb_run "fails a helper rewritten after staging" 1 "$RH/rewritten/termihub"
+rhb_run "--helper checks a helper kept elsewhere" 0 --helper "$RH/ok/termihub-rdp-helper" \
+  "$RH/rewritten/termihub"
+rhb_run "fails a missing helper" 1 "$RH/bare/termihub"
+cp "$RH/ok/termihub-rdp-helper" "$RH/bare/"
+rhb_run "fails a helper whose digest the app does not embed" 1 "$RH/bare/termihub"
+rhb_run "fails a missing app binary" 1 "$RH/missing/termihub"
+rhb_run "refuses no app binary" 2
 
 # --- Windows bundle check exit codes (#4207) ---
 # A .ps1 that falls off its end leaves the caller's $LASTEXITCODE untouched

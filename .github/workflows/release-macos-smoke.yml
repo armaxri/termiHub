@@ -127,7 +127,8 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011).
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011) and
+        # verify-rdp-helper-bundle.sh (#4222).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: scripts/internal
@@ -244,6 +245,10 @@ jobs:
           HELPER="$(dirname "$EXE")/termihub-rdp-helper"
           [ -x "$HELPER" ] || { echo "::error::bundled RDP helper missing or not executable at $HELPER"; exit 1; }
           echo "RDP helper architectures: $(lipo -archs "$HELPER")"
+          # The shipped helper must match the digest the app embeds (#1762), or
+          # RDP is refused as tampered (#4222): the release re-sign must not
+          # have rewritten it.
+          scripts/internal/verify-rdp-helper-bundle.sh "$EXE"
 
       - name: Run termihub --version
         env:

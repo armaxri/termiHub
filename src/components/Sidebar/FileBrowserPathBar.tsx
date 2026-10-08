@@ -33,7 +33,8 @@ function Crumb({ label, path, isCurrent, onNavigate }: CrumbProps) {
       className={`file-browser__crumb${highlight ? ` file-browser__crumb--drop-${highlight}` : ""}`}
       onClick={() => onNavigate(path)}
       disabled={isCurrent}
-      data-testid="file-browser-crumb"
+      // Per-segment id so a drag can target one ancestor (`dragTo`, #4007).
+      data-testid={`file-browser-crumb-${label}`}
       data-drop-highlight={highlight ?? undefined}
     >
       {label}

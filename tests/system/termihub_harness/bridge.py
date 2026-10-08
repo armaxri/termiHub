@@ -383,9 +383,44 @@ class Driver:
         """
         self._call({"action": "editorCursor", "direction": direction, "times": times})
 
-    def drag_to(self, from_test_id: str, to_test_id: str) -> None:
-        """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder)."""
-        self._call({"action": "dragTo", "fromTestId": from_test_id, "toTestId": to_test_id})
+    def drag_to(
+        self,
+        from_test_id: str,
+        to_test_id: str,
+        *,
+        alt: bool = False,
+        ctrl: bool = False,
+        shift: bool = False,
+        meta: bool = False,
+        observe: Optional[Sequence[str]] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder).
+
+        Modifier flags are **held for the whole gesture** — set on every pointer
+        event from press to release, as a real held key is. ``alt=True`` turns a
+        file-browser drag-to-move into a copy (PROD-006).
+
+        ``observe`` lists test ids to snapshot while the pointer is still held
+        over the target (after the last move, before the release): the mid-drag
+        UI — a folder row's ``data-drop-highlight``, the
+        ``file-browser-drag-chip`` — that is gone once the drag ends. Returns
+        ``{test_id: {"exists": bool, "text": str | None, "attributes": {...}}}``
+        when ``observe`` is given, else ``None``.
+        """
+        modifiers = {
+            key: True
+            for key, held in (("alt", alt), ("ctrl", ctrl), ("shift", shift), ("meta", meta))
+            if held
+        }
+        return self._call(
+            {
+                "action": "dragTo",
+                "fromTestId": from_test_id,
+                "toTestId": to_test_id,
+                "modifiers": modifiers or None,
+                "observe": list(observe) if observe is not None else None,
+            }
+        )
 
     def drag(self, test_id: str, dx: float, dy: float = 0.0) -> None:
         """Drag an element by a pixel delta (e.g. a resize handle).
