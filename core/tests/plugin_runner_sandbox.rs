@@ -160,13 +160,14 @@ impl CanaryPipe {
         use windows_sys::Win32::System::Pipes::{
             CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
         };
+        // Tests run in parallel in one process and the clock is coarse, so a
+        // per-process counter (not the time) keeps every canary's name unique;
+        // with one instance allowed, a reused name would fail the create.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let name = format!(
-            r"\\.\pipe\termihub-escape-canary-{}-{:?}",
+            r"\\.\pipe\termihub-escape-canary-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, Ordering::SeqCst)
         );
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // SAFETY: a NUL-terminated name; default security; the handle is
@@ -183,7 +184,11 @@ impl CanaryPipe {
                 std::ptr::null(),
             )
         };
-        assert!(raw != INVALID_HANDLE_VALUE, "create the canary pipe");
+        assert!(
+            raw != INVALID_HANDLE_VALUE,
+            "create the canary pipe `{name}`: {}",
+            std::io::Error::last_os_error()
+        );
         // SAFETY: a fresh handle from `CreateNamedPipeW`.
         let server = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(raw) };
         Self {
