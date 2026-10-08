@@ -15,6 +15,7 @@ import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import { CredentialReentry } from "./CredentialReentry";
+import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -141,6 +142,9 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
  * Variants (determined from store state, in priority order):
  *   - "session-lost"   — terminal: live agent session unrecoverable, "start new
  *                        shell" + view-scrollback buttons (#2512)
+ *   - "plugin-exit"    — the sandboxed plugin process crashed / hung / ran out of
+ *                        memory / sent invalid data: restart session + close tab
+ *                        (#4188, {@link TerminalPluginExitOverlay})
  *   - "auto-reconnect" — agentless resilient-reconnect countdown + Cancel (#1962)
  *   - "reconnecting"   — spinner, optional trigger error, Stop button
  *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
@@ -261,6 +265,13 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         </ContentOverlay>
       </div>
     );
+  }
+
+  // A plugin tab whose sandboxed plugin process failed (#4188): the plugin
+  // crash overlay with the cause and a manual Restart session (plugin types
+  // have no auto-reconnect, PLG-004).
+  if (lifecycle.pluginExit) {
+    return <TerminalPluginExitOverlay tabId={tabId} exit={lifecycle.pluginExit} />;
   }
 
   // Agentless resilient reconnect (#1962) takes precedence: while the backoff
