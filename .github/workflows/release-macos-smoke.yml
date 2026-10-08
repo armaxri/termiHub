@@ -250,6 +250,12 @@ jobs:
           # have rewritten it.
           scripts/internal/verify-rdp-helper-bundle.sh "$EXE"
 
+          # The plugin runner (#4202) is bundled the same way. It must start on
+          # this native runner and match the digest the app embeds, or the app
+          # would refuse it as tampered.
+          echo "plugin runner architectures: $(lipo -archs "$(dirname "$EXE")/termihub-plugin-runner")"
+          scripts/internal/verify-plugin-runner-bundle.sh "$EXE"
+
       - name: Run termihub --version
         env:
           EXE: ${{ steps.app.outputs.exe }}

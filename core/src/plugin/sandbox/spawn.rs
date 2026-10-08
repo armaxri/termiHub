@@ -6,12 +6,19 @@
 //!   rendezvous path, so nothing can squat it.
 //! * **Environment:** scrubbed to `LANG`, `TZ`, `HOME` and `TMPDIR` — no
 //!   `SSH_AUTH_SOCK`, no `TERMIHUB_*`, nothing else of the host's.
+//! * **Integrity (#4202):** the bundled runner is hashed through a retained
+//!   handle and spawned through it before anything is sent to it
+//!   ([`super::locate`]).
 //! * **Windows:** the private named pipe + handle list + job object transport
 //!   is the next slice of #4182; until then spawning reports
 //!   [`HostError::RunnerUnavailable`].
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Child;
+
+use super::locate::check_runner;
+#[cfg(unix)]
+use super::locate::confirm_runner;
 
 use crate::plugin::HostError;
 
@@ -34,9 +41,20 @@ pub(super) fn scrubbed_env() -> Vec<(String, std::ffi::OsString)> {
         .collect()
 }
 
-/// Spawn `runner` with its channel end as descriptor 3.
+/// Spawn `runner` with its channel end as descriptor 3, after the bundled
+/// runner passed its integrity check.
 #[cfg(unix)]
 pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
+    spawn_checked(runner, check_runner(runner)?)
+}
+
+/// Spawn `runner`; through `pinned` (and re-verified after the spawn) when it
+/// was integrity-checked, by path otherwise.
+#[cfg(unix)]
+fn spawn_checked(
+    runner: &Path,
+    pinned: Option<termihub_plugin_runner::loader::PinnedLibrary>,
+) -> Result<Spawned, HostError> {
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
     use std::os::unix::process::CommandExt;
@@ -48,6 +66,12 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
         path: runner.to_owned(),
         detail,
     };
+    // `exec` names the pinned handle (Linux: `/proc/self/fd/<n>`) or a path
+    // re-checked to still be the hashed file.
+    let exec_path = match &pinned {
+        Some(pinned) => pinned.load_path().map_err(|e| unavailable(e.to_string()))?,
+        None => runner.to_owned(),
+    };
     let (host_end, runner_end) =
         UnixStream::pair().map_err(|e| unavailable(format!("socketpair failed: {e}")))?;
     let runner_fd = runner_end.as_raw_fd();
@@ -57,7 +81,9 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
         set_socket_buffers(fd, SOCKET_BUFFER);
     }
 
-    let mut command = Command::new(runner);
+    let mut command = Command::new(&exec_path);
+    // The process keeps its real name when exec'd through a descriptor.
+    command.arg0(runner);
     command
         .arg(PROTOCOL_ARG)
         .arg(PROTOCOL_VERSION.to_string())
@@ -85,10 +111,19 @@ pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
             Ok(())
         });
     }
-    let child = spawn_command(command).map_err(|e| unavailable(e.to_string()))?;
+    let mut child = spawn_command(command).map_err(|e| unavailable(e.to_string()))?;
     // The runner owns its end now; the host must not keep a copy, or the
     // runner's death would never surface as end-of-stream.
     drop(runner_end);
+    // `spawn` returns once `exec` succeeded: re-hash the pinned file before the
+    // runner is sent anything, and kill it if the file changed underneath.
+    if let Some(pinned) = &pinned {
+        if let Err(e) = confirm_runner(runner, pinned) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(e);
+        }
+    }
     Ok(Spawned {
         child,
         stream: host_end,
@@ -160,19 +195,12 @@ fn set_socket_buffers(fd: std::os::fd::RawFd, size: libc::c_int) {
 /// No runner transport on this platform yet (Windows: next slice of #4182).
 #[cfg(not(unix))]
 pub(super) fn spawn_runner(runner: &Path) -> Result<Spawned, HostError> {
+    // A missing or tampered bundled runner still reports as such.
+    check_runner(runner)?;
     Err(HostError::RunnerUnavailable {
         path: runner.to_owned(),
         detail: "out-of-process plugins are not available on this platform yet".to_owned(),
     })
-}
-
-/// Where the bundled runner lives: next to the running executable (Tauri
-/// `externalBin` sidecars are installed beside the main binary).
-#[must_use]
-pub fn default_runner_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let name = format!("termihub-plugin-runner{}", std::env::consts::EXE_SUFFIX);
-    Some(exe.parent()?.join(name))
 }
 
 #[cfg(test)]
@@ -197,15 +225,76 @@ mod tests {
         }
     }
 
+    /// A stand-in runner that exits 0 once started with any arguments. Linux
+    /// execs the pinned descriptor, which needs a real ELF (a `#!` script's
+    /// interpreter cannot reopen the close-on-exec `/proc/self/fd/<n>`); macOS
+    /// kills copies of platform binaries, so there it is a script.
+    #[cfg(unix)]
+    fn stand_in_runner() -> (tempfile::TempDir, std::path::PathBuf, String) {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join(super::super::RUNNER_BIN_NAME);
+        if cfg!(any(target_os = "linux", target_os = "android")) {
+            std::fs::copy("/bin/true", &path).unwrap();
+        } else {
+            std::fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let digest = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
+        );
+        (tmp, path, digest)
+    }
+
+    /// Spawn through the pinned handle, retrying the Linux `ETXTBSY` race a
+    /// freshly written executable can hit while other test threads fork.
+    #[cfg(unix)]
+    fn spawn_pinned(path: &Path, digest: &str) -> Result<Spawned, HostError> {
+        use termihub_plugin_runner::loader::PinnedLibrary;
+        for _ in 0..50 {
+            let pinned = PinnedLibrary::open_verified(path, digest).unwrap();
+            match spawn_checked(path, Some(pinned)) {
+                Err(HostError::RunnerUnavailable { detail, .. })
+                    if detail.contains("Text file busy") =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                other => return other,
+            }
+        }
+        panic!("spawn kept failing with ETXTBSY");
+    }
+
+    #[cfg(unix)]
     #[test]
-    fn the_default_runner_sits_next_to_the_executable() {
-        let path = default_runner_path().expect("current exe has a parent");
-        let exe = std::env::current_exe().unwrap();
-        assert_eq!(path.parent(), exe.parent());
-        assert!(path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("termihub-plugin-runner"));
+    fn a_verified_runner_is_spawned_through_its_pinned_handle() {
+        let (_tmp, path, digest) = stand_in_runner();
+        let Spawned { mut child, .. } = match spawn_pinned(&path, &digest) {
+            Ok(spawned) => spawned,
+            Err(e) => panic!("pinned spawn failed: {e}"),
+        };
+        assert!(child.wait().unwrap().success());
+    }
+
+    /// macOS / other Unix spawn by path: a file swapped in after the check
+    /// (same bytes, new inode) is refused before anything runs.
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+    #[test]
+    fn a_runner_swapped_after_its_check_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        use termihub_plugin_runner::loader::PinnedLibrary;
+        let (tmp, path, digest) = stand_in_runner();
+        let pinned = PinnedLibrary::open_verified(&path, &digest).unwrap();
+        let swap = tmp.path().join("swap");
+        std::fs::copy(&path, &swap).unwrap();
+        std::fs::set_permissions(&swap, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&swap, &path).unwrap();
+        match spawn_checked(&path, Some(pinned)) {
+            Err(HostError::RunnerUnavailable { .. }) => {}
+            Err(other) => panic!("expected RunnerUnavailable, got {other:?}"),
+            Ok(_) => panic!("a swapped runner was spawned"),
+        }
     }
 }

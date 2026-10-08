@@ -377,6 +377,16 @@ jobs:
         shell: bash
         run: ./scripts/build-rdp-sidecar.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
 
+      # The plugin runner (#4182) is the second externalBin in
+      # tauri.sidecar.conf.json (#4202). Stage it before tauri-action too:
+      # core/build.rs embeds the staged runner's SHA-256, which the app checks
+      # before spawning the bundled runner. Windows MSVC links the static VC
+      # runtime (#4172); macOS ad-hoc signs it under its installed name so the
+      # re-sign below leaves its bytes, and so the digest, unchanged.
+      - name: Build plugin runner for bundling
+        shell: bash
+        run: ./scripts/build-plugin-runner.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
+
       # The generated notices (PKG-009) are bundled as an app resource by the
       # bundle-only fragment tauri.notices.conf.json (merged via --config below);
       # tauri-build rejects a missing resource, so stage the file first.
@@ -456,6 +466,38 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
           scripts/internal/assert-no-test-bridge.sh "$BIN"
 
+      # The bundled plugin runner (#4202) must start and match the digest the
+      # app embeds, or the app would refuse it as tampered. Windows/Linux: the
+      # target dir (tauri-build copies the staged runner next to termihub);
+      # Linux also inside the AppImage/.deb, whose packaging could rewrite it.
+      # macOS is checked inside the re-signed .app below.
+      - name: Verify the bundled plugin runner
+        if: ${{ !startsWith(matrix.os, 'macos') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          T="${{ matrix.rust_target }}"
+          BIN="target/$T/release/termihub"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="${BIN}.exe"; fi
+          scripts/internal/verify-plugin-runner-bundle.sh "$BIN"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            X="$(mktemp -d)"
+            for deb in "target/$T/release/bundle/deb/"*.deb; do
+              [ -e "$deb" ] || continue
+              dpkg-deb -x "$deb" "$X/deb"
+              scripts/internal/verify-plugin-runner-bundle.sh "$X/deb/usr/bin/termihub"
+            done
+            for img in "target/$T/release/bundle/appimage/"*.AppImage; do
+              [ -e "$img" ] || continue
+              img="$PWD/$img"
+              chmod +x "$img"
+              # FUSE is unavailable on GitHub runners, so extract rather than mount.
+              (cd "$X" && "$img" --appimage-extract >/dev/null)
+              scripts/internal/verify-plugin-runner-bundle.sh "$X/squashfs-root/usr/bin/termihub"
+            done
+            rm -rf "$X"
+          fi
+
       # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
       # (inner components signed in the wrong order), which Gatekeeper classifies as
       # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc
@@ -526,6 +568,12 @@ jobs:
             echo "::error::codesign --verify --deep --strict failed for $APP — the bundle is inconsistently signed"
             exit 1
           fi
+
+          # 5. The re-signed plugin runner (#4202) must still match the digest
+          #    the app embeds (the staged runner was signed under the same
+          #    name, so the re-sign is byte-identical). --no-run: the x64
+          #    bundle is cross-built here; Release macOS Smoke runs it natively.
+          scripts/internal/verify-plugin-runner-bundle.sh --no-run "$APP/Contents/MacOS/$EXE_NAME"
 
           # Advisory only: Gatekeeper always rejects an ad-hoc (non-Developer ID)
           # bundle — the project ships unsigned-beta by maintainer decision — so

@@ -1141,11 +1141,34 @@ tauri-build's static mode, enabled in `src-tauri/build.rs` for the release profi
 only: that mode writes a stub `msvcrt.lib` into the crate's `OUT_DIR` and adds it
 to the link search path, which cargo also hands to rustdoc for the doc tests of the
 other workspace crates, where the stub breaks linking (#4170). Debug and test builds
-therefore keep the dynamic runtime. The RDP helper builds with
-`-C target-feature=+crt-static` (`scripts/build-rdp-sidecar.*` with a
-`*-windows-msvc` `--target`). `release.yml` / `dev-build.yml` fail when any
-`.exe`/`.dll` in the MSI (and dev NSIS) imports `VCRUNTIME*.dll` or `MSVCP*.dll`
+therefore keep the dynamic runtime. The RDP helper and the plugin runner build with
+`-C target-feature=+crt-static` (`scripts/build-rdp-sidecar.*` /
+`scripts/build-plugin-runner.*` with a `*-windows-msvc` `--target`). `release.yml` /
+`dev-build.yml` fail when any `.exe`/`.dll` in the MSI (and dev NSIS) imports
+`VCRUNTIME*.dll` or `MSVCP*.dll`, or when `termihub.exe` or
+`termihub-plugin-runner.exe` is missing from it
 (`scripts/internal/verify-no-vcruntime.ps1`).
+
+**Plugin runner sidecar (#4202).** The out-of-process plugin host
+`termihub-plugin-runner` (#4182) ships like the RDP helper: the second Tauri
+`externalBin` in `tauri.sidecar.conf.json`, staged as
+`src-tauri/binaries/termihub-plugin-runner-<triple>[.exe]` by
+`scripts/build-plugin-runner.* --tauri-externalbin` and installed next to the app
+binary. `core/build.rs` embeds the staged file's SHA-256 (release profile only) as
+`TERMIHUB_PLUGIN_RUNNER_SHA256`; before spawning the **bundled** runner the host
+hashes it through a retained handle, spawns through that handle and re-hashes it
+after the spawn (`core/src/plugin/sandbox/locate.rs`, reusing the runner loader's
+`PinnedLibrary`), and refuses a missing or tampered one with "Plugin runner is
+missing — reinstall termiHub". A runner picked explicitly (the debug override
+`TERMIHUB_PLUGIN_RUNNER`, tests) and debug builds, which resolve the cargo-built
+runner, skip the check. On macOS the build script ad-hoc signs the staged runner
+under its installed name, so the release's inside-out re-sign of the `.app` is
+byte-identical and the digest still matches. `scripts/internal/verify-plugin-runner-bundle.sh`
+checks that a bundle's runner starts and matches the digest the app embeds:
+`build.yml` (PR), `dev-build.yml` / `release.yml` (target dir, AppImage, `.deb`,
+re-signed `.app`), the release install smokes and `release-check`. Release builds
+still never spawn it: out-of-process plugins stay a debug-build opt-in until the
+plugin OS-sandbox cut-over (#3769).
 
 The Windows **agent** binaries (#4175: `termihub-agent-windows-x64.exe` /
 `-arm64.exe`) link it statically too, because the desktop deploys them to remote hosts
