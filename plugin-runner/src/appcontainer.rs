@@ -61,6 +61,14 @@ const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 /// granting the shared runner folder at once cannot lose each other's entry.
 static ACL_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serialises this process's profile creation and deletion. Two concurrent
+/// `CreateAppContainerProfile` calls for one name race inside the API: one
+/// fails (`ERROR_BAD_ENVIRONMENT`) and rolls its half-made profile back while
+/// the other already uses it, and a runner spawned meanwhile fails with
+/// `ERROR_FILE_NOT_FOUND`. A plugin can be (re)started from several threads at
+/// once, so every profile operation takes this lock.
+static PROFILE_LOCK: Mutex<()> = Mutex::new(());
+
 /// One plugin's AppContainer: its profile name and SID.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AppContainer {
@@ -87,6 +95,7 @@ impl AppContainer {
         let display = to_wide(format!("termiHub plugin {plugin_id}").as_ref())?;
         let description = to_wide("Sandbox of one termiHub native plugin".as_ref())?;
         let mut sid: PSID = std::ptr::null_mut();
+        let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: NUL-terminated strings; no capabilities; `sid` receives a
         // SID freed with `FreeSid` below.
         let hr = unsafe {
@@ -99,7 +108,10 @@ impl AppContainer {
                 &mut sid,
             )
         };
-        if hr == hresult_from_win32(ERROR_ALREADY_EXISTS) {
+        // Another process (a second termiHub instance) may have created it
+        // concurrently: a failed create whose profile now exists is reused.
+        let created_elsewhere = || hr < 0 && profile_exists_unlocked(plugin_id).unwrap_or(false);
+        if hr == hresult_from_win32(ERROR_ALREADY_EXISTS) || created_elsewhere() {
             // SAFETY: NUL-terminated name; `sid` receives a SID freed below.
             let hr =
                 unsafe { DeriveAppContainerSidFromAppContainerName(wide_name.as_ptr(), &mut sid) };
@@ -183,6 +195,7 @@ impl AppContainer {
 /// that does not exist is not an error.
 pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
     let wide = to_wide(app_container_name(plugin_id).as_ref())?;
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // SAFETY: NUL-terminated name.
     let hr = unsafe { DeleteAppContainerProfile(wide.as_ptr()) };
     // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND / ERROR_NOT_FOUND: nothing
@@ -202,6 +215,12 @@ const PROFILE_MAPPINGS_KEY: &str = r"Software\Classes\Local Settings\Software\Mi
 /// Whether plugin `plugin_id`'s AppContainer profile exists (its mapping is
 /// registered for the current user).
 pub fn profile_exists(plugin_id: &str) -> io::Result<bool> {
+    let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    profile_exists_unlocked(plugin_id)
+}
+
+/// [`profile_exists`] for a caller that holds `PROFILE_LOCK`.
+fn profile_exists_unlocked(plugin_id: &str) -> io::Result<bool> {
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
     };
@@ -466,6 +485,26 @@ mod tests {
         let err = check_hresult(hresult_from_win32(5), "Call").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert!(err.to_string().starts_with("Call failed"), "{err}");
+    }
+
+    /// Many threads ensuring one plugin's profile at once (several loads of
+    /// the same plugin) all get it, with one SID; no call sees the API's
+    /// internal create race (`ERROR_BAD_ENVIRONMENT`).
+    #[test]
+    fn concurrent_ensures_of_one_profile_all_succeed() {
+        let id = format!("appcontainer-race-{}", std::process::id());
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let id = id.clone();
+                std::thread::spawn(move || AppContainer::ensure(&id))
+            })
+            .collect();
+        let containers: Vec<_> = threads
+            .into_iter()
+            .map(|t| t.join().unwrap().unwrap())
+            .collect();
+        delete_profile(&id).unwrap();
+        assert!(containers.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
     /// A profile is created once, reused with the same SID, granted on a
