@@ -39,12 +39,13 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   sessionListFiles: vi.fn(),
+  sessionStat: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   getConnectionTypes: vi.fn(() => Promise.resolve([])),
 }));
 
 import { useAppStore, type FileClipboard } from "./appStore";
-import { localListDir, sessionListFiles } from "@/services/api";
+import { localListDir, sessionListFiles, sessionStat } from "@/services/api";
 import { currentFileBrowsersView } from "./fileBrowsersBridge";
 import {
   fileBrowsersHarnessTransport,
@@ -689,7 +690,8 @@ describe("a refresh never lands the pane on a path it is leaving (#4017)", () =>
     await settle();
 
     expect(vi.mocked(sessionListFiles)).toHaveBeenLastCalledWith("sess-new", "~");
-    expect(currentFileBrowsersView().session.path).toBe("~");
+    // The listed home is recorded as the real directory, not the symbol.
+    expect(currentFileBrowsersView().session.path).toBe("/");
   });
 
   it("refreshLocal during an in-flight navigation re-lists the navigation's target", async () => {
@@ -707,5 +709,44 @@ describe("a refresh never lands the pane on a path it is leaving (#4017)", () =>
 
     expect(vi.mocked(localListDir)).toHaveBeenLastCalledWith("/new");
     expect(currentFileBrowsersView().local.path).toBe("/new");
+  });
+});
+
+describe("a session listing of the symbolic home records the real directory (#4017)", () => {
+  // Regression (nightly 2026-10-07): an SFTP-only / FTP session starts at `~`.
+  // Recording `~` as the pane path made uploads target `~/name`, which the
+  // transfer channels do not expand, and broke "up" and the breadcrumbs.
+  it("derives the directory from the listed entries", async () => {
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([
+      { ...entry("a.txt"), path: "/home/me/a.txt" },
+    ]);
+    await useAppStore.getState().navigateSession("sess-1", "~");
+    await settle();
+    expect(currentFileBrowsersView().session.path).toBe("/home/me");
+  });
+
+  it("stats `~` when the home directory is empty", async () => {
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([]);
+    vi.mocked(sessionStat).mockResolvedValueOnce({ ...entry("me", true), path: "/home/me" });
+    await useAppStore.getState().navigateSession("sess-1", "~");
+    await settle();
+    expect(vi.mocked(sessionStat)).toHaveBeenCalledWith("sess-1", "~");
+    expect(currentFileBrowsersView().session.path).toBe("/home/me");
+  });
+
+  it("keeps `~` when the backend cannot stat it", async () => {
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([]);
+    vi.mocked(sessionStat).mockRejectedValueOnce(new Error("unsupported"));
+    await useAppStore.getState().navigateSession("sess-1", "~");
+    await settle();
+    expect(currentFileBrowsersView().session.path).toBe("~");
+  });
+
+  it("leaves an absolute path untouched", async () => {
+    vi.mocked(sessionListFiles).mockResolvedValueOnce([]);
+    await useAppStore.getState().navigateSession("sess-1", "/srv/empty");
+    await settle();
+    expect(vi.mocked(sessionStat)).not.toHaveBeenCalled();
+    expect(currentFileBrowsersView().session.path).toBe("/srv/empty");
   });
 });
