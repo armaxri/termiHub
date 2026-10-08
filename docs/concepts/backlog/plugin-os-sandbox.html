@@ -1880,23 +1880,24 @@ flowchart TD
               </tr>
               <tr>
                 <td>1</td>
+                <td>Native plugins load in a sandboxed helper process</td>
                 <td>
-                  <strong>Out-of-process host without OS sandbox:</strong> the
-                  <code>plugin-runner</code> crate, IPC codec + protocol, ABI shim (output sender,
-                  services, cancellation), <code>SandboxedBackend</code>, lifecycle, idle reap,
-                  parent-death, the sidecar in the bundle. The echo and ABI tests pass through it.
+                  The runner path (phases 1–5a, Linux phase 4) is in place but opt-in for debug
+                  builds; release builds still <code>dlopen</code> in process
                 </td>
-                <td>L</td>
-                <td>0</td>
+                <td>Missing (by plan)</td>
+                <td>Phase 7 flips the default, then re-sync</td>
               </tr>
               <tr>
                 <td>2</td>
+                <td>Disclosure describes the sandbox</td>
                 <td>
-                  <strong>Bridge over IPC:</strong> the bridge service in the host, socket-handle
-                  passing (proxy fallback), file operations, denial events.
+                  <code>NATIVE_TRUST_DISCLOSURE</code> carries the new sandbox copy; while plugins
+                  still run in process the UI shows <code>NATIVE_TRUST_DISCLOSURE_IN_PROCESS</code>
+                  ("no operating-system sandbox") so the disclosure stays honest
                 </td>
-                <td>M</td>
-                <td>1</td>
+                <td>Deliberate, until phase 7</td>
+                <td>Drop the in-process copy with the in-process path in phase 7</td>
               </tr>
               <tr>
                 <td>3</td>
@@ -2330,7 +2331,9 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          <strong>Last synced:</strong> phase 6 UI (#4188), 2026-10-08 ·
+          <strong>Status:</strong> partially implemented (out-of-process path behind the debug
+          opt-in until phase 7)
         </p>
         <div class="table-wrap">
           <table>
@@ -2369,6 +2372,56 @@ $ sandbox-spike seatbelt install/libecho_backend.dylib install data outside
                 </td>
                 <td>Decided</td>
                 <td>Implement in phases 1, 2, 4, 5a and 5b as recorded in Spike results</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  Settings row: isolation badge, process status, access chips, reduced-isolation
+                  acknowledgement (callouts B–F)
+                </td>
+                <td>
+                  Implemented from the <code>plugin-sandbox</code> projection region
+                  (<code>NativePluginRow</code>, <code>NativePluginSandboxStatus</code>);
+                  <code>reducedIsolationAccepted</code> is enforced by the runner and the host. An
+                  in-process build shows "Not sandboxed" and no chips
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>
+                  Process status "Starting", "Not responding" and "Crashed" on the Settings row
+                  (callout C)
+                </td>
+                <td>
+                  The runner is respawned at once, so the row shows Running (· restarted n/3),
+                  Restarting (n/3) or Idle; not responding / crashed are shown by the tab's crash
+                  overlay, which carries the cause
+                </td>
+                <td>Minor divergence</td>
+                <td>Keep unless the row should also show the last exit cause</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td><em>Restart</em> on a running plugin row</td>
+                <td>
+                  Re-runs the enable path, which restarts the whole plugin and ends its open
+                  sessions (each shows its overlay)
+                </td>
+                <td>Matches</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>Kernel-level denials logged best-effort, without a toast</td>
+                <td>
+                  Bridge denials raise the rate-limited toast. The toast copy also handles a
+                  <code>syscall</code> reason with a count ("blocked system call: connect (×4)"), so
+                  kernel denials reported through the same list by #4236 would be toasted too
+                </td>
+                <td>Divergence once #4236 lands</td>
+                <td>Decide whether kernel denials toast (concept: log only) when #4236 lands</td>
               </tr>
             </tbody>
           </table>
