@@ -172,7 +172,10 @@ mod tests {
         for waiter in waiters {
             waiter.join().unwrap();
         }
-        assert_eq!(log.with(|log| log.clone()), (0..WAITERS).collect::<Vec<_>>());
+        assert_eq!(
+            log.with(|log| log.clone()),
+            (0..WAITERS).collect::<Vec<_>>()
+        );
     }
 
     /// A panic inside the critical section releases the lock for the next
