@@ -210,7 +210,18 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
 
 @pytest.mark.usefixtures("ssh_fixtures")
 class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
-    """SSH-08: monitoring shows on an SSH tab and hides on a local tab."""
+    """SSH-08: monitoring follows the active tab between an SSH and a local tab.
+
+    Since the local-machine monitoring provider (PROD-0022, 1267a2419) a local
+    shell tab is monitored too, so switching to it no longer hides monitoring;
+    it re-targets the status bar at the local machine (labelled by the tab).
+    """
+
+    def monitored_host(self) -> str:
+        """The monitoring host chip's label, or ``""`` while it is absent."""
+        if not self.driver.exists("monitoring-host"):
+            return ""
+        return self.driver.get_text("monitoring-host").strip()
 
     def test_monitoring_tracks_the_active_tab(self):
         ssh_name = unique_name("ssh-mon")
@@ -227,23 +238,26 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
         self.accept_host_key_prompt()
         ssh_tab = self.wait(lambda: self.find_tab(ssh_name), what="the SSH tab")
 
-        # Monitoring is shown while the SSH tab is active.
-        assert self.wait(
-            self.monitoring_visible, what="monitoring to appear on the SSH tab"
+        # Monitoring targets the SSH host while the SSH tab is active.
+        self.wait(
+            lambda: HOST in self.monitored_host(),
+            what="monitoring to target the SSH host",
         )
 
-        # Open a local shell tab — it becomes active and monitoring hides.
+        # Open a local shell tab — it becomes active and monitoring re-targets
+        # the local machine.
         self.driver.click("terminal-view-new-terminal")
         self.wait(self.has_terminal, what="the local terminal")
-        assert self.wait(
-            lambda: not self.monitoring_visible(),
-            what="monitoring to hide on the local tab",
+        self.wait(
+            lambda: (lambda h: h != "" and HOST not in h)(self.monitored_host()),
+            what="monitoring to follow the local tab",
         )
 
-        # Switch back to the SSH tab — monitoring reappears.
+        # Switch back to the SSH tab — monitoring targets the SSH host again.
         self.switch_to_tab(ssh_tab["id"])
-        assert self.wait(
-            self.monitoring_visible, what="monitoring to reappear on the SSH tab"
+        self.wait(
+            lambda: HOST in self.monitored_host(),
+            what="monitoring to return to the SSH host",
         )
 
 
@@ -275,6 +289,13 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         control = SshServerControl()
         if not control.available:
             pytest.skip("no container runtime to drop the SSH session server-side")
+
+        # The overlay's controls carry no tab id, and an inactive tab keeps its
+        # overlay mounted: a dropped tab left by an earlier test (or a rerun)
+        # would take the bare-testid clicks and reads below. On nightly
+        # 2026-10-07 "View Scrollback" dismissed the previous test's overlay
+        # and this tab's never closed. Start from an empty tab strip.
+        self.close_all_tabs()
 
         # Baseline sshd sessions before this test connects, so the session this
         # connection spawns can be isolated by set difference and killed alone.

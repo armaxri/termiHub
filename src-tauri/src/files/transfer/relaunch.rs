@@ -60,6 +60,10 @@
 //! session identity — the same agent-side session, or one reopened from the
 //! same saved definition on the same agent — and wait, paused, until the agent
 //! is reconnected: see [`super::relaunch_agent`].
+//! **Graphical side-channel** transfers of a VNC session (#4205) relaunch
+//! through their persisted side-channel identity — a session of the same saved
+//! VNC connection whose channel still reaches the same file host — and wait,
+//! paused, until that connection is reopened: see [`super::relaunch_graphical`].
 //! Queued **local-disk copies** (PARITY-004, #3567) need no session
 //! and always relaunch from their temp file.
 //!
@@ -87,7 +91,7 @@ use tauri::{AppHandle, Manager};
 
 use std::sync::Arc;
 
-use super::persist::{PersistedAgentTarget, PersistedTransfer};
+use super::persist::{PersistedAgentTarget, PersistedGraphicalTarget, PersistedTransfer};
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
 use super::relaunch_credentials::RelaunchBlocked;
@@ -131,6 +135,18 @@ pub(crate) enum RelaunchPlan {
     Agent {
         session_id: String,
         agent: PersistedAgentTarget,
+        direction: TransferDirection,
+        remote_path: String,
+        local_path: String,
+        offset: u64,
+        total: u64,
+    },
+    /// A graphical (VNC) session's side-channel download/upload (#4205):
+    /// relaunchable over a live graphical session of the same saved
+    /// connection whose side channel still reaches the same file host by the
+    /// same route. Carries ids, paths and progress only.
+    Graphical {
+        target: PersistedGraphicalTarget,
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
@@ -195,6 +211,18 @@ pub(crate) enum ResumeDecision {
 /// endpoint (#3206), and one persisted before that (no source) cannot be
 /// relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
+    // A graphical session's side-channel download/upload (#4205) re-attaches
+    // through a session of its saved VNC connection, never by session id.
+    if let (Some(local_path), Some(target)) = (&record.local_path, &record.graphical) {
+        return RelaunchPlan::Graphical {
+            target: target.clone(),
+            direction: record.direction,
+            remote_path: record.remote_path.clone(),
+            local_path: local_path.clone(),
+            offset: record.resume_offset,
+            total: record.total,
+        };
+    }
     // An agent-hosted download/upload (#4114) re-attaches by its session
     // identity, not through the SFTP/FTP session path.
     if let (Some(local_path), None, Some(agent)) =
@@ -514,6 +542,56 @@ async fn relaunch_record(
                 }
             }
         }
+        RelaunchPlan::Graphical {
+            target,
+            direction,
+            remote_path,
+            local_path,
+            offset,
+            total,
+        } => {
+            // Find a session of the saved VNC connection whose side channel
+            // still leads to the same file host. None yet keeps the row
+            // paused until the connection is reopened (#4205).
+            match super::relaunch_graphical::resolve_live_graphical_target(app_handle, &target)
+                .await
+            {
+                Ok((graphical_session_id, carrier)) => {
+                    // Queue it under the live graphical session, so closing
+                    // that session cancels it like its other uploads.
+                    let live_record = PersistedTransfer {
+                        session_id: graphical_session_id,
+                        ..record.clone()
+                    };
+                    let spawn_remote = remote_path.clone();
+                    spawn_relaunch(
+                        &live_record,
+                        direction,
+                        &remote_path,
+                        total,
+                        registry,
+                        app_handle,
+                        move |handle, registry, sink| {
+                            run_side_channel_transfer(
+                                carrier,
+                                direction,
+                                spawn_remote,
+                                local_path,
+                                handle,
+                                registry,
+                                sink,
+                                offset,
+                            )
+                        },
+                    );
+                    true
+                }
+                Err(blocked) => {
+                    block_row(app_handle, &record, blocked);
+                    true
+                }
+            }
+        }
         RelaunchPlan::RemoteCopy {
             src_session_id,
             src_saved_connection_id,
@@ -627,6 +705,54 @@ async fn relaunch_record(
         RelaunchPlan::Unsupported { reason } => {
             fail_row(app_handle, &record, reason);
             true
+        }
+    }
+}
+
+/// Run a side-channel transfer over `carrier` from `offset` (#4205): SFTP on
+/// the VNC tunnel's session, or ranged slices over the hosting agent. Either
+/// executor's resume gate re-verifies the destination (and the source
+/// fingerprint) before appending, and restarts from zero when it does not
+/// match.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_side_channel_transfer(
+    carrier: crate::session::graphical_upload::UploadCarrier,
+    direction: TransferDirection,
+    remote_path: String,
+    local_path: String,
+    handle: Arc<super::registry::TransferHandle>,
+    registry: TransferRegistry,
+    sink: ProgressSink,
+    offset: u64,
+) {
+    use crate::session::graphical_upload::UploadCarrier;
+    match carrier {
+        UploadCarrier::Sftp(browser) => {
+            super::sftp::run_sftp_transfer(
+                browser,
+                direction,
+                remote_path,
+                local_path,
+                handle,
+                registry,
+                sink,
+                super::sftp::DEFAULT_RESUME_MODE,
+                offset,
+            )
+            .await;
+        }
+        UploadCarrier::Agent(files) => {
+            termihub_core::files::transfer::ranged::run_ranged_transfer(
+                files,
+                direction,
+                remote_path,
+                local_path,
+                handle,
+                registry,
+                sink,
+                offset,
+            )
+            .await;
         }
     }
 }
@@ -808,10 +934,13 @@ fn sources<'a>(
 /// with the message. The persisted record is left intact either way.
 fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: RelaunchBlocked) {
     match blocked {
-        RelaunchBlocked::NeedsCredentials | RelaunchBlocked::AgentSessionUnavailable => {
+        RelaunchBlocked::NeedsCredentials
+        | RelaunchBlocked::AgentSessionUnavailable
+        | RelaunchBlocked::GraphicalSessionUnavailable => {
             // Resume by itself once the connection opens or the store unlocks
             // (#3883) — or, for an agent-hosted transfer, once a matching
-            // agent session opens (#4114).
+            // agent session opens (#4114), and for a graphical side-channel
+            // transfer once a session of its VNC connection is active (#4205).
             if let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() {
                 super::relaunch_auto::note_blocked(persist.credential_waits(), record, &blocked);
             }
@@ -865,6 +994,7 @@ mod tests {
             remote_source: None,
             saved_connection_id: None,
             agent: None,
+            graphical: None,
         }
     }
 
@@ -941,6 +1071,70 @@ mod tests {
                 total: 8192,
             }
         );
+    }
+
+    /// A graphical side-channel record (#4205) relaunches through its VNC
+    /// identity — even when it also names a saved connection or agent — and
+    /// from the persisted checkpoint.
+    #[test]
+    fn plan_for_a_side_channel_transfer_reattaches_by_its_vnc_identity() {
+        let target = crate::files::transfer::persist::PersistedGraphicalTarget {
+            connection_id: "Lab/pi-desktop".to_string(),
+            route: termihub_core::connection::FileSideChannelKind::Ssh,
+            host: "lab-pi".to_string(),
+            user: "pi".to_string(),
+            agent_id: None,
+        };
+        let mut rec = record("t1", Some("/home/user/big.bin"));
+        rec.direction = TransferDirection::Upload;
+        rec.saved_connection_id = Some("Lab/pi-desktop".to_string());
+        rec.graphical = Some(target.clone());
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::Graphical {
+                target,
+                direction: TransferDirection::Upload,
+                remote_path: "/remote/data.csv".to_string(),
+                local_path: "/home/user/big.bin".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
+    }
+
+    /// A side-channel upload keeps its identity through the persisted queue,
+    /// so a resume after a restart plans a graphical relaunch.
+    #[test]
+    fn decide_resume_relaunches_a_rehydrated_side_channel_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = TransferRegistry::new();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist.record_registration(
+            "vnc-t",
+            "rd-old",
+            TransferDirection::Upload,
+            "big.bin",
+            "/home/pi/Desktop/big.bin",
+            Some("/home/user/big.bin".to_string()),
+            0,
+        );
+        persist.record_graphical_target(
+            "vnc-t",
+            crate::files::transfer::persist::PersistedGraphicalTarget {
+                connection_id: "Lab/pi-desktop".to_string(),
+                route: termihub_core::connection::FileSideChannelKind::Agent,
+                host: "lab-pi".to_string(),
+                user: "pi".to_string(),
+                agent_id: Some("agent-1".to_string()),
+            },
+        );
+        match decide_resume("vnc-t", &registry, &persist) {
+            ResumeDecision::Relaunch(rec) => assert!(matches!(
+                plan_from_record(&rec),
+                RelaunchPlan::Graphical { .. }
+            )),
+            other => panic!("expected Relaunch, got {other:?}"),
+        }
     }
 
     /// An agent-hosted record keeps its identity through the persisted queue,

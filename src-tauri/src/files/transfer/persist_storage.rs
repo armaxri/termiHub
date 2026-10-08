@@ -99,6 +99,7 @@ mod tests {
             remote_source: None,
             saved_connection_id: None,
             agent: None,
+            graphical: None,
         }
     }
 

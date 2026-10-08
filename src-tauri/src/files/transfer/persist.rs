@@ -164,6 +164,39 @@ pub struct PersistedTransfer {
     /// these.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<PersistedAgentTarget>,
+    /// The graphical (VNC) session's file side channel a transfer runs over
+    /// (#4205): the saved VNC connection and the route it reached the file
+    /// host by. Absent for every other transfer and for records written before
+    /// it existed. Identities only, never a secret: the graphical session id
+    /// does not survive a restart, so a relaunch waits for a session of that
+    /// connection and re-checks the route before resuming.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphical: Option<PersistedGraphicalTarget>,
+}
+
+/// The persisted identity of a graphical session's file side channel (#4205).
+///
+/// A relaunch resumes only over a live graphical session opened from the same
+/// saved connection whose side channel still reaches the **same file host** by
+/// the same route (and, for the agent route, through the same agent) — so a
+/// partial upload is never continued on a different machine after the
+/// connection was edited. Ids, host names and the account name only; the
+/// session's credentials stay in the connection and its credential store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedGraphicalTarget {
+    /// The saved VNC connection the graphical session was opened from.
+    pub connection_id: String,
+    /// The carrier: SFTP on the VNC SSH tunnel, or the hosting agent.
+    pub route: termihub_core::connection::FileSideChannelKind,
+    /// The file host the bytes land on (the SSH tunnel host or agent host).
+    pub host: String,
+    /// The account files are written as on `host` (empty when unknown).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user: String,
+    /// The agent the agent route runs through; absent for the SSH route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// The persisted identity of an agent-hosted transfer's session (#4114).
@@ -459,6 +492,7 @@ impl crate::utils::migrate::VersionedStore for PersistedTransferStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use termihub_core::connection::FileSideChannelKind;
 
     fn sample(id: &str, status: PersistedTransferStatus) -> PersistedTransfer {
         PersistedTransfer {
@@ -481,6 +515,7 @@ mod tests {
             remote_source: None,
             saved_connection_id: None,
             agent: None,
+            graphical: None,
         }
     }
 
@@ -525,6 +560,64 @@ mod tests {
         assert!(!legacy.contains("\"agent\""), "absent field is not written");
         let parsed: PersistedTransfer = serde_json::from_str(&legacy).unwrap();
         assert_eq!(parsed.agent, None);
+    }
+
+    fn graphical_target(route: FileSideChannelKind) -> PersistedGraphicalTarget {
+        PersistedGraphicalTarget {
+            connection_id: "Lab/pi-desktop".to_string(),
+            route,
+            host: "lab-pi".to_string(),
+            user: "pi".to_string(),
+            agent_id: (route == FileSideChannelKind::Agent).then(|| "agent-1".to_string()),
+        }
+    }
+
+    /// The graphical side-channel identity (#4205) round-trips as ids, a host
+    /// and an account name only, and a record written before it existed still
+    /// loads (with none).
+    #[test]
+    fn graphical_target_round_trips_and_old_records_still_load() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.graphical = Some(graphical_target(FileSideChannelKind::Ssh));
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(
+            "\"graphical\":{\"connectionId\":\"Lab/pi-desktop\",\"route\":\"ssh\",\
+             \"host\":\"lab-pi\",\"user\":\"pi\"}"
+        ));
+        assert_eq!(
+            serde_json::from_str::<PersistedTransfer>(&json).unwrap(),
+            entry
+        );
+
+        entry.graphical = Some(graphical_target(FileSideChannelKind::Agent));
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"route\":\"agent\""));
+        assert!(json.contains("\"agentId\":\"agent-1\""));
+        assert_eq!(
+            serde_json::from_str::<PersistedTransfer>(&json).unwrap(),
+            entry
+        );
+
+        let legacy = serde_json::to_string(&sample("t2", PersistedTransferStatus::Paused)).unwrap();
+        assert!(!legacy.contains("graphical"), "absent field is not written");
+        let parsed: PersistedTransfer = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(parsed.graphical, None);
+    }
+
+    /// SECURITY: the graphical identity never carries the VNC or SSH settings
+    /// it was resolved from — only the connection id, route, host and user.
+    #[test]
+    fn graphical_target_carries_no_secret() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.graphical = Some(graphical_target(FileSideChannelKind::Agent));
+        let value = serde_json::to_value(&entry).unwrap();
+        let mut keys: Vec<_> = value["graphical"].as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["agentId", "connectionId", "host", "route", "user"]);
+        let json = serde_json::to_string(&entry).unwrap().to_lowercase();
+        for needle in ["password", "passphrase", "secret", "privatekey", "sshhost"] {
+            assert!(!json.contains(needle), "record leaked a `{needle}`");
+        }
     }
 
     #[test]

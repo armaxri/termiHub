@@ -46,6 +46,7 @@ pub async fn remote_desktop_open_file_browser(
         .file_channel_with_session(&session_id, Some(agents))
         .await?;
     let requests: Arc<dyn AgentRequests> = Arc::new(rpc);
+    let saved_connection = manager.saved_connection_of(&session_id).await;
     open_side_channel(
         &sessions.side_channels,
         &session_id,
@@ -53,12 +54,15 @@ pub async fn remote_desktop_open_file_browser(
         ssh,
         requests,
         dir,
+        saved_connection.as_deref(),
     )
     .await
 }
 
 /// The body of [`remote_desktop_open_file_browser`] once the channel is
-/// resolved: build the carrier, check the start folder, register it.
+/// resolved: build the carrier, check the start folder, register it — with
+/// the identity its transfers persist when `saved_connection_id` names the
+/// saved connection the session was opened from (#4205).
 pub(crate) async fn open_side_channel(
     side_channels: &SideChannelBrowsers,
     session_id: &str,
@@ -66,13 +70,22 @@ pub(crate) async fn open_side_channel(
     ssh: Option<Arc<termihub_core::backends::ssh::handler::SshSession>>,
     agents: Arc<dyn AgentRequests>,
     dir: Option<String>,
+    saved_connection_id: Option<&str>,
 ) -> Result<RemoteDesktopFileBrowser, TerminalError> {
     let (carrier, channel, default_dir) = upload_carrier(channel, ssh, agents).await?;
     let destination = carrier.destination();
     let start_dir = resolve_dest_dir(destination.as_ref(), dir.as_deref(), &default_dir)
         .await
         .map_err(|e| carrier.error(format!("Cannot browse {}: {e}", channel.host)))?;
-    side_channels.register(session_id, carrier);
+    // Its downloads and uploads persist under the side channel's identity
+    // when the session came from a saved connection, so one cut off by
+    // quitting resumes after a restart (#4205).
+    let target = crate::files::transfer::relaunch_graphical::side_channel_target(
+        saved_connection_id,
+        &channel,
+        &carrier,
+    );
+    side_channels.register_with_target(session_id, carrier, target);
     Ok(RemoteDesktopFileBrowser { channel, start_dir })
 }
 

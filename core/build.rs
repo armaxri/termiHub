@@ -26,6 +26,17 @@
 //!
 //! [`rdp_sidecar`]: crate::backends::rdp_sidecar
 //!
+//! # Plugin runner integrity digest (#4202)
+//!
+//! The out-of-process plugin runner (`termihub-plugin-runner`, #4182) ships the
+//! same way, so its expected SHA-256 is embedded the same way, as
+//! `TERMIHUB_PLUGIN_RUNNER_SHA256`, from `$TERMIHUB_PLUGIN_RUNNER_SHA256` or the
+//! staged `src-tauri/binaries/termihub-plugin-runner-<target>[.exe]` (written by
+//! `scripts/build-plugin-runner.sh --tauri-externalbin`). One difference: the
+//! staged file is only hashed for a **release** profile. A debug build (`tauri
+//! dev`, tests) runs the cargo-built runner, never the staged one, so a digest
+//! left behind by an earlier local bundle build must not make it refuse that.
+//!
 //! # Plugin host target triple (PLG-011)
 //!
 //! The plugin host picks the native backend library matching its own Rust
@@ -36,51 +47,76 @@
 
 use std::path::{Path, PathBuf};
 
-fn main() {
-    println!("cargo:rerun-if-env-changed=TERMIHUB_RDP_HELPER_SHA256");
+/// A sidecar binary staged for Tauri `externalBin` whose SHA-256 the host
+/// embeds to verify it before spawning it.
+struct Sidecar {
+    /// The binary name, without the `-<target>[.exe]` staging suffix.
+    bin: &'static str,
+    /// The compile-time env var carrying the digest (also the override name).
+    env: &'static str,
+    /// Hash the staged file only for a release profile (see the module docs).
+    release_only: bool,
+}
 
+const SIDECARS: [Sidecar; 2] = [
+    Sidecar {
+        bin: "termihub-rdp-helper",
+        env: "TERMIHUB_RDP_HELPER_SHA256",
+        release_only: false,
+    },
+    Sidecar {
+        bin: "termihub-plugin-runner",
+        env: "TERMIHUB_PLUGIN_RUNNER_SHA256",
+        release_only: true,
+    },
+];
+
+fn main() {
     // Cargo always sets TARGET for build scripts; fall back to "unknown" rather
     // than failing the build (a host that cannot name its triple then simply
     // matches no multi-platform package entry — fail closed).
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_owned());
     println!("cargo:rustc-env=TERMIHUB_TARGET_TRIPLE={target}");
+    let release = std::env::var("PROFILE").is_ok_and(|p| p == "release");
 
-    let staged = staged_helper_path();
-    // Re-run when the staged binary appears or changes. Watch the staging
+    let staging = staging_dir();
+    // Re-run when a staged binary appears or changes. Watch the staging
     // DIRECTORY, not the file: cargo treats a `rerun-if-changed` path that does
     // not exist as permanently stale, so watching the (normally absent) staged
     // file re-ran this script -- and recompiled termihub-core and every crate
     // above it -- on every cargo invocation (#3909). The directory is kept in
     // git by a placeholder (`src-tauri/binaries/.gitkeep`), and cargo scans a
     // watched directory's files, so staging a helper into it still re-runs this.
-    if let Some(dir) = staged.parent() {
-        println!("cargo:rerun-if-changed={}", dir.display());
-    }
+    println!("cargo:rerun-if-changed={}", staging.display());
 
-    if let Some(digest) = resolve_digest(&staged) {
-        println!("cargo:rustc-env=TERMIHUB_RDP_HELPER_SHA256={digest}");
+    for sidecar in &SIDECARS {
+        println!("cargo:rerun-if-env-changed={}", sidecar.env);
+        let staged = staging.join(staged_name(sidecar.bin, &target));
+        let hash_staged = release || !sidecar.release_only;
+        if let Some(digest) = resolve_digest(sidecar.env, &staged, hash_staged) {
+            println!("cargo:rustc-env={}={digest}", sidecar.env);
+        }
     }
 }
 
-/// Resolve the expected sidecar SHA-256 (lowercase hex), or `None`.
-fn resolve_digest(staged: &Path) -> Option<String> {
-    if let Ok(raw) = std::env::var("TERMIHUB_RDP_HELPER_SHA256") {
+/// Resolve a sidecar's expected SHA-256 (lowercase hex), or `None`: the
+/// `env` override, else the staged binary when `hash_staged` is set.
+fn resolve_digest(env: &str, staged: &Path, hash_staged: bool) -> Option<String> {
+    if let Ok(raw) = std::env::var(env) {
         let v = raw.trim().to_ascii_lowercase();
         if is_sha256_hex(&v) {
             return Some(v);
         }
         if !v.is_empty() {
-            println!(
-                "cargo:warning=Ignoring TERMIHUB_RDP_HELPER_SHA256: not a 64-char hex SHA-256"
-            );
+            println!("cargo:warning=Ignoring {env}: not a 64-char hex SHA-256");
         }
     }
 
-    if staged.is_file() {
+    if hash_staged && staged.is_file() {
         match sha256_hex_of_file(staged) {
             Ok(digest) => return Some(digest),
             Err(e) => println!(
-                "cargo:warning=Failed to hash staged RDP helper {}: {e}",
+                "cargo:warning=Failed to hash staged sidecar {}: {e}",
                 staged.display()
             ),
         }
@@ -89,21 +125,20 @@ fn resolve_digest(staged: &Path) -> Option<String> {
     None
 }
 
-/// Path to the staged `externalBin` for the target being compiled.
-fn staged_helper_path() -> PathBuf {
+/// `src-tauri/binaries/`, where the `externalBin` sidecars are staged.
+fn staging_dir() -> PathBuf {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
-    let target = std::env::var("TARGET").unwrap_or_default();
-    let name = if target.contains("windows") {
-        format!("termihub-rdp-helper-{target}.exe")
+    // core/ -> repo root -> src-tauri/binaries
+    manifest.join("..").join("src-tauri").join("binaries")
+}
+
+/// The staged file name Tauri `externalBin` expects for `bin` on `target`.
+fn staged_name(bin: &str, target: &str) -> String {
+    if target.contains("windows") {
+        format!("{bin}-{target}.exe")
     } else {
-        format!("termihub-rdp-helper-{target}")
-    };
-    // core/ -> repo root -> src-tauri/binaries/<name>
-    manifest
-        .join("..")
-        .join("src-tauri")
-        .join("binaries")
-        .join(name)
+        format!("{bin}-{target}")
+    }
 }
 
 fn is_sha256_hex(s: &str) -> bool {

@@ -23,7 +23,9 @@
       * a passing check exits 0 after a native command returned non-zero;
       * a passing -Nsis check exits 0 through a fake 7z on PATH;
       * a failing 7z extraction, a failing check, a thrown error and a bad
-        argument set all exit 1, also after a native command returned 0.
+        argument set all exit 1, also after a native command returned 0;
+      * verify-no-vcruntime.ps1 fails a bundle without the plugin runner
+        termihub-plugin-runner.exe (#4202).
 
     The dummy binaries are minimal PE32+ images with no imports. Authenticode
     is not what is under test (and Get-AuthenticodeSignature exists only on
@@ -130,6 +132,7 @@ try {
     New-DummyPe -Path (Join-Path $good 'termihub.exe') -Tag 1
     New-DummyPe -Path (Join-Path $good 'conpty.dll') -Tag 2
     New-DummyPe -Path (Join-Path $good 'OpenConsole.exe') -Tag 3
+    New-DummyPe -Path (Join-Path $good 'termihub-plugin-runner.exe') -Tag 4
     $pinDll = Get-Sha256 (Join-Path $good 'conpty.dll')
     $pinHost = Get-Sha256 (Join-Path $good 'OpenConsole.exe')
     [System.IO.File]::WriteAllLines((Join-Path $fakeRoot 'src-tauri/packaging/windows/conpty.env'), @(
@@ -158,6 +161,14 @@ try {
         Invoke-Case "conflicting arguments exit 1" $s "-Dir $(& $q $good) -Msi $(& $q $good)" 1 -PriorExit 0
     }
     Invoke-Case "missing directory exits 1 (thrown error -> trap)" 'verify-no-vcruntime.ps1' "-Dir $(& $q $missing)" 1 -PriorExit 0
+
+    # A bundle that dropped the plugin runner (#4202) fails, though every
+    # binary it does hold is clean.
+    $noRunner = Join-Path $work 'no-runner'
+    New-Item -ItemType Directory -Path $noRunner | Out-Null
+    Copy-Item -Path (Join-Path $good '*') -Destination $noRunner
+    Remove-Item -LiteralPath (Join-Path $noRunner 'termihub-plugin-runner.exe')
+    Invoke-Case "bundle without the plugin runner exits 1" 'verify-no-vcruntime.ps1' "-Dir $(& $q $noRunner)" 1 -PriorExit 0
     Invoke-Case "missing binaries exit 1" 'verify-conpty-bundle.ps1' "-Dir $(& $q $missing)" 1 -PriorExit 0
 
     if ($onWindows) {

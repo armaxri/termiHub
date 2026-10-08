@@ -727,12 +727,22 @@ export async function reclaimSession(tabId: string): Promise<void> {
  * Open a graphical remote-desktop session for a connection type (`mock-remote-desktop`,
  * `vnc`, `rdp`, …). Returns the new graphical session id. Frames/cursor/state
  * arrive via the `remote-desktop-*` events.
+ *
+ * `savedConnectionId` names the saved connection the tab was opened from
+ * (#4205): the backend binds the session to it, so the session's file
+ * side-channel transfers are persisted and — after a restart — resume once a
+ * session of the same connection is active again. Sent only when set.
  */
 export async function remoteDesktopConnect(
   typeId: string,
-  settings: Record<string, unknown>
+  settings: Record<string, unknown>,
+  savedConnectionId?: string
 ): Promise<SessionId> {
-  return await invoke<string>("remote_desktop_connect", { typeId, settings });
+  return await invoke<string>("remote_desktop_connect", {
+    typeId,
+    settings,
+    ...(savedConnectionId ? { savedConnectionId } : {}),
+  });
 }
 
 /** Request a new session resolution in pixels (Match Window / dynamic resize). */

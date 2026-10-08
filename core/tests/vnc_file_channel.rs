@@ -330,3 +330,98 @@ async fn vnc_ft_04_browse_and_queued_download_over_the_tunnel_sftp_channel() {
     sftp.delete(&remote).await.expect("cleanup");
     vnc.disconnect().await.expect("disconnect");
 }
+
+// ── VNC-FT-05: an upload cut off by a quit resumes on a new session (#4205) ──
+
+#[tokio::test]
+async fn vnc_ft_05_quit_interrupted_upload_resumes_over_a_reconnected_tunnel() {
+    use std::sync::{Arc, Mutex};
+    use termihub_core::files::transfer::sftp::{run_sftp_transfer, DEFAULT_RESUME_MODE};
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+    };
+
+    require_docker!(port_ssh_password());
+    require_docker!(port_vnc());
+
+    async fn tunnel_sftp(vnc: &mut Vnc) -> Arc<SftpFileBrowser> {
+        vnc.connect(tunnelled_settings(true, false))
+            .await
+            .expect("VNC-FT-05: VNC through the SSH tunnel should connect");
+        let session = vnc
+            .graphical()
+            .expect("graphical")
+            .file_side_channel_ssh_session()
+            .expect("VNC-FT-05: the tunnel's SSH session is reachable");
+        Arc::new(
+            SftpFileBrowser::from_session(session)
+                .await
+                .expect("VNC-FT-05: SFTP opens on the tunnel's own session"),
+        )
+    }
+
+    let local_dir = tempfile::tempdir().expect("tempdir");
+    let local = local_dir.path().join("big.bin");
+    let payload: Vec<u8> = (0..(900 * 1024)).map(|i| (i % 239) as u8).collect();
+    std::fs::write(&local, &payload).expect("write local file");
+    let remote = format!("/home/testuser/vnc-ft-05-{}.bin", std::process::id());
+    let checkpoint = 384 * 1024;
+
+    // Before the quit: the first part of the upload landed, then the app (and
+    // with it the VNC session and its tunnel) went away.
+    let mut first = Vnc::new();
+    let sftp = tunnel_sftp(&mut first).await;
+    sftp.write_file(&remote, &payload[..checkpoint])
+        .await
+        .expect("the partial upload");
+    first.disconnect().await.expect("disconnect");
+
+    // After the restart: a new session of the same connection, a new tunnel.
+    let mut second = Vnc::new();
+    let sftp = tunnel_sftp(&mut second).await;
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "vnc-ft-05",
+        "rd-reopened",
+        TransferDirection::Upload,
+        "big.bin",
+        &remote,
+        payload.len() as u64,
+    );
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let seen = progress.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        seen.lock().expect("progress lock").push(p.transferred);
+    });
+    run_sftp_transfer(
+        sftp.clone(),
+        TransferDirection::Upload,
+        remote.clone(),
+        local.to_string_lossy().into_owned(),
+        handle,
+        registry.clone(),
+        sink,
+        DEFAULT_RESUME_MODE,
+        checkpoint as u64,
+    )
+    .await;
+
+    let state = registry
+        .list(Some("rd-reopened"))
+        .into_iter()
+        .find(|s| s.transfer_id == "vnc-ft-05")
+        .map(|s| s.state);
+    assert_eq!(state, Some(TransferStateTag::Completed));
+    assert_eq!(
+        sftp.read_file(&remote).await.expect("read back"),
+        payload,
+        "VNC-FT-05: the resumed upload completes the file unchanged"
+    );
+    let progress = progress.lock().expect("progress lock").clone();
+    assert!(
+        progress.iter().all(|t| *t >= checkpoint as u64),
+        "VNC-FT-05: resumed from the checkpoint, never from zero: {progress:?}"
+    );
+    sftp.delete(&remote).await.expect("cleanup");
+    second.disconnect().await.expect("disconnect");
+}

@@ -30,7 +30,7 @@ import psutil
 
 from . import coverage
 from . import portable as portable_staging
-from .relaunch import find_relaunched_app
+from .relaunch import describe_candidates, find_relaunched_app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -741,9 +741,12 @@ class AppInstance:
                 self._relaunched = found
                 return
             if time.monotonic() >= deadline:
+                seen = describe_candidates(self._binary, self._bridge_port)
                 raise AssertionError(
                     f"the app (pid {old_pid}) exited but no relaunched app appeared "
-                    f"within {timeout}s"
+                    f"within {timeout}s (launched {self._binary}, started "
+                    f"{self._started_at:.1f}); app-like processes: "
+                    + ("; ".join(seen) if seen else "none")
                 )
             time.sleep(0.2)
 

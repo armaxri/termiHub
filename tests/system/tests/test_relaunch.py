@@ -222,3 +222,34 @@ def test_stop_does_not_block_on_a_stray_pipe_writer(tmp_path, monkeypatch):
                 psutil.Process(stray_pid).kill()
             except psutil.Error:
                 pass
+
+
+def test_matches_the_relaunch_by_file_identity_not_spelling(tmp_path: Path):
+    # macOS relaunches Contents/MacOS/<CFBundleExecutable>, which can differ in
+    # case from the launched path on a case-insensitive volume; a hard link
+    # stands in for "same file, other spelling" on any filesystem.
+    binary = tmp_path / "termiHub"
+    binary.write_text("")
+    alias = tmp_path / "relaunched-name"
+    alias.hardlink_to(binary)
+    relaunched = _Proc(3, str(alias), 1001.0, {BRIDGE_PORT_ENV: "5555"})
+    assert _find(binary, [relaunched]) is relaunched
+
+
+def test_describes_app_like_processes_for_a_failed_adopt(tmp_path: Path):
+    from termihub_harness.relaunch import describe_candidates
+
+    binary = tmp_path / "termiHub"
+    binary.write_text("")
+    lines = describe_candidates(
+        binary,
+        5555,
+        processes=[
+            _Proc(3, str(tmp_path / "TERMIHUB"), 1001.0, {BRIDGE_PORT_ENV: "5555"}),
+            _Proc(4, str(tmp_path / "other"), 1001.0, {}),
+            _Proc(5, str(binary), 1001.0, {}, denied=True),
+        ],
+    )
+    assert len(lines) == 2
+    assert "pid=3" in lines[0] and f"{BRIDGE_PORT_ENV}=5555 (want 5555)" in lines[0]
+    assert "pid=5" in lines[1] and "<AccessDenied>" in lines[1]

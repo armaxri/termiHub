@@ -418,7 +418,14 @@ async fn agent_carrier_uploads_through_the_queue_to_the_agent_host() {
         .unwrap();
     let placement = place(dest.as_ref(), &dir, plan).await;
     let registry = TransferRegistry::new();
-    let started = start_uploads(&carrier, "rd-1", placement.files, &registry, &quiet_sink());
+    let started = start_uploads(
+        &carrier,
+        "rd-1",
+        placement.files,
+        &registry,
+        &quiet_sink(),
+        None,
+    );
 
     assert_eq!(started.len(), 2);
     assert_eq!(started[1].remote_path, "/home/pi/Desktop/notes (1).md");
@@ -459,4 +466,184 @@ async fn cancel_session_transfers_cancels_only_that_session() {
     assert!(a1.is_cancelled() && a2.is_cancelled());
     assert!(!other.is_cancelled());
     assert_eq!(cancel_session_transfers(&registry, "rd-unknown"), 0);
+}
+
+// ── Persistence and resume (#4205) ──────────────────────────────────
+
+fn agent_carrier(host: &Arc<FakeHost>) -> UploadCarrier {
+    let requests: Arc<dyn AgentRequests> = host.clone();
+    UploadCarrier::Agent(Arc::new(AgentHostFiles::new(
+        "agent-1".to_string(),
+        requests,
+    )))
+}
+
+fn graphical_target() -> PersistedGraphicalTarget {
+    PersistedGraphicalTarget {
+        connection_id: "Lab/pi-desktop".to_string(),
+        route: termihub_core::connection::FileSideChannelKind::Agent,
+        host: "lab-pi".to_string(),
+        user: "pi".to_string(),
+        agent_id: Some("agent-1".to_string()),
+    }
+}
+
+/// With persistence, every queued upload is recorded — before its executor
+/// runs — with the side channel's identity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn persisted_uploads_record_the_side_channel_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(&tmp.path().join("a.txt"), b"alpha");
+    let host = Arc::new(FakeHost::with_dirs(&["/home/pi", "/home/pi/Desktop"]));
+    let carrier = agent_carrier(&host);
+    let persist = TransferPersistenceManager::new_test(tmp.path());
+    let target = graphical_target();
+    let registry = TransferRegistry::new();
+
+    // The quiet sink does not fold progress into the durable queue, so the
+    // record is still there to inspect after the upload finished.
+    let files = vec![PlacedFile {
+        local: tmp.path().join("a.txt"),
+        remote: "/home/pi/Desktop/a.txt".to_string(),
+    }];
+    let started = start_uploads(
+        &carrier,
+        "rd-1",
+        files,
+        &registry,
+        &quiet_sink(),
+        Some((&persist, &target)),
+    );
+    let record = persist
+        .get_record(&started[0].transfer_id)
+        .expect("the upload is recorded before it runs");
+    assert_eq!(record.graphical, Some(target));
+    assert_eq!(record.session_id, "rd-1");
+    assert_eq!(record.direction, TransferDirection::Upload);
+    assert_eq!(record.remote_path, "/home/pi/Desktop/a.txt");
+    assert_eq!(
+        record.local_path.as_deref(),
+        Some(s(&tmp.path().join("a.txt")).as_str())
+    );
+
+    assert_eq!(
+        settled(&registry, "rd-1").await,
+        vec![TransferStateTag::Completed]
+    );
+    assert_eq!(host.file("/home/pi/Desktop/a.txt").unwrap(), b"alpha");
+}
+
+/// Without a saved connection nothing is recorded (the default path).
+#[tokio::test]
+async fn unpersisted_uploads_leave_no_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(&tmp.path().join("a.txt"), b"alpha");
+    let host = Arc::new(FakeHost::with_dirs(&["/home/pi"]));
+    let persist = TransferPersistenceManager::new_test(tmp.path());
+    let registry = TransferRegistry::new();
+    let started = start_uploads(
+        &agent_carrier(&host),
+        "rd-1",
+        vec![PlacedFile {
+            local: tmp.path().join("a.txt"),
+            remote: "/home/pi/a.txt".to_string(),
+        }],
+        &registry,
+        &quiet_sink(),
+        None,
+    );
+    assert!(persist.get_record(&started[0].transfer_id).is_none());
+}
+
+/// Relaunch an upload over the agent carrier from `offset`, to completion.
+async fn resume_upload(host: &Arc<FakeHost>, local: &Path, offset: u64) {
+    let registry = TransferRegistry::new();
+    let handle = registry.enqueue(
+        "up-1",
+        "rd-new",
+        TransferDirection::Upload,
+        "big.bin",
+        "/home/pi/Desktop/big.bin",
+        0,
+    );
+    crate::files::transfer::relaunch::run_side_channel_transfer(
+        agent_carrier(host),
+        TransferDirection::Upload,
+        "/home/pi/Desktop/big.bin".to_string(),
+        s(local),
+        handle,
+        registry.clone(),
+        quiet_sink(),
+        offset,
+    )
+    .await;
+    assert_eq!(
+        settled(&registry, "rd-new").await,
+        vec![TransferStateTag::Completed]
+    );
+}
+
+fn write_offsets(host: &FakeHost) -> Vec<u64> {
+    host.requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(m, _)| m == CONNECTION_FILES_WRITE_RANGE)
+        .map(|(_, p)| p["offset"].as_u64().unwrap_or_default())
+        .collect()
+}
+
+/// A relaunched upload continues from the persisted offset when the remote
+/// partial file holds exactly those bytes: nothing before it is re-sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relaunched_upload_resumes_from_the_verified_offset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let big: Vec<u8> = (0..(600 * 1024)).map(|i| (i % 251) as u8).collect();
+    let local = tmp.path().join("big.bin");
+    write(&local, &big);
+    let offset = 256 * 1024;
+    let host = Arc::new(FakeHost::with_dirs(&["/home/pi", "/home/pi/Desktop"]));
+    host.add_file("/home/pi/Desktop/big.bin", &big[..offset]);
+
+    resume_upload(&host, &local, offset as u64).await;
+
+    assert_eq!(host.file("/home/pi/Desktop/big.bin").unwrap(), big);
+    let offsets = write_offsets(&host);
+    assert!(!offsets.is_empty());
+    assert!(
+        offsets.iter().all(|o| *o >= offset as u64),
+        "resumed past the checkpoint, got {offsets:?}"
+    );
+}
+
+/// When the remote partial holds more than the checkpoint (bytes the
+/// checkpoint cannot vouch for), the resume gate restarts from zero; when it
+/// holds less (it was truncated meanwhile), the upload continues from the
+/// bytes actually present — never after a gap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relaunched_upload_never_appends_after_unverified_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let big: Vec<u8> = (0..(600 * 1024)).map(|i| (i % 241) as u8).collect();
+    let local = tmp.path().join("big.bin");
+    write(&local, &big);
+
+    let longer = Arc::new(FakeHost::with_dirs(&["/home/pi", "/home/pi/Desktop"]));
+    longer.add_file("/home/pi/Desktop/big.bin", &big[..300 * 1024]);
+    resume_upload(&longer, &local, 256 * 1024).await;
+    assert_eq!(longer.file("/home/pi/Desktop/big.bin").unwrap(), big);
+    assert_eq!(
+        write_offsets(&longer).first(),
+        Some(&0),
+        "restarted from zero"
+    );
+
+    let shorter = Arc::new(FakeHost::with_dirs(&["/home/pi", "/home/pi/Desktop"]));
+    shorter.add_file("/home/pi/Desktop/big.bin", &big[..1000]);
+    resume_upload(&shorter, &local, 256 * 1024).await;
+    assert_eq!(shorter.file("/home/pi/Desktop/big.bin").unwrap(), big);
+    assert_eq!(
+        write_offsets(&shorter).first(),
+        Some(&1000),
+        "continued from the bytes present"
+    );
 }

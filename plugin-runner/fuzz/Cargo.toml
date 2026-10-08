@@ -1,0 +1,61 @@
+[package]
+name = "termihub-plugin-runner-fuzz"
+version = "0.0.0"
+description = "cargo-fuzz targets for the host <-> plugin-runner IPC frame protocol (#4190)"
+edition = "2021"
+publish = false
+
+# Deliberately NOT a member of the root workspace (see the root Cargo.toml
+# `exclude`): `libfuzzer-sys` needs a nightly toolchain with
+# `-Zsanitizer=address`, and its dependencies must not leak into the workspace
+# build, lockfile, cargo-deny graph or cargo-machete scan. The empty
+# `[workspace]` table makes this crate its own workspace root, so its
+# (uncommitted) Cargo.lock and target/ stay under plugin-runner/fuzz/.
+[workspace]
+members = ["."]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Structured input for the round-trip target and the seed generator.
+arbitrary = "1"
+libfuzzer-sys = "0.4"
+termihub-plugin-runner = { path = ".." }
+
+# Shared helpers: the structured `Message` generator and the stream decoders.
+[lib]
+name = "plugin_ipc_fuzz"
+path = "src/lib.rs"
+
+# Writes one valid frame per kind (plus a multi-frame stream) as seed corpus,
+# so every run starts from real wire captures rather than from nothing.
+[[bin]]
+name = "gen-seeds"
+path = "src/bin/gen_seeds.rs"
+test = false
+doc = false
+
+# The host decoding frames from a runner: the untrusted direction.
+[[bin]]
+name = "host_decode"
+path = "fuzz_targets/host_decode.rs"
+test = false
+doc = false
+bench = false
+
+# The runner decoding frames from the host.
+[[bin]]
+name = "runner_decode"
+path = "fuzz_targets/runner_decode.rs"
+test = false
+doc = false
+bench = false
+
+# Structured: any well-formed message survives encode -> chunked read -> decode.
+[[bin]]
+name = "frame_roundtrip"
+path = "fuzz_targets/frame_roundtrip.rs"
+test = false
+doc = false
+bench = false

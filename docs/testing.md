@@ -1348,6 +1348,40 @@ The JS-heap check from the original WebdriverIO suite is dropped — it read a C
 
 For detailed profiling instructions, baseline metrics, and memory leak detection, see the [Performance Profiling section in Contributing](contributing.md#performance-profiling).
 
+### Plugin sandbox hardening (nightly)
+
+The out-of-process plugin host (plugin OS-sandbox phase 8, #4190) has its own
+nightly lane, [`plugin-sandbox-nightly.yml`](../.github/workflows/plugin-sandbox-nightly.yml)
+(develop daily, main weekly; scheduled runs only fire once the file is on `main`,
+use **Run workflow** before that):
+
+- **IPC fuzzing** — `cargo-fuzz` targets in `plugin-runner/fuzz/`: `host_decode`
+  (the host decoding runner frames, the untrusted direction), `runner_decode`
+  (the runner decoding host frames) and `frame_roundtrip` (well-formed messages
+  survive encode, arbitrarily short reads and decode). 60 s per target on a
+  corpus cached between runs and re-seeded from the real encoder. The fuzz crate
+  is its own workspace on a pinned nightly (`plugin-runner/fuzz/nightly-toolchain`),
+  so its dependencies never enter the main build. Run locally:
+
+  ```bash
+  rustup toolchain install "$(scripts/internal/plugin-ipc-fuzz.sh --print-toolchain)" --profile minimal
+  cargo install cargo-fuzz --locked
+  scripts/internal/plugin-ipc-fuzz.sh --seconds 60
+  ```
+
+- **Performance gate** — `core/tests/plugin_runner_perf.rs` (ignored, release
+  build, Linux and macOS) measures the sandboxed `echo-backend` against the
+  concept's budget table and fails on any breach: p99 echo latency added ≤ 0.5 ms,
+  single-session throughput ≥ 100 MB/s, 40 concurrent sessions with no starvation
+  and a fairness spread ≤ 2×, helper cold start ≤ 150 ms p95 and idle RSS ≤ 15 MiB.
+  The relative throughput ("% of in-process") is reported only, because the
+  in-process echo is a memory copy. Run locally:
+
+  ```bash
+  cargo test -p termihub-core --features plugin --release \
+    --test plugin_runner_perf -- --ignored --nocapture
+  ```
+
 ## Accessibility Testing
 
 ```javascript

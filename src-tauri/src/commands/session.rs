@@ -1168,12 +1168,15 @@ async fn start_session_transfer(
         direction == TransferDirection::Download,
         &local_path,
     );
-    // Nor is a graphical session's side-channel transfer (#4193): its tunnel
-    // or agent route dies with the session, so the row could not be resumed.
+    // A graphical session's side-channel transfer (#4193) is persisted only
+    // with the side channel's identity (#4205): its tunnel or agent route dies
+    // with the session, so a relaunch waits for a session of the same saved
+    // VNC connection. One of an unsaved connection is not persisted.
     let side_channel = manager.side_channels.get(&session_id).is_some();
+    let graphical = manager.side_channels.target(&session_id);
     if let Some(pm) = app_handle
         .try_state::<TransferPersistenceManager>()
-        .filter(|_| !staging && !side_channel)
+        .filter(|_| !staging && (!side_channel || graphical.is_some()))
     {
         pm.record_registration(
             &transfer_id,
@@ -1184,17 +1187,19 @@ async fn start_session_transfer(
             Some(local_path.clone()),
             0,
         );
-        // A Docker transfer also records its container identity, so a relaunch
+        // A side-channel transfer records the side channel's identity
+        // (#4205); a Docker transfer its container identity, so a relaunch
         // after a restart can re-attach to the same container (#3585).
-        match &target {
-            SessionTransferTarget::Docker(docker) => {
+        match (&target, graphical) {
+            (_, Some(graphical)) => pm.record_graphical_target(&transfer_id, graphical),
+            (SessionTransferTarget::Docker(docker), None) => {
                 pm.record_docker_target(&transfer_id, docker.container_id());
             }
             // An agent-hosted transfer records its session's identity (agent,
             // agent-side session, saved definition — never a secret), so a
             // relaunch after a restart finds the session once the agent is
             // reconnected (#4114).
-            SessionTransferTarget::Ranged(proxy) => {
+            (SessionTransferTarget::Ranged(proxy), None) => {
                 pm.record_agent_target(&transfer_id, proxy.agent_session_identity().to_persisted());
             }
             _ => {

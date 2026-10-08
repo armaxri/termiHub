@@ -184,8 +184,23 @@ class TestRemoteAgentLive(
         time.sleep(2.0)
         self.wait_persistent_running(agent_id, def_id)
         assert self.persistent_dot_is_green(def_id)
-        assert any(
-            s.get("definitionId") == def_id for s in self.agent_sessions(agent_id)
+        # Ask the agent itself. The region's per-agent session list is a snapshot
+        # taken on connect / Refresh (``list_agent_sessions``); a persistent session
+        # started afterwards is not folded into it, so reading it without a
+        # refresh never showed this session at all (nightly 2026-10-07).
+        entry = (self.driver.get_state("persistentSessions") or {}).get(f"{agent_id}:{def_id}")
+        persistent_session_id = entry.get("sessionId") if isinstance(entry, dict) else None
+
+        def listed() -> bool:
+            self.agent_menu_action(agent["name"], self.CTX_REFRESH)
+            return any(
+                s.get("definitionId") == def_id
+                or (persistent_session_id and s.get("sessionId") == persistent_session_id)
+                for s in self.agent_sessions(agent_id)
+            )
+
+        assert self.wait(
+            listed, timeout=30.0, interval=2.0, what="the agent to list the persistent session"
         ), "the agent no longer lists the persistent session after the tab closed"
 
     # ── connected-agent context menu ─────────────────────────────────────────────

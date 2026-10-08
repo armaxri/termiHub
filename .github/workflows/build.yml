@@ -120,8 +120,26 @@ jobs:
       # `pnpm build`) and compiles the release binary, but skips installer
       # packaging. This is the compile-verification the PR needs; dev-build.yml
       # produces the actual installers on push to develop/main.
+      # Stage the plugin runner (#4202) first: core/build.rs embeds the staged
+      # runner's SHA-256 into the release binary, which the bundled-runner check
+      # below then finds. No installer is built, so it is not bundled here.
+      - name: Build and stage the plugin runner
+        shell: bash
+        run: ./scripts/build-plugin-runner.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
+
       - name: Build Tauri app (compile only, no installers)
         run: pnpm tauri build --no-bundle --target ${{ matrix.rust_target }}
+
+      # The release binary embeds the staged runner's digest (#4202), and the
+      # runner starts: the pre-merge proof of the integrity wiring the
+      # post-merge Dev Build then checks inside the real installers.
+      - name: Verify the release binary embeds the plugin runner digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          T="${{ matrix.rust_target }}"
+          scripts/internal/verify-plugin-runner-bundle.sh \
+            --runner "src-tauri/binaries/termihub-plugin-runner-$T" "target/$T/release/termihub"
 
       # The release binary must carry no test-bridge code (SEC-005), e.g. the
       # native-dialog fs grant of #4122. Same guard as release.yml, so a

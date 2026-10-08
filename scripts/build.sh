@@ -21,6 +21,12 @@ fi
 echo "=== Building RDP sidecar for bundling ==="
 "$(dirname "$0")/build-rdp-sidecar.sh" --release --tauri-externalbin
 
+# The plugin runner (#4182) is the second externalBin in the same fragment
+# (#4202): build and stage it too. core/build.rs embeds its SHA-256, which the
+# app checks before spawning the bundled runner.
+echo "=== Building plugin runner for bundling ==="
+"$(dirname "$0")/build-plugin-runner.sh" --release --tauri-externalbin
+
 # Third-party license notices (PKG-009): bundled as an app resource via the
 # tauri.notices.conf.json fragment when the pinned cargo-about is installed
 # (release.yml always generates them). Without it the build still succeeds;

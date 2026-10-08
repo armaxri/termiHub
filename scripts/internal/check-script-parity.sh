@@ -59,6 +59,7 @@ ALLOWLIST=(
   "scripts/internal/build-system-test-app.sh" # test-app build recipe (bash on every runner; Windows via test-system-py.cmd -> Git Bash, #3664)
   "scripts/internal/build-system-test-agent.sh" # musl test agent for the Linux deployed-agent fixtures (harness/nightly, #4092)
   "scripts/internal/harness-coverage.sh"      # harness coverage env/report (nightly Linux leg, #3657)
+  "scripts/internal/plugin-ipc-fuzz.sh"       # cargo-fuzz IPC run (nightly Linux leg; libFuzzer needs a Unix sanitizer runtime, #4190)
   # Agent update signing (AGT-005, #3213): OpenSSL-3 pipelines run by release CI
   # on Ubuntu, and a one-time maintainer tool (Git Bash works on Windows).
   "scripts/internal/agent-update-signing.sh"     # CI-only sign/verify/check-key helper
@@ -97,6 +98,7 @@ ALLOWLIST=(
   # Release test-bridge guard (#4122): CI-only gate run by release.yml on every
   # desktop build (Windows leg via `shell: bash`); never run by hand.
   "scripts/internal/assert-no-test-bridge.sh" # CI-only binary grep (bash on every runner)
+  "scripts/internal/verify-plugin-runner-bundle.sh" # CI bundle check (bash on every runner; release-check.cmd inlines it)
 )
 
 in_allowlist() {
