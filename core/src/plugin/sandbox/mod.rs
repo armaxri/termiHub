@@ -28,8 +28,14 @@
 //!   macOS, excess memory; the runner applies [`ResourceLimits`] before it
 //!   loads the plugin.
 //!
-//! **Scope so far.** No OS confinement yet (Seatbelt / landlock + seccomp /
-//! LPAC are phases 4–5), and Windows has no transport yet. The out-of-process path is therefore
+//! * OS confinement (#4186, phase 5a): the host derives a [`SandboxPolicy`]
+//!   from the plugin's folders ([`sandbox_policy`]); the runner applies it to
+//!   itself before `dlopen` (Seatbelt on macOS) and answers with a
+//!   [`SandboxReport`]. A failed setup, or a required layer that is missing,
+//!   refuses the plugin ([`HostError::SandboxSetupFailed`](super::HostError)).
+//!
+//! **Scope so far.** OS confinement on macOS only (landlock + seccomp and LPAC
+//! are #4185 / #4187), and Windows has no transport yet. The out-of-process path is therefore
 //! **opt-in** ([`PluginHost::with_runner`](super::PluginHost::with_runner)); the
 //! desktop enables it only in debug builds via an environment flag
 //! ([`debug_runner_config_from_env`]), so users see no change until the phase-7
@@ -40,6 +46,7 @@ mod client;
 mod exit;
 mod handle;
 mod peer;
+mod policy;
 mod proxy;
 mod session;
 mod spawn;
@@ -51,9 +58,11 @@ pub use client::SandboxedPlugin;
 pub use exit::{auto_disable_reason, CrashBudget, RunnerExitCause, DEFAULT_CRASH_WINDOW};
 pub(crate) use handle::AutoDisableHook;
 pub use handle::{PluginHealth, PluginRunnerConfig, SandboxedPluginHandle, DEFAULT_IDLE_TIMEOUT};
+pub use policy::sandbox_policy;
 pub use session::SandboxedSession;
 pub use spawn::default_runner_path;
-pub use termihub_plugin_runner::ipc::ResourceLimits;
+pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
+pub use termihub_plugin_runner::sandbox::{Isolation, SandboxPolicy};
 pub use watchdog::{
     WatchdogConfig, DEFAULT_HANG_TIMEOUT, DEFAULT_PING_INTERVAL, DEFAULT_RSS_LIMIT,
     DEFAULT_RSS_POLL_INTERVAL,

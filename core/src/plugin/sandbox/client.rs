@@ -437,6 +437,11 @@ fn handshake(
         .write_all(&frame)
         .map_err(|e| protocol(&format!("sending Configure: {e}")))?;
     match next(LOAD_TIMEOUT, "SandboxReport")? {
+        // A requested sandbox must be in force before the plugin is mapped;
+        // the caller kills the runner on `Err`, so it never loads (#4186).
+        Message::SandboxReport(report) if configure.sandbox.is_some() => {
+            super::policy::check_report(&report)?;
+        }
         Message::SandboxReport(_) => {}
         other => {
             return Err(protocol(&format!(

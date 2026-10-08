@@ -294,6 +294,13 @@ pub enum HostError {
     #[error("plugin runner failed: {0}")]
     RunnerProtocol(String),
 
+    /// The plugin runner could not confine itself with the OS sandbox (#4186):
+    /// the sandbox API failed, or a layer this platform requires was not
+    /// enforced. The plugin was never loaded and the runner was stopped; there
+    /// is no fallback to running it unconfined.
+    #[error("the plugin sandbox could not be set up: {0}")]
+    SandboxSetupFailed(String),
+
     /// The plugin runner refused or failed to load the plugin library. The
     /// message is the runner-side loader's, verbatim; `incompatible` keeps the
     /// ABI/toolchain-vs-load-error distinction the management layer relies on.
@@ -1312,7 +1319,20 @@ impl PluginHost {
                 ))
             })?
             .to_owned();
+        // The OS sandbox policy (#4186): install folder read-only, data folder
+        // read/write, the user's home denied. Built from the host's own paths,
+        // never from the manifest.
+        let sandbox = if config.os_sandbox {
+            let data_dir = prepare_plugin_data_dir(&self.root, id)?;
+            Some(super::sandbox::sandbox_policy(
+                &self.root.join(id),
+                Some(&data_dir),
+            )?)
+        } else {
+            None
+        };
         let configure = termihub_plugin_runner::ipc::Configure {
+            sandbox,
             library_path,
             expected_digest: options.expected_digest.map(str::to_owned),
             manifest_api_version: options.manifest_api_version.map(str::to_owned),

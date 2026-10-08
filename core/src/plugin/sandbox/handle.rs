@@ -56,13 +56,16 @@ pub struct PluginRunnerConfig {
     pub watchdog: WatchdogConfig,
     /// A plugin's crash budget resets after this long without a crash.
     pub crash_window: Duration,
+    /// Confine each runner with the OS sandbox (#4186). On by default; tests
+    /// that need an unconfined runner turn it off.
+    pub os_sandbox: bool,
 }
 
 impl PluginRunnerConfig {
     /// Run plugins through `runner_path` with the concept's defaults: 5 min
     /// idle reap, 512 MiB / 256 descriptors / no child processes, ping every
-    /// 5 s with a 10 s timeout, a 1 GiB resident-size poll on macOS, and a
-    /// 10-minute crash window.
+    /// 5 s with a 10 s timeout, a 1 GiB resident-size poll on macOS, a
+    /// 10-minute crash window, and the OS sandbox on.
     #[must_use]
     pub fn new(runner_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -71,7 +74,15 @@ impl PluginRunnerConfig {
             limits: ResourceLimits::plugin_defaults(),
             watchdog: WatchdogConfig::default(),
             crash_window: DEFAULT_CRASH_WINDOW,
+            os_sandbox: true,
         }
+    }
+
+    /// Run the plugin without the OS sandbox (tests of the unconfined path).
+    #[must_use]
+    pub fn without_os_sandbox(mut self) -> Self {
+        self.os_sandbox = false;
+        self
     }
 
     /// Override the idle timeout (tests use a short one).
