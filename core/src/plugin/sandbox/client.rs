@@ -143,6 +143,7 @@ impl SandboxedPlugin {
                 super::watchdog::spawn(
                     Arc::downgrade(&plugin),
                     config.watchdog,
+                    configure.limits.address_space_bytes,
                     &configure.plugin_id,
                 );
                 Ok(plugin)

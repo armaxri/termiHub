@@ -358,19 +358,15 @@ impl Shared {
     }
 
     /// The cause the runner ended (or is being ended) with, if it did.
+    ///
+    /// Only the final cause is reported (#4239): a pending verdict can still
+    /// give way to out-of-memory evidence when the runner is reaped.
     pub(super) fn exit_cause(&self) -> Option<RunnerExitCause> {
-        let final_cause = self
-            .exit
+        self.exit
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .cause
-            .clone();
-        final_cause.or_else(|| {
-            self.pending_cause
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-        })
+            .clone()
     }
 
     /// Install the exit hook; runs it at once if the runner already ended.
@@ -398,15 +394,20 @@ impl Shared {
             .clone();
         // A cause recorded by `kill_for` was already logged there.
         let natural = pending.is_none();
-        let cause = pending.unwrap_or_else(|| {
-            // The runner died on its own: let the stderr forwarder drain so a
-            // reported allocation failure is not missed.
+        // Let the stderr forwarder drain so a reported allocation failure is
+        // not missed: it decides a natural exit, and it overrides a hang
+        // verdict that raced it (#4239).
+        if natural || pending == Some(RunnerExitCause::NotResponding) {
             let deadline = Instant::now() + STDERR_DRAIN_TIMEOUT;
             while !self.stderr_done.load(Ordering::SeqCst) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(5));
             }
-            RunnerExitCause::from_status(status, self.out_of_memory.load(Ordering::SeqCst))
-        });
+        }
+        let out_of_memory = self.out_of_memory.load(Ordering::SeqCst);
+        let cause = match pending {
+            None => RunnerExitCause::from_status(status, out_of_memory),
+            Some(pending) => prefer_memory_evidence(pending, out_of_memory),
+        };
         let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
         if exit.cause.is_some() {
             return;
@@ -499,6 +500,17 @@ fn runner_went_away(error: &ProtocolError) -> bool {
                 | std::io::ErrorKind::UnexpectedEof
         ),
         _ => false,
+    }
+}
+
+/// A hang verdict gives way to out-of-memory evidence (#4239): a plugin that
+/// allocates without bound inside a call both stops answering pings and
+/// exhausts its memory, and whichever timer noticed first must not decide the
+/// overlay. Every other recorded cause stands.
+fn prefer_memory_evidence(pending: RunnerExitCause, out_of_memory: bool) -> RunnerExitCause {
+    match pending {
+        RunnerExitCause::NotResponding if out_of_memory => RunnerExitCause::OutOfMemory,
+        other => other,
     }
 }
 
