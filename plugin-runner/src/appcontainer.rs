@@ -15,7 +15,9 @@
 //! [`AppContainer::grant_object`]): read + execute on the runner itself and on
 //! the plugin's install folder, modify on its data folder. Grants are
 //! idempotent: an entry that is already there is not written again, so a
-//! respawn does not touch the ACLs.
+//! respawn does not touch the ACLs. On uninstall the profile is deleted
+//! together with the grants the host made outside the plugin's own folders
+//! ([`delete_profile_revoking`]), so the runner's ACL is left as it was.
 //!
 //! [`app_container_name`]: crate::sandbox::app_container_name
 
@@ -34,10 +36,11 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    CopySid, EqualSid, FreeSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
-    InitializeSecurityDescriptor, SetFileSecurityW, SetSecurityDescriptorControl,
-    SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION,
-    INHERITED_ACE, NO_INHERITANCE, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
+    CopySid, DeleteAce, EqualSid, FreeSid, GetAce, GetFileSecurityW, GetLengthSid,
+    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, InitializeSecurityDescriptor,
+    SetFileSecurityW, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE,
+    ACE_FLAGS, ACL, DACL_SECURITY_INFORMATION, INHERITED_ACE, NO_INHERITANCE,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
     SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
@@ -162,7 +165,14 @@ impl AppContainer {
     fn grant(&self, path: &Path, access: u32, inheritance: ACE_FLAGS) -> io::Result<()> {
         let wide = to_wide(path.as_os_str())?;
         let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let current = Dacl::of(&wide)?;
+        // An object-only grant is a plain rewrite of the DACL as stored; a
+        // tree grant goes through `SetNamedSecurityInfoW`, which recomputes
+        // the inherited part anyway, so it starts from the same API's view.
+        let current = if inheritance == NO_INHERITANCE {
+            Dacl::stored(&wide)?
+        } else {
+            Dacl::of(&wide)?
+        };
         if current.allows(self.sid(), access, inheritance) {
             return Ok(());
         }
@@ -194,8 +204,47 @@ impl AppContainer {
 /// Delete plugin `plugin_id`'s AppContainer profile (on uninstall). A profile
 /// that does not exist is not an error.
 pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
+    delete_profile_revoking(plugin_id, &[]).map(|_| ())
+}
+
+/// A grant [`delete_profile_revoking`] could not take back, and why.
+pub type RevokeFailure = (std::path::PathBuf, io::Error);
+
+/// Delete plugin `plugin_id`'s AppContainer profile (on uninstall), first
+/// revoking its SID's explicit allow entries from each of `objects` (the
+/// runner executable and its folder, granted with
+/// [`AppContainer::grant_object`]). Only that SID's own, non-inherited entries
+/// go; every other entry, inherited ones such as "ALL RESTRICTED APPLICATION
+/// PACKAGES" included, stays as it is, and an object without such an entry is
+/// not written at all.
+///
+/// Both happen under the profile lock, so a concurrent
+/// [`AppContainer::ensure`] of the same plugin runs entirely before or after.
+/// A revoke that fails (typically refused, like the grant on a per-machine
+/// install, or a path that no longer exists) does not stop the deletion: it is
+/// returned for the caller to report. A profile that does not exist is not an
+/// error.
+pub fn delete_profile_revoking(
+    plugin_id: &str,
+    objects: &[&Path],
+) -> io::Result<Vec<RevokeFailure>> {
     let wide = to_wide(app_container_name(plugin_id).as_ref())?;
     let _guard = PROFILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut failures = Vec::new();
+    if !objects.is_empty() {
+        let mut sid: PSID = std::ptr::null_mut();
+        // SAFETY: NUL-terminated name; `sid` receives a SID freed below. The
+        // SID is derived from the name alone, so it exists with or without
+        // the profile.
+        let hr = unsafe { DeriveAppContainerSidFromAppContainerName(wide.as_ptr(), &mut sid) };
+        check_hresult(hr, "DeriveAppContainerSidFromAppContainerName")?;
+        let sid = FreedSid(sid);
+        for &object in objects {
+            if let Err(e) = revoke(sid.0, object) {
+                failures.push((object.to_owned(), e));
+            }
+        }
+    }
     // SAFETY: NUL-terminated name.
     let hr = unsafe { DeleteAppContainerProfile(wide.as_ptr()) };
     // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND / ERROR_NOT_FOUND: nothing
@@ -204,9 +253,25 @@ pub fn delete_profile(plugin_id: &str) -> io::Result<()> {
         .into_iter()
         .any(|code| hr == hresult_from_win32(code))
     {
-        return Ok(());
+        return Ok(failures);
     }
-    check_hresult(hr, "DeleteAppContainerProfile")
+    check_hresult(hr, "DeleteAppContainerProfile")?;
+    Ok(failures)
+}
+
+/// Remove `sid`'s explicit allow entries from the DACL of `path` itself
+/// (nothing is re-propagated to a folder's contents: the entries the host
+/// grants there are not inheritable).
+fn revoke(sid: PSID, path: &Path) -> io::Result<()> {
+    let wide = to_wide(path.as_os_str())?;
+    let _guard = ACL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let current = Dacl::stored(&wide)?;
+    match current.without(sid)? {
+        Some(mut updated) => {
+            write_dacl_only(&wide, updated.as_mut_ptr(), current.inheritance_control())
+        }
+        None => Ok(()),
+    }
 }
 
 /// Where Windows records each AppContainer profile, one subkey per SID.
@@ -329,9 +394,20 @@ fn sid_to_string(sid: PSID) -> io::Result<String> {
 struct Dacl {
     descriptor: PSECURITY_DESCRIPTOR,
     acl: *mut ACL,
+    /// The buffer `descriptor` lives in, for [`Dacl::stored`]; `None` when
+    /// `GetNamedSecurityInfoW` allocated it (freed on drop).
+    stored: Option<Box<[u64]>>,
 }
 
 impl Dacl {
+    /// The DACL as `GetNamedSecurityInfoW` reports it. For an object whose
+    /// DACL is not auto-inherited (entries copied from its parent without the
+    /// inherited flag, as Windows creates files under such a folder), the
+    /// API converts it: the entries the parent would pass on come back marked
+    /// inherited, the descriptor auto-inherited. Fine for
+    /// `SetNamedSecurityInfoW`, which recomputes inheritance anyway, but
+    /// written back as is it changes the object (#4263): use [`Dacl::stored`]
+    /// for a plain rewrite.
     fn of(path: &[u16]) -> io::Result<Self> {
         let mut acl: *mut ACL = std::ptr::null_mut();
         let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
@@ -350,7 +426,66 @@ impl Dacl {
             )
         };
         win32_result(status)?;
-        Ok(Self { descriptor, acl })
+        Ok(Self {
+            descriptor,
+            acl,
+            stored: None,
+        })
+    }
+
+    /// The DACL exactly as stored on the object (`GetFileSecurityW`, no
+    /// conversion), for a plain rewrite with [`write_dacl_only`] that changes
+    /// nothing but the entries the caller adds or removes.
+    fn stored(path: &[u16]) -> io::Result<Self> {
+        let mut needed = 0u32;
+        // SAFETY: NUL-terminated path; a size query (no buffer).
+        unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // `u64` storage: a self-relative descriptor's fields need alignment.
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)].into_boxed_slice();
+        let descriptor: PSECURITY_DESCRIPTOR = buffer.as_mut_ptr().cast();
+        // SAFETY: `buffer` holds at least `needed` writable bytes.
+        if unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let (mut present, mut defaulted) = (0, 0);
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: a valid self-relative descriptor in `buffer`; writable
+        // out-pointers. `acl` points into `buffer`, which `Self` keeps (a
+        // boxed slice does not move with its owner).
+        if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) }
+            == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if present == 0 {
+            // No DACL at all grants everyone everything, like a NULL one.
+            acl = std::ptr::null_mut();
+        }
+        Ok(Self {
+            descriptor,
+            acl,
+            stored: Some(buffer),
+        })
     }
 
     /// The descriptor's DACL inheritance bits (auto-inherited, protected),
@@ -374,13 +509,25 @@ impl Dacl {
             // A NULL DACL grants everyone everything.
             return true;
         }
-        // SAFETY: a valid ACL inside the descriptor we hold.
-        let count = unsafe { (*self.acl).AceCount };
-        (0..u32::from(count)).any(|index| {
+        self.explicit_allows_for(sid).any(|(_, flags, mask)| {
+            u32::from(flags) & inheritance == inheritance && mask & access == access
+        })
+    }
+
+    /// The explicit (not inherited) allow entries for `sid`: index, flags and
+    /// access mask of each.
+    fn explicit_allows_for(&self, sid: PSID) -> impl Iterator<Item = (u32, u8, u32)> + '_ {
+        let count = if self.acl.is_null() {
+            0
+        } else {
+            // SAFETY: a valid ACL inside the descriptor we hold.
+            unsafe { (*self.acl).AceCount }
+        };
+        (0..u32::from(count)).filter_map(move |index| {
             let mut ace: *mut c_void = std::ptr::null_mut();
             // SAFETY: `index` is below the ACE count.
             if unsafe { GetAce(self.acl, index, &mut ace) } == 0 {
-                return false;
+                return None;
             }
             let ace = ace.cast::<ACCESS_ALLOWED_ACE>();
             // SAFETY: every ACE starts with an `ACE_HEADER`; the allowed-ACE
@@ -388,9 +535,8 @@ impl Dacl {
             let header = unsafe { (*ace).Header };
             if header.AceType != ACCESS_ALLOWED_ACE_TYPE
                 || u32::from(header.AceFlags) & INHERITED_ACE != 0
-                || u32::from(header.AceFlags) & inheritance != inheritance
             {
-                return false;
+                return None;
             }
             // SAFETY: an allowed ACE: mask, then the SID at `SidStart`.
             let (mask, ace_sid) = unsafe {
@@ -400,8 +546,37 @@ impl Dacl {
                 )
             };
             // SAFETY: both are valid SIDs.
-            mask & access == access && unsafe { EqualSid(ace_sid, sid) } != 0
+            (unsafe { EqualSid(ace_sid, sid) } != 0).then_some((index, header.AceFlags, mask))
         })
+    }
+
+    /// A copy of this DACL without `sid`'s explicit allow entries, or `None`
+    /// when it has none (or is NULL) and nothing needs writing.
+    fn without(&self, sid: PSID) -> io::Result<Option<OwnedAcl>> {
+        let doomed: Vec<u32> = self
+            .explicit_allows_for(sid)
+            .map(|(index, ..)| index)
+            .collect();
+        if doomed.is_empty() {
+            return Ok(None);
+        }
+        // SAFETY: a valid, non-NULL ACL (it has entries).
+        let size = usize::from(unsafe { (*self.acl).AclSize });
+        let mut copy = vec![0u32; size.div_ceil(4)].into_boxed_slice();
+        // SAFETY: `copy` holds at least `size` bytes, the ACL's whole extent;
+        // the two do not overlap.
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.acl.cast::<u8>(), copy.as_mut_ptr().cast(), size);
+        }
+        let mut acl = OwnedAcl(copy);
+        // Highest index first, so the lower indices stay valid.
+        for index in doomed.into_iter().rev() {
+            // SAFETY: a valid ACL we own; `index` names an entry in it.
+            if unsafe { DeleteAce(acl.as_mut_ptr(), index) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(Some(acl))
     }
 
     /// A new DACL: this one plus an allow entry for `sid`.
@@ -429,8 +604,10 @@ impl Dacl {
 
 impl Drop for Dacl {
     fn drop(&mut self) {
-        // SAFETY: allocated by `GetNamedSecurityInfoW`.
-        unsafe { LocalFree(self.descriptor as HLOCAL) };
+        if self.stored.is_none() {
+            // SAFETY: allocated by `GetNamedSecurityInfoW`.
+            unsafe { LocalFree(self.descriptor as HLOCAL) };
+        }
     }
 }
 
@@ -443,6 +620,15 @@ impl Drop for NewAcl {
     fn drop(&mut self) {
         // SAFETY: allocated by `SetEntriesInAclW`.
         unsafe { LocalFree(self.acl as HLOCAL) };
+    }
+}
+
+/// An ACL copied into memory we own (`u32` storage: an ACL is DWORD aligned).
+struct OwnedAcl(Box<[u32]>);
+
+impl OwnedAcl {
+    fn as_mut_ptr(&mut self) -> *mut ACL {
+        self.0.as_mut_ptr().cast()
     }
 }
 
@@ -466,8 +652,15 @@ fn write_dacl_only(path: &[u16], acl: *mut ACL, control: u16) -> io::Result<()> 
     if unsafe { SetSecurityDescriptorControl(raw, bits, control & bits) } == 0 {
         return Err(io::Error::last_os_error());
     }
+    // A protected DACL is written as protected explicitly; an unprotected one
+    // with no extra flag, so the system does not recompute its inherited part.
+    let information = if control & SE_DACL_PROTECTED != 0 {
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION
+    } else {
+        DACL_SECURITY_INFORMATION
+    };
     // SAFETY: NUL-terminated path; a valid absolute descriptor.
-    if unsafe { SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION, raw) } == 0 {
+    if unsafe { SetFileSecurityW(path.as_ptr(), information, raw) } == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -539,6 +732,192 @@ mod tests {
 
         delete_profile(&id).unwrap();
         assert!(!profile_exists(&id).unwrap());
+        delete_profile(&id).unwrap();
+    }
+
+    /// Deleting a profile revokes its SID's explicit entries from the given
+    /// objects and nothing else: another plugin's entry and the inherited
+    /// entries stay, an object without an entry is left alone, and a revoke
+    /// that fails is reported without stopping the deletion (#4263).
+    #[test]
+    fn deleting_a_profile_revokes_only_its_own_grants() {
+        let ours = format!("appcontainer-revoke-{}", std::process::id());
+        let theirs = format!("appcontainer-keep-{}", std::process::id());
+        let a = AppContainer::ensure(&ours).unwrap();
+        let b = AppContainer::ensure(&theirs).unwrap();
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("runner.exe");
+        std::fs::write(&file, b"x").unwrap();
+        let wide_file = to_wide(file.as_os_str()).unwrap();
+        let wide_dir = to_wide(tmp.path().as_os_str()).unwrap();
+        let inherited = |wide: &[u16]| {
+            let dacl = Dacl::of(wide).unwrap();
+            // SAFETY: a valid ACL inside the descriptor `dacl` holds.
+            let count = unsafe { (*dacl.acl).AceCount };
+            (0..u32::from(count))
+                .filter(|&index| {
+                    let mut ace: *mut c_void = std::ptr::null_mut();
+                    // SAFETY: `index` is below the ACE count.
+                    unsafe { GetAce(dacl.acl, index, &mut ace) };
+                    // SAFETY: every ACE starts with an `ACE_HEADER`.
+                    let flags = unsafe { (*ace.cast::<ACCESS_ALLOWED_ACE>()).Header.AceFlags };
+                    u32::from(flags) & INHERITED_ACE != 0
+                })
+                .count()
+        };
+        let inherited_before = inherited(&wide_file);
+        assert!(
+            inherited_before > 0,
+            "a temp file inherits its folder's ACL"
+        );
+
+        for container in [&a, &b] {
+            container.grant_object(&file, READ_EXECUTE).unwrap();
+        }
+        b.grant_object(tmp.path(), READ_EXECUTE).unwrap();
+        let missing = tmp.path().join("no-such-runner.exe");
+
+        let failures = delete_profile_revoking(&ours, &[&file, tmp.path(), &missing]).unwrap();
+        assert!(!profile_exists(&ours).unwrap());
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert_eq!(failures[0].0, missing);
+        assert_eq!(failures[0].1.kind(), io::ErrorKind::NotFound);
+
+        let file_dacl = Dacl::of(&wide_file).unwrap();
+        assert!(!file_dacl.allows(a.sid(), READ_EXECUTE, NO_INHERITANCE));
+        assert!(file_dacl.allows(b.sid(), READ_EXECUTE, NO_INHERITANCE));
+        assert_eq!(inherited(&wide_file), inherited_before);
+        assert!(Dacl::of(&wide_dir)
+            .unwrap()
+            .allows(b.sid(), READ_EXECUTE, NO_INHERITANCE));
+
+        // Again: nothing left to revoke, nothing to delete.
+        assert!(delete_profile_revoking(&ours, &[&file]).unwrap().is_empty());
+        delete_profile(&theirs).unwrap();
+    }
+
+    /// The raw DACL of `path` as stored (`GetFileSecurityW`, no conversion):
+    /// its inheritance control bits and the ACL bytes.
+    fn stored_dacl(path: &Path) -> (u16, Vec<u8>) {
+        let wide = to_wide(path.as_os_str()).unwrap();
+        let mut needed = 0u32;
+        // SAFETY: a size query: no buffer, `needed` receives the size.
+        unsafe {
+            GetFileSecurityW(
+                wide.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
+        let descriptor: PSECURITY_DESCRIPTOR = buffer.as_mut_ptr().cast();
+        // SAFETY: `buffer` holds `needed` writable bytes.
+        let ok = unsafe {
+            GetFileSecurityW(
+                wide.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor,
+                needed,
+                &mut needed,
+            )
+        };
+        assert_ne!(ok, 0, "{}", io::Error::last_os_error());
+        let (mut control, mut revision) = (0u16, 0u32);
+        let (mut present, mut defaulted) = (0, 0);
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        // SAFETY: a valid self-relative descriptor; writable out-pointers.
+        unsafe {
+            GetSecurityDescriptorControl(descriptor, &mut control, &mut revision);
+            GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted);
+        }
+        assert!(present != 0 && !acl.is_null());
+        // SAFETY: a valid ACL inside `buffer`, `AclSize` bytes long.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(acl.cast::<u8>(), usize::from((*acl).AclSize)).to_vec()
+        };
+        (
+            control & (SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED),
+            bytes,
+        )
+    }
+
+    /// Rewrite the DACL of `path` with every entry explicit and only the
+    /// `control` inheritance bits: a pre-Windows-2000 style DACL (0), as a
+    /// file or folder created under a non-auto-inherited parent has, or a
+    /// protected one (`SE_DACL_PROTECTED`).
+    fn make_explicit(path: &Path, control: u16) {
+        let (_, bytes) = stored_dacl(path);
+        let mut acl = vec![0u32; bytes.len().div_ceil(4)];
+        // SAFETY: `acl` holds `bytes.len()` bytes; no overlap.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), acl.as_mut_ptr().cast(), bytes.len());
+        }
+        let acl: *mut ACL = acl.as_mut_ptr().cast();
+        // SAFETY: a valid ACL we own.
+        let count = unsafe { (*acl).AceCount };
+        for index in 0..u32::from(count) {
+            let mut ace: *mut c_void = std::ptr::null_mut();
+            // SAFETY: `index` is below the ACE count; every ACE starts with
+            // an `ACE_HEADER`, whose flags we clear the inherited bit of.
+            unsafe {
+                assert_ne!(GetAce(acl, index, &mut ace), 0);
+                let header = &mut (*ace.cast::<ACCESS_ALLOWED_ACE>()).Header;
+                header.AceFlags &= !(INHERITED_ACE as u8);
+            }
+        }
+        let wide = to_wide(path.as_os_str()).unwrap();
+        write_dacl_only(&wide, acl, control).unwrap();
+        assert_eq!(stored_dacl(path).0, control);
+    }
+
+    /// Granting an object and revoking the grant leaves its stored DACL
+    /// exactly as it was, entries, flags and protection, for a protected, an
+    /// explicit-only (legacy) and an auto-inherited DACL alike (#4263).
+    #[test]
+    fn grant_then_revoke_restores_the_stored_dacl_exactly() {
+        let id = format!("appcontainer-exact-{}", std::process::id());
+        let container = AppContainer::ensure(&id).unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let legacy_dir = tmp.path().join("legacy");
+        std::fs::create_dir(&legacy_dir).unwrap();
+        make_explicit(&legacy_dir, 0);
+        let legacy_file = tmp.path().join("legacy.exe");
+        std::fs::write(&legacy_file, b"x").unwrap();
+        make_explicit(&legacy_file, 0);
+        let protected = tmp.path().join("protected.exe");
+        std::fs::write(&protected, b"x").unwrap();
+        make_explicit(&protected, SE_DACL_PROTECTED);
+        let inherited = tmp.path().join("inherited");
+        std::fs::create_dir(&inherited).unwrap();
+
+        for path in [&legacy_dir, &legacy_file, &protected, &inherited] {
+            let before = stored_dacl(path);
+            container.grant_object(path, READ_EXECUTE).unwrap();
+            let granted = stored_dacl(path);
+            assert_eq!(
+                granted.0,
+                before.0,
+                "the grant keeps `{}`'s control",
+                path.display()
+            );
+            assert_ne!(
+                granted.1,
+                before.1,
+                "the grant reaches `{}`",
+                path.display()
+            );
+            let failures = delete_profile_revoking(&id, &[path.as_path()]).unwrap();
+            assert!(failures.is_empty(), "{failures:?}");
+            assert_eq!(
+                stored_dacl(path),
+                before,
+                "`{}` is restored",
+                path.display()
+            );
+        }
         delete_profile(&id).unwrap();
     }
 }

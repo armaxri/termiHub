@@ -742,3 +742,70 @@ async fn seccomp_denials_reach_the_host_as_denied_reports() {
     assert_eq!(canary.unix_accepted.load(Ordering::SeqCst), 0);
     conn.disconnect().await.unwrap();
 }
+
+/// Windows (#4263): uninstalling a plugin revokes its AppContainer SID from a
+/// runner the user owns (per-user install, portable mode, dev builds — here a
+/// copy in a temp folder), so the runner's and its folder's ACLs are exactly
+/// what they were before the plugin was first loaded: no orphaned
+/// `S-1-15-2-<per-app>` entry, and the inherited entries (among them "ALL
+/// RESTRICTED APPLICATION PACKAGES") untouched.
+#[cfg(windows)]
+#[test]
+fn uninstalling_a_plugin_revokes_its_runner_grant() {
+    let work = tempfile::TempDir::new().unwrap();
+    let folder = work.path().join("runner-acl");
+    std::fs::create_dir_all(&folder).unwrap();
+    let runner = folder.join(runner_binary().file_name().unwrap());
+    std::fs::copy(runner_binary(), &runner).unwrap();
+    let before = [acl_of(&runner), acl_of(&folder)];
+    assert!(
+        !before.iter().any(|acl| has_per_app_entry(acl)),
+        "{before:?}"
+    );
+
+    // Its own id: the profile is deleted below, under no other test's feet.
+    let lib = fixture_library(Variant::Escape, work.path());
+    let manifest = PROBE_MANIFEST.replace("\"escape-probe\"", "\"acl-revoke-probe\"");
+    let installed = install_plugin(work.path(), &lib, &manifest);
+    let config = PluginRunnerConfig::new(&runner).with_limits(ResourceLimits::default());
+    let probe = Probe::load(installed, config).expect("the probe loads");
+    assert_eq!(probe.report().isolation(), Isolation::Full);
+    let loaded = [acl_of(&runner), acl_of(&folder)];
+    assert!(
+        loaded.iter().all(|acl| has_per_app_entry(acl)),
+        "the host grants a user-owned runner and its folder: {loaded:?}"
+    );
+
+    let id = probe.id().to_owned();
+    let root = probe.installed.root.clone();
+    drop(probe);
+    termihub_core::plugin::PluginManager::new(&root)
+        .uninstall(&id)
+        .expect("the plugin uninstalls");
+
+    let after = [acl_of(&runner), acl_of(&folder)];
+    assert_eq!(after, before, "the uninstall restores the runner's ACLs");
+    assert!(!termihub_plugin_runner::appcontainer::profile_exists(&id).unwrap());
+}
+
+/// The DACL of `path` as `icacls` prints it (one entry per line, unresolvable
+/// SIDs such as a plugin's AppContainer SID in `S-1-…` form).
+#[cfg(windows)]
+fn acl_of(path: &Path) -> String {
+    let out = std::process::Command::new("icacls")
+        .arg(path)
+        .output()
+        .expect("run icacls");
+    assert!(out.status.success(), "icacls {}: {out:?}", path.display());
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Whether `acl` names a per-app AppContainer SID (`S-1-15-2-` and more than
+/// one sub-authority; "ALL APPLICATION PACKAGES" and "ALL RESTRICTED
+/// APPLICATION PACKAGES" are `S-1-15-2-1` / `-2` and resolve to names).
+#[cfg(windows)]
+fn has_per_app_entry(acl: &str) -> bool {
+    acl.split(|c: char| c.is_whitespace() || c == ':')
+        .filter_map(|token| token.strip_prefix("S-1-15-2-"))
+        .any(|rest| rest.split('-').count() > 1)
+}
