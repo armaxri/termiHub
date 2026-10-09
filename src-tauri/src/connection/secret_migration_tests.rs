@@ -73,8 +73,10 @@ fn an_external_file_scopes_the_owner() {
 
 #[test]
 fn a_failed_migration_write_deletes_nothing() {
-    let mut store = RecordingStore::default();
-    store.fail_sets = true;
+    let store = RecordingStore {
+        fail_sets: true,
+        ..Default::default()
+    };
     let mut conns = vec![tunnelled_vnc()];
     let before = serde_json::to_value(&conns).unwrap();
     assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).is_err());
@@ -84,8 +86,10 @@ fn a_failed_migration_write_deletes_nothing() {
 
 #[test]
 fn a_failed_read_deletes_nothing() {
-    let mut store = RecordingStore::default();
-    store.fail_gets = true;
+    let store = RecordingStore {
+        fail_gets: true,
+        ..Default::default()
+    };
     let mut conns = vec![tunnelled_vnc()];
     assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).is_err());
     assert_eq!(conns[0].config.settings["sshPassword"], "gw-secret");
