@@ -57,6 +57,7 @@ import { SaveCopyDialog } from "./SaveCopyDialog";
 import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
 import { frontendLog, frontendError } from "@/utils/frontendLog";
+import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferRegistry";
 import "./FileEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -540,7 +541,10 @@ export function FileEditor({
           text = await localReadFile(meta.filePath);
         }
         if (!cancelled) {
-          setContent(text);
+          // A buffer carried over from another window (#4412) replaces the disk
+          // text in the same render, so the editor never shows (or reports) a
+          // clean buffer in between.
+          setContent(takeCarriedBuffer(tabId) ?? text);
           setSavedContent(text);
           setLoading(false);
           // Record which file the buffer now holds so a later identity-churn
@@ -549,10 +553,20 @@ export function FileEditor({
           loadedFileKeyRef.current = fileKey;
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(errorMessage(err));
+        if (cancelled) return;
+        const carried = takeCarriedBuffer(tabId);
+        if (carried !== null) {
+          // The moved buffer must not vanish behind a load error (#4412): keep
+          // it editable and dirty, and say why the disk copy is missing.
+          setContent(carried);
+          setSavedContent("");
+          setSaveError(`Could not reload the file: ${errorMessage(err)}`);
           setLoading(false);
+          loadedFileKeyRef.current = fileKey;
+          return;
         }
+        setError(errorMessage(err));
+        setLoading(false);
       }
     };
 
@@ -737,6 +751,26 @@ export function FileEditor({
   // no elevated save. Shown as a banner while writability is unknown; the
   // toolbar badge carries the same text as a tooltip otherwise.
   const isFtpTab = meta.isRemote && meta.sessionBrowser?.connectionType === "ftp";
+
+  // Expose the live buffer so "Move tabs" on window close can carry it to the
+  // destination window instead of discarding it (#4412). Read through a ref so
+  // the provider always returns the current text without re-registering.
+  const liveBufferRef = useRef({ content, isDirty, isUnsavedScratch, effectivePath });
+  liveBufferRef.current = { content, isDirty, isUnsavedScratch, effectivePath };
+  useEffect(
+    () =>
+      registerEditorBuffer(tabId, () => {
+        const live = liveBufferRef.current;
+        if (live.content === null) return null;
+        return {
+          content: live.content,
+          filePath: live.effectivePath,
+          scratch: live.isUnsavedScratch,
+          dirty: live.isDirty,
+        };
+      }),
+    [tabId]
+  );
 
   // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
