@@ -93,7 +93,10 @@ describe("RemoteDesktopClipboardImage", () => {
     hoisted.copy.mockResolvedValue({ width: 2, height: 3 });
     await click("remote-desktop-clipboard-copy-image");
     expect(hoisted.copy).toHaveBeenCalledWith("rd-1");
-    expect(hoisted.toastSuccess).toHaveBeenCalledWith("Image copied to clipboard (2 × 3)");
+    expect(hoisted.toastSuccess).toHaveBeenCalledWith(
+      "Image copied to clipboard (2 × 3)",
+      expect.any(Object)
+    );
   });
 
   it("sends the local image and confirms with its size", async () => {
@@ -101,14 +104,20 @@ describe("RemoteDesktopClipboardImage", () => {
     hoisted.send.mockResolvedValue({ width: 800, height: 600 });
     await click("remote-desktop-clipboard-send-image");
     expect(hoisted.send).toHaveBeenCalledWith("rd-1");
-    expect(hoisted.toastSuccess).toHaveBeenCalledWith("Image sent to remote (800 × 600)");
+    expect(hoisted.toastSuccess).toHaveBeenCalledWith(
+      "Image sent to remote (800 × 600)",
+      expect.any(Object)
+    );
   });
 
   it("tells the user when the local clipboard holds no image", async () => {
     await render({ supported: true, image: null });
     hoisted.send.mockResolvedValue(null);
     await click("remote-desktop-clipboard-send-image");
-    expect(hoisted.toastInfo).toHaveBeenCalledWith("No image on the local clipboard");
+    expect(hoisted.toastInfo).toHaveBeenCalledWith(
+      "No image on the local clipboard",
+      expect.any(Object)
+    );
   });
 
   it("shows an error toast when the local image exceeds the 32 MiB cap (#4088)", async () => {
@@ -123,6 +132,9 @@ describe("RemoteDesktopClipboardImage", () => {
     expect(hoisted.send).toHaveBeenCalledWith("rd-1");
     expect(hoisted.toastError).toHaveBeenCalledTimes(1);
     expect(hoisted.toastError.mock.calls[0][0]).toBe(capMessage);
+    // Routed through ui/toast (#4333), so the error persists until dismissed
+    // instead of sonner's default auto-dismiss.
+    expect(hoisted.toastError.mock.calls[0][1]).toMatchObject({ duration: Infinity });
     expect(hoisted.toastSuccess).not.toHaveBeenCalled();
     expect(hoisted.toastInfo).not.toHaveBeenCalled();
     // The button returns to idle so the user can retry with a smaller image.

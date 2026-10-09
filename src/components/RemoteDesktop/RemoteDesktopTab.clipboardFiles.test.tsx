@@ -11,12 +11,14 @@ import { useAppStore } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
 import type { RemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import type { RemoteClipboardFile } from "@/types/remoteDesktop";
+import { remoteDesktopGetClipboard } from "@/services/api";
 import { RemoteDesktopTab } from "./RemoteDesktopTab";
 
 const hoisted = vi.hoisted(() => ({
   session: null as unknown as RemoteDesktopSession,
   toastSuccess: vi.fn(),
   toastInfo: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 vi.mock("@/hooks/useRemoteDesktopSession", () => ({
@@ -45,7 +47,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: hoisted.toastSuccess,
     info: hoisted.toastInfo,
-    error: vi.fn(),
+    error: hoisted.toastError,
   },
 }));
 
@@ -91,6 +93,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   hoisted.toastSuccess.mockReset();
   hoisted.toastInfo.mockReset();
+  hoisted.toastError.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -165,19 +168,40 @@ describe("RemoteDesktopTab — remote clipboard files (#1804/#1814/#1815)", () =
     await openPanel([file(0, "a.txt"), file(1, "b.txt")]);
     await clickCopy();
     expect(hoisted.session.bindClipboardFiles).toHaveBeenCalledTimes(1);
-    expect(hoisted.toastSuccess).toHaveBeenCalledWith("2 files ready — paste into any app");
+    expect(hoisted.toastSuccess).toHaveBeenCalledWith(
+      "2 files ready — paste into any app",
+      expect.any(Object)
+    );
   });
 
   it("uses the singular for one file", async () => {
     await openPanel([file(0, "only.txt")]);
     await clickCopy();
-    expect(hoisted.toastSuccess).toHaveBeenCalledWith("1 file ready — paste into any app");
+    expect(hoisted.toastSuccess).toHaveBeenCalledWith(
+      "1 file ready — paste into any app",
+      expect.any(Object)
+    );
   });
 
   it("reports when nothing could be bound", async () => {
     await openPanel([file(0, "gone.txt")], 0);
     await clickCopy();
     expect(hoisted.toastSuccess).not.toHaveBeenCalled();
-    expect(hoisted.toastInfo).toHaveBeenCalledWith("No remote files to paste");
+    expect(hoisted.toastInfo).toHaveBeenCalledWith("No remote files to paste", expect.any(Object));
+  });
+
+  it("shows a persistent error when the remote clipboard cannot be read (#4333)", async () => {
+    vi.mocked(remoteDesktopGetClipboard).mockRejectedValueOnce({
+      code: "session_gone",
+      message: "session closed",
+    });
+    await openPanel([]);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hoisted.toastError).toHaveBeenCalledWith(
+      "Could not read the remote clipboard",
+      expect.objectContaining({ description: "session closed", duration: Infinity })
+    );
   });
 });
