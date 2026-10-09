@@ -975,10 +975,11 @@ impl ConnectionStore {
         delta: impl FnOnce(&mut Definitions) -> (R, bool),
     ) -> Result<R, NewerVersionError> {
         let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
+        // Every read of the store file happens under the file lock, so no
+        // reader holds it open while a peer renames over it (windows refuses
+        // to replace a file another process has open).
         let _file_lock = Self::lock_store_file(&self.file_path, LockMode::Exclusive);
-        // Re-check under the file lock: a newer agent may have written the
-        // file between the check above and taking the lock.
+        self.ensure_writable()?;
         self.refresh_from_disk(&mut defs, RefreshMode::Mutation)?;
         let (result, changed) = delta(&mut defs);
         if changed {

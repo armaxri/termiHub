@@ -6,8 +6,8 @@ severity: medium
 category: data-loss
 is_workaround: false
 subsystem: agent/src/session/definitions.rs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4285 — every connections.json mutation re-reads and saves under an exclusive std File::lock on the sidecar, so concurrent agent workers merge instead of overwriting"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
