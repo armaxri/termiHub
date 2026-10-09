@@ -16,8 +16,6 @@ import type {
 import type { TransferProgress } from "@/services/api";
 import type { AgentCrashNotice } from "@/types/diagnostics";
 import type {
-  RemoteDesktopFramePayload,
-  RemoteDesktopCursorPayload,
   RemoteDesktopClipboardPayload,
   RemoteDesktopStatePayload,
   RemoteDesktopCertPromptPayload,
@@ -87,27 +85,6 @@ export async function onTerminalOutput(
   return await listen<TerminalOutputEvent>("terminal-output", (event) => {
     const { session_id, data } = event.payload;
     callback(session_id, base64ToBytes(data));
-  });
-}
-
-/**
- * Subscribe to remote-desktop frame events (#1680). Fires for every session;
- * the caller filters by `payload.session_id`.
- */
-export async function onRemoteDesktopFrame(
-  callback: (payload: RemoteDesktopFramePayload) => void
-): Promise<UnlistenFn> {
-  return await listen<RemoteDesktopFramePayload>("remote-desktop-frame", (event) => {
-    callback(event.payload);
-  });
-}
-
-/** Subscribe to remote-desktop cursor events. */
-export async function onRemoteDesktopCursor(
-  callback: (payload: RemoteDesktopCursorPayload) => void
-): Promise<UnlistenFn> {
-  return await listen<RemoteDesktopCursorPayload>("remote-desktop-cursor", (event) => {
-    callback(event.payload);
   });
 }
 

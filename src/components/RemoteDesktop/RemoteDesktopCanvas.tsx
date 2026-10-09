@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
-import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
+import {
+  subscribeRemoteDesktopFrames,
+  type BinaryCursorShape,
+  type DecodedCursor,
+  type DecodedFrame,
+} from "@/services/remoteDesktopFrames";
 import { remoteDesktopRequestFullFrame } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
-import type { CursorShape, RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
+import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
 import type { Viewport } from "./monitorLayout";
@@ -73,7 +78,7 @@ const RESIZE_DEBOUNCE_MS = 300;
 /**
  * The one shared canvas surface for graphical remote-desktop sessions (#1680).
  *
- * Protocol-blind: it paints `remote-desktop-frame` dirty-rects into an offscreen
+ * Protocol-blind: it paints binary frame-channel dirty-rects into an offscreen
  * framebuffer and blits it to the visible `<canvas>` under the active scale mode,
  * tracks the synthetic cursor, and captures keyboard/mouse/wheel input —
  * reverse-scaling pointer coordinates to framebuffer pixels through one shared
@@ -107,7 +112,7 @@ export function RemoteDesktopCanvas({
   // `shape` is the last *validated* cursor bitmap (#3333). The renderer still
   // draws a synthetic marker; the shape is kept only once it passed the shared
   // bound so a future bitmap renderer never sizes an image from untrusted dims.
-  const cursorRef = useRef<{ x: number; y: number; visible: boolean; shape?: CursorShape }>({
+  const cursorRef = useRef<{ x: number; y: number; visible: boolean; shape?: BinaryCursorShape }>({
     x: 0,
     y: 0,
     visible: false,
@@ -233,27 +238,27 @@ export function RemoteDesktopCanvas({
   const repaintRef = useRef(repaint);
   repaintRef.current = repaint;
 
-  // Subscribe to frame + cursor events for this session.
+  // Subscribe to this session's binary frame + cursor channel (#4291).
   useEffect(() => {
     let disposed = false;
-    const unlisteners: Array<() => void> = [];
+    let unsubscribe: (() => void) | null = null;
     // A fresh (re)attach has painted nothing yet.
     firstFramePaintedRef.current = false;
 
-    void onRemoteDesktopFrame((payload) => {
-      if (disposed || payload.session_id !== sessionId) return;
+    const onFrame = (frame: DecodedFrame): void => {
+      if (disposed) return;
       // Never size the offscreen canvas from an untrusted, absurd size (MOCK-011).
-      if (!isFramebufferSizeValid(payload.width, payload.height)) return;
+      if (!isFramebufferSizeValid(frame.width, frame.height)) return;
       const prev = fbRef.current;
-      const changed = !prev || prev.width !== payload.width || prev.height !== payload.height;
-      const fb = ensureFramebuffer(payload.width, payload.height);
-      if (changed) onDimensionsRef.current?.(payload.width, payload.height);
+      const changed = !prev || prev.width !== frame.width || prev.height !== frame.height;
+      const fb = ensureFramebuffer(frame.width, frame.height);
+      if (changed) onDimensionsRef.current?.(frame.width, frame.height);
       const ctx = fb.getContext("2d");
       if (!ctx) return;
-      for (const rect of payload.rects) {
+      for (const rect of frame.rects) {
         if (!isDirtyRectValid(rect, fb.width, fb.height)) continue;
-        const img = new ImageData(new Uint8ClampedArray(rect.data), rect.width, rect.height);
-        ctx.putImageData(img, rect.x, rect.y);
+        // `rect.data` is already a Uint8ClampedArray view onto the IPC buffer.
+        ctx.putImageData(new ImageData(rect.data, rect.width, rect.height), rect.x, rect.y);
       }
       repaintRef.current();
       // First frame painted: clear the cross-window reconnecting placeholder.
@@ -261,38 +266,43 @@ export function RemoteDesktopCanvas({
         firstFramePaintedRef.current = true;
         onFirstFrameRef.current?.();
       }
-    }).then((un) => {
-      if (disposed) {
-        un();
-        return;
-      }
-      unlisteners.push(un);
-      // The backend streams frames from the moment the connect returns, before
-      // this listener existed, and a static desktop never resends them: ask for
-      // a full frame now that nothing can be missed (#4017).
-      void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
-        frontendLog(
-          "remote_desktop",
-          `request_full_frame on subscribe failed: ${errorMessage(err)}`
-        )
-      );
-    });
+    };
 
-    void onRemoteDesktopCursor((payload) => {
-      if (disposed || payload.session_id !== sessionId) return;
+    const onCursor = (cursor: DecodedCursor): void => {
+      if (disposed) return;
       // Defensive re-check (the backend cursor pump already enforces this):
       // ignore a non-integral / negative position outright, and never keep a
       // shape outside the shared bound — an absent or invalid shape keeps the
       // current cursor image.
-      if (![payload.x, payload.y].every((v) => Number.isInteger(v) && v >= 0)) return;
+      if (![cursor.x, cursor.y].every((v) => Number.isInteger(v) && v >= 0)) return;
       const prev = cursorRef.current.shape;
-      const shape = payload.shape && isCursorShapeValid(payload.shape) ? payload.shape : prev;
-      cursorRef.current = { x: payload.x, y: payload.y, visible: payload.visible, shape };
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+      const shape = cursor.shape && isCursorShapeValid(cursor.shape) ? cursor.shape : prev;
+      cursorRef.current = { x: cursor.x, y: cursor.y, visible: cursor.visible, shape };
+    };
+
+    void subscribeRemoteDesktopFrames(sessionId, { onFrame, onCursor }).then(
+      (un) => {
+        if (disposed) {
+          un();
+          return;
+        }
+        unsubscribe = un;
+        // The backend streams frames from the moment the connect returns, before
+        // this channel existed, and a static desktop never resends them: ask for
+        // a full frame now that nothing can be missed (#4017).
+        void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
+          frontendLog(
+            "remote_desktop",
+            `request_full_frame on subscribe failed: ${errorMessage(err)}`
+          )
+        );
+      },
+      (err) => frontendLog("remote_desktop", `frame channel subscribe failed: ${errorMessage(err)}`)
+    );
 
     return () => {
       disposed = true;
-      unlisteners.forEach((un) => un());
+      unsubscribe?.();
     };
   }, [sessionId, ensureFramebuffer]);
 

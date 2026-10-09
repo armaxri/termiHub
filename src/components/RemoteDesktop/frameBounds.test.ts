@@ -37,6 +37,11 @@ describe("isCursorShapeValid", () => {
     expect(isCursorShapeValid(shape(16, 16, -1, 0))).toBe(false);
   });
 
+  it("accepts a decoded binary shape (Uint8ClampedArray pixels, #4291)", () => {
+    expect(isCursorShapeValid({ ...shape(4, 4), data: new Uint8ClampedArray(64) })).toBe(true);
+    expect(isCursorShapeValid({ ...shape(4, 4), data: new Uint8ClampedArray(63) })).toBe(false);
+  });
+
   it("rejects a byte length other than width * height * 4", () => {
     const short = shape(4, 4);
     short.data.pop();

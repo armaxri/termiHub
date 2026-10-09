@@ -6,8 +6,8 @@ severity: high
 category: perf
 is_workaround: false
 subsystem: core/src/connection/graphical.rs, src-tauri/src/session/graphical_manager.rs, src/components/RemoteDesktop
-status: open
-resolution: ""
+status: fixed
+resolution: "#4291 — frames and cursor shapes stream as binary ArrayBuffers over a per-session tauri::ipc::Channel; VNC queue budget 32 MiB"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -6,7 +6,7 @@ import type { AppState } from "../appStore";
  * Remote-desktop resolution domain slice (extracted under #2077 via #2300): the
  * runtime-only (never persisted) live framebuffer resolution of each active
  * graphical remote-desktop session, keyed by session id (#1709), plus the
- * set/clear actions that feed it from the `remote-desktop-frame` / `onDimensions`
+ * set/clear actions that feed it from the frame channel / `onDimensions`
  * path so the shared status-bar segment can show `WxH` for the active tab.
  * Extracted verbatim from the monolithic root store as a behavior-preserving
  * Zustand slice — every action still receives the shared `set` typed against the
@@ -25,7 +25,7 @@ function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
 export interface RemoteDesktopResolutionsSlice {
   /**
    * Live framebuffer resolution of each active graphical remote-desktop session,
-   * keyed by session id (#1709). Fed from the `remote-desktop-frame` /
+   * keyed by session id (#1709). Fed from the frame channel /
    * `onDimensions` path so the shared status-bar segment can show `WxH` for the
    * active tab. Cleared when the session ends.
    */
