@@ -14,8 +14,8 @@ evidence:
   - scripts/build.sh:92
   - agent/Cargo.toml:42
   - tests/system/termihub_harness/fixtures.py:1047
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — the test-hooks agent builds into target/system-test-agent, never the release-agent path"
 audit: 2026-10
 commit: 663465d52
 relation: new

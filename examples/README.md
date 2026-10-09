@@ -34,8 +34,8 @@ The example config (`config/connections.json`) includes pre-configured connectio
 
 | Connection       | Type   | Host      | Port | Credentials             | Notes                  |
 | ---------------- | ------ | --------- | ---- | ----------------------- | ---------------------- |
-| Docker SSH       | SSH    | 127.0.0.1 | 2214 | `testuser` / `testpass` |                        |
-| Docker SSH + X11 | SSH    | 127.0.0.1 | 2214 | `testuser` / `testpass` | X11 forwarding enabled |
+| Docker SSH       | SSH    | 127.0.0.1 | 2230 | `testuser` / `testpass` |                        |
+| Docker SSH + X11 | SSH    | 127.0.0.1 | 2230 | `testuser` / `testpass` | X11 forwarding enabled |
 | Docker Telnet    | Telnet | 127.0.0.1 | 2323 | `testuser` / `testpass` |                        |
 
 SSH connections prompt for the password at connect time.
@@ -108,7 +108,7 @@ examples/
 │   └── connections.json               # Pre-configured test connections
 ├── docker/
 │   ├── Dockerfile                     # Ubuntu + SSH + Telnet + X11
-│   ├── docker-compose.yml             # Port mappings (2214, 2323)
+│   ├── docker-compose.yml             # Port mappings (2230, 2323)
 │   └── entrypoint.sh                  # Starts sshd + telnetd
 ├── scripts/
 │   ├── start-test-environment.sh      # Build, start, and launch app
@@ -123,7 +123,7 @@ examples/
 
 ### Port conflicts
 
-If ports 2214 or 2323 are already in use, edit `docker/docker-compose.yml` to change the host port mappings (left side of the colon).
+If ports 2230 or 2323 are already in use, edit `docker/docker-compose.yml` to change the host port mappings (left side of the colon).
 
 ### Docker not running
 
@@ -141,7 +141,7 @@ Start Docker Desktop or the Docker service:
 If the start script reports that SSH didn't start in time:
 
 1. Check Docker logs: `docker compose -f examples/docker/docker-compose.yml logs`
-2. Ensure no other service is using port 2214
+2. Ensure no other service is using port 2230
 
 ### socat not found
 

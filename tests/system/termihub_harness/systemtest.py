@@ -135,6 +135,11 @@ class SystemTest:
     #: registration (#3691, SI-5/6/7), set it so a local run stays sandboxed.
     sandbox_profile: ClassVar[bool] = False
 
+    #: Environment variables the suite's app must not inherit from the harness
+    #: (see ``AppInstance``'s ``unset_env``), e.g. ``SSH_AUTH_SOCK`` for a suite
+    #: that needs the app to find no SSH agent.
+    unset_app_env: ClassVar[tuple[str, ...]] = ()
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -159,6 +164,7 @@ class SystemTest:
                 echo_logs=echo_logs,
                 portable=request.cls.portable_mode,
                 sandbox_profile=request.cls.sandbox_profile,
+                unset_env=request.cls.unset_app_env,
             )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))

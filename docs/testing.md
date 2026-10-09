@@ -1853,11 +1853,11 @@ out.
 | Resource                         | Base (offset 0)                                                  | Derivation                                                                    |
 | -------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Docker container / network names | `termihub-*` / `termihub-*-net`                                  | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                     |
-| SSH / telnet / HTTP host ports   | `2201–2213`, `2215–2218`, `2301`, `8080`                         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| SSH / telnet / HTTP host ports   | `2201–2218`, `2301`, `8080`                                      | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | VNC host ports                   | `2501` (VncAuth), `2502` (VeNCrypt), `2503` (VeNCrypt X509Plain) | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | RDP host ports                   | `2601` (xrdp), `2602` (NLA)                                      | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | FTP / FTPS host ports            | `2401`, `2402`, PASV `30000–30019`                               | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
-| Quick-start (E2E) host ports     | `2214` (SSH), `2323` (telnet)                                    | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
+| Quick-start (E2E) host ports     | `2230` (SSH), `2323` (telnet)                                    | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
 | SSH-tunnel test ports            | `18081–18088`                                                    | `base + test_port_offset`.                                                    |
 | Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`                                     | Suffixed with `compose_project`.                                              |
 | `tauri-driver` (E2E) port        | `4444`                                                           | `4444 + test_port_offset`.                                                    |
@@ -2692,7 +2692,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-LOCAL-02, 04, 06, 11–20            | `tests/system/tests/test_windows_shells.py` (Windows-only; WSL cases skip without WSL2)                                                                                                  |
 | MT-SSH-04–06, 10–12, 20–33, 35        | `tests/system/tests/test_ssh*.py`                                                                                                                                                        |
 | MT-SSH-19 (X11 backward-compat)       | `tests/system/tests/test_connection_forms.py`                                                                                                                                            |
-| MT-SSH-08 (agent-auth warning)        | _dropped_ (`agent` is no longer a selectable SSH auth method)                                                                                                                            |
+| MT-SSH-08 (agent-auth warning)        | `tests/system/tests/test_connection_forms.py` (SSH Agent section), `tests/system/tests/test_ssh_agent_error.py` (no-agent connect error)                                                 |
 | MT-SSH-13, 17, 34                     | `tests/system/tests/test_ssh_extended.py`                                                                                                                                                |
 | SERIAL-01, 05 + custom path           | `tests/system/tests/test_serial.py`                                                                                                                                                      |
 | MT-SER-09 (live serial I/O)           | `tests/system/tests/test_serial.py::TestSerialLiveEcho` (host `socat` fixture; Linux and macOS)                                                                                          |

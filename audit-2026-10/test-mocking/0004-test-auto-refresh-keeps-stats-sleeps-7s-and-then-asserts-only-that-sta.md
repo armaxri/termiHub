@@ -12,8 +12,8 @@ evidence:
   - tests/system/tests/test_ssh_monitoring.py:138
   - tests/system/tests/test_ssh_monitoring.py:123
   - tests/system/termihub_harness/ui/monitoring.py:31
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — waits for the monitor's sampleCount to advance instead of sleeping 7s"
 audit: 2026-10
 commit: 663465d52
 relation: new

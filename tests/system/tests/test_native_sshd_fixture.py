@@ -3,9 +3,10 @@
 :class:`NativeSshdFixture` wraps the endpoint that
 ``scripts/internal/native-sshd-fixture.sh up`` provisions (the only way to get an
 sshd on the Windows runner) behind ``LocalAgentSshd``'s interface. These tests
-pin its env contract, its ``known_hosts`` bookkeeping and the endpoint choice of
-:func:`local_agent_endpoint` without starting any sshd (the fixture script calls
-are stubbed); the real round trip runs in the nightly agent reconnect grade.
+pin its env contract, its per-run ``known_hosts`` bookkeeping (#4339) and the
+endpoint choice of
+:func:`local_agent_endpoint` without starting any sshd (the fixture script
+calls are stubbed); the real round trip runs in the nightly agent reconnect grade.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from termihub_harness import local_agent
+from termihub_harness import known_hosts, local_agent
 from termihub_harness.local_agent import (
     LocalAgentUnavailable,
     NativeSshdFixture,
@@ -25,7 +26,17 @@ HOST_PUB = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests termihub-na
 
 
 @pytest.fixture
-def native_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def run_known_hosts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fresh harness known_hosts file for this test."""
+    path = tmp_path / "run" / "known_hosts"
+    path.parent.mkdir()
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(known_hosts, "_file", path)
+    return path
+
+
+@pytest.fixture
+def native_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_known_hosts: Path) -> Path:
     """A complete TERMIHUB_NATIVE_SSHD_* env and a throwaway home dir."""
     home = tmp_path / "home"
     home.mkdir()
@@ -44,28 +55,33 @@ def native_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
-def _known_hosts(home: Path) -> str:
+def _real_known_hosts(home: Path) -> str:
     path = home / ".ssh" / "known_hosts"
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def test_reads_the_fixture_env_and_trusts_its_host_key(native_env: Path) -> None:
+def test_reads_the_fixture_env_and_trusts_its_host_key(
+    native_env: Path, run_known_hosts: Path
+) -> None:
     fixture = NativeSshdFixture()
     assert fixture.port == 30400
     assert fixture.username == "termihubssh"
     assert fixture.client_key_path.endswith("client_ed25519_key")
     assert fixture.agent_binary_path.endswith("termihub-agent")
-    assert "[127.0.0.1]:30400 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests" in _known_hosts(
-        native_env
+    assert run_known_hosts.read_text(encoding="utf-8") == (
+        "[127.0.0.1]:30400 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests\n"
     )
+    assert not (native_env / ".ssh").exists(), "the user's ~/.ssh must stay untouched (#4339)"
 
 
 def test_cleanup_restarts_a_stopped_fixture_and_drops_only_its_known_host(
-    native_env: Path, monkeypatch: pytest.MonkeyPatch
+    native_env: Path, run_known_hosts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ssh_dir = native_env / ".ssh"
     ssh_dir.mkdir()
-    (ssh_dir / "known_hosts").write_text("[example.org]:22 ssh-ed25519 AAAAkeep\n", encoding="utf-8")
+    real = "[127.0.0.1]:30400 ssh-ed25519 AAAAusers-own-entry\n"
+    (ssh_dir / "known_hosts").write_text(real, encoding="utf-8")
+    run_known_hosts.write_text("[example.org]:22 ssh-ed25519 AAAAkeep\n", encoding="utf-8")
     calls: list[str] = []
     monkeypatch.setattr(NativeSshdFixture, "_fixture", lambda self, action: calls.append(action))
     monkeypatch.setattr(NativeSshdFixture, "is_listening", lambda self: False)
@@ -75,7 +91,8 @@ def test_cleanup_restarts_a_stopped_fixture_and_drops_only_its_known_host(
     fixture.cleanup()
 
     assert calls == ["stop", "start"], "cleanup must leave the shared fixture running"
-    assert _known_hosts(native_env) == "[example.org]:22 ssh-ed25519 AAAAkeep\n"
+    assert run_known_hosts.read_text(encoding="utf-8") == "[example.org]:22 ssh-ed25519 AAAAkeep\n"
+    assert _real_known_hosts(native_env) == real, "the user's file is never read or rewritten"
 
 
 def test_incomplete_env_is_unavailable(native_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:

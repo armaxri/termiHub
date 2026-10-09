@@ -32,6 +32,7 @@ from typing import Optional
 
 import psutil
 
+from . import known_hosts
 from .orchestrator import agent_binary_path, free_port
 
 
@@ -92,7 +93,6 @@ class LocalAgentSshd:
         self._pid_file = self._dir / "sshd.pid"
         self._config = self._dir / "sshd_config"
         self._process: Optional[subprocess.Popen] = None
-        self._known_hosts = Path.home() / ".ssh" / "known_hosts"
         self._known_hosts_added = False
         self._generate_keys()
         self._write_config()
@@ -187,41 +187,21 @@ class LocalAgentSshd:
         os.chmod(self._client_key, 0o600)
         os.chmod(self._dir, 0o700)
 
-    @property
-    def _known_hosts_marker(self) -> str:
-        """The host token our known_hosts entry is keyed on (loopback + our port)."""
-        return f"[127.0.0.1]:{self._port}"
-
     def _register_known_host(self) -> None:
-        """Pre-trust our host key in ``~/.ssh/known_hosts`` (strict verifier, #1969).
+        """Pre-trust our host key for the app under test (strict verifier, #1969).
 
-        The app's default SSH host-key verifier is strict known_hosts-only, so a
-        throwaway sshd on an unknown host would otherwise block the agent connect
-        on a trust prompt. Seed our ``[127.0.0.1]:<port>`` entry so the connect
-        proceeds; :meth:`_unregister_known_host` removes exactly that line on
-        cleanup, leaving the user's file otherwise untouched.
+        The app's default SSH host-key verifier trusts a ``known_hosts`` match
+        without a prompt, so seeding our ``[127.0.0.1]:<port>`` entry lets the
+        agent connect proceed. The entry goes into the harness's per-run file
+        (:mod:`.known_hosts`, #4339), never the user's ``~/.ssh/known_hosts``.
         """
-        pub = (self._host_key.with_suffix(".pub")).read_text().split()
-        # pub is: "<algo> <base64> [comment]"; build "[127.0.0.1]:<port> <algo> <base64>".
-        line = f"{self._known_hosts_marker} {pub[0]} {pub[1]}\n"
-        self._known_hosts.parent.mkdir(mode=0o700, exist_ok=True)
-        with open(self._known_hosts, "a", encoding="utf-8") as fh:
-            fh.write(line)
+        known_hosts.trust_pubkey_file("127.0.0.1", self._port, self._host_key.with_suffix(".pub"))
         self._known_hosts_added = True
 
     def _unregister_known_host(self) -> None:
-        if not self._known_hosts_added or not self._known_hosts.exists():
-            return
-        try:
-            kept = [
-                ln
-                for ln in self._known_hosts.read_text(encoding="utf-8").splitlines(keepends=True)
-                if self._known_hosts_marker not in ln
-            ]
-            self._known_hosts.write_text("".join(kept), encoding="utf-8")
-        except OSError:
-            pass
-        self._known_hosts_added = False
+        if self._known_hosts_added:
+            known_hosts.untrust("127.0.0.1", self._port)
+            self._known_hosts_added = False
 
     def _write_config(self) -> None:
         # Mirrors scripts/dev.sh: loopback-only, key auth only, no PAM/strict-modes
@@ -287,7 +267,7 @@ class NativeSshdFixture:
     ``start`` brings it back on the same port; the fixture itself (service, test
     user, keys) belongs to whoever ran ``up`` and is left in place by
     :meth:`cleanup`, which only restores it to running and removes the
-    ``known_hosts`` entry this object added.
+    entry this object added to the harness's per-run ``known_hosts``.
     """
 
     def __init__(self, *, require_agent: bool = True) -> None:
@@ -308,7 +288,6 @@ class NativeSshdFixture:
             self._agent_binary: Optional[Path] = Path(agent)
         else:
             self._agent_binary = _resolve_agent_binary(require_agent)
-        self._known_hosts = Path.home() / ".ssh" / "known_hosts"
         self._known_hosts_added = False
         self._register_known_host()
 
@@ -386,31 +365,15 @@ class NativeSshdFixture:
                 f"{result.stderr.strip() or result.stdout.strip()}"
             )
 
-    @property
-    def _known_hosts_marker(self) -> str:
-        return f"[127.0.0.1]:{self._port}"
-
     def _register_known_host(self) -> None:
         # Same strict-verifier reason as LocalAgentSshd._register_known_host.
-        algo, key = self._host_pubkey.read_text(encoding="utf-8").split()[:2]
-        self._known_hosts.parent.mkdir(mode=0o700, exist_ok=True)
-        with open(self._known_hosts, "a", encoding="utf-8") as fh:
-            fh.write(f"{self._known_hosts_marker} {algo} {key}\n")
+        known_hosts.trust_pubkey_file("127.0.0.1", self._port, self._host_pubkey)
         self._known_hosts_added = True
 
     def _unregister_known_host(self) -> None:
-        if not self._known_hosts_added or not self._known_hosts.exists():
-            return
-        try:
-            kept = [
-                ln
-                for ln in self._known_hosts.read_text(encoding="utf-8").splitlines(keepends=True)
-                if self._known_hosts_marker not in ln
-            ]
-            self._known_hosts.write_text("".join(kept), encoding="utf-8")
-        except OSError:
-            pass
-        self._known_hosts_added = False
+        if self._known_hosts_added:
+            known_hosts.untrust("127.0.0.1", self._port)
+            self._known_hosts_added = False
 
 
 def local_agent_endpoint(*, require_agent: bool = True):
