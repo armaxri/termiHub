@@ -7,8 +7,6 @@ these require the ssh-password container (2201).
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from termihub_harness import (
@@ -132,9 +130,25 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
         assert stats["cpu"] and stats["mem"] and stats["disk"]
 
     def test_auto_refresh_keeps_stats(self):
-        self.connect_ssh_password(unique_name("ssh-mon-refresh"))
+        # Prove a refresh actually happened: the monitor's sample counter must
+        # advance past the value seen once the first stats render. Stats that
+        # merely stay on screen pass even when auto-refresh is broken (#4339).
+        name = unique_name("ssh-mon-refresh")
+        self.connect_ssh_password(name)
         self.wait_for_monitoring_stats()
-        time.sleep(7)  # auto-refresh interval is ~5s
+        key = self.wait(
+            lambda: (self.find_tab(name) or {}).get("sessionId"),
+            what="the SSH tab's session id",
+        )
+        first = self.wait(
+            lambda: self._sample_count(key),
+            what="the monitor's first sample count",
+        )
+        self.wait(
+            lambda: (self._sample_count(key) or 0) > first,
+            timeout=20.0,
+            what="a second monitoring sample (auto-refresh)",
+        )
         assert self.monitoring_stats() is not None
 
     def test_dropdown_has_disconnect(self):
