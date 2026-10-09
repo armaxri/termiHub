@@ -43,6 +43,7 @@
 pub mod config;
 pub mod integrity;
 pub mod protocol;
+pub mod sidecar_log;
 
 pub use config::{host_supports_clipboard_delayed_render, rdp_settings_schema};
 
@@ -60,11 +61,11 @@ use tracing::{debug, warn};
 
 use crate::connection::{
     AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ClipboardImage, ConnectionType,
-    CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent,
-    MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver, RemoteClipboardFile,
-    SettingsSchema,
+    CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities, GraphicalState,
+    InputEvent, MonitorLayout, MonitorRect, MultiMonitorCapability, OutputReceiver,
+    RemoteClipboardFile, SettingsSchema,
 };
-use crate::errors::SessionError;
+use crate::errors::{ConnectFailureKind, SessionError};
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
@@ -79,8 +80,8 @@ const CHANNEL_DEPTH: usize = 32;
 /// The desktop is a GUI-subsystem process; spawning the console-subsystem
 /// sidecar from it makes Windows allocate a fresh console, which flashes a
 /// window on every RDP connect. This flag gives the child no console at all.
-/// stdout/stdin are piped and stderr is inherited, so those handles (and the
-/// sidecar's stderr logging) are unaffected — only the phantom console goes away.
+/// stdin, stdout and stderr are all piped, so those handles (and the sidecar's
+/// stderr logging, forwarded by [`sidecar_log`]) are unaffected — only the phantom console goes away.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -185,7 +186,10 @@ fn spawn_helper(
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        // Piped, not inherited (#4320, OBS2-003): a bundled GUI app has no
+        // stderr, so the sidecar's logs and panics would vanish. The connect
+        // path forwards it into the desktop log via [`sidecar_log`].
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     // Suppress the console-window flash on Windows (#1758). No-op elsewhere.
     #[cfg(windows)]
@@ -364,9 +368,78 @@ struct SidecarShared {
     /// The multi-monitor layout the session was opened with, or last set at
     /// runtime (#3696). `None` for a single-monitor session.
     monitor_layout: StdMutex<Option<MonitorLayout>>,
+    /// How far the sidecar's connect has got (#4320): it leaves
+    /// [`ConnectPhase::Pending`] once the session goes active or ends, which
+    /// is what [`GraphicalBackend::wait_until_established`] awaits.
+    phase: tokio::sync::watch::Sender<ConnectPhase>,
+}
+
+/// The connect outcome the host has observed from the sidecar (#4320).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectPhase {
+    /// TCP / TLS / CredSSP still in progress inside the sidecar.
+    Pending,
+    /// The sidecar reported the session active (or sent its first frame).
+    Established,
+    /// The sidecar's output ended before the session was established.
+    Ended,
 }
 
 impl SidecarShared {
+    /// Fresh shared state for a session that has not been established yet.
+    fn new(view_only: bool, monitor_layout: Option<MonitorLayout>) -> Self {
+        Self {
+            clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
+            remote_clipboard_files: Mutex::new(Vec::new()),
+            fetches: StdMutex::new(HashMap::new()),
+            view_only,
+            failure: StdMutex::new(None),
+            monitor_layout: StdMutex::new(monitor_layout),
+            phase: tokio::sync::watch::channel(ConnectPhase::Pending).0,
+        }
+    }
+
+    /// Record that the session is established; a no-op once it has ended.
+    fn mark_established(&self) {
+        self.phase.send_if_modified(|phase| {
+            let pending = *phase == ConnectPhase::Pending;
+            if pending {
+                *phase = ConnectPhase::Established;
+            }
+            pending
+        });
+    }
+
+    /// Record that the sidecar's output ended; an established session stays
+    /// established (it *was* reached).
+    fn mark_ended(&self) {
+        self.phase.send_if_modified(|phase| {
+            let pending = *phase == ConnectPhase::Pending;
+            if pending {
+                *phase = ConnectPhase::Ended;
+            }
+            pending
+        });
+    }
+
+    /// Wait for the first definitive connect outcome (#4320).
+    async fn wait_until_established(&self) -> Result<(), SessionError> {
+        let mut phase = self.phase.subscribe();
+        let reached = phase
+            .wait_for(|phase| *phase != ConnectPhase::Pending)
+            .await
+            .map(|phase| *phase);
+        match reached {
+            Ok(ConnectPhase::Established) => Ok(()),
+            _ => Err(self.fatal_error().unwrap_or_else(|| {
+                SessionError::ConnectionFailed(
+                    "the RDP helper ended before the session was established".to_string(),
+                )
+            })),
+        }
+    }
+
     /// Map the recorded sidecar failure onto the shared typed error (#3390).
     fn fatal_error(&self) -> Option<SessionError> {
         let guard = self.failure.lock().ok()?;
@@ -377,11 +450,18 @@ impl SidecarShared {
 
 /// The shared [`SessionError`] for a typed sidecar failure (#3390): a credential
 /// rejection is [`SessionError::AuthFailed`] — the same typed discriminant every
-/// other backend reports — and anything else a connect failure.
+/// other backend reports — a timeout the typed [`ConnectFailureKind::Timeout`],
+/// and anything else a connect failure.
 fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionError {
     match kind {
         SidecarFailureKind::Auth => SessionError::AuthFailed,
         SidecarFailureKind::Connect => SessionError::ConnectionFailed(message.to_string()),
+        // The typed timeout discriminant every other connect timeout carries
+        // (#4320), so Test connection and the error overlay classify it.
+        SidecarFailureKind::Timeout => SessionError::Classified {
+            kind: ConnectFailureKind::Timeout,
+            message: message.to_string(),
+        },
     }
 }
 
@@ -465,6 +545,7 @@ async fn run_reader<R>(
             msg = read_message::<_, SidecarMessage>(&mut reader) => {
                 match msg {
                     Ok(SidecarMessage::Frame(frame)) => {
+                        shared.mark_established();
                         if frame_tx.send(frame).await.is_err() {
                             break;
                         }
@@ -556,6 +637,9 @@ async fn run_reader<R>(
                     }
                     Ok(SidecarMessage::State(state)) => {
                         debug!(?state, "rdp sidecar state");
+                        if state == GraphicalState::Active {
+                            shared.mark_established();
+                        }
                     }
                     Ok(SidecarMessage::Failure { kind, message }) => {
                         // The typed reason for the fatal `Error` that follows
@@ -583,6 +667,8 @@ async fn run_reader<R>(
             }
         }
     }
+    // Any typed failure is recorded by now, so a waiter sees its reason.
+    shared.mark_ended();
     cancel.cancel();
 }
 
@@ -726,6 +812,7 @@ impl ConnectionType for SidecarRdp {
         let stdout = child.stdout.take().ok_or_else(|| {
             SessionError::SpawnFailed("RDP helper stdout unavailable".to_string())
         })?;
+        let stderr = child.stderr.take();
 
         // The connect payload — credentials included — travels over stdin, never
         // argv/env. It is always the first message.
@@ -736,15 +823,7 @@ impl ConnectionType for SidecarRdp {
                 SessionError::SpawnFailed(format!("failed to send RDP connect request: {e}"))
             })?;
 
-        let shared = Arc::new(SidecarShared {
-            clipboard: Mutex::new(String::new()),
-            clipboard_image: Mutex::new(None),
-            remote_clipboard_files: Mutex::new(Vec::new()),
-            fetches: StdMutex::new(HashMap::new()),
-            view_only,
-            failure: StdMutex::new(None),
-            monitor_layout: StdMutex::new(monitor_layout),
-        });
+        let shared = Arc::new(SidecarShared::new(view_only, monitor_layout));
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -761,11 +840,19 @@ impl ConnectionType for SidecarRdp {
         ));
         let writer_task = tokio::spawn(run_writer(stdin, sidecar_rx, cancel.clone()));
         let supervisor_task = tokio::spawn(supervise(child, cancel.clone()));
+        let tasks = vec![reader_task, writer_task, supervisor_task];
+        // Forward the helper's logs and panics into the desktop log (#4320,
+        // OBS2-003). Runs to the pipe's EOF, which follows the helper's exit,
+        // so a dying sidecar's last words are still captured; it is detached
+        // rather than aborted on teardown for the same reason.
+        if let Some(stderr) = stderr {
+            tokio::spawn(sidecar_log::forward_stderr(stderr));
+        }
 
         self.frame_rx = StdMutex::new(Some(frame_rx));
         self.cursor_rx = StdMutex::new(Some(cursor_rx));
         self.cert_prompt_rx = StdMutex::new(Some(cert_prompt_rx));
-        self.tasks = vec![reader_task, writer_task, supervisor_task];
+        self.tasks = tasks;
         self.runtime = Some(Arc::new(SidecarRuntime {
             to_sidecar,
             shared,
@@ -780,9 +867,9 @@ impl ConnectionType for SidecarRdp {
     /// with `kill_on_drop(true)` and nothing is stored on `self` until
     /// [`connect`](Self::connect) fully succeeds, so dropping the in-flight
     /// connect on cancel kills the helper and leaks nothing. (The RDP transport
-    /// / TLS / auth negotiation itself runs inside the sidecar and is surfaced
-    /// asynchronously after `connect` returns, so it is outside this method's
-    /// cancellation window.)
+    /// / TLS / auth negotiation itself runs inside the sidecar, bounded by the
+    /// connect timeout, and is surfaced asynchronously after `connect` returns
+    /// — await [`GraphicalBackend::wait_until_established`] for its verdict.)
     async fn connect_cancellable(
         &mut self,
         settings: serde_json::Value,
@@ -1117,12 +1204,21 @@ impl GraphicalBackend for SidecarRdp {
     fn fatal_error(&self) -> Option<SessionError> {
         self.runtime.as_ref()?.shared.fatal_error()
     }
+
+    async fn wait_until_established(&self) -> Result<(), SessionError> {
+        match &self.runtime {
+            Some(rt) => rt.shared.wait_until_established().await,
+            None => Err(SessionError::NotRunning(
+                "rdp session not connected".to_string(),
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::connection::{CursorUpdate, DirtyRect, FrameUpdate, GraphicalState};
+    use crate::connection::{CursorUpdate, DirtyRect, FrameUpdate};
 
     #[test]
     fn metadata_and_capabilities() {
@@ -1484,15 +1580,7 @@ mod tests {
     }
 
     fn test_shared() -> Arc<SidecarShared> {
-        Arc::new(SidecarShared {
-            clipboard: Mutex::new(String::new()),
-            clipboard_image: Mutex::new(None),
-            remote_clipboard_files: Mutex::new(Vec::new()),
-            fetches: StdMutex::new(HashMap::new()),
-            view_only: false,
-            failure: StdMutex::new(None),
-            monitor_layout: StdMutex::new(None),
-        })
+        Arc::new(SidecarShared::new(false, None))
     }
 
     /// End-to-end bridge over an in-memory pipe: a `SidecarMessage::Frame`
@@ -1847,8 +1935,6 @@ mod tests {
         let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
         let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
         let shared = Arc::new(SidecarShared {
-            clipboard: Mutex::new(String::new()),
-            clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
                 name: "hello.txt".to_string(),
                 relative_path: None,
@@ -1856,10 +1942,7 @@ mod tests {
                 is_dir: false,
                 index: 0,
             }]),
-            fetches: StdMutex::new(HashMap::new()),
-            view_only: false,
-            failure: StdMutex::new(None),
-            monitor_layout: StdMutex::new(None),
+            ..SidecarShared::new(false, None)
         });
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
@@ -1922,8 +2005,6 @@ mod tests {
         let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
 
         let shared = Arc::new(SidecarShared {
-            clipboard: Mutex::new(String::new()),
-            clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
                 name: "hello.txt".to_string(),
                 relative_path: None,
@@ -1931,10 +2012,7 @@ mod tests {
                 is_dir: false,
                 index: 0,
             }]),
-            fetches: StdMutex::new(HashMap::new()),
-            view_only: false,
-            failure: StdMutex::new(None),
-            monitor_layout: StdMutex::new(None),
+            ..SidecarShared::new(false, None)
         });
         let cancel = CancellationToken::new();
         let reader = tokio::spawn(run_reader(
@@ -2073,15 +2151,7 @@ mod tests {
 
     fn rdp_with_channel(view_only: bool) -> (SidecarRdp, mpsc::Receiver<HostMessage>) {
         let (to_sidecar, rx) = mpsc::channel(CHANNEL_DEPTH);
-        let shared = Arc::new(SidecarShared {
-            clipboard: Mutex::new(String::new()),
-            clipboard_image: Mutex::new(None),
-            remote_clipboard_files: Mutex::new(Vec::new()),
-            fetches: StdMutex::new(HashMap::new()),
-            view_only,
-            failure: StdMutex::new(None),
-            monitor_layout: StdMutex::new(None),
-        });
+        let shared = Arc::new(SidecarShared::new(view_only, None));
         let rdp = SidecarRdp {
             runtime: Some(Arc::new(SidecarRuntime {
                 to_sidecar,
@@ -2216,3 +2286,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "establish_tests.rs"]
+mod establish_tests;

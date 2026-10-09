@@ -6,6 +6,7 @@ pub mod graphical_file_channel;
 pub mod graphical_held_input;
 pub mod graphical_linked_ssh;
 pub mod graphical_manager;
+pub(crate) mod graphical_probe;
 pub mod graphical_supervisor;
 pub mod graphical_upload;
 pub mod line_ending;

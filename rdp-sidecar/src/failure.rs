@@ -213,8 +213,37 @@ impl fmt::Display for ServerLogonRejected {
 
 impl std::error::Error for ServerLogonRejected {}
 
-/// Classify a fatal sidecar error (the whole `anyhow` chain) as auth vs connect.
+/// The TCP connect or the X.224 / TLS / CredSSP negotiation did not finish
+/// within the connect timeout (#4320, #4401). Carried as the source of the
+/// sidecar's fatal error so [`classify`] reports it as
+/// [`SidecarFailureKind::Timeout`].
+#[derive(Debug)]
+pub struct ConnectTimedOut {
+    /// `host:port` the connect was aimed at.
+    pub target: String,
+    /// The timeout that elapsed, in whole seconds.
+    pub secs: u64,
+}
+
+impl fmt::Display for ConnectTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "RDP connect to {} timed out after {}s. Check that the host and port are correct, \
+             the server is running, and no firewall is blocking the connection",
+            self.target, self.secs
+        )
+    }
+}
+
+impl std::error::Error for ConnectTimedOut {}
+
+/// Classify a fatal sidecar error (the whole `anyhow` chain) as auth vs
+/// timeout vs any other connect failure.
 pub fn classify(error: &anyhow::Error) -> SidecarFailureKind {
+    if error.chain().any(|cause| cause.is::<ConnectTimedOut>()) {
+        return SidecarFailureKind::Timeout;
+    }
     let auth = error.chain().any(|cause| {
         cause.is::<ServerLogonRejected>()
             || cause.is::<CredsspRejected>()
@@ -236,7 +265,7 @@ pub fn classify(error: &anyhow::Error) -> SidecarFailureKind {
 pub fn failure_state(kind: SidecarFailureKind) -> GraphicalState {
     match kind {
         SidecarFailureKind::Auth => GraphicalState::AuthFailed,
-        SidecarFailureKind::Connect => GraphicalState::ConnectFailed,
+        SidecarFailureKind::Connect | SidecarFailureKind::Timeout => GraphicalState::ConnectFailed,
     }
 }
 

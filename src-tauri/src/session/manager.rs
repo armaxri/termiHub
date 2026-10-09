@@ -946,6 +946,12 @@ impl SessionManager {
     /// aborts the in-flight handshake promptly instead of waiting out the timeout
     /// (#952) — no un-cancellable hang on the connect path.
     ///
+    /// For a graphical backend that negotiates after `connect()` returns (the
+    /// RDP sidecar), the verdict is its first definitive outcome — established,
+    /// or its typed failure — bounded by the graphical connect timeout, with a
+    /// certificate prompt answered from `rdp_trust` (an untrusted certificate
+    /// is reported, never prompted for) (#4320).
+    ///
     /// Returns `Ok(())` when the connection was established (and then torn down),
     /// or a typed [`SessionError`] classifying the failure — [`AuthFailed`] when
     /// credentials were rejected, [`ConnectionFailed`] when the host was
@@ -966,7 +972,18 @@ impl SessionManager {
         settings: serde_json::Value,
         agent_id: Option<&str>,
         connect_id: Option<&str>,
+        rdp_trust: Option<&crate::session::rdp_trust_store::RdpTrustStore>,
     ) -> Result<(), termihub_core::errors::SessionError> {
+        // A graphical backend that negotiates after `connect()` (RDP) is judged
+        // by its first definitive outcome, bounded by the graphical connect
+        // timeout (#4320); read what that needs before `settings` moves.
+        let probe_host = settings
+            .get("host")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let probe_timeout = crate::session::graphical_manager::graphical_connect_timeout(&settings);
+
         // Register a cancellation token so a hung test connect is abortable via
         // `cancel_connecting` (#952) — reuses the same `connecting` map a real
         // connect uses. The RAII guard clears the entry on every exit path,
@@ -1017,14 +1034,32 @@ impl SessionManager {
             conn
         };
 
+        // RDP's TCP / TLS / certificate / CredSSP run inside its helper after
+        // `connect()` returned, so "connected" only means "helper started":
+        // await the real outcome (PARITY2-001, #4320). Backends that establish
+        // inside `connect()` (VNC, terminals) resolve at once.
+        let verdict = match connection.graphical() {
+            Some(backend) => {
+                crate::session::graphical_probe::await_verdict(
+                    backend,
+                    &probe_host,
+                    rdp_trust,
+                    probe_timeout,
+                    cancel_token.as_ref(),
+                )
+                .await
+            }
+            None => Ok(()),
+        };
+
         // Validate-and-teardown: the probe must never leave a live session. The
-        // test's verdict is the *connect* result, so a best-effort teardown error
-        // is logged but does not turn a successful validation into a failure (the
-        // probe connection is dropped immediately after regardless).
+        // test's verdict is the connect (and establish) result, so a best-effort
+        // teardown error is logged but does not change it (the probe connection
+        // is dropped immediately after regardless).
         if let Err(e) = connection.disconnect().await {
             warn!(error = %e, "test_connection: error tearing down the probe connection");
         }
-        Ok(())
+        verdict
     }
 
     /// Create a new connection session.
