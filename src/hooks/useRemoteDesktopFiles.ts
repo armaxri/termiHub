@@ -3,6 +3,7 @@ import { remoteDesktopFileChannel } from "@/services/api";
 import { toast } from "@/components/ui";
 import { uploadToRemoteDesktop } from "@/components/RemoteDesktop/fileTransfer";
 import { useAppStore } from "@/store/appStore";
+import { isPasswordPromptAbort } from "@/store/slices/passwordPromptSlice";
 import { askLinkedSshSecret } from "@/utils/linkedSshSecret";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -71,6 +72,15 @@ export function useRemoteDesktopFiles(
   // A new session starts with no remembered folder.
   useEffect(() => setChosenDir(null), [sessionId]);
 
+  // Aborted when the session changes or the tab closes, so a password prompt
+  // still queued for this session is dropped instead of outliving it (#4312).
+  const promptAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    promptAbort.current = controller;
+    return () => controller.abort();
+  }, [sessionId]);
+
   useEffect(() => {
     if (!live || !sessionId) {
       setFiles({ status: "resolving" });
@@ -115,7 +125,8 @@ export function useRemoteDesktopFiles(
           setFiles(answer);
           const outcome = await askLinkedSshSecret(
             answer.needsSecret,
-            useAppStore.getState().requestPassword
+            useAppStore.getState().requestPassword,
+            promptAbort.current?.signal
           );
           if (outcome.status === "canceled") break;
           answer = await remoteDesktopFileChannel(
@@ -125,6 +136,8 @@ export function useRemoteDesktopFiles(
         }
         return settle(answer);
       } catch (err) {
+        // The tab closed or the session changed while the prompt was queued.
+        if (isPasswordPromptAbort(err)) return null;
         frontendLog("remote_desktop_files", `file channel query failed: ${errorMessage(err)}`);
         return settle({ status: "error", message: errorMessage(err) });
       }
