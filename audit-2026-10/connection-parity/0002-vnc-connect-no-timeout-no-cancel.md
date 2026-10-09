@@ -16,8 +16,8 @@ evidence:
   - src-tauri/src/session/graphical_supervisor.rs:418
   - src/components/RemoteDesktop/RemoteDesktopOverlay.tsx:39
   - src/hooks/useRemoteDesktopSession.ts:254
-status: open
-resolution: ""
+status: fixed
+resolution: "#4298 — initial graphical connect is bounded by connectTimeoutSecs (default 30 s) and cancellable by connect id from the connecting overlay or tab close"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete
