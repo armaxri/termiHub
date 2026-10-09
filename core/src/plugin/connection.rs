@@ -245,14 +245,18 @@ fn field_type_from_spec(spec: &serde_json::Value) -> FieldType {
             min: spec.get("minimum").and_then(serde_json::Value::as_f64),
             max: spec.get("maximum").and_then(serde_json::Value::as_f64),
         },
-        Some("string")
-            if spec.get("format").and_then(serde_json::Value::as_str) == Some("password") =>
-        {
-            FieldType::Password
-        }
+        // A secret (#4289): `format: "password"`, or the standard JSON-Schema
+        // `writeOnly: true`. Either one routes the value to the credential store.
+        Some("string") if is_secret_spec(spec) => FieldType::Password,
         // `string` and anything unrecognised become a plain text field.
         _ => FieldType::Text,
     }
+}
+
+/// Whether a string property spec declares a secret value.
+fn is_secret_spec(spec: &serde_json::Value) -> bool {
+    spec.get("format").and_then(serde_json::Value::as_str) == Some("password")
+        || spec.get("writeOnly").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
 /// Turn a property key (`echoPrefix`, `default_namespace`) into a human label
