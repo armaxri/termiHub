@@ -358,25 +358,7 @@ impl SessionLifecycleStore {
     /// `session.connectFailed` — the initial connect errored. Terminal `Failed`
     /// with the message; the user may retry.
     pub fn connect_failed(&self, session_id: &str, error: Option<String>) {
-        let mut inner = self.lock();
-        // SM-003: an automatic failure fold (e.g. the agent transport giving up)
-        // never overwrites Evicted — control belongs to the other desktop.
-        if is_evicted(&inner, session_id) {
-            return;
-        }
-        inner.dirty.insert(session_id.to_string());
-        // No-op for an unknown/removed session (SM-006): the initial connect always
-        // folds `connect` first (`commands::session`), so a late `connectFailed`
-        // for a tab the user already closed must not resurrect a phantom entry.
-        if let Some(entry) = inner.sessions.get_mut(session_id) {
-            entry.status = SessionStatus::Failed;
-            entry.reconnect = INITIAL_RECONNECT_STATE;
-            entry.end_reason = Some(EndReason::Error);
-            entry.error = error;
-            entry.reconnect_error = None;
-            // The connect never established a session; nothing to re-attach to (#2457).
-            entry.backend_session_id = None;
-        }
+        apply_connect_failed(&mut self.lock(), session_id, error);
     }
 
     /// The initial connect was **rejected by authentication** (SM-005). Folds the
@@ -577,11 +559,21 @@ impl SessionLifecycleStore {
     /// [`dropped`](Self::dropped) / [`session_lost`](Self::session_lost) / the
     /// backoff loop when the live session did not survive — the region is never
     /// left stuck reconnecting. Creates the entry lazily (mirrors the other folds).
+    ///
+    /// Only a live tab enters it (SM2-002, #4305): `Connecting`, `Connected`, an
+    /// already-`Reconnecting` tab, or one the store does not know yet. A tab that
+    /// has ended — user-stopped, failed, auth-failed, session-lost — or is
+    /// `Evicted` is left alone: folding it back to `Reconnecting` would let the
+    /// next recovery resurrect it.
     pub fn agent_transport_reconnecting(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
-        // SM-003: an evicted tab stays Evicted across a transport break — the
-        // session is controlled by another desktop, not reconnecting here.
-        if is_evicted(&inner, session_id) {
+        let live = inner.sessions.get(session_id).is_none_or(|s| {
+            matches!(
+                s.status,
+                SessionStatus::Connecting | SessionStatus::Connected | SessionStatus::Reconnecting
+            )
+        });
+        if !live {
             return;
         }
         inner.dirty.insert(session_id.to_string());
@@ -809,31 +801,41 @@ impl SessionLifecycleStore {
     /// replacement shell. Resets the reconnect loop to idle, clears the
     /// re-attach id (the backend session is gone), and records `Unexpected` as the
     /// end reason (the live process was lost, not user-ended). A no-op for an
-    /// unknown/removed session (SM-006): its callers only fold it for a tab the
-    /// store is already tracking (they guard on the live reconnecting state), so it
-    /// never needs to create the entry and must not resurrect a removed one.
+    /// unknown/removed session (SM-006): it never creates the entry and must not
+    /// resurrect a removed one. Unconditional otherwise — the agent-recovery
+    /// callers use [`session_lost_if_reconnecting`](Self::session_lost_if_reconnecting)
+    /// so a tab the user stopped or that already ended is never relabelled.
     pub fn session_lost(&self, session_id: &str, error: Option<String>) {
+        apply_session_lost(&mut self.lock(), session_id, error);
+    }
+
+    /// [`session_lost`](Self::session_lost), applied only while the tab is
+    /// `Reconnecting` — the one status in which a tab is awaiting the outcome of an
+    /// agent transport recovery (SM2-002, #4305). A tab the user stopped
+    /// (`Disconnected(User)`), one that already ended, an `Evicted` tab and an
+    /// unknown id are left untouched. Returns whether the fold applied, so the
+    /// caller can tear down the agent session of a tab it skipped. The check and
+    /// the fold run under one lock, so a concurrent Stop cannot slip between them.
+    pub fn session_lost_if_reconnecting(&self, session_id: &str, error: Option<String>) -> bool {
         let mut inner = self.lock();
-        // SM-003: an evicted session is alive (held by another desktop), so a
-        // "not recovered here" resolve must not relabel it as lost.
-        if is_evicted(&inner, session_id) {
-            return;
+        if !is_reconnecting(&inner, session_id) {
+            return false;
         }
-        inner.dirty.insert(session_id.to_string());
-        // No-op for an unknown/removed session (SM-006): session-lost only resolves
-        // a tab the store is already tracking (its callers guard on the live
-        // reconnecting state — see `redrive`/`agent_manager`), so a late fold
-        // arriving after the user closed the tab must not resurrect a phantom entry.
-        if let Some(entry) = inner.sessions.get_mut(session_id) {
-            entry.status = SessionStatus::SessionLost;
-            entry.reconnect = INITIAL_RECONNECT_STATE;
-            entry.end_reason = Some(EndReason::Unexpected);
-            entry.error = error;
-            entry.reconnect_error = None;
-            // The live agent session could not be recovered; there is no backend
-            // session to re-attach to (#2512).
-            entry.backend_session_id = None;
+        apply_session_lost(&mut inner, session_id, error);
+        true
+    }
+
+    /// [`connect_failed`](Self::connect_failed), applied only while the tab is
+    /// `Reconnecting` (SM2-002, #4305): the agent's in-task reconnect loop gave up,
+    /// which is news only for a tab still awaiting it. A user-stopped or already
+    /// ended tab keeps its status. Returns whether the fold applied.
+    pub fn connect_failed_if_reconnecting(&self, session_id: &str, error: Option<String>) -> bool {
+        let mut inner = self.lock();
+        if !is_reconnecting(&inner, session_id) {
+            return false;
         }
+        apply_connect_failed(&mut inner, session_id, error);
+        true
     }
 
     /// Another desktop (or window) **took over** this tab's session (SM-003,
@@ -991,6 +993,62 @@ fn is_evicted(inner: &Inner, session_id: &str) -> bool {
         .sessions
         .get(session_id)
         .is_some_and(|s| s.status == SessionStatus::Evicted)
+}
+
+/// The `session.connectFailed` transition on the locked store (see
+/// [`SessionLifecycleStore::connect_failed`]).
+fn apply_connect_failed(inner: &mut Inner, session_id: &str, error: Option<String>) {
+    // SM-003: an automatic failure fold (e.g. the agent transport giving up)
+    // never overwrites Evicted — control belongs to the other desktop.
+    if is_evicted(inner, session_id) {
+        return;
+    }
+    inner.dirty.insert(session_id.to_string());
+    // No-op for an unknown/removed session (SM-006): the initial connect always
+    // folds `connect` first (`commands::session`), so a late `connectFailed`
+    // for a tab the user already closed must not resurrect a phantom entry.
+    if let Some(entry) = inner.sessions.get_mut(session_id) {
+        entry.status = SessionStatus::Failed;
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = Some(EndReason::Error);
+        entry.error = error;
+        entry.reconnect_error = None;
+        // The connect never established a session; nothing to re-attach to (#2457).
+        entry.backend_session_id = None;
+    }
+}
+
+/// The `session.sessionLost` transition on the locked store (see
+/// [`SessionLifecycleStore::session_lost`]).
+fn apply_session_lost(inner: &mut Inner, session_id: &str, error: Option<String>) {
+    // SM-003: an evicted session is alive (held by another desktop), so a
+    // "not recovered here" resolve must not relabel it as lost.
+    if is_evicted(inner, session_id) {
+        return;
+    }
+    inner.dirty.insert(session_id.to_string());
+    // No-op for an unknown/removed session (SM-006): a late fold arriving after
+    // the user closed the tab must not resurrect a phantom entry. The status
+    // guard lives in `session_lost_if_reconnecting` (agent recovery) and in the
+    // redrive's own `still_connecting` check.
+    if let Some(entry) = inner.sessions.get_mut(session_id) {
+        entry.status = SessionStatus::SessionLost;
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = Some(EndReason::Unexpected);
+        entry.error = error;
+        entry.reconnect_error = None;
+        // The live agent session could not be recovered; there is no backend
+        // session to re-attach to (#2512).
+        entry.backend_session_id = None;
+    }
+}
+
+/// Whether a session is `Reconnecting` — awaiting an agent recovery (SM2-002).
+fn is_reconnecting(inner: &Inner, session_id: &str) -> bool {
+    inner
+        .sessions
+        .get(session_id)
+        .is_some_and(|s| s.status == SessionStatus::Reconnecting)
 }
 
 /// The current reconnect-engine state for a session, or `Idle` when unknown.

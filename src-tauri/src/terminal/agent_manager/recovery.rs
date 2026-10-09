@@ -126,17 +126,43 @@ pub(crate) async fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
             // (`redrive.rs` `still_connecting`), so nothing outlives the cancelled tab.
             if still_reconnecting(app_handle, &h.tab_id) {
                 fold_agent_session_recovered(app_handle, &h.tab_id);
-            } else if is_evicted_tab(app_handle, &h.tab_id) {
-                // SM-003: an evicted tab's session is controlled by (or was just
-                // released by) another desktop. Never tear it down — that would
-                // kill the other desktop's live process — and never silently
-                // re-claim it: the tab waits for an explicit Reclaim.
-            } else if let Some(manager) = app_handle.try_state::<SessionManager>() {
-                let _ = manager.close_session(&h.session_id).await;
+            } else {
+                close_abandoned_session(app_handle, h).await;
             }
-        } else {
-            fold_agent_session_lost(app_handle, &h.tab_id);
+        } else if !fold_agent_session_lost(app_handle, &h.tab_id) {
+            // SM2-002: the tab was not awaiting recovery (the user stopped it, or
+            // it already ended), so it keeps its status instead of being relabelled
+            // `SessionLost`.
+            close_abandoned_session(app_handle, h).await;
         }
+    }
+}
+
+/// Tear down the agent session of a hosted tab that a recovery fold skipped
+/// because the tab was no longer awaiting recovery (SM-002 / SM2-002, #4305).
+///
+/// Only a tab the user ended (`Disconnected`) or closed (no region entry) is torn
+/// down, so nothing outlives the tab the user abandoned and it leaves
+/// `agent_hosted_sessions` — no later transport break can find it again. Every
+/// other status is left alone:
+///  - `Evicted` (SM-003): the session is controlled by, or was just released by,
+///    another desktop — tearing it down would kill that desktop's live process,
+///    and it is never silently re-claimed either: the tab waits for a Reclaim;
+///  - `Failed` / `AuthFailed` / `SessionLost`: the tab already shows its ending
+///    and the user decides what happens next;
+///  - `Connecting` / `Connected`: another path owns the tab now.
+async fn close_abandoned_session<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    hosted: &AgentHostedSession,
+) {
+    let status = app_handle
+        .try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.status(&hosted.tab_id));
+    if !matches!(status, None | Some(SessionStatus::Disconnected)) {
+        return;
+    }
+    if let Some(manager) = app_handle.try_state::<SessionManager>() {
+        let _ = manager.close_session(&hosted.session_id).await;
     }
 }
 
@@ -208,6 +234,9 @@ fn still_reconnecting<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
 ///  - `Some(live_ids)`: delegate to [`resolve_agent_hosted_sessions`] — a session the
 ///    agent recovered in place folds back to `Connected`, one it did not folds the
 ///    terminal `SessionLost` state (#2564).
+///  - Either way, only a tab still `Reconnecting` is folded (SM2-002, #4305): a tab
+///    the user stopped during the break, or one that already ended, keeps its
+///    status, and a stopped tab's agent session is torn down.
 ///  - `None`: the transport came back but `connection.list` never answered within the
 ///    bounded retry budget, so which sessions survived cannot be confirmed. Settle
 ///    **every** hosted tab to the terminal `SessionLost` state via
@@ -225,7 +254,12 @@ pub(crate) async fn resolve_hosted_sessions_after_reconnect<R: tauri::Runtime>(
         Some(live_ids) => resolve_agent_hosted_sessions(app_handle, hosted, live_ids).await,
         None => {
             for h in hosted {
-                fold_agent_session_unconfirmed(app_handle, &h.tab_id);
+                if !fold_agent_session_unconfirmed(app_handle, &h.tab_id) {
+                    // SM2-002: a tab the user stopped during the break keeps its
+                    // status, and its agent session is torn down like the live
+                    // branch's.
+                    close_abandoned_session(app_handle, h).await;
+                }
             }
         }
     }
