@@ -1,6 +1,7 @@
 /**
- * Helpers for the `agent-state-change` handler in {@link TerminalView} and the
- * agent-session connect-failure catch in {@link Terminal}.
+ * The `agent-state-change` / `remote-state-change` handlers {@link TerminalView}
+ * registers, their helpers, and the agent-session connect-failure catch in
+ * {@link Terminal}.
  *
  * Extracted so the branch logic can be unit-tested directly against the store
  * without rendering the whole component (avoids simulation drift — the real
@@ -8,8 +9,18 @@
  */
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
-import { currentSessionView } from "@/store/sessionBridge";
+import {
+  clearAgentDisconnectIntent,
+  consumeAgentDisconnectIntent,
+} from "@/store/agentDisconnectIntent";
+import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
+import { currentSessionView, type ProjectedSessionStatus } from "@/store/sessionBridge";
+import { listAgentSessions as apiListAgentSessions } from "@/services/api";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import type { AgentSessionInfo } from "@/types/generated/AgentSessionInfo";
 import { TerminalTab } from "@/types/terminal";
+import { readConfigString } from "@/utils/connectionConfigFields";
+import { errorMessage } from "@/utils/errorMessage";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveAgentSpawnAction, type AgentSpawnAction } from "./terminalConnectionPlan";
@@ -235,4 +246,185 @@ export function applyAgentSpawnFailure(input: AgentSpawnFailureInput): AgentSpaw
     useAppStore.getState().setTerminalDisconnectWithError(tabId, backendErrorMessage(err));
   }
   return action;
+}
+
+// ── agent-state-change / remote-state-change handlers (TFE2-001, #4309) ──────
+
+/** Payload of the backend `agent-state-change` event (`session_id` is the agent id). */
+export interface AgentStateChangePayload {
+  session_id: string;
+  state: string;
+  error?: string;
+}
+
+/** Payload of the backend `remote-state-change` event. */
+export interface RemoteStateChangePayload {
+  session_id: string;
+  state: string;
+}
+
+/** Injectable collaborators of the state-change handlers (defaults: the real ones). */
+export interface StateChangeDeps {
+  /** Lists the sessions an agent recovered after reconnecting. */
+  listAgentSessions: (agentId: string) => Promise<Pick<AgentSessionInfo, "sessionId">[]>;
+  /** Every tab across all tab groups. */
+  getAllTabs: () => TerminalTab[];
+}
+
+const DEFAULT_DEPS: StateChangeDeps = {
+  listAgentSessions: apiListAgentSessions,
+  getAllTabs: getAllTabsAcrossGroupTrees,
+};
+
+/** Region statuses in which a tab has already ended and must be left alone. */
+const ENDED_STATUSES: ReadonlySet<ProjectedSessionStatus> = new Set([
+  "disconnected",
+  "failed",
+  "authFailed",
+  "sessionLost",
+  "evicted",
+]);
+
+/**
+ * Whether a lost connection may still act on `tab`: it holds a session, the user
+ * has not just stopped it (a kill still in flight), and the region does not
+ * show it already ended — a user Stop, a give-up, a lost session or an
+ * eviction. autoReconnect is on by default but must never override the user's
+ * Stop (maintainer decision 2026-09-26).
+ */
+function tabStillLive(tab: TerminalTab): boolean {
+  if (!tab.sessionId) return false;
+  if (useAppStore.getState().intentionallyKilledSessions[tab.sessionId]) return false;
+  const status = currentSessionView()[tab.id]?.status;
+  return status === undefined || !ENDED_STATUSES.has(status);
+}
+
+/** Terminal tabs whose connection config names `agentId`. */
+function agentTerminalTabsOf(agentId: string, allTabs: TerminalTab[]): TerminalTab[] {
+  // Matched via the connection config rather than `agentSessions`, which is
+  // only filled on the first connect and so misses sessions opened later.
+  return allTabs.filter(
+    (tab) => tab.contentType === "terminal" && readConfigString(tab.config, "agentId") === agentId
+  );
+}
+
+/**
+ * The agent reconnected: resume tabs whose sessions it recovered, settle the
+ * rest as session-lost, then wake parked tabs and restart failed ones.
+ */
+async function applyAgentConnected(
+  agentId: string,
+  agentTerminalTabs: TerminalTab[],
+  snapshot: AgentConnectedSnapshot,
+  listAgentSessions: StateChangeDeps["listAgentSessions"]
+): Promise<void> {
+  let recovered: Set<string>;
+  try {
+    recovered = new Set((await listAgentSessions(agentId)).map((s) => s.sessionId));
+  } catch (err) {
+    // Can't reach the agent — assume all sessions are gone (safe fallback).
+    recovered = new Set();
+    frontendLog("disconnect", `agent connected: failed to list sessions (${errorMessage(err)})`);
+  }
+  const view = currentSessionView();
+  for (const tab of agentTerminalTabs) {
+    // The region is authoritative for the break (#2555/#2556/#2564). The backend
+    // folds a recovered session to `connected` and a gone one to `sessionLost`;
+    // that fold races this handler, so accept either break status here.
+    const status = view[tab.id]?.status;
+    if (status !== "reconnecting" && status !== "sessionLost") continue;
+    if (tab.sessionId && recovered.has(tab.sessionId)) continue;
+    // Gone: only clear the per-client in-flight flags — the backend already
+    // folded `sessionLost`; re-driving the region would double-fold.
+    useAppStore.getState().settleSessionLost(tab.id);
+  }
+  // Both gate on the pre-connect snapshot so a woken tab is not restarted too.
+  wakeWaitingAgentTabs(agentId, agentTerminalTabs, snapshot);
+  restartAgentRetryTabs(agentTerminalTabs, snapshot);
+}
+
+/**
+ * The agent's transport ended. A user Disconnect/Shutdown ends each live tab
+ * cleanly (#4309); an unexpected loss arms the backend reconnect; a backend
+ * give-up (`error`) reflects the server-folded `failed` state.
+ */
+function applyAgentDisconnected(
+  agentId: string,
+  agentTerminalTabs: TerminalTab[],
+  error: string | undefined
+): void {
+  const store = useAppStore.getState();
+  const intentional = consumeAgentDisconnectIntent(agentId);
+  let ended = 0;
+  for (const tab of agentTerminalTabs) {
+    if (intentional) {
+      // The disconnect deleted the agent's retained config, so a reconnect loop
+      // could never succeed: end the tab with a manual Reconnect instead.
+      if (!tabStillLive(tab)) continue;
+      store.setTerminalAgentDisconnected(tab.id);
+    } else if (error) {
+      // Backend gave up (#2612/#2564): it folded `failed` at the source; only
+      // clear the per-client in-flight flags here.
+      if (!tab.sessionId) continue;
+      store.settleBackendReconnectGaveUp(tab.id, error);
+    } else {
+      if (!tabStillLive(tab)) continue;
+      store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
+    }
+    ended++;
+  }
+  frontendLog(
+    "disconnect",
+    `agent disconnected (${intentional ? "by user" : error ? "gave up" : "lost"}): ${ended} tabs updated`
+  );
+  // Live sessions are gone; saved definitions/folders stay (they live on disk).
+  store.clearAgentSessions(agentId);
+}
+
+/**
+ * Handle one backend `agent-state-change` event — the function `TerminalView`
+ * registers with `listen`, extracted so tests exercise the real code.
+ */
+export async function handleAgentStateChange(
+  payload: AgentStateChangePayload,
+  deps: Partial<StateChangeDeps> = {}
+): Promise<void> {
+  const { listAgentSessions, getAllTabs } = { ...DEFAULT_DEPS, ...deps };
+  const { session_id: agentId, state, error } = payload;
+  frontendLog("disconnect", `agent-state-change agent=${agentId} state=${state}`);
+  const store = useAppStore.getState();
+  store.setAgentConnectionState(agentId, state as RemoteAgentDefinition["connectionState"], error);
+  const agentTerminalTabs = agentTerminalTabsOf(agentId, getAllTabs());
+
+  if (state === "connecting" || state === "connected") {
+    // A new connection makes any leftover disconnect intent stale.
+    clearAgentDisconnectIntent(agentId);
+  }
+  if (state === "connected") {
+    await applyAgentConnected(agentId, agentTerminalTabs, store, listAgentSessions);
+  } else if (state === "reconnecting") {
+    applyAgentReconnecting(agentId, agentTerminalTabs, error);
+  } else if (state === "disconnected") {
+    applyAgentDisconnected(agentId, agentTerminalTabs, error);
+  }
+}
+
+/**
+ * Handle one backend `remote-state-change` event: a "disconnected" state marks
+ * the owning tab dropped, unless the user already stopped it.
+ *
+ * Direct sessions do not emit this today (#1123) — their drops surface via
+ * `terminal-exit`; this is the forward-compatible hook for backends that do.
+ */
+export function handleRemoteStateChange(
+  payload: RemoteStateChangePayload,
+  deps: Partial<Pick<StateChangeDeps, "getAllTabs">> = {}
+): void {
+  const { getAllTabs } = { ...DEFAULT_DEPS, ...deps };
+  const { session_id: sessionId, state } = payload;
+  frontendLog("disconnect", `remote-state-change session=${sessionId} state=${state}`);
+  if (state !== "disconnected") return;
+  const tab = getAllTabs().find((t) => t.sessionId === sessionId);
+  if (!tab || !tabStillLive(tab)) return;
+  useAppStore.getState().setTerminalExited(tab.id, { code: null, reason: "dropped" });
 }

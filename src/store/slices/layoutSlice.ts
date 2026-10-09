@@ -541,6 +541,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
         const remainingView = omitKey(state.terminalViewMode, tabId);
+        const remainingAgentDisconnected = omitKey(state.terminalAgentDisconnected, tabId);
         const remainingReattach = omitKey(state.terminalReattaching, tabId);
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
@@ -593,6 +594,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
             terminalRetryCounters: remainingRetryCounters,
             terminalConnectDeadline: remainingConnectDeadline,
             terminalViewMode: remainingView,
+            terminalAgentDisconnected: remainingAgentDisconnected,
             terminalReattaching: remainingReattach,
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
@@ -617,6 +619,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           terminalRetryCounters: remainingRetryCounters,
           terminalConnectDeadline: remainingConnectDeadline,
           terminalViewMode: remainingView,
+          terminalAgentDisconnected: remainingAgentDisconnected,
           terminalReattaching: remainingReattach,
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,

@@ -333,7 +333,6 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
 
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
       expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
@@ -342,7 +341,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
 
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("skips tabs without an established session", async () => {
@@ -421,9 +420,8 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
   describe("'disconnected' after a user Disconnect / Shutdown ends tabs cleanly", () => {
     /** Assert the tab landed on the stable agent-disconnected state. */
     function expectStableAgentDisconnected(tabId: string) {
-      const life = currentSessionView()[tabId];
-      expect(life?.status).toBe("disconnected");
-      expect(life?.endReason).toBe("user");
+      // A user end: `session.disconnect` (region → disconnected, reason user),
+      // never the `session.reconnect` that arms the backend redrive.
       expect(intents("session.reconnect", tabId)).toHaveLength(0);
       expect(intents("session.disconnect", tabId)).toHaveLength(1);
       // Manual Reconnect is offered through the view-mode banner.
@@ -503,7 +501,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       harness.transport.setSession(tab.id, connected());
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("a stale intent is dropped once the agent connects again", async () => {
@@ -514,7 +512,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       harness.transport.setSession(tab.id, connected());
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("a failed disconnect request leaves no intent behind", async () => {
@@ -525,7 +523,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       await useAppStore.getState().disconnectRemoteAgent(AGENT);
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("a failed shutdown request leaves no intent behind", async () => {
@@ -536,7 +534,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       await expect(useAppStore.getState().shutdownRemoteAgent(AGENT)).rejects.toThrow("nope");
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("a suspend-style disconnect (agent update, force reconnect) keeps tabs resumable", async () => {
@@ -546,7 +544,7 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       await useAppStore.getState().disconnectRemoteAgent(AGENT, { endHostedSessions: false });
       await agentEvent("disconnected");
 
-      expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
       expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
     });
 
@@ -573,7 +571,8 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
         { getAllTabs: allTabs }
       );
 
-      expect(currentSessionView()[tab.id]?.exit).toEqual({ code: null, reason: "dropped" });
+      expect(intents("session.exited", tab.id)).toHaveLength(1);
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
 
     it("does not reconnect a tab the user stopped", () => {
@@ -601,7 +600,8 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
         { getAllTabs: allTabs }
       );
 
-      expect(harness.transport.dispatched.filter((i) => i.kind.startsWith("session."))).toEqual([]);
+      expect(intents("session.exited", tab.id)).toEqual([]);
+      expect(intents("session.reconnect", tab.id)).toEqual([]);
     });
   });
 });

@@ -142,6 +142,19 @@ export interface TerminalSessionStateSlice {
    * drops the tab straight into view mode so no disconnect overlay appears (#1121).
    */
   setTerminalExited: (tabId: string, info?: TerminalExitInfo) => void;
+  /**
+   * Tabs that ended because the user disconnected or shut down their agent
+   * (#4309). Runtime-only presentation state: the view-mode banner reads it to
+   * say the *agent* was disconnected. Cleared on reconnect and tab close.
+   */
+  terminalAgentDisconnected: Record<string, boolean>;
+  /**
+   * End a tab because the user disconnected or shut down its agent (#4309): a
+   * user end (`killed` → region `disconnected`, reason `user`), never a drop, so
+   * no reconnect loop is armed. The tab stays on the view-mode banner with a
+   * manual Reconnect, which re-establishes the agent and starts a new session.
+   */
+  setTerminalAgentDisconnected: (tabId: string) => void;
   /** Tag a session as intentionally killed by the user (e.g. Open Connections) (#1121). */
   markSessionKilled: (sessionId: string) => void;
   /** Return whether a session was intentionally killed, clearing the flag (#1121). */
@@ -396,6 +409,13 @@ export const createTerminalSessionStateSlice: StateCreator<
       }
     }
   },
+  terminalAgentDisconnected: {},
+  setTerminalAgentDisconnected: (tabId) => {
+    get().setTerminalExited(tabId, { code: null, reason: "killed" });
+    set((state) => ({
+      terminalAgentDisconnected: { ...state.terminalAgentDisconnected, [tabId]: true },
+    }));
+  },
   markSessionKilled: (sessionId) =>
     set((state) => ({
       intentionallyKilledSessions: {
@@ -540,6 +560,7 @@ export const createTerminalSessionStateSlice: StateCreator<
       // `regionExited` goes false, so no client clear is needed here.
       return {
         terminalViewMode: omitKey(state.terminalViewMode, tabId),
+        terminalAgentDisconnected: omitKey(state.terminalAgentDisconnected, tabId),
         terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
