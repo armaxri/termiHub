@@ -411,6 +411,27 @@ mod tests {
     }
 
     #[test]
+    fn check_file_reads_the_version_through_the_open_handle() {
+        // AGT2-002: the apply path checks the version of the verified copy it
+        // holds open, never by re-opening a path.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut body = b"AGENT".to_vec();
+        body.extend_from_slice(&record("2.0.0"));
+        let path = write_binary(tmp.path(), "agent", &body);
+        let file = std::fs::File::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        VersionPolicy::strict("1.0.0")
+            .check_file(&file, &path, None)
+            .expect("an upgrade read from the handle is allowed");
+        // A second check reads from the start again, not from where the first stopped.
+        assert!(matches!(
+            VersionPolicy::strict("3.0.0").check_file(&file, &path, None),
+            Err(VersionPolicyError::Downgrade { .. })
+        ));
+    }
+
+    #[test]
     fn upgrades_and_same_version_reinstalls_are_allowed() {
         let policy = VersionPolicy::strict("0.5.0");
         assert!(policy.check(&v("0.6.0"), None).is_ok());

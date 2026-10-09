@@ -972,32 +972,32 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn replace_binary_swaps_contents_and_marks_executable() {
+    fn install_verified_swaps_contents_and_marks_executable() {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = tempfile::tempdir().unwrap();
-        let staged = tmp.path().join("staged-agent");
         let current = tmp.path().join("running-agent");
-        std::fs::write(&staged, b"NEW-BINARY").unwrap();
         std::fs::write(&current, b"OLD-BINARY").unwrap();
-        // Start the "running" binary non-executable to prove replace fixes perms.
+        // Start the "running" binary non-executable to prove install fixes perms.
         std::fs::set_permissions(&current, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut verified = new_staging_temp(tmp.path()).unwrap();
+        verified.write_all(b"NEW-BINARY").unwrap();
 
-        replace_binary(&staged, &current).unwrap();
+        install_verified(verified, &current).unwrap();
 
         assert_eq!(std::fs::read(&current).unwrap(), b"NEW-BINARY");
         let mode = std::fs::metadata(&current).unwrap().permissions().mode();
         assert_ne!(mode & 0o111, 0, "replaced binary must be executable");
-        // No staging temp file may linger next to the binary — the directory
-        // should hold exactly the staged source and the swapped-in target.
-        let mut names: Vec<String> = std::fs::read_dir(tmp.path())
+        // No staging temp file may linger next to the binary — the verified
+        // copy is renamed into place, so only the target remains.
+        let names: Vec<String> = std::fs::read_dir(tmp.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        names.sort();
         assert_eq!(
             names,
-            vec!["running-agent".to_string(), "staged-agent".to_string()],
+            vec!["running-agent".to_string()],
             "a staging temp file must not linger, got {names:?}"
         );
     }
@@ -1082,18 +1082,19 @@ mod tests {
         // binary, swap in a (bad) new one, then restore. The on-disk binary must
         // end up byte-identical to the original and remain executable — i.e. the
         // agent is never left without a runnable binary.
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
         let current = dir.path().join("running-agent");
-        let staged = dir.path().join("staged-agent");
         std::fs::write(&current, b"GOOD-OLD-BINARY").unwrap();
         std::fs::set_permissions(&current, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::fs::write(&staged, b"BAD-NEW-BINARY-LONGER").unwrap();
+        let mut verified = new_staging_temp(dir.path()).unwrap();
+        verified.write_all(b"BAD-NEW-BINARY-LONGER").unwrap();
         let backup = backup_path_for(&current);
 
         back_up_current_binary(&current, &backup).unwrap();
-        replace_binary(&staged, &current).unwrap();
+        install_verified(verified, &current).unwrap();
         assert_eq!(std::fs::read(&current).unwrap(), b"BAD-NEW-BINARY-LONGER");
 
         restore_backup(&backup, &current).unwrap();
@@ -1199,6 +1200,62 @@ mod tests {
             err,
             StagingConfinementError::OutsideStaging { .. }
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_refuses_a_symlink_inside_staging() {
+        // AGT2-002: even a symlink that stays inside staging is refused — the
+        // staged binary must be the file itself, never a name for another one.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let real = staging.join("real-agent");
+        std::fs::write(&real, b"AGENT").unwrap();
+        let link = staging.join("termihub-agent-linux-x64");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let err = confine_to_staging(&[staging], &link)
+            .expect_err("a symlink inside staging must be refused");
+        assert!(
+            matches!(err, StagingConfinementError::SymlinkInPath { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_refuses_a_symlinked_directory_inside_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        let real = staging.join("upload.real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("termihub-agent"), b"AGENT").unwrap();
+        let link = staging.join("upload.link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let err = confine_to_staging(&[staging], &link.join("termihub-agent"))
+            .expect_err("a symlinked directory below the staging root must be refused");
+        assert!(
+            matches!(err, StagingConfinementError::SymlinkInPath { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_accepts_a_staging_root_reached_through_a_symlink() {
+        // A symlinked config dir (e.g. dotfiles-managed `~/.config`) is fine:
+        // only components *below* the trusted root must not be symlinks.
+        let dir = tempfile::tempdir().unwrap();
+        let real_root = dir.path().join("real-config");
+        std::fs::create_dir_all(&real_root).unwrap();
+        let link_root = dir.path().join("config");
+        std::os::unix::fs::symlink(&real_root, &link_root).unwrap();
+        let bin = link_root.join("termihub-agent");
+        std::fs::write(&bin, b"AGENT").unwrap();
+
+        confine_to_staging(&[link_root], &bin).expect("a symlinked root must still be usable");
     }
 
     #[test]
@@ -1330,11 +1387,26 @@ mod tests {
     /// `(staging_root, staged_path, correct_digest)`.
     #[cfg(unix)]
     fn stage_valid_binary(dir: &Path, bytes: &[u8]) -> (PathBuf, PathBuf, String) {
+        use std::os::unix::fs::PermissionsExt;
+
         let staging = dir.join("updates");
         std::fs::create_dir_all(&staging).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
         let bin = staging.join("termihub-agent-linux-x64");
         std::fs::write(&bin, bytes).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o600)).unwrap();
         (staging, bin, sha256_hex(bytes))
+    }
+
+    /// The bytes of a verified copy, read back through its handle.
+    #[cfg(unix)]
+    fn copy_bytes(copy: &tempfile::NamedTempFile) -> Vec<u8> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut handle = copy.as_file();
+        handle.seek(SeekFrom::Start(0)).unwrap();
+        let mut out = Vec::new();
+        handle.read_to_end(&mut out).unwrap();
+        out
     }
 
     // These drive `confine_and_verify` — the gate that runs before the swap — so
@@ -1356,6 +1428,7 @@ mod tests {
             None,
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect_err("a digest mismatch must be rejected");
         let msg = format!("{err:#}");
@@ -1384,6 +1457,7 @@ mod tests {
             None,
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect_err("bytes swapped after staging must be rejected at apply time");
         let msg = format!("{err:#}").to_ascii_lowercase();
@@ -1407,6 +1481,7 @@ mod tests {
             None,
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect_err("a missing expected digest must fail closed");
         let msg = format!("{err:#}");
@@ -1420,41 +1495,38 @@ mod tests {
     #[test]
     fn apply_gate_accepts_a_matching_confined_binary() {
         // (d) The matching case: correct digest for the staged, confined bytes
-        // passes the gate and returns the canonical confined path. (The full
-        // swap+re-exec cannot run in-process; the swap itself is covered by the
-        // `replace_binary_*` tests.)
+        // passes the gate and returns a private copy of exactly those bytes.
+        // (The full swap+re-exec cannot run in-process; the swap itself is
+        // covered by the `install_verified_*` tests.)
         let tmp = tempfile::tempdir().unwrap();
         let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"CORRECT-AGENT-BYTES");
 
         let signature = sign_digest(&test_signing_key(TEST_KEY_SEED), &good_digest);
 
-        let confined = confine_and_verify(
+        let copy = confine_and_verify(
             staged.to_str().unwrap(),
             Some(&good_digest),
             Some(&signature),
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect("a matching, confined, signed binary must pass the gate");
-        assert_eq!(confined, std::fs::canonicalize(&staged).unwrap());
+        assert_eq!(copy_bytes(&copy), b"CORRECT-AGENT-BYTES");
     }
 
     #[cfg(unix)]
     #[test]
-    fn verify_confined_digest_rejects_missing_mismatch_and_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
-        let bin = tmp.path().join("agent");
-        std::fs::write(&bin, b"AGENT-BYTES").unwrap();
+    fn check_expected_digest_rejects_missing_and_mismatch() {
+        let bin = Path::new("/staged/agent");
         let good = sha256_hex(b"AGENT-BYTES");
 
         // Missing digest → fail closed.
-        assert!(verify_confined_digest(&bin, None).is_err());
+        assert!(check_expected_digest(bin, &good, None).is_err());
         // Mismatch → reject.
-        assert!(verify_confined_digest(&bin, Some(&sha256_hex(b"OTHER"))).is_err());
-        // Unreadable file → reject (cannot prove integrity).
-        assert!(verify_confined_digest(&tmp.path().join("does-not-exist"), Some(&good)).is_err());
-        // Match → OK.
-        assert!(verify_confined_digest(&bin, Some(&good)).is_ok());
+        assert!(check_expected_digest(bin, &good, Some(&sha256_hex(b"OTHER"))).is_err());
+        // Match (case-insensitive) → OK.
+        assert!(check_expected_digest(bin, &good, Some(&good.to_ascii_uppercase())).is_ok());
     }
 
     // ── AGT-005: apply-time Ed25519 signature verification (#3213) ──────
@@ -1471,6 +1543,7 @@ mod tests {
             signature,
             std::slice::from_ref(&staging),
             policy,
+            tmp.path(),
         )
         .expect_err("the gate must refuse this signature")
     }
@@ -1542,6 +1615,7 @@ mod tests {
             Some(&sig),
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect_err("swapped bytes must be refused");
         assert!(err.downcast_ref::<UpdateSignatureError>().is_none());
@@ -1650,18 +1724,132 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (staging, staged, digest, signature) =
             stage_signed_versioned_binary(tmp.path(), "0.1.0");
-        let src = confine_and_verify(
+        let copy = confine_and_verify(
             staged.to_str().unwrap(),
             Some(&digest),
             Some(&signature),
             std::slice::from_ref(&staging),
             &strict_test_policy(),
+            tmp.path(),
         )
         .expect("an authentic binary passes the signature gate");
-        check_version_policy(&src, Some("0.1.0"), &VersionPolicy::strict("9.9.9"))
+        check_version_policy(&copy, Some("0.1.0"), &VersionPolicy::strict("9.9.9"))
             .expect("a matched pin authorises the downgrade");
         // And an upgrade needs no pin.
-        check_version_policy(&src, None, &VersionPolicy::strict("0.0.1"))
+        check_version_policy(&copy, None, &VersionPolicy::strict("0.0.1"))
             .expect("an upgrade is always allowed");
+    }
+
+    // ── AGT2-002: handle-bound verification, private staging (#4287) ─────
+
+    #[cfg(unix)]
+    #[test]
+    fn production_staging_roots_trust_no_shared_tmp_path() {
+        let roots = production_staging_roots();
+        assert_eq!(roots, vec![AgentState::config_dir().join("updates")]);
+        assert!(
+            roots.iter().all(|r| !r.starts_with("/tmp")),
+            "a world-shared /tmp path must never be a staging root: {roots:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_renamed_over_the_staged_path_after_open_is_never_installed() {
+        // The hook runs after the staged file is opened and before it is read:
+        // an attacker renaming different bytes over the path at that moment
+        // changes nothing, because verification and the copy both read the
+        // already-open handle.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest) = stage_valid_binary(tmp.path(), b"GOOD-STAGED-BYTES");
+        let sig = sign_digest(&test_signing_key(TEST_KEY_SEED), &digest);
+
+        let copy = confine_and_verify_with_hook(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&sig),
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+            tmp.path(),
+            |path| {
+                let evil = path.with_file_name("evil");
+                std::fs::write(&evil, b"MALICIOUS-SWAPPED-BYTES").unwrap();
+                std::fs::rename(&evil, path).unwrap();
+            },
+        )
+        .expect("the opened, verified bytes are still the good ones");
+
+        assert_eq!(copy_bytes(&copy), b"GOOD-STAGED-BYTES");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"MALICIOUS-SWAPPED-BYTES");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_file_rewritten_in_place_after_open_is_detected() {
+        // Rewriting the same inode after open is visible through the handle,
+        // so the digest of the bytes actually copied no longer matches.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest) = stage_valid_binary(tmp.path(), b"GOOD-STAGED-BYTES");
+        let sig = sign_digest(&test_signing_key(TEST_KEY_SEED), &digest);
+
+        let err = confine_and_verify_with_hook(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&sig),
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+            tmp.path(),
+            |path| std::fs::write(path, b"MALICIOUS-REWRITTEN-BYTES").unwrap(),
+        )
+        .expect_err("bytes rewritten after open must fail verification");
+        assert!(format!("{err:#}").contains("integrity verification"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_a_world_writable_staged_binary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest) = stage_valid_binary(tmp.path(), b"AGENT");
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+        let err = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            None,
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+            tmp.path(),
+        )
+        .expect_err("a binary other users can write must be refused");
+        assert!(format!("{err:#}").contains("privately staged"), "got: {err:#}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_valid_signed_update_installs_exactly_the_verified_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, digest, signature) =
+            stage_signed_versioned_binary(tmp.path(), "9.0.0");
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir(&bin_dir).unwrap();
+        let current = bin_dir.join("termihub-agent");
+        std::fs::write(&current, b"OLD-AGENT").unwrap();
+
+        let copy = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&digest),
+            Some(&signature),
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+            &bin_dir,
+        )
+        .expect("a valid signed update passes the gate");
+        check_version_policy(&copy, None, &VersionPolicy::strict("1.0.0"))
+            .expect("an upgrade passes the version policy");
+        install_verified(copy, &current).expect("the verified copy installs");
+
+        assert_eq!(std::fs::read(&current).unwrap(), std::fs::read(&staged).unwrap());
     }
 }
