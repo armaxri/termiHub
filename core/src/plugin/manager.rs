@@ -697,6 +697,15 @@ impl PluginManager {
         settings.plugins.remove(id);
         self.write_settings_store(&settings)?;
 
+        // Its native-plugin trust acknowledgment (PLG2-005, #4294): a later
+        // reinstall under the same id must be trusted again, never inherit it.
+        super::native_trust::NativeTrustStore::load(&self.root)
+            .revoke(id)
+            .map_err(|e| match e {
+                super::native_trust::NativeTrustError::Io(io) => PluginManagerError::Io(io),
+                other => PluginManagerError::Store(other.to_string()),
+            })?;
+
         Ok(())
     }
 
@@ -2360,6 +2369,29 @@ mod tests {
             .plugins
             .contains_key("gone"));
         assert!(!mgr.read_state_store().unwrap().plugins.contains_key("gone"));
+    }
+
+    /// PLG2-005 (#4294): uninstall drops the plugin's native trust
+    /// acknowledgment, so a reinstall under the same id asks again.
+    #[test]
+    fn uninstall_revokes_the_native_trust_acknowledgment() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("gone", "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        let mut trust = crate::plugin::NativeTrustStore::load(mgr.root());
+        trust.set_native_enabled(true).unwrap();
+        let binding = crate::plugin::TrustBinding::new("hash", &mgr.get("gone").unwrap().manifest);
+        trust.acknowledge("gone", &binding).unwrap();
+        trust.acknowledge("kept", &binding).unwrap();
+
+        mgr.uninstall("gone").unwrap();
+        let trust = crate::plugin::NativeTrustStore::load(mgr.root());
+        assert!(trust.ack("gone").is_none());
+        assert!(
+            trust.ack("kept").is_some(),
+            "other plugins keep their trust"
+        );
+        assert!(trust.is_native_enabled(), "the global switch is untouched");
     }
 
     /// Windows: uninstall also deletes the plugin's AppContainer profile

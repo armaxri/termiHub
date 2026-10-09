@@ -603,7 +603,7 @@ fn clone_installed(installed: &InstalledEcho) -> InstalledEcho {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_landlock_the_runner_reports_reduced_isolation() {
     use termihub_core::plugin::sandbox::{layer, sandbox_policy, IsolationStatus};
-    use termihub_core::plugin::{native_library_hash, AckAcceptances, NativeTrustStore};
+    use termihub_core::plugin::{native_trust_binding, AckAcceptances, NativeTrustStore};
 
     let work = tempfile::TempDir::new().unwrap();
     let canary = canaries(work.path());
@@ -630,11 +630,11 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
     assert!(!host.is_loaded(&id));
 
     // Accept reduced isolation for this exact library: now it loads.
-    let hash = native_library_hash(&installed.root, &id).unwrap();
+    let binding = native_trust_binding(&installed.root, &id).unwrap();
     NativeTrustStore::load(&installed.root)
         .acknowledge_with(
             &id,
-            hash,
+            &binding,
             AckAcceptances {
                 reduced_isolation: true,
                 ..AckAcceptances::default()

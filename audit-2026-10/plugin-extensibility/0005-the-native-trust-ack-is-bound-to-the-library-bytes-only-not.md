@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/commands/plugin.rs:475
   - core/src/plugin/manager.rs:672
   - core/src/plugin/manager.rs:684
-status: open
-resolution: ""
+status: fixed
+resolution: "#4294 — ack stores the approved access and the load requires an exact match; uninstall revokes the ack"
 audit: 2026-10
 commit: 663465d52
 relation: new

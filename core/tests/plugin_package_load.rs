@@ -4,7 +4,7 @@
 //! host on whichever OS the test runs: a `.termihub-plugin` package is
 //! **installed** through [`PluginManager`] (validation, host-platform check,
 //! extraction), the native-plugin trust gate is satisfied by acknowledging the
-//! hash [`native_library_hash`] reports for the *selected* library, then
+//! hash [`native_trust_binding`] reports for the *selected* library, then
 //! [`PluginHost`] runs it in its sandboxed plugin runner (ADR-19) and a session
 //! echoes input back.
 //!
@@ -29,7 +29,7 @@ use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionTypeRegistry};
 use termihub_core::plugin::{
-    host_target_triple, native_library_hash, pack_plugin, package_platform_entries,
+    host_target_triple, native_trust_binding, pack_plugin, package_platform_entries,
     NativeTrustStore, PluginHost, PluginManager,
 };
 
@@ -108,17 +108,17 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
         .expect("a native plugin declares a terminal backend");
 
     // Satisfy the native trust gate with the hash of the SELECTED library.
-    let hash = native_library_hash(&root, &id).expect("the host's library resolves");
+    let binding = native_trust_binding(&root, &id).expect("the host's library resolves");
     if let Some(expected) = std::env::var_os("TERMIHUB_PLUGIN_LIBRARY_SHA256") {
         assert_eq!(
-            hash.trim_start_matches("sha256:"),
+            binding.library_sha256.trim_start_matches("sha256:"),
             expected.to_string_lossy().trim(),
             "the selected library must be the one the packer staged for this host"
         );
     }
     let mut trust = NativeTrustStore::load(&root);
     trust.set_native_enabled(true).unwrap();
-    trust.acknowledge(&id, hash).unwrap();
+    trust.acknowledge(&id, &binding).unwrap();
 
     load_and_echo(
         &root,

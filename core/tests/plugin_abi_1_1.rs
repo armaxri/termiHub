@@ -28,7 +28,7 @@ use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{plugin_type_id, ConnectionType, ConnectionTypeRegistry};
 use termihub_core::plugin::{
-    native_library_hash, parse_manifest, AbiVersion, BackendLoadOptions, HostError,
+    native_trust_binding, parse_manifest, AbiVersion, BackendLoadOptions, HostError,
     InstalledPlugin, NativeTrustStore, PluginHost, PluginState, ToolchainIncompatibility,
     CURRENT_PLUGIN_ABI_VERSION, PLUGIN_DATA_DIR_NAME,
 };
@@ -172,9 +172,9 @@ fn install(root: &Path, lib: &Path, id: &str, api: &str) -> InstalledPlugin {
 fn trust(root: &Path, id: &str, accept_unverified_toolchain: bool) {
     let mut store = NativeTrustStore::load(root);
     store.set_native_enabled(true).unwrap();
-    let hash = native_library_hash(root, id).unwrap();
+    let binding = native_trust_binding(root, id).unwrap();
     store
-        .acknowledge_with_toolchain_acceptance(id, hash, accept_unverified_toolchain)
+        .acknowledge_with_toolchain_acceptance(id, &binding, accept_unverified_toolchain)
         .unwrap();
 }
 
