@@ -9,8 +9,8 @@ subsystem: agent/session/manager
 audit: 2026-10
 commit: 663465d52
 relation: new
-status: open
-resolution: ""
+status: fixed
+resolution: "#4286 — reattach/detach/buffer daemon I/O runs outside the sessions lock in a per-session turn; a removed or replaced session releases the new connection"
 evidence:
   - agent/src/session/manager.rs:1769
   - agent/src/session/manager.rs:1779

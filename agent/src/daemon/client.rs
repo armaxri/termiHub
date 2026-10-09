@@ -194,7 +194,7 @@ pub struct DaemonClient {
     alive: Arc<AtomicBool>,
     /// Whether the daemon evicted this worker's connection because another
     /// worker took the session over (SM-003). The session itself is still alive
-    /// (so [`alive`](Self::alive) stays `true`); a Reclaim ([`attach`](Self::attach))
+    /// (so [`alive`](Self::alive) stays `true`); a Reclaim ([`begin_reconnect`](Self::begin_reconnect))
     /// clears it by re-taking control.
     evicted: Arc<AtomicBool>,
     /// Notification channel to the transport loop.
@@ -371,7 +371,7 @@ impl DaemonClient {
     /// matching the in-process output-forwarder path (#2381). Safe to call after
     /// [`connect`](Self::connect): the reader reads the slot only once the
     /// backend has actually exited, and the shared slot is also observed by a
-    /// reader respawned on [`attach`](Self::attach).
+    /// reader respawned on a re-attach ([`begin_reconnect`](Self::begin_reconnect)).
     pub fn set_exit_hook(&self, hook: ExitHook) {
         let _ = self.on_exit.set(hook);
     }
@@ -379,24 +379,21 @@ impl DaemonClient {
     /// Request the current ring buffer contents from the daemon without reconnecting.
     ///
     /// Sends `MSG_QUERY_BUFFER` and waits (up to 10 s) for `MSG_BUFFER_REPLAY`.
+    ///
+    /// The session manager runs a [`buffer_query`](Self::buffer_query) instead,
+    /// outside its lock (#4286).
+    #[cfg(test)]
     pub async fn query_buffer(&self) -> Result<Vec<u8>, anyhow::Error> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        {
-            *self.pending_buffer_reply.lock().await = Some(tx);
-        }
+        self.buffer_query().run().await
+    }
 
-        {
-            let mut guard = self.writer.lock().await;
-            let writer = guard
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
-            write_frame_timed(writer, MSG_QUERY_BUFFER, &[]).await?;
+    /// The parts of this client a buffer query needs, so the caller can run it
+    /// after releasing whatever lock guards this client (#4286).
+    pub fn buffer_query(&self) -> BufferQuery {
+        BufferQuery {
+            writer: self.writer.clone(),
+            pending_buffer_reply: self.pending_buffer_reply.clone(),
         }
-
-        tokio::time::timeout(std::time::Duration::from_secs(10), rx)
-            .await
-            .map_err(|_| anyhow::anyhow!("Timeout waiting for buffer reply from daemon"))?
-            .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"))
     }
 
     /// Clone the writer Arc so callers can write without holding a reference to
@@ -466,95 +463,62 @@ impl DaemonClient {
         Ok(())
     }
 
-    /// Plain re-attach by reconnecting to the daemon socket (#3395).
-    ///
-    /// The daemon sends a BufferReplay on every new connection, so reconnecting
-    /// gives us a fresh buffer replay. The reconnect declares **recovery** intent:
-    /// a plain re-attach never evicts another desktop (SM-003, single-attach —
-    /// taking over must always be an explicit user action). If another worker
-    /// holds the session the daemon refuses it and this returns an
-    /// [`OwnedByLivePeer`] error; the client is then left disconnected and marked
-    /// [evicted](Self::is_evicted) (another desktop holds it) until an explicit
-    /// [`take_over`](Self::take_over).
-    pub async fn attach(&mut self) -> Result<(), anyhow::Error> {
-        self.reconnect(false).await
-    }
-
     /// Explicit **takeover** re-attach (SM-003 Reclaim / Take over): reconnect
     /// with takeover intent, so the daemon evicts whichever worker (another
     /// desktop) currently holds the session. Only ever reached from a
     /// user-initiated Reclaim — never from a plain attach.
+    #[cfg(test)]
     pub async fn take_over(&mut self) -> Result<(), anyhow::Error> {
         self.reconnect(true).await
     }
 
     /// Release this client's current connection (if any) and reconnect with the
     /// given intent.
+    #[cfg(test)]
     async fn reconnect(&mut self, takeover: bool) -> Result<(), anyhow::Error> {
-        // Release the current connection cleanly first: aborting the reader and
-        // sending `MSG_DETACH` makes the daemon drop us as its writer, so a
-        // recovery-intent reconnect is not refused on account of our own stale
-        // connection.
-        self.detach().await;
-
-        if takeover {
-            // A takeover re-takes control from any other worker, so this
-            // connection is no longer evicted.
-            self.evicted.store(false, Ordering::SeqCst);
-        }
-        // Not the start-up recovery path — the daemon is a live session being
-        // re-attached, so keep the long connect timeout. `detach` above already
-        // waited for the daemon to release our own connection (#3410), so a
-        // refusal here means another connection holds it. A plain re-attach still
-        // retries such a refusal briefly: another worker's ownership probe
-        // ([`probe_holder`](Self::probe_holder)) may hold it for a moment, and a
-        // wedged daemon may not have acknowledged our detach in time.
-        let mut attempt = 0;
-        let (reader_task, alive) = loop {
-            attempt += 1;
-            let connected = connect_and_start_reader(
-                &self.endpoint,
-                &self.session_id,
-                self.notification_tx.clone(),
-                self.pending_buffer_reply.clone(),
-                self.on_exit.clone(),
-                ConnectMode {
-                    fast_fail: false,
-                    recovery_intent: !takeover,
-                },
-                EvictionSink {
-                    writer: self.writer.clone(),
-                    evicted: self.evicted.clone(),
-                },
-                self.features.clone(),
-            )
-            .await;
-            match connected {
-                Ok(ok) => break ok,
-                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
-                    if attempt < PLAIN_REATTACH_RETRIES {
-                        tokio::time::sleep(PLAIN_REATTACH_RETRY_DELAY).await;
-                        continue;
-                    }
-                    // Another desktop holds the session: report it as held
-                    // elsewhere until the user explicitly takes it over.
-                    self.evicted.store(true, Ordering::SeqCst);
-                    return Err(e);
-                }
-                Err(e) => return Err(e),
-            }
-        };
-
-        self.evicted.store(false, Ordering::SeqCst);
-        self.reader_task = Some(reader_task);
-        self.alive = alive;
-
-        if takeover {
-            info!("Took over session {} (explicit takeover)", self.session_id);
-        } else {
-            info!("Reattached to session {}", self.session_id);
-        }
+        let reconnected = self.begin_reconnect(takeover).run().await?;
+        self.finish_reconnect(reconnected);
         Ok(())
+    }
+
+    /// Start a re-attach by reconnecting to the daemon socket, whose daemon I/O
+    /// runs detached from `&mut self` (#4286).
+    ///
+    /// The daemon sends a BufferReplay on every new connection, so reconnecting
+    /// gives us a fresh buffer replay. A plain re-attach (`takeover == false`,
+    /// #3395) declares **recovery** intent: it never evicts another desktop
+    /// (SM-003, single-attach — taking over must always be an explicit user
+    /// action). If another worker holds the session the daemon refuses it and
+    /// the job returns an [`OwnedByLivePeer`] error; the client is then left
+    /// disconnected and marked [evicted](Self::is_evicted) until an explicit
+    /// takeover. `takeover == true` (explicit Reclaim / Take over only) evicts
+    /// whichever worker holds the session.
+    ///
+    /// The returned job owns this client's reader task and shares its writer,
+    /// so the caller can release the lock guarding the client, run the job, and
+    /// re-take the lock only to [`finish_reconnect`](Self::finish_reconnect).
+    /// Until then the client has no connection: writes through its
+    /// [`writer_handle`](Self::writer_handle) fail as not connected. The caller
+    /// must not start a second reconnect or detach of this client meanwhile.
+    pub fn begin_reconnect(&mut self, takeover: bool) -> ReconnectJob {
+        ReconnectJob {
+            release: self.begin_detach(),
+            takeover,
+            endpoint: self.endpoint.clone(),
+            session_id: self.session_id.clone(),
+            notification_tx: self.notification_tx.clone(),
+            pending_buffer_reply: self.pending_buffer_reply.clone(),
+            on_exit: self.on_exit.clone(),
+            writer: self.writer.clone(),
+            evicted: self.evicted.clone(),
+            features: self.features.clone(),
+        }
+    }
+
+    /// Adopt the connection a [`ReconnectJob`] begun on this client made.
+    pub fn finish_reconnect(&mut self, reconnected: Reconnected) {
+        self.reader_task = Some(reconnected.reader_task);
+        self.alive = reconnected.alive;
     }
 
     /// Detach from the daemon without killing it.
@@ -582,36 +546,20 @@ impl DaemonClient {
     /// never hang a detach; the plain re-attach keeps its short refusal retry as
     /// a fallback for that case.
     pub async fn detach(&mut self) {
-        // Stop observing the transport first, so the detach-induced EOF below is
-        // never mistaken for the shell exiting.
-        let reader = match self.reader_task.take() {
-            Some(task) => task.stop().await,
-            None => None,
-        };
-        // Ask the daemon to keep the session but drop this connection, then drop
-        // our writer half.
-        let sent = {
-            let mut writer_guard = self.writer.lock().await;
-            let sent = match writer_guard.as_mut() {
-                Some(writer) => write_frame_timed(writer, MSG_DETACH, &[]).await.is_ok(),
-                None => false,
-            };
-            *writer_guard = None;
-            sent
-        };
-        // Nothing sent over this connection will be answered any more, and a
-        // monitoring stream must not outlive the hold on the session (#3871).
-        self.features.fail_all();
-        // Wait for the daemon to release us (its EOF on our read half).
-        if let (true, Some(reader)) = (sent, reader) {
-            if !await_daemon_release(reader).await {
-                warn!(
-                    "Session {} daemon did not acknowledge detach within {:?}",
-                    self.session_id, DETACH_RELEASE_TIMEOUT
-                );
-            }
+        self.begin_detach().run().await;
+    }
+
+    /// Start a [`detach`](Self::detach) whose daemon I/O runs detached from
+    /// `&mut self`, so the caller can release the lock guarding this client
+    /// first (#4286). Takes the reader task, so the client stops observing the
+    /// transport at once.
+    pub fn begin_detach(&mut self) -> DetachJob {
+        DetachJob {
+            session_id: self.session_id.clone(),
+            reader_task: self.reader_task.take(),
+            writer: self.writer.clone(),
+            features: self.features.clone(),
         }
-        debug!("Detached from session {}", self.session_id);
     }
 
     /// Send kill frame and disconnect.
@@ -630,7 +578,8 @@ impl DaemonClient {
     /// Whether the daemon is still alive.
     /// Whether another worker took this session over (SM-003): the daemon sent
     /// [`MSG_EVICTED`] and dropped this connection. The session is still alive on
-    /// the daemon; [`attach`](Self::attach) takes control back.
+    /// the daemon; a takeover re-attach
+    /// ([`begin_reconnect`](Self::begin_reconnect)) takes control back.
     pub fn is_evicted(&self) -> bool {
         self.evicted.load(Ordering::SeqCst)
     }
@@ -701,6 +650,210 @@ impl DaemonClient {
         if let Some(task) = self.reader_task.take() {
             task.abort();
         }
+    }
+}
+
+/// A buffer query taken from a [`DaemonClient`] (see
+/// [`DaemonClient::buffer_query`]), runnable without borrowing the client.
+pub struct BufferQuery {
+    writer: DaemonWriterHandle,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+}
+
+/// Longest [`BufferQuery::run`] waits for the daemon's `MSG_BUFFER_REPLAY`.
+const BUFFER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+
+impl BufferQuery {
+    /// Send `MSG_QUERY_BUFFER` and wait for the replay. Bounded: the write by
+    /// [`WRITE_TIMEOUT`], the reply by [`BUFFER_REPLY_TIMEOUT`].
+    ///
+    /// The client has a single reply slot, so queries of one session must not
+    /// overlap; the session manager runs them one at a time per session.
+    pub async fn run(self) -> Result<Vec<u8>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            *self.pending_buffer_reply.lock().await = Some(tx);
+        }
+
+        {
+            let mut guard = self.writer.lock().await;
+            let writer = guard
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
+            write_frame_timed(writer, MSG_QUERY_BUFFER, &[]).await?;
+        }
+
+        tokio::time::timeout(BUFFER_REPLY_TIMEOUT, rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("Timeout waiting for buffer reply from daemon"))?
+            .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"))
+    }
+}
+
+/// The daemon I/O of a [`DaemonClient::detach`], taken from the client by
+/// [`DaemonClient::begin_detach`] (#4286).
+pub struct DetachJob {
+    session_id: String,
+    reader_task: Option<ReaderTask>,
+    writer: DaemonWriterHandle,
+    features: FeatureChannels,
+}
+
+impl DetachJob {
+    /// Stop the reader, send `MSG_DETACH`, drop the writer and wait for the
+    /// daemon's release. Bounded by [`READER_STOP_TIMEOUT`], [`WRITE_TIMEOUT`]
+    /// and [`DETACH_RELEASE_TIMEOUT`]. See [`DaemonClient::detach`].
+    pub async fn run(self) {
+        // Stop observing the transport first, so the detach-induced EOF below is
+        // never mistaken for the shell exiting.
+        let reader = match self.reader_task {
+            Some(task) => task.stop().await,
+            None => None,
+        };
+        // Ask the daemon to keep the session but drop this connection, then drop
+        // our writer half.
+        let sent = {
+            let mut writer_guard = self.writer.lock().await;
+            let sent = match writer_guard.as_mut() {
+                Some(writer) => write_frame_timed(writer, MSG_DETACH, &[]).await.is_ok(),
+                None => false,
+            };
+            *writer_guard = None;
+            sent
+        };
+        // Nothing sent over this connection will be answered any more, and a
+        // monitoring stream must not outlive the hold on the session (#3871).
+        self.features.fail_all();
+        // Wait for the daemon to release us (its EOF on our read half).
+        if let (true, Some(reader)) = (sent, reader) {
+            if !await_daemon_release(reader).await {
+                warn!(
+                    "Session {} daemon did not acknowledge detach within {:?}",
+                    self.session_id, DETACH_RELEASE_TIMEOUT
+                );
+            }
+        }
+        debug!("Detached from session {}", self.session_id);
+    }
+}
+
+/// The daemon I/O of a re-attach, taken from the client by
+/// [`DaemonClient::begin_reconnect`] (#4286): release the current connection,
+/// then connect again with the job's intent.
+pub struct ReconnectJob {
+    release: DetachJob,
+    takeover: bool,
+    endpoint: String,
+    session_id: String,
+    notification_tx: NotificationSender,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    on_exit: ExitHookSlot,
+    writer: DaemonWriterHandle,
+    evicted: Arc<AtomicBool>,
+    features: FeatureChannels,
+}
+
+/// A connection a [`ReconnectJob`] made, to hand back to its client with
+/// [`DaemonClient::finish_reconnect`] — or to [`abandon`](Self::abandon) when
+/// the client went away meanwhile.
+pub struct Reconnected {
+    reader_task: ReaderTask,
+    alive: Arc<AtomicBool>,
+    session_id: String,
+    writer: DaemonWriterHandle,
+    features: FeatureChannels,
+}
+
+impl ReconnectJob {
+    /// Run the re-attach. Bounded: the release by [`DetachJob::run`]'s bounds,
+    /// each connect attempt by the transport connect timeout plus
+    /// [`READY_TIMEOUT`], at most [`PLAIN_REATTACH_RETRIES`] attempts.
+    pub async fn run(self) -> Result<Reconnected, anyhow::Error> {
+        // Release the current connection cleanly first: stopping the reader and
+        // sending `MSG_DETACH` makes the daemon drop us as its writer, so a
+        // recovery-intent reconnect is not refused on account of our own stale
+        // connection.
+        self.release.run().await;
+
+        let takeover = self.takeover;
+        if takeover {
+            // A takeover re-takes control from any other worker, so this
+            // connection is no longer evicted.
+            self.evicted.store(false, Ordering::SeqCst);
+        }
+        // Not the start-up recovery path — the daemon is a live session being
+        // re-attached, so keep the long connect timeout. The release above
+        // already waited for the daemon to release our own connection (#3410),
+        // so a refusal here means another connection holds it. A plain
+        // re-attach still retries such a refusal briefly: another worker's
+        // ownership probe ([`DaemonClient::probe_holder`]) may hold it for a
+        // moment, and a wedged daemon may not have acknowledged our detach in
+        // time.
+        let mut attempt = 0;
+        let (reader_task, alive) = loop {
+            attempt += 1;
+            let connected = connect_and_start_reader(
+                &self.endpoint,
+                &self.session_id,
+                self.notification_tx.clone(),
+                self.pending_buffer_reply.clone(),
+                self.on_exit.clone(),
+                ConnectMode {
+                    fast_fail: false,
+                    recovery_intent: !takeover,
+                },
+                EvictionSink {
+                    writer: self.writer.clone(),
+                    evicted: self.evicted.clone(),
+                },
+                self.features.clone(),
+            )
+            .await;
+            match connected {
+                Ok(ok) => break ok,
+                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                    if attempt < PLAIN_REATTACH_RETRIES {
+                        tokio::time::sleep(PLAIN_REATTACH_RETRY_DELAY).await;
+                        continue;
+                    }
+                    // Another desktop holds the session: report it as held
+                    // elsewhere until the user explicitly takes it over.
+                    self.evicted.store(true, Ordering::SeqCst);
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
+        };
+
+        self.evicted.store(false, Ordering::SeqCst);
+        if takeover {
+            info!("Took over session {} (explicit takeover)", self.session_id);
+        } else {
+            info!("Reattached to session {}", self.session_id);
+        }
+        Ok(Reconnected {
+            reader_task,
+            alive,
+            session_id: self.session_id,
+            writer: self.writer,
+            features: self.features,
+        })
+    }
+}
+
+impl Reconnected {
+    /// Release the connection again without handing it to a client: detach
+    /// from the daemon so the session keeps running, held by nobody. Used when
+    /// the session was closed or replaced while the re-attach ran (#4286).
+    pub async fn abandon(self) {
+        DetachJob {
+            session_id: self.session_id,
+            reader_task: Some(self.reader_task),
+            writer: self.writer,
+            features: self.features,
+        }
+        .run()
+        .await;
     }
 }
 
@@ -801,7 +954,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
 /// Stores the writer half into `eviction.writer` (before the reader starts, so an
 /// eviction can never race ahead of it) and returns the reader task handle and
 /// the alive flag.
-/// How often a plain [`DaemonClient::attach`] retries a recovery connect that was
+/// How often a plain re-attach ([`DaemonClient::begin_reconnect`]) retries a recovery connect that was
 /// refused as "held by a live peer" before reporting the session as held by
 /// another desktop (#3395). A refusal can be transient: another worker's
 /// ownership probe may hold the daemon for a few milliseconds. (This client's own
