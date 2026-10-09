@@ -716,6 +716,8 @@ sequenceDiagram
     Note over TM: On app close: graceful shutdown of all tunnels
 ```
 
+The dynamic forwarder is a SOCKS5 server (RFC 1928, `CONNECT` with no authentication) that accepts IPv4, IPv6 and domain-name targets and opens one SSH `direct-tcpip` channel per request. When the SSH server refuses the channel, the client gets the matching SOCKS5 reply instead of a generic failure: "administratively prohibited" becomes "connection not allowed by ruleset" (0x02), "connect failed" becomes "host unreachable" (0x04), and an unknown channel type becomes "command not supported" (0x07). SSH only reports these coarse reasons, so a refused port and an unreachable host both read as 0x04. An address type other than 0x01/0x03/0x04 gets 0x08 ("address type not supported").
+
 Tunnels are persisted in `tunnels.json` alongside connections. The SSH Session Pool reuses SSH connections across multiple tunnels targeting the same host, avoiding redundant authentication.
 
 #### Per-connection port forwards (PROD-023)
