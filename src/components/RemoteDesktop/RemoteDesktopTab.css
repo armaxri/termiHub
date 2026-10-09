@@ -40,6 +40,37 @@
   outline: none;
 }
 
+/* Visible focus ring while the canvas captures the keyboard (#4328). Inset so
+   the clipping surface (overflow: hidden) never cuts it off. */
+.rd-canvas__surface--captured,
+.rd-canvas__surface:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-border);
+}
+
+/* On-focus hint disclosing the release chord (#4328). */
+.rd-canvas__hint {
+  position: absolute;
+  bottom: var(--spacing-sm);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: var(--z-raised);
+}
+
+.rd-canvas__hint kbd,
+.rd-toolbar__hint kbd {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
 .rd-canvas--fit .rd-canvas__surface,
 .rd-canvas--match .rd-canvas__surface {
   width: 100%;
@@ -85,6 +116,12 @@
   gap: var(--spacing-xs-sm);
   padding: 0 var(--spacing-xs-sm);
   color: var(--text-primary);
+}
+
+.rd-toolbar__hint {
+  padding: 0 var(--spacing-xs-sm);
+  border-left: 1px solid var(--border-primary);
+  white-space: nowrap;
 }
 
 .rd-toolbar__res {

@@ -63,6 +63,7 @@ interface RenderOptions {
   onFirstFrame: () => void;
   onReleaseAll: () => void;
   viewport: { x: number; y: number; width: number; height: number } | null;
+  label: string;
 }
 
 let container: HTMLDivElement;
@@ -533,6 +534,77 @@ describe("RemoteDesktopCanvas", () => {
     expect(onInput).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "key", code: "ShiftLeft" })
     );
+  });
+
+  describe("accessibility: name, focus ring and disclosed release chord (#4328)", () => {
+    function liveRegionText(): string {
+      return (
+        container.querySelector('[data-testid="remote-desktop-capture-announcer"]')?.textContent ??
+        ""
+      );
+    }
+
+    it("is an application with an accessible name naming the session", () => {
+      render({ label: "office-pc" });
+      const canvas = canvasEl();
+      expect(canvas.getAttribute("role")).toBe("application");
+      expect(canvas.getAttribute("aria-label")).toBe("Remote desktop: office-pc");
+    });
+
+    it("falls back to a generic name without a label", () => {
+      render();
+      expect(canvasEl().getAttribute("aria-label")).toBe("Remote desktop");
+    });
+
+    it("has a description that discloses the release chord", () => {
+      render({ label: "office-pc" });
+      const id = canvasEl().getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      const description = document.getElementById(id as string);
+      expect(description?.textContent).toContain("Ctrl+Alt+Shift");
+      expect(description?.textContent).toMatch(/return focus to termiHub/i);
+    });
+
+    it("applies the captured focus-ring class only while focused", () => {
+      render();
+      expect(canvasEl().classList.contains("rd-canvas__surface--captured")).toBe(false);
+      act(() => canvasEl().focus());
+      expect(canvasEl().classList.contains("rd-canvas__surface--captured")).toBe(true);
+      expect(container.querySelector('[data-testid="remote-desktop-capture-hint"]')).not.toBeNull();
+      act(() => canvasEl().blur());
+      expect(canvasEl().classList.contains("rd-canvas__surface--captured")).toBe(false);
+      expect(container.querySelector('[data-testid="remote-desktop-capture-hint"]')).toBeNull();
+    });
+
+    it("the chord returns focus to the app", () => {
+      render();
+      act(() => canvasEl().focus());
+      expect(document.activeElement).toBe(canvasEl());
+      act(() => {
+        canvasEl().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            bubbles: true,
+            code: "AltLeft",
+            ctrlKey: true,
+            altKey: true,
+            shiftKey: true,
+          })
+        );
+      });
+      expect(document.activeElement).not.toBe(canvasEl());
+      expect(canvasEl().classList.contains("rd-canvas__surface--captured")).toBe(false);
+    });
+
+    it("announces capture and release through a polite live region", () => {
+      render();
+      const region = container.querySelector('[data-testid="remote-desktop-capture-announcer"]');
+      expect(region?.getAttribute("aria-live")).toBe("polite");
+      expect(liveRegionText()).toBe("");
+      act(() => canvasEl().focus());
+      expect(liveRegionText()).toBe("Keyboard captured — press Ctrl+Alt+Shift to release");
+      act(() => canvasEl().blur());
+      expect(liveRegionText()).toBe("Keyboard released to termiHub");
+    });
   });
 
   describe("releases held input on focus loss (#3402)", () => {

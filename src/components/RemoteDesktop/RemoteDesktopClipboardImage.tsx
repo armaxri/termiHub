@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ImageDown, ImageUp } from "lucide-react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 import {
   remoteDesktopClipboardImageStatus,
   remoteDesktopCopyClipboardImage,

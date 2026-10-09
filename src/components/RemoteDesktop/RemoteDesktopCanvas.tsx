@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
   subscribeRemoteDesktopFrames,
   type BinaryCursorShape,
@@ -12,6 +12,8 @@ import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
 import type { Viewport } from "./monitorLayout";
 import { errorMessage } from "@/utils/errorMessage";
+import { LiveRegion } from "@/components/ui/LiveRegion";
+import { isReleaseChord, releaseChordLabel } from "./releaseChord";
 
 /** The part of a `width x height` framebuffer to show: `viewport`, clamped. */
 function sourceRegion(viewport: Viewport | null | undefined, width: number, height: number) {
@@ -55,6 +57,11 @@ interface RemoteDesktopCanvasProps {
    * session. `null` / absent shows the whole (combined) framebuffer.
    */
   viewport?: Viewport | null;
+  /**
+   * The session's name for assistive tech (#4328): the canvas is announced as
+   * "Remote desktop: <label>". Absent, it is just "Remote desktop".
+   */
+  label?: string;
 }
 
 /**
@@ -94,6 +101,7 @@ export function RemoteDesktopCanvas({
   onFirstFrame,
   onReleaseAll,
   viewport,
+  label,
 }: RemoteDesktopCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -139,6 +147,12 @@ export function RemoteDesktopCanvas({
   const buttonsRef = useRef(0);
   // Held modifier keys, released on focus loss to avoid stuck keys.
   const heldKeysRef = useRef<Set<string>>(new Set());
+  // Whether the canvas holds keyboard focus (#4328): drives the focus ring, the
+  // on-canvas release hint and the capture/release announcement.
+  const [captured, setCaptured] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const descriptionId = useId();
+  const chord = releaseChordLabel();
 
   /** Ensure the offscreen framebuffer canvas exists at the given size. */
   const ensureFramebuffer = useCallback((w: number, h: number) => {
@@ -403,8 +417,9 @@ export function RemoteDesktopCanvas({
   const handleKey = useCallback(
     (e: React.KeyboardEvent, pressed: boolean) => {
       // Escape hatch: Ctrl+Alt+Shift releases focus back to termiHub so global
-      // shortcuts and tab switching work again.
-      if (pressed && e.ctrlKey && e.altKey && e.shiftKey) {
+      // shortcuts and tab switching work again. Disclosed in the canvas's
+      // description, the on-focus hint and the toolbar (#4328).
+      if (pressed && isReleaseChord(e)) {
         releaseHeldKeys();
         canvasRef.current?.blur();
         return;
@@ -420,12 +435,26 @@ export function RemoteDesktopCanvas({
     [viewOnly, releaseHeldKeys, onInput]
   );
 
+  const handleFocus = useCallback(() => {
+    setCaptured(true);
+    setAnnouncement(`Keyboard captured — press ${chord} to release`);
+  }, [chord]);
+
+  const handleBlur = useCallback(() => {
+    releaseHeldKeys();
+    setCaptured(false);
+    setAnnouncement("Keyboard released to termiHub");
+  }, [releaseHeldKeys]);
+
   return (
     <div ref={containerRef} className={`rd-canvas rd-canvas--${scaleMode}`}>
       <canvas
         ref={canvasRef}
-        className="rd-canvas__surface"
+        className={`rd-canvas__surface${captured ? " rd-canvas__surface--captured" : ""}`}
         tabIndex={0}
+        role="application"
+        aria-label={label ? `Remote desktop: ${label}` : "Remote desktop"}
+        aria-describedby={descriptionId}
         data-testid="remote-desktop-canvas"
         onMouseDown={(e) => handlePointer(e, e.buttons)}
         onMouseUp={(e) => handlePointer(e, e.buttons)}
@@ -435,8 +464,22 @@ export function RemoteDesktopCanvas({
         onWheel={handleWheel}
         onKeyDown={(e) => handleKey(e, true)}
         onKeyUp={(e) => handleKey(e, false)}
-        onBlur={releaseHeldKeys}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
       />
+      <span id={descriptionId} className="ui-visually-hidden">
+        Keyboard input goes to the remote machine. Press {chord} to return focus to termiHub.
+      </span>
+      {captured && (
+        <div
+          className="rd-canvas__hint"
+          aria-hidden="true"
+          data-testid="remote-desktop-capture-hint"
+        >
+          Keyboard captured · <kbd>{chord}</kbd> to release
+        </div>
+      )}
+      <LiveRegion message={announcement} data-testid="remote-desktop-capture-announcer" />
     </div>
   );
 }
