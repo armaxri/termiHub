@@ -214,21 +214,36 @@ export function WorkflowSidebar() {
     void importWorkflowsFromFile(async (json) => {
       const result = await importWorkflows(json);
       const summary = `Imported ${result.imported} workflow${result.imported === 1 ? "" : "s"}`;
+      const warnings: string[] = [];
       if (result.localProcessSteps > 0) {
         // Security surfacing (#1856): an imported workflow may carry a
         // run-local-process step. It is preserved but NOT auto-authorized — the
-        // runner refuses to spawn it until it is explicitly enabled (#1857). Flag
-        // it prominently (persistent toast) so it is never silently trusted.
+        // runner refuses to spawn it until it is explicitly enabled (#1857).
         const stepLabel = `${result.localProcessSteps} local-process step${
           result.localProcessSteps === 1 ? "" : "s"
         }`;
         const wfLabel = `${result.workflowsWithLocalProcess} imported workflow${
           result.workflowsWithLocalProcess === 1 ? "" : "s"
         }`;
-        toast.success(summary, {
-          description: `${wfLabel} contain ${stepLabel} that run a local program. These stay disabled and will not run until you review and authorize them.`,
-          duration: Infinity,
-        });
+        warnings.push(
+          `${wfLabel} contain ${stepLabel} that run a local program. These stay disabled and will not run until you review and authorize them.`
+        );
+      }
+      const removed = result.removedScriptSourcePaths;
+      if (removed.length > 0) {
+        // Security surfacing (#4310, FEC2-001): an imported run-script step
+        // referenced a local file to read and type into the remote shell. The
+        // reference was removed on import; name the real paths so the user can
+        // see what the file tried to read and re-pick a file deliberately.
+        const stepLabel = `${removed.length} run-script step${removed.length === 1 ? "" : "s"}`;
+        const verb = removed.length === 1 ? "referenced a local file" : "referenced local files";
+        warnings.push(
+          `${stepLabel} ${verb} (${removed.join(", ")}). The untrusted file reference was removed, so only the visible script runs. Re-pick the file in the step editor to load it from disk.`
+        );
+      }
+      if (warnings.length > 0) {
+        // Flag it prominently (persistent toast) so it is never silently trusted.
+        toast.success(summary, { description: warnings.join(" "), duration: Infinity });
       } else {
         toast.success(summary);
       }

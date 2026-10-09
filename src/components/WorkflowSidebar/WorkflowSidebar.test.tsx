@@ -113,9 +113,12 @@ describe("WorkflowSidebar", () => {
       macros: [],
       saveWorkflowToBackend: vi.fn().mockResolvedValue(undefined),
       deleteWorkflowFromBackend: vi.fn().mockResolvedValue(undefined),
-      importWorkflows: vi
-        .fn()
-        .mockResolvedValue({ imported: 0, workflowsWithLocalProcess: 0, localProcessSteps: 0 }),
+      importWorkflows: vi.fn().mockResolvedValue({
+        imported: 0,
+        workflowsWithLocalProcess: 0,
+        localProcessSteps: 0,
+        removedScriptSourcePaths: [],
+      }),
       runWorkflow: vi.fn().mockResolvedValue(undefined),
       cancelWorkflowRun: vi.fn(),
     });
@@ -335,9 +338,12 @@ describe("WorkflowSidebar", () => {
   it("imports workflows and reports the count on success", async () => {
     dialogOpen.mockResolvedValue("/tmp/workflows.json");
     fsReadTextFile.mockResolvedValue("{}");
-    const importWorkflows = vi
-      .fn()
-      .mockResolvedValue({ imported: 2, workflowsWithLocalProcess: 0, localProcessSteps: 0 });
+    const importWorkflows = vi.fn().mockResolvedValue({
+      imported: 2,
+      workflowsWithLocalProcess: 0,
+      localProcessSteps: 0,
+      removedScriptSourcePaths: [],
+    });
     useAppStore.setState({ importWorkflows });
     await render();
 
@@ -355,9 +361,12 @@ describe("WorkflowSidebar", () => {
   it("flags imported run-local-process steps as needing authorization", async () => {
     dialogOpen.mockResolvedValue("/tmp/workflows.json");
     fsReadTextFile.mockResolvedValue("{}");
-    const importWorkflows = vi
-      .fn()
-      .mockResolvedValue({ imported: 1, workflowsWithLocalProcess: 1, localProcessSteps: 2 });
+    const importWorkflows = vi.fn().mockResolvedValue({
+      imported: 1,
+      workflowsWithLocalProcess: 1,
+      localProcessSteps: 2,
+      removedScriptSourcePaths: [],
+    });
     useAppStore.setState({ importWorkflows });
     await render();
 
@@ -370,6 +379,31 @@ describe("WorkflowSidebar", () => {
     // The security warning is surfaced persistently and never auto-authorizes.
     expect(String(opts?.description)).toMatch(/2 local-process steps/);
     expect(String(opts?.description)).toMatch(/authorize/i);
+    expect(opts?.duration).toBe(Infinity);
+  });
+
+  it("flags removed run-script file references as untrusted and names the real paths (#4310)", async () => {
+    dialogOpen.mockResolvedValue("/tmp/workflows.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    const importWorkflows = vi.fn().mockResolvedValue({
+      imported: 1,
+      workflowsWithLocalProcess: 0,
+      localProcessSteps: 0,
+      removedScriptSourcePaths: ["/home/u/.ssh/id_ed25519"],
+    });
+    useAppStore.setState({ importWorkflows });
+    await render();
+
+    act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
+    expect(message).toBe("Imported 1 workflow");
+    const description = String(opts?.description);
+    expect(description).toMatch(/1 run-script step referenced a local file/);
+    expect(description).toContain("/home/u/.ssh/id_ed25519");
+    expect(description).toMatch(/removed/);
     expect(opts?.duration).toBe(Infinity);
   });
 

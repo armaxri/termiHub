@@ -260,6 +260,16 @@ workflowLocalProcessEnabled?: boolean,
  */
 workflowLocalProcessAllowlist?: Array<string>, 
 /**
+ * Local script files the user picked or confirmed on this machine for a
+ * `run-script` workflow step's `sourcePath` (#4310, FEC2-001). The runner
+ * reads a `sourcePath` only when it is on this list. Owned by the frontend
+ * `AppSettings.workflowScriptSourceAllowlist`; persisted here so the
+ * confirmation survives a restart. Independent of workflow data, so an
+ * imported workflow can never add an entry. Omitted when empty so older
+ * settings files round-trip byte-identically.
+ */
+workflowScriptSourceAllowlist?: Array<string>, 
+/**
  * Durable log file verbosity chosen in Settings (OBS-009).
  *
  * One of `"off"`/`"error"`/`"warn"`/`"info"`/`"debug"`/`"trace"` (see

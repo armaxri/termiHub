@@ -111,6 +111,12 @@ const subscribeLocalProcessOutput = vi.fn(
     });
   }
 );
+// The run-script `sourcePath` read seam (#4310): records every local path read.
+const localReadFile = vi.fn((_path: string) => Promise.resolve("from-disk-1\nfrom-disk-2"));
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  localReadFile: (path: string) => localReadFile(path),
+}));
 vi.mock("@/services/localProcessApi", () => ({
   invokeRunLocalProcess: (args: { program: string; args: string[] }) => invokeRunLocalProcess(args),
   cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
@@ -392,6 +398,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     recordedRuns.length = 0;
     injected = [];
     invokeRunLocalProcess.mockClear();
+    localReadFile.mockClear();
     cancelLocalProcess.mockClear();
     subscribeLocalProcessOutput.mockClear();
     vi.mocked(apiRecordWorkflowRun).mockClear();
@@ -808,6 +815,82 @@ describe("appStore — workflow run slice (#1852)", () => {
       kind: "run-local-process",
       program: "echo",
       args: ["hi"],
+    });
+  });
+
+  describe("run-script sourcePath trust (#4310, FEC2-001)", () => {
+    const script = (body: string, sourcePath?: string): WorkflowStep => ({
+      kind: "run-script",
+      script: body,
+      ...(sourcePath !== undefined ? { sourcePath } : {}),
+    });
+
+    it("strips an imported sourcePath so running it never reads the local file", async () => {
+      useAppStore.setState({ workflows: [] });
+      const json = JSON.stringify({
+        version: 1,
+        workflows: [
+          {
+            name: "innocent",
+            steps: [
+              {
+                kind: "run-script",
+                script: "echo harmless",
+                sourcePath: "/home/u/.ssh/id_ed25519",
+                sourcePathConfirmed: true,
+              },
+            ],
+          },
+        ],
+      });
+
+      const result = await useAppStore.getState().importWorkflows(json);
+
+      expect(result.removedScriptSourcePaths).toEqual(["/home/u/.ssh/id_ed25519"]);
+      const [imported] = layoutState().workflows;
+      expect(imported.steps).toEqual([{ kind: "run-script", script: "echo harmless" }]);
+
+      seedConnectedTerminal();
+      await useAppStore.getState().runWorkflow(imported.id);
+
+      expect(localReadFile).not.toHaveBeenCalled();
+      expect(injected).toEqual(["echo harmless\n"]);
+    });
+
+    it("refuses to read a stored sourcePath the user never confirmed on this machine", async () => {
+      seedConnectedTerminal();
+      seedSettings({ workflowScriptSourceAllowlist: ["/home/u/other.sh"] });
+      useAppStore.setState({
+        workflows: [workflow("w1", [script("echo visible", "/home/u/.aws/credentials")])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(localReadFile).not.toHaveBeenCalled();
+      expect(injected).toEqual([]);
+    });
+
+    it("reads a sourcePath the user picked or confirmed on this machine", async () => {
+      seedConnectedTerminal();
+      seedSettings({ workflowScriptSourceAllowlist: ["/home/u/deploy.sh"] });
+      useAppStore.setState({
+        workflows: [workflow("w1", [script("stale", "/home/u/deploy.sh")])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(localReadFile).toHaveBeenCalledWith("/home/u/deploy.sh");
+      expect(injected).toEqual(["from-disk-1\n", "from-disk-2\n"]);
+    });
+
+    it("runs a locally created step without a sourcePath from its visible script", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [script("uptime")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(localReadFile).not.toHaveBeenCalled();
+      expect(injected).toEqual(["uptime\n"]);
     });
   });
 

@@ -11,8 +11,8 @@ evidence:
   - src/services/workflowIo.ts:484-494
   - src/services/workflowIo.ts:230-237
   - src/services/workflowIo.ts:200-217
-status: open
-resolution: ""
+status: fixed
+resolution: "#4310 — workflowIo.test.ts covers the parameters round-trip and every rejection, malformed run-local-process, and run-script/wait invalid delays"
 audit: 2026-10
 commit: 663465d52
 relation: new
