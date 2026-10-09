@@ -11,6 +11,7 @@ import { onLogEntry } from "@/services/events";
 import {
   clearFrontendLogHistory,
   fireAndForget,
+  frontendError,
   frontendWarn,
   onFrontendLog,
 } from "@/utils/frontendLog";
@@ -146,7 +147,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       toast.success("Logs saved", { description: filePath });
     } catch (err) {
       // A cancelled dialog resolves to null above; reaching here is a real failure.
-      toast.error("Could not save logs", { description: errorMessage(err) });
+      reportFailure("Could not save logs", "save logs", err);
     }
   }, []);
 
@@ -158,7 +159,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       await writeText(redactLogText(formatEntry(entry)));
       toast.success("Log entry copied");
     } catch (err) {
-      toast.error("Could not copy log entry", { description: errorMessage(err) });
+      reportFailure("Could not copy log entry", "copy log entry", err);
     }
   }, []);
 
@@ -172,7 +173,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         description: `${count} ${count === 1 ? "entry" : "entries"}`,
       });
     } catch (err) {
-      toast.error("Could not copy logs", { description: errorMessage(err) });
+      reportFailure("Could not copy logs", "copy logs", err);
     }
   }, []);
 
@@ -286,6 +287,13 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       </div>
     </div>
   );
+}
+
+/** Surface a failed export action as a toast and an ERROR entry in this log (OBS2-006). */
+function reportFailure(title: string, action: string, err: unknown): void {
+  const message = errorMessage(err);
+  frontendError("log_viewer", `${action} failed: ${message}`);
+  toast.error(title, { description: message });
 }
 
 function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
