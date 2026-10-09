@@ -115,19 +115,19 @@ pub async fn create_connection(
     // Server-authority fold (#2431): make the *initial* connect's lifecycle
     // server-authoritative in the shared `session-lifecycle` region, keyed by the
     // frontend tab id this attempt carries in its `connect_id`. Only the initial
-    // attempt (`retryCount == 0`) is folded here: a reconnect attempt's lifecycle
-    // is owned by the client + backend reconnect timer (#2203). The `connect` →
-    // `connected` edge converges exactly with the client's `session.connect` /
-    // `session.connected` dispatch, so both running is a benign convergent
-    // double-write. Additive; see `fold_session_transition`.
+    // attempt (`retryCount == 0`) is folded here; a client retry (`retryCount > 0`)
+    // is not. Automatic reconnect never comes through this command: the backend redrive
+    // (`session_projection::redrive::AppReconnectRedrive`, driven by the
+    // `ReconnectTimerDriver`, #2203/#2454) is the sole reconnect authority — the
+    // client reconnect engine was deleted (#2558) — and it folds each attempt's
+    // `connected` / `reconnectFailed` outcome (and the give-up) at the source.
     //
     // The failure arm is *not* folded here — a **genuine, non-cancelled, initial
     // direct** connect failure is folded inside `manager.create_connection`
     // (#2439, `EventEmitter::fold_connect_failed`), where the cancel token is
-    // visible so a Stop is not misread as a failure. An **agent** connect (silent
-    // client-side auto-retry) and a **reconnect attempt** (retry>0) stay
-    // client-owned; the reconnect-loop give-up is not yet source-foldable (its
-    // attempt redrive + outcome live in the client engine, part of #2205).
+    // visible so a Stop is not misread as a failure. An **agent** connect failure
+    // is not folded there either: agent-hosted tabs recover through the backend
+    // agent park/retry + new-sessionId re-attach (#2476, #2560).
     let initial_tab_id = initial_connect_tab_id(connect_id.as_deref());
     if let Some(tab_id) = &initial_tab_id {
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
@@ -185,8 +185,8 @@ pub async fn create_connection(
 /// Returns `Some(tab_id)` only for the initial attempt (`retryCount == 0`).
 /// Reconnect attempts (`retryCount > 0`) and any `connect_id` not carrying the
 /// tab-id form (e.g. the internal agent-setup session, which passes `None`) yield
-/// `None`: those lifecycle edges are owned by the client and the backend reconnect
-/// timer, not this fold.
+/// `None`: automatic reconnect edges are folded at the source by the backend
+/// redrive (`session_projection::redrive`), not by this fold.
 fn initial_connect_tab_id(connect_id: Option<&str>) -> Option<String> {
     let (tab_id, retry) = connect_id?.rsplit_once(':')?;
     (retry == "0" && !tab_id.is_empty()).then(|| tab_id.to_string())
