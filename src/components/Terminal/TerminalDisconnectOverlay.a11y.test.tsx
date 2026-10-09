@@ -4,12 +4,13 @@
  * land in a live region with the right politeness, describe itself with its
  * message, and move focus to its primary action only in the active tab.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
+import { consumeTerminalRefocusPending } from "./terminalRefocus";
 import {
   authFailed,
   disconnected,
@@ -130,5 +131,41 @@ describe("TerminalDisconnectOverlay focus (#4331)", () => {
   it("leaves focus alone in an inactive tab", async () => {
     await renderWith(failed("boom"), false);
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe("TerminalDisconnectOverlay — refocus after reconnect (#4513)", () => {
+  it("marks the tab when the user clicks Reconnect", async () => {
+    const reconnectTerminal = vi.fn();
+    useAppStore.setState({ reconnectTerminal });
+    consumeTerminalRefocusPending(TAB);
+    await renderWith(disconnected("unexpected"), true);
+    act(() => byTestId("terminal-disconnect-reconnect-btn")?.click());
+    expect(reconnectTerminal).toHaveBeenCalledWith(TAB);
+    expect(consumeTerminalRefocusPending(TAB)).toBe(true);
+  });
+
+  it("marks the tab when the user clicks Try Again after a failed reconnect", async () => {
+    useAppStore.setState({ reconnectTerminal: vi.fn() });
+    consumeTerminalRefocusPending(TAB);
+    await renderWith(failed("boom"), true);
+    act(() => byTestId("terminal-disconnect-reconnect-btn")?.click());
+    expect(consumeTerminalRefocusPending(TAB)).toBe(true);
+  });
+
+  it("marks the tab when the user starts a new shell after a lost session", async () => {
+    const startFreshShellForTab = vi.fn();
+    useAppStore.setState({ startFreshShellForTab });
+    consumeTerminalRefocusPending(TAB);
+    await renderWith(sessionLost("gone"), true);
+    act(() => byTestId("terminal-session-lost-new-shell-btn")?.click());
+    expect(startFreshShellForTab).toHaveBeenCalledWith(TAB);
+    expect(consumeTerminalRefocusPending(TAB)).toBe(true);
+  });
+
+  it("does not mark the tab on a mere re-render", async () => {
+    consumeTerminalRefocusPending(TAB);
+    await renderWith(disconnected("unexpected"), true);
+    expect(consumeTerminalRefocusPending(TAB)).toBe(false);
   });
 });

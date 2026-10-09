@@ -10,6 +10,7 @@ import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
 import { formatElapsed } from "@/utils/formatters";
 import { CredentialReentry } from "./CredentialReentry";
+import { markTerminalRefocusPending } from "./terminalRefocus";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -141,6 +142,8 @@ export function TerminalConnectionOverlay({
   }, [tabId, panelId, closeTab]);
 
   const handleRetry = useCallback(() => {
+    // Return focus to the terminal once the retry connects (#4513).
+    markTerminalRefocusPending(tabId);
     retryTerminalSpawn(tabId);
   }, [tabId, retryTerminalSpawn]);
 
