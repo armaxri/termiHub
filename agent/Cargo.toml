@@ -135,6 +135,8 @@ wiremock = "0.6"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dev-dependencies]
+# Read the ssh-agent relay pipe's DACL back in its AGT2-005 test (#4322).
+termihub-win-security = { path = "../win-security" }
 # Kill-on-close Job Object the test harnesses put spawned agents into, so a
 # killed test run cannot leak them (#3641, agent/tests/common/parent_death.rs).
 # ToolHelp: the process-tree snapshot the Windows ConPTY shell-session tests use

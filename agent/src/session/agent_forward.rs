@@ -372,22 +372,20 @@ impl AgentForwardRelay {
     /// [`AGENT_PIPE_ENV`](termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV)
     /// (#2038) — the Windows analog of the unix relay socket.
     ///
-    /// The first server instance is bound up front so a name collision surfaces
-    /// synchronously, before the daemon is told to use it; the accept loop keeps a
-    /// fresh instance armed for each subsequent connection.
+    /// The pipe is bound through the same current-user-only transport as every
+    /// other agent endpoint (AGT2-005): each instance, the first and every
+    /// re-armed one, carries the protected per-user DACL, and each accepted peer
+    /// is SID-checked (AGT-022). The default named-pipe DACL would let other
+    /// local users open it. The first instance is bound up front so a name
+    /// collision surfaces synchronously, before the daemon is told to use it.
     #[cfg(windows)]
     pub async fn start_listener(self: &Arc<Self>, session_id: &str) -> std::io::Result<String> {
-        use tokio::net::windows::named_pipe::ServerOptions;
-
         let pipe = crate::daemon::transport::agent_forward_endpoint(session_id);
-        let server = ServerOptions::new()
-            .first_pipe_instance(true)
-            .create(&pipe)?;
+        let listener = crate::daemon::transport::DaemonListener::bind(&pipe).await?;
 
         let relay = Arc::clone(self);
-        let name = pipe.clone();
         let sid = session_id.to_string();
-        let handle = tokio::spawn(async move { relay.accept_loop(server, name, sid).await });
+        let handle = tokio::spawn(async move { relay.accept_loop(listener, sid).await });
 
         self.listeners
             .lock()
@@ -447,41 +445,33 @@ impl AgentForwardRelay {
     /// the session ends (the task is aborted by
     /// [`stop_listener`](Self::stop_listener)).
     ///
-    /// A Windows named-pipe server serves one client per instance, so after a
-    /// client connects the next instance is armed immediately — before the
-    /// accepted connection is handed off — so a client arriving right behind it is
-    /// not refused (the core connector also retries briefly on a busy pipe).
+    /// A Windows named-pipe server serves one client per instance; the listener
+    /// arms the next (equally restricted) instance as soon as a client connects,
+    /// before the accepted connection is handed off, so a client arriving right
+    /// behind it is not refused (the core connector also retries briefly on a
+    /// busy pipe).
     #[cfg(windows)]
     async fn accept_loop(
         self: Arc<Self>,
-        first: tokio::net::windows::named_pipe::NamedPipeServer,
-        pipe: String,
+        mut listener: crate::daemon::transport::DaemonListener,
         session_id: String,
     ) {
-        use tokio::net::windows::named_pipe::ServerOptions;
-
-        let mut server = first;
         let mut counter: u64 = 0;
         loop {
-            if let Err(e) = server.connect().await {
-                debug!(session_id, "ssh-agent relay pipe connect ended: {e}");
-                break;
-            }
-            let connected = server;
-
-            // Arm the next instance before serving this one.
-            let next = ServerOptions::new().create(&pipe);
-            counter += 1;
-            let stream_id = format!("{}{}", stream_prefix(&session_id), counter);
-            Arc::clone(&self).spawn_stream(connected, stream_id).await;
-
-            server = match next {
-                Ok(s) => s,
+            match listener.accept().await {
+                Ok((reader, writer)) => {
+                    counter += 1;
+                    let stream_id = format!("{}{}", stream_prefix(&session_id), counter);
+                    // The core transport hands back type-erased halves; rejoin
+                    // them into one duplex stream for the shared body.
+                    let conn = tokio::io::join(reader, writer);
+                    Arc::clone(&self).spawn_stream(conn, stream_id).await;
+                }
                 Err(e) => {
-                    debug!(session_id, "ssh-agent relay pipe re-arm failed: {e}");
+                    debug!(session_id, "ssh-agent relay pipe accept ended: {e}");
                     break;
                 }
-            };
+            }
         }
     }
 
@@ -1149,6 +1139,57 @@ mod tests {
         assert_eq!(close.method, AGENT_FORWARD_CLOSE);
         assert_eq!(close.params["stream_id"], stream_id);
 
+        relay.stop_listener(&session_id).await;
+    }
+
+    /// AGT2-005 (#4322): the relay pipe is restricted to the current user. Both
+    /// the first instance and the one re-armed after an accept carry the shared
+    /// protected DACL (current user + `LocalSystem`, nothing inherited), read
+    /// back through each connected client handle, and the same-user clients are
+    /// still accepted (each connect is announced with `open`).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn relay_pipe_instances_grant_only_the_current_user() {
+        use std::os::windows::io::AsRawHandle;
+        use termihub_win_security::{current_user_sid_string, dacl_of_handle, LOCAL_SYSTEM_SID};
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let (relay, mut rx) = test_relay();
+        let session_id = format!("afr-win-dacl-{}", std::process::id());
+        let pipe = relay
+            .start_listener(&session_id)
+            .await
+            .expect("start listener");
+        let user = current_user_sid_string().expect("current user SID");
+
+        // Each client stays connected so the next one reaches a re-armed instance.
+        let mut clients = Vec::new();
+        for instance in ["first", "re-armed"] {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let client = loop {
+                match ClientOptions::new().open(&pipe) {
+                    Ok(client) => break client,
+                    Err(e) if std::time::Instant::now() < deadline => {
+                        debug!("relay pipe not ready yet: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    Err(e) => panic!("connect to the {instance} relay instance: {e}"),
+                }
+            };
+            let summary = dacl_of_handle(client.as_raw_handle()).expect("read relay pipe DACL");
+            assert!(
+                summary.grants_full_control_to_exactly(&[&user, LOCAL_SYSTEM_SID]),
+                "{instance} relay instance DACL: {summary:?}"
+            );
+            let open = rx.recv().await.expect("open notification");
+            assert_eq!(
+                open.method, AGENT_FORWARD_OPEN,
+                "{instance} client accepted"
+            );
+            clients.push(client);
+        }
+
+        drop(clients);
         relay.stop_listener(&session_id).await;
     }
 

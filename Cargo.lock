@@ -7749,6 +7749,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "termihub-core",
+ "termihub-win-security",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
