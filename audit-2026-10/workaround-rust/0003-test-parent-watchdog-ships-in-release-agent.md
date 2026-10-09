@@ -15,8 +15,8 @@ evidence:
   - agent/src/test_parent_watchdog.rs:57
   - agent/src/test_parent_watchdog.rs:123
   - agent/src/io/tcp.rs:276
-status: open
-resolution: ""
+status: fixed
+resolution: "#4362 — watchdog compiled only under debug_assertions or the test-hooks feature, no-op in release; assert-no-agent-test-hooks.sh fails CI if a release agent contains TERMIHUB_TEST_PARENT_PID"
 audit: 2026-10
 commit: 663465d52
 relation: regression
