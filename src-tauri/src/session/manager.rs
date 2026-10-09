@@ -617,6 +617,10 @@ pub struct SessionManager {
     /// names one; entries of ended sessions are pruned lazily. See
     /// [`saved_connections`](self::saved_connections).
     pub(super) saved_connections: Arc<StdMutex<HashMap<String, String>>>,
+    /// Where [`Self::on_session_opened`] sends the transfer-resume triggers of
+    /// a newly opened session (#4301). Installed at boot; `None` in tests that
+    /// do not install one. See [`saved_connections`](self::saved_connections).
+    pub(super) session_opened_hook: Arc<StdMutex<Option<SessionOpenedHook>>>,
     /// Graphical sessions' file side channels open for browsing (#4193),
     /// keyed by graphical session id. The file facade resolves an id that is
     /// not a session here, so the File Browser and the Transfers queue reuse
@@ -738,6 +742,7 @@ impl SessionManager {
             session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
             retained_requests: RetainedRequestStore::new(),
             saved_connections: Arc::new(StdMutex::new(HashMap::new())),
+            session_opened_hook: Arc::new(StdMutex::new(None)),
             side_channels: Default::default(),
         }
     }
@@ -1301,6 +1306,9 @@ impl SessionManager {
                         // new one, and emits session-lost when the agent no longer
                         // lists it.
                         agent_session_id: retained_agent_session_id.clone(),
+                        // Stamped by `on_session_opened` once the caller knows
+                        // the session id (#4301).
+                        saved_connection_id: None,
                         resilient: true,
                     },
                 );
@@ -2487,8 +2495,10 @@ mod file_ops;
 /// file (ARCH-002 / TAURI-009); a second `impl SessionManager` block lives there.
 mod monitoring;
 
-/// Session → saved-connection bindings for relaunched transfers (#3876).
+/// Session → saved-connection bindings for relaunched transfers (#3876), and
+/// the session-opened side effects every creation path shares (#4301).
 mod saved_connections;
+pub(crate) use saved_connections::{SessionOpenedHook, SessionOrigin};
 
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
