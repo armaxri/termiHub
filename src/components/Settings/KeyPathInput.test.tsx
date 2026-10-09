@@ -463,12 +463,15 @@ describe("KeyPathInput combobox interactions", () => {
       });
       const hint = query("field-keyPath-key-path-validation") as HTMLElement;
       expect(hint).not.toBeNull();
-      const region = hint.closest('[role="status"]') as HTMLElement | null;
-      expect(region).not.toBeNull();
+      // A polite live region announces the message as it arrives.
+      const region = container.querySelector('[role="status"]') as HTMLElement | null;
+      expect(region?.getAttribute("aria-live")).toBe("polite");
+      expect(region?.textContent).toBe("Key file not found.");
       const describedBy = (input().getAttribute("aria-describedby") ?? "").split(" ");
-      // The caller's ids are kept and the validation region is appended.
+      // The caller's ids are kept and the visible validation hint is appended.
+      expect(hint.id).toBeTruthy();
       expect(describedBy).toContain("err-1");
-      expect(describedBy).toContain(region!.id);
+      expect(describedBy).toContain(hint.id);
     });
   });
 });
