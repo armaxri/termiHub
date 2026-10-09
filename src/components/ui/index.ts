@@ -29,8 +29,8 @@ export type { FieldProps } from "./Field";
 export { Select, SelectItem } from "./Select";
 export type { SelectProps, SelectOption, SelectItemProps } from "./Select";
 
-export { Modal, useModalPortalContainer } from "./Modal";
-export type { ModalProps } from "./Modal";
+export { Modal, ModalClose, UnsavedChangesDialog, useModalPortalContainer } from "./Modal";
+export type { ModalProps, UnsavedChangesDialogProps, UnsavedChangesSubject } from "./Modal";
 
 export { ConfirmDialog } from "./ConfirmDialog";
 export type {

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { draftKey } from "@/utils/draftKey";
 import {
   Button,
   Checkbox,
@@ -8,6 +9,7 @@ import {
   Field,
   Input,
   Modal,
+  ModalClose,
   NumberInput,
   Select,
 } from "@/components/ui";
@@ -98,12 +100,16 @@ export function ScheduleEditorDialog({
   // run, or the backend following a connection rename) never clobbers the
   // unsaved edits (#3603).
   const latest = useRef({ schedule, initialAction });
+  // The loaded values, to tell an edited form from an untouched one (UX2-004).
+  const [baselineKey, setBaselineKey] = useState<string | null>(null);
   latest.current = { schedule, initialAction };
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
     const { schedule: current, initialAction: action } = latest.current;
-    reset(current ? scheduleToForm(current) : blankScheduleForm(action));
+    const initial = current ? scheduleToForm(current) : blankScheduleForm(action);
+    reset(initial);
+    setBaselineKey(draftKey(initial));
   }, [open, scheduleId, loadedId, reset]);
 
   // A connection renamed while the dialog is open: re-point the targets, or
@@ -115,6 +121,7 @@ export function ScheduleEditorDialog({
   }, open);
 
   const watched = useWatch({ control }) as ScheduleFormValues;
+  const isDirty = baselineKey !== null && draftKey(watched) !== baselineKey;
   const validation = useMemo(() => scheduleFormSchema.safeParse(watched), [watched]);
   const errorFor = (path: keyof ScheduleFormValues): string | undefined =>
     validation.success
@@ -130,19 +137,19 @@ export function ScheduleEditorDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
+      dirty={isDirty}
       title={schedule ? "Edit Schedule" : "New Schedule"}
       description="Run a workflow or macro on saved connections at set times, while termiHub is running"
       size="md"
       data-testid="schedule-editor-dialog"
       footer={
         <>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            data-testid="schedule-editor-cancel"
-          >
-            Cancel
-          </Button>
+          {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
+          <ModalClose>
+            <Button variant="secondary" data-testid="schedule-editor-cancel">
+              Cancel
+            </Button>
+          </ModalClose>
           <Button
             variant="primary"
             onClick={handleSave}

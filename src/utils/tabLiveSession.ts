@@ -46,3 +46,16 @@ export function countLiveSessions(
 ): number {
   return tabs.reduce((n, tab) => (tabHasLiveSession(tab, maps) ? n + 1 : n), 0);
 }
+
+/**
+ * The tabs whose editor holds unsaved changes (`editorDirtyTabs[tab.id]`) — the
+ * work a bulk close (window, split panel, tab group) would silently discard
+ * (UX2-003). Editor tabs carry no backend session, so the live-session checks
+ * above never see them; every bulk close must ask this separately.
+ */
+export function dirtyEditorTabs<T extends Pick<TerminalTab, "id">>(
+  tabs: ReadonlyArray<T>,
+  editorDirtyTabs: Readonly<Record<string, boolean>>
+): T[] {
+  return tabs.filter((tab) => editorDirtyTabs[tab.id] === true);
+}

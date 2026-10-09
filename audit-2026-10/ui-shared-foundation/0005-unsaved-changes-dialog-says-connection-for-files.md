@@ -6,8 +6,8 @@ severity: low
 category: ui
 is_workaround: false
 subsystem: "src/components/ConnectionEditor"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4314 — UnsavedChangesDialog moved to components/ui with a subject prop; file tabs say file and the copy is announced once"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

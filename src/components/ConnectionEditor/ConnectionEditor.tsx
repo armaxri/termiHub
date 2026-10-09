@@ -57,7 +57,16 @@ import {
   SshConfigImportConnection,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
-import { Button, Field, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import {
+  Button,
+  Field,
+  Input,
+  Select,
+  SelectItem,
+  Toggle,
+  UnsavedChangesDialog,
+  toast,
+} from "@/components/ui";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
@@ -84,7 +93,6 @@ import { validateProxyJump } from "@/utils/validateProxyJump";
 import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { remoteAgentConfigToRecord, toRemoteAgentConfig } from "@/utils/remoteAgentConfig";
 import { AgentSettingsForm } from "./AgentSettingsForm";
-import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { NamedCredentialPicker } from "./NamedCredentialPicker";
 import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
@@ -1896,6 +1904,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       </div>
       <UnsavedChangesDialog
         open={pendingCloseRequest?.tabId === tabId}
+        subject="connection"
+        name={name.trim() || undefined}
         onCancel={handleDialogCancel}
         onJustClose={handleDialogJustClose}
         onSaveAndClose={handleDialogSaveAndClose}

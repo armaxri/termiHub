@@ -7,6 +7,7 @@ import {
   pruneForeignTransfers,
 } from "../windowHelpers";
 import { collectWindowTabs, getComposedLayout, withComposedLayout } from "../layoutHelpers";
+import { dirtyEditorTabs } from "@/utils/tabLiveSession";
 import { LAST_SESSION_SAVE_DEBOUNCE_MS } from "../restoreHelpers";
 import {
   closeTerminal as apiCloseTerminal,
@@ -154,8 +155,9 @@ export interface WindowManagementSlice {
    * - `"proceed"` — nothing would be lost: the window is empty, or every live
    *   session is persistent/agent and is detached here (kept running) with a
    *   toast. The caller may destroy the window.
-   * - `"prompt"` — at least one non-persistent session would be terminated, so
-   *   the decision dialog is raised ({@link pendingWindowClose}); the caller
+   * - `"prompt"` — at least one non-persistent session would be terminated, or
+   *   an editor tab holds unsaved changes (UX2-003), so the decision dialog is
+   *   raised ({@link pendingWindowClose}); the caller
    *   must NOT destroy the window — the dialog resolves it.
    */
   prepareWindowClose: (otherWindows: WindowInfo[]) => Promise<"proceed" | "prompt">;
@@ -301,7 +303,18 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
   setPendingWindowClose: (request) => set({ pendingWindowClose: request }),
 
   prepareWindowClose: async (otherWindows) => {
-    const sessions = classifyWindowCloseSessions(collectWindowTabs(get()));
+    const tabs = collectWindowTabs(get());
+    const sessions = classifyWindowCloseSessions(tabs);
+    // Unsaved editors carry no session, so the session classification never
+    // sees them; a dirty editor alone must still stop the close (UX2-003).
+    const dirtyEditors = dirtyEditorTabs(tabs, get().editorDirtyTabs).map((tab) => ({
+      tabId: tab.id,
+      title: tab.title,
+    }));
+    if (dirtyEditors.length > 0) {
+      set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors } });
+      return "prompt";
+    }
     if (sessions.length === 0) {
       // Empty window (no live sessions) — nothing to decide, just close.
       return "proceed";

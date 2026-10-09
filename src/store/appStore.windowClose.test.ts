@@ -122,6 +122,58 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
     });
   });
 
+  describe("prepareWindowClose — unsaved editors (UX2-003)", () => {
+    /** Seed an editor tab (no backend session) and optionally mark it dirty. */
+    function seedEditorTab(
+      title: string,
+      contentType: "editor" | "connection-editor",
+      dirty: boolean
+    ) {
+      const tabId = useAppStore.getState().addTab(title, "local", undefined, { contentType });
+      if (dirty) useAppStore.getState().setEditorDirty(tabId, true);
+      return tabId;
+    }
+
+    it("prompts for a window whose only content is a dirty file editor", async () => {
+      const tabId = seedEditorTab("nginx.conf", "editor", true);
+
+      const decision = await useAppStore.getState().prepareWindowClose(OTHERS);
+
+      expect(decision).toBe("prompt");
+      const pending = useAppStore.getState().pendingWindowClose;
+      expect(pending?.sessions).toEqual([]);
+      expect(pending?.dirtyEditors).toEqual([{ tabId, title: "nginx.conf" }]);
+    });
+
+    it("prompts for a dirty connection editor", async () => {
+      seedEditorTab("New Connection", "connection-editor", true);
+      expect(await useAppStore.getState().prepareWindowClose(OTHERS)).toBe("prompt");
+    });
+
+    it("still closes straight away when the editors are clean", async () => {
+      seedEditorTab("nginx.conf", "editor", false);
+      expect(await useAppStore.getState().prepareWindowClose(OTHERS)).toBe("proceed");
+      expect(useAppStore.getState().pendingWindowClose).toBeNull();
+    });
+
+    it("prompts before detaching persistent sessions when an editor is dirty", async () => {
+      seedLiveTab({
+        title: "server-1",
+        connectionType: "ssh",
+        sessionId: "s1",
+        persistentConnectionId: "conn-1",
+      });
+      seedEditorTab("nginx.conf", "editor", true);
+
+      const decision = await useAppStore.getState().prepareWindowClose(OTHERS);
+
+      expect(decision).toBe("prompt");
+      expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toHaveLength(1);
+      // Nothing torn down until the user decides.
+      expect(detachPersistentTab).not.toHaveBeenCalled();
+    });
+  });
+
   describe("endWindowSessions", () => {
     it("detaches persistent sessions and terminates non-persistent ones", async () => {
       seedLiveTab({

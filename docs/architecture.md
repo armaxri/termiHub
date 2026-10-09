@@ -334,7 +334,7 @@ graph LR
 
 The frontend is built on a shared **design system** (`src/components/ui/`) that keeps every screen visually and behaviorally consistent:
 
-- **Primitives** — `Button`, `Input`, `Field`, `Select`, `Modal`, `Toggle`: thin, token-driven skins over installed libraries (Radix for `Modal`/`Select`, `@radix-ui/react-switch` for `Toggle`, `react-hook-form` + `zod` for forms). Dialogs and forms compose from these instead of hand-rolling CSS.
+- **Primitives** — `Button`, `Input`, `Field`, `Select`, `Modal`, `Toggle`: thin, token-driven skins over installed libraries (Radix for `Modal`/`Select`, `@radix-ui/react-switch` for `Toggle`, `react-hook-form` + `zod` for forms). Dialogs and forms compose from these instead of hand-rolling CSS. A `Modal` holding unsaved input sets `dirty`, so Escape, a scrim click, the X and `ModalClose` buttons ask through the shared `UnsavedChangesDialog` before discarding.
 - **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
 - **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
   - **Spacing scale** — `--spacing-xxs` 2 · `xs` 4 · `xs-sm` 6 · `sm` 8 · `sm-md` 10 · `md` 12 · `lg` 16 · `xl` 24 · `2xl` 32 px. Component `padding`/`margin`/`gap` must use these tokens (enforced by `src/styles/tokenDiscipline.test.ts`); true geometry such as icon clearance or indent alignment goes in a named, commented component custom property (e.g. `--password-toggle-space`).

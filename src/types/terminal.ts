@@ -408,7 +408,14 @@ export interface ReopenTabPayload {
  */
 export type SessionCloseConfirmRequest =
   | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
-  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number }
+  | {
+      kind: "panel";
+      panelId: string;
+      liveCount: number;
+      tabCount: number;
+      /** Editor tabs in the panel with unsaved changes that would be discarded. */
+      dirtyCount: number;
+    }
   | {
       kind: "group";
       tabGroupId: string;
