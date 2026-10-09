@@ -13,6 +13,8 @@ describe("redactLogText — password / passphrase / secret keys", () => {
     ["pwd=abc123", `pwd=${MARK}`],
     ["secret=topsecret", `secret=${MARK}`],
     ["client_secret: 'abcdef'", `client_secret: '${MARK}'`],
+    ['"sshPassword": "gateway"', `"sshPassword": "${MARK}"`],
+    ["ssh_password=gateway", `ssh_password=${MARK}`],
   ];
 
   it.each(cases)("redacts %s", (input, expected) => {
