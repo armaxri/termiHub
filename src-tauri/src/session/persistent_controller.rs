@@ -349,7 +349,7 @@ impl<'a> PersistentController<'a> {
                             output_rx,
                             emitter_clone,
                             sessions_clone,
-                            false,
+                            None,
                             capture,
                             output_buffers,
                             session_loggers,

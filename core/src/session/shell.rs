@@ -8,7 +8,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use crate::config::{home_directory, ShellConfig};
 
@@ -39,20 +38,6 @@ pub struct ShellCommand {
     pub cols: u16,
     /// PTY row count.
     pub rows: u16,
-}
-
-/// Strategy for sending an initial command to a newly spawned shell.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InitialCommandStrategy {
-    /// No initial command.
-    None,
-    /// Send the command immediately (caller handles timing).
-    Immediate(String),
-    /// Buffer output until the screen-clear sequence appears, then
-    /// send the command with a short delay.
-    WaitForClear(String),
-    /// Send the command after a fixed delay.
-    Delayed(String, Duration),
 }
 
 /// Detect the user's default shell on this platform.
@@ -483,22 +468,6 @@ pub fn detect_available_shells() -> Vec<String> {
     }
 
     shells
-}
-
-/// Determine the strategy for sending an initial command to a shell.
-///
-/// - `None` input -> [`InitialCommandStrategy::None`]
-/// - `Some(cmd)` + `wait_for_clear == true` -> [`InitialCommandStrategy::WaitForClear`]
-/// - `Some(cmd)` + `wait_for_clear == false` -> [`InitialCommandStrategy::Delayed`] (200 ms)
-pub fn initial_command_strategy(
-    initial_command: Option<&str>,
-    wait_for_clear: bool,
-) -> InitialCommandStrategy {
-    match initial_command {
-        None => InitialCommandStrategy::None,
-        Some(cmd) if wait_for_clear => InitialCommandStrategy::WaitForClear(cmd.to_string()),
-        Some(cmd) => InitialCommandStrategy::Delayed(cmd.to_string(), Duration::from_millis(200)),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1661,10 +1630,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // initial_command_strategy
-    // -----------------------------------------------------------------------
-
-    // -----------------------------------------------------------------------
     // OSC 133 command marks (#3415, PROD-059)
     // -----------------------------------------------------------------------
 
@@ -1861,36 +1826,6 @@ mod tests {
         assert!(
             !setup.contains("function fish_prompt"),
             "must not override the user's fish_prompt: {setup}"
-        );
-    }
-
-    #[test]
-    fn initial_command_none() {
-        let strategy = initial_command_strategy(None, false);
-        assert_eq!(strategy, InitialCommandStrategy::None);
-    }
-
-    #[test]
-    fn initial_command_none_with_clear_flag() {
-        let strategy = initial_command_strategy(None, true);
-        assert_eq!(strategy, InitialCommandStrategy::None);
-    }
-
-    #[test]
-    fn initial_command_with_clear() {
-        let strategy = initial_command_strategy(Some("echo hello"), true);
-        assert_eq!(
-            strategy,
-            InitialCommandStrategy::WaitForClear("echo hello".to_string())
-        );
-    }
-
-    #[test]
-    fn initial_command_without_clear() {
-        let strategy = initial_command_strategy(Some("echo hello"), false);
-        assert_eq!(
-            strategy,
-            InitialCommandStrategy::Delayed("echo hello".to_string(), Duration::from_millis(200))
         );
     }
 
