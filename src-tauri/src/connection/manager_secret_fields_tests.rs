@@ -315,3 +315,48 @@ fn plaintext_secrets_in_an_external_file_are_moved_on_load() {
     mgr.restore_saved_secrets(&mut connect, &loaded.id);
     assert_eq!(connect["sshPassword"], GATEWAY);
 }
+
+#[test]
+fn field_secrets_are_read_and_saved_for_the_connect_prompt() {
+    // The frontend connect flow reads stored field secrets and saves prompted
+    // ones through the manager, scoped like every per-connection secret (#4429).
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::default());
+    let mgr = manager(dir.path(), &store);
+    let id = mgr.save_connection(tunnelled_vnc()).unwrap();
+
+    let stored = mgr.stored_field_secrets(&id, None).unwrap();
+    assert_eq!(
+        stored.fields.get("sshPassword").map(String::as_str),
+        Some(GATEWAY)
+    );
+
+    let mut prompted = termihub_core::connection::secrets::TakenSecrets::default();
+    prompted.hops.insert("ops@bastion:22".into(), HOP.into());
+    mgr.save_field_secrets(&id, None, prompted).unwrap();
+    let stored = mgr.stored_field_secrets(&id, None).unwrap();
+    assert_eq!(
+        stored.fields.get("sshPassword").map(String::as_str),
+        Some(GATEWAY),
+        "saving merges over the stored secrets"
+    );
+    assert_eq!(
+        stored.hops.get("ops@bastion:22").map(String::as_str),
+        Some(HOP)
+    );
+}
+
+#[test]
+fn reading_field_secrets_from_a_locked_store_fails_without_writing() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore {
+        fail_gets: true,
+        ..Default::default()
+    });
+    let mgr = manager(dir.path(), &store);
+    assert!(mgr.stored_field_secrets("Desk", None).is_err());
+    let mut prompted = termihub_core::connection::secrets::TakenSecrets::default();
+    prompted.fields.insert("sshPassword".into(), GATEWAY.into());
+    assert!(mgr.save_field_secrets("Desk", None, prompted).is_err());
+    assert!(store.snapshot().is_empty());
+}
