@@ -47,6 +47,11 @@ pub struct DynamicForwarder {
 /// runs with no deadline (#2329).
 const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a rejected connection is drained before it is closed, and the most
+/// bytes read while draining (see `DynamicForwarder::reject`).
+const SOCKS5_REJECT_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+const SOCKS5_REJECT_DRAIN_LIMIT: usize = 64 * 1024;
+
 const SOCKS5_VERSION: u8 = 0x05;
 const SOCKS5_NO_AUTH: u8 = 0x00;
 const SOCKS5_CMD_CONNECT: u8 = 0x01;
@@ -249,7 +254,7 @@ impl DynamicForwarder {
         stream.read_exact(&mut methods).await?;
 
         if !methods.contains(&SOCKS5_NO_AUTH) {
-            stream.write_all(&[SOCKS5_VERSION, 0xFF]).await?;
+            Self::reject(stream, &[SOCKS5_VERSION, 0xFF]).await?;
             return Ok(None);
         }
         stream.write_all(&[SOCKS5_VERSION, SOCKS5_NO_AUTH]).await?;
@@ -261,7 +266,7 @@ impl DynamicForwarder {
             return Ok(None);
         }
         if req[1] != SOCKS5_CMD_CONNECT {
-            Self::send_reply(stream, SOCKS5_REP_CMD_NOT_SUPPORTED).await?;
+            Self::reject(stream, &Self::reply(SOCKS5_REP_CMD_NOT_SUPPORTED)).await?;
             return Ok(None);
         }
 
@@ -279,7 +284,7 @@ impl DynamicForwarder {
                 match String::from_utf8(domain) {
                     Ok(host) => host,
                     Err(_) => {
-                        Self::send_reply(stream, SOCKS5_REP_GENERAL_FAILURE).await?;
+                        Self::reject(stream, &Self::reply(SOCKS5_REP_GENERAL_FAILURE)).await?;
                         return Ok(None);
                     }
                 }
@@ -291,7 +296,7 @@ impl DynamicForwarder {
                 std::net::Ipv6Addr::from(addr).to_string()
             }
             _ => {
-                Self::send_reply(stream, SOCKS5_REP_ATYP_NOT_SUPPORTED).await?;
+                Self::reject(stream, &Self::reply(SOCKS5_REP_ATYP_NOT_SUPPORTED)).await?;
                 return Ok(None);
             }
         };
@@ -308,7 +313,7 @@ impl DynamicForwarder {
                     dest_port,
                     e
                 );
-                Self::send_reply(stream, Self::reply_for_open_error(&e)).await?;
+                Self::reject(stream, &Self::reply(Self::reply_for_open_error(&e))).await?;
                 return Ok(None);
             }
         };
@@ -335,8 +340,37 @@ impl DynamicForwarder {
         }
     }
 
-    async fn send_reply(stream: &mut tokio::net::TcpStream, rep: u8) -> std::io::Result<()> {
-        let reply = [
+    /// Send a final rejection and close the connection gracefully.
+    ///
+    /// The client may already have sent bytes the server never read (the rest
+    /// of a request, or pipelined payload). Closing a socket with unread input
+    /// makes Windows — and Linux — send an RST, which can discard the reply
+    /// still in flight, so the client sees "connection reset" instead of the
+    /// reply code. Instead: write, flush, half-close our side (the client sees
+    /// the reply then EOF), and drain what the client still sends for a short,
+    /// bounded window before the socket is dropped (#4337).
+    async fn reject(stream: &mut tokio::net::TcpStream, reply: &[u8]) -> std::io::Result<()> {
+        stream.write_all(reply).await?;
+        stream.flush().await?;
+        stream.shutdown().await?;
+
+        let mut buf = [0u8; 4096];
+        let mut drained = 0usize;
+        let _ = tokio::time::timeout(SOCKS5_REJECT_DRAIN_TIMEOUT, async {
+            while drained < SOCKS5_REJECT_DRAIN_LIMIT {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => drained += n,
+                }
+            }
+        })
+        .await;
+        Ok(())
+    }
+
+    /// The 10-byte RFC 1928 reply for `rep` (BND.ADDR 0.0.0.0, BND.PORT 0).
+    fn reply(rep: u8) -> [u8; 10] {
+        [
             SOCKS5_VERSION,
             rep,
             0x00, // RSV
@@ -347,8 +381,11 @@ impl DynamicForwarder {
             0, // BND.ADDR (0.0.0.0)
             0,
             0, // BND.PORT (0)
-        ];
-        stream.write_all(&reply).await
+        ]
+    }
+
+    async fn send_reply(stream: &mut tokio::net::TcpStream, rep: u8) -> std::io::Result<()> {
+        stream.write_all(&Self::reply(rep)).await
     }
 }
 
@@ -613,6 +650,95 @@ mod tests {
         let reply = read_reply(&mut client).await;
         assert_eq!(reply[1], SOCKS5_REP_GENERAL_FAILURE);
         assert!(targets.lock().unwrap().is_empty());
+        drop(forwarder);
+    }
+
+    /// Every early-reject path must deliver its reply even when the client has
+    /// already sent more bytes than the server reads. Closing a socket with
+    /// unread input makes Windows (and Linux) answer with an RST that discards
+    /// the reply still in flight, so the server must close gracefully (#4337).
+    #[tokio::test]
+    async fn rejection_reply_survives_unread_client_bytes() {
+        let trailing = vec![0xAB; 4096];
+        let mut requests: Vec<(Vec<u8>, u8)> = Vec::new();
+
+        // BIND with a full IPv4 address + port, then payload.
+        let mut bind = vec![SOCKS5_VERSION, 0x02, 0x00, SOCKS5_ATYP_IPV4, 10, 0, 0, 1];
+        bind.extend_from_slice(&80u16.to_be_bytes());
+        requests.push((bind, SOCKS5_REP_CMD_NOT_SUPPORTED));
+
+        // Unknown ATYP 0x05 followed by bytes the server never parses.
+        requests.push((
+            vec![SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, 0x05, 1, 2, 3, 4],
+            SOCKS5_REP_ATYP_NOT_SUPPORTED,
+        ));
+
+        // Non-UTF-8 domain with its port.
+        let mut bad_domain = vec![
+            SOCKS5_VERSION,
+            SOCKS5_CMD_CONNECT,
+            0x00,
+            SOCKS5_ATYP_DOMAIN,
+            2,
+            0xFF,
+            0xFE,
+        ];
+        bad_domain.extend_from_slice(&80u16.to_be_bytes());
+        requests.push((bad_domain, SOCKS5_REP_GENERAL_FAILURE));
+
+        for (request, rep) in requests {
+            let (forwarder, mut client, _targets) =
+                start_and_connect(EchoChannelOpener::new()).await;
+            greet_no_auth(&mut client).await;
+            let mut bytes = request.clone();
+            bytes.extend_from_slice(&trailing);
+            client.write_all(&bytes).await.expect("write request");
+            // Give the server time to reply and close before we read.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let reply = read_reply(&mut client).await;
+            assert_eq!(reply[1], rep, "request {request:?}");
+            drop(forwarder);
+        }
+
+        // A failed channel open, with payload already pipelined behind it.
+        let (forwarder, mut client, _targets) = start_and_connect(EchoChannelOpener::failing_with(
+            std::io::ErrorKind::HostUnreachable,
+        ))
+        .await;
+        greet_no_auth(&mut client).await;
+        let mut bytes = vec![
+            SOCKS5_VERSION,
+            SOCKS5_CMD_CONNECT,
+            0x00,
+            SOCKS5_ATYP_IPV4,
+            10,
+            0,
+            0,
+            1,
+        ];
+        bytes.extend_from_slice(&80u16.to_be_bytes());
+        bytes.extend_from_slice(&trailing);
+        client.write_all(&bytes).await.expect("write request");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_HOST_UNREACHABLE);
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn auth_rejection_survives_unread_client_bytes() {
+        let (forwarder, mut client, _targets) = start_and_connect(EchoChannelOpener::new()).await;
+        // Greeting offering only user/pass, with a request pipelined behind it.
+        let mut bytes = vec![SOCKS5_VERSION, 0x01, 0x02];
+        bytes.extend_from_slice(&[0xAB; 4096]);
+        client.write_all(&bytes).await.expect("write greeting");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut resp = [0u8; 2];
+        client
+            .read_exact(&mut resp)
+            .await
+            .expect("read method reply");
+        assert_eq!(resp, [SOCKS5_VERSION, 0xFF]);
         drop(forwarder);
     }
 
