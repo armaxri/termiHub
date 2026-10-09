@@ -12,7 +12,7 @@ import {
 } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
 import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
-import { Button, Input, Field, Tooltip } from "@/components/ui";
+import { Button, Input, Field, Tooltip, UnsavedChangesDialog } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
 import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
@@ -23,6 +23,8 @@ import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { errorMessage } from "@/utils/errorMessage";
+import { draftKey } from "@/utils/draftKey";
+import { findLeafByTab } from "@/utils/panelTree";
 
 interface WorkspaceEditorProps {
   tabId: string;
@@ -37,9 +39,22 @@ const DEFAULT_LAYOUT: WorkspaceLayoutNode = {
 
 const DEFAULT_GROUP_NAME = "Main";
 
+/** The editable part of a workspace draft, compared to its baseline for dirtiness. */
+function workspaceDraftKey(
+  name: string,
+  description: string,
+  tabGroupDefs: WorkspaceTabGroupDef[],
+  settings: WorkspaceSettings
+): string {
+  return draftKey({ name, description, tabGroupDefs, settings });
+}
+
 export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps) {
   const saveWorkspace = useAppStore((s) => s.saveWorkspaceToBackend);
   const closeTab = useAppStore((s) => s.closeTab);
+  const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const rootPanel = useLayoutRenderTree();
 
   const [name, setName] = useState("");
@@ -57,22 +72,30 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   // A saved connection renamed while the editor is open: re-point the draft's
   // tab refs, or saving would write the old id back over the backend's follow (#3603).
   useFollowConnectionIdChanges(setTabGroupDefs, remapWorkspaceTabGroups);
+  // The values the editor was opened with (a new workspace's defaults, or the
+  // loaded one): the draft differing from them marks the tab dirty (UX2-004).
+  const [baselineKey, setBaselineKey] = useState(() =>
+    workspaceDraftKey("", "", [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }], {})
+  );
 
   useEffect(() => {
     if (meta.workspaceId) {
       setLoading(true);
       loadWorkspace(meta.workspaceId)
         .then((ws) => {
+          const groups =
+            ws.tabGroups.length > 0
+              ? ws.tabGroups
+              : [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }];
           setName(ws.name);
           setDescription(ws.description ?? "");
           setSettings(ws.settings ?? {});
           setWindows(ws.windows);
-          setTabGroupDefs(
-            ws.tabGroups.length > 0
-              ? ws.tabGroups
-              : [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }]
-          );
+          setTabGroupDefs(groups);
           setActiveGroupIndex(0);
+          setBaselineKey(
+            workspaceDraftKey(ws.name, ws.description ?? "", groups, ws.settings ?? {})
+          );
         })
         .catch(() => {
           // Discard broken workspace; editor starts fresh
@@ -167,15 +190,53 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     tabId,
   ]);
 
-  const handleCancel = useCallback(async () => {
-    const { findLeafByTab } = await import("@/utils/panelTree");
+  // Report unsaved edits like ConnectionEditor does, so the tab-bar close guard
+  // and every bulk close (panel, group, window) see this tab as dirty (UX2-004).
+  const isDirty =
+    !loading && workspaceDraftKey(name, description, tabGroupDefs, settings) !== baselineKey;
+  useEffect(() => {
+    setEditorDirty(tabId, isDirty);
+  }, [tabId, isDirty, setEditorDirty]);
+
+  const closeThisTab = useCallback(() => {
     const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) {
-      closeTab(tabId, leaf.id);
-    }
+    if (leaf) closeTab(tabId, leaf.id);
   }, [rootPanel, tabId, closeTab]);
 
-  if (!isVisible) return null;
+  // Cancel shares the tab-bar close guard (UX2-004): with unsaved edits it
+  // raises the unsaved-changes prompt via pendingCloseRequest; otherwise the
+  // tab closes at once.
+  const handleCancel = useCallback(() => {
+    if (useAppStore.getState().editorDirtyTabs[tabId]) {
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (leaf) setPendingCloseRequest({ tabId, panelId: leaf.id });
+      return;
+    }
+    closeThisTab();
+  }, [rootPanel, tabId, setPendingCloseRequest, closeThisTab]);
+
+  // Rendered on every branch, including while hidden: a tab-bar close request
+  // can target this tab when it is not the visible one.
+  const unsavedDialog = (
+    <UnsavedChangesDialog
+      open={pendingCloseRequest?.tabId === tabId}
+      subject="workspace"
+      name={name.trim() || undefined}
+      onCancel={() => setPendingCloseRequest(null)}
+      onJustClose={() => {
+        setPendingCloseRequest(null);
+        closeThisTab();
+      }}
+      onSaveAndClose={async () => {
+        // Save closes the tab on success; on failure it throws, the Button
+        // toasts the error and the prompt stays up.
+        await handleSave();
+        setPendingCloseRequest(null);
+      }}
+    />
+  );
+
+  if (!isVisible) return unsavedDialog;
 
   if (loading) {
     return (
@@ -328,6 +389,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
           Cancel
         </Button>
       </div>
+      {unsavedDialog}
     </div>
   );
 }

@@ -6,9 +6,11 @@ REM is a workspace member, but ships like the RDP sidecar: NEXT TO the desktop
 REM binary via Tauri `externalBin` (#4202). core\build.rs embeds the staged
 REM file's SHA-256, which the app checks before spawning the bundled runner.
 REM
-REM Usage: scripts\build-plugin-runner.cmd [--release] [--target <triple>]
+REM Usage: scripts\build-plugin-runner.cmd [--release] [--locked] [--target <triple>]
 REM                                        [--tauri-externalbin] [--out <dir>]
 REM   --release             Build with optimizations (default: debug).
+REM   --locked              Pass --locked to cargo: fail instead of updating a
+REM                         stale Cargo.lock (release builds use it, #4282).
 REM   --target <triple>     Cross-build for a specific Rust target triple (e.g.
 REM                         aarch64-pc-windows-msvc). Default: the host triple.
 REM                         Output lands under target\<triple>\<profile>\.
@@ -44,6 +46,7 @@ if "%~1"=="--help" goto usage
 if "%~1"=="-h" goto usage
 if "%~1"=="/?" goto usage
 if "%~1"=="--release" goto opt_release
+if "%~1"=="--locked" goto opt_locked
 if "%~1"=="--target" goto opt_target
 if "%~1"=="--tauri-externalbin" goto opt_externalbin
 if "%~1"=="--out" goto opt_out
@@ -51,8 +54,13 @@ echo Unknown argument: %~1 1>&2
 exit /b 2
 
 :opt_release
-set "CARGO_FLAGS=--release"
+set "CARGO_FLAGS=%CARGO_FLAGS% --release"
 set "PROFILE=release"
+shift
+goto parse
+
+:opt_locked
+set "CARGO_FLAGS=%CARGO_FLAGS% --locked"
 shift
 goto parse
 
@@ -81,9 +89,10 @@ if "%~1"=="--out" echo ERROR: --out requires a directory 1>&2
 exit /b 2
 
 :usage
-echo Usage: scripts\build-plugin-runner.cmd [--release] [--target ^<triple^>]
+echo Usage: scripts\build-plugin-runner.cmd [--release] [--locked] [--target ^<triple^>]
 echo                                        [--tauri-externalbin] [--out ^<dir^>]
 echo   --release             Build with optimizations (default: debug).
+echo   --locked              Fail instead of updating a stale Cargo.lock.
 echo   --target ^<triple^>     Cross-build for a Rust target triple (default: host).
 echo   --tauri-externalbin   Stage src-tauri\binaries\termihub-plugin-runner-^<triple^>.exe
 echo                         for Tauri externalBin, plus a .sha256 sidecar.

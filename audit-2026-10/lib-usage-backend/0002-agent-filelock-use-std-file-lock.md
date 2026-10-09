@@ -15,8 +15,8 @@ evidence:
   - agent/src/fs.rs:156
   - src-tauri/src/utils/data_dir_lock.rs:79
   - .github/rust-version:1
-status: open
-resolution: ""
+status: fixed
+resolution: "#4285 — FileLock uses std File::lock/lock_shared; the nix flock and unsafe LockFileEx branches and their windows-sys features are gone"
 audit: 2026-10
 commit: 663465d52
 relation: new

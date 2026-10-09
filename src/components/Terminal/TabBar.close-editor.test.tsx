@@ -54,16 +54,16 @@ function makeEditorTab(id = TAB_ID): TerminalTab {
   };
 }
 
-// A dirty tab whose contentType is NOT in the editor set
-// (settings/editor/connection-editor). This is the fallback branch that used
-// to trigger the native window.confirm and now surfaces the shared dialog.
+// A dirty tab whose contentType has no unsaved-changes dialog of its own (not
+// settings or one of the editors). This is the fallback branch that used to
+// trigger the native window.confirm and now surfaces the shared dialog.
 function makeDirtyOtherTab(id = TAB_ID): TerminalTab {
   return {
     id,
     sessionId: null,
-    title: "tunnel.json",
+    title: "diagnostics",
     connectionType: "local",
-    contentType: "tunnel-editor",
+    contentType: "network-diagnostic",
     config: { type: "local", config: {} },
     panelId: PANEL_ID,
     isActive: true,
@@ -174,6 +174,31 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
   });
 });
 
+describe("TabBar — tunnel and workspace editors use their own unsaved prompt (UX2-004)", () => {
+  it.each(["tunnel-editor", "workspace-editor"] as const)(
+    "routes a dirty %s tab close through setPendingCloseRequest",
+    async (contentType) => {
+      const closeTab = vi.fn();
+      useAppStore.setState({ closeTab });
+      await render([{ ...makeDirtyOtherTab(), contentType }]);
+      act(() => {
+        useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
+      });
+
+      act(() => {
+        (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
+      });
+
+      expect(useAppStore.getState().pendingCloseRequest).toEqual({
+        tabId: TAB_ID,
+        panelId: PANEL_ID,
+      });
+      expect(document.querySelector('[data-testid="unsaved-editor-close-dialog"]')).toBeNull();
+      expect(closeTab).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.confirm)", () => {
   const DIALOG = '[data-testid="unsaved-editor-close-dialog"]';
 
@@ -196,6 +221,8 @@ describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.co
     const dialog = document.querySelector(DIALOG);
     expect(dialog).toBeTruthy();
     expect(dialog?.textContent).toContain("unsaved changes");
+    // Generic copy: the fallback is not only reached by file tabs (UISF2-005).
+    expect(dialog?.textContent).toContain("This tab has unsaved changes");
     // Nothing closes until the user confirms.
     expect(closeTab).not.toHaveBeenCalled();
   });

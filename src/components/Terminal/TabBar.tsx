@@ -175,10 +175,14 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     const tab = tabs.find((t) => t.id === tabId);
     const isDirty = state.editorDirtyTabs[tabId];
     if (isDirty) {
+      // These tabs render their own unsaved-changes prompt off
+      // pendingCloseRequest (the tunnel and workspace editors since UX2-004).
       if (
         tab?.contentType === "connection-editor" ||
         tab?.contentType === "settings" ||
-        tab?.contentType === "editor"
+        tab?.contentType === "editor" ||
+        tab?.contentType === "tunnel-editor" ||
+        tab?.contentType === "workspace-editor"
       ) {
         setPendingCloseRequest({ tabId, panelId });
         return;
@@ -313,7 +317,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       <ConfirmDialog
         open={unsavedCloseTabId !== null}
         title="Unsaved changes"
-        message="This file has unsaved changes. Close anyway?"
+        message="This tab has unsaved changes. Close anyway?"
         confirmLabel="Close anyway"
         cancelLabel="Cancel"
         data-testid="unsaved-editor-close-dialog"

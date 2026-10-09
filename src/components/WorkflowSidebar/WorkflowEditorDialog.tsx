@@ -6,7 +6,7 @@ import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { Modal, Button, Input, Field, useModalPortalContainer } from "@/components/ui";
+import { Modal, ModalClose, Button, Input, Field, useModalPortalContainer } from "@/components/ui";
 import type {
   Workflow,
   WorkflowParameter,
@@ -28,6 +28,7 @@ import {
 } from "./workflowStepMeta";
 import { newId } from "@/services/transport/ids";
 import { parseTags } from "@/utils/parseTags";
+import { draftKey } from "@/utils/draftKey";
 import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { remapWorkflowTriggers } from "@/utils/connectionIdChanges";
 import { workflowTriggersValid } from "@/services/workflowOutputTriggers";
@@ -179,6 +180,28 @@ export function WorkflowEditorDialog({
   const triggersValid = useMemo(() => workflowTriggersValid(triggers), [triggers]);
   const canSave = formValid && entries.length > 0 && policiesValid && triggersValid;
 
+  // Unsaved work spans the RHF fields and the imperative step / trigger /
+  // parameter lists; any of them differing from the opened workflow arms the
+  // Modal's dismiss guard (UX2-004).
+  const isDirty =
+    workflow !== null &&
+    draftKey({
+      name: watched.name ?? "",
+      description: watched.description ?? "",
+      tags: watched.tags ?? "",
+      steps: entries.map((e) => e.step),
+      triggers,
+      parameters,
+    }) !==
+      draftKey({
+        name: workflow.name,
+        description: workflow.description ?? "",
+        tags: workflow.tags.join(", "),
+        steps: workflow.steps,
+        triggers: workflow.triggers,
+        parameters: workflow.parameters ?? [],
+      });
+
   const updateStep = (uid: string, step: WorkflowStep) => {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, step } : e)));
   };
@@ -232,19 +255,19 @@ export function WorkflowEditorDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
+      dirty={isDirty}
       title={isNew ? "New Workflow" : "Edit Workflow"}
       description="Author an ordered list of typed steps and bind its triggers"
       size="lg"
       data-testid="workflow-editor-dialog"
       footer={
         <>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            data-testid="workflow-editor-cancel"
-          >
-            Cancel
-          </Button>
+          {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
+          <ModalClose>
+            <Button variant="secondary" data-testid="workflow-editor-cancel">
+              Cancel
+            </Button>
+          </ModalClose>
           <Button
             variant="primary"
             onClick={handleSave}

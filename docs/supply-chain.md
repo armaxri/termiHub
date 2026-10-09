@@ -86,6 +86,15 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
   override (with a row above). If the fix truly cannot be taken yet, add the advisory's GHSA id
   to `pnpm.auditConfig.ignoreGhsas` in `package.json` and list it here with the reason and
   what unblocks it.
+- **Rust tree at release time — blocking (#4282).** The Release workflow's **Verify Rust
+  Supply Chain** job runs `cargo audit` and `cargo deny check advisories bans licenses sources`
+  on the tagged commit for the workspace, and `cargo deny` for the RDP sidecar's own lockfile,
+  with pinned tool versions. RUSTSEC advisories and yanks are time-based, so this grades the
+  advisory database as of the tag, not as of the merge: an advisory published after the merge
+  blocks the release too. It also checks both lockfiles are fresh, and every release cargo
+  build passes `--locked`. Every build job needs this job, so nothing is built or published
+  until it passes. Accept an advisory the usual way (`deny.toml` / `.cargo/audit.toml` with a
+  row under _Accepted risks_ below), never by skipping the gate.
 
 ### Accepted advisories (`pnpm.auditConfig.ignoreGhsas`)
 

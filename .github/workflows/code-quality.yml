@@ -135,8 +135,10 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
+      # --locked: a stale root Cargo.lock fails here, per PR, instead of first
+      # surfacing in the --locked release builds (#4282, SUP2-001).
       - name: Run Clippy (linter)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       # Guards #868 + #1499: builds termihub-core with individual opt-in features
       # *in isolation*, which the --all-features jobs above cannot do because
@@ -900,8 +902,8 @@ jobs:
         shell: cmd
         run: |
           set "PATH=%RUNNER_TEMP%\stub-cargo;%PATH%"
-          rem Host triple from rustc, release, staged for externalBin, copied to --out.
-          call scripts\build-rdp-sidecar.cmd --release --tauri-externalbin --out "%RUNNER_TEMP%\rdp-out"
+          rem Host triple from rustc, release, --locked, staged for externalBin, copied to --out.
+          call scripts\build-rdp-sidecar.cmd --release --locked --tauri-externalbin --out "%RUNNER_TEMP%\rdp-out"
           if errorlevel 1 (echo externalBin run failed& exit /b 1)
           rem Explicit --target without staging: cargo's per-target output dir.
           call scripts\build-rdp-sidecar.cmd --target aarch64-pc-windows-msvc
@@ -999,7 +1001,7 @@ jobs:
         shell: cmd
         run: |
           set "PATH=%RUNNER_TEMP%\stub-cargo-runner;%PATH%"
-          rem Host triple from rustc, release, staged for externalBin, copied to --out.
+          rem Host triple from rustc, release, --locked, staged for externalBin, copied to --out.
           call scripts\build-plugin-runner.cmd --release --tauri-externalbin --out "%RUNNER_TEMP%\runner-out"
           if errorlevel 1 (echo externalBin run failed& exit /b 1)
           rem Explicit --target without staging: cargo's per-target output dir.

@@ -1387,6 +1387,14 @@ flowchart TB
             window closes with just a toast ("3 sessions detached — still running"); the decision
             surface only appears when something would actually be lost.
           </li>
+          <li>
+            <strong>Unsaved editors → always a dialog.</strong> A file, connection, tunnel or
+            workspace editor with unsaved changes carries no session, but closing the window would
+            still lose its edits. Such a window always raises the dialog, which lists each unsaved
+            editor as discarded; a window holding only unsaved editors offers Cancel or
+            <em>Discard &amp; close</em>. Closing a split panel or a tab group confirms the same
+            way.
+          </li>
         </ul>
 
         <!-- Mockup 5: close-with-live-tabs decision dialog -->
@@ -2146,7 +2154,9 @@ sequenceDiagram
               <tr>
                 <td>6</td>
                 <td>Transfer-queue ownership scoped to the owning window on move</td>
-                <td>Transfers follow the tab: carried in the hand-off, seeded in the destination</td>
+                <td>
+                  Transfers follow the tab: carried in the hand-off, seeded in the destination
+                </td>
                 <td>Resolved (#1951)</td>
                 <td>Source releases the moved sessions so broadcast events don't re-adopt them</td>
               </tr>
@@ -2183,10 +2193,12 @@ sequenceDiagram
             <code>sftpSessions[…].owningTabId</code>) in the opaque hand-off envelope
             (<code>HandoffTab.transfers</code>): the destination seeds them into its own queue while
             the source drops them and marks the sessions <em>released</em> so ongoing broadcast
-            events do not re-adopt the moved rows
-            (<a href="https://github.com/armaxri/termiHub/issues/1951">#1951</a>). Fully scoping the
-            display to the owning window <em>without</em> a move (a window that never owned a
-            session still folds its broadcast transfers) remains a separate follow-up.
+            events do not re-adopt the moved rows (<a
+              href="https://github.com/armaxri/termiHub/issues/1951"
+              >#1951</a
+            >). Fully scoping the display to the owning window <em>without</em> a move (a window
+            that never owned a session still folds its broadcast transfers) remains a separate
+            follow-up.
           </li>
         </ul>
       </section>
