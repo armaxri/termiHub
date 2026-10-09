@@ -133,4 +133,49 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     expect(endWindowSessions).not.toHaveBeenCalled();
     expect(useAppStore.getState().pendingWindowClose).toBeNull();
   });
+
+  describe("unsaved editors (UX2-003)", () => {
+    const dirtyEditors = [{ tabId: "e1", title: "nginx.conf" }];
+
+    it("lists each unsaved editor as discarded", () => {
+      render();
+      act(() => useAppStore.getState().setPendingWindowClose(request({ dirtyEditors })));
+
+      const rows = qa("close-window-decision-dirty-row");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].textContent).toContain("nginx.conf");
+      expect(q("close-window-decision-outcome-discard")).not.toBeNull();
+      expect(q("close-window-decision-dialog").textContent).toContain("1 unsaved editor");
+    });
+
+    it("offers Discard & close and no move for a window with only a dirty editor", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ sessions: [], dirtyEditors }))
+      );
+
+      expect(q("close-window-decision-move")).toBeNull();
+      expect(q("close-window-decision-end").textContent).toContain("Discard & close");
+      expect(q("close-window-decision-dialog").textContent).not.toContain("open session");
+    });
+
+    it("Cancel keeps the window and its editors", async () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ sessions: [], dirtyEditors }))
+      );
+      await act(async () => q("close-window-decision-cancel").click());
+      expect(destroy).not.toHaveBeenCalled();
+      expect(useAppStore.getState().pendingWindowClose).toBeNull();
+    });
+
+    it("Discard & close destroys the window", async () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ sessions: [], dirtyEditors }))
+      );
+      await act(async () => q("close-window-decision-end").click());
+      expect(destroy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

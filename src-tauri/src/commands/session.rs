@@ -345,6 +345,23 @@ pub async fn set_session_line_ending(
     Ok(())
 }
 
+/// Pause or resume a session's output stream (PERF2-002, #4307).
+///
+/// The terminal sends `paused = true` once xterm.js has too many unparsed
+/// bytes (the write-callback high watermark) and `paused = false` once it has
+/// drained below the low watermark. While paused the backend stops reading the
+/// session's output, so the PTY backpressures the program; input still flows.
+#[tauri::command]
+pub async fn set_terminal_output_paused(
+    session_id: String,
+    paused: bool,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, paused, "Setting terminal output flow");
+    manager.set_output_flow(&session_id, paused).await;
+    Ok(())
+}
+
 /// Resize a session's terminal.
 ///
 /// Multi-window resize ownership (#1900): a PTY has exactly one size, so only the

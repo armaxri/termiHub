@@ -15,9 +15,11 @@
 //! exactly — the pump reports *why* it ended via [`PumpEnd`] and leaves the
 //! tier-specific "settle" (exit event + drop-fold) to the caller.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 use crate::output::coalescer::OutputCoalescer;
@@ -40,6 +42,90 @@ pub struct PumpOptions {
     pub max_coalesce_bytes: usize,
     /// How long the `wait_for_clear` phase buffers before flushing anyway.
     pub clear_wait_timeout: Duration,
+    /// Frontend flow control (PERF2-002). While the gate is paused the
+    /// streaming phase stops reading `rx`, so the bounded channel fills and the
+    /// producer (the PTY reader thread) blocks — the OS PTY buffer then
+    /// backpressures the program. `None` never pauses. Only wire this up when
+    /// the producer *blocks* on a full channel: a producer that `try_send`s
+    /// would drop output instead.
+    pub flow: Option<OutputFlowGate>,
+}
+
+/// Pause/resume switch the frontend flips when xterm.js falls behind
+/// (PERF2-002, the xterm write-callback watermark pattern).
+///
+/// Clones share one state: the session manager keeps one to apply the
+/// frontend's pause/resume, the pump holds another and waits on it. Pausing
+/// only stops the pump *reading* output; input (Ctrl+C included) takes a
+/// separate path and is never held back.
+#[derive(Debug, Clone)]
+pub struct OutputFlowGate {
+    paused: Arc<watch::Sender<bool>>,
+}
+
+impl Default for OutputFlowGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OutputFlowGate {
+    /// A gate that starts out flowing (not paused).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            paused: Arc::new(watch::Sender::new(false)),
+        }
+    }
+
+    /// Stop the pump reading output.
+    pub fn pause(&self) {
+        self.set_paused(true);
+    }
+
+    /// Let the pump read output again.
+    pub fn resume(&self) {
+        self.set_paused(false);
+    }
+
+    /// Set the paused state; waking the pump when it changes.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.send_if_modified(|current| {
+            let changed = *current != paused;
+            *current = paused;
+            changed
+        });
+    }
+
+    /// Whether the gate is currently paused.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        *self.paused.borrow()
+    }
+
+    /// Resolve once the gate is (or becomes) not paused.
+    async fn wait_resumed(&self) {
+        self.wait_state(false).await;
+    }
+
+    /// Resolve once the gate is (or becomes) paused.
+    async fn wait_paused(&self) {
+        self.wait_state(true).await;
+    }
+
+    async fn wait_state(&self, paused: bool) {
+        let mut rx = self.paused.subscribe();
+        // The gate owns the sender, so the wait cannot observe it closing.
+        let _ = rx.wait_for(|current| *current == paused).await;
+    }
+}
+
+/// Resolve when `gate` becomes paused; never when there is no gate.
+async fn paused(gate: Option<&OutputFlowGate>) {
+    match gate {
+        Some(gate) => gate.wait_paused().await,
+        None => std::future::pending::<()>().await,
+    }
 }
 
 /// Why [`run_output_pump`] returned.
@@ -169,6 +255,16 @@ pub async fn run_output_pump<S: OutputSink>(
     // delivery mirrors one received chunk (the agent's on-wire framing).
     let mut coalescer = OutputCoalescer::new();
     loop {
+        // Flow control (PERF2-002): while the frontend reports xterm is
+        // backlogged, do not read the channel. Cancel still wins so teardown
+        // is never held up by a paused stream.
+        if let Some(gate) = opts.flow.as_ref().filter(|g| g.is_paused()) {
+            tokio::select! {
+                biased;
+                _ = cancelled(cancel) => return PumpEnd::Cancelled,
+                _ = gate.wait_resumed() => {}
+            }
+        }
         // Normal delivery is the `recv` arm; the `cancel` arm only fires on
         // deterministic teardown (CONC-011). `biased` checks cancel first, but
         // it is never ready during normal streaming, so a chunk is always taken
@@ -177,6 +273,9 @@ pub async fn run_output_pump<S: OutputSink>(
         let first_chunk = tokio::select! {
             biased;
             _ = cancelled(cancel) => return PumpEnd::Cancelled,
+            // A pause that lands while we wait for output takes effect before
+            // the next chunk is read (`recv` is cancel-safe, nothing is lost).
+            _ = paused(opts.flow.as_ref()) => continue,
             chunk = rx.recv() => match chunk {
                 Some(chunk) => chunk,
                 None => return PumpEnd::Eof,
@@ -290,6 +389,7 @@ mod tests {
             coalesce: true,
             max_coalesce_bytes: 32 * 1024,
             clear_wait_timeout: Duration::from_secs(5),
+            flow: None,
         }
     }
 
@@ -550,5 +650,144 @@ mod tests {
 
         assert_eq!(end, PumpEnd::Cancelled);
         drop(tx);
+    }
+    /// Poll `cond` until it holds or a generous deadline passes.
+    async fn eventually(mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cond()
+    }
+
+    #[tokio::test]
+    async fn paused_gate_stops_reading_until_resumed() {
+        // PERF2-002: while the frontend reports xterm is backlogged, the pump
+        // must not read the channel at all, so the bounded channel fills and
+        // backpressures the PTY reader.
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(2);
+        let gate = OutputFlowGate::new();
+        gate.pause();
+        let opts = PumpOptions {
+            flow: Some(gate.clone()),
+            ..stream_opts()
+        };
+        let sink = FakeSink::new();
+        let outputs = sink.outputs.clone();
+        let handle =
+            tokio::spawn(async move { run_output_pump("s1", &mut rx, &sink, None, &opts).await });
+
+        tx.send(b"one".to_vec()).await.unwrap();
+        tx.send(b"two".to_vec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(outputs.lock().unwrap().is_empty(), "paused pump forwarded");
+        // Nothing was read: the channel is full and a producer is refused.
+        assert!(
+            tx.try_send(b"three".to_vec()).is_err(),
+            "paused pump drained the channel (no backpressure)"
+        );
+
+        gate.resume();
+        let delivered = eventually(|| {
+            outputs
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|(_, d)| d.clone())
+                .collect::<Vec<u8>>()
+                == b"onetwo"
+        })
+        .await;
+        assert!(delivered, "resumed pump did not deliver the queued output");
+
+        drop(tx);
+        let end = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("pump did not finish")
+            .expect("pump task panicked");
+        assert_eq!(end, PumpEnd::Eof);
+    }
+
+    #[tokio::test]
+    async fn pause_mid_stream_holds_later_chunks_without_loss() {
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
+        let gate = OutputFlowGate::new();
+        let opts = PumpOptions {
+            flow: Some(gate.clone()),
+            ..stream_opts()
+        };
+        let sink = FakeSink::new();
+        let outputs = sink.outputs.clone();
+        let handle =
+            tokio::spawn(async move { run_output_pump("s1", &mut rx, &sink, None, &opts).await });
+
+        tx.send(b"before ".to_vec()).await.unwrap();
+        assert!(eventually(|| outputs.lock().unwrap().len() == 1).await);
+
+        gate.pause();
+        // Let the pump observe the pause before more output arrives.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tx.send(b"during ".to_vec()).await.unwrap();
+        tx.send(b"pause".to_vec()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(outputs.lock().unwrap().len(), 1, "paused pump forwarded");
+
+        gate.resume();
+        drop(tx);
+        let end = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("pump did not finish")
+            .expect("pump task panicked");
+        assert_eq!(end, PumpEnd::Eof);
+        let all: Vec<u8> = outputs
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, d)| d.clone())
+            .collect();
+        assert_eq!(all, b"before during pause", "output lost or reordered");
+    }
+
+    #[tokio::test]
+    async fn cancel_while_paused_returns_cancelled() {
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
+        tx.send(b"queued".to_vec()).await.unwrap();
+        let gate = OutputFlowGate::new();
+        gate.pause();
+        let opts = PumpOptions {
+            flow: Some(gate),
+            ..stream_opts()
+        };
+        let cancel = CancellationToken::new();
+        let child = cancel.clone();
+        let sink = FakeSink::new();
+        let handle = tokio::spawn(async move {
+            run_output_pump("s1", &mut rx, &sink, Some(&child), &opts).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancel.cancel();
+        let end = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("paused pump ignored cancellation")
+            .expect("pump task panicked");
+        assert_eq!(end, PumpEnd::Cancelled);
+        drop(tx);
+    }
+
+    #[test]
+    fn gate_set_paused_toggles_state() {
+        let gate = OutputFlowGate::default();
+        assert!(!gate.is_paused());
+        gate.set_paused(true);
+        assert!(gate.is_paused());
+        // Clones share state: the manager holds one, the pump another.
+        let clone = gate.clone();
+        clone.set_paused(false);
+        assert!(!gate.is_paused());
     }
 }

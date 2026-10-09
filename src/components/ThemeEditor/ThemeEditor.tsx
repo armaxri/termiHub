@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Button, ColorInput, Field, Input, Modal, Select } from "@/components/ui";
+import { Button, ColorInput, Field, Input, Modal, ModalClose, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
 import type { ThemeColors, ThemeDefinition } from "@/themes/types";
 import { normalizeHexColor } from "@/services/syntaxHighlighting";
+import { draftKey as toDraftKey } from "@/utils/draftKey";
 import "./ThemeEditor.css";
 
 /**
@@ -136,6 +137,11 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(meta)]);
 
+  // Any difference from the opened theme (a colour pick, a rename, a new base)
+  // arms the Modal's dismiss guard (UX2-004).
+  const isDirty =
+    toDraftKey(draft) !== toDraftKey({ ...metaOf(initialTheme), colors: initialTheme.colors });
+
   const nameError = validity.errors["name"];
   const canSave = validity.valid;
 
@@ -163,12 +169,17 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
       onOpenChange={(next) => {
         if (!next) onCancel();
       }}
+      dirty={isDirty}
       title="Theme Editor"
+      data-testid="theme-editor-dialog"
       footer={
         <>
-          <Button variant="ghost" onClick={onCancel} data-testid="theme-editor-cancel">
-            Cancel
-          </Button>
+          {/* Routed through the Modal so unsaved picks ask first (UX2-004). */}
+          <ModalClose>
+            <Button variant="ghost" data-testid="theme-editor-cancel">
+              Cancel
+            </Button>
+          </ModalClose>
           <Button
             variant="primary"
             onClick={handleSave}

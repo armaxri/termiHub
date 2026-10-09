@@ -76,6 +76,7 @@ function fakeSession(files: RemoteClipboardFile[], bound: number): RemoteDesktop
     remoteClipboardFiles: vi.fn(async () => files),
     bindClipboardFiles: vi.fn(async () => bound),
     reconnect: vi.fn(),
+    cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
     awaitingFirstFrame: false,
     noteFirstFrame: vi.fn(),

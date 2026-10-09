@@ -16,6 +16,7 @@ function render(
   overrides: Partial<{ reconnectAttempt: number; message: string | null }> = {}
 ) {
   const onCancel = vi.fn();
+  const onCancelConnect = vi.fn();
   const onReconnect = vi.fn();
   act(() => {
     root.render(
@@ -25,11 +26,12 @@ function render(
         reconnectAttempt={overrides.reconnectAttempt ?? 0}
         message={overrides.message ?? null}
         onCancel={onCancel}
+        onCancelConnect={onCancelConnect}
         onReconnect={onReconnect}
       />
     );
   });
-  return { onCancel, onReconnect };
+  return { onCancel, onCancelConnect, onReconnect };
 }
 
 describe("RemoteDesktopOverlay", () => {
@@ -65,6 +67,18 @@ describe("RemoteDesktopOverlay", () => {
     const el = query("remote-desktop-overlay-connecting");
     expect(el?.textContent).toContain("Authenticating");
   });
+
+  it.each(["connecting", "authenticating"] as const)(
+    "offers Cancel on the %s overlay that aborts the connect (#4298)",
+    (state) => {
+      const { onCancelConnect, onCancel } = render(state);
+      const cancel = query("remote-desktop-cancel-connect");
+      expect(cancel?.textContent).toBe("Cancel");
+      act(() => cancel?.click());
+      expect(onCancelConnect).toHaveBeenCalledOnce();
+      expect(onCancel).not.toHaveBeenCalled();
+    }
+  );
 
   it("shows the reconnecting overlay with a clamped attempt counter and Cancel", () => {
     const { onCancel } = render("reconnecting", { reconnectAttempt: 0 });

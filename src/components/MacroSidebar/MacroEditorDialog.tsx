@@ -3,9 +3,10 @@ import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
-import { Modal, Button, Input, Field, NumberInput } from "@/components/ui";
+import { Modal, ModalClose, Button, Input, Field, NumberInput } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
 import { parseTags } from "@/utils/parseTags";
+import { draftKey as toDraftKey } from "@/utils/draftKey";
 import { escapeMacroStepData, parseMacroStepText } from "./macroStepFormat";
 import "./MacroEditorDialog.css";
 
@@ -131,19 +132,21 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
 
   // Reload the working copy each time the dialog opens so a prior edit never
   // leaks in and cancel truly discards. A new macro starts with one empty step.
+  const initialForm = useMemo<MacroFormValues>(
+    () =>
+      macro
+        ? {
+            name: macro.name,
+            description: macro.description ?? "",
+            tags: macro.tags.join(", "),
+            steps: macro.steps.map(toFormStep),
+          }
+        : { ...EMPTY_FORM, steps: [{ text: "", delayMs: 0 }] },
+    [macro]
+  );
   useEffect(() => {
-    if (!open) return;
-    if (macro) {
-      reset({
-        name: macro.name,
-        description: macro.description ?? "",
-        tags: macro.tags.join(", "),
-        steps: macro.steps.map(toFormStep),
-      });
-    } else {
-      reset({ ...EMPTY_FORM, steps: [{ text: "", delayMs: 0 }] });
-    }
-  }, [open, macro, reset]);
+    if (open) reset(initialForm);
+  }, [open, initialForm, reset]);
 
   // Live form values. `useWatch` can lag the seeded defaults by a render, so
   // merge it over blank defaults to keep a complete draft for the synchronous
@@ -161,6 +164,8 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   // async error proxy, so the Save gate and the per-step messages update on the
   // same render as the edit.
   const draftKey = JSON.stringify(draft);
+  // Any difference from the opened macro arms the Modal's dismiss guard (UX2-004).
+  const isDirty = toDraftKey(draft) !== toDraftKey(initialForm);
   const validation = useMemo(() => {
     const result = macroFormSchema.safeParse(draft);
     const stepErrors = new Map<number, string>();
@@ -321,6 +326,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
     <Modal
       open={open}
       onOpenChange={onOpenChange}
+      dirty={isDirty}
       title={isNew ? "New Macro" : "Edit Macro"}
       description={
         isNew
@@ -331,13 +337,12 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
       data-testid="macro-editor-dialog"
       footer={
         <>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            data-testid="macro-editor-cancel"
-          >
-            Cancel
-          </Button>
+          {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
+          <ModalClose>
+            <Button variant="secondary" data-testid="macro-editor-cancel">
+              Cancel
+            </Button>
+          </ModalClose>
           <Button
             variant="primary"
             onClick={handleSave}

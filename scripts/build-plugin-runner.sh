@@ -6,9 +6,11 @@
 # binary via Tauri `externalBin` (#4202). The app resolves it next to its own
 # executable (debug builds: also $TERMIHUB_PLUGIN_RUNNER or target/<profile>/).
 #
-# Usage: ./scripts/build-plugin-runner.sh [--release] [--target <triple>]
+# Usage: ./scripts/build-plugin-runner.sh [--release] [--locked] [--target <triple>]
 #                                         [--tauri-externalbin] [--out <dir>]
 #   --release             Build with optimizations (default: debug).
+#   --locked              Pass --locked to cargo: fail instead of updating a
+#                         stale Cargo.lock (release builds use it, #4282).
 #   --target <triple>     Cross-build for a specific Rust target triple (e.g.
 #                         x86_64-apple-darwin). Default: the host triple. Output
 #                         lands under target/<triple>/<profile>/.
@@ -40,6 +42,10 @@ while [ $# -gt 0 ]; do
         CARGO_FLAGS+=(--release)
         shift
         ;;
+    --locked)
+        CARGO_FLAGS+=(--locked)
+        shift
+        ;;
     --target)
         TARGET="${2:?--target requires a triple}"
         shift 2
@@ -53,7 +59,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --help | -h)
-        sed -n '2,25p' "$0"
+        sed -n '2,27p' "$0"
         exit 0
         ;;
     *)

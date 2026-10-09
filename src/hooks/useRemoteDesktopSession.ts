@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import {
   remoteDesktopConnect,
+  remoteDesktopCancelConnect,
   remoteDesktopDisconnect,
   remoteDesktopResize,
   remoteDesktopSendInput,
@@ -105,6 +106,12 @@ export interface RemoteDesktopSession {
   /** Manually reconnect after a failure or the auto-retry cap. */
   reconnect: () => void;
   /**
+   * Abort the initial connect while it is still connecting (#4298): the backend
+   * drops the half-open connection and the tab rests on the manual Reconnect
+   * prompt. A no-op once the connect has finished.
+   */
+  cancelConnect: () => void;
+  /**
    * Stop an in-progress backend auto-reconnect (#3364): tears the session down
    * and rests on the manual-reconnect prompt instead of dialling again.
    */
@@ -184,6 +191,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const earlyStatesRef = useRef(new Map<string, RemoteDesktopStatePayload>());
   // Whether a connect is in flight, i.e. whether unknown sessions' events are buffered.
   const connectPendingRef = useRef(false);
+  // The in-flight connect attempt (#4298): its backend `connectId`, so Cancel or
+  // closing the tab can abort it, and whether the user cancelled it, so its
+  // rejection is not reported as a failure. `null` when no connect is pending.
+  const connectAttemptRef = useRef<{ connectId: string; userCancelled: boolean } | null>(null);
 
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
 
@@ -241,6 +252,11 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setReconnectAttempt(0);
       earlyStatesRef.current.clear();
       connectPendingRef.current = true;
+      const attempt = { connectId: `${tabId}:rd:${crypto.randomUUID()}`, userCancelled: false };
+      connectAttemptRef.current = attempt;
+      const settle = () => {
+        if (connectAttemptRef.current === attempt) connectAttemptRef.current = null;
+      };
       try {
         // A multi-monitor connection carries the concrete layout of this
         // computer's displays (#3696); the backend normalizes it.
@@ -251,9 +267,15 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
           : tab.config.config;
         // Name the saved connection (#4205) so a file transfer over this
         // session's side channel can resume after a restart.
-        const id = await remoteDesktopConnect(tab.config.type, connectSettings, tab.connectionId);
+        const id = await remoteDesktopConnect(
+          tab.config.type,
+          connectSettings,
+          tab.connectionId,
+          attempt.connectId
+        );
+        settle();
         connectPendingRef.current = false;
-        if (canceled) {
+        if (canceled || attempt.userCancelled) {
           fireAndForget(
             remoteDesktopDisconnect(id),
             `disconnect orphaned remote-desktop session ${id}`
@@ -272,9 +294,11 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         applyState(superseded ? { session_id: id, state: "active", reconnect_attempt: 0 } : early);
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
+        settle();
         connectPendingRef.current = false;
         earlyStatesRef.current.clear();
-        if (canceled) return;
+        // Unmounted, or cancelled by the user (who already sees "closed").
+        if (canceled || attempt.userCancelled) return;
         // A rejected credential (typed `auth_failed`, #3390) keeps the
         // "Authentication failed" overlay instead of the generic connect error.
         setState(isAuthFailure(err) ? "authFailed" : "connectFailed");
@@ -308,6 +332,17 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
     return () => {
       canceled = true;
+      // Closing the tab while it is still connecting aborts the backend connect
+      // (#4298) instead of letting it run on to its timeout. A StrictMode
+      // remount starts a fresh attempt, so aborting this one is always safe.
+      const attempt = connectAttemptRef.current;
+      if (attempt) {
+        connectAttemptRef.current = null;
+        fireAndForget(
+          remoteDesktopCancelConnect(attempt.connectId),
+          `cancel connecting remote-desktop attempt ${attempt.connectId} on tab close`
+        );
+      }
       const id = sessionIdRef.current;
       if (id) {
         // Cross-window move (#1904): the destination window adopts this still-
@@ -521,6 +556,20 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     setRetryNonce((n) => n + 1);
   }, []);
 
+  const cancelConnect = useCallback(() => {
+    const attempt = connectAttemptRef.current;
+    if (!attempt) return;
+    attempt.userCancelled = true;
+    connectAttemptRef.current = null;
+    setState("closed");
+    setReconnectAttempt(0);
+    setMessage(null);
+    fireAndForget(
+      remoteDesktopCancelConnect(attempt.connectId),
+      `cancel connecting remote-desktop attempt ${attempt.connectId}`
+    );
+  }, []);
+
   const cancelReconnect = useCallback(() => {
     // Disconnecting aborts the backend's reconnect loop (and any pending
     // attempt); the tab then shows the manual Reconnect prompt.
@@ -564,6 +613,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     remoteClipboardFiles,
     bindClipboardFiles,
     reconnect,
+    cancelConnect,
     cancelReconnect,
     awaitingFirstFrame,
     noteFirstFrame,

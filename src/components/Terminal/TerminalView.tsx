@@ -21,12 +21,11 @@ import {
   useLayoutRenderTree,
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
-import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
-import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { currentSessionView } from "@/store/sessionBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import { countLiveSessions } from "@/utils/tabLiveSession";
+import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
 import { Button, Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
@@ -275,10 +274,6 @@ export function TerminalView() {
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useLayoutRenderTree();
   const activePanelId = useActivePanelId();
-  const removePanel = useAppStore((s) => s.removePanel);
-  const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
-  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const confirmCloseLiveSession = useProjectedSettings().confirmCloseLiveSession;
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const macroRecording = useAppStore((s) => s.macroRecording);
@@ -400,26 +395,9 @@ export function TerminalView() {
 
   const handleClosePanel = () => {
     if (!activePanelId || allLeaves.length <= 1) return;
-    const panel = allLeaves.find((p) => p.id === activePanelId);
-    const panelTabs = panel?.tabs ?? [];
-    const liveCount = countLiveSessions(panelTabs, {
-      // #2625: exited is region-only now the per-client slice is deleted; read
-      // synchronously here since this is an imperative close handler, not render.
-      terminalExitedTabs: effectiveExitedMap(currentSessionView()),
-      terminalSpawnErrors,
-    });
-    // Confirm before destroying every tab/session in the panel, unless the user
-    // opted out or nothing live would be lost.
-    if (liveCount > 0 && confirmCloseLiveSession !== false) {
-      setPendingSessionCloseConfirm({
-        kind: "panel",
-        panelId: activePanelId,
-        liveCount,
-        tabCount: panelTabs.length,
-      });
-      return;
-    }
-    removePanel(activePanelId);
+    // Confirms first when the panel holds live sessions or unsaved editors
+    // (UX2-003), so removing it never silently discards work.
+    closePanelGuarded(activePanelId);
   };
 
   return (

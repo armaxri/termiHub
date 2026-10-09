@@ -6,8 +6,8 @@ severity: medium
 category: supply-chain
 is_workaround: false
 subsystem: "release / CI gates"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4282 — release.yml verify-supply-chain runs cargo audit + cargo deny at tag time, every build needs it, Security Audit push run required, release cargo builds use --locked"
 audit: 2026-10
 commit: 663465d52
 relation: new

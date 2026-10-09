@@ -89,8 +89,8 @@ check_integration() {
     # here is not reliable: they need Docker fixtures, a real display and a quiet
     # machine, and on macOS the container VMs pin the CPU and stall the WKWebView.
     # So the gate is the same one the Release workflow enforces: the newest run of
-    # 'Release Candidate: Full Integration' and the post-merge Code Quality and Dev
-    # Build push runs must be green on this exact commit. The check reuses
+    # 'Release Candidate: Full Integration' and the post-merge Code Quality, Dev
+    # Build and Security Audit push runs must be green on this exact commit. The check reuses
     # scripts/internal/release-integration-gate.mjs, so the local gate and the tag
     # gate cannot disagree. It needs the gh CLI, logged in.
     HEAD_SHA=$(git rev-parse HEAD)
