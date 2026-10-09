@@ -20,6 +20,9 @@ on:
       # exercised on their own PR instead of shipping unvalidated.
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
+      # Release crash-report symbol check (#4316).
+      - 'tests/release-crash-probe/**'
+      - 'scripts/internal/check-release-crash-symbols.sh'
   push:
     branches: [ main, develop ]
     paths:
@@ -28,6 +31,9 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
+      # Release crash-report symbol check (#4316).
+      - 'tests/release-crash-probe/**'
+      - 'scripts/internal/check-release-crash-symbols.sh'
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
 # to develop, cancels the in-flight run for the older commit, so a merge burst
@@ -153,6 +159,39 @@ jobs:
           path: target/${{ matrix.target }}/release/termihub-agent
           if-no-files-found: error
           retention-days: 7
+
+  # Release crash reports must stay symbolizable (#4316, audit OBS2-001). Builds
+  # the tiny tests/release-crash-probe with the workspace's real
+  # [profile.release], forces a panic through the same CrashDetails::capture +
+  # write_report path the desktop and agent hooks use, and fails unless the
+  # report's backtrace names a `termihub_core` frame. `strip = true` turns every
+  # frame into `<unknown>`; this catches it coming back. The probe links core
+  # with no default features, so the release build is small enough for every PR
+  # that touches the profile (root Cargo.toml) or core.
+  release-crash-symbols:
+    name: Release crash-report symbols
+    runs-on: ubuntu-latest
+    needs: changes
+    # Gated on `tests` only, not `agent`: the probe and this script sit outside
+    # the agent area, and an edit to either must still run the check. The
+    # workflow's path filter already limits it to profile/core/probe changes.
+    if: ${{ !cancelled() && needs.changes.outputs.tests != 'false' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release-crash-probe
+          # Reader/writer split (#3328): only pushes to develop/main save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Forced panic in a release build names termiHub frames
+        run: scripts/internal/check-release-crash-symbols.sh
 
   # Build the Windows agent (MSVC) and run the agent/core test suites on a
   # Windows runner. cross-rs cannot build the MSVC ABI, so this uses native
