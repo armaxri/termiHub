@@ -29,6 +29,7 @@ import { mirrorLayoutIntent, mirrorLayoutMove } from "@/store/layoutBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
+import { prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -447,11 +448,21 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         return;
       }
 
+      // The old tab id now exists in no window (the destination mints a fresh
+      // one), so release it from the shared regions — lifecycle record and
+      // broadcast membership — exactly as a close would (#4313, FES2-002).
+      // Ownership release and close workflow triggers are deliberately skipped:
+      // the session is moving, not closing.
+      releaseTabFromSharedRegions(get, tabId);
+
       // Remove the tab from the source window's tree. The Terminal unmount sees
       // the moving flag and skips closeTerminal, keeping the backend session
       // alive for the destination to re-attach and replay. Non-intent structural
       // writer (#2283 slice E2 / #2562): compute the tree and reseed the region.
       setAndReseed((state) => {
+        // Drop every per-tab map entry, persistent attachment and (when no other
+        // tab here shows the session) session-keyed entry of the departing tab.
+        const pruned = prunedTabState(state, tabId);
         let newRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
         );
@@ -476,6 +487,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         // Transfer Queue region is unaffected — every window already sees it.
         const transferMoved = removeTransferSessionsFromWindow(state, transferSessionIds);
         return {
+          ...pruned,
           rootPanel: newRootPanel,
           tabGroups,
           activePanelId: newActivePanelId,
