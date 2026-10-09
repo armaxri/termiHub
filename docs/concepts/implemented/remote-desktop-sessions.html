@@ -1344,7 +1344,7 @@ sequenceDiagram
         S-&gt;&gt;B: protocol update PDU (RFB rects / RDP bitmap)
         B-&gt;&gt;B: decode to RGBA dirty-rects
         B-&gt;&gt;M: FrameUpdate {rects, width, height}
-        M-&gt;&gt;C: emit remote-desktop-frame
+        M-&gt;&gt;C: binary frame message on the session's ipc::Channel (#4291)
         C-&gt;&gt;C: blit dirty-rects into &lt;canvas&gt;
     end
     Note over C,B: input travels the reverse path, protocol-agnostic
@@ -1368,7 +1368,7 @@ sequenceDiagram
     M-&gt;&gt;B: resize(w, h)
     B-&gt;&gt;B: RDP: Display Control Channel / VNC: SetDesktopSize
     B-&gt;&gt;M: FrameUpdate at new size
-    M-&gt;&gt;C: emit remote-desktop-frame {w, h}
+    M-&gt;&gt;C: binary frame message {w, h}
     C-&gt;&gt;C: resize canvas, repaint
           </pre>
         </div>
