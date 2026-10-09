@@ -115,3 +115,21 @@ fn exports_carry_no_secret() {
     }
     assert_eq!(clean["host"], "h");
 }
+
+#[test]
+fn only_connections_that_can_own_field_secrets_touch_the_store() {
+    assert!(may_have_field_secrets("vnc", &json!({ "host": "h" })));
+    assert!(may_have_field_secrets(
+        "ssh",
+        &json!({ "proxyJump": [{ "host": "gw" }] })
+    ));
+    assert!(!may_have_field_secrets(
+        "ssh",
+        &json!({ "proxyJump": [{ "connectionId": "saved" }] })
+    ));
+    assert!(!may_have_field_secrets("local", &json!({ "shell": "zsh" })));
+    assert!(!may_have_field_secrets(
+        "ssh",
+        &json!({ "host": "h", "authMethod": "key" })
+    ));
+}

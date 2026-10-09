@@ -24,6 +24,7 @@ const CREDENTIAL_TYPE_LABELS: Record<string, string> = {
   password: "Password",
   key_passphrase: "Key passphrase",
   sudo_password: "Sudo password",
+  field_secrets: "Other saved secrets",
 };
 
 /** Human label for one conflicting credential. */

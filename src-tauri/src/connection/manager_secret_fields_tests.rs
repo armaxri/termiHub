@@ -130,7 +130,8 @@ fn exports_and_backups_carry_no_secret() {
     assert_no_secret(&mgr.export_encrypted_json(None, None).unwrap(), "export");
 
     // A backup of a connections.json still holding legacy plaintext.
-    let mut doc: serde_json::Value = serde_json::from_str(&read(dir.path(), "connections.json")).unwrap();
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&read(dir.path(), "connections.json")).unwrap();
     doc["children"][0]["config"]["config"]["sshPassword"] = json!(GATEWAY);
     crate::backup::sections::strip_connection_passwords(&mut doc);
     assert_no_secret(&doc.to_string(), "backup");
@@ -166,15 +167,28 @@ fn saved_secrets_come_back_at_connect_time() {
     let vnc_id = mgr.save_connection(tunnelled_vnc()).unwrap();
     let ssh_id = mgr.save_connection(jump_ssh()).unwrap();
 
-    let vnc = mgr.get_all().unwrap().connections.into_iter().find(|c| c.id == vnc_id).unwrap();
+    let vnc = mgr
+        .get_all()
+        .unwrap()
+        .connections
+        .into_iter()
+        .find(|c| c.id == vnc_id)
+        .unwrap();
     let mut settings = vnc.config.settings.clone();
     assert!(settings.get("sshPassword").is_none());
     mgr.restore_saved_secrets(&mut settings, &vnc_id);
     assert_eq!(settings["sshPassword"], GATEWAY);
 
-    let ssh = mgr.get_all().unwrap().connections.into_iter().find(|c| c.id == ssh_id).unwrap();
+    let ssh = mgr
+        .get_all()
+        .unwrap()
+        .connections
+        .into_iter()
+        .find(|c| c.id == ssh_id)
+        .unwrap();
     let mut settings = ssh.config.settings.clone();
-    mgr.resolve_jump_host_refs(&mut settings, Some(&ssh_id)).unwrap();
+    mgr.resolve_jump_host_refs(&mut settings, Some(&ssh_id))
+        .unwrap();
     assert_eq!(settings["proxyJump"][0]["password"], HOP);
 }
 
@@ -212,12 +226,14 @@ fn plaintext_secrets_in_connections_json_are_moved_on_load() {
     // A connections.json written before #4289, with secrets in plaintext.
     {
         let writer = manager(dir.path(), &Arc::new(RecordingStore::default()));
-        writer.storage.save_flat(&FlatConnectionStore {
-            connections: vec![tunnelled_vnc(), jump_ssh()],
-            folders: Vec::new(),
-            agents: Vec::new(),
-        })
-        .unwrap();
+        writer
+            .storage
+            .save_flat(&FlatConnectionStore {
+                connections: vec![tunnelled_vnc(), jump_ssh()],
+                folders: Vec::new(),
+                agents: Vec::new(),
+            })
+            .unwrap();
     }
     assert!(read(dir.path(), "connections.json").contains(GATEWAY));
 
@@ -226,9 +242,15 @@ fn plaintext_secrets_in_connections_json_are_moved_on_load() {
 
     assert_no_secret(&read(dir.path(), "connections.json"), "connections.json");
     let desk = secret_fields::read_field_secrets(&*store, "Desk").unwrap();
-    assert_eq!(desk.fields.get("sshPassword").map(String::as_str), Some(GATEWAY));
+    assert_eq!(
+        desk.fields.get("sshPassword").map(String::as_str),
+        Some(GATEWAY)
+    );
     let target = secret_fields::read_field_secrets(&*store, "Target").unwrap();
-    assert_eq!(target.hops.get("ops@bastion:22").map(String::as_str), Some(HOP));
+    assert_eq!(
+        target.hops.get("ops@bastion:22").map(String::as_str),
+        Some(HOP)
+    );
 }
 
 #[test]
@@ -236,12 +258,14 @@ fn a_failed_store_write_leaves_connections_json_untouched() {
     let dir = tempfile::tempdir().unwrap();
     {
         let writer = manager(dir.path(), &Arc::new(RecordingStore::default()));
-        writer.storage.save_flat(&FlatConnectionStore {
-            connections: vec![tunnelled_vnc()],
-            folders: Vec::new(),
-            agents: Vec::new(),
-        })
-        .unwrap();
+        writer
+            .storage
+            .save_flat(&FlatConnectionStore {
+                connections: vec![tunnelled_vnc()],
+                folders: Vec::new(),
+                agents: Vec::new(),
+            })
+            .unwrap();
     }
     let before = read(dir.path(), "connections.json");
     let store = Arc::new(RecordingStore {
@@ -278,7 +302,11 @@ fn plaintext_secrets_in_an_external_file_are_moved_on_load() {
     mgr.save_settings(settings).unwrap();
 
     let view = mgr.load_unified_view().unwrap();
-    assert!(view.external_errors.is_empty(), "{:?}", view.external_errors);
+    assert!(
+        view.external_errors.is_empty(),
+        "{:?}",
+        view.external_errors
+    );
     let loaded = view.connections.iter().find(|c| c.name == "Desk").unwrap();
     assert!(loaded.config.settings.get("sshPassword").is_none());
     assert_no_secret(&std::fs::read_to_string(&file).unwrap(), "external file");

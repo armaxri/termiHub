@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use super::config::SavedConnection;
 use super::credential_scope::owner_id;
 use super::id_changes::ConnectionIdRemap;
+use super::secret_fields::restore_saved_hop_secrets;
 use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 
@@ -362,10 +363,20 @@ fn resolve_hops(
                 visited.insert(ref_id.to_string());
                 // The referenced connection's own chain is reached first (its hops
                 // are the *outer* gateways), then the connection itself.
-                let inner = referenced_chain(conn);
+                let owner = scope.credential_owner(conn);
+                let mut inner = referenced_chain(conn);
+                // Its inline hops' passwords live in its field-secrets entry (#4289).
+                if let Some(owner) = owner.as_deref() {
+                    if let Err(e) = restore_saved_hop_secrets(creds, owner, &mut inner) {
+                        tracing::warn!(
+                            connection = %conn.name,
+                            error = %e,
+                            "Could not restore a referenced jump host's hop secrets"
+                        );
+                    }
+                }
                 let mut inner_resolved = resolve_hops(&inner, scope, creds, visited, depth + 1)?;
                 resolved.append(&mut inner_resolved);
-                let owner = scope.credential_owner(conn);
                 resolved.push(build_inline_hop(
                     conn,
                     ref_id,

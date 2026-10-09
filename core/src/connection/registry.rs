@@ -128,6 +128,12 @@ impl ConnectionTypeRegistry {
             .ok_or_else(|| CoreError::Config(unknown_type_message(type_id)))
     }
 
+    /// The metadata (including the settings schema) of the registered type
+    /// `type_id`, without cloning every type as [`available_types`](Self::available_types) does.
+    pub fn type_info(&self, type_id: &str) -> Option<&ConnectionTypeInfo> {
+        self.factories.get(type_id).map(|entry| &entry.info)
+    }
+
     /// Check whether a connection type is registered.
     pub fn has_type(&self, type_id: &str) -> bool {
         self.factories.contains_key(type_id)
