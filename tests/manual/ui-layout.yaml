@@ -255,3 +255,24 @@ tests:
       - "With the yellow accent, primary button text turns dark and stays readable."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-51
+    release_gate: true
+    manual_reason: "scrollbar paint and overlap with terminal text are a visual judgement (the CSS rules are pinned by tokenDiscipline.test.ts)"
+    name: "Terminal and file-browser breadcrumb scrollbars follow the global style"
+    pr: 4615
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell and run 'seq 1 500' so there is scrollback; keep the pointer off the terminal."
+      - "Fill the terminal with long lines (e.g. 'yes $(printf x%.0s {1..300}) | head -50') and look at the right edge."
+      - "Enable horizontal scrolling for the terminal and scroll a little to the right."
+      - "Open the file browser in a deeply nested folder so the breadcrumb row is wider than the sidebar, then scroll it sideways."
+    expected:
+      - "The terminal's vertical scrollbar thumb is visible without hovering and brightens when hovered or dragged."
+      - "The thumb sits in the strip at the right edge and never covers terminal text; there is only one vertical bar."
+      - "In horizontal-scroll mode the horizontal thumb is visible at rest and does not cover the last row."
+      - "The breadcrumb row scrolls and shows the same thin scrollbar as the rest of the app."
+    verification: manual
+    tags: [visual]

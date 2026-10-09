@@ -29,6 +29,8 @@ on:
       - 'scripts/package-plugin.*'
       - 'plugins/keys/first-party-publisher.pub.pem'
       - '.github/workflows/plugin-packaging.yml'
+      - '.github/actions/docker-hub-mirror/**'
+      - 'scripts/internal/registry-mirror.sh'
   push:
     branches: [ main, develop ]
 
@@ -212,6 +214,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
+      - name: Docker Hub resilience (mirror)
+        # #4614: pull the rust:<pinned>-bookworm image below through the
+        # mirror.gcr.io Docker Hub mirror instead of unauthenticated Docker Hub.
+        uses: ./.github/actions/docker-hub-mirror
+
       - name: Allow unprivileged user namespaces on the host
         if: matrix.userns == 'allowed'
         shell: bash
@@ -229,6 +236,8 @@ jobs:
           set -euo pipefail
           version="$(cat .github/rust-version)"
           read -r -a docker_opts <<< "$DOCKER_OPTS"
+          # Retried with backoff so a transient registry error is not a red (#4614).
+          scripts/internal/registry-mirror.sh pull "rust:${version}-bookworm"
           docker run --rm "${docker_opts[@]}" -e "TERMIHUB_EXPECT_USERNS=$EXPECT_USERNS" \
             -v "$PWD:/src:ro" "rust:${version}-bookworm" bash -euo pipefail -c '
             apt-get update -qq

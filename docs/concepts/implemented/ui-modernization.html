@@ -1026,7 +1026,19 @@
             <strong>One scrollbar.</strong> Scrollbars are styled globally (persistent, visible
             thumb on every platform, #3144, <code>global.css</code>); components never re-style
             them. Fixes the one straggler (<code>TabGroupChips.css</code> forcing
-            <code>scrollbar-width: none</code>).
+            <code>scrollbar-width: none</code>). Enforced by the <code>tokenDiscipline</code>
+            &ldquo;one scrollbar&rdquo; test: any component that hides or re-styles a scrollbar
+            fails unless it is on the allow-list, and every allow-list entry is a named exception
+            recorded here.
+            <br />
+            <em>Named exception &mdash; terminal (<code>Terminal/Terminal.css</code>):</em> the
+            terminal draws its own gutter scrollbar (<code>terminalScrollbar.ts</code>), because in
+            horizontal-scroll mode the <code>.xterm</code> element is widened and scrolled, so a bar
+            attached to it would drift to the content&rsquo;s right edge. The native xterm viewport
+            bar is therefore hidden (a second vertical bar otherwise), and the horizontal
+            bar&rsquo;s height is pinned to the bottom reserve FitAddon accounts for. Both thumbs
+            still use the global scrollbar tokens and are persistently visible (#3144), so the
+            terminal looks and behaves like every other scrollbar (#4585).
           </li>
           <li>
             <strong>One motion language.</strong> Dialogs and toasts share one enter (fade + 8px
@@ -1273,10 +1285,10 @@ stateDiagram-v2
         </blockquote>
         <p>
           <strong>Last synced:</strong> 2026-10-09 (#4369: scrollbar, focus-ring and list-library
-          wording) · <strong>Status:</strong> implemented. All five roadmap phases shipped and their
-          issues (#1059–#1063) are closed — the phase-4 dialog/form migration is
-          <strong>complete</strong>: every <code>&lt;Modal&gt;</code> call site (including the Port
-          Scanner large-scan warning, WoL save modal and
+          wording; #4585: component scrollbar overrides) · <strong>Status:</strong> implemented. All
+          five roadmap phases shipped and their issues (#1059–#1063) are closed — the phase-4
+          dialog/form migration is <strong>complete</strong>: every <code>&lt;Modal&gt;</code> call
+          site (including the Port Scanner large-scan warning, WoL save modal and
           <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives. The last
           residual —
           <strong
@@ -1414,10 +1426,14 @@ stateDiagram-v2
                   <code>Sidebar/FileBrowser.css</code> (breadcrumb row) set
                   <code>scrollbar-width: none</code>
                 </td>
-                <td>Divergence</td>
+                <td>Resolved</td>
                 <td>
-                  Tracked in <a href="https://github.com/armaxri/termiHub/issues/4585">#4585</a>:
-                  fix the code or record the exception here
+                  <a href="https://github.com/armaxri/termiHub/issues/4585">#4585</a>: the
+                  breadcrumb override was removed (global scrollbar). The terminal keeps its native
+                  viewport bar hidden as a named exception in the consistency rules (its gutter
+                  scrollbar replaces it), and its gutter and horizontal thumbs were made
+                  persistently visible instead of hover-only. A <code>tokenDiscipline</code>
+                  allow-list test now fails any other component scrollbar override
                 </td>
               </tr>
             </tbody>
