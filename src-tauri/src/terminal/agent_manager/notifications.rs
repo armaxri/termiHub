@@ -6,8 +6,8 @@
 //! channels, `connection.evicted` to the SM-003 eviction fold,
 //! `connection.filesOnly` to the session's files-only watch (#4081), `agent.forward.*`
 //! to the desktop ssh-agent relay, `tool.event`/`tool.done` to their tool run,
-//! and the `agent.update_available`/`agent.update_pending` notices to the
-//! frontend as Tauri events.
+//! the `agent.update_available` notice to the frontend as a Tauri event, and the
+//! `agent.update_pending` notice to the backend's update reconnect (#4489).
 //!
 //! Carved verbatim out of the parent `agent_manager` module: no behaviour,
 //! emit-order, channel, lock or task change. The I/O task that *calls* these
@@ -23,10 +23,11 @@ use tracing::{info, warn};
 use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentForwardOpenParams,
     ConnectionEvictedNotification, ConnectionOutputNotification, MonitoringData,
-    MonitoringStatusNotification, UpdateAvailableNotification, UpdatePendingNotification,
+    MonitoringStatusNotification, UpdateAvailableNotification,
 };
 
 use super::files_only::{route_files_only_notification, FilesOnlyRoutes};
+use super::update_reconnect::handle_update_pending_notice;
 use super::{
     fold_evicted_hosted_sessions, hosted_sessions_for_agent, AgentIoSender, MonitoringRoute,
     ToolRunMessage, ToolRunSender,
@@ -50,17 +51,18 @@ struct AgentUpdateAvailableEvent<'a> {
 }
 
 /// Payload of the `remote-agent-update-pending` Tauri event: the agent's
-/// [`UpdatePendingNotification`] tagged with the desktop's `agent_id`.
+/// [`UpdatePendingNotification`](termihub_core::protocol::methods::UpdatePendingNotification)
+/// tagged with the desktop's `agent_id`.
 #[derive(Debug, serde::Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
-struct RemoteAgentUpdatePendingEvent<'a> {
-    agent_id: &'a str,
+pub(super) struct RemoteAgentUpdatePendingEvent<'a> {
+    pub(super) agent_id: &'a str,
     #[serde(rename = "requestedByVersion")]
-    requested_by_version: &'a str,
+    pub(super) requested_by_version: &'a str,
     #[serde(rename = "estimatedRestartSecs")]
     #[cfg_attr(test, ts(type = "number"))]
-    estimated_restart_secs: u64,
+    pub(super) estimated_restart_secs: u64,
 }
 
 /// Build the `agent-update-available` event payload from the notification's
@@ -78,9 +80,11 @@ pub(super) fn agent_update_available_event(agent_id: &str, params: &Value) -> Op
 
 /// Build the `remote-agent-update-pending` event payload from the
 /// notification's params via the shared DTO (DUP-001, #3226). `None` for a
-/// malformed payload.
+/// malformed payload. Production emits it from the update reconnect (#4489).
+#[cfg(test)]
 pub(super) fn remote_agent_update_pending_event(agent_id: &str, params: &Value) -> Option<Value> {
-    let n: UpdatePendingNotification = serde_json::from_value(params.clone()).ok()?;
+    let n: termihub_core::protocol::methods::UpdatePendingNotification =
+        serde_json::from_value(params.clone()).ok()?;
     serde_json::to_value(RemoteAgentUpdatePendingEvent {
         agent_id,
         requested_by_version: &n.requested_by_version,
@@ -103,28 +107,6 @@ fn emit_agent_update_available<R: Runtime>(
             let _ = app_handle.emit("agent-update-available", event);
         }
         None => warn!("Agent {agent_id}: malformed agent.update_available notification dropped"),
-    }
-}
-
-/// Forward an agent's `agent.update_pending` notification to the frontend as the
-/// `remote-agent-update-pending` Tauri event (#1602). Broadcast by the agent to
-/// every *other* connected host when one host initiates a coordinated update
-/// (#1351): this desktop is being cut over, so the frontend surfaces the "being
-/// updated by another host" notice, suspends the affected session and queues an
-/// auto-reconnect. Tagged with the `agent_id` so the notice keys off it exactly
-/// like the deferred-update banner. A payload that does not match the shared
-/// DTO is logged and dropped (the agent restart is then handled by the normal
-/// transport-loss reconnect).
-fn emit_remote_agent_update_pending<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    agent_id: &str,
-    params: &Value,
-) {
-    match remote_agent_update_pending_event(agent_id, params) {
-        Some(event) => {
-            let _ = app_handle.emit("remote-agent-update-pending", event);
-        }
-        None => warn!("Agent {agent_id}: malformed agent.update_pending notification dropped"),
     }
 }
 
@@ -187,7 +169,9 @@ pub(super) fn dispatch_agent_notification<R: Runtime>(
         emit_agent_update_available(app_handle, agent_id, params);
     }
     if method == termihub_core::protocol::methods::AGENT_UPDATE_PENDING {
-        emit_remote_agent_update_pending(app_handle, agent_id, params);
+        // The backend suspends the agent and reconnects it once for every
+        // window (#4489); the waiting notice is emitted from there.
+        handle_update_pending_notice(app_handle, agent_id, params);
     }
     if method == termihub_core::protocol::methods::CONNECTION_EVICTED {
         handle_session_evicted_notification(app_handle, agent_id, params);

@@ -23,6 +23,7 @@ export const TAURI_EVENT = {
   agentSetupProgress: "agent-setup-progress",
   agentUpdateAvailable: "agent-update-available",
   remoteAgentUpdatePending: "remote-agent-update-pending",
+  agentUpdateReconnect: "agent-update-reconnect",
   vscodeEditComplete: "vscode-edit-complete",
   localFileChanged: "local-file-changed",
   localDirChanged: "local-dir-changed",

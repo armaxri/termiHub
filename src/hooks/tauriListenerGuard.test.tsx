@@ -23,6 +23,7 @@ function deferredRegistration(): Promise<() => void> {
 vi.mock("@/services/events", () => ({
   onAgentUpdateAvailable: vi.fn(() => deferredRegistration()),
   onRemoteAgentUpdatePending: vi.fn(() => deferredRegistration()),
+  onAgentUpdateReconnect: vi.fn(() => deferredRegistration()),
   onEmbeddedServerStatusChanged: vi.fn(() => deferredRegistration()),
   onCredentialStoreLocked: vi.fn(() => deferredRegistration()),
   onCredentialStoreUnlocked: vi.fn(() => deferredRegistration()),

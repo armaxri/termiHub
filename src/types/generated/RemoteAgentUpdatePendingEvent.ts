@@ -2,6 +2,7 @@
 
 /**
  * Payload of the `remote-agent-update-pending` Tauri event: the agent's
- * [`UpdatePendingNotification`] tagged with the desktop's `agent_id`.
+ * [`UpdatePendingNotification`](termihub_core::protocol::methods::UpdatePendingNotification)
+ * tagged with the desktop's `agent_id`.
  */
 export type RemoteAgentUpdatePendingEvent = { agent_id: string, requestedByVersion: string, estimatedRestartSecs: number, };
