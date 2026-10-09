@@ -26,6 +26,7 @@ pub mod plugin_type_id;
 pub mod registry;
 pub mod save_password;
 pub mod schema;
+pub mod secrets;
 pub mod schema_defaults;
 pub mod validation;
 
