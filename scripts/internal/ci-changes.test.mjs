@@ -58,6 +58,7 @@ describe("classify", () => {
     expect(on(classify(["vendor/vnc-rs/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
     expect(classify(["plugin-api/src/lib.rs"])).toMatchObject({ rust: true, agent: true });
     expect(classify(["plugin-runner/src/lib.rs"])).toMatchObject({ rust: true, agent: true });
+    expect(classify(["win-security/src/lib.rs"])).toMatchObject({ rust: true, agent: true });
     expect(classify(["rust-toolchain.toml"])).toMatchObject({ rust: true, agent: true });
     expect(classify(["Cargo.lock"])).toMatchObject({ rust: true, deps: true, agent: true });
   });
@@ -69,6 +70,7 @@ describe("classify", () => {
     expect(on(classify(["plugin-runner/fuzz/fuzz_targets/host_decode.rs"]))).toEqual(fuzz);
     expect(classify(["plugin-runner/Cargo.toml"])).toMatchObject({ deps: true, plugin_fuzz: true });
     expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(fuzz);
+    expect(on(classify(["win-security/src/windows.rs"]))).toEqual(fuzz);
     expect(on(classify(["rust-toolchain.toml"]))).toEqual(fuzz);
     expect(on(classify([".cargo/config.toml"]))).toEqual(fuzz);
     expect(classify(["Cargo.toml"])).toMatchObject({ rust: true, plugin_fuzz: true });
