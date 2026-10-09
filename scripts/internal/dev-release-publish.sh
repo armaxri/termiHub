@@ -169,6 +169,8 @@ publish() {
     --jq ".[] | select(.draft and (.tag_name | startswith(\"${tag}-staging-\"))) | .id" \
     || true)"
   for sid in $stale; do
+    # Never the release just published (the list may still report it a draft).
+    [ "$sid" = "$id" ] && continue
     gh api -X DELETE "repos/{owner}/{repo}/releases/$sid" >/dev/null || true
   done
 }
