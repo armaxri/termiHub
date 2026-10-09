@@ -20,6 +20,14 @@
 //! `System32\drivers\etc\hosts` stay readable to every AppContainer, which
 //! is expected and harmless (spike #4181), so they are not probed there.
 //!
+//! **Profile tuning (#4342).** Also probed: the host's `/proc/<pid>/mem`
+//! opened for writing and inotify watches (Linux, also in reduced isolation),
+//! the metadata of a file in the home folder (macOS; Linux where the
+//! namespace layer masks the home folder), the process table and other
+//! processes' arguments and paths (macOS) — and, as positive controls, the
+//! TLS trust store: the distribution CA bundle on Linux, the CA bundle and
+//! the platform certificate verifier (`trustd`) on macOS.
+//!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
 #![cfg(feature = "plugin")]
@@ -78,6 +86,78 @@ fn netns_available() -> bool {
     return termihub_plugin_runner::sandbox::linux::namespaces::available();
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     false
+}
+
+/// Linux: Yama's `ptrace_scope`, `None` without Yama.
+#[cfg(target_os = "linux")]
+fn yama_ptrace_scope() -> Option<u32> {
+    std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// The CA bundle files and folders of the common distributions, as
+/// `openssl-probe` / `rustls-native-certs` look for them (#4342).
+#[cfg(target_os = "linux")]
+const CA_BUNDLES: &[&str] = &[
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+];
+
+/// Linux: trust-store reads a TLS plugin makes, as `read` probes: the first
+/// CA bundle this system has, and one hashed entry of `/etc/ssl/certs` (a
+/// symlink into `/usr/share/ca-certificates` on Debian-likes). Empty on a
+/// system without a CA bundle.
+#[cfg(target_os = "linux")]
+fn trust_store_reads() -> Vec<(&'static str, String)> {
+    let mut reads: Vec<(&'static str, String)> = CA_BUNDLES
+        .iter()
+        .find(|path| Path::new(path).is_file())
+        .map(|path| ("read", (*path).to_owned()))
+        .into_iter()
+        .collect();
+    let hashed = std::fs::read_dir("/etc/ssl/certs")
+        .ok()
+        .and_then(|entries| {
+            entries.flatten().map(|e| e.path()).find(|p| {
+                p.extension().is_some_and(|x| x == "0")
+                    && std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+                    && p.is_file()
+            })
+        });
+    if let Some(path) = hashed {
+        reads.push(("read", path.display().to_string()));
+    }
+    if reads.is_empty() {
+        println!("no CA bundle on this system; the trust-store control is skipped");
+    }
+    reads
+}
+
+/// macOS: the CA bundle and the platform certificate verifier (`trustd`).
+#[cfg(target_os = "macos")]
+fn trust_store_reads() -> Vec<(&'static str, String)> {
+    vec![
+        ("read", "/etc/ssl/cert.pem".to_owned()),
+        ("trust", String::new()),
+    ]
+}
+
+#[cfg(windows)]
+fn trust_store_reads() -> Vec<(&'static str, String)> {
+    Vec::new()
+}
+
+/// A file in the user's home folder whose metadata the plugin must not see
+/// (#4342, SEC2-006): `None` where the home folder is not writable.
+fn home_canary() -> Option<tempfile::NamedTempFile> {
+    tempfile::Builder::new()
+        .prefix(".termihub-stat-canary-")
+        .tempfile_in(home_dir())
+        .ok()
 }
 
 /// Whether this OS's runner must report an enforced sandbox.
@@ -348,6 +428,11 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     let probe_plugin = Probe::load(Probe::install(work.path()), config()).expect("the probe loads");
 
     let report = probe_plugin.report();
+    #[cfg(target_os = "linux")]
+    let netns = report
+        .enforced
+        .iter()
+        .any(|l| l == termihub_core::plugin::sandbox::layer::NETNS);
     if expect_confined() {
         assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
         // The optional namespace layer (#4237) is listed exactly where this
@@ -392,6 +477,14 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
         assert!(allowed, "positive control failed: {line}");
     }
+    // TLS needs the trust store (#4342, PLG2-004).
+    if expect_confined() {
+        for (op, arg) in trust_store_reads() {
+            let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
+            println!("{line}");
+            assert!(allowed, "trust-store control failed: {line}");
+        }
+    }
     if expect_confined() {
         // HOME and TMPDIR point into the data folder.
         let (_, line) = probe(conn.as_ref(), &mut rx, "env", "HOME").await;
@@ -419,6 +512,17 @@ async fn escape_attempts_fail_and_positive_controls_work() {
         ("env", "SSH_AUTH_SOCK".to_owned()),
     ];
     attempts.extend(os_escape_attempts(&canary));
+    // The metadata of a file in the home folder (#4342, SEC2-006): Seatbelt
+    // denies it; on Linux landlock does not mediate `stat`, so it is hidden
+    // only where the namespace layer masks the home folder.
+    let home_file = home_canary();
+    #[cfg(target_os = "linux")]
+    let stat_hidden = netns;
+    #[cfg(not(target_os = "linux"))]
+    let stat_hidden = cfg!(target_os = "macos");
+    if let Some(file) = home_file.as_ref().filter(|_| stat_hidden) {
+        attempts.push(("stat", canonical(file.path())));
+    }
     let mut escaped = Vec::new();
     for (op, arg) in &attempts {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
@@ -457,11 +561,13 @@ async fn escape_attempts_fail_and_positive_controls_work() {
 }
 
 /// The escape attempts only this OS has: Unix sockets, `fork`, `/etc/hosts`,
-/// the host's `/proc` entries (Linux; absent elsewhere) and a serial device.
+/// the host's `/proc` entries (Linux; absent elsewhere), a serial device,
+/// and (#4342) inotify watches (Linux) and other processes' information
+/// (macOS).
 #[cfg(unix)]
 fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
     let host_pid = std::process::id();
-    vec![
+    let mut attempts = vec![
         ("unix", canonical(&canary.unix_path)),
         ("fork", String::new()),
         ("read", "/etc/hosts".to_owned()),
@@ -470,6 +576,31 @@ fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
         ("read", format!("/proc/{host_pid}/environ")),
         // A serial device.
         ("read", "/dev/ttyS0".to_owned()),
+    ];
+    if cfg!(target_os = "linux") {
+        attempts.extend(linux_host_attempts(canary));
+    }
+    if cfg!(target_os = "macos") {
+        attempts.extend([
+            // The process table and the host's arguments, environment and
+            // path (SEC2-008): `(deny default)` alone does not deny them.
+            ("proclist", String::new()),
+            ("procargs", host_pid.to_string()),
+            ("pidpath", host_pid.to_string()),
+        ]);
+    }
+    attempts
+}
+
+/// Linux attempts that must fail in reduced isolation too (#4342): writing
+/// into the host's memory (SEC2-003) and watching folders outside the
+/// plugin's own (SEC2-006).
+#[cfg(unix)]
+fn linux_host_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
+    vec![
+        ("procmem", std::process::id().to_string()),
+        ("inotify", home_dir()),
+        ("inotify", canonical(&canary.outside_dir)),
     ]
 }
 
@@ -672,8 +803,79 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, arg).await;
         assert!(!allowed, "seccomp must deny {op}: {line}");
     }
+    // #4342: no write access to the host's memory (SEC2-003) and no inotify
+    // (SEC2-006), even without landlock.
+    for (op, arg) in linux_host_attempts(&canary) {
+        let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
+        assert!(!allowed, "{op} must be denied in reduced isolation: {line}");
+    }
+    // With the namespace layer the home folder is masked: neither its files'
+    // metadata nor their contents are reachable (SEC2-003, SEC2-006).
+    if netns_available() {
+        if let Some(file) = home_canary() {
+            for op in ["stat", "read"] {
+                let (allowed, line) =
+                    probe(conn.as_ref(), &mut rx, op, &canonical(file.path())).await;
+                assert!(!allowed, "the masked home folder leaked: {line}");
+            }
+        }
+    }
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(canary.tcp_accepted.load(Ordering::SeqCst), 0);
+    conn.disconnect().await.unwrap();
+}
+
+/// Linux (#4342, SEC2-003): without landlock **and** without the namespace
+/// layer, only Yama keeps a same-user plugin from writing into the host's
+/// memory through `/proc/<pid>/mem`. With `ptrace_scope` ≥ 1 the plugin loads
+/// with reduced isolation and the write access is refused; with
+/// `ptrace_scope` 0 or no Yama the runner refuses to start the plugin at all
+/// (the setup fails), since nothing would stop it.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_landlock_or_namespaces_host_memory_stays_out_of_reach() {
+    use termihub_core::plugin::sandbox::{layer, sandbox_policy};
+    use termihub_core::plugin::{native_trust_binding, AckAcceptances, NativeTrustStore};
+
+    let work = tempfile::TempDir::new().unwrap();
+    let canary = canaries(work.path());
+    let installed = Probe::install(work.path());
+    let id = installed.plugin.manifest.id.clone();
+    let mut policy = sandbox_policy(&installed.root, &id).expect("a policy");
+    policy.simulate_missing = vec![layer::LANDLOCK.to_owned(), layer::NETNS.to_owned()];
+    let binding = native_trust_binding(&installed.root, &id).unwrap();
+    NativeTrustStore::load(&installed.root)
+        .acknowledge_with(
+            &id,
+            &binding,
+            AckAcceptances {
+                reduced_isolation: true,
+                ..AckAcceptances::default()
+            },
+        )
+        .unwrap();
+    let loaded = Probe::load(installed, config().with_sandbox_policy_for_tests(policy));
+    let scope = yama_ptrace_scope();
+    println!("Yama ptrace_scope: {scope:?}");
+    if scope.is_none_or(|s| s < 1) {
+        match loaded {
+            Err(HostError::SandboxSetupFailed(detail)) => {
+                assert!(detail.contains("ptrace_scope"), "{detail}");
+            }
+            Err(other) => panic!("expected SandboxSetupFailed, got {other:?}"),
+            Ok(_) => panic!("reduced isolation without any /proc protection must not load"),
+        }
+        return;
+    }
+    let probe_plugin = loaded.expect("Yama protects the host: reduced isolation loads");
+    let report = probe_plugin.report();
+    assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+    assert_eq!(report.enforced, vec![layer::SECCOMP.to_owned()]);
+    let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;
+    for (op, arg) in linux_host_attempts(&canary) {
+        let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
+        assert!(!allowed, "{op} must be denied: {line}");
+    }
     conn.disconnect().await.unwrap();
 }
 

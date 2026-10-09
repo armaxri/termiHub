@@ -29,6 +29,14 @@
 //! | `pipe`  | open the named pipe `<arg>` for reading and writing       |
 //! | `sockets` | call `socket()` `<arg>` times (ALLOWED = any succeeded)   |
 //! | `sigsys`  | replace the `SIGSYS` handler (Linux; #4236)             |
+//! | `stat`    | read the metadata of `<arg>` (no open; #4342)            |
+//! | `procmem` | open `/proc/<arg>/mem` for reading and writing (Linux)   |
+//! | `inotify` | watch the path `<arg>` with inotify (Linux; #4342)       |
+//! | `trust`   | verify a root of `/etc/ssl/cert.pem` with the platform   |
+//! |           | verifier, `SecTrustEvaluateWithError` (macOS; #4342)     |
+//! | `proclist`| size the process table, `sysctl(KERN_PROC_ALL)` (macOS)  |
+//! | `procargs`| read `KERN_PROCARGS2` of the process `<arg>` (macOS)     |
+//! | `pidpath` | `proc_pidpath` of the process `<arg>` (macOS)            |
 //!
 //! Under a Less-Privileged AppContainer Winsock cannot start, and `std::net`
 //! panics on its first use (spike #4181): a panicking probe is caught and
@@ -107,6 +115,20 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
             .map_err(io),
         "sockets" => sockets(arg),
         "sigsys" => replace_sigsys_handler(),
+        "stat" => std::fs::symlink_metadata(arg)
+            .map(|m| format!("{} bytes", m.len()))
+            .map_err(io),
+        "procmem" => std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(format!("/proc/{arg}/mem"))
+            .map(|_| "opened".to_owned())
+            .map_err(io),
+        "inotify" => inotify_watch(arg),
+        "trust" => macos::verify_a_system_root(),
+        "proclist" => macos::process_table_size(),
+        "procargs" => macos::process_arguments(arg),
+        "pidpath" => macos::process_path(arg),
         other => Err(format!("unknown probe `{other}`")),
     }
 }
@@ -258,4 +280,240 @@ fn replace_sigsys_handler() -> Result<String, String> {
 #[cfg(not(target_os = "linux"))]
 fn replace_sigsys_handler() -> Result<String, String> {
     Err("no seccomp trap on this platform".to_owned())
+}
+
+/// Watch `path` with inotify (#4342, SEC2-006): a sandboxed plugin must not
+/// learn the names of files the user creates or opens outside its folders.
+#[cfg(target_os = "linux")]
+fn inotify_watch(path: &str) -> Result<String, String> {
+    extern "C" {
+        fn inotify_init1(flags: i32) -> i32;
+        fn inotify_add_watch(fd: i32, path: *const std::ffi::c_char, mask: u32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    const IN_CLOEXEC: i32 = 0o2_000_000;
+    const IN_ALL_EVENTS: u32 = 0xfff;
+    let path = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    // SAFETY: a plain `inotify_init1` call with constant flags.
+    let fd = unsafe { inotify_init1(IN_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    // SAFETY: `fd` is the inotify instance above; `path` is NUL-terminated.
+    let watch = unsafe { inotify_add_watch(fd, path.as_ptr(), IN_ALL_EVENTS) };
+    let error = std::io::Error::last_os_error();
+    // SAFETY: `fd` was opened above and is not used again.
+    unsafe { close(fd) };
+    if watch < 0 {
+        Err(error.to_string())
+    } else {
+        Ok(format!("watch {watch}"))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn inotify_watch(_path: &str) -> Result<String, String> {
+    Err("no inotify on this platform".to_owned())
+}
+
+/// macOS probes: the platform certificate verifier (must work, #4342
+/// PLG2-004) and other processes' information (must not, SEC2-008).
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::ffi::{c_char, c_int, c_long, c_uint, c_void};
+
+    type CFTypeRef = *const c_void;
+    type OSStatus = i32;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFDataCreate(alloc: CFTypeRef, bytes: *const u8, length: c_long) -> CFTypeRef;
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        fn SecCertificateCreateWithData(alloc: CFTypeRef, data: CFTypeRef) -> CFTypeRef;
+        fn SecPolicyCreateBasicX509() -> CFTypeRef;
+        fn SecTrustCreateWithCertificates(
+            certificates: CFTypeRef,
+            policies: CFTypeRef,
+            trust: *mut CFTypeRef,
+        ) -> OSStatus;
+        fn SecTrustEvaluateWithError(trust: CFTypeRef, error: *mut CFTypeRef) -> bool;
+    }
+
+    extern "C" {
+        fn sysctl(
+            name: *const c_int,
+            namelen: c_uint,
+            oldp: *mut c_void,
+            oldlenp: *mut usize,
+            newp: *const c_void,
+            newlen: usize,
+        ) -> c_int;
+        fn proc_pidpath(pid: c_int, buffer: *mut c_char, size: u32) -> c_int;
+    }
+
+    const CTL_KERN: c_int = 1;
+    const KERN_PROC: c_int = 14;
+    const KERN_PROC_ALL: c_int = 0;
+    const KERN_PROCARGS2: c_int = 49;
+
+    /// Evaluate the roots of `/etc/ssl/cert.pem` one by one (basic X.509
+    /// policy) until `trustd` accepts one: a system root evaluates as trusted
+    /// exactly when the platform verifier works. Without the `trustd`
+    /// allowance every evaluation fails.
+    pub(super) fn verify_a_system_root() -> Result<String, String> {
+        let pem = std::fs::read_to_string("/etc/ssl/cert.pem").map_err(|e| e.to_string())?;
+        let mut last = "no certificate in /etc/ssl/cert.pem".to_owned();
+        for (i, der) in super::pem_certificates(&pem).iter().enumerate() {
+            match evaluate(der) {
+                Ok(()) => return Ok(format!("root #{i} trusted")),
+                Err(error) => last = error,
+            }
+        }
+        Err(last)
+    }
+
+    fn evaluate(der: &[u8]) -> Result<(), String> {
+        let len = c_long::try_from(der.len()).map_err(|e| e.to_string())?;
+        // SAFETY: CoreFoundation / Security calls on valid buffers; every
+        // created object is released once below, and `CFRelease` is never
+        // passed NULL.
+        unsafe {
+            let data = CFDataCreate(std::ptr::null(), der.as_ptr(), len);
+            if data.is_null() {
+                return Err("CFDataCreate failed".to_owned());
+            }
+            let cert = SecCertificateCreateWithData(std::ptr::null(), data);
+            CFRelease(data);
+            if cert.is_null() {
+                return Err("not a certificate".to_owned());
+            }
+            let policy = SecPolicyCreateBasicX509();
+            let mut trust: CFTypeRef = std::ptr::null();
+            let status = SecTrustCreateWithCertificates(cert, policy, &mut trust);
+            CFRelease(cert);
+            CFRelease(policy);
+            if status != 0 || trust.is_null() {
+                return Err(format!("SecTrustCreateWithCertificates: {status}"));
+            }
+            let mut error: CFTypeRef = std::ptr::null();
+            let trusted = SecTrustEvaluateWithError(trust, &mut error);
+            CFRelease(trust);
+            if !error.is_null() {
+                CFRelease(error);
+            }
+            if trusted {
+                Ok(())
+            } else {
+                Err("not trusted (is trustd reachable?)".to_owned())
+            }
+        }
+    }
+
+    fn query(mib: &[c_int], buffer: Option<&mut [u8]>) -> Result<usize, String> {
+        let (pointer, mut len) = match buffer {
+            Some(buffer) => (buffer.as_mut_ptr().cast::<c_void>(), buffer.len()),
+            None => (std::ptr::null_mut(), 0),
+        };
+        let count = c_uint::try_from(mib.len()).map_err(|e| e.to_string())?;
+        // SAFETY: `mib` holds `count` names; `pointer` is NULL or valid for
+        // `len` bytes, and `len` is a valid in/out pointer.
+        let rc = unsafe { sysctl(mib.as_ptr(), count, pointer, &mut len, std::ptr::null(), 0) };
+        if rc == 0 {
+            Ok(len)
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
+        }
+    }
+
+    pub(super) fn process_table_size() -> Result<String, String> {
+        query(&[CTL_KERN, KERN_PROC, KERN_PROC_ALL], None).map(|n| format!("{n} bytes"))
+    }
+
+    fn pid(arg: &str) -> Result<c_int, String> {
+        arg.trim().parse().map_err(|e| format!("bad pid: {e}"))
+    }
+
+    pub(super) fn process_arguments(arg: &str) -> Result<String, String> {
+        let mut buffer = vec![0u8; 256 * 1024];
+        query(&[CTL_KERN, KERN_PROCARGS2, pid(arg)?], Some(&mut buffer))
+            .map(|n| format!("{n} bytes"))
+    }
+
+    pub(super) fn process_path(arg: &str) -> Result<String, String> {
+        let mut buffer = vec![0 as c_char; 4096];
+        let size = u32::try_from(buffer.len()).map_err(|e| e.to_string())?;
+        // SAFETY: `buffer` is valid for `size` bytes.
+        let len = unsafe { proc_pidpath(pid(arg)?, buffer.as_mut_ptr(), size) };
+        if len > 0 {
+            Ok(format!("{len} bytes"))
+        } else {
+            Err(std::io::Error::last_os_error().to_string())
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod macos {
+    pub(super) fn verify_a_system_root() -> Result<String, String> {
+        Err("no platform verifier probe on this platform".to_owned())
+    }
+    pub(super) fn process_table_size() -> Result<String, String> {
+        Err("no KERN_PROC on this platform".to_owned())
+    }
+    pub(super) fn process_arguments(_arg: &str) -> Result<String, String> {
+        Err("no KERN_PROCARGS2 on this platform".to_owned())
+    }
+    pub(super) fn process_path(_arg: &str) -> Result<String, String> {
+        Err("no proc_pidpath on this platform".to_owned())
+    }
+}
+
+/// The DER certificates of a PEM bundle (a minimal base64 decoder: the
+/// fixture has no dependencies beyond the plugin API and serde).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn pem_certificates(pem: &str) -> Vec<Vec<u8>> {
+    const BEGIN: &str = "-----BEGIN CERTIFICATE-----";
+    const END: &str = "-----END CERTIFICATE-----";
+    let mut certificates = Vec::new();
+    let mut rest = pem;
+    while let Some(start) = rest.find(BEGIN) {
+        let body = &rest[start + BEGIN.len()..];
+        let Some(end) = body.find(END) else { break };
+        if let Some(der) = base64_decode(&body[..end]) {
+            certificates.push(der);
+        }
+        rest = &body[end + END.len()..];
+    }
+    certificates
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for c in text
+        .bytes()
+        .filter(|c| !c.is_ascii_whitespace() && *c != b'=')
+    {
+        acc = (acc << 6) | u32::from(value(c)?);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
