@@ -6,8 +6,8 @@ severity: low
 category: durability
 is_workaround: false
 subsystem: core/src/plugin
-status: open
-resolution: ""
+status: fixed
+resolution: "#4334 — plugin stores write via unique fsynced temp files; corrupt plugin-state.json is backed up and rebuilt (all disabled, native trust revoked); state updates share one lock"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

@@ -18,8 +18,8 @@ evidence:
   - core/src/plugin/native_trust.rs:313-323
   - core/src/plugin/trust_store.rs:368-372
   - core/src/plugin/manager.rs:1460-1468
-status: open
-resolution: ""
+status: fixed
+resolution: "#4334 — write_atomic, the version gate and the first-free .bak backup live once in core::util::persist; desktop and agent re-export it and the core::plugin stores use it"
 audit: 2026-10
 commit: 663465d52
 relation: new
