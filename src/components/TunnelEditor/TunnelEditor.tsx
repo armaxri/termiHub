@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller } from "react-hook-form";
 import { z } from "zod";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
@@ -111,9 +111,10 @@ interface TunnelFormState {
  * Client-side validation schema (UX gate only; the same checks the editor
  * previously ran by hand, translated 1:1 into zod):
  *
- * - `name` must be non-empty once trimmed (UX-022) — gates Save without an
- *   inline error, matching the ConnectionEditor.
- * - `sshConnectionId` must resolve to a saved SSH connection.
+ * - `name` must be non-empty once trimmed (UX-022). Save is disabled outright
+ *   here, so the message renders inline as the reason (UISF2-003).
+ * - `sshConnectionId` must resolve to a saved SSH connection; its message shows
+ *   on the SSH Connection field when no more specific error applies.
  * - the forwarding host/port fields are validated by the shared
  *   {@link validateTunnelType} (non-empty hosts, ports in 1–65535, blank
  *   rejected) — its per-field messages are re-emitted as zod issues under
@@ -195,7 +196,16 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   );
   const pickableSshConnections = sshConnections.filter((c) => !ambiguousIds.has(c.id));
 
-  const { control, getValues, setValue, reset } = useForm<TunnelFormState>({
+  // The shared RHF + zod scaffold (UISF2-003): `form` is a complete, stable
+  // snapshot of the values (it reflects `setValue` at once), and `formErrors` /
+  // `canSave` update on the same render as the edit.
+  const {
+    form: { control, getValues, setValue, reset },
+    draft: form,
+    errors: formErrors,
+    canSave,
+  } = useZodEditorForm<TunnelFormState>({
+    schema: tunnelFormSchema,
     defaultValues: {
       name: existingTunnel?.name ?? "",
       // A new tunnel opened from a connection's "Port Forwarding" section
@@ -218,8 +228,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         existingTunnel?.startWithConnection ?? (!existingTunnel && !!meta.sshConnectionId),
       reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? false,
     },
-    resolver: zodResolver(tunnelFormSchema),
-    mode: "onChange",
   });
 
   // Sync if the tunnel ID changes (reload the working copy from the store).
@@ -247,11 +255,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingTunnelId]);
 
-  // Subscribe to every field so validity + the derived diagram/endpoint/
-  // reachability reads re-run on each edit, then take a complete, fresh snapshot
-  // from `getValues()` (which reflects `setValue` synchronously).
-  useWatch({ control });
-  const form = getValues();
   // Pull the tagged unions into locals so the `isAgentHost` type guard narrows
   // through into the closures below (control-flow narrowing of a property access
   // does not persist into nested callbacks; a `const` local's does).
@@ -290,22 +293,16 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     setValue("tunnelType", next);
   };
 
-  // Deterministic, synchronous validity + per-field errors derived straight from
-  // the schema — the same approach CustomRuleEditor / EmbeddedServerDialog use.
-  const { valid: canSave, errors } = useMemo<{ valid: boolean; errors: TunnelFieldErrors }>(() => {
-    const result = tunnelFormSchema.safeParse(form);
+  // The forwarding host/port errors, keyed by config field name for the inline
+  // `Field` errors below.
+  const errors = useMemo<TunnelFieldErrors>(() => {
+    const prefix = "tunnelType.config.";
     const fieldErrors: TunnelFieldErrors = {};
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const key = issue.path[issue.path.length - 1];
-        if (typeof key === "string" && !(key in fieldErrors)) fieldErrors[key] = issue.message;
-      }
+    for (const [path, message] of Object.entries(formErrors)) {
+      if (path.startsWith(prefix)) fieldErrors[path.slice(prefix.length)] = message;
     }
-    return { valid: result.success, errors: fieldErrors };
-    // `form` is a fresh snapshot every render; key on its serialization so the
-    // check only recomputes when a value actually changed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(form)]);
+    return fieldErrors;
+  }, [formErrors]);
 
   // Build the parent `TunnelConfig` from the current editor state. Shared by
   // Save and by "Chain a hop" (which must persist the parent before linking a
@@ -507,12 +504,13 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           name="name"
           control={control}
           render={({ field }) => (
-            <Field label="Name" htmlFor={`tunnel-name-${tabId}`}>
+            <Field label="Name" htmlFor={`tunnel-name-${tabId}`} error={formErrors.name}>
               <Input
                 ref={nameRef}
                 id={`tunnel-name-${tabId}`}
                 type="text"
                 value={field.value ?? ""}
+                error={!!formErrors.name}
                 onChange={(e) => field.onChange(e.target.value)}
                 onBlur={field.onBlur}
                 placeholder="e.g. Dev Database"
@@ -532,7 +530,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 "SSH connection."
               : sshConnectionMissing
                 ? t("tunnel.editor.missingConnection")
-                : undefined
+                : formErrors.sshConnectionId
           }
           data-testid="tunnel-editor-ssh-connection-field"
         >

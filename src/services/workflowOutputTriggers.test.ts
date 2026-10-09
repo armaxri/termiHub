@@ -6,7 +6,6 @@ import {
   clampCooldownMs,
   clampMaxFires,
   compileOutputTriggers,
-  stripAnsi,
   validateOutputPattern,
   workflowTriggersValid,
   type OutputTriggerDeps,
@@ -90,12 +89,6 @@ describe("compileOutputTriggers", () => {
   });
 });
 
-describe("stripAnsi", () => {
-  it("removes colour codes so patterns match visible text", () => {
-    expect(stripAnsi("\u001b[31mERROR\u001b[0m: disk")).toBe("ERROR: disk");
-  });
-});
-
 describe("OutputTriggerEngine", () => {
   let now: number;
   let fire: ReturnType<typeof vi.fn<OutputTriggerDeps["fire"]>>;
@@ -150,6 +143,22 @@ describe("OutputTriggerEngine", () => {
   it("matches the ANSI-stripped text and a regex", () => {
     const engine = makeEngine([wf("wf-a", [match("^ERROR: \\d+", { isRegex: true })])]);
     engine.enqueue("sess-1", "\u001b[1;31mERROR\u001b[0m: 42");
+    engine.flush();
+    expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches a $-anchored prompt pattern through OSC title and OSC 133 marks", () => {
+    const engine = makeEngine([wf("wf-a", [match("\\$ $", { isRegex: true })])]);
+    engine.enqueue("sess-1", "\u001b]0;arne@box: ~\u0007arne@box:~$ \u001b]133;B\u0007");
+    engine.flush();
+    expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it("strips an OSC 133 mark split across two batches", () => {
+    const engine = makeEngine([wf("wf-a", [match("\\$ $", { isRegex: true })])]);
+    engine.enqueue("sess-1", "arne@box:~$ \u001b]13");
+    engine.flush();
+    engine.enqueue("sess-1", "3;B\u0007");
     engine.flush();
     expect(fire).toHaveBeenCalledTimes(1);
   });

@@ -158,6 +158,16 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
     expect(mocks.toast.success).toHaveBeenCalledWith('Ran workflow "wf"', expect.anything());
   });
 
+  it("strips OSC 133 marks split across chunks before a $-anchored match (#4355)", async () => {
+    const done = run(
+      workflow([{ kind: "wait-for-output", pattern: "\\$ $", isRegex: true, timeoutMs: 50 }])
+    );
+    await listenerAttached();
+    emitOutput("sess-1", "\u001b]0;arne@box: ~\u0007arne@box:~$ \u001b]13");
+    emitOutput("sess-1", "3;B\u0007");
+    expect((await done).status).toBe("completed");
+  });
+
   it("matches a regular-expression pattern", async () => {
     const done = run(
       workflow([{ kind: "wait-for-output", pattern: "build \\d+ ok", isRegex: true }])

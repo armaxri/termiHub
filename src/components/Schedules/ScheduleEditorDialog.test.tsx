@@ -186,4 +186,12 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Edited" }));
     });
   });
+
+  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
+    render({});
+    const nameError = () => document.getElementById("schedule-editor-name-error");
+    expect(nameError()?.textContent).toBe("Name is required.");
+    setInput("schedule-editor-name", "Nightly");
+    expect(nameError()).toBeNull();
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
-import type { FieldType, SettingsSchema } from "@/types/schema";
+import type { FieldType, SettingsField, SettingsSchema } from "@/types/schema";
 
 function makeSchema(fields: SettingsSchema["groups"][0]["fields"]): SettingsSchema {
   return { groups: [{ key: "g", label: "Group", fields }] };
@@ -321,6 +321,52 @@ describe("settingsSchemaToZod", () => {
       const zod = settingsSchemaToZod(schema);
       expect(zod.safeParse({ host: "example.com", port: 22 }).success).toBe(true);
       expect(zod.safeParse({ host: "example.com", port: 0 }).success).toBe(false);
+    });
+  });
+
+  describe("cleared required fields (UISF2-003)", () => {
+    const messageFor = (field: SettingsField, value: unknown) => {
+      const result = settingsSchemaToZod(makeSchema([field])).safeParse({ [field.key]: value });
+      return result.success ? undefined : result.error.issues[0].message;
+    };
+
+    it("names the field instead of reporting a raw type error", () => {
+      const host: SettingsField = {
+        key: "host",
+        label: "Host",
+        fieldType: { type: "text" },
+        required: true,
+      };
+      expect(messageFor(host, undefined)).toBe("Host is required");
+      expect(messageFor(host, null)).toBe("Host is required");
+      expect(messageFor(host, "")).toBe("Host is required");
+
+      const port: SettingsField = {
+        key: "port",
+        label: "Port",
+        fieldType: { type: "port" },
+        required: true,
+      };
+      expect(messageFor(port, undefined)).toBe("Port is required");
+      expect(messageFor(port, 0)).toBe("Port must be between 1 and 65535");
+
+      const mode: SettingsField = {
+        key: "mode",
+        label: "Mode",
+        fieldType: { type: "select", options: [] },
+        required: true,
+      };
+      expect(messageFor(mode, null)).toBe("Mode is required");
+    });
+
+    it("still lets an optional field be null after a type switch (#2467)", () => {
+      const shell: SettingsField = {
+        key: "shell",
+        label: "Shell",
+        fieldType: { type: "text" },
+        required: false,
+      };
+      expect(messageFor(shell, null)).toBeUndefined();
     });
   });
 });

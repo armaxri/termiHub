@@ -132,7 +132,45 @@ enum SerialOpenError {
     Other,
 }
 
+/// Which numeric space a raw OS error code belongs to.
+///
+/// The same number means different things per platform (code `5` is `EIO` on
+/// Unix but `ERROR_ACCESS_DENIED` on Windows), so the classifier must be told
+/// how to read it. Passed explicitly — rather than read via `cfg` inside the
+/// classifier — so every platform's CI exercises every platform's mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OsCodeSpace {
+    /// `errno` values (Linux, macOS, other Unixes).
+    Unix,
+    /// `GetLastError` values.
+    Windows,
+    /// A platform whose code space the classifier does not know; raw codes are
+    /// ignored.
+    Unknown,
+}
+
+/// The code space of the host this binary was compiled for.
+const HOST_OS_CODE_SPACE: OsCodeSpace = if cfg!(windows) {
+    OsCodeSpace::Windows
+} else if cfg!(unix) {
+    OsCodeSpace::Unix
+} else {
+    OsCodeSpace::Unknown
+};
+
 /// Classify a serial-port open error **without relying on localized OS text**.
+///
+/// Thin wrapper over [`classify_open_error_parts`] for the host platform.
+fn classify_open_error(err: &std::io::Error) -> SerialOpenError {
+    classify_open_error_parts(
+        err.kind(),
+        err.raw_os_error(),
+        &err.to_string(),
+        HOST_OS_CODE_SPACE,
+    )
+}
+
+/// Pure classification of a serial-port open error from its parts.
 ///
 /// The OS error *message* is localized to the display language (on Windows it
 /// comes from `FormatMessage`; e.g. "Access is denied" → "Zugriff verweigert"
@@ -140,64 +178,73 @@ enum SerialOpenError {
 /// non-English systems (I18N-007). Instead this prefers locale-invariant
 /// signals, best first:
 ///
-/// 1. [`std::io::ErrorKind`] — already normalized by the standard library.
-/// 2. The **raw OS error code** ([`std::io::Error::raw_os_error`]) — errno on
-///    Unix, `GetLastError` on Windows. Platform-gated because the numeric
-///    spaces differ (code `5` is `EIO` on Unix but `ERROR_ACCESS_DENIED` on
-///    Windows).
+/// 1. The **raw OS error code** — errno on Unix, `GetLastError` on Windows,
+///    read according to `space`. It comes first because std's
+///    [`std::io::ErrorKind`] mapping loses the serial-specific meaning: on
+///    Windows a COM port held open by another process fails `CreateFile` with
+///    `ERROR_ACCESS_DENIED` (5), which std maps to `PermissionDenied`. Standard
+///    users have no per-port ACL problem on COM ports, so for a serial open
+///    that code means exclusive use in practice and is classified as
+///    [`SerialOpenError::Busy`] (WA-RS2-002, #4368).
+/// 2. [`std::io::ErrorKind`] — already normalized by the standard library.
 /// 3. English-substring matching, kept **only** as a last-resort fallback for
-///    the "busy" case, which has no stable `ErrorKind` variant
-///    (`ResourceBusy` is not matched by name so the classifier compiles on
-///    every pinned toolchain — the raw `EBUSY`/`ERROR_SHARING_VIOLATION` code
-///    in step 2 is the primary "busy" signal).
-fn classify_open_error(err: &std::io::Error) -> SerialOpenError {
-    // 1. Locale-invariant ErrorKind. `serial2` surfaces the underlying
-    //    `io::Error`, so `NotFound`/`PermissionDenied` are already mapped by std
-    //    (including from the Windows error codes) on every platform.
-    match err.kind() {
+///    the "busy" / "not found" cases when there is neither an OS code nor a
+///    classifying kind (`ResourceBusy` is not matched by name so the
+///    classifier compiles on every pinned toolchain).
+fn classify_open_error_parts(
+    kind: std::io::ErrorKind,
+    raw_os_error: Option<i32>,
+    desc: &str,
+    space: OsCodeSpace,
+) -> SerialOpenError {
+    // 1. Raw OS error code — locale-invariant. "Busy" in particular has no
+    //    stable `ErrorKind`, so the code is the only reliable non-text signal.
+    if let Some(code) = raw_os_error {
+        match space {
+            OsCodeSpace::Unix => {
+                const ENOENT: i32 = 2; // No such file or directory
+                const ENXIO: i32 = 6; // No such device or address
+                const EACCES: i32 = 13; // Permission denied
+                const EBUSY: i32 = 16; // Device or resource busy
+                const ENODEV: i32 = 19; // No such device
+                match code {
+                    EBUSY => return SerialOpenError::Busy,
+                    EACCES => return SerialOpenError::PermissionDenied,
+                    ENOENT | ENXIO | ENODEV => return SerialOpenError::NotFound,
+                    _ => {}
+                }
+            }
+            OsCodeSpace::Windows => {
+                const ERROR_FILE_NOT_FOUND: i32 = 2;
+                const ERROR_PATH_NOT_FOUND: i32 = 3;
+                const ERROR_ACCESS_DENIED: i32 = 5; // COM port held open by another app
+                const ERROR_SHARING_VIOLATION: i32 = 32; // held open by another app
+                const ERROR_BUSY: i32 = 170; // the requested resource is in use
+                match code {
+                    ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_BUSY => {
+                        return SerialOpenError::Busy
+                    }
+                    ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => {
+                        return SerialOpenError::NotFound
+                    }
+                    _ => {}
+                }
+            }
+            OsCodeSpace::Unknown => {}
+        }
+    }
+
+    // 2. Locale-invariant ErrorKind, for errors without a recognized OS code.
+    match kind {
         std::io::ErrorKind::NotFound => return SerialOpenError::NotFound,
         std::io::ErrorKind::PermissionDenied => return SerialOpenError::PermissionDenied,
         _ => {}
     }
 
-    // 2. Raw OS error code — locale-invariant. "Busy" in particular has no
-    //    stable `ErrorKind`, so the code is the only reliable non-text signal.
-    if let Some(code) = err.raw_os_error() {
-        #[cfg(unix)]
-        {
-            const ENOENT: i32 = 2; // No such file or directory
-            const ENXIO: i32 = 6; // No such device or address
-            const EACCES: i32 = 13; // Permission denied
-            const EBUSY: i32 = 16; // Device or resource busy
-            const ENODEV: i32 = 19; // No such device
-            match code {
-                EBUSY => return SerialOpenError::Busy,
-                EACCES => return SerialOpenError::PermissionDenied,
-                ENOENT | ENXIO | ENODEV => return SerialOpenError::NotFound,
-                _ => {}
-            }
-        }
-        #[cfg(windows)]
-        {
-            const ERROR_FILE_NOT_FOUND: i32 = 2;
-            const ERROR_PATH_NOT_FOUND: i32 = 3;
-            const ERROR_ACCESS_DENIED: i32 = 5;
-            const ERROR_SHARING_VIOLATION: i32 = 32; // held open by another app
-            const ERROR_BUSY: i32 = 170; // the requested resource is in use
-            match code {
-                ERROR_SHARING_VIOLATION | ERROR_BUSY => return SerialOpenError::Busy,
-                ERROR_ACCESS_DENIED => return SerialOpenError::PermissionDenied,
-                ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => return SerialOpenError::NotFound,
-                _ => {}
-            }
-        }
-    }
-
     // 3. Last-resort English-substring heuristic. Localized on non-English
     //    systems, so it runs only after the locale-invariant checks above fail
     //    to classify the error.
-    let desc = err.to_string();
-    if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
+    if desc.contains("busy") || desc.contains("in use") {
         SerialOpenError::Busy
     } else if desc.contains("not found")
         || desc.contains("cannot find")
@@ -999,65 +1046,108 @@ mod tests {
     // correct classification of these proves the mapping does not depend on
     // English text.
 
-    #[cfg(unix)]
+    /// Classify a bare raw OS code as it would arrive from `space`.
+    ///
+    /// Uses `ErrorKind::Other` and a placeholder message so only the code can
+    /// drive the result — which proves the mapping does not depend on text.
+    /// Callable on every host, so Linux/macOS CI also covers the Windows map.
+    fn classify_code(code: i32, space: OsCodeSpace) -> SerialOpenError {
+        classify_open_error_parts(std::io::ErrorKind::Other, Some(code), "x", space)
+    }
+
     #[test]
     fn classify_unix_error_codes_by_errno() {
-        use std::io::Error;
+        let unix = OsCodeSpace::Unix;
         // EBUSY (16): no stable ErrorKind — must be caught by the raw code.
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(16)),
+            classify_code(16, unix),
             SerialOpenError::Busy,
             "EBUSY should classify as Busy without matching any English text"
         );
         // EACCES (13): permission.
-        assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(13)),
-            SerialOpenError::PermissionDenied
-        );
+        assert_eq!(classify_code(13, unix), SerialOpenError::PermissionDenied);
         // ENOENT (2) / ENXIO (6) / ENODEV (19): not found.
-        assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(2)),
-            SerialOpenError::NotFound
-        );
-        assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(6)),
-            SerialOpenError::NotFound
-        );
-        assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(19)),
-            SerialOpenError::NotFound
-        );
+        assert_eq!(classify_code(2, unix), SerialOpenError::NotFound);
+        assert_eq!(classify_code(6, unix), SerialOpenError::NotFound);
+        assert_eq!(classify_code(19, unix), SerialOpenError::NotFound);
     }
 
-    #[cfg(windows)]
     #[test]
     fn classify_windows_error_codes_by_code() {
-        use std::io::Error;
+        let win = OsCodeSpace::Windows;
         // ERROR_SHARING_VIOLATION (32): the port is held by another app — the
         // key non-English-text case for "busy" on Windows.
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(32)),
+            classify_code(32, win),
             SerialOpenError::Busy,
             "ERROR_SHARING_VIOLATION should classify as Busy on non-English Windows too"
         );
         // ERROR_BUSY (170): resource in use.
+        assert_eq!(classify_code(170, win), SerialOpenError::Busy);
+        // ERROR_FILE_NOT_FOUND (2) / ERROR_PATH_NOT_FOUND (3): not found.
+        assert_eq!(classify_code(2, win), SerialOpenError::NotFound);
+        assert_eq!(classify_code(3, win), SerialOpenError::NotFound);
+    }
+
+    /// WA-RS2-002 (#4368): a COM port held open by another process fails
+    /// `CreateFile` with ERROR_ACCESS_DENIED (5), which std maps to
+    /// `ErrorKind::PermissionDenied`. The raw code must win over that kind so
+    /// the user sees "in use", not "permission denied".
+    #[test]
+    fn classify_windows_access_denied_as_busy_despite_permission_kind() {
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(170)),
+            classify_open_error_parts(
+                std::io::ErrorKind::PermissionDenied,
+                Some(5),
+                "Zugriff verweigert",
+                OsCodeSpace::Windows,
+            ),
             SerialOpenError::Busy
         );
-        // ERROR_ACCESS_DENIED (5): permission.
+        // The same number on Unix is EIO, not a permission or busy signal —
+        // the kind then decides.
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(5)),
+            classify_open_error_parts(
+                std::io::ErrorKind::PermissionDenied,
+                Some(5),
+                "x",
+                OsCodeSpace::Unix,
+            ),
             SerialOpenError::PermissionDenied
         );
-        // ERROR_FILE_NOT_FOUND (2) / ERROR_PATH_NOT_FOUND (3): not found.
+        assert_eq!(classify_code(5, OsCodeSpace::Unix), SerialOpenError::Other);
+    }
+
+    /// The wrapper must agree with the pure classifier for the host, so the
+    /// real `io::Error` path is covered on whichever platform runs the tests.
+    #[test]
+    fn classify_open_error_uses_host_code_space() {
+        use std::io::Error;
+        for code in [2, 3, 5, 6, 13, 16, 19, 32, 170] {
+            let err = Error::from_raw_os_error(code);
+            assert_eq!(
+                classify_open_error(&err),
+                classify_open_error_parts(
+                    err.kind(),
+                    Some(code),
+                    &err.to_string(),
+                    HOST_OS_CODE_SPACE
+                ),
+                "code {code}"
+            );
+        }
+        #[cfg(windows)]
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(2)),
-            SerialOpenError::NotFound
+            classify_open_error(&Error::from_raw_os_error(5)),
+            SerialOpenError::Busy
         );
+    }
+
+    #[test]
+    fn classify_ignores_raw_codes_from_an_unknown_code_space() {
         assert_eq!(
-            classify_open_error(&Error::from_raw_os_error(3)),
-            SerialOpenError::NotFound
+            classify_code(16, OsCodeSpace::Unknown),
+            SerialOpenError::Other
         );
     }
 

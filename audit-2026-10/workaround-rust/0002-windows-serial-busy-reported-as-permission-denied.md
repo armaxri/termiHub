@@ -13,8 +13,8 @@ evidence:
   - core/src/session/serial.rs:296
   - src/utils/connectionErrorHints.ts:177
   - src/i18n/catalog.ts:44
-status: open
-resolution: ""
+status: fixed
+resolution: "#4368 — Windows ERROR_ACCESS_DENIED on serial open now classified as Busy (raw code before ErrorKind); dead substring branch removed; Windows permission hint reduced to a real permission message"
 audit: 2026-10
 commit: 663465d52
 relation: new

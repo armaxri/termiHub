@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useState } from "react";
+import { Controller } from "react-hook-form";
 import { z } from "zod";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
-import { Modal, Button, Input, NumberInput, Select, Checkbox, RadioGroup } from "@/components/ui";
+import {
+  Modal,
+  Button,
+  Field,
+  Input,
+  NumberInput,
+  Select,
+  Checkbox,
+  RadioGroup,
+} from "@/components/ui";
 import {
   EmbeddedServerConfig,
   NetworkInterface,
@@ -119,10 +128,17 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     { name: "All Interfaces", addr: "0.0.0.0" },
   ]);
 
-  const { control, getValues, setValue, reset } = useForm<ServerFormState>({
+  // The shared RHF + zod scaffold (UISF2-003): `form` is a complete, stable
+  // snapshot of the values (it reflects `setValue` at once), and `errors` /
+  // `canSave` update on the same render as the edit.
+  const {
+    form: { control, getValues, setValue, reset },
+    draft: form,
+    errors,
+    canSave,
+  } = useZodEditorForm<ServerFormState>({
+    schema: serverFormSchema,
     defaultValues: config ? { ...config } : defaultConfig(),
-    resolver: zodResolver(serverFormSchema),
-    mode: "onChange",
   });
 
   // Reload the working copy each time the dialog opens so a prior edit never
@@ -142,24 +158,6 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
         });
     }
   }, [open, config, reset]);
-
-  // Subscribe to every field so validity + derived reads re-run on each edit,
-  // then take a complete, fresh snapshot from `getValues()` (which reflects
-  // `setValue` synchronously) for the schema check.
-  useWatch({ control });
-  const form = getValues();
-
-  // Deterministic, synchronous validity derived straight from the schema — the
-  // same approach ConnectionSettingsForm / CustomRuleEditor use — so the Save
-  // gate updates on the same render as the edit (and stays testable without
-  // awaiting react-hook-form's async error proxy).
-  const canSave = useMemo(
-    () => serverFormSchema.safeParse(form).success,
-    // `form` is a fresh snapshot every render; key on its serialization so the
-    // check only recomputes when a value actually changed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(form)]
-  );
 
   const handleProtocolChange = (type: ServerType) => {
     const cur = getValues();
@@ -273,23 +271,29 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
       >
         <div className="server-dialog__form">
           {/* Name */}
-          <label className="server-dialog__label">
-            Name
-            <Controller
-              name="name"
-              control={control}
-              render={({ field }) => (
+          <Controller
+            name="name"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Name"
+                htmlFor="server-dialog-name-input"
+                error={errors["name"]}
+                className="server-dialog__label"
+              >
                 <Input
+                  id="server-dialog-name-input"
                   value={field.value ?? ""}
                   onChange={(e) => field.onChange(e.target.value)}
                   onBlur={field.onBlur}
                   placeholder="e.g. Firmware Share"
+                  error={Boolean(errors["name"])}
                   data-testid="server-dialog-name"
                   autoFocus
                 />
-              )}
-            />
-          </label>
+              </Field>
+            )}
+          />
 
           {/* Protocol */}
           <div className="server-dialog__label">
@@ -309,22 +313,28 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           </div>
 
           {/* Root directory */}
-          <label className="server-dialog__label">
-            Root Directory
-            <Controller
-              name="rootDirectory"
-              control={control}
-              render={({ field }) => (
+          <Controller
+            name="rootDirectory"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Root Directory"
+                htmlFor="server-dialog-root-input"
+                error={errors["rootDirectory"]}
+                className="server-dialog__label"
+              >
                 <Input
+                  id="server-dialog-root-input"
                   value={field.value ?? ""}
                   onChange={(e) => field.onChange(e.target.value)}
                   onBlur={field.onBlur}
                   placeholder="/path/to/directory"
+                  error={Boolean(errors["rootDirectory"])}
                   data-testid="server-dialog-root"
                 />
-              )}
-            />
-          </label>
+              </Field>
+            )}
+          />
 
           {/* Network */}
           <fieldset className="server-dialog__fieldset">
@@ -346,13 +356,18 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                   data-testid="server-dialog-bind-host"
                 />
               </label>
-              <label className="server-dialog__label server-dialog__label--inline">
-                Port
-                <Controller
-                  name="port"
-                  control={control}
-                  render={({ field }) => (
+              <Controller
+                name="port"
+                control={control}
+                render={({ field }) => (
+                  <Field
+                    label="Port"
+                    htmlFor="server-dialog-port-input"
+                    error={errors["port"]}
+                    className="server-dialog__label server-dialog__label--inline"
+                  >
                     <NumberInput
+                      id="server-dialog-port-input"
                       className="server-dialog__input--port"
                       min={1}
                       max={65535}
@@ -360,9 +375,9 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                       onValueChange={field.onChange}
                       data-testid="server-dialog-port"
                     />
-                  )}
-                />
-              </label>
+                  </Field>
+                )}
+              />
             </div>
           </fieldset>
 
