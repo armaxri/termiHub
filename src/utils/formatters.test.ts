@@ -6,6 +6,9 @@ import {
   formatRelativeAgo,
   formatRelativeTime,
   formatAbsoluteTime,
+  formatClockTime,
+  formatRelativeDay,
+  formatShortDate,
   truncate,
 } from "./formatters";
 import * as locale from "./locale";
@@ -180,6 +183,59 @@ describe("formatAbsoluteTime", () => {
     expect(formatAbsoluteTime(null)).toBe("");
     expect(formatAbsoluteTime("")).toBe("");
     expect(formatAbsoluteTime("not a date")).toBe("");
+  });
+});
+
+describe("UI-locale date helpers (#4374, I18N2-004)", () => {
+  const originalLanguage = Object.getOwnPropertyDescriptor(navigator, "language");
+  const originalLanguages = Object.getOwnPropertyDescriptor(navigator, "languages");
+  afterEach(() => {
+    if (originalLanguage) Object.defineProperty(navigator, "language", originalLanguage);
+    if (originalLanguages) Object.defineProperty(navigator, "languages", originalLanguages);
+  });
+  function setLocale(tag: string): void {
+    Object.defineProperty(navigator, "language", { configurable: true, get: () => tag });
+    Object.defineProperty(navigator, "languages", { configurable: true, get: () => [tag] });
+  }
+  const at = new Date(2026, 5, 5, 18, 5, 7);
+
+  it("formatClockTime uses the UI locale, not the engine default", () => {
+    setLocale("de-DE");
+    expect(formatClockTime(at)).toBe(at.toLocaleTimeString("de-DE"));
+    expect(formatClockTime(at.toISOString())).toBe(at.toLocaleTimeString("de-DE"));
+  });
+
+  it("formatClockTime returns an empty string for an unparseable input", () => {
+    expect(formatClockTime("not a date")).toBe("");
+  });
+
+  it("formatClockTime never throws under a C locale", () => {
+    setLocale("C");
+    expect(formatClockTime(at)).toBe(at.toLocaleTimeString(locale.DEFAULT_UI_LOCALE));
+  });
+
+  it("formatRelativeDay names today/tomorrow in the UI locale", () => {
+    setLocale("en-US");
+    expect(formatRelativeDay(0)).toBe("today");
+    expect(formatRelativeDay(1)).toBe("tomorrow");
+    setLocale("de-DE");
+    expect(formatRelativeDay(0)).toBe("heute");
+    expect(formatRelativeDay(1)).toBe("morgen");
+  });
+
+  it("formatShortDate renders weekday, day and month in the UI locale", () => {
+    setLocale("fr-FR");
+    const expected = at.toLocaleDateString("fr-FR", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+    expect(formatShortDate(at)).toBe(expected);
+  });
+
+  it("formatAbsoluteTime uses the UI locale", () => {
+    setLocale("de-DE");
+    expect(formatAbsoluteTime(at.toISOString())).toBe(at.toLocaleString("de-DE"));
   });
 });
 
