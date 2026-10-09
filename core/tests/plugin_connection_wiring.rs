@@ -29,7 +29,7 @@ use plugin_fixture::{artifact_name, fixture_library, Variant};
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
 use termihub_core::plugin::{
-    native_library_hash, parse_manifest, HostLifecycleHook, InstalledPlugin, NativeTrustStore,
+    native_trust_binding, parse_manifest, HostLifecycleHook, InstalledPlugin, NativeTrustStore,
     PluginHost, PluginManager, PluginState,
 };
 
@@ -52,8 +52,10 @@ fn trust_native(root: &Path, id: &str) {
     trust
         .set_native_enabled(true)
         .expect("enable native plugins");
-    let hash = native_library_hash(root, id).expect("hash the installed backend library");
-    trust.acknowledge(id, hash).expect("acknowledge the plugin");
+    let binding = native_trust_binding(root, id).expect("bind the installed plugin");
+    trust
+        .acknowledge(id, &binding)
+        .expect("acknowledge the plugin");
 }
 
 /// A manifest declaring a terminal backend of connection type `connection_type`,

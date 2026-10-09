@@ -382,6 +382,11 @@
   color: var(--color-warning);
 }
 
+.native-plugin-review__access {
+  margin: var(--spacing-xs) 0 0;
+  white-space: pre-line;
+}
+
 .native-plugin-sandbox__denials {
   display: flex;
   flex-direction: column;
