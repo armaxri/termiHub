@@ -18,6 +18,7 @@
 import type { ThemeColors, ThemeDefinition } from "./types";
 import type { ThemeEntry, PluginFileReader } from "@/types/plugin";
 import { COLOR_TOKEN_KEYS } from "./colorTokens";
+import { deriveTextOnAccent } from "./contrast";
 import { THEME_FILE_SCHEMA } from "./themeIO";
 import { BASE_THEME_ORDER } from "./customThemes";
 
@@ -104,6 +105,13 @@ export function parsePluginTheme(
       `theme "${entry.id}" is missing color token${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`
     );
   }
+  // Optional: a plugin may pin its on-accent foreground; otherwise it is
+  // derived from the accent by WCAG contrast (UI2-003).
+  const onAccent = stored.textOnAccent;
+  colors.textOnAccent =
+    typeof onAccent === "string" && onAccent.trim() !== ""
+      ? onAccent
+      : deriveTextOnAccent(colors.accentColor);
 
   return {
     id: pluginThemeId(pluginId, entry.id),

@@ -46,6 +46,7 @@ export const solarizedLightTheme: ThemeDefinition = {
     accentColor: "#268bd2",
     accentHover: "#1a7bb8",
     focusBorder: "#268bd2",
+    textOnAccent: "#ffffff",
 
     // Status
     colorSuccess: "#859900",

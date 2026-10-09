@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
+import { darkTheme } from "@/themes/dark";
+import { lightTheme } from "@/themes/light";
+import { solarizedDarkTheme } from "@/themes/solarized-dark";
+import { solarizedLightTheme } from "@/themes/solarized-light";
+import { createCustomTheme } from "@/themes/customThemes";
 
 // This suite drives the real registration logic in `monacoCustomLanguages.ts`
 // against LOCAL recording stubs for `monaco-editor`, `shiki`, and
@@ -91,19 +96,40 @@ async function freshModule() {
 }
 
 describe("getMonacoTheme", () => {
+  // UI2-002 (#4356): the editor theme is keyed on the app theme's colorScheme,
+  // not its id — previously only the id "light" got a light editor, so
+  // Solarized Light and light custom/plugin themes rendered a dark editor.
   it("maps the light app theme to the light Shiki theme", async () => {
     const { getMonacoTheme, MONACO_LIGHT_THEME } = await freshModule();
-    expect(getMonacoTheme("light")).toBe(MONACO_LIGHT_THEME);
+    expect(getMonacoTheme(lightTheme)).toBe(MONACO_LIGHT_THEME);
   });
 
   it("maps the dark app theme to the dark Shiki theme", async () => {
     const { getMonacoTheme, MONACO_DARK_THEME } = await freshModule();
-    expect(getMonacoTheme("dark")).toBe(MONACO_DARK_THEME);
+    expect(getMonacoTheme(darkTheme)).toBe(MONACO_DARK_THEME);
   });
 
-  it("falls back to the dark theme for an unknown app theme id", async () => {
+  it("maps Solarized Light to the light Shiki theme", async () => {
+    const { getMonacoTheme, MONACO_LIGHT_THEME } = await freshModule();
+    expect(getMonacoTheme(solarizedLightTheme)).toBe(MONACO_LIGHT_THEME);
+  });
+
+  it("maps Solarized Dark to the dark Shiki theme", async () => {
     const { getMonacoTheme, MONACO_DARK_THEME } = await freshModule();
-    expect(getMonacoTheme("neon")).toBe(MONACO_DARK_THEME);
+    expect(getMonacoTheme(solarizedDarkTheme)).toBe(MONACO_DARK_THEME);
+  });
+
+  it("maps a custom theme with a light colorScheme to the light Shiki theme", async () => {
+    const { getMonacoTheme, MONACO_LIGHT_THEME } = await freshModule();
+    const custom = createCustomTheme("light", "My Light");
+    expect(custom.id).not.toBe("light");
+    expect(getMonacoTheme(custom)).toBe(MONACO_LIGHT_THEME);
+  });
+
+  it("maps a light plugin theme to the light Shiki theme", async () => {
+    const { getMonacoTheme, MONACO_LIGHT_THEME } = await freshModule();
+    const plugin = { ...darkTheme, id: "plugin:acme:paper", colorScheme: "light" as const };
+    expect(getMonacoTheme(plugin)).toBe(MONACO_LIGHT_THEME);
   });
 });
 

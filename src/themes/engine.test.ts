@@ -5,6 +5,7 @@ import {
   getXtermTheme,
   getCurrentTheme,
   onThemeChange,
+  getThemeRevision,
   dispose,
 } from "./engine";
 import { darkTheme } from "./dark";
@@ -219,6 +220,23 @@ describe("onThemeChange", () => {
     listeners[0]({ matches: false });
     expect(cb).toHaveBeenCalledTimes(1);
     expect(getCurrentTheme().id).toBe("light");
+  });
+
+  it("fires callbacks when a theme is applied from settings (UI2-004)", () => {
+    applyTheme("dark");
+    const cb = vi.fn();
+    onThemeChange(cb);
+    applyTheme("solarized-light");
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(getCurrentTheme().id).toBe("solarized-light");
+  });
+
+  it("bumps the theme revision on every apply and preview (UI2-004)", () => {
+    const before = getThemeRevision();
+    applyTheme("light");
+    expect(getThemeRevision()).toBe(before + 1);
+    previewTheme(createCustomTheme("dark", "Draft"));
+    expect(getThemeRevision()).toBe(before + 2);
   });
 
   it("unsubscribe stops further callbacks", () => {
