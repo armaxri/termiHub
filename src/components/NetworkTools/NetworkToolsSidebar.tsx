@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import "./NetworkTools.css";
 import {
   Play,
@@ -78,10 +78,31 @@ function MonitorRow({
   const { config, running, paused, lastResult } = monitor;
   const shortUrl = config.url.replace(/^https?:\/\//, "").slice(0, 24);
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
+  // The status and age read as the button's description, its name being the
+  // full URL (the visible one is truncated) (#4349).
+  const idBase = useId();
+  const resultId = `${idBase}-result`;
+  const stateId = `${idBase}-state`;
+  const ageId = `${idBase}-age`;
+  const checking = !lastResult && running && !paused;
+  const describedBy = [
+    lastResult ? resultId : null,
+    checking || paused || !running ? stateId : null,
+    lastResult ? ageId : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className="network-sidebar__monitor" data-testid={`monitor-row-${config.id}`}>
-      <div className="network-sidebar__monitor-info" onClick={() => onOpen(config.id)}>
+      <button
+        type="button"
+        className="network-sidebar__monitor-info"
+        onClick={() => onOpen(config.id)}
+        aria-label={`Open monitor ${config.url}`}
+        aria-describedby={describedBy}
+        data-testid={`monitor-open-${config.id}`}
+      >
         <Circle
           size={8}
           fill={
@@ -97,17 +118,28 @@ function MonitorRow({
         />
         <span className="network-sidebar__monitor-url">{shortUrl}</span>
         {lastResult && (
-          <span className="network-sidebar__monitor-status">
+          <span id={resultId} className="network-sidebar__monitor-status">
             {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}
           </span>
         )}
-        {!lastResult && running && !paused && (
-          <span className="network-sidebar__monitor-status">checking…</span>
+        {checking && (
+          <span id={stateId} className="network-sidebar__monitor-status">
+            checking…
+          </span>
         )}
-        {running && paused && <span className="network-sidebar__monitor-status">paused</span>}
-        {!running && <span className="network-sidebar__monitor-status">stopped</span>}
+        {running && paused && (
+          <span id={stateId} className="network-sidebar__monitor-status">
+            paused
+          </span>
+        )}
+        {!running && (
+          <span id={stateId} className="network-sidebar__monitor-status">
+            stopped
+          </span>
+        )}
         {lastResult && (
           <span
+            id={ageId}
             className={`network-sidebar__monitor-age${
               stale ? " network-sidebar__monitor-age--stale" : ""
             }`}
@@ -131,7 +163,7 @@ function MonitorRow({
             {formatCheckedAgo(lastResult.timestampMs, now)}
           </span>
         )}
-      </div>
+      </button>
       {running && !paused && (
         <Tooltip content="Pause monitor" side="left">
           <Button
