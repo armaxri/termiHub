@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -64,6 +64,7 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
@@ -312,6 +313,12 @@ interface TerminalProps {
   tabId: string;
   config: ConnectionConfig;
   isVisible: boolean;
+  /**
+   * Whether the terminal is actually on screen — its panel's active tab in the
+   * active tab group. Drives the WebGL context lease (#4308): only on-screen
+   * terminals hold a WebGL2 context. Defaults to `isVisible`.
+   */
+  isOnScreen?: boolean;
   existingSessionId?: string | null;
   /** Optional command to send after the session connects. */
   initialCommand?: string;
@@ -342,6 +349,7 @@ export function Terminal({
   tabId,
   config,
   isVisible,
+  isOnScreen = isVisible,
   existingSessionId,
   initialCommand,
   persistentConnectionId,
@@ -392,6 +400,18 @@ export function Terminal({
   // the DOM renderer mid-session. Lives at component scope so the output-flush
   // effect and the terminal-init effect (which owns the addon) share it.
   const webglRendererActiveRef = useRef(false);
+  // WebGL context lease of the live xterm (#4308): acquired while the terminal
+  // is on screen, released while it is hidden. Created and disposed with the
+  // xterm instance; `isOnScreenRef` carries the latest visibility into the
+  // creation effect, which does not re-run on visibility changes.
+  const webglRendererRef = useRef<WebglRendererController | null>(null);
+  const isOnScreenRef = useRef(isOnScreen);
+  // Set by a layout-effect cleanup, which React runs before any passive-effect
+  // cleanup on unmount. Lets the xterm teardown tell a final unmount (tab,
+  // group or window close — the instance is discarded) from an effect re-run
+  // such as a reconnect, and skip the full-scrollback serialization on the
+  // former (#4308, PERF2-006).
+  const isUnmountingRef = useRef(false);
   // Inline-image controller for the live xterm (PROD-057). Created and disposed
   // with the xterm instance; the settings effect below toggles it live.
   const inlineImagesRef = useRef<InlineImagesController | null>(null);
@@ -1489,33 +1509,34 @@ export function Terminal({
     // throughput win on high-volume output. It must be loaded AFTER open() so it
     // can attach to the already-created terminal DOM/dimensions.
     //
-    // Every failure path degrades to the DOM renderer, never to a blank pane:
-    //  - loadAddon() calls the addon's activate(), which creates the WebGL2
-    //    context and throws if the WebView cannot provide one — caught here, the
-    //    terminal simply keeps its DOM renderer.
-    //  - onContextLoss fires if the GPU context is lost at runtime (driver reset,
-    //    tab backgrounded, resource pressure). We dispose the addon, which makes
-    //    xterm fall back to the DOM renderer automatically, so text keeps
-    //    rendering. A one-shot fallback: we do not try to re-create the context.
+    // The context is a lease of on-screen terminals only (#4308): browser
+    // engines cap active WebGL contexts per page at 16, so the controller
+    // acquires one from a shared, capped pool while the terminal is visible and
+    // releases it while hidden. Every failure path degrades to the DOM
+    // renderer, never to a blank pane: a failed creation keeps the DOM renderer
+    // for good, and a runtime context loss disposes the addon (xterm falls back
+    // automatically) and retries on the next time the tab is shown.
+    //
     // The forced full-viewport refresh after each flush (see flushOutput) is a
     // DOM-renderer paint fix (#1849). It is skipped while WebGL is active
     // (#2107) — tracked via webglRendererActiveRef, which mirrors the renderer
-    // state below — and resumes automatically on context-loss fallback so the
-    // DOM path stays correct.
-    let webglAddon: WebglAddon | null = null;
-    try {
-      const addon = new WebglAddon();
-      addon.onContextLoss(() => {
-        frontendLog("terminal", `webgl context lost tab=${tabId}; falling back to DOM renderer`);
-        addon.dispose();
-        webglAddon = null;
-        webglRendererActiveRef.current = false;
-        el.dataset.terminalRenderer = "dom";
-        // The DOM renderer measures its own cell, which need not match the
-        // WebGL one — so the grid fitted under WebGL no longer fills the
-        // container and nothing else re-fits it until the next resize (#4017).
-        // Re-fit once the swapped-in renderer has measured (next frame); a
-        // changed grid flows to the PTY through onResize as usual.
+    // state below — and resumes automatically on a DOM fallback.
+    let webglInitialAttach = true;
+    const webglRenderer = createWebglRenderer({
+      id: tabId,
+      createAddon: () => new WebglAddon(),
+      loadAddon: (addon) => xterm.loadAddon(addon as WebglAddon),
+      log: (message) => frontendLog("terminal", message),
+      onRendererChange: (renderer, reason) => {
+        webglRendererActiveRef.current = renderer === "webgl";
+        el.dataset.terminalRenderer = renderer;
+        frontendLog("terminal", `renderer ${renderer} (${reason}) tab=${tabId}`);
+        if (webglInitialAttach || reason === "disposed") return;
+        // The two renderers measure their own cells, so the grid fitted under
+        // one no longer fills the container under the other and nothing else
+        // re-fits it until the next resize (#4017). Re-fit once the swapped-in
+        // renderer has measured (next frame); a changed grid flows to the PTY
+        // through onResize as usual.
         requestAnimationFrame(() => {
           if (connectAbort.signal.aborted || horizontalScrollingRef.current) return;
           try {
@@ -1524,22 +1545,11 @@ export function Terminal({
             // Container not sized (parked); the next ResizeObserver fit re-fits.
           }
         });
-      });
-      xterm.loadAddon(addon);
-      webglAddon = addon;
-      webglRendererActiveRef.current = true;
-      el.dataset.terminalRenderer = "webgl";
-      frontendLog("terminal", `webgl renderer active tab=${tabId}`);
-    } catch (err) {
-      frontendLog(
-        "terminal",
-        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${errorMessage(err)}`
-      );
-      webglAddon?.dispose();
-      webglAddon = null;
-      webglRendererActiveRef.current = false;
-      el.dataset.terminalRenderer = "dom";
-    }
+      },
+    });
+    webglRendererRef.current = webglRenderer;
+    webglRenderer.setVisible(isOnScreenRef.current);
+    webglInitialAttach = false;
 
     // Inline images (PROD-057): SIXEL + iTerm2 inline image protocol via the
     // lazily-imported image addon, with conservative memory caps (see
@@ -1887,23 +1897,30 @@ export function Terminal({
       // effect via the retryCount dep) can replay it into the fresh xterm. This
       // is what makes the disconnect overlay's "Scrollback is preserved below"
       // hold true even when the reconnect fails (#1126). Serialize before
-      // dispose; guard so a serialize failure never blocks teardown.
-      try {
-        const snapshot = serializeAddon.serialize();
-        scrollbackSnapshotRef.current = snapshot.length > 0 ? snapshot : null;
-      } catch (err) {
-        frontendLog("terminal", `Failed to snapshot scrollback tab=${tabId}: ${errorMessage(err)}`);
-        scrollbackSnapshotRef.current = null;
+      // dispose; guard so a serialize failure never blocks teardown. Skipped on
+      // a final unmount, where no next run exists and serializing a possibly
+      // multi-MB buffer would only delay the close (#4308, PERF2-006).
+      scrollbackSnapshotRef.current = null;
+      if (!isUnmountingRef.current) {
+        try {
+          const snapshot = serializeAddon.serialize();
+          scrollbackSnapshotRef.current = snapshot.length > 0 ? snapshot : null;
+        } catch (err) {
+          frontendLog(
+            "terminal",
+            `Failed to snapshot scrollback tab=${tabId}: ${errorMessage(err)}`
+          );
+        }
       }
       // Dispose the highlighting engine on the same boundary as the xterm
       // instance so no decorations or write hooks leak past teardown.
       highlightEngine.dispose();
       highlightEngineRef.current = null;
       // Dispose the WebGL renderer explicitly before the terminal so its GPU
-      // context/canvas is released deterministically (#2078). Null after a
-      // context-loss fallback, in which case it is already disposed.
-      webglAddon?.dispose();
-      webglAddon = null;
+      // context/canvas and pool slot are released deterministically (#2078,
+      // #4308). A no-op after a context-loss fallback or while hidden.
+      webglRenderer.dispose();
+      if (webglRendererRef.current === webglRenderer) webglRendererRef.current = null;
       // Dispose the inline-image addon (and cancel any in-flight lazy load) on
       // the same boundary as the terminal (PROD-057).
       unregisterInlineImages();
@@ -1939,6 +1956,26 @@ export function Terminal({
     retryCount,
     applyHighlighting,
   ]);
+
+  // Flag a final unmount for the xterm teardown above (#4308). A layout-effect
+  // cleanup runs before every passive-effect cleanup when the component
+  // unmounts, so the flag is set by the time the teardown decides whether to
+  // serialize the scrollback. React StrictMode's simulated unmount re-runs the
+  // setup, which clears the flag again.
+  useLayoutEffect(() => {
+    isUnmountingRef.current = false;
+    return () => {
+      isUnmountingRef.current = true;
+    };
+  }, []);
+
+  // Lease or release the WebGL context as the terminal enters or leaves the
+  // screen (#4308). On mount the controller does not exist yet; the creation
+  // effect reads isOnScreenRef instead.
+  useLayoutEffect(() => {
+    isOnScreenRef.current = isOnScreen;
+    webglRendererRef.current?.setVisible(isOnScreen);
+  }, [isOnScreen]);
 
   // Re-fit and focus when visibility changes
   useEffect(() => {
