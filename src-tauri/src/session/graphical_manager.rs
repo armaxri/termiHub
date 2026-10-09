@@ -473,7 +473,12 @@ impl GraphicalSessionManager {
     /// Returns the new session id. Drives the state machine through
     /// `Connecting → Authenticating → Active`, emitting `remote-desktop-state`
     /// at each step, then spawns the frame and cursor pumps.
-    pub async fn connect<S: GraphicalEventSink>(
+    ///
+    /// A direct, non-cancellable connect for tests; the app connects through
+    /// [`connect_routed`](Self::connect_routed), which also takes a
+    /// `connect_id` (#4298).
+    #[cfg(test)]
+    pub(crate) async fn connect<S: GraphicalEventSink>(
         &self,
         type_id: &str,
         settings: serde_json::Value,
