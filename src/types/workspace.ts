@@ -50,7 +50,6 @@ export type { ActiveWorkspaceInfo } from "./generated/ActiveWorkspaceInfo";
 export type { WorkspaceSummary } from "./generated/WorkspaceSummary";
 
 /** Preview of a workspace import file. */
-export type { WorkspaceImportPreview } from "./generated/WorkspaceImportPreview";
 
 /**
  * An imported tab carrying a command or an inline connection config that waits

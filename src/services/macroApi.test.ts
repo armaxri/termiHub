@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { listMacros, getMacro, saveMacro, deleteMacro } from "./macroApi";
+import { listMacros, saveMacro, deleteMacro } from "./macroApi";
 import type { Macro } from "@/types/macro";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -32,14 +32,6 @@ describe("macroApi", () => {
     const result = await listMacros();
     expect(mockedInvoke).toHaveBeenCalledWith("list_macros");
     expect(result).toEqual([]);
-  });
-
-  it("getMacro invokes correct command with id", async () => {
-    const macro = sampleMacro();
-    mockedInvoke.mockResolvedValue(macro);
-    const result = await getMacro("macro-1");
-    expect(mockedInvoke).toHaveBeenCalledWith("get_macro", { macroId: "macro-1" });
-    expect(result).toEqual(macro);
   });
 
   it("saveMacro invokes correct command with macroDef arg", async () => {

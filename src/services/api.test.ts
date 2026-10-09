@@ -33,18 +33,13 @@ import {
   closeTerminal,
   listSerialPorts,
   listAvailableShells,
-  checkX11Available,
-  checkSshAgentStatus,
   loadConnectionsAndFolders,
   saveConnection,
   deleteConnectionFromBackend,
   saveFolder,
   deleteFolderFromBackend,
-  exportConnections,
-  importConnections,
   getSettings,
   saveSettings,
-  saveExternalFile,
   reloadExternalConnections,
   sftpCancelTransfer,
   getHomeDir,
@@ -74,11 +69,9 @@ import {
   vscodeOpenLocal,
   validateSshKey,
   checkDockerAvailable,
-  listDockerImages,
   listDockerContainers,
   listAgentDockerContainers,
   checkPodmanAvailable,
-  listPodmanImages,
   detectAgentArch,
   setupRemoteAgent,
   cancelAgentSetup,
@@ -87,7 +80,6 @@ import {
   getCredentialStoreStatus,
   unlockCredentialStore,
   lockCredentialStore,
-  setupMasterPassword,
   changeMasterPassword,
   switchCredentialStore,
   resolveCredential,
@@ -362,24 +354,6 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("list_available_shells");
       expect(result).toEqual(["zsh", "bash"]);
     });
-
-    it("checkX11Available returns boolean", async () => {
-      mockedInvoke.mockResolvedValue(true);
-
-      const result = await checkX11Available();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("check_x11_available");
-      expect(result).toBe(true);
-    });
-
-    it("checkSshAgentStatus returns status string", async () => {
-      mockedInvoke.mockResolvedValue("running");
-
-      const result = await checkSshAgentStatus();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("check_ssh_agent_status");
-      expect(result).toBe("running");
-    });
   });
 
   describe("connection persistence commands", () => {
@@ -434,26 +408,6 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("delete_folder", { id: "folder-1" });
     });
-
-    it("exportConnections returns JSON string", async () => {
-      mockedInvoke.mockResolvedValue('{"connections":[]}');
-
-      const result = await exportConnections();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("export_connections");
-      expect(result).toBe('{"connections":[]}');
-    });
-
-    it("importConnections returns count", async () => {
-      mockedInvoke.mockResolvedValue(5);
-
-      const result = await importConnections('{"connections":[]}');
-
-      expect(mockedInvoke).toHaveBeenCalledWith("import_connections", {
-        json: '{"connections":[]}',
-      });
-      expect(result).toBe(5);
-    });
   });
 
   describe("settings commands", () => {
@@ -484,19 +438,6 @@ describe("api service", () => {
       await saveSettings(settings);
 
       expect(mockedInvoke).toHaveBeenCalledWith("save_settings", { settings });
-    });
-
-    it("saveExternalFile invokes with all parameters", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await saveExternalFile("/path/to/file.json", "Test File", [], []);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("save_external_file", {
-        filePath: "/path/to/file.json",
-        name: "Test File",
-        folders: [],
-        connections: [],
-      });
     });
 
     it("reloadExternalConnections returns sources", async () => {
@@ -874,16 +815,6 @@ describe("api service", () => {
       expect(result).toBe(false);
     });
 
-    it("listDockerImages invokes correct command", async () => {
-      const images = ["ubuntu:22.04", "node:18-alpine", "nginx:latest"];
-      mockedInvoke.mockResolvedValue(images);
-
-      const result = await listDockerImages();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("list_docker_images");
-      expect(result).toEqual(images);
-    });
-
     it("listDockerContainers passes the runtime to the command (PROD-017)", async () => {
       const containers = [
         { id: "abc", name: "web", image: "nginx", state: "running", status: "Up", running: true },
@@ -927,14 +858,6 @@ describe("api service", () => {
         runtime: null,
       });
     });
-
-    it("listDockerImages returns empty array when none available", async () => {
-      mockedInvoke.mockResolvedValue([]);
-
-      const result = await listDockerImages();
-
-      expect(result).toEqual([]);
-    });
   });
 
   describe("podman commands", () => {
@@ -953,24 +876,6 @@ describe("api service", () => {
       const result = await checkPodmanAvailable();
 
       expect(result).toBe(false);
-    });
-
-    it("listPodmanImages invokes correct command", async () => {
-      const images = ["ubuntu:22.04", "node:18-alpine"];
-      mockedInvoke.mockResolvedValue(images);
-
-      const result = await listPodmanImages();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("list_podman_images");
-      expect(result).toEqual(images);
-    });
-
-    it("listPodmanImages returns empty array when none available", async () => {
-      mockedInvoke.mockResolvedValue([]);
-
-      const result = await listPodmanImages();
-
-      expect(result).toEqual([]);
     });
   });
 
@@ -1161,16 +1066,6 @@ describe("api service", () => {
       await lockCredentialStore();
 
       expect(mockedInvoke).toHaveBeenCalledWith("lock_credential_store");
-    });
-
-    it("setupMasterPassword invokes with password", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await setupMasterPassword("new-master");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("setup_master_password", {
-        password: "new-master",
-      });
     });
 
     it("changeMasterPassword invokes with current and new password", async () => {

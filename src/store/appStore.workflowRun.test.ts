@@ -61,7 +61,6 @@ const savedWorkflows: Workflow[] = [];
 const recordedRuns: import("@/types/workflow").WorkflowRun[] = [];
 vi.mock("@/services/workflowApi", () => ({
   listWorkflows: vi.fn(() => Promise.resolve([...savedWorkflows])),
-  getWorkflow: vi.fn(),
   saveWorkflow: vi.fn((w: Workflow) => {
     savedWorkflows.push(w);
     return Promise.resolve(w);
@@ -82,7 +81,6 @@ vi.mock("@/services/workflowApi", () => ({
 const recordedMacroRuns: import("@/types/macro").MacroRun[] = [];
 vi.mock("@/services/macroApi", () => ({
   listMacros: vi.fn(() => Promise.resolve([])),
-  getMacro: vi.fn(),
   saveMacro: vi.fn((m: Macro) => Promise.resolve(m)),
   deleteMacro: vi.fn(() => Promise.resolve()),
   listMacroRuns: vi.fn(() => Promise.resolve([...recordedMacroRuns])),
