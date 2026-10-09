@@ -197,3 +197,23 @@ tests:
       - "Shift+Escape closes the overlay and focus returns to the terminal tab."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-48
+    release_gate: true
+    manual_reason: "real stacking of portaled Radix menus over a modal scrim needs a WebView with layout; jsdom computes no z-order (the token tier is unit-tested in tokenDiscipline.test.ts)"
+    name: "Context menu inside the zoomed terminal appears above the overlay"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell tab and zoom it with Ctrl+Shift+Enter (Cmd+Shift+Enter on macOS)."
+      - "Right-click the zoomed tab's title in the overlay header."
+      - "Hover each menu item, then pick Rename and press Escape."
+      - "Close the overlay, open the Open Connections dialog with an SSH host that has monitoring on, and click its refresh-interval button."
+    expected:
+      - "The overlay opens over the whole window."
+      - "The menu draws fully on top of the overlay: no part of it is dimmed by the scrim or hidden behind the dialog."
+      - "Every item highlights on hover and responds to the click."
+      - "The refresh-interval menu opens on top of the dialog and picking an interval updates the button label."
+    verification: manual
+    tags: [visual]

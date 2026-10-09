@@ -12,6 +12,7 @@ import { flushAsync } from "@/test/flushAsync";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { MonitoringEntry } from "@/types/monitoring";
+import { MONITORING_INTERVAL_OPTIONS } from "@/types/monitoring";
 import { ensureMonitorsSubscribed } from "@/store/systemMonitorBridge";
 import {
   installMonitorHarness,
@@ -198,6 +199,34 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
       expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).not.toBeNull();
     }
   );
+
+  it("portals the refresh-interval menu inside the modal, above its scrim (#4347)", async () => {
+    seedMonitor();
+    await renderModal();
+
+    const trigger = document.querySelector<HTMLButtonElement>(
+      `[data-testid="monitor-interval-${KEY}"]`
+    );
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger!.focus();
+      trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+
+    const menu = document.querySelector<HTMLElement>(".monitoring-menu__content");
+    expect(menu, "the interval menu should be open").not.toBeNull();
+    // Portaled into the modal's own content node, so the modal's pointer-events
+    // lock does not make it unclickable and it stacks with the dialog surface,
+    // not under the body-level scrim.
+    const modal = document.querySelector(".ui-modal");
+    expect(modal).not.toBeNull();
+    expect(modal!.contains(menu)).toBe(true);
+    // The interval options are reachable inside the open menu.
+    expect(menu!.querySelectorAll('[role="menuitemradio"], [role="menuitem"]').length).toBe(
+      MONITORING_INTERVAL_OPTIONS.length
+    );
+  });
 
   it("does not render a Retry control while live", async () => {
     seedMonitor({ status: "live" });
