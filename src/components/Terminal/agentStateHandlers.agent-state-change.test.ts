@@ -544,6 +544,8 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       await useAppStore.getState().disconnectRemoteAgent(AGENT, { endHostedSessions: false });
       await agentEvent("disconnected");
 
+      // The backend is told too, so it reports a suspend to every window (#4447).
+      expect(disconnectAgent).toHaveBeenCalledWith(AGENT, { endHostedSessions: false });
       expect(intents("session.reconnect", tab.id)).toHaveLength(1);
       expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
     });
@@ -556,6 +558,66 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       useAppStore.getState().reconnectTerminal(tab.id);
 
       expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
+    });
+  });
+
+  // ── backend end reason, seen by a window that clicked nothing (#4447) ────
+
+  describe("'disconnected' with a backend end reason (any window)", () => {
+    /** Deliver a "disconnected" event carrying the backend's end reason. */
+    function disconnectedWith(reason: string): Promise<void> {
+      return handleAgentStateChange(
+        { session_id: AGENT, state: "disconnected", reason },
+        { listAgentSessions, getAllTabs: allTabs }
+      );
+    }
+
+    it.each(["user", "shutdown"])(
+      "reason '%s' ends the tabs of a window with no local intent",
+      async (reason) => {
+        const tab = openAgentTab("session-123");
+        harness.transport.setSession(tab.id, connected());
+
+        await disconnectedWith(reason);
+
+        expect(intents("session.reconnect", tab.id)).toHaveLength(0);
+        expect(intents("session.disconnect", tab.id)).toHaveLength(1);
+        expect(useAppStore.getState().terminalViewMode[tab.id]).toBe(true);
+        expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBe(true);
+      }
+    );
+
+    it("a user end leaves tabs that had already ended untouched", async () => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, sessionLost());
+
+      await disconnectedWith("user");
+
+      expect(intents("session.disconnect", tab.id)).toHaveLength(0);
+      expect(currentSessionView()[tab.id]?.status).toBe("sessionLost");
+    });
+
+    it.each(["lost", "suspend"])("reason '%s' still reconnects the tab", async (reason) => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, connected());
+
+      await disconnectedWith(reason);
+
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
+      expect(intents("session.disconnect", tab.id)).toHaveLength(0);
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
+    });
+
+    it("a user end consumes this window's own intent too", async () => {
+      const tab = openAgentTab("session-123");
+      markAgentDisconnectIntent(AGENT);
+      await disconnectedWith("user");
+
+      // The user reconnects; a later unexpected loss must reconnect, not end.
+      harness.transport.setSession(tab.id, connected());
+      await disconnectedWith("lost");
+
+      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
   });
 
