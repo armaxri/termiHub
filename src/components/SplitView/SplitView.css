@@ -96,51 +96,27 @@
 }
 
 .split-view__resize-handle:hover,
+.split-view__resize-handle:focus-visible,
 .split-view__resize-handle[data-separator="active"] {
   background-color: var(--resize-handle-hover-color);
 }
 
-/* Panel zoom overlay */
-.zoom-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-sticky);
-  background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.zoom-overlay__panel {
-  display: flex;
-  flex-direction: column;
-  width: calc(100% - 32px);
-  height: calc(100% - 32px);
-  background: var(--bg-primary);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.zoom-overlay__header {
+/* Panel zoom overlay: the head and body of a full-size Modal (#4329). */
+.zoom-overlay__label {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: var(--tab-bg);
-  border-bottom: 1px solid var(--panel-border);
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .zoom-overlay__icon {
+  display: inline-flex;
   flex-shrink: 0;
   color: var(--text-secondary);
 }
 
 .zoom-overlay__title {
-  font-size: var(--font-size-sm);
   color: var(--text-primary);
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -150,23 +126,6 @@
   font-size: var(--font-size-xs);
   color: var(--text-disabled);
   flex-shrink: 0;
-}
-
-.zoom-overlay__close {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  padding: var(--spacing-xxs);
-  border-radius: var(--radius-xs);
-  flex-shrink: 0;
-}
-
-.zoom-overlay__close:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
 }
 
 .zoom-overlay__content {

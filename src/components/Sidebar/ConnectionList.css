@@ -78,6 +78,7 @@
 }
 
 .connection-list__resize-handle--resizable:hover,
+.connection-list__resize-handle--resizable:focus-visible,
 .connection-list__resize-handle--active {
   background-color: var(--resize-handle-hover-color);
 }

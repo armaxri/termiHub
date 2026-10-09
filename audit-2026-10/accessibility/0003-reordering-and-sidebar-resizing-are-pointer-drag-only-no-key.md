@@ -15,8 +15,8 @@ evidence:
   - src/hooks/useSidebarResize.ts:92
   - src/App.tsx:331-335
   - src/components/Sidebar/ConnectionList.tsx:1404-1408
-status: open
-resolution: ""
+status: fixed
+resolution: "#4329 — sidebar/section handles are arrow-key separators; tabs, groups and shell entries move via keys/menus"
 audit: 2026-10
 commit: 663465d52
 relation: new
