@@ -76,7 +76,7 @@ const EXPECTED_ARGS: Record<string, unknown[]> = {
   onCredentialStoreLocked: [true],
 };
 
-const wrappers = Object.entries(events).filter(
+const wrappers = (Object.entries(events) as [string, unknown][]).filter(
   (entry): entry is [string, Wrapper] => /^on[A-Z]/.test(entry[0]) && typeof entry[1] === "function"
 );
 
