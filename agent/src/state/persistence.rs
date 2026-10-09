@@ -224,7 +224,7 @@ impl AgentState {
     ///   the file is not interpreted and is left intact; the returned state is
     ///   empty and write-blocked, so no save can overwrite it.
     /// * **Valid JSON with a malformed part** (e.g. one bad session): the
-    ///   original bytes are copied aside to a `state.json.corrupt-…` backup, then
+    ///   original bytes are copied aside to a `state.json.bak[.N]` backup, then
     ///   every well-formed session, the update record and unknown keys are
     ///   salvaged.
     /// * **Unparseable JSON**: the bytes are quarantined to a
@@ -1437,7 +1437,7 @@ mod tests {
                 p.file_name()
                     .unwrap()
                     .to_string_lossy()
-                    .starts_with("state.json.corrupt-")
+                    .starts_with("state.json.bak")
             })
             .collect();
         assert_eq!(backups.len(), 1, "exactly one backup expected: {backups:?}");
