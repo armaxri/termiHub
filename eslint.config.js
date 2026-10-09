@@ -34,6 +34,10 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     rules: {
       "no-console": "error",
+      // Silent-catch policy (#4333): an empty `catch {}` hides a failure from the
+      // user and the Log Viewer. Log it (frontendLog / fireAndForget), surface it
+      // (toast), or rethrow; a deliberately ignored error carries a comment saying why.
+      "no-empty": ["error", { allowEmptyCatch: false }],
     },
   },
   {
@@ -59,6 +63,14 @@ export default tseslint.config(
           message:
             'Interpolate errorMessage(err) from @/utils/errorMessage — "${err}" of a structured IPC error renders "[object Object]" (#4104).',
         },
+        {
+          // Silent-catch policy (#4333): `.catch(() => {})` swallows a rejection
+          // with no trace. A comment-only body counts as empty too.
+          selector:
+            "CallExpression[callee.property.name='catch'] > :matches(ArrowFunctionExpression, FunctionExpression)[body.type='BlockStatement'][body.body.length=0]",
+          message:
+            'Do not swallow a rejection silently (#4333). Use fireAndForget(p, "<reason>") for best-effort work, or log/toast the error in the handler.',
+        },
       ],
     },
   },
@@ -69,12 +81,24 @@ export default tseslint.config(
     // the system tests. The wrapper itself is the one legitimate importer.
     // The fs / opener plugins are limited to what the capability grants (#3115).
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/services/nativeDialog.ts", "src/**/*.test.{ts,tsx}", "src/test/**"],
+    ignores: [
+      "src/services/nativeDialog.ts",
+      "src/components/ui/Toast/**",
+      "src/**/*.test.{ts,tsx}",
+      "src/test/**",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           paths: [
+            // ui/Toast is the app's toast policy (errors persist until dismissed);
+            // a direct sonner import bypasses it (#4333). The wrapper is exempt.
+            {
+              name: "sonner",
+              message:
+                'Use toast from "@/components/ui" — it applies the persist-errors policy (#4333).',
+            },
             {
               name: "@tauri-apps/plugin-dialog",
               importNames: ["open", "save"],
