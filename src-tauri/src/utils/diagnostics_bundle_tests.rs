@@ -84,6 +84,35 @@ fn plan_lists_readme_system_info_logs_and_crash_reports_only() {
 }
 
 #[test]
+fn plan_includes_every_per_process_log_file_of_the_family() {
+    // #4319: logs are written per process (`termihub-<role>-<pid>.log`, with
+    // their own archives). Export Diagnostics must pick all of them up, after
+    // the main `termihub.log` family, and still skip unrelated `.log` files.
+    let tmp = populated_log_dir();
+    let dir = tmp.path();
+    fs::write(dir.join("termihub-helper-4242.log"), "INFO helper\n").unwrap();
+    fs::write(dir.join("termihub-helper-4242.1.log"), "INFO helper old\n").unwrap();
+    fs::write(dir.join("termihubby.log"), "not ours").unwrap();
+    fs::write(dir.join("other-app.log"), "not ours").unwrap();
+
+    let entries = plan_bundle(Some(dir), &build(), SystemTime::now());
+
+    let logs: Vec<String> = names(&entries)
+        .into_iter()
+        .filter(|n| n.starts_with("logs/"))
+        .collect();
+    assert_eq!(
+        logs,
+        vec![
+            "logs/termihub.log",
+            "logs/termihub.1.log",
+            "logs/termihub-helper-4242.log",
+            "logs/termihub-helper-4242.1.log",
+        ]
+    );
+}
+
+#[test]
 fn plan_never_includes_session_transcripts() {
     let tmp = populated_log_dir();
     let entries = plan_bundle(Some(tmp.path()), &build(), SystemTime::now());

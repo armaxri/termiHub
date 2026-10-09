@@ -36,10 +36,12 @@ const UPLOAD_DIR_PREFIX: &str = "upload.";
 /// Create `dir` (and any missing parents) and restrict it to its owner.
 ///
 /// On Unix the dir ends up `0700` even when it already existed with a wider
-/// mode, and a symlink in its place is refused rather than followed. On other
-/// platforms the dir is created and inherits the per-user ACL of its parent
-/// (the agent's config dir under the user profile); the staged binary is never
-/// applied there (apply is Unix-only).
+/// mode, and a symlink in its place is refused rather than followed. On
+/// Windows it gets a protected DACL granting only the current user and
+/// `LocalSystem` full control, inherited by everything created inside it (the
+/// desktop's per-upload subdirs included), even when it already existed with a
+/// broader ACL — defence in depth, as the staged binary is never applied there
+/// (apply is Unix-only). Elsewhere the dir is just created.
 pub(crate) fn ensure_private_dir(dir: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
@@ -61,10 +63,51 @@ pub(crate) fn ensure_private_dir(dir: &Path) -> anyhow::Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
             .with_context(|| format!("restrict staging dir {} to 0700", dir.display()))?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("create staging dir {}", dir.display()))?;
+        restrict_dir_to_current_user(dir)?;
+    }
+    #[cfg(not(any(unix, windows)))]
     std::fs::create_dir_all(dir)
         .with_context(|| format!("create staging dir {}", dir.display()))?;
     Ok(())
+}
+
+/// The staging dir's DACL on Windows (#4494): the current user and
+/// `LocalSystem`, object- and container-inheritable, protected so nothing is
+/// inherited from the parent.
+///
+/// `LocalSystem` is kept for parity with the other per-user objects built from
+/// the shared helper (the core local-IPC endpoints,
+/// `ListenerSecurity::CurrentUserOnly`) and with the user-profile ACL the dir
+/// would otherwise inherit: SYSTEM already holds full control of the whole
+/// profile, so excluding it adds no protection and only breaks system services
+/// (backup, Defender scans) that legitimately read it.
+#[cfg(windows)]
+pub(crate) const STAGING_DACL: termihub_win_security::DaclSpec<'static> =
+    termihub_win_security::DaclSpec {
+        extra_sids: &[],
+        include_system: true,
+        inherit_to_children: true,
+    };
+
+/// Replace `dir`'s DACL with [`STAGING_DACL`], refusing a reparse point (a
+/// symlink or junction) in its place rather than re-ACLing its target.
+#[cfg(windows)]
+fn restrict_dir_to_current_user(dir: &Path) -> anyhow::Result<()> {
+    let meta = std::fs::symlink_metadata(dir)
+        .with_context(|| format!("stat staging dir {}", dir.display()))?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        anyhow::bail!(
+            "staging dir {} is not a real directory (symlink or junction?)",
+            dir.display()
+        );
+    }
+    termihub_win_security::ProtectedDacl::new(&STAGING_DACL)
+        .and_then(|dacl| dacl.apply_to_path(dir))
+        .with_context(|| format!("restrict staging dir {} to the current user", dir.display()))
 }
 
 /// Open the staged binary at `src` — already confined below `root` — exactly
@@ -233,3 +276,7 @@ pub fn discard_applied_upload(roots: &[PathBuf], path: &Path) {
 #[cfg(all(test, unix))]
 #[path = "staged_tests.rs"]
 mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "staged_windows_tests.rs"]
+mod windows_tests;

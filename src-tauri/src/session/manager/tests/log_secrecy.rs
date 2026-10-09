@@ -55,7 +55,8 @@ const TERMINAL_INPUT: &str = "log-secrecy-terminal-line-3e8d07";
 
 /// The shipped file sink at `trace`, writing into `dir`.
 fn file_log_dispatch(dir: &Path) -> tracing::Dispatch {
-    let writer = RotatingLogFile::new(dir, 10 * 1024 * 1024, 2).expect("open the log file");
+    let writer =
+        RotatingLogFile::new(dir, "termihub", 10 * 1024 * 1024, 2).expect("open the log file");
     let filter = env_filter_for_level("trace").expect("trace is a selectable level");
     let layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)

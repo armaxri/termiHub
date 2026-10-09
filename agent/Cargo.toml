@@ -69,6 +69,8 @@ termihub-core = { path = "../core", features = [
     # with the desktop (#3330). The public key is compiled in from
     # `keys/update-signing.pub.pem`.
     "agent-update-signing",
+    # The shared rotating log-file writer and russh clamp (#4319).
+    "file-log",
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -107,6 +109,10 @@ libc = "0.2"
 # Named-pipe liveness probe (WaitNamedPipeW) for the session daemon's endpoint
 # and detached-process creation flags. The per-user DACL construction moved to
 # termihub-core's shared IPC transport (`ipc::ListenerSecurity::CurrentUserOnly`).
+# The shared protected-DACL helper (#4322): the update staging dir's
+# current-user-and-SYSTEM ACL (#4494), the Windows analog of its Unix 0700; its
+# tests also read the ssh-agent relay pipe's DACL back (AGT2-005).
+termihub-win-security = { path = "../win-security" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Pipes",
@@ -135,8 +141,6 @@ wiremock = "0.6"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dev-dependencies]
-# Read the ssh-agent relay pipe's DACL back in its AGT2-005 test (#4322).
-termihub-win-security = { path = "../win-security" }
 # Kill-on-close Job Object the test harnesses put spawned agents into, so a
 # killed test run cannot leak them (#3641, agent/tests/common/parent_death.rs).
 # ToolHelp: the process-tree snapshot the Windows ConPTY shell-session tests use
