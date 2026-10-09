@@ -367,3 +367,64 @@ async fn a_directory_larger_than_one_frame_lists_every_entry() {
     // Paging is not a refusal.
     assert!(plugin.runner().bridge_denials().is_empty());
 }
+
+/// Escape probe for PLG2-001 / SEC2-001: a manifest whose `filesystemPaths`
+/// reached the loader unvalidated (a pre-fix install, a hand-edited plugin
+/// folder) with an empty, `.` or relative root must not load. Before the fix
+/// such a root normalised to the empty path, which `Path::starts_with` treats
+/// as containing every path, so the plugin could read any file on the disk
+/// through the bridge.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_dot_or_relative_root_never_opens_the_disk() {
+    let work = tempfile::TempDir::new().unwrap();
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
+    std::fs::create_dir_all(&scoped).unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, b"top secret").unwrap();
+
+    let lib = fixture_library(Variant::Default, work.path());
+    let manifest = serde_json::json!({
+        "id": "test-echo",
+        "name": "Test Echo",
+        "version": "0.1.0",
+        "author": "termiHub tests",
+        "description": "Bridge-over-IPC fixture",
+        "license": "MIT",
+        "apiVersion": "1.1",
+        "platforms": ["windows", "linux", "macos"],
+        "permissions": ["terminal", "filesystem"],
+        "filesystemPaths": [scoped.to_str().unwrap()],
+        "extensions": {
+            "terminalBackend": {
+                "connectionType": "probe",
+                "displayName": "Probe",
+                "configSchema": { "type": "object", "properties": {} }
+            }
+        }
+    });
+    let installed = install_plugin(work.path(), &lib, &manifest.to_string());
+
+    for root in ["", ".", "./", "relative"] {
+        let mut tampered = installed.plugin.clone();
+        tampered.manifest.filesystem_paths = vec![root.to_owned()];
+        let (host, registry) = host_for(&installed);
+        let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
+        if host.load(&tampered).is_err() {
+            assert!(!host.is_loaded(&tampered.manifest.id));
+            continue;
+        }
+        let loaded = Loaded {
+            host,
+            registry,
+            type_id: installed.type_id.clone(),
+            id: tampered.manifest.id.clone(),
+        };
+        let line = loaded
+            .probe(
+                serde_json::json!({ "probe": "readfile", "probePath": secret.to_str().unwrap() }),
+            )
+            .await;
+        panic!("root {root:?} loaded and the plugin read outside its scope: {line}");
+    }
+}

@@ -859,6 +859,83 @@ mod tests {
         ));
     }
 
+    /// A real file outside every declared root, to probe a scope against.
+    fn outside_file() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("secret.txt");
+        std::fs::write(&file, b"top secret").unwrap();
+        (tmp, file)
+    }
+
+    /// Regression test for the `Path::starts_with("")` bypass (PLG2-001 /
+    /// SEC2-001): an empty, `.` or relative root used to normalise to the empty
+    /// path, which "contains" every path and so granted the whole disk.
+    #[test]
+    fn empty_dot_and_relative_roots_never_grant_anything() {
+        let (_tmp, secret) = outside_file();
+        for root in ["", ".", "./", "relative", "docs/sub", "~/captures"] {
+            let m = manifest_with(
+                r#"["terminal", "filesystem"]"#,
+                &format!("[{}]", serde_json::to_string(root).unwrap()),
+            );
+            let perms = PermissionSet::from_manifest(&m);
+            assert!(
+                perms.check_path(&secret).is_err(),
+                "root {root:?} must not grant {}",
+                secret.display()
+            );
+            assert!(
+                perms.check_consistency(&m.extensions).is_err(),
+                "root {root:?} must fail the load"
+            );
+        }
+    }
+
+    /// A filesystem root, or a root that normalises to one through `..`, would
+    /// grant the whole disk.
+    #[test]
+    fn filesystem_roots_never_grant_anything() {
+        let (_tmp, secret) = outside_file();
+        let roots: &[&str] = if cfg!(windows) {
+            &["C:\\", "C:/", "C:\\Windows\\..", "\\\\server\\share"]
+        } else {
+            &["/", "//", "/data/..", "/data/../"]
+        };
+        for root in roots {
+            let perms =
+                PermissionSet::from_parts([PluginPermission::Filesystem], &[(*root).to_owned()]);
+            assert!(
+                perms.check_path(&secret).is_err(),
+                "root {root:?} must not grant {}",
+                secret.display()
+            );
+            assert!(
+                perms
+                    .check_consistency(&crate::plugin::PluginExtensions::default())
+                    .is_err(),
+                "root {root:?} must fail the load"
+            );
+        }
+    }
+
+    /// A plugin-supplied relative path must never be resolved against the host
+    /// process's working directory.
+    #[test]
+    fn relative_requested_paths_are_refused() {
+        let cwd = std::env::current_dir().unwrap();
+        let perms = PermissionSet::from_parts(
+            [PluginPermission::Filesystem],
+            &[cwd.to_string_lossy().into_owned()],
+        );
+        assert!(perms.check_path(&cwd.join("Cargo.toml")).is_ok());
+        for relative in ["Cargo.toml", "./Cargo.toml", "src", ""] {
+            assert!(
+                perms.check_path(Path::new(relative)).is_err(),
+                "relative {relative:?} must be refused"
+            );
+        }
+    }
+
     #[test]
     fn normalize_lexical_cannot_escape_root() {
         // A pile of `..` at the root collapses to the root, never above it.

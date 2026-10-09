@@ -1410,6 +1410,53 @@ mod tests {
         );
     }
 
+    /// The load is refused with a permission error for the single declared
+    /// `root`, before any trust gate or library is consulted.
+    fn assert_root_refused(host: &PluginHost, root: &Path) {
+        let paths = serde_json::to_string(&[root.to_string_lossy()]).unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal", "filesystem"]"#, &paths));
+        let err = host.load(&plugin).unwrap_err();
+        assert!(
+            matches!(err, HostError::Permission(_)),
+            "root {} must be refused as a permission error, got {err:?}",
+            root.display()
+        );
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    /// Defence in depth for PLG2-001 / SEC2-001: a manifest that reaches the
+    /// loader without validation (a pre-fix install, a hand-edited folder) still
+    /// cannot declare a root that grants the whole disk.
+    #[test]
+    fn load_refuses_empty_dot_and_relative_filesystem_roots() {
+        let (host, _t) = test_host();
+        for root in ["", ".", "./", "relative"] {
+            assert_root_refused(&host, Path::new(root));
+        }
+    }
+
+    /// An over-broad root is refused at load: the user's home folder or any
+    /// folder containing it, termiHub's plugins folder or anything in it (other
+    /// plugins' files and data), and termiHub's config folder (settings and
+    /// credentials) or anything containing it.
+    #[test]
+    fn load_refuses_over_broad_filesystem_roots() {
+        let (host, tmp) = test_host();
+        let plugins = tmp.path();
+        let config = plugins.parent().expect("the temp root has a parent");
+        assert_root_refused(&host, plugins);
+        assert_root_refused(&host, &plugins.join("other-plugin"));
+        assert_root_refused(&host, &plugins.join(".data").join("other-plugin"));
+        assert_root_refused(&host, config);
+        assert_root_refused(&host, &config.join("credentials"));
+        if let Some(home) = crate::config::home_directory() {
+            assert_root_refused(&host, &home);
+            if let Some(parent) = home.parent().filter(|p| p.parent().is_some()) {
+                assert_root_refused(&host, parent);
+            }
+        }
+    }
+
     // --- Native-plugin trust gate (SEC-002 / PLG-006 / ARCH-008) ---
 
     use super::super::native_trust::NativeTrustStore;

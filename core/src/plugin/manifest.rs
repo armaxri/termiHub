@@ -947,6 +947,70 @@ mod tests {
         }
     }
 
+    /// The valid manifest with `filesystemPaths` set to the single entry `path`.
+    fn with_filesystem_path(path: &str) -> PluginManifest {
+        let json = valid_manifest_json().replace(
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],",
+            &format!(
+                "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],\n            \
+                 \"filesystemPaths\": [{}],",
+                serde_json::to_string(path).unwrap()
+            ),
+        );
+        parse_manifest(&json).expect("filesystemPaths is a valid shape")
+    }
+
+    /// PLG2-001 / SEC2-001: an empty, `.`, relative, root or traversing
+    /// `filesystemPaths` entry is refused when the manifest is validated, so a
+    /// package declaring one never installs.
+    #[test]
+    fn validate_rejects_unsafe_filesystem_paths() {
+        for bad in [
+            "",
+            ".",
+            "./",
+            "..",
+            "relative",
+            "docs/sub",
+            "~/captures",
+            "/",
+            "//",
+            "/data/..",
+            "/data/../etc",
+            "/data/./sub",
+            "/data\0nul",
+            "C:",
+            "C:relative",
+            "C:\\",
+            "C:/",
+            "C:\\Windows\\..",
+            "\\\\server\\share",
+            "\\\\?\\C:\\Windows",
+            "\\Windows",
+        ] {
+            assert!(
+                with_filesystem_path(bad).validate().is_err(),
+                "filesystemPaths entry {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_absolute_normalised_filesystem_paths() {
+        for good in [
+            "/var/log/app",
+            "/Users/someone/captures",
+            "/data/plugin/",
+            "C:\\Logs\\app",
+            "D:/captures",
+            "\\\\server\\share\\captures",
+        ] {
+            with_filesystem_path(good)
+                .validate()
+                .unwrap_or_else(|e| panic!("filesystemPaths entry {good:?} is valid: {e}"));
+        }
+    }
+
     #[test]
     fn api_compatibility_rules() {
         // Same version is compatible.
