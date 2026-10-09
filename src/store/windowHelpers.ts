@@ -6,7 +6,7 @@
  * them without pulling in the root store.
  */
 
-import type { TerminalTab } from "@/types/terminal";
+import type { EditorTabMeta, TerminalTab } from "@/types/terminal";
 import type { TransferState } from "@/types/connection";
 import type { TabHandoffRecord, HandoffTab } from "@/types/window";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
@@ -19,6 +19,7 @@ import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "./appStore";
 import { collectLiveTabs, type LayoutViewState } from "./layoutHelpers";
 import { errorMessage } from "@/utils/errorMessage";
+import { readEditorBuffer } from "@/utils/editorBufferRegistry";
 
 /**
  * The runtime label of the window this store belongs to (multi-window
@@ -139,6 +140,47 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
     ...(tab.persistentConnectionId ? { persistentConnectionId: tab.persistentConnectionId } : {}),
     ...(tab.connectionId ? { connectionId: tab.connectionId } : {}),
     ...(tab.spawned ? { spawned: true } : {}),
+    ...editorHandoffFields(tab),
+  };
+}
+
+/**
+ * Whether `tab` is a file editor whose live buffer can be read, so a window
+ * move can carry its unsaved changes (#4412). The form editors (connection,
+ * tunnel, workspace, settings) keep their state inside the component and are
+ * never movable with unsaved changes.
+ */
+export function canCarryEditorBuffer(tab: TerminalTab): boolean {
+  return tab.contentType === "editor" && !!tab.editorMeta && readEditorBuffer(tab.id) !== null;
+}
+
+/**
+ * The editor fields of a hand-off record (#4412): the tab's `editorMeta`, with
+ * its current buffer when that buffer holds unsaved changes. The buffer is read
+ * now, by value, so the source window tearing the editor down afterwards
+ * cannot lose it.
+ */
+function editorHandoffFields(
+  tab: TerminalTab
+): Pick<HandoffTab, "editorMeta" | "editorBuffer" | "editorDirty"> {
+  if (tab.contentType !== "editor" || !tab.editorMeta) return {};
+  const buffer = readEditorBuffer(tab.id);
+  if (!buffer) return { editorMeta: tab.editorMeta };
+  const dirty = buffer.dirty ? { editorDirty: true } : {};
+  if (buffer.scratch) {
+    const editorMeta: EditorTabMeta = {
+      ...tab.editorMeta,
+      scratch: true,
+      scratchContent: buffer.content,
+    };
+    return { editorMeta, ...dirty };
+  }
+  // A scratch buffer saved via Save As is a plain file from now on.
+  const { scratch: _scratch, scratchContent: _seed, ...file } = tab.editorMeta;
+  return {
+    editorMeta: { ...file, filePath: buffer.filePath },
+    ...(buffer.dirty ? { editorBuffer: buffer.content } : {}),
+    ...dirty,
   };
 }
 

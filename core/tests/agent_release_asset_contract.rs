@@ -3,7 +3,7 @@
 //!
 //! `termihub_core::agent_release_asset` is the single source of the agent
 //! release-asset naming scheme. This test reads the release and dev-build
-//! workflow YAML and fails when any list of agent assets there drifts from
+//! workflow YAML (and the dev release publish helper) and fails when any list of agent assets there drifts from
 //! [`agent_release_asset_names`] — e.g. a Windows asset published without
 //! `.exe`, a platform missing from dev builds, or a renamed target.
 
@@ -93,11 +93,29 @@ fn dev_build_matrix_publishes_exactly_the_core_asset_names() {
 
 #[test]
 fn dev_build_completeness_check_expects_every_core_asset() {
-    let arrays = bash_arrays(&workflow("dev-build.yml"), "EXPECTED");
+    // The required-artifact list lives in the publish helper (#4471); Dev
+    // Build's publish job runs its `check-artifacts` before publishing.
+    let dev_build = workflow("dev-build.yml");
+    assert!(
+        dev_build.contains("scripts/internal/dev-release-publish.sh check-artifacts"),
+        "dev-build.yml must run dev-release-publish.sh check-artifacts"
+    );
+    assert!(
+        bash_arrays(&dev_build, "EXPECTED").is_empty(),
+        "the required-artifact list must live only in dev-release-publish.sh"
+    );
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts")
+        .join("internal")
+        .join("dev-release-publish.sh");
+    let script =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let arrays = bash_arrays(&script, "EXPECTED");
     assert_eq!(
         arrays.len(),
         1,
-        "expected one EXPECTED=( list in dev-build.yml"
+        "expected one EXPECTED=( list in dev-release-publish.sh"
     );
     assert_eq!(arrays[0], expected());
 }

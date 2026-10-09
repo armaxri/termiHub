@@ -7,7 +7,7 @@
  * tab hand-off queue expose. See `docs/concepts/implemented/multi-window.html`.
  */
 
-import type { ConnectionConfig, TabContentType } from "@/types/terminal";
+import type { ConnectionConfig, EditorTabMeta, TabContentType } from "@/types/terminal";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import type { WindowInfo } from "./generated/WindowInfo";
 
@@ -44,6 +44,16 @@ export interface HandoffTab {
   persistentConnectionId?: string;
   connectionId?: string;
   spawned?: boolean;
+  /** A moved file editor's metadata (#4412). */
+  editorMeta?: EditorTabMeta;
+  /**
+   * The moved file editor's unsaved buffer text (#4412). The destination loads
+   * the file as usual and then shows this text instead. An unsaved scratch
+   * buffer travels in `editorMeta.scratchContent` instead.
+   */
+  editorBuffer?: string;
+  /** The moved editor held unsaved changes; the destination marks it dirty. */
+  editorDirty?: boolean;
 }
 
 /**
@@ -138,6 +148,13 @@ export interface WindowCloseRequest {
 export interface WindowCloseDirtyEditor {
   tabId: string;
   title: string;
+  /**
+   * Whether "Move tabs" can carry this editor's unsaved buffer to another
+   * window (#4412). A file editor can; the form editors (connection, tunnel,
+   * workspace, settings) cannot, so they block the move until saved or
+   * discarded. Absent means not movable.
+   */
+  movable?: boolean;
 }
 
 /**

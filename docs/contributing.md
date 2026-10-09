@@ -1547,6 +1547,12 @@ and Security Audit cancel superseded runs on `develop` too (never on `main`). Re
 cancelled run (`gh run rerun <run id>`) and wait for green. A _failed_ Dev Build is a broken
 full build on the release commit: fix it and re-tag.
 
+Only Dev Build's last job, **Publish Dev Release**, touches the rolling `dev-latest` /
+`dev-develop-latest` release, and only after every build job succeeded and every required
+artifact is present (#4471). It stages the new assets in a draft release, verifies the
+upload, then swaps the draft in for the old release, so a failed build or a failed upload
+leaves the previous dev binaries downloadable (see `scripts/internal/dev-release-publish.sh`).
+
 **Rust supply chain at tag time (#4282).** Next to the integration gate, the Release
 workflow's **Verify Rust Supply Chain** job re-runs `cargo audit` and
 `cargo deny check advisories bans licenses sources` (workspace and RDP sidecar, pinned tool
