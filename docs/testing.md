@@ -645,17 +645,19 @@ Docker case in `agent/tests/self_update_integration.rs`
 (`active_docker_session_is_never_interrupted`). Each carries a `#[ignore]`, so
 the per-PR `cargo test --workspace` gate ([`code-quality.yml`](../.github/workflows/code-quality.yml)
 → _Run Tests_) never runs them — real-daemon tests are slow and must not flake
-the fast merge gate. They also keep a `docker_available()` self-skip as a safety
-net for a host with no Docker.
+the fast merge gate. They also keep a `docker_ready()` self-skip for a host with
+no Docker, which `TERMIHUB_REQUIRE_DOCKER=1` turns into a failure (#4338).
 
 The [`system-integration.yml`](../.github/workflows/system-integration.yml)
 `agent-docker-integration` job (Linux-only; the suites are `#![cfg(unix)]` and
 the macOS/Windows runners have no usable Linux Docker daemon) is where they
-actually execute. It first asserts `docker info` succeeds — failing loudly
-rather than letting the suites self-skip to a false green — then runs
-`cargo test -p termihub-agent --test docker_integration --test docker_deferred_update_integration --test self_update_integration -- --ignored`.
-`--ignored` selects exactly those 6 Docker tests (the three files carry no other
-`#[ignore]`; the 5 non-Docker `self_update` tests are filtered out). This is the
+actually execute. It first asserts `docker info` succeeds, then runs
+`cargo test -p termihub-agent --test docker_integration --test docker_deferred_update_integration --test self_update_integration -- --ignored`
+with `TERMIHUB_REQUIRE_DOCKER=1`, so an unreachable daemon or a container that
+will not start fails the job instead of skipping to a false green (#4338).
+`--ignored` selects exactly those 9 Docker tests (the three files carry no other
+`#[ignore]`; the non-Docker `self_update` tests are filtered out), and the step
+fails when fewer than 9 passed or any printed `SKIPPED:`. This is the
 `#[ignore]`-plus-dedicated-`-- --ignored`-job pattern.
 
 ### `require_docker!` — visible skips and enforceable presence (TBE-006)
@@ -1505,7 +1507,12 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 
 ### Skip Behavior
 
-All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
+All Rust integration tests that need a fixture gate on it at runtime (`require_docker!` in `core/tests`, `termihub_core::test_fixtures::require` elsewhere). If the dependency is missing, the test prints a `SKIPPED:` line and returns early (no failure), so you can run `cargo test` without Docker and only the tests requiring containers are skipped. A lane that provisions the dependency sets a require flag that turns the skip into a failure:
+
+| Flag                          | Covers                                                                                                                                                             | Set by                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `TERMIHUB_REQUIRE_DOCKER`     | Docker fixtures, the Docker daemon, image pulls and container starts (core, agent and desktop suites)                                                              | `integration-fixtures.yml`, the `agent-docker-integration` job                                 |
+| `TERMIHUB_REQUIRE_LOCAL_SSHD` | The headless agent-reconnect tests (`russh_reconnect_tests`): a local `sshd`, the `ssh` client and the prebuilt `termihub-agent` (`cargo build -p termihub-agent`) | `code-quality.yml` → _Run Rust tests (contention-sensitive suites)_ on Linux and macOS (#4338) |
 
 #### Agent Docker-probe skip hatch (#2495)
 
@@ -1826,11 +1833,22 @@ every entry point honours. The resolver lives in three mirrored forms:
   `compose` under the same project name.
 - **Node:** `scripts/internal/dev-local.mjs` — read by `vite.config.ts` and the
   `pnpm tauri` wrapper to resolve `dev_port`.
+- **Rust:** `termihub_core::test_fixtures` (`core/src/test_fixtures.rs`) — read
+  by every crate's integration tests (`core/tests/common` includes the file;
+  the agent and desktop tests enable the `fixture-test-support` feature), so a
+  plain `cargo test` in any checkout targets that checkout's fixture ports and
+  containers (#4338). Ports and container names come from one resolved value,
+  so they cannot disagree.
 
-All three apply the same precedence: an explicit **environment variable** wins,
+All four apply the same precedence: an explicit **environment variable** wins,
 then the `dev.local.json` key, then the built-in default. So `dev.sh` keeps
 overriding via `TERMIHUB_DEV_PORT`, and a checkout with no `dev.local.json` — a
-fresh clone, or CI — behaves exactly as it always did.
+fresh clone, or CI — behaves exactly as it always did. The Python and Rust
+resolvers refuse that fallback in a parallel `dev*/termiHub` tree (another
+`dev<N>/termiHub` next to this one): there a missing or malformed
+`dev.local.json` is an error rather than a silent collision with checkout 0.
+Set `TERMIHUB_TEST_PORT_OFFSET` or `TERMIHUB_ALLOW_DEFAULT_DEV_LOCAL=1` to opt
+out.
 
 | Resource                         | Base (offset 0)                                                  | Derivation                                                                    |
 | -------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |

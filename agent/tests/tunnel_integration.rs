@@ -27,31 +27,15 @@ use termihub_agent::tunnel::AgentTunnelRegistry;
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 use termihub_core::backends::ssh::host_key::{set_host_key_verifier, HostKeyInfo, HostKeyVerifier};
 use termihub_core::config::SshConfig;
+use termihub_core::test_fixtures;
 use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig};
 use termihub_core::tunnel::ReachableFrom;
 
 /// Host port of the `ssh-tunnel-target` fixture: `TERMIHUB_TEST_SSH_TUNNEL_PORT`
-/// when set, else 2207 shifted by this checkout's `TERMIHUB_TEST_PORT_OFFSET`
-/// (the same scheme as `docker-compose.yml` and core/tests).
+/// when set, else 2207 shifted by this checkout's test-port offset (env or
+/// `dev.local.json`, the same scheme as `docker-compose.yml` and core/tests).
 fn tunnel_port() -> u16 {
-    if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_TUNNEL_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    2207 + offset
-}
-
-/// Whether `TERMIHUB_REQUIRE_DOCKER` asks for a missing fixture to fail.
-fn docker_required() -> bool {
-    std::env::var("TERMIHUB_REQUIRE_DOCKER")
-        .map(|v| matches!(v.trim(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    test_fixtures::fixture_port("TERMIHUB_TEST_SSH_TUNNEL_PORT", 2207)
 }
 
 /// The fixture's port when it accepts connections; `None` (skip) when it does
@@ -65,19 +49,13 @@ async fn tunnel_fixture_port() -> Option<u16> {
     )
     .await
     .is_ok_and(|r| r.is_ok());
-    if reachable {
-        return Some(port);
-    }
-    assert!(
-        !docker_required(),
-        "REQUIRED fixture unavailable: ssh-tunnel-target not reachable on 127.0.0.1:{port} \
-         but TERMIHUB_REQUIRE_DOCKER is set"
-    );
-    eprintln!(
-        "SKIPPED: ssh-tunnel-target not reachable on 127.0.0.1:{port} \
-         (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-tunnel-target)"
-    );
-    None
+    test_fixtures::require(
+        reachable,
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        &format!("ssh-tunnel-target not reachable on 127.0.0.1:{port}"),
+        "start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-tunnel-target",
+    )
+    .then_some(port)
 }
 
 /// Trusts every host key — the fixture's key is not in this machine's

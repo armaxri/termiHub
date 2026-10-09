@@ -768,7 +768,7 @@ jobs:
 
   # Agent-crate Docker integration tests (TIN-008). The agent's Rust
   # Docker/real-daemon integration suites — agent/tests/docker_integration.rs
-  # (4 tests), agent/tests/docker_deferred_update_integration.rs (1 test), and
+  # (7 tests), agent/tests/docker_deferred_update_integration.rs (1 test), and
   # the Docker case in agent/tests/self_update_integration.rs
   # (active_docker_session_is_never_interrupted) — each carry a `#[ignore]`, so
   # the per-PR `cargo test --workspace` gate (code-quality.yml → Run Tests) never
@@ -778,12 +778,14 @@ jobs:
   # self-skipping INVISIBLY on the macOS leg and never running deterministically
   # anywhere. This nightly job is the one place they EXECUTE against a real daemon.
   #
-  # The suites also keep a `docker_available()` self-skip as a safety net for a
-  # host with no Docker — but a self-skip is silent, so this job first asserts the
-  # daemon is reachable (`docker info`), failing loudly if it is not, then runs the
-  # suites with `-- --ignored`, which un-ignores EXACTLY those Docker tests (the
-  # three files carry no other `#[ignore]`; the 5 non-Docker self_update tests are
-  # filtered out under `--ignored`, so only the 6 Docker tests run). GitHub's
+  # The suites keep a `docker_ready()` self-skip for a host with no Docker. This
+  # job first asserts the daemon is reachable (`docker info`), then runs the
+  # suites with TERMIHUB_REQUIRE_DOCKER=1, which turns that skip — and a
+  # container that will not start — into a failure (#4338, TBE2-003). They run
+  # with `-- --ignored`, which un-ignores EXACTLY those Docker tests (the three
+  # files carry no other `#[ignore]`; the non-Docker self_update tests are
+  # filtered out under `--ignored`, so only the 9 Docker tests run), and a count
+  # check fails the step when fewer ran or any printed `SKIPPED:`. GitHub's
   # ubuntu runner ships a running Docker daemon and the tests pull alpine:latest on
   # demand, so the self-skip guard passes and they run for real. Linux-only: the
   # macOS/Windows runners have no usable Linux Docker daemon (see the header note),
@@ -792,7 +794,7 @@ jobs:
     needs: setup
     name: Agent Docker integration (${{ matrix.branch }})
     runs-on: ubuntu-latest
-    # Only a cargo build + six short real-daemon tests; generous enough for a
+    # Only a cargo build + nine short real-daemon tests; generous enough for a
     # cold cache and the alpine image pulls.
     timeout-minutes: 30
 
@@ -821,12 +823,22 @@ jobs:
 
       - name: Run the agent Docker integration suites (real daemon, --ignored)
         # `--ignored` runs exactly the `#[ignore]`d Docker tests across the three
-        # binaries; the non-Docker self_update tests are filtered out. The
-        # `docker_available()` guard passes because the daemon is up (asserted
-        # above), so the tests exercise real containers.
-        run: >-
-          cargo test -p termihub-agent
-          --test docker_integration
-          --test docker_deferred_update_integration
-          --test self_update_integration
-          -- --ignored --nocapture
+        # binaries; the non-Docker self_update tests are filtered out.
+        # TERMIHUB_REQUIRE_DOCKER=1 makes an unreachable daemon or a container
+        # that will not start a failure instead of a skip (#4338). The count
+        # check rejects a run where a test went missing (a lost `#[ignore]`, a
+        # rename) or skipped; raise AGENT_DOCKER_MIN_TESTS when adding one.
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+          AGENT_DOCKER_MIN_TESTS: "9"
+        run: |
+          cargo test -p termihub-agent \
+            --test docker_integration \
+            --test docker_deferred_update_integration \
+            --test self_update_integration \
+            -- --ignored --nocapture 2>&1 | tee agent-docker.log
+          passed="$(grep -oE 'test result: ok\. [0-9]+ passed' agent-docker.log |
+            awk '{s += $4} END {print s + 0}')"
+          echo "agent Docker tests passed: ${passed} (expected >= ${AGENT_DOCKER_MIN_TESTS})"
+          test "$passed" -ge "$AGENT_DOCKER_MIN_TESTS"
+          ! grep -q 'SKIPPED:' agent-docker.log

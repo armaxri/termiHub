@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::Duration;
 
+use termihub_core::test_fixtures;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
@@ -152,6 +153,21 @@ fn docker_available() -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Whether the Docker tests should run: `true` with a reachable daemon; with
+/// none, skip — or panic under `TERMIHUB_REQUIRE_DOCKER`, which the nightly
+/// agent-Docker lane sets so the suite cannot go green by skipping (#4338).
+fn docker_ready() -> bool {
+    test_fixtures::require(
+        docker_available(),
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        "Docker not available (`docker info` failed)",
+        DOCKER_HINT,
+    )
+}
+
+/// How to provide what the Docker tests need.
+const DOCKER_HINT: &str = "needs a running Docker daemon that can pull and run Linux images";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -305,8 +321,7 @@ fn temp_socket_path(label: &str) -> (tempfile::TempDir, PathBuf) {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_basic() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
 
@@ -347,8 +362,7 @@ async fn test_docker_session_basic() {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_recovery() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
 
@@ -413,8 +427,7 @@ async fn test_docker_session_recovery() {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_resize() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
 
@@ -449,8 +462,7 @@ async fn test_docker_resize() {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_kill() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
 
@@ -652,13 +664,16 @@ async fn first_monitoring_sample(
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_monitoring_distroless_uses_docker_stats() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
     let args = ["/usr/bin/python3", "-c", "import time; time.sleep(300)"];
     let Some(container) = start_container("distroless", DISTROLESS, &args) else {
-        eprintln!("Skipping test: could not start a {DISTROLESS} container");
+        test_fixtures::missing(
+            test_fixtures::REQUIRE_DOCKER_ENV,
+            &format!("could not start a {DISTROLESS} container"),
+            DOCKER_HINT,
+        );
         return;
     };
 
@@ -685,12 +700,15 @@ async fn test_docker_session_monitoring_distroless_uses_docker_stats() {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_monitoring_proc_container_uses_proc() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
     let Some(container) = start_container("proc", "alpine:latest", &["sleep", "300"]) else {
-        eprintln!("Skipping test: could not start an alpine container");
+        test_fixtures::missing(
+            test_fixtures::REQUIRE_DOCKER_ENV,
+            "could not start an alpine container",
+            DOCKER_HINT,
+        );
         return;
     };
 
@@ -775,8 +793,7 @@ async fn file_call(
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_browses_inside_the_container() {
-    if !docker_available() {
-        eprintln!("Skipping test: Docker not available");
+    if !docker_ready() {
         return;
     }
     let args = [
@@ -785,7 +802,11 @@ async fn test_docker_session_browses_inside_the_container() {
         "echo inside > /tmp/marker-3242 && sleep 300",
     ];
     let Some(container) = start_container("files", "alpine:latest", &args) else {
-        eprintln!("Skipping test: could not start an alpine container");
+        test_fixtures::missing(
+            test_fixtures::REQUIRE_DOCKER_ENV,
+            "could not start an alpine container",
+            DOCKER_HINT,
+        );
         return;
     };
     let (_dir, socket_path) = temp_socket_path("docker-files");

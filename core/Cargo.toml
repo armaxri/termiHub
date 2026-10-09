@@ -363,6 +363,10 @@ plugin-index-signing-test-support = ["plugin"]
 # for other crates' tests — the agent's relayed OTP end-to-end suite (#3436).
 # Enabled only from `[dev-dependencies]` — never in a shipping build.
 ssh-test-support = ["ssh"]
+# Fixture addressing (`test_fixtures`: ports/containers from dev.local.json) and
+# the skip-or-fail gate shared by every crate's integration tests (#4338).
+# Enabled only from `[dev-dependencies]` — never in a shipping build.
+fixture-test-support = []
 # Embedded HTTP/FTP/TFTP file servers (#2192). Pulls the web-server stack
 # (`axum`/`tower-http` for HTTP, `libunftp`/`unftp-sbe-fs` for FTP) plus `chrono`
 # for status timestamps and `tracing` for lifecycle logs. Enabled by the desktop

@@ -5,7 +5,8 @@
 //!
 //! The Docker ends are throwaway `alpine:3` containers (busybox userland)
 //! started and force-removed per test, exactly like `docker_transfer.rs`; the
-//! tests skip when no Linux-capable container daemon is reachable. The SFTP
+//! tests skip when no Linux-capable container daemon is reachable (and fail
+//! under `TERMIHUB_REQUIRE_DOCKER`, #4338). The SFTP
 //! end is the pre-populated `sftp-stress` fixture (Docker Compose `stress`
 //! profile); those tests skip when it is not running, or fail when
 //! `TERMIHUB_REQUIRE_DOCKER` is set.
@@ -172,7 +173,11 @@ where
     let client = match client().await {
         Ok(client) => client,
         Err(reason) => {
-            eprintln!("SKIPPED: {reason} ({test})");
+            common::fixture_env::missing(
+                common::fixture_env::REQUIRE_DOCKER_ENV,
+                &format!("{reason} ({test})"),
+                "needs a reachable Docker daemon that runs Linux containers",
+            );
             return;
         }
     };

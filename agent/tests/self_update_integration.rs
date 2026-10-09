@@ -56,6 +56,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use termihub_core::test_fixtures;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -714,6 +715,21 @@ fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the Docker tests should run: `true` with a reachable daemon; with
+/// none, skip — or panic under `TERMIHUB_REQUIRE_DOCKER`, which the nightly
+/// agent-Docker lane sets so the suite cannot go green by skipping (#4338).
+fn docker_ready() -> bool {
+    test_fixtures::require(
+        docker_available(),
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        "Docker not available (`docker info` failed)",
+        DOCKER_HINT,
+    )
+}
+
+/// How to provide what the Docker tests need.
+const DOCKER_HINT: &str = "needs a running Docker daemon that can pull and run Linux images";
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 /// Deferred + idle: the live agent polls the mock, downloads + SHA-256-verifies
@@ -1104,8 +1120,7 @@ async fn active_shell_session_is_never_interrupted() {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn active_docker_session_is_never_interrupted() {
-    if !docker_available() {
-        eprintln!("Skipping: Docker not available");
+    if !docker_ready() {
         return;
     }
     // Pre-pull so container start (and thus session activation) is fast enough to
