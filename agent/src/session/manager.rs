@@ -32,7 +32,7 @@ use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
-use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
+use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
 
@@ -250,6 +250,12 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Resize a session's terminal.
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String>;
+
+    /// Pause or resume a session's output (`connection.output_flow`, #4416).
+    /// Defaults to a no-op so test doubles need not implement it.
+    async fn set_output_paused(&self, _session_id: &str, _paused: bool) -> Result<(), String> {
+        Ok(())
+    }
 
     /// Return the current scrollback buffer for a session (daemon-backed only).
     async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String>;
@@ -1313,12 +1319,14 @@ impl SessionManager {
 
         let output_rx = connection.subscribe_output();
         let alive = Arc::new(AtomicBool::new(true));
+        let flow = OutputFlowGate::new();
         let output_task = spawn_output_forwarder(
             output_rx,
             session_id.to_string(),
             self.notification_tx.clone(),
             alive.clone(),
             self.self_ref.get().cloned().unwrap_or_default(),
+            flow.clone(),
         );
 
         info!("In-process connection for session {session_id} (type={type_id})");
@@ -1326,6 +1334,7 @@ impl SessionManager {
             connection,
             output_task: Some(output_task),
             alive,
+            flow,
         })
     }
 
@@ -1918,6 +1927,45 @@ impl SessionManager {
         }
     }
 
+    /// Pause (`true`) or resume (`false`) a session's output (#4416), on the
+    /// desktop's `connection.output_flow`.
+    ///
+    /// An in-process session's output pump stops reading the connection's
+    /// bounded output channel, so the PTY reader blocks and the program is
+    /// backpressured. A daemon-backed session forwards the pause to its daemon,
+    /// which stops reading its backend's output the same way; a daemon from
+    /// before #4416 does not support it and keeps streaming. Input is never
+    /// held back. The sessions lock is released before the daemon write.
+    pub async fn set_output_paused(&self, session_id: &str, paused: bool) -> Result<(), String> {
+        let daemon_handle = {
+            let sessions = self.sessions.lock().await;
+            let info = sessions
+                .get(session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+            match &info.backend {
+                // An evicted client no longer holds the daemon: nothing to pause.
+                SessionBackend::Daemon(client)
+                    if client.output_flow_supported() && !client.is_evicted() =>
+                {
+                    Some(client.writer_handle())
+                }
+                SessionBackend::Daemon(_) => None,
+                SessionBackend::InProcess { flow, .. } => {
+                    flow.set_paused(paused);
+                    None
+                }
+                #[cfg(test)]
+                SessionBackend::Stub { .. } => None,
+            }
+        };
+        if let Some(handle) = daemon_handle {
+            DaemonClient::output_flow_via_handle(&handle, paused)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Detach the client from a session.
     pub async fn detach(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
@@ -2430,8 +2478,10 @@ async fn attach_backend(backend: &mut SessionBackend, takeover: bool) -> Result<
                 client.attach().await?;
             }
         }
-        SessionBackend::InProcess { .. } => {
-            // In-process connections always forward output; no-op.
+        SessionBackend::InProcess { flow, .. } => {
+            // In-process connections always forward output; a pause left by the
+            // previous desktop does not carry over (#4416).
+            flow.resume();
         }
         #[cfg(test)]
         SessionBackend::Stub { .. } => {}
@@ -2444,8 +2494,10 @@ async fn detach_backend(backend: &mut SessionBackend) {
         SessionBackend::Daemon(ref mut client) => {
             client.detach().await;
         }
-        SessionBackend::InProcess { .. } => {
-            // In-process connections keep forwarding; no-op.
+        SessionBackend::InProcess { flow, .. } => {
+            // In-process connections keep forwarding. The desktop that paused
+            // the output is gone, so never leave the program blocked (#4416).
+            flow.resume();
         }
         #[cfg(test)]
         SessionBackend::Stub { .. } => {}
@@ -2462,6 +2514,7 @@ fn spawn_output_forwarder(
     notification_tx: NotificationSender,
     alive: Arc<AtomicBool>,
     manager: Weak<SessionManager>,
+    flow: OutputFlowGate,
 ) -> tokio::task::JoinHandle<()> {
     let sink = JsonRpcOutputSink::new(notification_tx);
     // The mechanical recv→send_output loop now lives in the shared core pump
@@ -2478,9 +2531,12 @@ fn spawn_output_forwarder(
         max_coalesce_bytes: 32 * 1024,
         // Ignored when `wait_for_clear` is false.
         clear_wait_timeout: Duration::from_secs(0),
-        // No frontend flow control on the agent yet (PERF2-002 follow-up): the
-        // desktop has no pause command for agent-hosted sessions.
-        flow: None,
+        // Desktop flow control (#4416): `connection.output_flow` pauses the
+        // pump, which then stops reading `output_rx`. The connection's PTY
+        // reader blocks on the full bounded channel, so the program on this
+        // host is backpressured; the unbounded notification queue only ever
+        // holds what was read before the pause.
+        flow: Some(flow),
     };
     // Run under the caller's span: for a `connection.create` that is the
     // session's `agent_session` span carrying the desktop correlation id
@@ -2705,6 +2761,10 @@ impl SessionManagerApi for SessionManager {
                 .map_err(|e| e.to_string());
         }
         Ok(())
+    }
+
+    async fn set_output_paused(&self, session_id: &str, paused: bool) -> Result<(), String> {
+        SessionManager::set_output_paused(self, session_id, paused).await
     }
 
     /// The sessions lock is released before any async operation so the future
@@ -4506,6 +4566,7 @@ mod tests {
                 test_notification_tx(),
                 alive.clone(),
                 Arc::downgrade(&mgr),
+                OutputFlowGate::new(),
             );
 
             drop(tx); // model the backend exiting / EOF
@@ -4738,6 +4799,7 @@ mod tests {
             test_notification_tx(),
             alive.clone(),
             Weak::new(),
+            OutputFlowGate::new(),
         );
 
         assert!(alive.load(Ordering::SeqCst), "alive before channel closes");
@@ -4777,6 +4839,7 @@ mod tests {
             notif_tx,
             alive.clone(),
             Weak::new(),
+            OutputFlowGate::new(),
         );
         handle.await.expect("forwarder task joins cleanly");
 
@@ -5209,6 +5272,9 @@ mod tests {
 
     /// Resolving a held session's file browser (#3242).
     mod files_tests;
+
+    /// Desktop output flow control for in-process sessions (#4416).
+    mod output_flow_tests;
 
     /// One-time sweep of pre-existing orphan session files (#2807).
     #[cfg(unix)]

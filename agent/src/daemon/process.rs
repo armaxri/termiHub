@@ -305,6 +305,8 @@ enum AgentCommand {
     Kill,
     /// Agent requested current buffer contents without reconnecting.
     QueryBuffer,
+    /// Agent paused (`true`) or resumed (`false`) the session's output (#4416).
+    OutputFlow(bool),
     /// Agent requested a process list / kill in this session's backend (#3210).
     Process(ProcessRequest),
     /// Agent sent a monitoring request for this session's backend (#3871).
@@ -432,6 +434,9 @@ async fn daemon_loop(
     // detach — starts the clock without having to remember to.
     let mut detached_since: Option<tokio::time::Instant> = None;
 
+    // Whether the attached worker paused the session's output (#4416).
+    let mut output_paused = false;
+
     // Newcomers that connected while a worker held the session, each on its
     // own task reading the attach intent (#3928): a slow newcomer never stalls
     // this loop, and its intent is decided here against the session as it is
@@ -457,6 +462,11 @@ async fn daemon_loop(
         // budget (#3890); otherwise leave them waiting in their channels until
         // the worker catches up or is dropped. Unattached, everything flows.
         let forwarding = agent_writer.as_ref().is_none_or(WorkerSink::has_room);
+        // Output flow control (#4416): the attached worker's terminal fell
+        // behind, so stop reading the backend's output — its bounded channel
+        // fills and the PTY backpressures the program. Unattached, output always
+        // flows into the ring buffer.
+        let reading_output = forwarding && !(output_paused && agent_writer.is_some());
 
         tokio::select! {
             // No worker has been attached for the whole `detached_timeout`
@@ -494,7 +504,7 @@ async fn daemon_loop(
             }
 
             // Output from the ConnectionType
-            output = output_rx.recv(), if forwarding => {
+            output = output_rx.recv(), if reading_output => {
                 match output {
                     Some(data) => {
                         ring_buffer.write(&data);
@@ -632,6 +642,10 @@ async fn daemon_loop(
                         }
                         send_exited_async(&mut agent_writer, 0).await;
                         return Ok(());
+                    }
+                    Some(AgentCommand::OutputFlow(paused)) => {
+                        debug!(session_id, paused, "Agent set output flow");
+                        output_paused = paused;
                     }
                     Some(AgentCommand::QueryBuffer) => {
                         if let Some(ref sink) = agent_writer {
@@ -782,6 +796,9 @@ async fn daemon_loop(
         // Bump the generation so any in-flight Disconnected from
         // the previous connection is treated as stale.
         connection_gen += 1;
+        // The pause belonged to the previous worker (#4416); the newcomer
+        // starts flowing and pauses again if its own terminal falls behind.
+        output_paused = false;
         let gen = connection_gen;
 
         // Drop the old connection (its writer task is aborted)
@@ -857,8 +874,9 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges:
             flags |= CAP_FILE_RANGES;
         }
     }
-    // Every daemon answers heartbeat probes, whatever its backend (#3140).
-    flags | CAP_HEARTBEAT
+    // Every daemon answers heartbeat probes (#3140) and honors output flow
+    // control (#4416), whatever its backend.
+    flags | CAP_HEARTBEAT | CAP_OUTPUT_FLOW
 }
 
 /// Queue an empty heartbeat frame (#3140) — a pong for the agent's ping, or a
@@ -1074,6 +1092,9 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                     MSG_DETACH => AgentCommand::Detach,
                     MSG_KILL => AgentCommand::Kill,
                     MSG_QUERY_BUFFER => AgentCommand::QueryBuffer,
+                    MSG_OUTPUT_FLOW => {
+                        AgentCommand::OutputFlow(frame.payload.first().is_some_and(|b| *b != 0))
+                    }
                     MSG_PROCESS_REQUEST => match serde_json::from_slice(&frame.payload) {
                         Ok(request) => AgentCommand::Process(request),
                         Err(e) => {
@@ -1678,6 +1699,9 @@ pub(crate) mod tests {
 
     /// A files-only session reaches the desktop, end to end (#4081).
     mod files_only_e2e;
+
+    /// Output flow control for daemon-backed sessions, end to end (#4416).
+    mod output_flow_e2e;
 
     /// The daemon's half of the session heartbeat (#3140).
     mod heartbeat_tests;
