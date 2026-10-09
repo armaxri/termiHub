@@ -6,8 +6,8 @@ severity: low
 category: security
 is_workaround: false
 subsystem: "src/components/NetworkTools/exportResults"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4376 — csvCell prefixes ' to string cells starting with = + - @ TAB CR before RFC 4180 quoting"
 audit: 2026-10
 commit: "663465d52"
 relation: new

