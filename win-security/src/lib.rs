@@ -34,7 +34,8 @@ pub use windows::{
 /// (the SDDL alias `SY`).
 pub const LOCAL_SYSTEM_SID: &str = "S-1-5-18";
 
-/// `GENERIC_ALL`: the access mask every ACE built by [`dacl_sddl`] carries.
+/// `GENERIC_ALL`: the access mask of every non-inheritable ACE built by
+/// [`dacl_sddl`] (pipes and other kernel objects).
 pub const GENERIC_ALL: u32 = 0x1000_0000;
 
 /// `FILE_ALL_ACCESS`: what the kernel maps `GENERIC_ALL` to when a descriptor
@@ -61,6 +62,13 @@ pub struct DaclSpec<'a> {
     /// Mark every ACE object- and container-inheritable (`OICI`), so files and
     /// folders created inside a directory carrying this DACL get the same
     /// grants. Only meaningful for a directory.
+    ///
+    /// Inheritable ACEs grant the specific `FILE_ALL_ACCESS` rather than
+    /// `GENERIC_ALL`: Windows splits an inheritable *generic* ACE stored on a
+    /// directory into an effective ACE (rights mapped to `FILE_ALL_ACCESS`)
+    /// plus an inherit-only `GENERIC_ALL` ACE. The specific right is the same
+    /// access on the directory and on everything created inside it, and
+    /// leaves exactly one ACE per principal.
     pub inherit_to_children: bool,
 }
 
@@ -83,14 +91,19 @@ pub fn is_sid_string(sid: &str) -> bool {
     })
 }
 
-/// The SDDL of a protected DACL granting `GENERIC_ALL` to `user_sid`, then to
+/// The SDDL of a protected DACL granting full control to `user_sid`, then to
 /// each of `spec.extra_sids`, then (with `spec.include_system`) to `SY`, and to
-/// nobody else.
+/// nobody else. Full control is `GENERIC_ALL`, or `FILE_ALL_ACCESS` for
+/// inheritable ACEs (see [`DaclSpec::inherit_to_children`]).
 ///
 /// Every SID must pass [`is_sid_string`]; anything else is refused with
 /// `InvalidInput` rather than spliced into the descriptor.
 pub fn dacl_sddl(user_sid: &str, spec: &DaclSpec<'_>) -> io::Result<String> {
-    let flags = if spec.inherit_to_children { "OICI" } else { "" };
+    let (flags, rights) = if spec.inherit_to_children {
+        ("OICI", "FA")
+    } else {
+        ("", "GA")
+    };
     let mut sddl = String::from("D:P");
     for sid in std::iter::once(&user_sid).chain(spec.extra_sids.iter()) {
         if !is_sid_string(sid) {
@@ -100,10 +113,10 @@ pub fn dacl_sddl(user_sid: &str, spec: &DaclSpec<'_>) -> io::Result<String> {
             ));
         }
         // Writing to a `String` cannot fail.
-        let _ = write!(sddl, "(A;{flags};GA;;;{sid})");
+        let _ = write!(sddl, "(A;{flags};{rights};;;{sid})");
     }
     if spec.include_system {
-        let _ = write!(sddl, "(A;{flags};GA;;;SY)");
+        let _ = write!(sddl, "(A;{flags};{rights};;;SY)");
     }
     Ok(sddl)
 }
@@ -211,7 +224,7 @@ mod tests {
         };
         assert_eq!(
             dacl_sddl(USER, &spec).unwrap(),
-            format!("D:P(A;OICI;GA;;;{USER})(A;OICI;GA;;;SY)")
+            format!("D:P(A;OICI;FA;;;{USER})(A;OICI;FA;;;SY)")
         );
     }
 

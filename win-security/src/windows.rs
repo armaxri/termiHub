@@ -391,6 +391,9 @@ pub fn dacl_of_path(path: &Path) -> io::Result<DaclSummary> {
 mod tests {
     use super::*;
     use crate::{LOCAL_SYSTEM_SID, OBJECT_AND_CONTAINER_INHERIT};
+
+    /// `INHERITED_ACE`: the only flag an ACE a file inherited carries.
+    const INHERITED_ACE: u8 = 0x10;
     use std::os::windows::io::AsRawHandle;
 
     #[test]
@@ -473,23 +476,36 @@ mod tests {
         .unwrap();
         dacl.apply_to_path(&dir).unwrap();
 
+        // Exactly one explicit, inheritable FILE_ALL_ACCESS ACE per principal
+        // (no split into an effective + inherit-only pair), protected.
         let summary = dacl_of_path(&dir).unwrap();
         assert!(
             summary.grants_full_control_to_exactly(&[&user, LOCAL_SYSTEM_SID]),
             "{summary:?}"
         );
-        assert!(summary
-            .aces
-            .iter()
-            .all(|ace| ace.flags & OBJECT_AND_CONTAINER_INHERIT == OBJECT_AND_CONTAINER_INHERIT));
+        for ace in &summary.aces {
+            assert_eq!(ace.mask, crate::FILE_ALL_ACCESS, "{summary:?}");
+            assert_eq!(ace.flags, OBJECT_AND_CONTAINER_INHERIT, "{summary:?}");
+        }
 
-        // A file created inside inherits exactly those grants.
+        // A file created inside inherits exactly those grants: FILE_ALL_ACCESS
+        // for the same two principals, marked inherited, and nothing else.
         let file = dir.join("staged.bin");
         std::fs::write(&file, b"x").unwrap();
         let inner = dacl_of_path(&file).unwrap();
-        let sids: Vec<_> = inner.aces.iter().filter_map(|a| a.sid.as_deref()).collect();
+        assert!(inner.present, "{inner:?}");
         assert_eq!(inner.aces.len(), 2, "{inner:?}");
-        assert!(sids.contains(&user.as_str()) && sids.contains(&LOCAL_SYSTEM_SID));
+        let mut sids: Vec<&str> = Vec::new();
+        for ace in &inner.aces {
+            assert_eq!(ace.ace_type, ACCESS_ALLOWED_ACE_TYPE, "{inner:?}");
+            assert_eq!(ace.mask, crate::FILE_ALL_ACCESS, "{inner:?}");
+            assert_eq!(ace.flags, INHERITED_ACE, "{inner:?}");
+            sids.extend(ace.sid.as_deref());
+        }
+        sids.sort_unstable();
+        let mut expected = vec![user.as_str(), LOCAL_SYSTEM_SID];
+        expected.sort_unstable();
+        assert_eq!(sids, expected, "{inner:?}");
     }
 
     #[test]
