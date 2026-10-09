@@ -16,11 +16,18 @@
 //! notification — one byte per SSH data message, so every chunk boundary lands
 //! inside a line and inside each multi-byte character; `fake.flood` streams
 //! `params.bytes` bytes with no newline. Every other JSON-RPC line is ignored.
+//!
+//! For the output flow control tests (#4416) it records every request it
+//! receives ([`FakeAgentSshd::requests`]), can advertise the `outputFlow`
+//! capability ([`InitBehavior::AnswerWithOutputFlow`]), and serves
+//! `fake.output_flood`: `params.chunks` `connection.output` notifications of
+//! `params.size` bytes for `params.session_id`, followed by the answer.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
 use russh::server::{Auth, Msg, Session};
 use russh::{Channel, ChannelId};
 use termihub_core::ipc::ndjson::LineSplitter;
@@ -43,7 +50,13 @@ pub(super) enum InitBehavior {
     /// Answer straight away, reporting [`SPLIT_AGENT_VERSION`] as the agent
     /// version, one byte per SSH data message (#4303).
     AnswerInOneByteChunks,
+    /// Answer straight away as a protocol 0.27.0 agent advertising the
+    /// `outputFlow` capability (#4416).
+    AnswerWithOutputFlow,
 }
+
+/// One JSON-RPC request the fake agent received: `(method, params)`.
+pub(super) type ReceivedRequest = (String, serde_json::Value);
 
 /// The non-ASCII agent version [`InitBehavior::AnswerInOneByteChunks`] reports.
 pub(super) const SPLIT_AGENT_VERSION: &str = "0.0.0-Übersicht-€-😀";
@@ -60,6 +73,8 @@ pub(super) struct FakeAgentSshd {
     init_seen: Arc<Notify>,
     release: watch::Sender<bool>,
     accept_task: tokio::task::JoinHandle<()>,
+    /// Every request received, in arrival order (#4416).
+    requests: Arc<std::sync::Mutex<Vec<ReceivedRequest>>>,
 }
 
 impl Drop for FakeAgentSshd {
@@ -87,6 +102,8 @@ impl FakeAgentSshd {
         let inits = Arc::new(AtomicUsize::new(0));
         let init_seen = Arc::new(Notify::new());
         let (release, release_rx) = watch::channel(false);
+        let requests: Arc<std::sync::Mutex<Vec<ReceivedRequest>>> = Arc::default();
+        let task_requests = requests.clone();
         let task_inits = inits.clone();
         let task_seen = init_seen.clone();
         let accept_task = tokio::spawn(async move {
@@ -97,6 +114,7 @@ impl FakeAgentSshd {
                     init_seen: task_seen.clone(),
                     release: release_rx.clone(),
                     lines: LineSplitter::new(),
+                    requests: task_requests.clone(),
                 };
                 let config = config.clone();
                 tokio::spawn(async move {
@@ -112,7 +130,22 @@ impl FakeAgentSshd {
             init_seen,
             release,
             accept_task,
+            requests,
         }
+    }
+
+    /// Every request received so far, in arrival order (#4416).
+    pub(super) fn requests(&self) -> Vec<ReceivedRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+
+    /// The params of every request for `method` received so far.
+    pub(super) fn requests_for(&self, method: &str) -> Vec<serde_json::Value> {
+        self.requests()
+            .into_iter()
+            .filter(|(m, _)| m == method)
+            .map(|(_, params)| params)
+            .collect()
     }
 
     /// The agent connect config pointing at this server.
@@ -165,6 +198,21 @@ fn initialize_answer(id: u64) -> String {
     initialize_answer_with_version(id, "0.0.0-fake")
 }
 
+/// An `initialize` answer from a protocol 0.27.0 agent advertising
+/// `outputFlow` (#4416).
+fn initialize_answer_with_output_flow(id: u64) -> String {
+    ndjson_line(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "protocolVersion": "0.27.0",
+            "agentVersion": "0.0.0-fake",
+            "clientId": "fake-client",
+            "capabilities": { "connectionTypes": [], "maxSessions": 20, "outputFlow": true },
+        },
+    }))
+}
+
 /// [`initialize_answer`] reporting `agent_version`.
 fn initialize_answer_with_version(id: u64, agent_version: &str) -> String {
     let mut line = serde_json::json!({
@@ -188,6 +236,7 @@ struct FakeAgentHandler {
     init_seen: Arc<Notify>,
     release: watch::Receiver<bool>,
     lines: LineSplitter,
+    requests: Arc<std::sync::Mutex<Vec<ReceivedRequest>>>,
 }
 
 /// Queue `bytes` on `channel` one byte per SSH data message.
@@ -213,6 +262,9 @@ impl FakeAgentHandler {
             InitBehavior::Stall => {}
             InitBehavior::Answer => {
                 let _ = session.data(channel, initialize_answer(id).into_bytes());
+            }
+            InitBehavior::AnswerWithOutputFlow => {
+                let _ = session.data(channel, initialize_answer_with_output_flow(id).into_bytes());
             }
             InitBehavior::AnswerInOneByteChunks => {
                 let answer = initialize_answer_with_version(id, SPLIT_AGENT_VERSION);
@@ -281,6 +333,12 @@ impl russh::server::Handler for FakeAgentHandler {
                 continue;
             };
             let params = msg.get("params").cloned().unwrap_or_default();
+            if let Some(method) = msg.get("method").and_then(|m| m.as_str()) {
+                self.requests
+                    .lock()
+                    .unwrap()
+                    .push((method.to_string(), params.clone()));
+            }
             match msg.get("method").and_then(|m| m.as_str()) {
                 Some("initialize") => self.on_initialize(channel, id, session),
                 Some("fake.echo") => {
@@ -290,6 +348,37 @@ impl russh::server::Handler for FakeAgentHandler {
                     let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": params });
                     let wire = ndjson_line(&note) + &ndjson_line(&reply);
                     send_one_byte_at_a_time(session, channel, wire.as_bytes());
+                }
+                Some("fake.output_flood") => {
+                    let handle = session.handle();
+                    tokio::spawn(async move {
+                        let sid = params["session_id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string();
+                        let chunks = params["chunks"].as_u64().unwrap_or(0);
+                        let size = params["size"].as_u64().unwrap_or(1) as usize;
+                        let b64 = base64::engine::general_purpose::STANDARD;
+                        for i in 0..chunks {
+                            // Each chunk is filled with its own index byte, so
+                            // a lost or reordered chunk is visible.
+                            let data = vec![(i % 251) as u8; size];
+                            let note = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "method": "connection.output",
+                                "params": { "session_id": sid, "data": b64.encode(&data) },
+                            });
+                            if handle
+                                .data(channel, ndjson_line(&note).into_bytes())
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} });
+                        let _ = handle.data(channel, ndjson_line(&reply).into_bytes()).await;
+                    });
                 }
                 Some("fake.flood") => {
                     let total = params.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0);

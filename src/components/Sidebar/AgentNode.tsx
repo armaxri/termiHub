@@ -944,7 +944,9 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
   }, []);
 
   const handleForceReconnect = useCallback(async () => {
-    await disconnectRemoteAgent(agent.id);
+    // A reconnect follows at once, so the hosted tabs wait to resume their
+    // sessions instead of ending (#4309).
+    await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
     void handleConnect();
   }, [agent.id, disconnectRemoteAgent, handleConnect]);
 

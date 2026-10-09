@@ -1767,7 +1767,7 @@ use crate::commands::projection::ProjectionState;
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::session_projection::timer::{ReconnectScheduler, ReconnectTimerDriver};
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use termihub_core::connection::ConnectionTypeRegistry;
 
 /// A [`ReconnectScheduler`] that records the tabs it was asked to arm, so a test
@@ -2148,7 +2148,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
                 )
                 .expect("create continuity session");
             let cont_sid = cont.session_id;
-            let (out_tx, out_rx) = sync_channel::<Vec<u8>>(4096);
+            let (out_tx, out_rx) = std::sync::mpsc::channel::<Vec<u8>>();
             manager
                 .register_session_output(&agent_id, &cont_sid, out_tx)
                 .expect("register continuity output");

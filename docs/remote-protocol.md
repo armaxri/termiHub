@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.26.0
+**Version**: 0.27.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416
 
 ---
 
@@ -217,7 +217,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. Since 0.26.0 (#3587) the capabilities frame also says whether that file browser serves ranged slices; only then does the worker send it the `read_range` / `write_range` file requests, whose bytes travel in the same data frames, so a daemon from an older agent is never asked. A `read_range` of length 0 is the per-session probe: the daemon answers it from its live browser (an empty read, or the browser's not-supported error), without reading any file (#4146). Since 0.25.0 (#4081) a daemon whose SSH backend kept the session up **files-only** (the host refused the shell but SFTP works) tells the worker that holds the session with a files-only frame, and repeats it right after the ready frame to every worker that attaches later; the worker relays it as [`connection.filesOnly`](#connectionfilesonly). The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. Since 0.26.0 (#3587) the capabilities frame also says whether that file browser serves ranged slices; only then does the worker send it the `read_range` / `write_range` file requests, whose bytes travel in the same data frames, so a daemon from an older agent is never asked. A `read_range` of length 0 is the per-session probe: the daemon answers it from its live browser (an empty read, or the browser's not-supported error), without reading any file (#4146). Since 0.25.0 (#4081) a daemon whose SSH backend kept the session up **files-only** (the host refused the shell but SFTP works) tells the worker that holds the session with a files-only frame, and repeats it right after the ready frame to every worker that attaches later; the worker relays it as [`connection.filesOnly`](#connectionfilesonly). The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. Since 0.27.0 (#4416) the capabilities frame also says whether the daemon honors **output flow control**; only then does the worker relay [`connection.output_flow`](#connectionoutput_flow) to it as a one-byte output-flow frame (`1` pause, `0` resume). While the attached worker is paused the daemon stops reading its backend's output, so the program is backpressured through its PTY; input and every other frame keep flowing. The pause belongs to that worker: a newly attached worker starts flowing, and an unattached daemon always reads into its ring buffer. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.24.0          | 0.27.0        | Yes (the desktop requests 0.24.0; `outputFlow` lets a lagging terminal pause the agent-hosted session's output)                      |
 | 0.24.0          | 0.26.0        | Yes (the desktop requests 0.24.0; `fileRanges` puts agent-hosted transfers in the Transfer Queue)                                    |
 | 0.24.0          | 0.25.0        | Yes (the desktop requests 0.24.0; `connection.filesOnly` is routed)                                                                  |
 | 0.24.0          | 0.24.0        | Yes                                                                                                                                  |
@@ -408,6 +409,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.27.0 (additive, minor)** — adds [`connection.output_flow`](#connectionoutput_flow) (#4416), and the `initialize` result gains `capabilities.outputFlow: true` to say so. When the desktop terminal falls behind rendering an agent-hosted session's output (more than 2 MiB not yet parsed by xterm.js) it sends `paused: true`, and once it has caught up (below 512 KiB) `paused: false`. While paused the agent stops reading that session's output, so the program on the agent host is backpressured through its PTY — the same flow control a local or direct session gets — instead of output piling up in the agent, the desktop or the terminal. Input (Ctrl+C included) and every other session on the connection keep flowing. A persistent session forwards the pause to its session daemon, which stops reading its backend's output in turn; a daemon started by an older agent does not support it and keeps streaming. The pause belongs to the desktop that sent it: a detach, a dropped transport or another desktop's attach resumes the session. Negotiation is by **capability**: the desktop sends the method only to an agent that advertises the flag; for an older agent the session is never paused and the terminal's 32 MiB staged-output cap applies as before. An older desktop ignores the flag. The desktop still requests `0.24.0`.
 
 **0.26.0 (additive, minor)** — adds [`connection.files.read_range`](#connectionfilesread_range) and [`connection.files.write_range`](#connectionfileswrite_range) (#3587), and the `initialize` result gains `capabilities.fileRanges: true` to say so. They move a bounded slice (at most 256 KiB) of a file at an offset, through the same target resolution as every other `connection.files.*` method, so the desktop can run an agent-hosted session's upload or download as a queued transfer — progress, pause/resume, retry and cancel — one request per chunk. A write names the offset it expects, and the agent refuses it unless the file holds exactly that many bytes. A read of `length: 0` moves no file data and only answers whether the session's backend serves slices: the desktop's per-session probe. It asks the live backend — for a persistent session, the session daemon's own browser, through a zero-length `read_range` file request (#4146) — so a backend that learns on connect that it cannot serve slices (an FTP server without `REST STREAM`) refuses the probe with `-32013` and the session keeps whole-file transfers instead of failing on its first slice. No wire change: a session daemon from before #4146 answers the zero-length request as supported, as it always did. Negotiation is by **capability**: the desktop calls the methods only on an agent that advertises the flag and whose probe succeeds; otherwise the session keeps whole-file transfers. A backend without ranged access and a session started by an older agent's session daemon answer `-32013`. FTP sessions serve slices since #4113 (no wire change, so no version bump; an agent from before it answers `-32013` for FTP and the session keeps whole-file transfers): `REST` + `RETR` for a read, `STOR` at offset 0 and a `SIZE` check followed by `APPE` beyond it for a write — but only for binary transfers on a server that advertises `REST STREAM`; an ASCII-mode session, or a server that does not advertise it, refuses them with `-32013`. An older desktop ignores the flag.
 
@@ -545,6 +548,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.sessionFiles`               | `boolean`              | [`connection.files.*`](#connectionfileslist) accept an agent-hosted SSH, Docker, FTP or WSL session id and browse inside that session (0.22.0+; absent = `false`)                        |
 | `capabilities.unattendedConnect`          | `boolean`              | [`connection.create`](#connectioncreate) honors `unattended: true` — it never prompts and refuses with a typed `connect_failure` instead (0.23.0+; absent = `false`)                     |
 | `capabilities.fileRanges`                 | `boolean`              | [`connection.files.read_range`](#connectionfilesread_range) / [`write_range`](#connectionfileswrite_range) move offset-addressed slices for queued transfers (0.26.0+; absent = `false`) |
+| `capabilities.outputFlow`                 | `boolean`              | [`connection.output_flow`](#connectionoutput_flow) pauses / resumes a session's output, backpressuring the program (0.27.0+; absent = `false`)                                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
 > params (`protocolVersion`, `clientVersion`; a field sent in `snake_case` is silently ignored),
@@ -1098,6 +1102,53 @@ Resize the PTY for a shell session.
 - `-32001` Session not found
 - `-32006` Session not running
 - `-32005` Invalid configuration (for serial sessions, which have no PTY)
+
+---
+
+### `connection.output_flow`
+
+Pause or resume a session's output (0.27.0+, #4416). Sent only to an agent that advertises `capabilities.outputFlow`.
+
+The desktop sends `paused: true` when the session's terminal has fallen behind (more than 2 MiB handed to xterm.js and not yet parsed) and `paused: false` once it has drained (below 512 KiB). While paused the agent does **not read** the session's output: the session backend's bounded output channel fills, its PTY reader blocks, and the program on the agent host is slowed down by its own PTY — no output is buffered without bound, and none is dropped. Only output already read before the pause arrived is still delivered. Input (Ctrl+C included), resizes and every other session on the connection are unaffected.
+
+A persistent (daemon-backed) session forwards the pause to its session daemon, which stops reading its backend's output the same way while the worker that holds it is paused. A daemon started by an older agent does not advertise the frame and keeps streaming. The pause belongs to the desktop that sent it: `connection.detach`, a dropped transport, a re-attach, or another desktop taking the session over all resume it.
+
+The desktop does not wait for the response; it sends pause and resume in order.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.output_flow",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "paused": true
+  },
+  "id": 8
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 8
+}
+```
+
+| Param        | Type      | Description                                          |
+| ------------ | --------- | ---------------------------------------------------- |
+| `session_id` | `string`  | Target session UUID                                  |
+| `paused`     | `boolean` | `true` to stop reading output, `false` to read again |
+
+**Errors:**
+
+- `-32001` Session not found
+- `-32602` Invalid params (missing `paused`)
+- `-32601` Method not found (an agent older than 0.27.0 — the desktop never sends it one)
 
 ---
 

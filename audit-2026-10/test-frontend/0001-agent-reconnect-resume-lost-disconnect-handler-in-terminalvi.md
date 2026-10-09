@@ -14,8 +14,8 @@ evidence:
   - src/components/Terminal/TerminalView.agent-disconnect.test.ts:290-296
   - src/components/Terminal/TerminalView.agent-disconnect.test.ts:499-512
   - src/components/Terminal/agentStateHandlers.ts:35
-status: open
-resolution: ""
+status: fixed
+resolution: "#4309 — the handler is extracted to handleAgentStateChange/handleRemoteStateChange and tested directly; the hand-copied test loops are gone and TerminalView's wiring is pinned"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -48,6 +48,19 @@ jobs:
           set -euo pipefail
           scripts/release-check.sh --versions-only --expect-version "${TAG_NAME#v}"
 
+      # The Windows leg builds an MSI, whose version must be numeric
+      # (major.minor.patch.revision); Tauri's WiX bundler rejects a semver
+      # prerelease such as 0.2.0-beta.1 (PKG2-003, #4283). build-and-upload maps
+      # the tag with msi-version.mjs; fail HERE, before create-release, when the
+      # tag has a shape that mapping cannot represent (only -beta.N / -rc.N
+      # prereleases, WiX field limits).
+      - name: Check the tag maps to a Windows MSI version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node scripts/internal/msi-version.mjs --check "${TAG_NAME#v}"
+
       # Strict production audit (WA-CI-008): the Security Audit lane soft-passes an
       # unreachable npm registry, which is fine for develop but must never let an
       # UNAUDITED tree ship. AUDIT_STRICT=1 turns "registry unreachable" into a
@@ -464,6 +477,25 @@ jobs:
         shell: bash
         run: ./scripts/internal/fetch-conpty.sh --arch x64
 
+      # Tauri's WiX bundler rejects a non-numeric prerelease (0.2.0-beta.1), so
+      # map the tag to a numeric MSI version (beta < rc < final, see the script
+      # header and docs/contributing.md) and merge it as bundle.windows.wix.version
+      # through a generated fragment (PKG2-003, #4283). Final releases are mapped
+      # too, so the MSI version stays monotonic across beta -> rc -> final.
+      # verify-version already ran --check, so this cannot reject the tag.
+      - name: Generate the Windows MSI version fragment
+        id: wix_version
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          fragment=src-tauri/tauri.wix-version.conf.json
+          node scripts/internal/msi-version.mjs --config-out "$fragment" "${TAG_NAME#v}"
+          cat "$fragment"
+          echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app for release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
@@ -474,7 +506,7 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ matrix.extra_args }} -- --locked
+          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ steps.wix_version.outputs.config }} ${{ matrix.extra_args }} -- --locked
 
       # Fail the build, not the user, if the sideloaded ConPTY host (#4121) is
       # missing from the installer, misplaced (it must sit next to termihub.exe,

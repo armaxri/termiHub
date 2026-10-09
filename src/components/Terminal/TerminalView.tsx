@@ -15,13 +15,11 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
-  getAllTabsAcrossGroupTrees,
   useActivePanelId,
   useActiveTabGroupId,
   useLayoutRenderTree,
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
-import { currentSessionView } from "@/store/sessionBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -31,9 +29,10 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
 import {
-  applyAgentReconnecting,
-  restartAgentRetryTabs,
-  wakeWaitingAgentTabs,
+  handleAgentStateChange,
+  handleRemoteStateChange,
+  type AgentStateChangePayload,
+  type RemoteStateChangePayload,
 } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
@@ -41,14 +40,7 @@ import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
-import {
-  listAgentSessions,
-  sessionLoggingStart,
-  sessionLoggingStop,
-  sessionLoggingStatus,
-} from "@/services/api";
-import { frontendLog } from "@/utils/frontendLog";
-import { readConfigString } from "@/utils/connectionConfigFields";
+import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import "./TerminalView.css";
 
@@ -81,192 +73,27 @@ export function TerminalView() {
     terminalDispatcher.init();
   }, []);
 
-  // Handle backend-reported remote-connection state changes: a "disconnected"
-  // state marks the owning tab exited (which drives the per-tab status dot via
-  // the tab-id-keyed lifecycle maps — see deriveTabStatus).
-  //
-  // NOTE (#1123): direct sessions (SSH / telnet / serial) do NOT currently
-  // reach this path — the backend never emits `remote-state-change` for them.
-  // Their disconnects — including half-open TCP drops (cable pull, NAT timeout,
-  // crashed host) — surface via `terminal-exit`: TCP keepalive on the socket
-  // (`core::net::enable_tcp_keepalive`) tears the dead connection down, the
-  // reader thread sees the error, and `terminal-exit` fires the overlay. This
-  // listener is retained as the forward-compatible hook for any future backend
-  // that emits explicit `remote-state-change` transitions.
+  // Backend state-change events. The handlers live in `agentStateHandlers` so
+  // tests drive the real code (TFE2-001): `remote-state-change` marks a dropped
+  // remote session's tab exited; `agent-state-change` updates the agent's state
+  // (sidebar dots) and moves its hosted tabs — resume, session-lost, reconnect,
+  // or a clean end after a user Disconnect/Shutdown (#4309).
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
-      const { session_id, state } = event.payload;
-      frontendLog("disconnect", `remote-state-change session=${session_id} state=${state}`);
-      if (state === "disconnected") {
-        // Find the tab that owns this session and show the disconnect overlay.
-        const store = useAppStore.getState();
-        const allTabs = getAllTabsAcrossGroupTrees();
-        const tab = allTabs.find((t) => t.sessionId === session_id);
-        if (tab) {
-          frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
-          // Remote peer dropped the connection — no exit code available (#1121).
-          store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
-        } else {
-          frontendLog("disconnect", `remote-state-change: no tab found for session=${session_id}`);
-        }
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      if (unlisten) unlisten();
+    const unlisteners: (() => void)[] = [];
+    let disposed = false;
+    const keep = (fn: () => void) => {
+      if (disposed) fn();
+      else unlisteners.push(fn);
     };
-  }, []);
-
-  // Update agent connection state in the store (drives sidebar state dots).
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen<{ session_id: string; state: string; error?: string }>(
-      "agent-state-change",
-      async (event) => {
-        const { session_id, state, error } = event.payload;
-        frontendLog("disconnect", `agent-state-change agent=${session_id} state=${state}`);
-        const store = useAppStore.getState();
-        store.setAgentConnectionState(
-          session_id,
-          state as "disconnected" | "connecting" | "connected" | "reconnecting",
-          error
-        );
-
-        // Build the full tab list once and reuse across all branches.
-        const allTabs = getAllTabsAcrossGroupTrees();
-
-        // Find all terminal tabs that belong to this agent via their connection
-        // config. This is more reliable than cross-referencing through
-        // agentSessions, which is only populated once on initial connect and
-        // therefore empty for sessions opened after the first refresh.
-        const agentTerminalTabs = allTabs.filter((tab) => {
-          if (tab.contentType !== "terminal") return false;
-          return readConfigString(tab.config, "agentId") === session_id;
-        });
-
-        if (state === "connected") {
-          // Query the agent for sessions it actually recovered. Daemons that
-          // survived the power cycle are re-attached with the same session IDs;
-          // those that didn't are silently dropped by the agent.
-          let recoveredSessionIds: Set<string>;
-          try {
-            const sessions = await listAgentSessions(session_id);
-            recoveredSessionIds = new Set(sessions.map((s) => s.sessionId));
-            frontendLog(
-              "disconnect",
-              `agent connected: ${recoveredSessionIds.size} sessions recovered: [${[...recoveredSessionIds].join(", ")}]`
-            );
-          } catch (err) {
-            // Can't reach the agent — assume all sessions are gone (safe fallback).
-            recoveredSessionIds = new Set();
-            frontendLog(
-              "disconnect",
-              `agent connected: failed to list sessions (${errorMessage(err)}), assuming all gone`
-            );
-          }
-
-          // Transition each reconnecting tab based on whether its session survived.
-          let markedResumed = 0;
-          let markedExited = 0;
-          const reconnectingView = currentSessionView();
-          for (const tab of agentTerminalTabs) {
-            // The shared `session-lifecycle` region is authoritative for the whole
-            // transient-break lifecycle (#2555/#2556/#2564) — the same source the
-            // overlay + tab dot read — so gate the resume-vs-lost decision on it
-            // rather than the local `terminalReconnectingTabs` slice (#2205 PR-B).
-            // The backend folds both resolve edges at the source: a recovered
-            // session `reconnecting → connected`, a gone session
-            // `reconnecting → sessionLost` (#2564). Accept either the mid-break
-            // `reconnecting` status or the already-folded `sessionLost` — the
-            // backend fold and this handler race, so a gone tab may read either by
-            // the time we get here; both mean "this tab was in the break".
-            const status = reconnectingView[tab.id]?.status;
-            if (status !== "reconnecting" && status !== "sessionLost") continue;
-            if (tab.sessionId && recoveredSessionIds.has(tab.sessionId)) {
-              // Session survived — the backend `agent_io_task` folds the region
-              // entry `reconnecting → connected` at the source (#2556), and output
-              // resumes automatically once the region leaves reconnecting. No
-              // client fold here (the survived-recovery mirror is retired).
-              frontendLog(
-                "disconnect",
-                `agent connected: session recovered for tab=${tab.id} session=${tab.sessionId}, resuming`
-              );
-              markedResumed++;
-            } else {
-              // Session is gone — the backend `agent_io_task` folds the region entry
-              // `reconnecting → sessionLost` at the source (#2564), the same
-              // authority the "Session lost" overlay renders from (#2512) and that
-              // `regionExited` mounts the overlay from (#2625). `settleSessionLost`
-              // only clears the per-client in-flight connect flags — do NOT re-drive
-              // the region, which would double-fold against the server authority.
-              frontendLog(
-                "disconnect",
-                `agent connected after reconnect: reflecting server-folded session-lost for tab=${tab.id} (session not recovered)`
-              );
-              store.settleSessionLost(tab.id);
-              markedExited++;
-            }
-          }
-          frontendLog(
-            "disconnect",
-            `agent connected: ${markedResumed} sessions resumed, ${markedExited} tabs transitioned to exited`
-          );
-
-          // Wake any tabs that were parked waiting for this agent to connect
-          // (retryTerminalSpawn re-runs the Terminal's setup effect), then restart
-          // tabs in the connection-overlay state (auto-retry delay or "Connection
-          // failed"). Both gate on the original `store` snapshot so a tab woken by
-          // the first loop is not double-woken by the second.
-          wakeWaitingAgentTabs(session_id, agentTerminalTabs, store);
-          restartAgentRetryTabs(agentTerminalTabs, store);
-
-          // The sessions/definitions refresh is owned by `setAgentConnectionState`
-          // (called above for the "connected" transition), so it runs exactly
-          // once per connect (G4/#1234) — do not refresh again here.
-        } else if (state === "reconnecting") {
-          // Live-session tabs show the reconnecting spinner; spawning tabs (no
-          // sessionId yet) are parked on the waiting-for-agent path so every
-          // agent tab gets honest feedback during a drop (G8, #1242).
-          applyAgentReconnecting(session_id, agentTerminalTabs, error);
-        } else if (state === "disconnected") {
-          // Mark all tabs with an active session for this agent as exited so
-          // the disconnect overlay appears.
-          let markedCount = 0;
-          for (const tab of agentTerminalTabs) {
-            if (!tab.sessionId) continue;
-            frontendLog("disconnect", `agent disconnect: marking tab=${tab.id} as exited`);
-            if (error) {
-              // Fully-failed reconnect (#2612/#2564): the backend `agent_io_task` folds
-              // the region entry `reconnecting → failed` at the source with the reconnect
-              // error (the same authority the "Reconnect failed" overlay reads, and that
-              // `regionExited` / `effectiveDisconnectError` render from, #2625).
-              // `settleBackendReconnectGaveUp` only clears the per-client in-flight connect
-              // flags — do NOT re-drive the region (the old `setTerminalDisconnectWithError`
-              // `session.connectFailed` mirror was a no-op while the region read
-              // `reconnecting`, so the region was left stuck `Reconnecting`); the backend
-              // now owns that fold.
-              store.settleBackendReconnectGaveUp(tab.id, error);
-            } else {
-              // Agent connection dropped without a specific error — e.g. a user-initiated
-              // agent disconnect. A dropped session (#1121); its region fold stays
-              // frontend-owned (out of scope for the fully-failed reconnect edge).
-              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
-            }
-            markedCount++;
-          }
-          frontendLog("disconnect", `agent disconnected: ${markedCount} tabs marked as exited`);
-          // Active sessions are gone; clear them so stale entries don't linger.
-          // Saved connections (definitions/folders) are kept — they live on disk.
-          store.clearAgentSessions(session_id);
-        }
-      }
-    ).then((fn) => {
-      unlisten = fn;
-    });
+    void listen<RemoteStateChangePayload>("remote-state-change", (event) =>
+      handleRemoteStateChange(event.payload)
+    ).then(keep);
+    void listen<AgentStateChangePayload>("agent-state-change", (event) =>
+      handleAgentStateChange(event.payload)
+    ).then(keep);
     return () => {
-      if (unlisten) unlisten();
+      disposed = true;
+      unlisteners.forEach((fn) => fn());
     };
   }, []);
 

@@ -1418,8 +1418,9 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 1. Refuse to start if the tag does not match every version source above or the Tauri
    npm packages have drifted from their Rust crates (`release-check.sh --versions-only`),
    if the full integration lanes have not passed on the tagged commit (the
-   [release integration gate](#release-integration-gate)), or if the
-   [agent update signing key](#agent-update-signing-key) is not configured
+   [release integration gate](#release-integration-gate)), if the
+   [agent update signing key](#agent-update-signing-key) is not configured, or if the tag
+   cannot be mapped to a [Windows MSI version](#prerelease-tags-and-the-windows-msi-version)
 2. Create a GitHub Release with notes extracted from `CHANGELOG.md`
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
 4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`
@@ -1445,6 +1446,40 @@ to "Latest" (and that desktop update checks and agent self-updates then pick up)
 `TERMIHUB_STABLE_RELEASE` repository variable to `true` before pushing the tag (and clear
 it afterwards). A tag with a semver prerelease suffix (`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is
 always a prerelease, even with the variable set.
+
+### Prerelease tags and the Windows MSI version
+
+The only supported tag shapes are `vX.Y.Z`, `vX.Y.Z-beta.N` and `vX.Y.Z-rc.N`. A Windows
+MSI version must be numeric (`major.minor.patch.revision`, with major and minor at most
+255 and patch and revision at most 65535), and Tauri's WiX bundler rejects a semver
+prerelease such as `0.2.0-beta.1`. So the Windows leg of the Release workflow maps every
+tag to a numeric MSI version with
+[`scripts/internal/msi-version.mjs`](../scripts/internal/msi-version.mjs) and passes it as
+`bundle.windows.wix.version` in a generated `--config` fragment (#4283):
+
+| Tag             | MSI version         | Range of `N` |
+| --------------- | ------------------- | ------------ |
+| `vX.Y.Z-beta.N` | `X.Y.Z.(10000 + N)` | 0–9999       |
+| `vX.Y.Z-rc.N`   | `X.Y.Z.(20000 + N)` | 0–9999       |
+| `vX.Y.Z`        | `X.Y.Z.30000`       | —            |
+
+The mapping is unique and orders beta < rc < final < the next patch. The final release
+gets a revision too: without one, its MSI version would be `X.Y.Z.0`, below its own
+prereleases. Windows Installer ignores the fourth field when it looks for an installed
+copy to upgrade, but Tauri's `MajorUpgrade` either allows downgrades (`allowDowngrades`,
+the default) or same-version upgrades, so installing an rc over a beta, or the final
+release over an rc, replaces the earlier install rather than adding a second one. The
+installer file name and the app's own version still use the tag version. The NSIS
+`-setup.exe` accepts semver prereleases and is not affected.
+
+**Verify Version** runs `msi-version.mjs --check` on the tag, so an unsupported tag
+(`-alpha.1`, a numeric-only `-1`, build metadata, `beta.N` above 9999, or a version over
+the WiX limits) fails before the GitHub release is created. Check a tag locally first:
+
+```bash
+node scripts/internal/msi-version.mjs 0.2.0-beta.1   # prints 0.2.0.10001
+node scripts/internal/msi-version.mjs --check v0.2.0-alpha.1 || echo "unsupported tag"
+```
 
 ### Release integration gate
 
