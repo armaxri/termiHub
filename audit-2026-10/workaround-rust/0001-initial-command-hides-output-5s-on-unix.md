@@ -17,8 +17,8 @@ evidence:
   - core/src/session/shell.rs:1392
   - core/src/session/shell.rs:500
   - src/utils/openLocalCommandTab.ts:20
-status: open
-resolution: ""
+status: fixed
+resolution: "#4345 — removed the buffer-until-clear phase; the initial command now waits for the OSC 133 prompt mark (1 s fallback) and logs failed sends"
 audit: 2026-10
 commit: 663465d52
 relation: new

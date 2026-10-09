@@ -20,7 +20,7 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
-use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpEnd, PumpOptions};
+use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
 
@@ -48,9 +48,11 @@ const MAX_SESSIONS: usize = 50;
 /// Maximum coalesced output size per emit (32 KB).
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
 
-/// Maximum time to wait for the screen-clear sequence before flushing
-/// buffered output anyway.
-const CLEAR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Longest wait for the shell's OSC 133 prompt-start mark before a
+/// connection's initial command is sent anyway (#4345). Shells without
+/// termiHub's shell integration (plain `sh`, most remote shells, serial)
+/// never print the mark, so this is the delay they get.
+const INITIAL_COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Output event emitted via Tauri events.
 ///
@@ -1366,11 +1368,16 @@ impl SessionManager {
             }
         }
 
-        // Determine if we should wait for screen clear (initial command).
-        let has_initial_command = settings
+        // A connection's initial command waits for the shell's prompt mark
+        // (#4345). The output itself is never held back.
+        let initial_command = settings
             .get("initialCommand")
             .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.is_empty());
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let prompt_ready = initial_command
+            .as_ref()
+            .map(|_| Arc::new(tokio::sync::Notify::new()));
 
         // Forward a files-only verdict (#4078) to the tab's lifecycle entry.
         if let (Some(watch), Some(tab_id)) = (
@@ -1394,6 +1401,8 @@ impl SessionManager {
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
         let sid = session_id.clone();
+        let reader_prompt_ready = prompt_ready.clone();
+        let injection_cancel = reader_cancel.clone();
         // Not app-owned (#3105): session-scoped reader, stopped by the session's `reader_cancel`.
         tokio::spawn(async move {
             Self::run_output_reader(
@@ -1401,7 +1410,7 @@ impl SessionManager {
                 output_rx,
                 emitter,
                 sessions_clone,
-                has_initial_command,
+                reader_prompt_ready,
                 capture,
                 output_buffers,
                 session_loggers,
@@ -1412,18 +1421,20 @@ impl SessionManager {
             .await;
         });
 
-        // Send initial command after a short delay.
-        if let Some(cmd) = settings
-            .get("initialCommand")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
+        // Send the initial command once the shell has drawn its prompt (the
+        // OSC 133 prompt-start mark), or after a fallback timeout for shells
+        // that never print one.
+        if let (Some(cmd), Some(ready)) = (initial_command, prompt_ready) {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
-            let cmd = cmd.to_string();
-            // Not app-owned (#3105): one-shot 200 ms initial-command injection for this session.
+            // Not app-owned (#3105): one-shot initial-command injection, stopped
+            // with the session's reader.
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::select! {
+                    _ = injection_cancel.cancelled() => return,
+                    _ = ready.notified() => {}
+                    _ = tokio::time::sleep(INITIAL_COMMAND_READY_TIMEOUT) => {}
+                }
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
             });
         }
@@ -1528,8 +1539,8 @@ impl SessionManager {
 
     /// Send the settings-driven initial command to a freshly created session.
     ///
-    /// Runs from a detached task after a short delay, so it operates on the
-    /// shared sessions map rather than `&self`. Routed through
+    /// Runs from a detached task once the shell is ready, so it operates on
+    /// the shared sessions map rather than `&self`. Routed through
     /// [`Self::send_input_normalized`] so the trailing line break honors the
     /// session's configured [`LineEnding`] (e.g. CRLF on hosts that require it)
     /// rather than a hardcoded `\n`.
@@ -1539,7 +1550,9 @@ impl SessionManager {
         command: &str,
     ) {
         let input = format!("{command}\n");
-        let _ = Self::send_input_normalized(sessions, session_id, input.as_bytes()).await;
+        if let Err(e) = Self::send_input_normalized(sessions, session_id, input.as_bytes()).await {
+            warn!(session_id, error = %e, "Failed to send the initial command");
+        }
     }
 
     /// Set the line ending applied to input for a session. Called by the
@@ -2208,7 +2221,7 @@ impl SessionManager {
                 output_rx,
                 emitter,
                 sessions_clone,
-                false,
+                None,
                 capture,
                 output_buffers,
                 session_loggers,
@@ -2425,15 +2438,17 @@ impl SessionManager {
     /// Read output from a connection and emit Tauri events.
     ///
     /// Coalesces pending output chunks into a single event (up to
-    /// `MAX_COALESCE_BYTES`) to reduce IPC overhead. `flow` is the frontend's
-    /// pause/resume gate (PERF2-002); `None` never pauses.
+    /// `MAX_COALESCE_BYTES`) to reduce IPC overhead. `prompt_ready` is
+    /// signalled on the first OSC 133 prompt-start mark (the initial-command
+    /// readiness signal, #4345); `None` skips that scan. `flow` is the
+    /// frontend's pause/resume gate (PERF2-002); `None` never pauses.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_output_reader<E: EventEmitter, M: SessionMap>(
         session_id: String,
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
         emitter: E,
         sessions: Arc<Mutex<M>>,
-        wait_for_clear: bool,
+        prompt_ready: Option<Arc<tokio::sync::Notify>>,
         capture: Arc<StdMutex<RingBuffer>>,
         output_buffers: OutputBuffers,
         session_loggers: SessionLoggers,
@@ -2441,8 +2456,7 @@ impl SessionManager {
         cancel: CancellationToken,
         flow: Option<OutputFlowGate>,
     ) {
-        // The mechanical forwarding loop (buffer-until-clear + coalescing
-        // stream) now lives in the shared core pump (finding DUP-011); the
+        // The mechanical forwarding loop (coalescing stream) now lives in the shared core pump (finding DUP-011); the
         // desktop delivery — capture + transcript + emit — is injected via
         // `TerminalOutputSink`. The reader keeps its own `emitter` /
         // `session_loggers` handles for the tier-specific settle below, so the
@@ -2454,35 +2468,27 @@ impl SessionManager {
             session_loggers.clone(),
         );
         let opts = PumpOptions {
-            wait_for_clear,
             coalesce: true,
             max_coalesce_bytes: MAX_COALESCE_BYTES,
-            clear_wait_timeout: CLEAR_WAIT_TIMEOUT,
+            prompt_ready,
             flow,
         };
 
-        match run_output_pump(&session_id, &mut output_rx, &sink, Some(&cancel), &opts).await {
-            // A sink failure while flushing the pre-stream clear buffer returns
-            // WITHOUT settling — preserving the original no-settle asymmetry
-            // (old manager.rs:1968): no `terminal-exit`, no drop-fold.
-            PumpEnd::ClearFlushSinkClosed => {}
-            // Eof / Cancelled / a streaming-phase sink failure all settle the
-            // session exactly as the original loop did after its `break`: emit
-            // the exit event and run cleanup (the drop-fold lives here, #2439 —
-            // the DUP-010 seam).
-            _ => {
-                Self::emit_and_cleanup(
-                    &session_id,
-                    Vec::new(),
-                    &emitter,
-                    &sessions,
-                    &output_buffers,
-                    &session_loggers,
-                    &session_tab_ids,
-                )
-                .await;
-            }
-        }
+        // Every end — Eof, Cancelled, or a sink failure — settles the session
+        // exactly as the original loop did after its `break`: emit the exit
+        // event and run cleanup (the drop-fold lives here, #2439 — the DUP-010
+        // seam).
+        run_output_pump(&session_id, &mut output_rx, &sink, Some(&cancel), &opts).await;
+        Self::emit_and_cleanup(
+            &session_id,
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &output_buffers,
+            &session_loggers,
+            &session_tab_ids,
+        )
+        .await;
     }
 
     /// Mirror emitted output into a session's scrollback capture buffer (#1900).

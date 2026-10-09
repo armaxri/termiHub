@@ -31,6 +31,7 @@ import {
   ConfirmDialog,
   EmptyState,
   toast,
+  useModalPortalContainer,
 } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import {
@@ -1589,6 +1590,9 @@ function MonitorRowActions({
 }: MonitorRowActionsProps) {
   const paused = entry.paused;
   const isOffline = entry.status === "offline";
+  // Portal the interval menu into the modal (#4347): the modal disables pointer
+  // events outside its content, so a body-portaled menu would be unclickable.
+  const portalContainer = useModalPortalContainer();
   return (
     <span className="oc-row__actions">
       <MonitorRunLocation entry={entry} />
@@ -1630,7 +1634,7 @@ function MonitorRowActions({
             </Button>
           </DropdownMenu.Trigger>
         </Tooltip>
-        <DropdownMenu.Portal>
+        <DropdownMenu.Portal container={portalContainer}>
           <DropdownMenu.Content
             className="monitoring-menu__content"
             side="bottom"
