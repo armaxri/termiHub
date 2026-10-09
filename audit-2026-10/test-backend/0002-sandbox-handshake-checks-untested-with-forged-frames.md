@@ -15,8 +15,8 @@ evidence:
   - core/src/plugin/sandbox/client.rs:454
   - core/tests/plugin_runner_e2e.rs:184
   - core/tests/plugin_runner_e2e.rs:230
-status: open
-resolution: ""
+status: fixed
+resolution: "#4335 — client_tests.rs drives the handshake with forged frames (one HostError each); an e2e fake runner forging Loaded is killed and not registered"
 audit: 2026-10
 commit: 663465d52
 relation: new

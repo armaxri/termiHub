@@ -8,8 +8,10 @@
 //! sessions then report not-alive; the host and every other plugin keep running.
 //!
 //! Each runner also gets a watchdog (#4184, [`super::watchdog`]) for hangs and
-//! memory, and its stderr is forwarded through the host so an allocation
-//! failure under `RLIMIT_AS` is recognised as out of memory.
+//! memory; a runner whose watchdog cannot start is not kept (#4335). Its
+//! stderr is forwarded into the plugin's rate-limited log, and an allocation
+//! failure reported there counts as out of memory only when the host's own
+//! observations agree.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver};
@@ -39,6 +41,20 @@ use super::writer::ChannelWriter;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the runner may take to load the plugin (digest, `dlopen`, init).
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The handshake's deadlines (shortened by tests).
+#[derive(Debug, Clone, Copy)]
+struct Deadlines {
+    /// For `Hello`.
+    hello: Duration,
+    /// For `SandboxReport` and for `Loaded`, each.
+    load: Duration,
+}
+
+const DEADLINES: Deadlines = Deadlines {
+    hello: HELLO_TIMEOUT,
+    load: LOAD_TIMEOUT,
+};
 /// Deadline for a `Close` reply (the concept's 2 s close budget).
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// Deadline for a `CreateSession` reply. Generous: a plugin's
@@ -86,6 +102,7 @@ impl SandboxedPlugin {
             }),
         )?;
         let stderr = child.stderr.take();
+        let pid = child.id();
         // Bridge sockets are duplicated into the runner through its process
         // handle (#4219); without a copy every connection is proxied.
         #[cfg(windows)]
@@ -95,25 +112,35 @@ impl SandboxedPlugin {
         };
         let shared = Shared::new(configure.plugin_id.clone(), Some(child), log_limiter);
         shared.set_output_rate_cap(config.output_rate_cap);
+        // A failed allocation the runner reports on stderr is checked against
+        // the host's own measurement of its memory (#4335).
+        let (rss_limit, address_space_limit) = (
+            config.watchdog.rss_limit,
+            configure.limits.address_space_bytes,
+        );
+        shared.set_memory_probe(Box::new(move || {
+            super::watchdog::memory_pressure(pid, rss_limit, address_space_limit)
+        }));
         if let Some(stderr) = stderr {
             shared.expect_stderr();
             let forwarder = Arc::clone(&shared);
-            let spawned = std::thread::Builder::new()
-                .name(format!("plugin-runner-stderr-{}", configure.plugin_id))
-                .spawn(move || forwarder.forward_stderr(stderr));
-            if spawned.is_err() {
-                shared.kill();
-                return Err(HostError::RunnerProtocol("stderr thread".to_owned()));
+            let spawned = super::threads::spawn(
+                format!("plugin-runner-stderr-{}", configure.plugin_id),
+                move || forwarder.forward_stderr(stderr),
+            );
+            if let Err(e) = spawned {
+                abandon(&shared);
+                return Err(HostError::RunnerProtocol(format!("stderr thread: {e}")));
             }
         }
-        match handshake(&mut stream, configure) {
+        match handshake(&mut stream, configure, DEADLINES) {
             Ok((info, sandbox)) => {
                 let _ = stream.set_read_timeout(None);
                 let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
                 let reader = stream
                     .try_clone()
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
-                    .inspect_err(|_| shared.kill())?;
+                    .inspect_err(|_| abandon(&shared))?;
                 let writer = ChannelWriter::for_channel(stream);
                 #[cfg(windows)]
                 let writer = writer.map(|w| match runner_process {
@@ -123,7 +150,7 @@ impl SandboxedPlugin {
                 let writer = writer
                     .map(Arc::new)
                     .map_err(|e| HostError::RunnerProtocol(format!("clone channel: {e}")))
-                    .inspect_err(|_| shared.kill())?;
+                    .inspect_err(|_| abandon(&shared))?;
                 // The bridge service answers requests from the reader thread on,
                 // so it is wired up before that thread starts.
                 shared.bridge.attach(
@@ -132,28 +159,36 @@ impl SandboxedPlugin {
                     Arc::downgrade(&shared),
                 );
                 let reader_shared = Arc::clone(&shared);
-                std::thread::Builder::new()
-                    .name(format!("plugin-runner-{}", configure.plugin_id))
-                    .spawn(move || reader_shared.read_loop(reader))
-                    .map_err(|e| HostError::RunnerProtocol(format!("reader thread: {e}")))
-                    .inspect_err(|_| shared.kill())?;
+                super::threads::spawn(
+                    format!("plugin-runner-{}", configure.plugin_id),
+                    move || {
+                        reader_shared.read_loop(reader);
+                    },
+                )
+                .map_err(|e| HostError::RunnerProtocol(format!("reader thread: {e}")))
+                .inspect_err(|_| abandon(&shared))?;
                 let plugin = Arc::new(Self {
                     info,
                     sandbox,
                     writer,
                     shared,
                 });
-                super::watchdog::spawn(
+                // No plugin runs without hang detection and the memory kill
+                // (#4335): a watchdog that cannot start ends the runner.
+                if let Err(e) = super::watchdog::spawn(
                     Arc::downgrade(&plugin),
                     config.watchdog,
                     configure.limits.address_space_bytes,
                     &configure.plugin_id,
-                );
+                ) {
+                    abandon(&plugin.shared);
+                    return Err(HostError::RunnerProtocol(format!("watchdog thread: {e}")));
+                }
                 Ok(plugin)
             }
             Err(err) => {
                 let err = with_exit_code(err, &shared);
-                shared.kill();
+                abandon(&shared);
                 Err(err)
             }
         }
@@ -408,13 +443,29 @@ impl Drop for CallGuard<'_> {
     }
 }
 
-/// Run the startup sequence on the calling thread, bounded by deadlines.
+/// End a runner the host gave up on during startup: kill it and reap it, so
+/// no process (or zombie) is left behind. Not a crash: the caller returns the
+/// reason as its error.
+fn abandon(shared: &Shared) {
+    shared.set_pending_cause(RunnerExitCause::Stopped);
+    shared.kill();
+    shared.reap(EXIT_TIMEOUT);
+}
+
+/// Run the startup sequence on the calling thread, bounded by `deadlines`.
+///
+/// The runner is untrusted (and the plugin's init code has run in it by the
+/// time `Loaded` arrives), so every frame is checked here: the protocol
+/// version, a `SandboxReport` before anything else (judged against a requested
+/// policy), and the ABI gate + manifest mirror on `Loaded`. The caller kills
+/// the runner on any `Err`.
 fn handshake<S: ChannelStream>(
     stream: &mut S,
     configure: &Configure,
+    deadlines: Deadlines,
 ) -> Result<(LoadedPluginInfo, SandboxReport), HostError> {
     let protocol = |what: &str| HostError::RunnerProtocol(what.to_owned());
-    match next_frame(stream, HELLO_TIMEOUT, "Hello")? {
+    match next_frame(stream, deadlines.hello, "Hello")? {
         Message::Hello(hello) if hello.protocol_version == PROTOCOL_VERSION => {}
         Message::Hello(hello) => {
             return Err(protocol(&format!(
@@ -430,7 +481,7 @@ fn handshake<S: ChannelStream>(
     stream
         .write_all(&frame)
         .map_err(|e| protocol(&format!("sending Configure: {e}")))?;
-    let sandbox = match next_frame(stream, LOAD_TIMEOUT, "SandboxReport")? {
+    let sandbox = match next_frame(stream, deadlines.load, "SandboxReport")? {
         // A requested sandbox must be in force before the plugin is mapped;
         // the caller kills the runner on `Err`, so it never loads (#4186).
         Message::SandboxReport(report) => {
@@ -446,7 +497,7 @@ fn handshake<S: ChannelStream>(
             )))
         }
     };
-    match next_frame(stream, LOAD_TIMEOUT, "Loaded")? {
+    match next_frame(stream, deadlines.load, "Loaded")? {
         Message::Loaded(loaded) => {
             let info = loaded.into_info();
             // Re-apply the ABI gate + manifest mirror host-side: the runner ran
@@ -520,3 +571,7 @@ fn next_frame<S: ChannelStream>(
         ))),
     }
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

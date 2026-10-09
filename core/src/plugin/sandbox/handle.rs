@@ -211,7 +211,11 @@ impl SandboxedPluginHandle {
         });
         handle.watch(&first);
         *handle.current.lock().unwrap_or_else(|e| e.into_inner()) = Some(first);
-        spawn_idle_reaper(Arc::downgrade(&handle), handle.config.idle_timeout);
+        spawn_idle_reaper(
+            Arc::downgrade(&handle),
+            handle.config.idle_timeout,
+            &handle.info.id,
+        );
         Ok(handle)
     }
 
@@ -273,13 +277,20 @@ impl SandboxedPluginHandle {
                 })
             }
         };
-        let _ = std::thread::Builder::new()
-            .name("plugin-runner-recovery".to_owned())
-            .spawn(move || {
-                if let Some(handle) = handle.upgrade() {
-                    follow_up(&handle);
-                }
-            });
+        let started = super::threads::spawn("plugin-runner-recovery".to_owned(), move || {
+            if let Some(handle) = handle.upgrade() {
+                follow_up(&handle);
+            }
+        });
+        if let Err(e) = started {
+            // This runs under the reaping thread's locks, so the follow-up
+            // cannot run inline: the plugin respawns lazily on its next session.
+            tracing::error!(
+                target: crate::plugin::PLUGIN_LOG_TARGET,
+                "[{}] starting the crash-recovery thread failed: {e}",
+                self.info.id
+            );
+        }
     }
 
     /// Set what happens when the crash budget is spent (the host unregisters
@@ -446,18 +457,25 @@ impl Drop for SandboxedPluginHandle {
     }
 }
 
-fn spawn_idle_reaper(handle: Weak<SandboxedPluginHandle>, idle_timeout: Duration) {
+/// Start the idle reaper. A failed start is logged at error level (#4335):
+/// the plugin keeps working, its runner is just not reaped when idle.
+fn spawn_idle_reaper(handle: Weak<SandboxedPluginHandle>, idle_timeout: Duration, plugin_id: &str) {
     let interval = (idle_timeout / 4).clamp(Duration::from_millis(10), MAX_IDLE_CHECK_INTERVAL);
-    let _ = std::thread::Builder::new()
-        .name("plugin-runner-idle-reaper".to_owned())
-        .spawn(move || loop {
-            std::thread::sleep(interval);
-            let Some(handle) = handle.upgrade() else {
-                return;
-            };
-            if handle.stopped.load(Ordering::SeqCst) {
-                return;
-            }
-            handle.reap_if_idle();
-        });
+    let started = super::threads::spawn("plugin-runner-idle-reaper".to_owned(), move || loop {
+        std::thread::sleep(interval);
+        let Some(handle) = handle.upgrade() else {
+            return;
+        };
+        if handle.stopped.load(Ordering::SeqCst) {
+            return;
+        }
+        handle.reap_if_idle();
+    });
+    if let Err(e) = started {
+        tracing::error!(
+            target: crate::plugin::PLUGIN_LOG_TARGET,
+            "[{plugin_id}] starting the idle-reaper thread failed: {e}; the plugin runner \
+             will not be stopped when idle"
+        );
+    }
 }

@@ -94,15 +94,18 @@ enum Beat {
 /// `address_space_limit` is the runner's `RLIMIT_AS` (Linux) or its job
 /// object's committed-memory limit (Windows), used to tell a hang from a
 /// runner busy running out of memory.
+///
+/// A failed start is an `Err` (#4335): the caller must not let the plugin run
+/// without hang detection and the memory kill.
 pub(super) fn spawn(
     plugin: Weak<SandboxedPlugin>,
     config: WatchdogConfig,
     address_space_limit: Option<u64>,
     plugin_id: &str,
-) {
-    let _ = std::thread::Builder::new()
-        .name(format!("plugin-runner-watchdog-{plugin_id}"))
-        .spawn(move || run(&plugin, config, address_space_limit));
+) -> std::io::Result<()> {
+    super::threads::spawn(format!("plugin-runner-watchdog-{plugin_id}"), move || {
+        run(&plugin, config, address_space_limit);
+    })
 }
 
 /// The share of a memory limit above which a stalled runner counts as out of
@@ -122,21 +125,32 @@ fn hang_cause(
     config: &WatchdogConfig,
     address_space_limit: Option<u64>,
 ) -> RunnerExitCause {
-    let Some(pid) = pid else {
-        return RunnerExitCause::NotResponding;
-    };
-    let rss_pressure = config
-        .rss_limit
+    let pressure =
+        pid.is_some_and(|pid| memory_pressure(pid, config.rss_limit, address_space_limit));
+    if pressure {
+        RunnerExitCause::OutOfMemory
+    } else {
+        RunnerExitCause::NotResponding
+    }
+}
+
+/// Whether process `pid` is, by the host's own measurement, close to one of
+/// its memory limits: `rss_limit` (the resident-size watchdog) or
+/// `address_space_limit` (`RLIMIT_AS` on Linux, the job object's commit limit
+/// on Windows). `false` when nothing can be measured (no limit, or the process
+/// is gone).
+pub(super) fn memory_pressure(
+    pid: u32,
+    rss_limit: Option<u64>,
+    address_space_limit: Option<u64>,
+) -> bool {
+    let rss_pressure = rss_limit
         .zip(resident_bytes(pid))
         .is_some_and(|(limit, rss)| near(rss, limit));
     let address_space_pressure = address_space_limit
         .zip(address_space_bytes(pid))
         .is_some_and(|(limit, used)| near(used, limit));
-    if rss_pressure || address_space_pressure {
-        RunnerExitCause::OutOfMemory
-    } else {
-        RunnerExitCause::NotResponding
-    }
+    rss_pressure || address_space_pressure
 }
 
 fn run(plugin: &Weak<SandboxedPlugin>, config: WatchdogConfig, address_space_limit: Option<u64>) {
@@ -324,6 +338,17 @@ pub(super) fn resident_bytes(pid: u32) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_watchdog_that_cannot_start_is_an_error() {
+        let _fail = crate::plugin::sandbox::threads::fail_spawns_named("plugin-runner-watchdog");
+        let err = spawn(Weak::new(), WatchdogConfig::default(), None, "probe")
+            .expect_err("an injected spawn failure surfaces");
+        assert!(
+            err.to_string().contains("plugin-runner-watchdog-probe"),
+            "{err}"
+        );
+    }
 
     #[test]
     fn the_defaults_match_the_concept() {

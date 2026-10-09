@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/sandbox/peer.rs:162
   - core/src/plugin/sandbox/peer.rs:165
   - core/src/plugin/sandbox/peer.rs:494
-status: open
-resolution: ""
+status: fixed
+resolution: "#4335 — runner stderr goes through the plugin log limiter, tagged and stripped of control characters; its OOM marker counts only with host-side evidence"
 audit: 2026-10
 commit: 663465d52
 relation: new
