@@ -9,7 +9,10 @@ use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::tree::flatten_tree;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
-use crate::utils::migrate::{guard_not_newer, load_versioned, LoadOutcome, VersionedStore};
+use crate::utils::migrate::{
+    guard_not_newer, load_versioned, read_unknown_fields, recover_corrupt_store, LoadOutcome,
+    Salvage, VersionedStore,
+};
 
 const FILE_NAME: &str = "connections.json";
 
@@ -38,7 +41,10 @@ impl ConnectionStorage {
     ///
     /// - If the file is missing, returns defaults with no warnings.
     /// - If parsing succeeds, flattens the tree to in-memory arrays.
-    /// - If parsing fails, backs up to `.bak` and attempts recursive node recovery.
+    /// - If the file was written by a newer schema, runs on defaults and leaves
+    ///   it untouched.
+    /// - If parsing fails, backs up to a fresh `.bak[.N]` and attempts recursive
+    ///   node recovery; the file is never rewritten when the backup failed.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<FlatConnectionStore>> {
         if !self.file_path.exists() {
             return Ok(RecoveryResult {
@@ -59,7 +65,7 @@ impl ConnectionStorage {
         // NEWER file is left completely intact and reported — never treated as
         // corrupt and reset. Only a genuinely-unparseable file falls through to
         // the granular per-node recovery below.
-        match load_versioned::<ConnectionStore>(&data) {
+        let detail = match load_versioned::<ConnectionStore>(&data) {
             LoadOutcome::Loaded { data: store, .. } => {
                 let (connections, folders) = flatten_tree(&store.children, None);
                 let mut flat = FlatConnectionStore {
@@ -93,106 +99,31 @@ impl ConnectionStorage {
                     }],
                 });
             }
-            // Genuinely unparseable at/below the current version — fall through to
-            // the granular per-node recovery, which salvages what it can.
-            LoadOutcome::Corrupt(_) => {}
-        }
-
-        // Parse failed — back up the corrupt file
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Connections file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        // Try to parse as unstructured JSON for per-node recovery
-        let value: serde_json::Value = match serde_json::from_str(&data) {
-            Ok(v) => v,
-            Err(e) => {
-                // Completely unparseable — reset to defaults
-                let warning = RecoveryWarning {
-                    file_name: FILE_NAME.to_string(),
-                    message: "Connections file was completely corrupt and has been reset."
-                        .to_string(),
-                    details: Some(e.to_string()),
-                };
-                tracing::error!("Connections file completely corrupt: {e}");
-                let default_store = ConnectionStore::default();
-                self.save_store(&default_store)
-                    .context("Failed to save default connections after recovery")?;
-                return Ok(RecoveryResult {
-                    data: FlatConnectionStore {
-                        connections: Vec::new(),
-                        folders: Vec::new(),
-                        agents: Vec::new(),
-                    },
-                    warnings: vec![warning],
-                });
-            }
+            // Genuinely unparseable at/below the current version: the shared
+            // rule (ERR2-002) backs the file up to a fresh `.bak`, salvages per
+            // node on the migrated document (PER-004/PER2-007), and rewrites it
+            // only once the backup is on disk.
+            LoadOutcome::Corrupt(detail) => detail,
         };
 
-        // Granular recovery: try each node individually
-        let mut warnings = Vec::new();
-        let mut recovered_children = Vec::new();
-        let mut recovered_agents = Vec::new();
-
-        if let Some(arr) = value.get("children").and_then(|v| v.as_array()) {
-            recover_nodes_recursive(arr, &mut recovered_children, &mut warnings, "");
-        }
-
-        if let Some(arr) = value.get("agents").and_then(|v| v.as_array()) {
-            for (i, entry) in arr.iter().enumerate() {
-                match serde_json::from_value::<SavedRemoteAgent>(entry.clone()) {
-                    Ok(agent) => recovered_agents.push(agent),
-                    Err(e) => {
-                        let name = entry
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        warnings.push(RecoveryWarning {
-                            file_name: FILE_NAME.to_string(),
-                            message: format!(
-                                "Removed corrupt agent entry at index {i} (\"{name}\")."
-                            ),
-                            details: Some(e.to_string()),
-                        });
-                        tracing::warn!("Dropped corrupt agent at index {i} (\"{name}\"): {e}");
-                    }
-                }
-            }
-        }
-
-        // If no per-entry warnings, the top-level structure itself was broken
-        if warnings.is_empty() {
-            warnings.push(RecoveryWarning {
-                file_name: FILE_NAME.to_string(),
-                message: "Connections file had an invalid structure and has been repaired."
-                    .to_string(),
-                details: None,
-            });
-        }
-
-        let recovered_store = ConnectionStore {
-            version: ConnectionStore::CURRENT_VERSION.to_string(),
-            children: recovered_children,
-            agents: recovered_agents,
-        };
-
-        self.save_store(&recovered_store)
-            .context("Failed to save recovered connections")?;
-
-        let (connections, folders) = flatten_tree(&recovered_store.children, None);
+        let recovered = recover_corrupt_store::<ConnectionStore>(
+            &self.file_path,
+            FILE_NAME,
+            &data,
+            detail,
+            |store| self.save_store(store),
+        )?;
+        let (connections, folders) = flatten_tree(&recovered.data.children, None);
         let mut flat = FlatConnectionStore {
             connections,
             folders,
-            agents: recovered_store.agents,
+            agents: recovered.data.agents,
         };
         self.migrate_plugin_type_ids(&mut flat);
 
         Ok(RecoveryResult {
             data: flat,
-            warnings,
+            warnings: recovered.warnings,
         })
     }
 
@@ -227,11 +158,7 @@ impl ConnectionStorage {
     /// version (PER-004), so an older build can never clobber a newer one's
     /// connections. (`save_flat` routes through here, so it is guarded too.)
     pub fn save_store(&self, store: &ConnectionStore) -> Result<()> {
-        guard_not_newer(
-            &self.file_path,
-            ConnectionStore::STORE_NAME,
-            ConnectionStore::CURRENT_VERSION,
-        )?;
+        self.guard_not_newer()?;
 
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize connections")?;
@@ -242,14 +169,29 @@ impl ConnectionStorage {
     }
 
     /// Save flat in-memory data to disk by first building the nested tree.
+    ///
+    /// The flat in-memory model never holds the file's unknown top-level
+    /// fields, so they are re-read from disk and carried forward (PER2-005) —
+    /// only after the version guard passed, so they come from a same-or-older
+    /// schema.
     pub fn save_flat(&self, flat: &FlatConnectionStore) -> Result<()> {
+        self.guard_not_newer()?;
         let tree = super::tree::build_tree(&flat.connections, &flat.folders);
         let store = ConnectionStore {
             version: ConnectionStore::CURRENT_VERSION.to_string(),
             children: tree,
             agents: flat.agents.clone(),
+            extra: read_unknown_fields(&self.file_path, &ConnectionStore::KNOWN_FIELDS),
         };
         self.save_store(&store)
+    }
+
+    fn guard_not_newer(&self) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            ConnectionStore::STORE_NAME,
+            ConnectionStore::CURRENT_VERSION,
+        )
     }
 
     /// A path next to `connections.json` (in the config directory).
@@ -262,6 +204,72 @@ impl ConnectionStorage {
     #[cfg(test)]
     pub fn new_for_test(file_path: std::path::PathBuf) -> Self {
         Self { file_path }
+    }
+}
+
+/// Granular per-node recovery (PER-004) of a readable-but-invalid
+/// `connections.json` document (already migrated — PER2-007): every tree node
+/// and agent entry that still parses is kept, the corrupt ones are dropped with
+/// a warning each, and the unknown top-level fields ride along (PER2-005).
+/// A non-object document is unsalvageable (the caller resets).
+pub(crate) fn salvage_connection_store(
+    value: &serde_json::Value,
+    file_name: &str,
+) -> Salvage<ConnectionStore> {
+    let Some(obj) = value.as_object() else {
+        return Salvage::Unsalvageable;
+    };
+    let mut warnings = Vec::new();
+    let mut children = Vec::new();
+    let mut agents = Vec::new();
+
+    if let Some(arr) = obj.get("children").and_then(|v| v.as_array()) {
+        recover_nodes_recursive(arr, &mut children, &mut warnings, "");
+    }
+
+    if let Some(arr) = obj.get("agents").and_then(|v| v.as_array()) {
+        for (i, entry) in arr.iter().enumerate() {
+            match serde_json::from_value::<SavedRemoteAgent>(entry.clone()) {
+                Ok(agent) => agents.push(agent),
+                Err(e) => {
+                    let name = entry
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    warnings.push(RecoveryWarning {
+                        file_name: file_name.to_string(),
+                        message: format!("Removed corrupt agent entry at index {i} (\"{name}\")."),
+                        details: Some(e.to_string()),
+                    });
+                    tracing::warn!("Dropped corrupt agent at index {i} (\"{name}\"): {e}");
+                }
+            }
+        }
+    }
+
+    // If no per-entry warnings, the top-level structure itself was broken
+    if warnings.is_empty() {
+        warnings.push(RecoveryWarning {
+            file_name: file_name.to_string(),
+            message: "Connections file had an invalid structure and has been repaired.".to_string(),
+            details: None,
+        });
+    }
+
+    let extra = obj
+        .iter()
+        .filter(|(key, _)| !ConnectionStore::KNOWN_FIELDS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+
+    Salvage::Recovered {
+        data: ConnectionStore {
+            version: ConnectionStore::CURRENT_VERSION.to_string(),
+            children,
+            agents,
+            extra,
+        },
+        warnings,
     }
 }
 
@@ -385,6 +393,7 @@ mod tests {
         let storage = create_test_storage(&dir);
 
         let store = ConnectionStore {
+            extra: Default::default(),
             version: "2".to_string(),
             children: vec![],
             agents: vec![],
@@ -438,6 +447,7 @@ mod tests {
         let storage = create_test_storage(&dir);
 
         let store = ConnectionStore {
+            extra: Default::default(),
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Connection {
                 extra: Default::default(),
@@ -467,6 +477,7 @@ mod tests {
         let storage = create_test_storage(&dir);
 
         let store = ConnectionStore {
+            extra: Default::default(),
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Folder {
                 extra: Default::default(),

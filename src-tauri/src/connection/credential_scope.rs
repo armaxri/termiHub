@@ -69,6 +69,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{ExternalConnectionStore, SavedConnection};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{backup_corrupt_file, guard_not_newer, protect_unbacked_corrupt};
 
 /// Prefix of the owner id of an external-file connection's secrets.
 pub const EXTERNAL_OWNER_PREFIX: &str = "connection-file:";
@@ -140,6 +141,8 @@ impl FileScopes {
             Ok(data) => match serde_json::from_str::<ScopeState>(&data) {
                 Ok(state) if state.version <= STATE_VERSION => state,
                 Ok(state) => {
+                    // Saves re-check the on-disk version, so this file is
+                    // never overwritten by this build (PER2-002).
                     tracing::warn!(
                         version = state.version,
                         "Connection file scope state is from a newer termiHub; ignoring it"
@@ -148,7 +151,12 @@ impl FileScopes {
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "Connection file scope state is corrupt; starting over");
-                    let _ = std::fs::rename(&state_path, state_path.with_extension("json.bak"));
+                    // Keep every corrupt copy (ERR2-002); without a backup the
+                    // save guard keeps the only copy from being overwritten.
+                    if let Err(e) = backup_corrupt_file(&state_path) {
+                        tracing::warn!(error = %e, "Could not back up the corrupt scope state");
+                        protect_unbacked_corrupt(&state_path);
+                    }
                     ScopeState::default()
                 }
             },
@@ -169,6 +177,12 @@ impl FileScopes {
     }
 
     fn save(&self, state: &mut ScopeState) {
+        // Never re-stamp v1 over a state file a newer termiHub wrote, nor
+        // overwrite a corrupt one that could not be backed up (PER2-002).
+        if let Err(e) = guard_not_newer(&self.state_path, STATE_FILE_NAME, STATE_VERSION) {
+            tracing::warn!(error = %e, "Not persisting connection file scope state");
+            return;
+        }
         state.version = STATE_VERSION;
         let written = serde_json::to_string_pretty(&*state)
             .context("Failed to serialize connection file scope state")
@@ -328,19 +342,19 @@ fn read_file_id(path: &str) -> Option<String> {
     if data.trim().is_empty() {
         return None;
     }
-    serde_json::from_str::<ExternalConnectionStore>(&data)
-        .ok()?
-        .file_id
+    ExternalConnectionStore::parse_gated(&data).ok()?.file_id
 }
 
 /// Write `id` into the external file at `path` (best-effort). A file that
-/// cannot be parsed is never rewritten.
+/// cannot be parsed, or was written by a newer termiHub, is never rewritten.
 fn stamp_file_id(path: &str, id: &str) {
     let stamped = std::fs::read_to_string(path)
         .context("Failed to read the file")
         .and_then(|data| {
-            let mut store: ExternalConnectionStore =
-                serde_json::from_str(&data).context("Failed to parse the file")?;
+            // Gated (PER2-005): a file written by a newer termiHub is never
+            // rewritten just to stamp an id into it.
+            let mut store =
+                ExternalConnectionStore::parse_gated(&data).context("Failed to parse the file")?;
             store.file_id = Some(id.to_string());
             let data = serde_json::to_string_pretty(&store).context("Failed to serialize")?;
             write_atomic(Path::new(path), &data)

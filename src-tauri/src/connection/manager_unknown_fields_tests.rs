@@ -217,7 +217,7 @@ fn a_newer_external_file_is_refused_and_left_intact() {
     let err = try_load_external_file(path, "scope", &HashSet::new(), &NullStore, None)
         .err()
         .expect("a newer external file must be refused");
-    assert!(err.to_string().contains("newer version"), "{err:#}");
+    assert!(format!("{err:#}").contains("newer version"), "{err:#}");
     assert!(read_external_store(path).is_err());
     assert!(remove_from_external_file(path, "s").is_err());
 
