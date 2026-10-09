@@ -7641,11 +7641,15 @@ dependencies = [
 name = "termihub-core"
 version = "0.1.0"
 dependencies = [
+ "aead 0.6.0-rc.10",
  "aes 0.9.1",
+ "aes-gcm 0.11.0-rc.4",
  "anyhow",
+ "argon2 0.6.0-rc.8",
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "blake2 0.11.0-rc.6",
  "bollard",
  "cbc 0.2.1",
  "chrono",
@@ -7666,6 +7670,7 @@ dependencies = [
  "p521",
  "pnet_packet 0.35.0",
  "portable-pty",
+ "primefield",
  "proptest",
  "rand 0.8.6",
  "regex",
