@@ -76,7 +76,9 @@ fn frame_trims_and_skips_blank_lines() {
 
 #[test]
 fn frame_drops_non_utf8_lines() {
-    let bad = std::str::from_utf8(&[0xff]).expect_err("invalid utf-8");
+    let bad = String::from_utf8(vec![0xff])
+        .expect_err("invalid utf-8")
+        .utf8_error();
     assert_eq!(frame("a", Err(LineError::InvalidUtf8(bad))), Frame::Skip);
 }
 
