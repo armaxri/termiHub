@@ -47,7 +47,7 @@ import {
   useLayoutRenderTree,
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
-import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
+import { PanelNode, LeafPanel, TerminalTab } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
@@ -77,6 +77,7 @@ import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import { useTerminalRightClickRouting } from "./terminalRightClick";
+import { describePointerHits, resolveTabDrop, type PointerHit } from "./resolveTabDrop";
 import { errorMessage } from "@/utils/errorMessage";
 import "./SplitView.css";
 
@@ -334,86 +335,48 @@ export function SplitView() {
 
       const tabId = dndId(active.id);
       const fromPanelId = readDndPanelId(active.data.current);
-      if (!fromPanelId) return;
 
-      // If not dropped on any registered droppable, check for special drop targets
-      // outside the DndContext (group chips, new-tab button) using elementsFromPoint.
-      // Use elementsFromPoint (plural) to look through the DragOverlay which may be
-      // rendered at the same coordinates and would block elementFromPoint.
+      // Drops outside every registered droppable may still land on targets
+      // outside the DndContext (group chips, the new-group button). Use
+      // elementsFromPoint (plural) to look through the DragOverlay, which may sit
+      // at the same coordinates and would block elementFromPoint.
+      let pointerHits: PointerHit[] = [];
       if (!over) {
         const ae = asPointerEvent(event.activatorEvent);
         if (ae) {
-          const finalX = ae.clientX + event.delta.x;
-          const finalY = ae.clientY + event.delta.y;
-          const elements = document.elementsFromPoint(finalX, finalY);
-          // Prefer a group chip over the adjacent new-group button: the two drop
-          // targets sit side by side in the chip bar, so scan the whole stack for
-          // a chip first and only fall back to the new-group button when no chip
-          // is under the drop point. This keeps a drop that grazes the chip/button
-          // boundary landing on the intended group rather than creating a new one.
-          let chipEl: Element | null = null;
-          let newGroupEl: Element | null = null;
-          for (const el of elements) {
-            const chip = el.closest("[data-tab-group-id]");
-            if (chip) {
-              chipEl = chip;
-              break;
-            }
-            if (!newGroupEl && el.closest("[data-new-group-btn]")) {
-              newGroupEl = el;
-            }
-          }
-          if (chipEl) {
-            const targetGroupId = chipEl.getAttribute("data-tab-group-id");
-            if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
-          } else if (newGroupEl) {
-            // New-group button drop: create a new tab group and move the tab into it
-            addTabGroupWithTab(tabId, fromPanelId);
-          }
+          pointerHits = describePointerHits(
+            document.elementsFromPoint(ae.clientX + event.delta.x, ae.clientY + event.delta.y)
+          );
         }
-        return;
       }
 
-      const overId = dndId(over.id);
-
-      // Edge drop: split panel with tab
-      if (overId.startsWith("edge-")) {
-        const parts = overId.split("-");
-        // edge-{panelId}-{edge} — panelId may contain dashes so parse carefully
-        const edge = parts[parts.length - 1] as DropEdge;
-        const targetPanelId = parts.slice(1, -1).join("-");
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, edge);
-        return;
-      }
-
-      // Center drop: move tab to that panel
-      if (overId.startsWith("center-")) {
-        const targetPanelId = overId.slice("center-".length);
-        if (targetPanelId === fromPanelId) return;
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, "center");
-        return;
-      }
-
-      // Sortable tab drop — find which panel the over tab belongs to
-      const overPanelId = readDndPanelId(over.data.current);
-
-      if (overPanelId && overPanelId !== fromPanelId) {
-        // Cross-panel tab drop: find index of the over tab in destination
-        const destLeaf = getAllLeaves(rootPanel).find((l) => l.id === overPanelId);
-        if (!destLeaf) return;
-        const overIndex = destLeaf.tabs.findIndex((t) => t.id === overId);
-        moveTab(tabId, fromPanelId, overPanelId, overIndex >= 0 ? overIndex : -1);
-        return;
-      }
-
-      // Same-panel reorder
-      if (tabId === overId) return;
-      const sourceLeaf = getAllLeaves(rootPanel).find((l) => l.id === fromPanelId);
-      if (!sourceLeaf) return;
-      const oldIndex = sourceLeaf.tabs.findIndex((t) => t.id === tabId);
-      const newIndex = sourceLeaf.tabs.findIndex((t) => t.id === overId);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        reorderTabs(fromPanelId, oldIndex, newIndex);
+      const action = resolveTabDrop({
+        tabId,
+        fromPanelId,
+        overId: over ? dndId(over.id) : null,
+        overPanelId: over ? readDndPanelId(over.data.current) : undefined,
+        rootPanel,
+        pointerHits,
+      });
+      if (!fromPanelId) return;
+      switch (action.kind) {
+        case "moveToGroup":
+          moveTabToGroup(tabId, fromPanelId, action.groupId);
+          break;
+        case "newGroup":
+          addTabGroupWithTab(tabId, fromPanelId);
+          break;
+        case "split":
+          splitPanelWithTab(tabId, fromPanelId, action.targetPanelId, action.edge);
+          break;
+        case "move":
+          moveTab(tabId, fromPanelId, action.toPanelId, action.index);
+          break;
+        case "reorder":
+          reorderTabs(action.panelId, action.oldIndex, action.newIndex);
+          break;
+        case "none":
+          break;
       }
     },
     [
