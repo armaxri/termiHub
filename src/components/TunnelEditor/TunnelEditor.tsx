@@ -17,7 +17,16 @@ import {
   THIS_COMPUTER,
 } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
-import { Button, Input, NumberInput, Select, Field, Toggle, toast } from "@/components/ui";
+import {
+  Button,
+  Input,
+  NumberInput,
+  Select,
+  Field,
+  Toggle,
+  UnsavedChangesDialog,
+  toast,
+} from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { frontendLog } from "@/utils/frontendLog";
@@ -36,6 +45,8 @@ import { ambiguousConnectionIds } from "@/utils/jumpHost";
 import { t } from "@/i18n/catalog";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { errorMessage } from "@/utils/errorMessage";
+import { draftKey } from "@/utils/draftKey";
+import { findLeafByTab } from "@/utils/panelTree";
 import "./TunnelEditor.css";
 
 /** Encode a run-location as a `Select` option value, and decode it back. */
@@ -165,6 +176,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const closeTab = useAppStore((s) => s.closeTab);
+  const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
   const rootPanel = useLayoutRenderTree();
 
@@ -213,9 +227,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // change, or the backend following a connection rename) must not clobber the
   // unsaved edits — the draft follows renames itself below (#3603).
   const existingTunnelId = existingTunnel?.id;
+  // The values the editor was opened (or last reloaded) with: the draft differing
+  // from them is what marks the tab dirty (UX2-004).
+  const [baselineKey, setBaselineKey] = useState(() => draftKey(getValues()));
   useEffect(() => {
     if (existingTunnel) {
-      reset({
+      const loaded: TunnelFormState = {
         name: existingTunnel.name,
         sshConnectionId: existingTunnel.sshConnectionId,
         tunnelType: existingTunnel.tunnelType,
@@ -223,7 +240,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         autoStart: existingTunnel.autoStart,
         startWithConnection: existingTunnel.startWithConnection ?? false,
         reconnectOnDisconnect: existingTunnel.reconnectOnDisconnect,
-      });
+      };
+      reset(loaded);
+      setBaselineKey(draftKey(loaded));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingTunnelId]);
@@ -237,6 +256,13 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // through into the closures below (control-flow narrowing of a property access
   // does not persist into nested callbacks; a `const` local's does).
   const { tunnelType, host } = form;
+
+  // Report unsaved edits like ConnectionEditor does, so the tab-bar close guard
+  // and every bulk close (panel, group, window) see this tab as dirty (UX2-004).
+  const isDirty = draftKey(form) !== baselineKey;
+  useEffect(() => {
+    setEditorDirty(tabId, isDirty);
+  }, [tabId, isDirty, setEditorDirty]);
 
   const handleTypeChange = (type: "local" | "remote" | "dynamic") => {
     if (getValues("tunnelType").type !== type) {
@@ -327,12 +353,21 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     }
   };
 
-  const handleCancel = async () => {
-    const { findLeafByTab } = await import("@/utils/panelTree");
+  const closeThisTab = () => {
     const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) {
-      closeTab(tabId, leaf.id);
+    if (leaf) closeTab(tabId, leaf.id);
+  };
+
+  // Cancel and Escape share the tab-bar close guard (UX2-004): with unsaved
+  // edits they raise the unsaved-changes prompt via pendingCloseRequest;
+  // otherwise the tab closes at once.
+  const handleCancel = () => {
+    if (useAppStore.getState().editorDirtyTabs[tabId]) {
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (leaf) setPendingCloseRequest({ tabId, panelId: leaf.id });
+      return;
     }
+    closeThisTab();
   };
 
   const sshOptions = sshConnections.map((c) =>
@@ -390,12 +425,17 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   // A connection renamed while the editor is open: re-point the draft's SSH
   // connection (and a pending chain hop's), or saving would write the old id
-  // back over the backend's follow (#3603). No dirty flag to preserve here.
+  // back over the backend's follow (#3603). An untouched draft stays clean.
   useConnectionIdChanges((remap) => {
     const current = getValues("sshConnectionId");
     if (current) {
       const mapped = remap(current);
-      if (mapped !== current) setValue("sshConnectionId", mapped, { shouldValidate: true });
+      if (mapped !== current) {
+        const before = draftKey(getValues());
+        setValue("sshConnectionId", mapped, { shouldValidate: true });
+        const after = draftKey(getValues());
+        setBaselineKey((prev) => (prev === before ? after : prev));
+      }
     }
     setChainSshId((prev) => (prev ? remap(prev) : prev));
   });
@@ -446,7 +486,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // Enter (from a single-line field) saves; Escape cancels.
   const handleKeyDown = useEditorKeyboard({
     onSubmit: () => void handleSave(false),
-    onCancel: () => void handleCancel(),
+    onCancel: handleCancel,
     canSubmit: canSave,
   });
 
@@ -881,6 +921,27 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         startNow={chainStartNow}
         onStartNowChange={setChainStartNow}
         onConfirm={handleChainConfirm}
+      />
+
+      <UnsavedChangesDialog
+        open={pendingCloseRequest?.tabId === tabId}
+        subject="tunnel"
+        name={form.name.trim() || undefined}
+        onCancel={() => setPendingCloseRequest(null)}
+        onJustClose={() => {
+          setPendingCloseRequest(null);
+          closeThisTab();
+        }}
+        onSaveAndClose={
+          canSave
+            ? async () => {
+                // Save closes the tab on success; on failure it throws, the
+                // Button toasts the error and the prompt stays up.
+                await handleSave(false);
+                setPendingCloseRequest(null);
+              }
+            : undefined
+        }
       />
     </div>
   );

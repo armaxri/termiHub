@@ -224,7 +224,7 @@ export interface UnsavedChangesDialogProps {
    * Save, then close. When omitted (a caller that cannot save from here, such as
    * the {@link Modal} dismiss guard), only Cancel and "Discard changes" are offered.
    */
-  onSaveAndClose?: () => void;
+  onSaveAndClose?: () => void | Promise<void>;
 }
 
 /** The message for a subject, optionally naming the item. */
