@@ -73,6 +73,8 @@ mod manifest;
 mod native_trust;
 mod pack;
 mod package;
+#[cfg(test)]
+mod persist_tests;
 mod platform;
 mod plugin_index;
 mod plugin_state;
