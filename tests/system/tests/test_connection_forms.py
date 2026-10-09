@@ -15,11 +15,12 @@ Divergences from the original, by design:
 * **Horizontal-scroll toggle** (``connection-editor-horizontal-scroll``) no
   longer renders in the editor, so it is dropped from the common-fields check;
   appearance is now the color/icon pickers in ``ConnectionAppearanceSettings``.
-* **SSH ``agent`` auth warning** (``MT-SSH-08``) is dropped: ``agent`` is no
-  longer a selectable ``authMethod`` (the schema offers only ``key`` /
-  ``password`` — ``core/src/backends/ssh/mod.rs``), so the option the old test
-  selected no longer exists. The removed-feature gap is already recorded by the
-  skipped ``test_ssh_agent_error.py``.
+* **SSH ``agent`` auth warning** (``MT-SSH-08``): the old test checked a warning
+  shown for ``agent`` auth. The editor now shows an "SSH Agent" section with the
+  "Setup SSH Agent" helper instead (``ssh-agent-setup-section``), so the check
+  asserts that section appears for ``agent`` auth and only for it. ``agent`` is
+  a selectable ``authMethod`` in the SSH schema (``core/src/backends/ssh/mod.rs``);
+  the connect-time error with no agent running is ``test_ssh_agent_error.py``.
 * **X11 default** (``MT-SSH-19``) is asserted by saving an SSH connection and
   reading ``enableX11Forwarding`` back from the store (the bridge reads an
   ``<input>``'s ``value`` — ``"on"`` for a checkbox — not its live ``checked``
@@ -122,6 +123,24 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.wait(lambda: self.field_visible("authMethod"), what="the SSH fields")
         self.driver.select("field-authMethod", "password")
         assert not self.field_visible("password")
+
+    # ── MT-SSH-08: agent auth surfaces the SSH-agent helper ────────────────────
+    def test_ssh_agent_auth_shows_the_agent_section(self):
+        self.open_new_connection_editor()
+        self.select_connection_type("ssh")
+        self.wait(lambda: self.field_visible("authMethod"), what="the SSH fields")
+        assert not self.driver.exists("ssh-agent-setup-section")
+        self.driver.select("field-authMethod", "agent")
+        self.wait(
+            lambda: self.driver.exists("ssh-agent-setup-section"),
+            what="the SSH Agent section for agent auth",
+        )
+        assert self.driver.exists("ssh-setup-agent")
+        self.driver.select("field-authMethod", "password")
+        self.wait(
+            lambda: not self.driver.exists("ssh-agent-setup-section"),
+            what="the SSH Agent section to go away for password auth",
+        )
 
     def test_ssh_default_port_is_22(self):
         self.open_new_connection_editor()

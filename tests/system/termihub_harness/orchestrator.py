@@ -319,8 +319,13 @@ class AppInstance:
         echo_logs: bool = True,
         portable: Optional[str] = None,
         sandbox_profile: bool = False,
+        unset_env: Sequence[str] = (),
     ) -> None:
         """Create an unstarted instance.
+
+        ``unset_env`` names variables the app (and :meth:`run_cli`) must not
+        inherit from the harness, e.g. ``SSH_AUTH_SOCK`` for a suite that needs
+        the app to see no SSH agent.
 
         ``portable`` selects the **portable launch mode** (#3691): ``"marker"``
         or ``"data"`` (see :mod:`termihub_harness.portable`). The built app is
@@ -338,6 +343,7 @@ class AppInstance:
         (#3691, SI-5/6/7). It is a no-op on macOS and Windows.
         """
         binary = app_binary_path()
+        self._unset_env = tuple(unset_env)
         self._portable = portable
         self._portable_root: Optional[Path] = None
         self._profile_home: Optional[Path] = None
@@ -407,6 +413,8 @@ class AppInstance:
         env.update(self._profile_overrides())
         # Read the harness's per-run known_hosts, never the user's (#4339).
         env.update(known_hosts.app_env())
+        for name in self._unset_env:
+            env.pop(name, None)
         return env
 
     def _profile_overrides(self) -> dict[str, str]:
@@ -467,6 +475,8 @@ class AppInstance:
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         env.update(self._profile_overrides())
         env.update(known_hosts.app_env())
+        for name in self._unset_env:
+            env.pop(name, None)
         return env
 
     def run_cli(
