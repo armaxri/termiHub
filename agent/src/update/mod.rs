@@ -295,7 +295,7 @@ impl UpdateConfig {
     /// Path a staged binary for `arch_suffix` would be written to.
     fn staged_binary_path(&self, arch_suffix: &str) -> PathBuf {
         self.staging_dir
-            .join(format!("termihub-agent-{arch_suffix}"))
+            .join(termihub_core::agent_release_asset::agent_release_asset_name(arch_suffix))
     }
 }
 

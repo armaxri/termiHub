@@ -13,7 +13,7 @@
 #   does NOT support the MSVC ABI, so these cannot be built via Docker/Podman.
 #   Requesting a Windows target on a non-Windows host (or without --native) fails
 #   fast with a clear message. Windows binaries are emitted as `termihub-agent.exe`
-#   (CI renames artifacts to termihub-agent-windows-x64 / -windows-arm64).
+#   (CI renames artifacts to termihub-agent-windows-x64.exe / -windows-arm64.exe).
 #
 # Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--native] [--dev] [--help]
 #
