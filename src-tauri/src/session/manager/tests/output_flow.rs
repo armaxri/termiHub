@@ -49,7 +49,7 @@ async fn set_output_flow_pauses_and_resumes_the_session_reader() {
             rx,
             reader_emitter,
             sessions,
-            false,
+            None,
             new_capture(),
             new_output_buffers(),
             new_session_loggers(),

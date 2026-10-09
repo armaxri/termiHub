@@ -2,36 +2,32 @@
 //!
 //! Both the desktop runtime and the remote agent read raw PTY/transport output
 //! off a bounded [`tokio::sync::mpsc`] channel and forward it to their frontend.
-//! The *mechanics* of that forwarding — an optional startup buffer-until-clear
-//! phase, then a coalescing streaming phase with the PERF-012 zero-copy fast
-//! path — are identical across both runtimes. Only the delivery target differs,
+//! The *mechanics* of that forwarding — a coalescing streaming loop with the
+//! PERF-012 zero-copy fast path — are identical across both runtimes. Only the delivery target differs,
 //! and that difference is already abstracted behind [`OutputSink`].
 //!
 //! [`run_output_pump`] owns the loop; consumers inject *where* the bytes go via
 //! [`OutputSink`] and decide *how* to frame them via [`PumpOptions`]. This is a
 //! behaviour-preserving extraction of the desktop `run_output_reader` loop
-//! (finding DUP-011): the byte framing, the two `biased` cancel-first selects,
-//! and the settle-vs-no-settle asymmetry on sink failure are all preserved
-//! exactly — the pump reports *why* it ended via [`PumpEnd`] and leaves the
-//! tier-specific "settle" (exit event + drop-fold) to the caller.
+//! (finding DUP-011): the byte framing and the `biased` cancel-first selects
+//! are preserved exactly — the pump reports *why* it ended via [`PumpEnd`] and
+//! leaves the tier-specific "settle" (exit event + drop-fold) to the caller.
+//!
+//! The pump never holds output back: the old startup buffer-until-clear phase
+//! hid every byte for up to 5 s on shells that never emit a clear (#4345).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::output::coalescer::OutputCoalescer;
-use crate::output::screen_clear::ScreenClearDetector;
+use crate::output::prompt_mark::PromptMarkDetector;
 use crate::session::traits::OutputSink;
 
 /// Framing/behaviour knobs for [`run_output_pump`].
 #[derive(Debug, Clone)]
 pub struct PumpOptions {
-    /// Buffer startup output until the screen-clear sequence (or a timeout)
-    /// before streaming, flushing the buffered prefix as a single batch.
-    pub wait_for_clear: bool,
     /// Coalesce already-queued chunks into one batch per send (desktop IPC
     /// reduction, PERF-012). When `false`, every received chunk is delivered as
     /// its own `send_output` call — required by transports whose on-wire
@@ -40,8 +36,12 @@ pub struct PumpOptions {
     /// Upper bound on a single coalesced batch. Ignored when `coalesce` is
     /// `false`.
     pub max_coalesce_bytes: usize,
-    /// How long the `wait_for_clear` phase buffers before flushing anyway.
-    pub clear_wait_timeout: Duration,
+    /// Signalled (`notify_one`) the first time the output carries an OSC 133
+    /// prompt-start mark (`ESC ] 133 ; A`), i.e. once the shell has drawn a
+    /// prompt with termiHub's shell integration active. The desktop uses it
+    /// as the readiness signal for a connection's initial command (#4345).
+    /// `None` skips the scan. The output itself is never delayed.
+    pub prompt_ready: Option<Arc<Notify>>,
     /// Frontend flow control (PERF2-002). While the gate is paused the
     /// streaming phase stops reading `rx`, so the bounded channel fills and the
     /// producer (the PTY reader thread) blocks — the OS PTY buffer then
@@ -130,22 +130,14 @@ async fn paused(gate: Option<&OutputFlowGate>) {
 
 /// Why [`run_output_pump`] returned.
 ///
-/// The caller maps this onto its tier-specific end-of-stream handling. The
-/// distinction between the two sink-closed variants preserves the desktop
-/// asymmetry: a streaming-phase failure still settles the session (exit event),
-/// but a failure while flushing the pre-stream clear buffer does **not** — it
-/// returns without settling, exactly as the original loop did.
+/// The caller maps this onto its tier-specific end-of-stream handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PumpEnd {
     /// The output channel closed (the process's output ended). Normal exit.
     Eof,
     /// The cancellation token fired (deterministic teardown, CONC-011).
     Cancelled,
-    /// The sink rejected the pre-stream clear-flush batch. The caller must
-    /// return **without** settling the session (no exit event), matching the
-    /// original no-settle path.
-    ClearFlushSinkClosed,
-    /// The sink rejected a streaming-phase batch (e.g. the webview closed).
+    /// The sink rejected a batch (e.g. the webview closed).
     StreamSinkClosed,
 }
 
@@ -165,21 +157,15 @@ async fn cancelled(cancel: Option<&CancellationToken>) {
 /// sink closes.
 ///
 /// This is the shared body of the desktop `run_output_reader` (finding
-/// DUP-011). Its two phases are moved verbatim from that loop:
+/// DUP-011): coalescing streaming with the PERF-012 zero-copy fast path. An
+/// owned chunk with nothing queued behind it is handed to the sink uncopied;
+/// 2+ queued chunks concatenate into one contiguous batch (bounded by
+/// `max_coalesce_bytes`); a first chunk already at/over the cap is delivered
+/// alone. With `coalesce: false`, every chunk is delivered on its own.
 ///
-/// - **Phase 1** (`opts.wait_for_clear`): buffer startup output until a
-///   [`ScreenClearDetector`] sees the clear sequence or `clear_wait_timeout`
-///   elapses, then flush the buffered prefix as one batch. A cancel or channel
-///   close *during* buffering flushes best-effort (ignoring a sink error) and
-///   returns [`PumpEnd::Cancelled`] / [`PumpEnd::Eof`]. The post-clear flush,
-///   by contrast, **honours** a sink error and returns
-///   [`PumpEnd::ClearFlushSinkClosed`] — the no-settle asymmetry.
-/// - **Phase 2**: coalescing streaming with the PERF-012 zero-copy fast path.
-///   An owned chunk with nothing queued behind it is handed to the sink
-///   uncopied; 2+ queued chunks concatenate into one contiguous batch (bounded
-///   by `max_coalesce_bytes`); a first chunk already at/over the cap is
-///   delivered alone. With `coalesce: false`, every chunk is delivered on its
-///   own.
+/// When `opts.prompt_ready` is set, each delivered batch is scanned for the
+/// OSC 133 prompt-start mark until it is first seen; the bytes are delivered
+/// unchanged and without delay either way.
 ///
 /// The caller owns the "settle" step (exit event, drop-fold) — see [`PumpEnd`].
 pub async fn run_output_pump<S: OutputSink>(
@@ -189,56 +175,13 @@ pub async fn run_output_pump<S: OutputSink>(
     cancel: Option<&CancellationToken>,
     opts: &PumpOptions,
 ) -> PumpEnd {
-    // Phase 1: optionally buffer until the screen-clear sequence.
-    if opts.wait_for_clear {
-        let deadline = Instant::now() + opts.clear_wait_timeout;
+    // Readiness scan for the initial command (#4345); dropped once it fires.
+    let mut prompt_watch = opts
+        .prompt_ready
+        .as_ref()
+        .map(|notify| (PromptMarkDetector::new(), notify.clone()));
 
-        let mut buffer = Vec::new();
-        let mut detector = ScreenClearDetector::new();
-
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let recv = tokio::select! {
-                biased;
-                // Deterministic teardown while still buffering startup output
-                // (CONC-011): flush what we have best-effort and let the caller
-                // settle, rather than waiting for the channel to close.
-                _ = cancelled(cancel) => {
-                    let _ = sink.send_output(session_id, buffer);
-                    return PumpEnd::Cancelled;
-                }
-                res = tokio::time::timeout(remaining, rx.recv()) => res,
-            };
-            match recv {
-                Ok(Some(chunk)) => {
-                    let cleared = detector.feed(&chunk);
-                    buffer.extend_from_slice(&chunk);
-                    if cleared {
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    // Channel closed during startup.
-                    let _ = sink.send_output(session_id, buffer);
-                    return PumpEnd::Eof;
-                }
-                Err(_) => break, // Timeout
-            }
-        }
-
-        // Flush the buffered output as a single batch. Unlike the terminal
-        // flushes above, this HONORS a sink error: the original loop returned
-        // here without running its end-of-stream cleanup (old manager.rs:1968),
-        // so the caller must not settle either.
-        if !buffer.is_empty() && sink.send_output(session_id, buffer).is_err() {
-            return PumpEnd::ClearFlushSinkClosed;
-        }
-    }
-
-    // Phase 2: normal streaming with coalescing.
+    // Streaming with coalescing.
     //
     // Fast path (the common case, PERF-012): when a chunk arrives and no
     // further chunk is already buffered, the owned `Vec` received from the
@@ -308,6 +251,13 @@ pub async fn run_output_pump<S: OutputSink>(
             continue;
         }
 
+        if let Some((detector, notify)) = prompt_watch.as_mut() {
+            if detector.feed(&data) {
+                notify.notify_one();
+                prompt_watch = None;
+            }
+        }
+
         if sink.send_output(session_id, data).is_err() {
             return PumpEnd::StreamSinkClosed;
         }
@@ -317,6 +267,8 @@ pub async fn run_output_pump<S: OutputSink>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::time::{Duration, Instant};
 
     use std::sync::{Arc, Mutex};
 
@@ -385,10 +337,9 @@ mod tests {
 
     fn stream_opts() -> PumpOptions {
         PumpOptions {
-            wait_for_clear: false,
             coalesce: true,
             max_coalesce_bytes: 32 * 1024,
-            clear_wait_timeout: Duration::from_secs(5),
+            prompt_ready: None,
             flow: None,
         }
     }
@@ -503,56 +454,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_for_clear_buffers_until_clear_then_flushes_one_batch() {
+    async fn screen_clear_output_is_streamed_without_buffering() {
+        // Regression (#4345): output before (and without) a screen clear is
+        // delivered as it arrives — nothing waits for a clear sequence.
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
-        // Pre-clear output, then the clear sequence, then post-clear output.
-        tx.send(b"boot noise".to_vec()).await.unwrap();
+        let sink = FakeSink::new();
+        let outputs = sink.outputs.clone();
+        let handle = tokio::spawn(async move {
+            run_output_pump("s1", &mut rx, &sink, None, &stream_opts()).await
+        });
+
+        tx.send(b"user@host:~$ ".to_vec()).await.unwrap();
+        assert!(
+            eventually(|| outputs.lock().unwrap().len() == 1).await,
+            "pre-clear output must be delivered without waiting"
+        );
         tx.send(b"\x1b[2J\x1b[H".to_vec()).await.unwrap();
-        tx.send(b"prompt".to_vec()).await.unwrap();
         drop(tx);
 
-        let opts = PumpOptions {
-            wait_for_clear: true,
-            ..stream_opts()
-        };
-        let sink = FakeSink::new();
-        let end = run_output_pump("s1", &mut rx, &sink, None, &opts).await;
-
-        assert_eq!(end, PumpEnd::Eof);
-        let recorded = sink.recorded();
-        // First batch is the buffered-until-clear prefix as a single flush.
-        assert_eq!(recorded[0].1, b"boot noise\x1b[2J\x1b[H");
-        // All bytes preserved end to end.
-        assert_eq!(combined(&sink), b"boot noise\x1b[2J\x1b[Hprompt");
+        assert_eq!(handle.await.unwrap(), PumpEnd::Eof);
+        let recorded = outputs.lock().unwrap().clone();
+        let all: Vec<u8> = recorded.into_iter().flat_map(|(_, d)| d).collect();
+        assert_eq!(all, b"user@host:~$ \x1b[2J\x1b[H");
     }
 
     #[tokio::test]
-    async fn wait_for_clear_timeout_flushes_then_streams() {
+    async fn prompt_ready_fires_on_the_osc133_prompt_mark_split_across_chunks() {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
-        tx.send(b"no clear here".to_vec()).await.unwrap();
-
+        let notify = Arc::new(Notify::new());
         let opts = PumpOptions {
-            wait_for_clear: true,
-            clear_wait_timeout: Duration::from_millis(60),
+            coalesce: false,
+            prompt_ready: Some(notify.clone()),
             ..stream_opts()
         };
+        tx.send(b"motd\x1b]13".to_vec()).await.unwrap();
+        tx.send(b"3;A\x07$ ".to_vec()).await.unwrap();
+        drop(tx);
+
         let sink = FakeSink::new();
-
-        // Feed a post-timeout chunk while the pump runs, then close.
-        let feeder = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            tx.send(b"live".to_vec()).await.unwrap();
-            drop(tx);
-        });
-
         let end = run_output_pump("s1", &mut rx, &sink, None, &opts).await;
-        feeder.await.unwrap();
-
         assert_eq!(end, PumpEnd::Eof);
-        // The timeout flushed the buffered prefix, then streaming delivered the
-        // later chunk — all bytes present, in order.
-        assert_eq!(combined(&sink), b"no clear herelive");
-        assert_eq!(sink.recorded()[0].1, b"no clear here");
+        // Bytes pass through unchanged.
+        assert_eq!(combined(&sink), b"motd\x1b]133;A\x07$ ");
+        tokio::time::timeout(Duration::from_secs(1), notify.notified())
+            .await
+            .expect("the prompt mark must signal readiness");
+    }
+
+    #[tokio::test]
+    async fn prompt_ready_does_not_fire_without_a_prompt_mark() {
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
+        let notify = Arc::new(Notify::new());
+        let opts = PumpOptions {
+            prompt_ready: Some(notify.clone()),
+            ..stream_opts()
+        };
+        tx.send(b"\x1b]133;B\x07\x1b]7;file:///tmp\x07$ ".to_vec())
+            .await
+            .unwrap();
+        drop(tx);
+
+        let sink = FakeSink::new();
+        run_output_pump("s1", &mut rx, &sink, None, &opts).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), notify.notified())
+                .await
+                .is_err(),
+            "only the prompt-start mark signals readiness"
+        );
     }
 
     #[tokio::test]
@@ -594,63 +563,6 @@ mod tests {
         drop(tx);
     }
 
-    #[tokio::test]
-    async fn sink_err_on_pre_stream_clear_flush_returns_clear_flush_sink_closed() {
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
-        tx.send(b"boot".to_vec()).await.unwrap();
-        tx.send(b"\x1b[2J".to_vec()).await.unwrap();
-        tx.send(b"after".to_vec()).await.unwrap();
-        drop(tx);
-
-        let opts = PumpOptions {
-            wait_for_clear: true,
-            ..stream_opts()
-        };
-        // Fail on the first send — which is the post-clear flush.
-        let sink = FakeSink::failing_after(0);
-        let end = run_output_pump("s1", &mut rx, &sink, None, &opts).await;
-
-        assert_eq!(end, PumpEnd::ClearFlushSinkClosed);
-    }
-
-    #[tokio::test]
-    async fn sink_err_on_terminal_clear_flush_is_swallowed_returns_eof() {
-        // Channel closes while still buffering (no clear seen): the terminal
-        // flush is best-effort, so a sink error is swallowed and the pump still
-        // reports the natural end (Eof).
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
-        tx.send(b"partial".to_vec()).await.unwrap();
-        drop(tx); // EOF during buffering
-
-        let opts = PumpOptions {
-            wait_for_clear: true,
-            ..stream_opts()
-        };
-        let sink = FakeSink::failing_after(0);
-        let end = run_output_pump("s1", &mut rx, &sink, None, &opts).await;
-
-        assert_eq!(end, PumpEnd::Eof);
-    }
-
-    #[tokio::test]
-    async fn cancel_on_terminal_clear_flush_is_swallowed_returns_cancelled() {
-        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(16);
-        tx.send(b"partial".to_vec()).await.unwrap();
-        // Keep tx alive; cancel while buffering.
-
-        let cancel = CancellationToken::new();
-        cancel.cancel();
-
-        let opts = PumpOptions {
-            wait_for_clear: true,
-            ..stream_opts()
-        };
-        let sink = FakeSink::failing_after(0);
-        let end = run_output_pump("s1", &mut rx, &sink, Some(&cancel), &opts).await;
-
-        assert_eq!(end, PumpEnd::Cancelled);
-        drop(tx);
-    }
     /// Poll `cond` until it holds or a generous deadline passes.
     async fn eventually(mut cond: impl FnMut() -> bool) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);

@@ -1,5 +1,5 @@
 pub mod coalescer;
-pub mod screen_clear;
+pub mod prompt_mark;
 pub mod session_log;
 
 /// Bounded channel capacity for output data flowing from a backend's reader

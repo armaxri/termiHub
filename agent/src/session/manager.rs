@@ -2744,16 +2744,14 @@ fn spawn_output_forwarder(
     // (finding DUP-011). The agent forwards each received chunk as its own
     // `connection.output` notification, so `coalesce: false` keeps exactly one
     // `send_output` per received chunk — the on-wire framing must mirror the
-    // chunk boundaries (`JsonRpcOutputSink` re-chunks at 64 KiB). The agent has
-    // no `ScreenClearDetector` (`wait_for_clear: false`) and no cancellation
-    // token (`cancel: None`).
+    // chunk boundaries (`JsonRpcOutputSink` re-chunks at 64 KiB). The agent
+    // has no initial-command readiness watch (`prompt_ready: None`) and no
+    // cancellation token (`cancel: None`).
     let opts = PumpOptions {
-        wait_for_clear: false,
         coalesce: false,
         // Ignored when `coalesce` is false; mirror the desktop batch cap.
         max_coalesce_bytes: 32 * 1024,
-        // Ignored when `wait_for_clear` is false.
-        clear_wait_timeout: Duration::from_secs(0),
+        prompt_ready: None,
         // Desktop flow control (#4416): `connection.output_flow` pauses the
         // pump, which then stops reading `output_rx`. The connection's PTY
         // reader blocks on the full bounded channel, so the program on this
@@ -2785,10 +2783,10 @@ fn spawn_output_forwarder(
             }
             // A JSON-RPC sink error means the transport loop was dropped; the
             // old loop simply returned on a send failure — no `alive` flip, no
-            // exit event, no deferred-update hook. `Cancelled`/`ClearFlushSinkClosed`
-            // are unreachable with `cancel: None`/`wait_for_clear: false`, but
-            // share that no-settle semantics, so they fall through identically.
-            PumpEnd::StreamSinkClosed | PumpEnd::Cancelled | PumpEnd::ClearFlushSinkClosed => {}
+            // exit event, no deferred-update hook. `Cancelled` is unreachable
+            // with `cancel: None`, but shares that no-settle semantics, so it
+            // falls through identically.
+            PumpEnd::StreamSinkClosed | PumpEnd::Cancelled => {}
         }
     };
     tokio::spawn(tracing::Instrument::instrument(forward, span))

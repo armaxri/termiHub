@@ -684,7 +684,7 @@ async fn run_output_reader_emits_chunks_and_exit() {
         rx,
         emitter.clone(),
         sessions.clone(),
-        false,
+        None,
         capture.clone(),
         output_buffers,
         new_session_loggers(),
@@ -745,7 +745,7 @@ async fn run_output_reader_stops_on_cancellation_without_eof() {
             rx,
             reader_emitter,
             sessions,
-            false,
+            None,
             new_capture(),
             new_output_buffers(),
             new_session_loggers(),
@@ -812,7 +812,7 @@ async fn run_output_reader_writes_to_active_session_logger() {
         rx,
         emitter,
         sessions,
-        false,
+        None,
         new_capture(),
         new_output_buffers(),
         session_loggers.clone(),
@@ -851,7 +851,7 @@ async fn run_output_reader_stops_on_emitter_failure() {
         rx,
         emitter.clone(),
         sessions,
-        false,
+        None,
         new_capture(),
         new_output_buffers(),
         new_session_loggers(),
@@ -889,7 +889,7 @@ async fn collect_stream_events(chunks: Vec<Vec<u8>>) -> Vec<TerminalOutputEvent>
         rx,
         emitter.clone(),
         sessions,
-        false,
+        None,
         new_capture(),
         new_output_buffers(),
         new_session_loggers(),
@@ -4324,6 +4324,9 @@ mod output_flow;
 
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;
+
+/// A connection's initial command never hides terminal output (#4345).
+mod initial_command;
 
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;

@@ -163,7 +163,6 @@ regex = "1"
 # (OBS-010). Already in the workspace tree, so this adds no new crate.
 gethostname = "1"
 shellexpand = "3.1"
-vte = "0.13"
 # ZIP reader for the `.termihub-plugin` package format (#1989). Used instead of
 # hand-rolled archive parsing to open a package and read its `manifest.json`.
 # Behind the optional `plugin` feature so it is only compiled when the plugin
