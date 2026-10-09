@@ -142,7 +142,8 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
       expect(decision).toBe("prompt");
       const pending = useAppStore.getState().pendingWindowClose;
       expect(pending?.sessions).toEqual([]);
-      expect(pending?.dirtyEditors).toEqual([{ tabId, title: "nginx.conf" }]);
+      // No live buffer is registered for this bare editor tab, so it cannot move (#4412).
+      expect(pending?.dirtyEditors).toEqual([{ tabId, title: "nginx.conf", movable: false }]);
     });
 
     it("prompts for a dirty connection editor", async () => {
