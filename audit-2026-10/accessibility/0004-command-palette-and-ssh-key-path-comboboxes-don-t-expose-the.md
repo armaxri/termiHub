@@ -12,8 +12,8 @@ evidence:
   - src/components/Settings/KeyPathInput.tsx:166-182
   - src/components/Settings/KeyPathInput.tsx:194-210
   - src/components/Settings/KeyPathInput.tsx:222-229
-status: open
-resolution: ""
+status: fixed
+resolution: "#4330 — palette, key-path and quick-connect comboboxes expose aria-activedescendant, aria-controls, real aria-expanded and an announced validation hint"
 audit: 2026-10
 commit: 663465d52
 relation: new

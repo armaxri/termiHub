@@ -118,3 +118,17 @@ textarea:focus {
   box-shadow: var(--shadow-focus);
   outline: none;
 }
+
+/* Visually hidden but still exposed to assistive technology — for live regions
+   and accessible-only labels (e.g. the keyboard-settings announcer, #4330). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

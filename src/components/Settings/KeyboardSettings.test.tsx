@@ -320,4 +320,194 @@ describe("KeyboardSettings", () => {
       vi.useRealTimers();
     }
   });
+
+  describe("keyboard-operable rebinding (#4330 / A11Y2-001)", () => {
+    function bindingButton(action: string): HTMLButtonElement {
+      const el = container.querySelector<HTMLButtonElement>(
+        `[data-testid="keybinding-binding-${action}"]`
+      );
+      if (!el) throw new Error(`binding control for ${action} not found`);
+      return el;
+    }
+    function announcement(): string {
+      return (
+        container.querySelector('[data-testid="keyboard-settings-announcement"]')?.textContent ?? ""
+      );
+    }
+    /** Dispatch a keydown on the focused element, the way a real key press arrives. */
+    function press(key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+      const target = (document.activeElement as HTMLElement | null) ?? document.body;
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+      act(() => {
+        target.dispatchEvent(event);
+      });
+      return event;
+    }
+    function startRecordingWith(action: string, key: "Enter" | " ") {
+      const btn = bindingButton(action);
+      act(() => btn.focus());
+      press(key);
+    }
+
+    it("renders the binding as a focusable button with a descriptive accessible name", async () => {
+      await renderComponent();
+      const btn = bindingButton("toggle-sidebar");
+      expect(btn.tagName).toBe("BUTTON");
+      expect(btn.getAttribute("type")).toBe("button");
+      expect(btn.getAttribute("aria-label")).toMatch(
+        /^Change shortcut for Toggle Sidebar, currently .+/
+      );
+    });
+
+    it("exposes a polite live region for recording results", async () => {
+      await renderComponent();
+      const region = container.querySelector(
+        '[data-testid="keyboard-settings-announcement"]'
+      ) as HTMLElement;
+      expect(region).not.toBeNull();
+      expect(region.getAttribute("role")).toBe("status");
+      expect(region.getAttribute("aria-live")).toBe("polite");
+    });
+
+    it("enters record mode with Enter and announces it", async () => {
+      await renderComponent();
+      startRecordingWith("toggle-sidebar", "Enter");
+      expect(bindingButton("toggle-sidebar").textContent).toContain("Press a key combination");
+      expect(announcement()).toContain("Recording shortcut for Toggle Sidebar");
+      expect(announcement()).toContain("Escape");
+    });
+
+    it("enters record mode with Space", async () => {
+      await renderComponent();
+      startRecordingWith("toggle-sidebar", " ");
+      expect(bindingButton("toggle-sidebar").textContent).toContain("Press a key combination");
+    });
+
+    it("records a new chord using only the keyboard and announces the result", async () => {
+      await renderComponent();
+      startRecordingWith("new-terminal", "Enter");
+      press("k", { ctrlKey: true });
+      await act(async () => {
+        press("j", { ctrlKey: true });
+        await Promise.resolve();
+      });
+
+      const entry = (currentSettingsView().keybindingOverrides ?? []).find(
+        (o) => o.action === "new-terminal"
+      );
+      expect(entry?.key).toBe("Ctrl+k Ctrl+j");
+      expect(announcement()).toBe("New Terminal shortcut set to Ctrl+k Ctrl+j.");
+      // Focus stays on (returns to) the binding button so the user can carry on.
+      expect(document.activeElement).toBe(bindingButton("new-terminal"));
+    });
+
+    it("cancels with Escape, keeps the binding, announces it and keeps focus", async () => {
+      await renderComponent();
+      const before = bindingButton("toggle-sidebar").textContent;
+      startRecordingWith("toggle-sidebar", "Enter");
+      press("Escape");
+
+      expect(bindingButton("toggle-sidebar").textContent).toBe(before);
+      expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
+      expect(announcement()).toBe("Recording cancelled. Toggle Sidebar shortcut unchanged.");
+      expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
+    });
+
+    it("clears a binding from record mode with Backspace and announces it", async () => {
+      await renderComponent();
+      startRecordingWith("toggle-sidebar", "Enter");
+      await act(async () => {
+        press("Backspace");
+        await Promise.resolve();
+      });
+
+      expect(bindingButton("toggle-sidebar").getAttribute("data-unbound")).toBe("true");
+      expect(announcement()).toBe("Toggle Sidebar shortcut cleared.");
+      expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
+    });
+
+    it("the dedicated Clear button clears, announces, and hands focus to the binding", async () => {
+      await renderComponent();
+      const clearBtn = container.querySelector<HTMLButtonElement>(
+        '[data-testid="keybinding-unbind-toggle-sidebar"]'
+      )!;
+      expect(clearBtn.getAttribute("aria-label")).toBe("Clear shortcut for Toggle Sidebar");
+      act(() => clearBtn.focus());
+      await act(async () => {
+        clearBtn.click();
+        await Promise.resolve();
+      });
+
+      expect(bindingButton("toggle-sidebar").getAttribute("data-unbound")).toBe("true");
+      expect(announcement()).toBe("Toggle Sidebar shortcut cleared.");
+      // The Clear button unmounts once nothing is bound — focus must not be lost.
+      expect(document.activeElement).toBe(bindingButton("toggle-sidebar"));
+    });
+
+    it("announces a conflict through an assertive alert and leaves the binding alone", async () => {
+      vi.useFakeTimers();
+      try {
+        await renderComponent();
+        startRecordingWith("new-terminal", "Enter");
+        // Ctrl+Tab is the default for Next Tab on Windows/Linux and macOS.
+        press("Tab", { ctrlKey: true });
+        await act(async () => {
+          vi.advanceTimersByTime(2000);
+          await Promise.resolve();
+        });
+
+        const conflict = container.querySelector(
+          '[data-testid="keyboard-settings-conflict"]'
+        ) as HTMLElement;
+        expect(conflict).not.toBeNull();
+        expect(conflict.getAttribute("role")).toBe("alert");
+        expect(conflict.textContent).toContain("Next Tab");
+        expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("records Tab when combined with Ctrl/Alt/Cmd (e.g. Ctrl+Shift+Tab)", async () => {
+      vi.useFakeTimers();
+      try {
+        await renderComponent();
+        // Unbind Previous Tab first so Ctrl+Shift+Tab is free to record elsewhere.
+        await act(async () => {
+          container
+            .querySelector<HTMLElement>('[data-testid="keybinding-unbind-prev-tab"]')
+            ?.click();
+          await Promise.resolve();
+        });
+        startRecordingWith("new-terminal", "Enter");
+        const event = press("Tab", { ctrlKey: true, shiftKey: true });
+        expect(event.defaultPrevented).toBe(true);
+        await act(async () => {
+          vi.advanceTimersByTime(2000);
+          await Promise.resolve();
+        });
+        const entry = (currentSettingsView().keybindingOverrides ?? []).find(
+          (o) => o.action === "new-terminal"
+        );
+        expect(entry?.key).toBe("Ctrl+Shift+Tab");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a bare Tab or Shift+Tab leaves record mode and is not captured (no keyboard trap)", async () => {
+      await renderComponent();
+      for (const shiftKey of [false, true]) {
+        startRecordingWith("toggle-sidebar", "Enter");
+        const event = press("Tab", { shiftKey });
+        // Not swallowed: the browser is free to move focus as usual.
+        expect(event.defaultPrevented).toBe(false);
+        expect(bindingButton("toggle-sidebar").textContent).not.toContain(
+          "Press a key combination"
+        );
+        expect(announcement()).toBe("Recording cancelled. Toggle Sidebar shortcut unchanged.");
+      }
+      expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
+    });
+  });
 });

@@ -21,6 +21,18 @@ import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
 import { isImeComposing } from "@/utils/imeComposition";
 
+/** DOM id of the results listbox the combobox input controls. */
+const LIST_ID = "command-palette-list";
+
+/**
+ * Stable DOM id of the option at `index`, referenced by the input's
+ * `aria-activedescendant` so screen readers follow arrow-key navigation while
+ * DOM focus stays in the input (WAI-ARIA combobox pattern, #4330).
+ */
+function paletteOptionId(index: number): string {
+  return `${LIST_ID}-opt-${index}`;
+}
+
 /** A single fuzzy-matchable palette entry — either a command or a saved connection. */
 type PaletteEntry =
   | {
@@ -359,8 +371,10 @@ export function CommandPalette(): React.ReactElement {
           }
           aria-label="Command or connection search"
           role="combobox"
-          aria-expanded
-          aria-controls="command-palette-list"
+          aria-autocomplete="list"
+          aria-expanded={results.length > 0}
+          aria-controls={LIST_ID}
+          aria-activedescendant={results[activeIndex] ? paletteOptionId(activeIndex) : undefined}
           data-testid="command-palette-input"
         />
         {results.length === 0 ? (
@@ -371,7 +385,7 @@ export function CommandPalette(): React.ReactElement {
           </p>
         ) : (
           <ul
-            id="command-palette-list"
+            id={LIST_ID}
             className="command-palette__list"
             role="listbox"
             aria-label="Commands and connections"
@@ -382,6 +396,7 @@ export function CommandPalette(): React.ReactElement {
               return (
                 <li
                   key={entry.key}
+                  id={paletteOptionId(index)}
                   data-index={index}
                   role="option"
                   aria-selected={index === activeIndex}

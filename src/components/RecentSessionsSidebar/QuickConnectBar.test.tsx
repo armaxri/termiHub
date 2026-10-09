@@ -167,4 +167,70 @@ describe("QuickConnectBar", () => {
       vi.useRealTimers();
     }
   });
+
+  describe("WAI-ARIA combobox pattern (#4330 / A11Y2-004)", () => {
+    const HISTORY = [
+      sshEntry(),
+      sshEntry({ dedupKey: "ssh:admin@prod2:22", title: "admin@prod2" }),
+    ];
+
+    function keydown(key: string) {
+      act(() => {
+        input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+    }
+    function options(): HTMLElement[] {
+      return Array.from(container.querySelectorAll<HTMLElement>('[role="option"]'));
+    }
+
+    it("is a collapsed combobox until suggestions show", () => {
+      render(HISTORY);
+      expect(input().getAttribute("role")).toBe("combobox");
+      expect(input().getAttribute("aria-autocomplete")).toBe("list");
+      expect(input().getAttribute("aria-expanded")).toBe("false");
+      expect(input().getAttribute("aria-controls")).toBeTruthy();
+    });
+
+    it("expands and points aria-controls at the suggestion listbox", () => {
+      render(HISTORY);
+      focusInput();
+      typeInto("prod");
+      const list = query("quick-connect-suggestions") as HTMLElement;
+      expect(input().getAttribute("aria-expanded")).toBe("true");
+      expect(input().getAttribute("aria-controls")).toBe(list.id);
+    });
+
+    it("moves aria-activedescendant through the suggestions with the arrow keys", () => {
+      render(HISTORY);
+      focusInput();
+      typeInto("prod");
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+
+      keydown("ArrowDown");
+      const [first, second] = options();
+      expect(first.id).toBeTruthy();
+      expect(first.getAttribute("aria-selected")).toBe("true");
+      expect(input().getAttribute("aria-activedescendant")).toBe(first.id);
+
+      keydown("ArrowDown");
+      expect(second.id).not.toBe(first.id);
+      expect(second.getAttribute("aria-selected")).toBe("true");
+      expect(first.getAttribute("aria-selected")).toBe("false");
+      expect(input().getAttribute("aria-activedescendant")).toBe(second.id);
+
+      keydown("ArrowUp");
+      expect(input().getAttribute("aria-activedescendant")).toBe(first.id);
+    });
+
+    it("Enter connects the highlighted suggestion instead of parsing the typed text", () => {
+      const onConnect = render(HISTORY);
+      focusInput();
+      typeInto("prod");
+      keydown("ArrowDown");
+      keydown("ArrowDown");
+      keydown("Enter");
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(onConnect.mock.calls[0][1]).toBe("admin@prod2");
+    });
+  });
 });
