@@ -659,6 +659,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::send_input,
             commands::session::set_session_line_ending,
             commands::session::resize_terminal,
+            commands::session::set_terminal_output_paused,
             commands::session::close_terminal,
             commands::session::reclaim_session,
             commands::session::list_local_sessions,

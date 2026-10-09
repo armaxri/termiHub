@@ -346,6 +346,8 @@ impl<'a> PersistentController<'a> {
                             session_loggers,
                             session_tab_ids,
                             reader_cancel,
+                            // Agent-proxied: not flow-controlled (PERF2-002).
+                            None,
                         )
                         .await;
                     });

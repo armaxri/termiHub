@@ -20,7 +20,7 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
-use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
+use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use tracing::{info, warn};
 
@@ -1223,6 +1223,14 @@ impl SessionManager {
         // clone is moved into the reader.
         let reader_cancel = CancellationToken::new();
 
+        // Frontend flow control (PERF2-002): a direct session's producer blocks
+        // on the full output channel, so pausing the reader backpressures the
+        // PTY. An agent-proxied session's channel is fed by `try_send` in the
+        // agent I/O task, which would DROP output under a paused reader, so it
+        // is left unwired there.
+        let io = SessionIo::default();
+        let output_flow = agent_id.is_none().then(|| io.output_flow());
+
         // Store session, promoting its capacity reservation to a live entry
         // under the same `sessions` lock so the occupied-slot count never dips.
         {
@@ -1235,7 +1243,7 @@ impl SessionManager {
                     remote_session_id,
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
-                    io: SessionIo::default(),
+                    io,
                 },
             );
             self.pending_creates
@@ -1357,6 +1365,7 @@ impl SessionManager {
                 session_loggers,
                 session_tab_ids,
                 reader_cancel,
+                output_flow,
             )
             .await;
         });
@@ -1499,6 +1508,26 @@ impl SessionManager {
         if let Some(entry) = sessions.get_mut(session_id) {
             entry.line_ending = ending;
         }
+    }
+
+    /// Pause or resume a session's output stream (PERF2-002). The frontend
+    /// pauses when xterm.js has too many unparsed bytes and resumes once it
+    /// has drained; while paused the output reader stops reading, so the
+    /// bounded channel and then the OS PTY buffer backpressure the program.
+    /// Input is unaffected. No-op for an unknown session, and for an
+    /// agent-proxied one, whose reader is not flow-controlled.
+    pub async fn set_output_flow(&self, session_id: &str, paused: bool) {
+        let sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get(session_id) {
+            entry.io.output_flow().set_paused(paused);
+        }
+    }
+
+    /// The session's output flow gate (test introspection).
+    #[cfg(test)]
+    pub async fn output_flow_gate(&self, session_id: &str) -> Option<OutputFlowGate> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(session_id).map(|e| e.io.output_flow())
     }
 
     /// Resize a session's terminal.
@@ -2086,6 +2115,8 @@ impl SessionManager {
                 session_loggers,
                 session_tab_ids,
                 reader_cancel,
+                // Agent-proxied: not flow-controlled (see the create path).
+                None,
             )
             .await;
         });
@@ -2279,8 +2310,8 @@ impl SessionManager {
     /// Read output from a connection and emit Tauri events.
     ///
     /// Coalesces pending output chunks into a single event (up to
-    /// `MAX_COALESCE_BYTES`) to reduce IPC overhead.
-    #[allow(clippy::too_many_arguments)]
+    /// `MAX_COALESCE_BYTES`) to reduce IPC overhead. `flow` is the frontend's
+    /// pause/resume gate (PERF2-002); `None` never pauses.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_output_reader<E: EventEmitter, M: SessionMap>(
         session_id: String,
@@ -2293,6 +2324,7 @@ impl SessionManager {
         session_loggers: SessionLoggers,
         session_tab_ids: SessionTabIds,
         cancel: CancellationToken,
+        flow: Option<OutputFlowGate>,
     ) {
         // The mechanical forwarding loop (buffer-until-clear + coalescing
         // stream) now lives in the shared core pump (finding DUP-011); the
@@ -2311,6 +2343,7 @@ impl SessionManager {
             coalesce: true,
             max_coalesce_bytes: MAX_COALESCE_BYTES,
             clear_wait_timeout: CLEAR_WAIT_TIMEOUT,
+            flow,
         };
 
         match run_output_pump(&session_id, &mut output_rx, &sink, Some(&cancel), &opts).await {
