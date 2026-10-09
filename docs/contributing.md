@@ -1430,8 +1430,11 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    (see [Licensing](licensing.md#generated-third-party-notices))
 6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
    (`verify-release`) — a release missing either fails here
-7. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
-   `verify-release` passes
+7. Install and launch the published artifacts on every platform (the
+   [install smokes](#release-install-smokes)) — a release that does not install or launch
+   fails here
+8. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
+   `verify-release` and every install smoke pass
 
 There is no `latest` git tag. The desktop update check and the agent self-updater
 follow GitHub's own "Latest release" marker through the `releases/latest` API, as do
@@ -1512,12 +1515,20 @@ and `core/Cargo.toml`. It is deliberately **not** widened to `agent/**` or `src-
 `Cargo.lock` (weekly lockfile bumps would run the Docker lane every time); the nightly run
 and this gate catch those before they ship.
 
-### Post-Release Install Smokes
+### Release Install Smokes
 
-When the Release workflow succeeds, five separate workflows install and launch (or, for
-the Windows arm64 agent, execute) the just-published artifacts on hosted runners, prereleases included. Each one can be
-re-run against any published release from the Actions tab (`workflow_dispatch` with the
-tag, e.g. `v0.1.0`), and each uploads its logs as a run artifact:
+After `verify-release`, the Release workflow calls five reusable workflows that install
+and launch (or, for the Windows arm64 agent, execute) the just-published artifacts on
+hosted runners, prereleases included. `mark-latest` needs every one of them (#4281), so a
+release whose installer fails is never promoted to GitHub's **Latest release**: it stays
+published but not latest (or a prerelease), and the previous latest release keeps serving
+update checks. A pinned structural test,
+[`release-smoke-gate.test.mjs`](../scripts/internal/release-smoke-gate.test.mjs), fails if
+a smoke drops out of that gate. After fixing a flaky smoke, `gh run rerun <run-id> --failed`
+re-runs it and then `mark-latest`; a real installer failure needs a fix and a new tag.
+Each smoke can also be run against any published release from the Actions tab
+(`workflow_dispatch` with the tag, e.g. `v0.1.0`), and each uploads its logs as a run
+artifact:
 
 | Workflow                                                                            | Runner(s)                                      | What it asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1545,8 +1556,9 @@ through the install folder's inherited "ALL RESTRICTED APPLICATION PACKAGES" ent
 After the workflow completes:
 
 - [ ] Check the [GitHub Actions](https://github.com/armaxri/termiHub/actions) page — all jobs should be green
-- [ ] Confirm the five post-release install smokes above are green (Linux x64, Linux arm64,
-      macOS arm64 + x64, Windows x64, Windows arm64 agent)
+- [ ] Confirm the five install smokes above are green (Linux x64, Linux arm64,
+      macOS arm64 + x64, Windows x64, Windows arm64 agent) and, for a stable release,
+      that `mark-latest` ran
 - [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
 - [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
 - [ ] Download and smoke-test at least one artifact on your platform

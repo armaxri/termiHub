@@ -41,9 +41,9 @@ name: Release macOS Smoke
 # (dyld/signature kill at exec, early panic, webview/frontend load failure)
 # without that dependency.
 #
-# Like the Linux smokes this is a SEPARATE workflow triggered by the completion of
-# the "Release" run (not `release: published`), because release.yml publishes the
-# release BEFORE its build matrix uploads the assets.
+# Like the Linux smokes, release.yml calls this as a reusable workflow
+# (workflow_call) after verify-release and before mark-latest (#4281), so a
+# failing smoke keeps the release from becoming GitHub's "Latest release".
 
 on:
   # Called by release.yml after verify-release and before mark-latest (#4281),

@@ -15,13 +15,9 @@ name: Release Linux arm64 Smoke
 # arm64 *GUI* smoke stays a manual session on real Raspberry-Pi hardware (#479),
 # and is deliberately NOT attempted here.
 #
-# This is a SEPARATE workflow (not a job inside release.yml, and separate from
-# release-linux-smoke.yml) on purpose: it is fully decoupled and cannot collide
-# with concurrent edits to those files. Like release-linux-smoke.yml it triggers
-# on the completion of the "Release" run rather than the `release: published`
-# event, because release.yml publishes the (non-draft) release BEFORE its build
-# matrix uploads the assets — a `release: published` job would run too early and
-# find no arm64 .deb to test.
+# Like release-linux-smoke.yml, release.yml calls this as a reusable workflow
+# (workflow_call) after verify-release and before mark-latest (#4281), so a
+# failing smoke keeps the release from becoming GitHub's "Latest release".
 
 on:
   # Called by release.yml after verify-release and before mark-latest (#4281),

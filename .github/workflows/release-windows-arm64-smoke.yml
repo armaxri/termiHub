@@ -15,9 +15,9 @@ name: Release Windows arm64 Smoke
 #      so an x64 binary cannot pass here under emulation,
 #   4. runs `termihub-agent --version` and asserts it prints the release version.
 #
-# Like the other post-release smokes this is a SEPARATE workflow triggered by the
-# completion of the "Release" run (not `release: published`), because release.yml
-# publishes the release BEFORE its build matrix uploads the assets.
+# Like the other install smokes, release.yml calls this as a reusable workflow
+# (workflow_call) after verify-release and before mark-latest (#4281), so a
+# failing smoke keeps the release from becoming GitHub's "Latest release".
 
 on:
   # Called by release.yml after verify-release and before mark-latest (#4281),

@@ -13,12 +13,12 @@ name: Release Linux Smoke
 # close, append across relaunch, single-instance forwarding of --workspace /
 # --workspace-file, and no clean-exit line after kill -9.
 #
-# This is a SEPARATE workflow (not a job inside release.yml) on purpose: it is
-# fully decoupled from the release-build matrix and cannot collide with concurrent
-# edits to release.yml. It is triggered by the completion of the "Release" run
-# rather than the `release: published` event, because release.yml publishes the
-# (non-draft) release BEFORE its build matrix uploads the assets — a
-# `release: published` job would run too early and find no artifacts to test.
+# release.yml calls this as a reusable workflow (workflow_call) after
+# verify-release and before mark-latest (#4281), so a failing smoke keeps the
+# release from becoming GitHub's "Latest release". It is not triggered by the
+# `release: published` event, because release.yml publishes the (non-draft)
+# release BEFORE its build matrix uploads the assets — a `release: published`
+# job would run too early and find no artifacts to test.
 #
 # NOTE (#2646 fixed, #2669): the built desktop app now launches headless under
 # WebKitGTK on ubuntu-latest (the nightly integration Xvfb leg passes), so the two
