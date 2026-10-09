@@ -48,7 +48,7 @@ pub const MAC: &str = "[mac]";
 
 /// Secret-bearing field names (case-insensitive, whole word). Kept in step with
 /// `SECRET_KEY_PATTERN` in `src/utils/redactLogText.ts`.
-const SECRET_KEYS: &str = "(?:passwords?|passphrases?|passwd|pwd|secrets?|\
+const SECRET_KEYS: &str = "(?:passwords?|ssh[-_ ]?passwords?|passphrases?|passwd|pwd|secrets?|\
 tokens?|access[-_ ]?tokens?|auth[-_ ]?tokens?|id[-_ ]?tokens?|refresh[-_ ]?tokens?|\
 api[-_ ]?keys?|access[-_ ]?keys?|secret[-_ ]?keys?|private[-_ ]?keys?|\
 client[-_ ]?secrets?|credentials?|cookies?|otp|totp)";

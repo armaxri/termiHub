@@ -171,5 +171,7 @@ fn taken_secrets_round_trip_through_json() {
     taken.hops.insert("u@h:22".into(), "p".into());
     let text = serde_json::to_string(&taken).unwrap();
     assert_eq!(serde_json::from_str::<TakenSecrets>(&text).unwrap(), taken);
-    assert!(serde_json::from_str::<TakenSecrets>("{}").unwrap().is_empty());
+    assert!(serde_json::from_str::<TakenSecrets>("{}")
+        .unwrap()
+        .is_empty());
 }
