@@ -1355,15 +1355,87 @@ jobs:
           fi
           echo "All ${#subjects[@]} release artifacts carry valid build provenance."
 
-  # Promote a verified stable release to GitHub's "Latest release" (PKG-014).
-  # Replaces the old force-moved `latest` git tag: the desktop update check and
-  # the agent self-updater poll the releases/latest API, which follows this
-  # marker. Runs only after verify-release, so "Latest" never points at a
-  # release with missing assets or attestations. Prereleases are skipped —
-  # GitHub never marks them latest.
+  # Platform install smokes (PKG-006, #4281): each release-*-smoke.yml is a
+  # reusable workflow that installs and launches the just-verified artifacts on
+  # hosted runners. They run INSIDE the Release run, after verify-release and
+  # before mark-latest, so a release whose installer does not install or launch
+  # never becomes GitHub's "Latest release". Release Windows Smoke also calls
+  # plugin-lpac-per-machine.yml (#4252), so that check gates mark-latest too.
+  # Each smoke keeps workflow_dispatch for a manual re-run against any release.
+  smoke-linux:
+    name: Install smoke - Linux x64
+    needs: [create-release, verify-release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-linux-smoke.yml
+    with:
+      tag: v${{ needs.create-release.outputs.version }}
+
+  smoke-linux-arm64:
+    name: Install smoke - Linux arm64
+    needs: [create-release, verify-release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-linux-arm64-smoke.yml
+    with:
+      tag: v${{ needs.create-release.outputs.version }}
+
+  smoke-macos:
+    name: Install smoke - macOS
+    needs: [create-release, verify-release]
+    permissions:
+      contents: read
+      # `gh attestation verify` fetches the provenance bundles.
+      attestations: read
+    uses: ./.github/workflows/release-macos-smoke.yml
+    with:
+      tag: v${{ needs.create-release.outputs.version }}
+
+  smoke-windows:
+    name: Install smoke - Windows x64
+    needs: [create-release, verify-release]
+    permissions:
+      contents: read
+      # `gh attestation verify` fetches the provenance bundles.
+      attestations: read
+    uses: ./.github/workflows/release-windows-smoke.yml
+    with:
+      tag: v${{ needs.create-release.outputs.version }}
+
+  smoke-windows-arm64:
+    name: Install smoke - Windows arm64 agent
+    needs: [create-release, verify-release]
+    permissions:
+      contents: read
+      # `gh attestation verify` fetches the provenance bundles.
+      attestations: read
+    uses: ./.github/workflows/release-windows-arm64-smoke.yml
+    with:
+      tag: v${{ needs.create-release.outputs.version }}
+
+  # Promote a verified, install-smoked stable release to GitHub's "Latest
+  # release" (PKG-014). Replaces the old force-moved `latest` git tag: the
+  # desktop update check and the agent self-updater poll the releases/latest API,
+  # which follows this marker. Runs only after verify-release AND every install
+  # smoke succeeded (#4281), so "Latest" never points at a release with missing
+  # assets or attestations, or one that does not install and launch. There is
+  # deliberately no `if:` here: a failed or skipped smoke skips this job, and the
+  # release stays published but not latest (create-release passes --latest=false)
+  # while the previous latest keeps serving clients. Fix a flaky smoke with
+  # `gh run rerun <run-id> --failed`, which re-runs it and then this job.
+  # Prereleases are skipped — GitHub never marks them latest.
   mark-latest:
     name: Mark Latest Release
-    needs: [create-release, verify-release]
+    needs:
+      [
+        create-release,
+        verify-release,
+        smoke-linux,
+        smoke-linux-arm64,
+        smoke-macos,
+        smoke-windows,
+        smoke-windows-arm64,
+      ]
     runs-on: ubuntu-latest
     # No checkout in this job; GH_REPO tells gh which repository to act on.
     env:

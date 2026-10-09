@@ -32,17 +32,19 @@ name: Release Windows Smoke
 # The msiexec install/uninstall logs and app logs are uploaded as an artifact on
 # every run, so a failed install is diagnosable without a re-run.
 #
-# Like the Linux smokes this is a SEPARATE workflow triggered by the completion of
-# the "Release" run (not `release: published`), because release.yml publishes the
-# release BEFORE its build matrix uploads the assets.
+# Like the Linux smokes, release.yml calls this as a reusable workflow
+# (workflow_call) after verify-release and before mark-latest (#4281), so a
+# failing smoke keeps the release from becoming GitHub's "Latest release".
 
 on:
-  # Fire after the Release workflow completes. workflow_run runs the copy of this
-  # file on the default branch, which is the correct behavior for release
-  # automation (releases are cut from the default branch's tags).
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
+  # Called by release.yml after verify-release and before mark-latest (#4281),
+  # so a failing smoke keeps the release from becoming GitHub's "Latest release".
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
   # Manual re-run against any already-published release, for verification without
   # cutting a new release.
   workflow_dispatch:
@@ -61,12 +63,6 @@ jobs:
   # The release tag both jobs grade.
   resolve-tag:
     name: Resolve release tag
-    # Only run for a manual dispatch, or for a Release run that was triggered by a
-    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
@@ -76,32 +72,12 @@ jobs:
         id: tag
         shell: bash
         env:
-          GH_EVENT: ${{ github.event_name }}
-          DISPATCH_TAG: ${{ github.event.inputs.tag }}
-          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
-            TAG="${DISPATCH_TAG:-}"
-          else
-            # For a tag-triggered upstream run, head_branch is the tag name.
-            TAG="${RUN_TAG:-}"
-            case "$TAG" in
-              v*.*.*) ;;
-              *)
-                # Fallback: resolve the version tag pointing at the release commit.
-                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
-                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
-                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
-                        | grep -E '^v[0-9]' | head -n1 || true)"
-                ;;
-            esac
-          fi
           case "$TAG" in
             v*.*.*) ;;
-            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+            *) echo "::error::not a version tag: '$TAG'"; exit 1 ;;
           esac
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
