@@ -20,10 +20,7 @@ pub const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
 /// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (truthy: `1`,
 /// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey).
 pub fn parse_required(val: Option<&str>) -> bool {
-    matches!(
-        val.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
+    termihub_core::test_fixtures::parse_flag(val)
 }
 
 /// Whether this process requires the Docker fixtures to be present.

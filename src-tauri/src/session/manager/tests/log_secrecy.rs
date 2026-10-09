@@ -267,10 +267,7 @@ const WRONG_SUDO_PASSWORD: &str = "Log-Secrecy-Wrong-Sudo-Pw-5d19c3";
 #[test]
 #[serial_test::serial(elevated_save)]
 fn sudo_password_of_an_elevated_save_stays_out_of_the_app_log() {
-    let port = std::env::var("TERMIHUB_TEST_SSH_SUDO_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2212);
+    let port = termihub_core::test_fixtures::fixture_port("TERMIHUB_TEST_SSH_SUDO_PORT", 2212);
     if !fixture_ready("ssh-sudo", port) {
         return;
     }

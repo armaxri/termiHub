@@ -74,18 +74,18 @@ mod tests {
 
     /// Root-owned file the fixtures ship (see `tests/docker/ssh-sudo`).
     const ELEVATED_TARGET: &str = "/etc/termihub-elevated-target.txt";
-    /// Default host ports of the elevated-save fixtures (`tests/docker`).
+    /// Base host ports of the elevated-save fixtures (`tests/docker`), before
+    /// this checkout's offset.
     const DEFAULT_SSH_SUDO_PORT: u16 = 2212;
     const DEFAULT_SSH_NOSUDO_PORT: u16 = 2213;
     const DEFAULT_SSH_SFTP_ONLY_PORT: u16 = 2215;
     /// A file the fixtures' `testuser` owns (`useradd -m` copies `/etc/skel`).
     const USER_OWNED_FILE: &str = "/home/testuser/.bashrc";
 
-    fn env_port(var: &str, default: u16) -> u16 {
-        std::env::var(var)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
+    /// A fixture's host port: `var` when set, else `base` shifted by this
+    /// checkout's test-port offset (env or `dev.local.json`, #4338).
+    fn env_port(var: &str, base: u16) -> u16 {
+        termihub_core::test_fixtures::fixture_port(var, base)
     }
 
     /// Trust the loopback fixture host keys before connecting.

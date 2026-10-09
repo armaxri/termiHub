@@ -46,6 +46,13 @@ pub mod reconnect_backoff;
 pub mod restore_mode;
 pub mod service;
 pub mod session;
+// Fixture addressing + skip-or-fail gate for the integration tests (#4338).
+// Exposed to other crates' tests behind `fixture-test-support`, which only
+// `[dev-dependencies]` enable; `core/tests/common` includes the file directly.
+#[cfg(any(test, feature = "fixture-test-support"))]
+pub mod test_fixtures;
+#[cfg(test)]
+mod test_fixtures_tests;
 pub mod tool;
 #[cfg(feature = "ssh")]
 pub mod tunnel;

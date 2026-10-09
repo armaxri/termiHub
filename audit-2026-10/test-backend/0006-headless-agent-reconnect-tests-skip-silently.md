@@ -15,8 +15,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager/russh_reconnect_tests.rs:2506
   - scripts/internal/ci-rust-tests.sh:63
   - core/tests/common/mod.rs:150
-status: open
-resolution: ""
+status: fixed
+resolution: "#4338 — TERMIHUB_REQUIRE_LOCAL_SSHD turns a missing sshd/ssh/agent binary into a failure; set on the Linux/macOS heavy Rust step, which installs openssh-server"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -7,13 +7,16 @@
 //! `run_docker_transfer`, and byte-verifies the result against `sha256sum`
 //! inside the container. The container is force-removed afterwards even when
 //! the test body panics. Skips when no Linux-capable container daemon is
-//! reachable — including a Windows-container-mode daemon (see `client()`). The
+//! reachable — including a Windows-container-mode daemon (see `client()`) —
+//! and fails instead under `TERMIHUB_REQUIRE_DOCKER=1` (#4338). The
 //! client is resolved through the backend's own `connect_to_runtime` so it
 //! reaches the daemon a session would (see `support/container.rs`, #3888).
 //!
 //! Killing the streaming process is made deterministic by arming an in-
 //! container killer loop *before* resuming: it SIGKILLs the first `tail` /
 //! `cat` that appears — which can only be the resumed attempt's exec.
+
+mod support;
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -185,7 +188,7 @@ where
     let client = match client().await {
         Ok(client) => client,
         Err(reason) => {
-            eprintln!("SKIPPED: {reason} ({test})");
+            support::container::docker_missing(&format!("{reason} ({test})"));
             return;
         }
     };

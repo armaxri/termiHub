@@ -752,11 +752,16 @@ async fn set_layout_until(
 /// inside this checkout's fixture container. Proves the server applied the
 /// layout, not just a wide single monitor of the same size.
 fn xrdp_session_monitors(label: &str) -> usize {
-    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
     let script = "for d in /tmp/.X11-unix/X1?; do \
         su testuser -c \"DISPLAY=:${d##*X} xrandr --listmonitors\"; done";
     let out = std::process::Command::new("docker")
-        .args(["exec", &format!("{project}-rdp"), "bash", "-c", script])
+        .args([
+            "exec",
+            &common::fixture_container("rdp"),
+            "bash",
+            "-c",
+            script,
+        ])
         .output()
         .unwrap_or_else(|e| panic!("{label}: docker exec failed: {e}"));
     let text = String::from_utf8_lossy(&out.stdout);

@@ -13,4 +13,9 @@
 
 #[cfg(feature = "docker")]
 pub mod container;
+// The fixture resolver and skip-or-fail gate shared by every crate's
+// integration tests (#4338); see `core/tests/common` for why it is included by
+// path.
+#[path = "../../src/test_fixtures.rs"]
+pub mod fixture_env;
 pub mod golden;
