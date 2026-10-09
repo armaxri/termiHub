@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
@@ -252,55 +251,33 @@ fn companion_action(parent_status: &TunnelStatus, companion_running: bool) -> Co
     }
 }
 
-/// How often the live stats emitter samples each active tunnel and pushes a
-/// `tunnel-stats-updated` event (GAP 6, #1248).
+/// How often the live stats emitter republishes the `tunnels` projection region
+/// while a tunnel is active (GAP 6, #1248; #2150).
 const STATS_EMIT_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The Tauri event name carrying live per-tunnel throughput / connection counts.
-const TUNNEL_STATS_EVENT: &str = "tunnel-stats-updated";
-
-/// Payload for a live `tunnel-stats-updated` event.
+/// Whether one emit tick has anything to publish: at least one tunnel is active.
 ///
-/// The frontend listener (`onTunnelStatsUpdated`, `src/services/events.ts`)
-/// reads `event.payload.tunnel_id` and `event.payload.stats`, so the id field is
-/// intentionally serialized as snake_case `tunnel_id` (not the camelCase
-/// `tunnelId` used by `TunnelState`). `TunnelStats` itself already serializes to
-/// the camelCase shape the frontend `TunnelStats` type expects.
-#[derive(Debug, Clone, Serialize)]
-struct TunnelStatsUpdate {
-    tunnel_id: String,
-    stats: TunnelStats,
-}
-
-/// Build the per-tunnel stats payloads for one emit tick from the active set.
-///
-/// Pure helper (no locking, no IO) so it is unit-testable: given the current
-/// active tunnels it returns one [`TunnelStatsUpdate`] per tunnel with a live
-/// counter snapshot. An empty map yields an empty vec — the signal the emitter
-/// task uses to stop once no tunnel is active.
-fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelStatsUpdate> {
-    active
-        .iter()
-        .map(|(tunnel_id, tunnel)| TunnelStatsUpdate {
-            tunnel_id: tunnel_id.clone(),
-            stats: tunnel.forwarder.get_stats(),
-        })
-        .collect()
+/// Pure helper (no locking, no IO) so it is unit-testable. `false` is the
+/// signal the emitter task uses to stop once no tunnel is active.
+fn has_active_tunnels(active: &HashMap<String, ActiveTunnel>) -> bool {
+    !active.is_empty()
 }
 
 /// Spawn the single live-stats emitter loop (GAP 6, #1248) on the app-owned
 /// task registry (ARCH-007, #3105).
 ///
-/// Every [`STATS_EMIT_INTERVAL`] it snapshots the active tunnels' live stats and
-/// hands them to `emit` (outside the lock). It ends — and clears `slot` so a
-/// later start re-spawns it — once no tunnel is active, or promptly between
-/// ticks when the app cancellation token fires. `emit` is a closure so the loop
-/// is testable without a live Tauri `AppHandle`.
+/// Every [`STATS_EMIT_INTERVAL`] it checks for active tunnels and calls `emit`
+/// (outside the lock), which republishes the `tunnels` projection region — the
+/// only channel carrying live stats to the frontend since the legacy
+/// per-tunnel stats event was retired (PERF2-007, #4344). It ends — and clears
+/// `slot` so a later start re-spawns it — once no tunnel is active, or promptly
+/// between ticks when the app cancellation token fires. `emit` is a closure so
+/// the loop is testable without a live Tauri `AppHandle`.
 fn spawn_stats_emitter(
     tasks: &AppTasks,
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
     slot: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    mut emit: impl FnMut(&[TunnelStatsUpdate]) + Send + 'static,
+    mut emit: impl FnMut() + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     let cancel = tasks.cancellation_token();
     tasks.spawn(async move {
@@ -312,20 +289,20 @@ fn spawn_stats_emitter(
                 _ = tokio::time::sleep(STATS_EMIT_INTERVAL) => {}
             }
 
-            // Snapshot under the lock, then release it before emitting so a
-            // slow event dispatch never blocks start/stop of other tunnels.
-            let updates = match active_tunnels.lock() {
-                Ok(active) => snapshot_active_stats(&active),
+            // Check under the lock, then release it before publishing so a
+            // slow projection rebuild never blocks start/stop of other tunnels.
+            let any_active = match active_tunnels.lock() {
+                Ok(active) => has_active_tunnels(&active),
                 Err(_) => break,
             };
 
             // No tunnel left active: stop emitting and clear the slot so a
             // later start re-spawns the task.
-            if updates.is_empty() {
+            if !any_active {
                 break;
             }
 
-            emit(&updates);
+            emit();
         }
 
         // Self-reap: drop our own handle from the tracking slot so
@@ -836,7 +813,7 @@ impl TunnelManager {
             }
             Err(message) => {
                 record_last_error(&self.last_errors, tunnel_id, message.clone());
-                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+                self.emit_status(tunnel_id, TunnelStatus::Error);
                 return Err(TerminalError::TunnelError(message));
             }
         }
@@ -864,7 +841,7 @@ impl TunnelManager {
         })?;
 
         // Emit connecting status
-        self.emit_status(tunnel_id, TunnelStatus::Connecting, None);
+        self.emit_status(tunnel_id, TunnelStatus::Connecting);
 
         // Build the forwarder (resolves the SSH config and performs the
         // handshake). On failure, surface it as `error` status instead of
@@ -875,14 +852,14 @@ impl TunnelManager {
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
                     FinishOutcome::Cancel => {
-                        self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+                        self.emit_status(tunnel_id, TunnelStatus::Disconnected);
                     }
                     FinishOutcome::Commit => {
                         // Persist the failure so `Error` is a durable, queryable
                         // resting state, not just a fire-and-forget event that a
                         // reload launders away (GAP 3, #1238).
                         record_last_error(&self.last_errors, tunnel_id, e.to_string());
-                        self.emit_status(tunnel_id, TunnelStatus::Error, Some(e.to_string()));
+                        self.emit_status(tunnel_id, TunnelStatus::Error);
                     }
                 }
                 return Err(e);
@@ -894,7 +871,7 @@ impl TunnelManager {
         // thought they had stopped.
         if !matches!(self.connecting.finish(tunnel_id), FinishOutcome::Commit) {
             self.teardown_forwarder(forwarder, guards);
-            self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+            self.emit_status(tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {} start cancelled by stop request", tunnel_id);
             return Ok(());
         }
@@ -914,11 +891,11 @@ impl TunnelManager {
         clear_last_error(&self.last_errors, tunnel_id);
 
         // Emit connected status
-        self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+        self.emit_status(tunnel_id, TunnelStatus::Connected);
 
         // Ensure the periodic live-stats emitter is running now that a tunnel is
         // active, so the sidebar's ↑/↓ bytes + conn count update live rather than
-        // freezing at the zeros the initial status event carried (GAP 6, #1248).
+        // resting at the zeros of the initial status (GAP 6, #1248).
         self.ensure_stats_emitter();
 
         tracing::info!("Tunnel {} started", tunnel_id);
@@ -990,7 +967,7 @@ impl TunnelManager {
             }
         }
 
-        self.emit_status(tunnel_id, TunnelStatus::Connecting, None);
+        self.emit_status(tunnel_id, TunnelStatus::Connecting);
 
         // Resolve the SSH connection so the agent can open the session to the
         // "via" server itself; any inline jump-host chain is already expanded.
@@ -998,7 +975,7 @@ impl TunnelManager {
             Ok(cfg) => cfg,
             Err(e) => {
                 record_last_error(&self.last_errors, tunnel_id, e.to_string());
-                self.emit_status(tunnel_id, TunnelStatus::Error, Some(e.to_string()));
+                self.emit_status(tunnel_id, TunnelStatus::Error);
                 return Err(e);
             }
         };
@@ -1055,7 +1032,7 @@ impl TunnelManager {
                     );
                 }
                 clear_last_error(&self.last_errors, tunnel_id);
-                self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+                self.emit_status(tunnel_id, TunnelStatus::Connected);
                 // Sample the agent's live stats periodically so the projection's
                 // ↑/↓ bytes + conn count update instead of resting at zero (#2199).
                 self.ensure_status_poller();
@@ -1071,7 +1048,7 @@ impl TunnelManager {
             Err(e) => {
                 let message = format!("agent-hosted tunnel start failed: {}", e);
                 record_last_error(&self.last_errors, tunnel_id, message.clone());
-                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+                self.emit_status(tunnel_id, TunnelStatus::Error);
                 Err(TerminalError::TunnelError(message))
             }
         }
@@ -1110,7 +1087,7 @@ impl TunnelManager {
                 ),
             }
         }
-        self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+        self.emit_status(tunnel_id, TunnelStatus::Disconnected);
         tracing::info!("Tunnel {} stopped on agent {}", tunnel_id, handle.agent_id);
         true
     }
@@ -1119,8 +1096,8 @@ impl TunnelManager {
     ///
     /// Idempotent: if a task is already tracked in `stats_emitter` it is left
     /// alone. Otherwise a new task is spawned that, every [`STATS_EMIT_INTERVAL`],
-    /// snapshots every active tunnel's live [`ForwarderStats`] and emits one
-    /// `tunnel-stats-updated` event per tunnel. The task self-terminates (and
+    /// republishes the `tunnels` projection region, whose statuses carry every
+    /// active tunnel's live [`ForwarderStats`]. The task self-terminates (and
     /// clears the tracking slot) as soon as no tunnel is active, so a dead/errored
     /// tunnel reaped by its supervisor (#1243) naturally stops emitting.
     fn ensure_stats_emitter(&self) {
@@ -1138,14 +1115,11 @@ impl TunnelManager {
             &self.tasks,
             Arc::clone(&self.active_tunnels),
             Arc::clone(&self.stats_emitter),
-            move |updates| {
-                for update in updates {
-                    let _ = app_handle.emit(TUNNEL_STATS_EVENT, update);
-                }
-                // Project live stats onto the `tunnels` region (#2150) so a
-                // projection subscriber sees the same per-tick ↑/↓ + conn counts
-                // as the legacy event above. The active-tunnels lock is already
-                // released here, so the re-lock inside is safe.
+            move || {
+                // Project live stats onto the `tunnels` region (#2150): the
+                // per-tick ↑/↓ + conn counts reach the frontend only this way.
+                // The active-tunnels lock is already released here, so the
+                // re-lock inside is safe.
                 crate::tunnel::projection::publish_tunnels(&app_handle);
             },
         );
@@ -1389,7 +1363,7 @@ impl TunnelManager {
             return false;
         }
         clear_last_error(&self.last_errors, tunnel_id);
-        self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+        self.emit_status(tunnel_id, TunnelStatus::Connected);
         tracing::info!("Tunnel {tunnel_id} reconnected");
         true
     }
@@ -1469,7 +1443,7 @@ impl TunnelManager {
                 handle.abort();
             }
             self.teardown_forwarder(forwarder, guards);
-            self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+            self.emit_status(tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {} stopped", tunnel_id);
             return Ok(());
         }
@@ -1487,7 +1461,7 @@ impl TunnelManager {
         // (#829). The start path tears the forwarder down once the blocking
         // handshake completes.
         if self.connecting.request_cancel(tunnel_id) {
-            self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+            self.emit_status(tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {} stop requested while connecting", tunnel_id);
         }
 
@@ -1662,8 +1636,8 @@ impl TunnelManager {
     }
 
     /// Emit a tunnel status change event to the frontend.
-    fn emit_status(&self, tunnel_id: &str, status: TunnelStatus, error: Option<String>) {
-        emit_tunnel_status(&self.app_handle, tunnel_id, status, error);
+    fn emit_status(&self, tunnel_id: &str, status: TunnelStatus) {
+        emit_tunnel_status(&self.app_handle, tunnel_id, status);
     }
 }
 
@@ -1756,26 +1730,12 @@ fn teardown_parts(mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
 
 /// Emit a tunnel status change event to the frontend (free function so the
 /// supervisor task can emit without `&self`).
-fn emit_tunnel_status(
-    app_handle: &AppHandle,
-    tunnel_id: &str,
-    status: TunnelStatus,
-    error: Option<String>,
-) {
-    // A status-change event carries no vantage/stats — the projection's
-    // `get_statuses` path fills those for the resting state on the publish below
-    // (#2199); the legacy event stays a bare status ping.
-    let state = TunnelState::desktop(
-        tunnel_id.to_string(),
-        status.clone(),
-        error,
-        TunnelStats::default(),
-    );
-    let _ = app_handle.emit("tunnel-status-changed", &state);
-    // Project the change onto the stateless-UI `tunnels` region (#2150). Kept
-    // beside the legacy event above (strangler): this is the single status-emit
-    // choke point, and every caller emits outside the manager's locks, so the
-    // re-lock inside `publish_tunnels` cannot deadlock.
+fn emit_tunnel_status(app_handle: &AppHandle, tunnel_id: &str, status: TunnelStatus) {
+    // Project the change onto the stateless-UI `tunnels` region (#2150) — the
+    // only status channel since the legacy `tunnel-status-changed` event was
+    // retired (DEAD2-004, #4344). This is the single status-emit choke point,
+    // and every caller emits outside the manager's locks, so the re-lock inside
+    // `publish_tunnels` cannot deadlock.
     crate::tunnel::projection::publish_tunnels(app_handle);
     // Drive the chained companion's ordered lifecycle off the same choke point:
     // when a parent settles into `Connected` bring its desktop hop up, otherwise
@@ -1865,12 +1825,7 @@ async fn supervise(
     // With reconnect off, death is a terminal Error resting state (#1243).
     if !reconnect_on_disconnect {
         record_last_error(&last_errors, &tunnel_id, reason.to_string());
-        emit_tunnel_status(
-            &app_handle,
-            &tunnel_id,
-            TunnelStatus::Error,
-            Some(reason.to_string()),
-        );
+        emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error);
         tracing::warn!("Tunnel {tunnel_id} died — transitioned to Error");
         return;
     }
@@ -1893,15 +1848,12 @@ async fn supervise(
         &TUNNEL_RECONNECT_POLICY,
         &mut jitter,
         |attempt, delay| {
-            emit_tunnel_status(
-                &app_handle,
-                &tunnel_id,
-                TunnelStatus::Reconnecting,
-                Some(format!(
-                    "reconnecting — attempt {attempt} of {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
-                    delay.as_secs()
-                )),
+            tracing::info!(
+                "Tunnel {tunnel_id} reconnecting — attempt {attempt} of \
+                 {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
+                delay.as_secs()
             );
+            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Reconnecting);
         },
         |_attempt| match resolve_managed_arc::<TunnelManager, _>(&app_handle) {
             Some(mgr) => mgr.attempt_reconnect(&tunnel_id),
@@ -1918,13 +1870,13 @@ async fn supervise(
         // `attempt_reconnect` already re-registered + re-supervised + emitted Connected.
         ReconnectOutcome::Reconnected => {}
         ReconnectOutcome::Cancelled => {
-            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Disconnected, None);
+            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Disconnected);
             tracing::info!("Tunnel {tunnel_id} reconnect cancelled by stop");
         }
         ReconnectOutcome::Exhausted => {
             let msg = format!("reconnect failed after {RECONNECT_MAX_ATTEMPTS} attempts");
-            record_last_error(&last_errors, &tunnel_id, msg.clone());
-            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error, Some(msg));
+            record_last_error(&last_errors, &tunnel_id, msg);
+            emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Error);
             tracing::warn!("Tunnel {tunnel_id} reconnect exhausted — transitioned to Error");
         }
     }
@@ -2080,11 +2032,10 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
         clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
-        last_error_for, record_last_error, resolve_managed_arc, resolve_tunnel_host,
-        resting_status, run_reconnect_loop, snapshot_active_stats, stats_from_status_reply,
+        has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc,
+        resolve_tunnel_host, resting_status, run_reconnect_loop, stats_from_status_reply,
         tunnel_host_ssh_config, type_supports_tunneling, wait_forwarder_death, wait_session_death,
-        ActiveTunnel, CompanionAction, ReconnectOutcome, TunnelStatsUpdate,
-        TUNNEL_RECONNECT_POLICY,
+        ActiveTunnel, CompanionAction, ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
@@ -2745,7 +2696,7 @@ mod tests {
         let slot = Arc::new(Mutex::new(None));
         let emits = Arc::new(AtomicUsize::new(0));
         let counter = emits.clone();
-        let handle = super::spawn_stats_emitter(&tasks, active, slot.clone(), move |_| {
+        let handle = super::spawn_stats_emitter(&tasks, active, slot.clone(), move || {
             counter.fetch_add(1, Ordering::SeqCst);
         });
         *slot.lock().unwrap() = Some(handle);
@@ -2900,9 +2851,8 @@ mod tests {
     // `src-tauri` has no mock harness for. So — like the GAP-3 / GAP-8 tests
     // above — these exercise the production building blocks the emitter uses
     // directly: the shared `ForwarderStats` atomics the forwarders update under
-    // traffic, the `TunnelStatsUpdate` event payload shape the frontend reads,
-    // and the `snapshot_active_stats` "nothing active -> nothing to emit"
-    // predicate that stops the task.
+    // traffic, and the `has_active_tunnels` "nothing active -> nothing to
+    // publish" predicate that stops the task.
 
     /// GAP 6: after simulated traffic the forwarder's live counters read back
     /// non-zero — so the emitter ships real ↑/↓ bytes and connection counts,
@@ -2924,56 +2874,15 @@ mod tests {
         assert_eq!(snapshot.total_connections, 2, "total never decrements");
     }
 
-    /// GAP 6: the emitted payload serializes to the exact shape the frontend
-    /// `onTunnelStatsUpdated` listener reads — snake_case `tunnel_id` plus a
-    /// camelCase `stats` object (`bytesSent`/`bytesReceived`/…). A regression
-    /// here would silently freeze the sidebar at 0.
+    /// GAP 6: with no tunnel active the emit tick has nothing to publish — the
+    /// signal the emitter task uses to stop itself once the last tunnel goes
+    /// away (a dead/errored tunnel reaped by its supervisor #1243).
     #[test]
-    fn stats_update_payload_matches_frontend_shape() {
-        let stats = ForwarderStats::new();
-        stats.increment_active();
-        stats.add_bytes_sent(2048);
-        stats.add_bytes_received(1024);
-
-        let update = TunnelStatsUpdate {
-            tunnel_id: "tunnel-1".to_string(),
-            stats: stats.to_tunnel_stats(),
-        };
-        let json = serde_json::to_value(&update).expect("serialize payload");
-
-        assert_eq!(
-            json.get("tunnel_id").and_then(|v| v.as_str()),
-            Some("tunnel-1")
-        );
-        let stats_json = json.get("stats").expect("stats object");
-        assert_eq!(
-            stats_json.get("bytesSent").and_then(|v| v.as_u64()),
-            Some(2048)
-        );
-        assert_eq!(
-            stats_json.get("bytesReceived").and_then(|v| v.as_u64()),
-            Some(1024)
-        );
-        assert_eq!(
-            stats_json.get("activeConnections").and_then(|v| v.as_u64()),
-            Some(1)
-        );
-        assert_eq!(
-            stats_json.get("totalConnections").and_then(|v| v.as_u64()),
-            Some(1)
-        );
-    }
-
-    /// GAP 6: with no tunnel active the emit tick produces no payloads — the
-    /// empty-vec signal the emitter task uses to stop itself once the last
-    /// tunnel goes away (a dead/errored tunnel reaped by its supervisor #1243).
-    #[test]
-    fn snapshot_of_empty_active_set_is_empty_and_stops_emitter() {
+    fn empty_active_set_stops_emitter() {
         let active: HashMap<String, ActiveTunnel> = HashMap::new();
-        let updates = snapshot_active_stats(&active);
         assert!(
-            updates.is_empty(),
-            "no active tunnel must yield no stats events so the emitter stops"
+            !has_active_tunnels(&active),
+            "no active tunnel must stop the emitter"
         );
     }
 
