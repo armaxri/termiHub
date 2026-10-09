@@ -45,6 +45,11 @@ vi.mock("@/components/ui", () => ({
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { useTransferEvents } from "./useTransferEvents";
+import {
+  claimBatchTransfers,
+  openBatchWindow,
+  resetBatchTransfersForTest,
+} from "./batchTransferToasts";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import type { TransferProgress } from "@/services/api";
@@ -167,6 +172,33 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("Uploaded");
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("report.pdf");
+  });
+
+  it("leaves a graphical upload batch's files to its summary toast (#4348)", async () => {
+    resetBatchTransfersForTest();
+    await mountHook();
+    // Settles while the batch is still being queued (ids not known yet).
+    const close = openBatchWindow("rd-1");
+    act(() => {
+      emit!(
+        progress({ transferId: "fast", sessionId: "rd-1", direction: "upload", phase: "done" })
+      );
+    });
+    claimBatchTransfers(["a", "b"]);
+    close();
+    act(() => {
+      emit!(progress({ transferId: "a", sessionId: "rd-1", direction: "upload", phase: "done" }));
+      emit!(progress({ transferId: "b", sessionId: "rd-1", direction: "upload", phase: "error" }));
+    });
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+
+    // Other transfers — and the same session once the batch is queued — still toast.
+    act(() => {
+      emit!(progress({ transferId: "c", sessionId: "rd-1", direction: "upload", phase: "done" }));
+      emit!(progress({ transferId: "d", sessionId: "sess-a", direction: "upload", phase: "done" }));
+    });
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(2);
   });
 
   it("labels a queued local copy with 'Copied' / 'Copy' (#3567)", async () => {

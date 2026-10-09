@@ -233,6 +233,22 @@ describe("RemoteDesktopTab — drop to upload (#4192)", () => {
     expect(q("remote-desktop-files-warning")).not.toBeNull();
   });
 
+  it("hides the Files button and the drop overlay on an RDP tab (#4348)", async () => {
+    // RDP has no side-channel file transfer: the backend says `notOffered`,
+    // and the tab must not point to a "File Transfer" setting RDP lacks.
+    hoisted.channel.mockResolvedValue({ status: "unavailable", reason: "notOffered" });
+    await render("active");
+    expect(hoisted.channel).toHaveBeenCalledWith(SID);
+    expect(q("remote-desktop-files-btn")).toBeNull();
+    fire({ type: "enter", paths: ["/l/a.txt"], position: AT });
+    expect(q("remote-desktop-drop-overlay")).toBeNull();
+    fire({ type: "drop", paths: ["/l/a.txt"], position: AT });
+    await flushAsync();
+    expect(hoisted.upload).not.toHaveBeenCalled();
+    expect(hoisted.info).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Turn on File Transfer");
+  });
+
   it("opens the Files popover on the resolved route", async () => {
     await render("active");
     act(() => q("remote-desktop-files-btn")?.click());
@@ -442,7 +458,7 @@ describe("RemoteDesktopTab — linked SSH route without a saved password (#4265)
     expect(hoisted.info).not.toHaveBeenCalled();
   });
 
-  it("drops nothing when the drop's prompt is cancelled", async () => {
+  it("says so when the drop's prompt is cancelled, uploading nothing (#4348)", async () => {
     linkedBackend();
     await render("active");
     fire({ type: "enter", paths: ["/l/a.txt"], position: AT });
@@ -451,6 +467,41 @@ describe("RemoteDesktopTab — linked SSH route without a saved password (#4265)
     await answer(null);
     expect(hoisted.upload).not.toHaveBeenCalled();
     expect(hoisted.error).not.toHaveBeenCalled();
+    expect(hoisted.info).toHaveBeenCalledWith("Upload canceled", {
+      description: "The linked SSH password is needed to upload files.",
+    });
+  });
+
+  it("explains a drop whose route fails after the prompt (#4348)", async () => {
+    hoisted.channel.mockImplementation((_id: string, secret?: string) =>
+      secret === "pw" ? Promise.reject(new Error("connection refused")) : Promise.resolve(DEGRADED)
+    );
+    await render("active");
+    fire({ type: "enter", paths: ["/l/a.txt"], position: AT });
+    fire({ type: "drop", paths: ["/l/a.txt"], position: AT });
+    await flushAsync();
+    await answer("pw");
+    expect(hoisted.upload).not.toHaveBeenCalled();
+    expect(hoisted.info).toHaveBeenCalledWith("File transfer isn't available right now", {
+      description: "connection refused",
+    });
+  });
+
+  it("explains a drop whose password is rejected every round (#4348)", async () => {
+    const rejected = { ...DEGRADED, needsSecret: { ...DEGRADED.needsSecret!, rejected: true } };
+    hoisted.channel.mockImplementation((_id: string, secret?: string) =>
+      Promise.resolve(secret ? rejected : DEGRADED)
+    );
+    await render("active");
+    fire({ type: "enter", paths: ["/l/a.txt"], position: AT });
+    fire({ type: "drop", paths: ["/l/a.txt"], position: AT });
+    await flushAsync();
+    for (let round = 0; round < 4; round++) await answer("wrong");
+    expect(promptOpen()).toBe(false);
+    expect(hoisted.upload).not.toHaveBeenCalled();
+    expect(hoisted.info).toHaveBeenCalledWith("File transfer isn't available right now", {
+      description: expect.stringContaining("no password is saved"),
+    });
   });
 
   it("re-asks with the reason when the entered password is rejected", async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileSideChannel } from "@/types/generated/FileSideChannel";
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
 import type { TransferProgress } from "@/services/api";
@@ -25,6 +25,8 @@ vi.mock("@/services/events", () => ({
     return Promise.resolve(hoisted.unlisten);
   }),
 }));
+import { onTransferProgress } from "@/services/events";
+import { isBatchTransfer, resetBatchTransfersForTest } from "@/hooks/batchTransferToasts";
 vi.mock("@/hooks/transferFeedback", () => ({ seedTransferQueueRow: hoisted.seed }));
 vi.mock("@/components/ui", () => ({ toast: hoisted.toast }));
 
@@ -34,6 +36,7 @@ import {
   dropSubject,
   routeCarrier,
   routeVia,
+  SETTLEMENT_IDLE_MS,
   unavailableCopy,
   uploadToRemoteDesktop,
 } from "./fileTransfer";
@@ -63,7 +66,7 @@ function started(ids: string[], extra: Partial<RemoteDesktopUploadStarted> = {})
   } satisfies RemoteDesktopUploadStarted;
 }
 
-function settle(transferId: string, phase: "done" | "error" | "cancelled") {
+function settle(transferId: string, phase: "done" | "error" | "cancelled" | "transferring") {
   hoisted.progress?.({ transferId, phase } as TransferProgress);
 }
 
@@ -235,5 +238,79 @@ describe("uploadToRemoteDesktop", () => {
     await flushMacrotask();
     expect(hoisted.toast.dismiss).toHaveBeenCalledWith("t1");
     expect(hoisted.toast.success).not.toHaveBeenCalled();
+  });
+
+  describe("the summary always resolves (#4348, FEC2-004)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      resetBatchTransfersForTest();
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("points to Transfers after a stall instead of spinning forever", async () => {
+      hoisted.upload.mockResolvedValue(started(["a", "b"]));
+      await uploadToRemoteDesktop("rd-1", ["/l/a", "/l/b"]);
+      settle("a", "done");
+      // Progress of a tracked upload restarts the inactivity bound.
+      await vi.advanceTimersByTimeAsync(SETTLEMENT_IDLE_MS - 1);
+      settle("b", "transferring");
+      await vi.advanceTimersByTimeAsync(SETTLEMENT_IDLE_MS - 1);
+      expect(hoisted.toast.info).not.toHaveBeenCalled();
+      expect(hoisted.unlisten).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(hoisted.unlisten).toHaveBeenCalledTimes(1);
+      expect(hoisted.toast.info).toHaveBeenCalledWith(
+        "Upload to /home/arne/Desktop on tiger-box — see Transfers",
+        expect.objectContaining({ id: "t1", description: "1 of 2 files done so far" })
+      );
+      // A file that settles later gets its own per-file toast again.
+      expect(isBatchTransfer({ transferId: "b", sessionId: "x", direction: "upload" })).toBe(false);
+    });
+
+    it("stops listening and resolves the toast when the session closes", async () => {
+      const abort = new AbortController();
+      hoisted.upload.mockResolvedValue(started(["a"]));
+      await uploadToRemoteDesktop("rd-1", ["/l/a"], undefined, undefined, abort.signal);
+      abort.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hoisted.unlisten).toHaveBeenCalledTimes(1);
+      expect(hoisted.toast.info).toHaveBeenCalledWith(
+        expect.stringContaining("see Transfers"),
+        expect.objectContaining({ id: "t1" })
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("resolves the loading toast when the progress listener cannot register", async () => {
+      vi.mocked(onTransferProgress).mockRejectedValueOnce(new Error("no event bridge"));
+      expect(await uploadToRemoteDesktop("rd-1", ["/l/a"])).toBeNull();
+      expect(hoisted.upload).not.toHaveBeenCalled();
+      expect(hoisted.toast.error).toHaveBeenCalledWith(
+        "Upload failed: no event bridge",
+        expect.objectContaining({ id: "t1" })
+      );
+      // The batch window closed again: later uploads on the session toast normally.
+      expect(isBatchTransfer({ transferId: "z", sessionId: "rd-1", direction: "upload" })).toBe(
+        false
+      );
+    });
+
+    it("claims its files so the per-file toasts stay quiet", async () => {
+      hoisted.upload.mockImplementation(async () => {
+        // Settling before the ids are known: covered by the batch window.
+        expect(isBatchTransfer({ transferId: "q", sessionId: "rd-1", direction: "upload" })).toBe(
+          true
+        );
+        return started(["a"]);
+      });
+      await uploadToRemoteDesktop("rd-1", ["/l/a"]);
+      expect(isBatchTransfer({ transferId: "a", sessionId: "rd-1", direction: "upload" })).toBe(
+        true
+      );
+      expect(isBatchTransfer({ transferId: "q", sessionId: "rd-1", direction: "upload" })).toBe(
+        false
+      );
+    });
   });
 });
