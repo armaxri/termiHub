@@ -51,13 +51,14 @@
 //!   A signature that *is* present must still verify against the termiHub key —
 //!   a bad signature is never accepted.
 
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine as _;
 use ed25519_dalek::{Signature, VerifyingKey, SIGNATURE_LENGTH};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
+use crate::ed25519_detached::{
+    any_trusted_key_verifies, domain_message, parse_b64_signature, SignatureParseError,
+};
 use crate::ed25519_pem::parse_public_keys_pem;
+use crate::util::sha256::sha256_of_bytes;
 
 /// Suffix appended (after a `.`) to an index URL to locate its signature.
 pub const INDEX_SIGNATURE_EXT: &str = "sig";
@@ -171,11 +172,7 @@ impl IndexSignaturePolicy {
         };
         let signature = parse_index_signature(signature)?;
         let message = index_signed_message(index_bytes);
-        if self
-            .trusted_keys
-            .iter()
-            .any(|key| key.verify_strict(&message, &signature).is_ok())
-        {
+        if any_trusted_key_verifies(&self.trusted_keys, &message, &signature) {
             Ok(IndexSignatureStatus::Verified)
         } else {
             Err(IndexSignatureError::Invalid)
@@ -192,27 +189,21 @@ pub fn embedded_index_keys() -> Vec<VerifyingKey> {
 /// The exact byte string signed for an index: [`INDEX_SIGNING_DOMAIN`]
 /// followed by the 32 raw SHA-256 bytes of `index_bytes`.
 pub fn index_signed_message(index_bytes: &[u8]) -> Vec<u8> {
-    let digest = Sha256::digest(index_bytes);
-    let mut message = Vec::with_capacity(INDEX_SIGNING_DOMAIN.len() + digest.len());
-    message.extend_from_slice(INDEX_SIGNING_DOMAIN);
-    message.extend_from_slice(&digest);
-    message
+    domain_message(INDEX_SIGNING_DOMAIN, &sha256_of_bytes(index_bytes))
 }
 
 /// Parse a `.sig` body: base64 of the 64-byte signature, whitespace ignored.
 fn parse_index_signature(raw: &[u8]) -> Result<Signature, IndexSignatureError> {
     let text = std::str::from_utf8(raw)
         .map_err(|_| IndexSignatureError::Malformed("not UTF-8 text".to_string()))?;
-    let bytes = BASE64
-        .decode(text.trim())
-        .map_err(|e| IndexSignatureError::Malformed(format!("not base64: {e}")))?;
-    let bytes: [u8; SIGNATURE_LENGTH] = bytes.as_slice().try_into().map_err(|_| {
-        IndexSignatureError::Malformed(format!(
-            "{} bytes, expected {SIGNATURE_LENGTH}",
-            bytes.len()
-        ))
-    })?;
-    Ok(Signature::from_bytes(&bytes))
+    parse_b64_signature(text).map_err(|e| {
+        IndexSignatureError::Malformed(match e {
+            SignatureParseError::NotBase64(e) => format!("not base64: {e}"),
+            SignatureParseError::WrongLength(n) => {
+                format!("{n} bytes, expected {SIGNATURE_LENGTH}")
+            }
+        })
+    })
 }
 
 /// Deterministic signing helpers for the desktop's tests. Compiled only for
@@ -221,6 +212,8 @@ fn parse_index_signature(raw: &[u8]) -> Result<Signature, IndexSignatureError> {
 #[cfg(any(test, feature = "plugin-index-signing-test-support"))]
 pub mod test_support {
     use super::*;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use base64::Engine as _;
     use ed25519_dalek::{Signer, SigningKey};
 
     /// A fixed test signing key (never used outside tests).

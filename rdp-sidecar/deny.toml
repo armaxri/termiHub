@@ -7,9 +7,15 @@
 # every release via Tauri `externalBin`, so it ships to users — but because it
 # is workspace-excluded, the root `cargo deny` / `cargo audit` / clippy jobs
 # never see it. This config gives the sidecar its own supply-chain gate over its
-# independent lockfile, mirroring the workspace gate in the repo-root deny.toml
-# (see .github/workflows/code-quality.yml). CI runs, from `rdp-sidecar/`:
+# independent lockfile, mirroring the workspace gate in the repo-root deny.toml.
+# CI runs, from `rdp-sidecar/`:
 #   cargo deny check advisories bans licenses sources
+# in .github/workflows/security-audit.yml -> "Security Audit (RDP sidecar)"
+# (with `cargo audit`, config rdp-sidecar/.cargo/audit.toml) on every push to
+# develop/main, DAILY over both branches and on dependency PRs (#4357), and in
+# code-quality.yml -> "RDP Sidecar Quality" on PRs touching the sidecar or what
+# it compiles from (core/, win-security/, the root Cargo.toml). The daily
+# `cargo update` chore (cargo-update-lockfile.yml) refreshes this lockfile too.
 #
 # Four gates:
 #   - advisories: YANKED-crate gate + RUSTSEC vulnerabilities. A silently
@@ -82,6 +88,11 @@ private = { ignore = true }
 [sources]
 # Every crate must come from crates.io. An unexpected registry or a git
 # dependency (a common supply-chain injection vector) fails CI.
+#
+# In-tree path crates have no external source, so neither this check nor the
+# advisories gate sees them: termihub-core (../core, first-party) and the
+# vendored forks rdp-sidecar/vendor/ironrdp-{rdpsnd,pdu,rdpdr}. The forks'
+# upstream drift and advisories are monitored through vendor/vendored-forks.json.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

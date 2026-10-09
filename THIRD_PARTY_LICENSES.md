@@ -13,12 +13,14 @@ termiHub's third-party attribution has two parts:
    installer bundles that file — it is what the in-app **About → Third-Party
    Licenses** viewer shows — and each release publishes it as
    `termiHub-<version>-THIRD_PARTY_NOTICES.txt` next to the agent binaries.
-2. **External programs and bundled native binaries — this file.** The sections
-   below document third-party programs that termiHub **installs and invokes**
-   (but does **not** bundle or redistribute), and the prebuilt native binaries
-   it **does** bundle that do not come from a lockfile (the Windows ConPTY
-   host), together with their license texts and upstream source pointers.
-   This content is also copied into the generated notices.
+2. **External programs, bundled native binaries and bundled fonts — this file.**
+   The sections below document third-party programs that termiHub **installs
+   and invokes** (but does **not** bundle or redistribute), and the prebuilt
+   native binaries and font files it **does** bundle that do not come from a
+   lockfile (the Windows ConPTY host, the Geist and MesloLGS Nerd Font Mono
+   fonts), together with their license texts and upstream source pointers.
+   This content and the license texts are also copied into the generated
+   notices.
 
 > **Scope note.** The external programs are the X servers used for SSH X11
 > forwarding (see the
@@ -50,6 +52,57 @@ license) and the compliance checklist.
   other inline-image sequences. The files are downloaded and checksum-verified at
   build time (`scripts/internal/fetch-conpty.sh`); they are not stored in this
   repository.
+
+---
+
+## Bundled fonts
+
+The frontend bundle (`frontendDist`, so every installer) carries two vendored
+font families. `pnpm notices:check` fails when a font file under `src/` or
+`public/` has no license entry (#4357).
+
+### Geist (UI typeface)
+
+- **Component:** Geist variable font, `src/assets/fonts/Geist-Variable.woff2`
+  (emitted as `assets/Geist-Variable-*.woff2`), #2673
+- **Upstream / source:** <https://github.com/vercel/geist-font>
+- **License:** SIL Open Font License 1.1 (OFL-1.1), © 2023 Vercel, in
+  collaboration with basement.studio
+- **License text:** [`licenses/OFL-1.1-geist.txt`](licenses/OFL-1.1-geist.txt)
+  (the same text sits next to the font as `src/assets/fonts/Geist-OFL.txt`)
+
+### MesloLGS Nerd Font Mono (terminal font)
+
+- **Component:** `public/fonts/MesloLGSNerdFontMono-Regular.ttf` and
+  `public/fonts/MesloLGSNerdFontMono-Bold.ttf` (copied to the bundle as
+  `fonts/`), Nerd Fonts 3.3.0 build of Meslo LG S, #123
+- **Upstream / source:** <https://github.com/ryanoasis/nerd-fonts> (v3.3.0);
+  base font <https://github.com/andreberg/Meslo-Font>
+- **Base font license:** Apache License 2.0, © 2009, 2010, 2013 André Berg —
+  [`licenses/Apache-2.0-meslo-lg.txt`](licenses/Apache-2.0-meslo-lg.txt)
+- **Nerd Fonts patcher and patched font:** MIT and OFL-1.1, © 2014 Ryan L
+  McIntyre — [`licenses/nerd-fonts-LICENSE.txt`](licenses/nerd-fonts-LICENSE.txt)
+- **Glyph sets merged in by the patcher** (from upstream `license-audit.md`):
+
+  | Glyph set                 | License               | License text                                                                                                 |
+  | ------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
+  | Codicons (Microsoft)      | CC-BY-4.0             | [`licenses/nerd-fonts-codicons-CC-BY-4.0.txt`](licenses/nerd-fonts-codicons-CC-BY-4.0.txt)                   |
+  | Devicons                  | MIT                   | [`licenses/nerd-fonts-devicons-MIT.txt`](licenses/nerd-fonts-devicons-MIT.txt)                               |
+  | Font Awesome (Fonticons)  | CC-BY-4.0 and OFL-1.1 | [`licenses/nerd-fonts-font-awesome.txt`](licenses/nerd-fonts-font-awesome.txt)                               |
+  | Font Awesome Extension    | MIT                   | [`licenses/nerd-fonts-font-awesome-extension-MIT.txt`](licenses/nerd-fonts-font-awesome-extension-MIT.txt)   |
+  | Font Logos                | Unlicense             | [`licenses/nerd-fonts-font-logos-Unlicense.txt`](licenses/nerd-fonts-font-logos-Unlicense.txt)               |
+  | IEC Power Symbols         | MIT                   | [`licenses/nerd-fonts-iec-power-symbols-MIT.txt`](licenses/nerd-fonts-iec-power-symbols-MIT.txt)             |
+  | Material Design Icons     | Apache-2.0            | [`licenses/nerd-fonts-material-design-icons.txt`](licenses/nerd-fonts-material-design-icons.txt)             |
+  | Octicons (GitHub)         | MIT                   | [`licenses/nerd-fonts-octicons-MIT.txt`](licenses/nerd-fonts-octicons-MIT.txt)                               |
+  | Pomicons                  | OFL-1.1               | [`licenses/nerd-fonts-pomicons-OFL-1.1.txt`](licenses/nerd-fonts-pomicons-OFL-1.1.txt)                       |
+  | Powerline Extra Symbols   | MIT                   | [`licenses/nerd-fonts-powerline-extra-symbols-MIT.txt`](licenses/nerd-fonts-powerline-extra-symbols-MIT.txt) |
+  | Powerline Symbols         | MIT                   | [`licenses/nerd-fonts-powerline-symbols-MIT.txt`](licenses/nerd-fonts-powerline-symbols-MIT.txt)             |
+  | Seti-UI (Original Source) | MIT                   | [`licenses/nerd-fonts-seti-ui-MIT.txt`](licenses/nerd-fonts-seti-ui-MIT.txt)                                 |
+  | Weather Icons             | OFL-1.1               | [`licenses/nerd-fonts-weather-icons-OFL-1.1.txt`](licenses/nerd-fonts-weather-icons-OFL-1.1.txt)             |
+
+  The license texts are the upstream files from the Nerd Fonts 3.3.0
+  `src/glyphs/` folders, or, where that folder has none, the glyph project's
+  own repository license.
 
 ---
 
@@ -109,6 +162,11 @@ The winget install command termiHub runs is defined by
 ---
 
 ## Maintenance
+
+When a bundled font is added, replaced or upgraded (a new Nerd Fonts release can
+add glyph sets), add or refresh its license texts under `licenses/`, its entry
+in `EXTERNAL_TEXTS` (`scripts/internal/third-party-notices.mjs`, listing the
+font files in `fonts`) and the section above.
 
 When the pinned ConPTY version changes, update the version above together with
 the pins in `src-tauri/packaging/windows/conpty.env` (that file lists the steps).

@@ -117,10 +117,15 @@ Earlier `dompurify` overrides (removed in #3482) had the same blind spot.
 
 ### Accepted risks (Rust advisories and pre-release crates)
 
-The Rust side of the Security Audit job runs `cargo audit` (config:
+The Rust side of the Security Audit workflow
+([`security-audit.yml`](../.github/workflows/security-audit.yml)) runs `cargo audit` (config:
 [`.cargo/audit.toml`](../.cargo/audit.toml)) and `cargo deny check` (config:
-[`deny.toml`](../deny.toml)) on the root workspace and on `rdp-sidecar/`. A real vulnerability or
-a yanked crate fails the job. The entries below are the only exceptions. Each is a transitive
+[`deny.toml`](../deny.toml)) on the root workspace. Its **Security Audit (RDP sidecar)** job
+runs the same two tools from `rdp-sidecar/` against the sidecar's own `Cargo.lock` (config:
+[`rdp-sidecar/.cargo/audit.toml`](../rdp-sidecar/.cargo/audit.toml) and
+[`rdp-sidecar/deny.toml`](../rdp-sidecar/deny.toml)), #4357. Both run on every push to
+`develop`/`main`, daily over both branches, and on PRs that change a dependency manifest or
+lockfile. A real vulnerability or a yanked crate fails the job. The entries below are the only exceptions. Each is a transitive
 crate pinned by an upstream dependency, with no fix we can take today, and the maintainer
 accepted each as a documented risk on 2026-10-06 (#3054, #3734) instead of waiting on upstream.
 The ignore lists carry the same rationale next to each ID.
