@@ -393,6 +393,24 @@ impl<'de> Deserialize<'de> for ConnectionConfig {
     }
 }
 
+/// Why an agent connection ended — carried on every `agent-state-change`
+/// "disconnected" event (#4447), so every window can tell a user end from a loss
+/// without having to remember who clicked what.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentEndReason {
+    /// The user disconnected the agent: hosted tabs end, nothing reconnects.
+    User,
+    /// The user shut the agent down: hosted tabs end, nothing reconnects.
+    Shutdown,
+    /// A disconnect that is followed by a reconnect — the agent-update suspend or
+    /// Force reconnect: hosted tabs stay resumable.
+    Suspend,
+    /// The connection was lost or could not be established (the I/O task gave
+    /// up, a connect failed): hosted tabs follow the normal recovery path.
+    Lost,
+}
+
 /// Event emitted when a remote connection's state changes.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteStateChangeEvent {
@@ -402,6 +420,9 @@ pub struct RemoteStateChangeEvent {
     /// failed reconnect, or when the initial connection cannot be established.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why the connection ended; set only when `state` is "disconnected" (#4447).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<AgentEndReason>,
 }
 
 /// Bounded channel capacity for output data from backends. Re-exported from

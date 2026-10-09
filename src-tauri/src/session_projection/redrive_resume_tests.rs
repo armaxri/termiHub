@@ -1836,3 +1836,7 @@ fn agent_reattach_keeps_the_saved_connection_and_fires_resume_triggers() {
         "the re-attach fires the same resume triggers as a user connect"
     );
 }
+
+/// SM2-002 (#4305): the agent-recovery folds respect the tab's current status.
+#[path = "agent_recovery_status_tests.rs"]
+mod agent_recovery_status;

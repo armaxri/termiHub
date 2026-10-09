@@ -46,7 +46,7 @@ use crate::terminal::agent_config_store::{
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_ki_prompt::{recv_excluding_prompts, AgentPromptActivity, KiResponses};
 use crate::terminal::agent_update_auth::{token_path_from_initialize, UPDATE_TOKEN_READ_TIMEOUT};
-use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+use crate::terminal::backend::{AgentEndReason, OutputSender, RemoteAgentConfig};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate_cancellable;
@@ -138,7 +138,7 @@ pub(crate) use recovery::{
 };
 #[cfg(test)]
 use state_events::parse_agent_connection_state;
-use state_events::{emit_agent_state, emit_agent_state_with_error};
+use state_events::{emit_agent_disconnected, emit_agent_state, emit_agent_state_with_error};
 use stdout_reader::read_handshake_line;
 
 /// A failed agent JSON-RPC request: the agent's error `code` (when it answered
@@ -449,6 +449,17 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Disconnect an agent; for an agent that is still connecting, cancel the
     /// connect (#4304).
     fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError>;
+
+    /// [`disconnect_agent`](Self::disconnect_agent), telling every window why the
+    /// agent ended (#4447): its `agent-state-change` "disconnected" event carries
+    /// `reason`. Default ignores the reason so mock clients need not implement it.
+    fn disconnect_agent_with_reason(
+        &self,
+        agent_id: &str,
+        _reason: AgentEndReason,
+    ) -> Result<(), TerminalError> {
+        self.disconnect_agent(agent_id)
+    }
 
     /// Check if an agent is connected.
     fn is_connected(&self, agent_id: &str) -> bool;
@@ -1542,7 +1553,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
             Ok(v) => v,
             Err(e) => {
                 if cancel_token.is_cancelled() {
-                    emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                    // Only a user Cancel / Disconnect fires the token.
+                    emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User);
                 }
                 return Err(e);
             }
@@ -1567,7 +1579,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 alive.store(false, Ordering::SeqCst);
                 io_task.abort();
                 io_budget.close();
-                emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User);
                 return Err(TerminalError::RemoteError("Connect cancelled".to_string()));
             }
             // Paired with the map entry under the same `agents` lock (#3018).
@@ -1611,9 +1623,20 @@ impl<R: Runtime> AgentConnectionManager<R> {
         Ok(result)
     }
 
-    /// Disconnect an agent, closing all sessions. An agent that is still
-    /// connecting has its connect cancelled instead (#4304).
+    /// Disconnect an agent, closing all sessions — a user Disconnect. An agent
+    /// that is still connecting has its connect cancelled instead (#4304).
     pub fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        self.disconnect_agent_with_reason(agent_id, AgentEndReason::User)
+    }
+
+    /// [`disconnect_agent`](Self::disconnect_agent) with the reason the
+    /// "disconnected" event carries to every window (#4447): a user Disconnect or
+    /// Shutdown ends the hosted tabs, a suspend keeps them resumable.
+    pub fn disconnect_agent_with_reason(
+        &self,
+        agent_id: &str,
+        reason: AgentEndReason,
+    ) -> Result<(), TerminalError> {
         let mut agents = self
             .agents
             .lock()
@@ -1658,7 +1681,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // for good, so interrupting an in-flight write cannot corrupt any
             // framing we still care about. A no-op if the task already exited.
             conn.io_task.abort();
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
+            emit_agent_disconnected(&self.app_handle, agent_id, reason);
             Ok(())
         } else if cancelled_connect {
             // The in-flight connect emits `disconnected` itself once it unwinds.
@@ -1866,8 +1889,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map(|r| r.detached_sessions)
             .unwrap_or(0);
 
-        // Now disconnect the local side
-        let _ = self.disconnect_agent(agent_id);
+        // Now disconnect the local side, telling every window it was a shutdown.
+        let _ = self.disconnect_agent_with_reason(agent_id, AgentEndReason::Shutdown);
 
         Ok(detached)
     }
@@ -2870,6 +2893,14 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
         AgentConnectionManager::disconnect_agent(self, agent_id)
+    }
+
+    fn disconnect_agent_with_reason(
+        &self,
+        agent_id: &str,
+        reason: AgentEndReason,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::disconnect_agent_with_reason(self, agent_id, reason)
     }
 
     fn is_connected(&self, agent_id: &str) -> bool {
