@@ -212,6 +212,9 @@ jobs:
         # the daemon, so it runs before any container exists) and pre-pull every
         # fixture base image with retry + backoff, so neither the per-IP pull
         # limit nor a Docker Hub outage reds the lane. No-op on macOS/Windows.
+        # The graded tree may predate the action (a dispatched `both` run checks
+        # out main): skip it there rather than fail on a missing action.
+        if: hashFiles('.github/actions/docker-hub-mirror/action.yml') != ''
         uses: ./.github/actions/docker-hub-mirror
         with:
           fixture-images: "true"
@@ -826,6 +829,9 @@ jobs:
         # #4614: the suites start alpine:latest containers; pull it through the
         # mirror.gcr.io mirror with retry + backoff so a Docker Hub pull limit
         # or outage cannot red the lane.
+        # The graded tree may predate the action (a dispatched `both` run checks
+        # out main): skip it there rather than fail on a missing action.
+        if: hashFiles('.github/actions/docker-hub-mirror/action.yml') != ''
         uses: ./.github/actions/docker-hub-mirror
         with:
           images: alpine:latest
