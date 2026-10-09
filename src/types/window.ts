@@ -116,6 +116,17 @@ export interface WindowCloseRequest {
   sessions: WindowCloseSessionRow[];
   /** Other open windows this window's tabs could be moved to (excludes self). */
   otherWindows: WindowInfo[];
+  /**
+   * Editor tabs with unsaved changes that closing the window would discard
+   * (UX2-003). Absent or empty when no editor is dirty.
+   */
+  dirtyEditors?: WindowCloseDirtyEditor[];
+}
+
+/** One unsaved editor tab listed in the window-close decision dialog. */
+export interface WindowCloseDirtyEditor {
+  tabId: string;
+  title: string;
 }
 
 /**

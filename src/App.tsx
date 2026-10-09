@@ -268,9 +268,9 @@ function App() {
   // Multi-window (#1903): intercept this window's close so live sessions are not
   // silently killed. `prepareWindowClose` decides: an empty or all-persistent
   // window closes straight away (persistent sessions detach, with a toast),
-  // while a window that would lose a non-persistent session raises the
-  // detach-vs-terminate decision dialog, which destroys the window itself once
-  // the user resolves it. The backend applies the per-OS quit policy when the
+  // while a window that would lose a non-persistent session or an unsaved
+  // editor (UX2-003) raises the close decision dialog, which destroys the
+  // window itself once the user resolves it. The backend applies the per-OS quit policy when the
   // window is actually destroyed.
   useEffect(() => {
     const win = getCurrentWindow();

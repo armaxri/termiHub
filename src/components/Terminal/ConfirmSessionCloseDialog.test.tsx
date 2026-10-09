@@ -110,6 +110,7 @@ describe("ConfirmSessionCloseDialog", () => {
         panelId: target,
         liveCount: 1,
         tabCount: 1,
+        dirtyCount: 0,
       })
     );
 
