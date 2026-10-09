@@ -17,8 +17,8 @@ evidence:
   - src/components/SplitView/SplitView.tsx:1105
   - src/components/Terminal/Terminal.tsx:1821
   - src/components/Terminal/Terminal.tsx:1822
-status: open
-resolution: ""
+status: fixed
+resolution: "#4350 — fitTerminal re-pins to the bottom only when the viewport was already there, so zoom/move keeps a scrolled-up position"
 audit: 2026-10
 commit: 663465d52
 relation: new

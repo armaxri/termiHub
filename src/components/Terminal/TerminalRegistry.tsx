@@ -308,6 +308,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       "terminal_registry",
       `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm?.cols}×${xterm?.rows}`
     );
+    // Capture whether the user was following the output BEFORE the fit: a
+    // reflow can move baseY, and only a terminal that was already at the bottom
+    // should be re-pinned there. A user who scrolled up to read history keeps
+    // their position across zoom / cross-panel moves (#4350) — the same rule
+    // the ResizeObserver path applies via userScrolledUpRef.
+    const activeBuffer = xterm?.buffer.active;
+    const wasAtBottom = !activeBuffer || activeBuffer.viewportY >= activeBuffer.baseY;
     try {
       fitAddon.fit();
       frontendLog(
@@ -319,7 +326,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
     if (xterm) {
       requestAnimationFrame(() => {
-        xterm.scrollToBottom();
+        if (wasAtBottom) {
+          xterm.scrollToBottom();
+        }
         // Force a full repaint of the viewport. fitAddon.fit() only re-renders
         // when the computed cols/rows actually change; when a terminal is
         // reparented into a same-size container — e.g. zooming a tab into the
