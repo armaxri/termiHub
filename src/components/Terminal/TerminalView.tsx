@@ -589,7 +589,7 @@ export function TerminalHost() {
   const tabGroups = useLayoutTabGroups();
   const activeTabGroupId = useActiveTabGroupId();
 
-  const allTabs: TerminalTab[] = useMemo(() => {
+  const { allTabs, onScreenTabIds } = useMemo(() => {
     // Active group: use live rootPanel (always up-to-date)
     const activeTabs = getAllLeaves(rootPanel)
       .flatMap((leaf) => leaf.tabs)
@@ -601,7 +601,11 @@ export function TerminalHost() {
       .flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs))
       .filter((tab) => tab.contentType === "terminal");
 
-    return [...activeTabs, ...inactiveTabs];
+    // Only the active group's panel-active tabs are on screen; saved panels of
+    // other groups keep `isActive` but must not hold a WebGL context (#4308).
+    const onScreen = new Set(activeTabs.filter((tab) => tab.isActive).map((tab) => tab.id));
+    const tabs: TerminalTab[] = [...activeTabs, ...inactiveTabs];
+    return { allTabs: tabs, onScreenTabIds: onScreen };
   }, [rootPanel, tabGroups, activeTabGroupId]);
 
   return (
@@ -612,6 +616,7 @@ export function TerminalHost() {
           tabId={tab.id}
           config={tab.config}
           isVisible={tab.isActive}
+          isOnScreen={onScreenTabIds.has(tab.id)}
           existingSessionId={tab.sessionId}
           initialCommand={tab.initialCommand}
           persistentConnectionId={tab.persistentConnectionId}

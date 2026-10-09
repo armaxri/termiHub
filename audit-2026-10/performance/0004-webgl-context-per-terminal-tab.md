@@ -6,8 +6,8 @@ severity: medium
 category: perf
 is_workaround: false
 subsystem: src/components/Terminal/Terminal.tsx
-status: open
-resolution: ""
+status: fixed
+resolution: "#4308 — WebGL contexts are leased only to on-screen terminals from a pool capped at 12 (LRU eviction); hidden tabs release theirs and a lost context is retried on the next show"
 audit: 2026-10
 commit: 663465d52
 relation: new
