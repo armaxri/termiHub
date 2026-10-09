@@ -29,11 +29,8 @@ use termihub_core::backends::ssh::handler::SshSession;
 /// system (matching VS Code / JetBrains conventions).
 const DEFAULT_REMOTE_PATH: &str = "~/.local/bin/termihub-agent";
 
-/// Temporary upload path for the agent binary (writable without sudo).
-const TEMP_UPLOAD_PATH: &str = "/tmp/termihub-agent-upload";
-
-/// Temporary upload path for the setup script.
-const TEMP_SCRIPT_PATH: &str = "/tmp/termihub-agent-setup.sh";
+/// File name of the setup (or error) script inside the private upload dir.
+const SETUP_SCRIPT_NAME: &str = "setup.sh";
 
 /// Delay (ms) before injecting commands to let the shell initialize.
 const SHELL_INIT_DELAY_MS: u64 = 2000;
@@ -332,13 +329,28 @@ fn run_setup_background(
     };
 
     // Windows hosts use a different upload location and an install command
-    // injected directly into the terminal (no POSIX `sh` setup script).
+    // injected directly into the terminal (no POSIX `sh` setup script). POSIX
+    // hosts upload into a fresh private dir, never a shared `/tmp` name
+    // (AGT2-002, #4287).
     let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
-    let upload_path = if is_windows {
-        agent_install::WINDOWS_UPLOAD_NAME
+    let upload_dir = if is_windows {
+        None
     } else {
-        TEMP_UPLOAD_PATH
+        match agent_install::prepare_posix_upload_dir(&sftp_session) {
+            Ok(dir) => Some(dir),
+            Err(e) => {
+                error!("Agent setup: {e}");
+                emit_progress(app_handle, agent_id, "error", &e.to_string());
+                inject_error_inline(session_manager, session_id, &e.to_string(), rt_handle);
+                return;
+            }
+        }
     };
+    let upload_path = match upload_dir.as_deref() {
+        Some(dir) => agent_install::posix_upload_path(dir),
+        None => agent_install::WINDOWS_UPLOAD_NAME.to_string(),
+    };
+    let upload_path = upload_path.as_str();
 
     // Upload binary via SFTP
     if bail_if_cancelled(cancel).is_err() {
@@ -391,7 +403,7 @@ fn run_setup_background(
         return;
     }
 
-    if is_windows {
+    let Some(upload_dir) = upload_dir else {
         run_windows_install(
             agent_id,
             session_id,
@@ -401,14 +413,14 @@ fn run_setup_background(
             rt_handle,
         );
         return;
-    }
+    };
 
     // POSIX: generate and upload the setup script, then run it.
     let remote_path = setup_config
         .remote_path
         .as_deref()
         .unwrap_or(DEFAULT_REMOTE_PATH);
-    let script = generate_setup_script(remote_path, setup_config.install_service);
+    let script = generate_setup_script(remote_path, setup_config.install_service, upload_path);
 
     if bail_if_cancelled(cancel).is_err() {
         rollback_uploaded_binary(&sftp_session, upload_path);
@@ -417,7 +429,8 @@ fn run_setup_background(
     }
 
     emit_progress(app_handle, agent_id, "script", "Uploading setup script...");
-    match upload_bytes_via_sftp(&sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
+    let script_path = format!("{upload_dir}/{SETUP_SCRIPT_NAME}");
+    match upload_bytes_via_sftp(&sftp_session, script.as_bytes(), &script_path) {
         Ok(bytes) => {
             info!("Agent setup: uploaded setup script ({} bytes)", bytes);
         }
@@ -441,7 +454,7 @@ fn run_setup_background(
     }
 
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
-    let exec_command = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
+    let exec_command = setup_exec_command(&upload_dir);
     inject_commands(session_manager, session_id, &exec_command, rt_handle);
 
     emit_progress(
@@ -474,8 +487,8 @@ fn report_setup_cancelled(
 
 /// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
 ///
-/// The binary is uploaded to a temp path (`/tmp/termihub-agent-upload` on POSIX,
-/// the upload name on Windows) before the install step moves it into place, so
+/// The binary is uploaded to a temp path (a private upload dir on POSIX, the
+/// upload name on Windows) before the install step moves it into place, so
 /// removing it fully rolls back the SFTP upload. Failures are logged only — the
 /// setup already aborted and a lingering temp file is harmless.
 fn rollback_uploaded_binary(sftp_session: &SshSession, upload_path: &str) {
@@ -714,21 +727,24 @@ fn resolve_binary(
 /// The script handles privilege escalation detection, directory creation,
 /// binary installation, verification, and optional systemd service setup.
 /// It uses `set -e` for error handling and provides verbose emoji output.
-pub fn generate_setup_script(remote_path: &str, install_service: bool) -> String {
+/// `binary_src` is where the agent binary was uploaded — inside a private
+/// upload dir validated by [`agent_install::parse_prepared_upload_dir`].
+pub fn generate_setup_script(remote_path: &str, install_service: bool, binary_src: &str) -> String {
     let service_flag = if install_service { "true" } else { "false" };
     SETUP_SCRIPT_TEMPLATE
+        .replace("__BINARY_SRC__", binary_src)
         .replace("__INSTALL_PATH__", remote_path)
         .replace("__INSTALL_SERVICE__", service_flag)
 }
 
 /// Template for the agent setup script.
 ///
-/// Placeholders `__INSTALL_PATH__` and `__INSTALL_SERVICE__` are replaced
-/// at runtime by [`generate_setup_script`].
+/// Placeholders `__BINARY_SRC__`, `__INSTALL_PATH__` and `__INSTALL_SERVICE__`
+/// are replaced at runtime by [`generate_setup_script`].
 const SETUP_SCRIPT_TEMPLATE: &str = r#"#!/bin/sh
 set -e
 
-BINARY_SRC="/tmp/termihub-agent-upload"
+BINARY_SRC="__BINARY_SRC__"
 INSTALL_PATH="__INSTALL_PATH__"
 INSTALL_SERVICE=__INSTALL_SERVICE__
 
@@ -840,8 +856,9 @@ fn inject_commands(
 /// Upload a small error script via SFTP and execute it in the terminal.
 ///
 /// This avoids the shell echoing raw `printf` commands.  The user only
-/// sees the `sh /tmp/…` invocation (same pattern as the normal setup
-/// flow) followed by the styled error output.
+/// sees the `sh …/setup.sh` invocation (same pattern as the normal setup
+/// flow) followed by the styled error output. The script goes into a fresh
+/// private upload dir, never a shared `/tmp` name (AGT2-002, #4287).
 fn inject_error_script(
     sftp_session: &SshSession,
     session_manager: &SessionManager,
@@ -850,10 +867,19 @@ fn inject_error_script(
     rt_handle: &tokio::runtime::Handle,
 ) {
     let script = generate_error_script(message);
-    match upload_bytes_via_sftp(sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
-        Ok(_) => {
-            let cmd = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
-            inject_commands(session_manager, session_id, &cmd, rt_handle);
+    let staged = agent_install::prepare_posix_upload_dir(sftp_session).and_then(|dir| {
+        let path = format!("{dir}/{SETUP_SCRIPT_NAME}");
+        upload_bytes_via_sftp(sftp_session, script.as_bytes(), &path)?;
+        Ok(dir)
+    });
+    match staged {
+        Ok(dir) => {
+            inject_commands(
+                session_manager,
+                session_id,
+                &setup_exec_command(&dir),
+                rt_handle,
+            );
         }
         Err(e) => {
             // Fallback: inject commands directly if upload fails
@@ -861,6 +887,15 @@ fn inject_error_script(
             inject_error_inline(session_manager, session_id, message, rt_handle);
         }
     }
+}
+
+/// The terminal command that runs the setup script staged in `upload_dir` and
+/// then removes the script and the (by then empty) private upload dir.
+/// `upload_dir` was validated by [`agent_install::parse_prepared_upload_dir`],
+/// so single-quoting it is safe.
+fn setup_exec_command(upload_dir: &str) -> String {
+    let script = format!("{upload_dir}/{SETUP_SCRIPT_NAME}");
+    format!("sh '{script}'; rm -f '{script}'; rmdir '{upload_dir}' 2>/dev/null\n")
 }
 
 /// Inject a red error banner directly into the terminal (fallback).
