@@ -250,11 +250,20 @@ export function applyAgentSpawnFailure(input: AgentSpawnFailureInput): AgentSpaw
 
 // ── agent-state-change / remote-state-change handlers (TFE2-001, #4309) ──────
 
+/**
+ * Why the agent ended, carried on every backend "disconnected" event (#4447):
+ * `user` / `shutdown` are user ends, `suspend` is a disconnect followed by a
+ * reconnect (agent update, Force reconnect), `lost` is anything unexpected.
+ */
+export type AgentEndReason = "user" | "shutdown" | "suspend" | "lost";
+
 /** Payload of the backend `agent-state-change` event (`session_id` is the agent id). */
 export interface AgentStateChangePayload {
   session_id: string;
   state: string;
   error?: string;
+  /** Set on "disconnected" only. */
+  reason?: AgentEndReason;
 }
 
 /** Payload of the backend `remote-state-change` event. */
@@ -346,17 +355,30 @@ async function applyAgentConnected(
 }
 
 /**
+ * Whether a "disconnected" event is a user end. The backend reason is the
+ * authority and reaches every window (#4447); the window that clicked also
+ * recorded a local intent (#4309), kept as a fallback and always consumed so it
+ * never outlives this event.
+ */
+function isUserEnd(agentId: string, reason: AgentEndReason | undefined): boolean {
+  const localIntent = consumeAgentDisconnectIntent(agentId);
+  return reason === "user" || reason === "shutdown" || localIntent;
+}
+
+/**
  * The agent's transport ended. A user Disconnect/Shutdown ends each live tab
- * cleanly (#4309); an unexpected loss arms the backend reconnect; a backend
- * give-up (`error`) reflects the server-folded `failed` state.
+ * cleanly (#4309, in every window since #4447); an unexpected loss or a suspend
+ * arms the backend reconnect; a backend give-up (`error`) reflects the
+ * server-folded `failed` state.
  */
 function applyAgentDisconnected(
   agentId: string,
   agentTerminalTabs: TerminalTab[],
-  error: string | undefined
+  error: string | undefined,
+  reason: AgentEndReason | undefined
 ): void {
   const store = useAppStore.getState();
-  const intentional = consumeAgentDisconnectIntent(agentId);
+  const intentional = isUserEnd(agentId, reason);
   let ended = 0;
   for (const tab of agentTerminalTabs) {
     if (intentional) {
@@ -392,7 +414,7 @@ export async function handleAgentStateChange(
   deps: Partial<StateChangeDeps> = {}
 ): Promise<void> {
   const { listAgentSessions, getAllTabs } = { ...DEFAULT_DEPS, ...deps };
-  const { session_id: agentId, state, error } = payload;
+  const { session_id: agentId, state, error, reason } = payload;
   frontendLog("disconnect", `agent-state-change agent=${agentId} state=${state}`);
   const store = useAppStore.getState();
   store.setAgentConnectionState(agentId, state as RemoteAgentDefinition["connectionState"], error);
@@ -407,7 +429,7 @@ export async function handleAgentStateChange(
   } else if (state === "reconnecting") {
     applyAgentReconnecting(agentId, agentTerminalTabs, error);
   } else if (state === "disconnected") {
-    applyAgentDisconnected(agentId, agentTerminalTabs, error);
+    applyAgentDisconnected(agentId, agentTerminalTabs, error, reason);
   }
 }
 

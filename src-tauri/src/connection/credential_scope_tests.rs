@@ -251,6 +251,52 @@ fn a_corrupt_state_file_starts_over() {
     assert!(state.with_extension("json.bak").exists());
 }
 
+/// PER2-002: a state file written by a newer termiHub is never overwritten —
+/// the next save is refused instead of re-stamping v1 over it.
+#[test]
+fn a_newer_state_file_is_never_overwritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(STATE_FILE_NAME);
+    let newer = r#"{"version":99,"bindings":{},"futureField":true}"#;
+    std::fs::write(&state, newer).unwrap();
+
+    FileScopes::load(state.clone()).complete_migration(SCOPE, None, &[]);
+
+    assert_eq!(std::fs::read_to_string(&state).unwrap(), newer);
+}
+
+/// PER2-005: resolving the scope of an external file written by a newer
+/// termiHub never stamps a file id into (rewrites) that file.
+#[test]
+fn a_newer_external_file_is_never_stamped() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(STATE_FILE_NAME);
+    let file = dir.path().join("shared.json");
+    let newer = r#"{"version":"99","children":[]}"#;
+    std::fs::write(&file, newer).unwrap();
+    let path = file.to_str().unwrap().to_string();
+
+    FileScopes::load(state).resolve(&path, std::slice::from_ref(&path));
+
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), newer);
+}
+
+/// ERR2-002: a second corrupt state file never replaces the first backup.
+#[test]
+fn a_second_corrupt_state_file_keeps_the_earlier_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(STATE_FILE_NAME);
+    std::fs::write(state.with_extension("json.bak"), "earlier").unwrap();
+    std::fs::write(&state, "{ not json").unwrap();
+
+    FileScopes::load(state.clone());
+
+    assert_eq!(
+        std::fs::read_to_string(state.with_extension("json.bak")).unwrap(),
+        "earlier"
+    );
+}
+
 // ── migration of pre-#3591 secrets ──────────────────────────────────────────
 
 fn alone(_: &str) -> LegacyHolders {

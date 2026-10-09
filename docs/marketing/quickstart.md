@@ -13,8 +13,9 @@ Download the build for your platform from the
 pattern `termiHub-<version>-<platform>.<ext>` (for example,
 `termiHub-0.1.0-macos-arm64.dmg`).
 
-> **Beta note:** v0.1.0 binaries are **unsigned**. On macOS, right-click the app →
-> **Open** → **Open** on first launch. On Windows, click **More info → Run anyway** if
+> **Beta note:** v0.1.0 binaries are **unsigned**. On macOS 15 and later, approve the first
+> launch in **System Settings → Privacy & Security → Open Anyway** (macOS 14 and earlier:
+> right-click the app → **Open** → **Open**). On Windows, click **More info → Run anyway** if
 > SmartScreen warns. See the README's Installation section for the full per-platform steps.
 
 ### Option B — run from source (for contributors)

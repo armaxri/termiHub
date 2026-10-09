@@ -19,8 +19,8 @@ evidence:
   - src-tauri/src/session_projection/projection.rs:554
   - src/store/slices/terminalSessionStateSlice.ts:576
   - src-tauri/src/session/manager.rs:1504
-status: open
-resolution: ""
+status: fixed
+resolution: "#4305 — agent-recovery folds act only on a tab still reconnecting; a user-stopped or ended tab keeps its status and a stopped tab's agent session is torn down"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

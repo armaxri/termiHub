@@ -243,7 +243,7 @@ macro_rules! plain_store {
     };
 }
 
-plain_store!(MacroStore, TunnelStore, EmbeddedServerStore,);
+plain_store!(EmbeddedServerStore,);
 
 /// Normalize a store that has no migration layer: refuse a `version` newer
 /// than the store's `CURRENT_VERSION`, otherwise validate through the typed
@@ -419,7 +419,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
         integrity_sensitive: false,
-        normalize: normalize_plain::<MacroStore>,
+        normalize: normalize_versioned::<MacroStore>,
         legacy_secrets: None,
         default_doc: || to_doc(&MacroStore::default()),
     },
@@ -458,7 +458,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
         integrity_sensitive: false,
-        normalize: normalize_plain::<TunnelStore>,
+        normalize: normalize_versioned::<TunnelStore>,
         legacy_secrets: None,
         default_doc: || to_doc(&TunnelStore::default()),
     },
@@ -745,6 +745,7 @@ pub fn merge(
                 version: <ConnectionStore as VersionedStore>::CURRENT_VERSION.to_string(),
                 children: build_tree(&connections, &folders),
                 agents,
+                extra: current.extra,
             };
             serde_json::to_value(&merged).map_err(|e| e.to_string())
         }

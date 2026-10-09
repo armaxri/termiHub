@@ -901,6 +901,7 @@ impl ConnectionManager {
             version: "2".to_string(),
             children: tree,
             agents: store.agents.clone(),
+            extra: Default::default(),
         };
         serde_json::to_string_pretty(&export_store)
             .context("Failed to serialize connections for export")
@@ -1647,7 +1648,9 @@ pub(crate) fn try_load_external_file(
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
-    let ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+    // Version gate (PER2-005): a file written by a newer termiHub is refused
+    // here — never parsed into this build's shape and rewritten below.
+    let ext_store = ExternalConnectionStore::parse_gated(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
     // Flatten the nested tree
@@ -1693,11 +1696,11 @@ pub(crate) fn try_load_external_file(
         // The file's own folders are kept so foldered connections survive the
         // rewrite.
         let cleaned_tree = build_tree(&connections, &folders);
+        // The file's own version and unknown top-level fields are kept
+        // (PER2-005), not re-stamped as "2" and dropped.
         let cleaned_store = ExternalConnectionStore {
-            name: ext_store.name,
-            file_id: ext_store.file_id,
-            version: "2".to_string(),
             children: cleaned_tree,
+            ..ext_store
         };
         let cleaned_data = serde_json::to_string_pretty(&cleaned_store)
             .context("Failed to serialize external file during migration")?;
@@ -1759,7 +1762,7 @@ fn read_external_store(file_path: &str) -> Result<ExternalConnectionStore> {
         return Ok(empty_external_store());
     }
 
-    serde_json::from_str(&data)
+    ExternalConnectionStore::parse_gated(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))
 }
 
@@ -1770,6 +1773,7 @@ fn empty_external_store() -> ExternalConnectionStore {
         file_id: None,
         version: "2".to_string(),
         children: Vec::new(),
+        extra: Default::default(),
     }
 }
 
@@ -1804,7 +1808,7 @@ fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<Vec
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
-    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+    let mut ext_store = ExternalConnectionStore::parse_gated(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
     let (mut conns, folders) = flatten_tree(&ext_store.children, None);
@@ -1863,6 +1867,7 @@ fn write_new_external_file(
         file_id: file_id.map(String::from),
         version: "2".to_string(),
         children: tree,
+        extra: Default::default(),
     };
     let data = serde_json::to_string_pretty(&store)
         .context("Failed to serialize external connection file")?;

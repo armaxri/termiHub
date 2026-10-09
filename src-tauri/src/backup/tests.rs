@@ -1363,3 +1363,21 @@ fn v1_workspace_section_restores_migrated() {
     assert_eq!(doc["workspaces"][0]["id"], "w1");
     assert_eq!(doc["workspaces"][0]["name"], "Dev");
 }
+
+/// PER2-002: restoring a macros/tunnels section keeps the document's unknown
+/// top-level fields (they used to be dropped by a typed round-trip).
+#[test]
+fn macros_and_tunnels_sections_keep_unknown_top_level_fields() {
+    for (id, file, field) in [
+        ("macros", "macros.json", "macros"),
+        ("tunnels", "tunnels.json", "tunnels"),
+    ] {
+        let doc = at_current(file, json!({ field: [], "futureTop": {"keep": true} }));
+        let normalized = sections::spec(id).unwrap().normalize(doc).unwrap();
+        assert_eq!(
+            normalized["futureTop"],
+            json!({"keep": true}),
+            "{id}: {normalized}"
+        );
+    }
+}

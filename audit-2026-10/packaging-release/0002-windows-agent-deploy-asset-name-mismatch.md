@@ -21,8 +21,8 @@ evidence:
   - .github/workflows/dev-build.yml:518
   - .github/workflows/dev-build.yml:636-647
   - src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs:31-34
-status: open
-resolution: ""
+status: fixed
+resolution: "#4302 — one core asset-name scheme (.exe for Windows) drives deploy URLs, sidecars, cache and bundle; dev builds publish Windows agents"
 audit: 2026-10
 commit: 663465d52
 relation: new

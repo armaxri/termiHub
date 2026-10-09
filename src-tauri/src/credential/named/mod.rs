@@ -145,8 +145,8 @@ impl VersionedStore for NamedCredentialStore {
     /// v1 (#3557): the first released schema.
     const CURRENT_VERSION: u32 = 1;
 
-    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
-        salvage_list_store::<Self, NamedCredential>(raw, file_name, "credentials")
+    fn salvage(value: serde_json::Value, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, NamedCredential>(value, file_name, "credentials")
     }
 }
 

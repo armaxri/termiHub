@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
-use crate::terminal::backend::RemoteStateChangeEvent;
+use crate::terminal::backend::{AgentEndReason, RemoteStateChangeEvent};
 
 /// Map an `agent-state-change` wire string to the store's connection-state enum.
 ///
@@ -30,12 +30,37 @@ pub(super) fn parse_agent_connection_state(state: &str) -> Option<AgentConnectio
     }
 }
 
-/// Emit an agent state change event with an optional error description.
+/// Emit an agent state change event with an optional error description. A
+/// "disconnected" emitted here is an unexpected loss ([`AgentEndReason::Lost`]);
+/// a user-initiated end goes through [`emit_agent_disconnected`] instead.
 pub(super) fn emit_agent_state_with_error<R: Runtime>(
     app_handle: &AppHandle<R>,
     agent_id: &str,
     state: &str,
     error: Option<&str>,
+) {
+    let reason = (state == "disconnected").then_some(AgentEndReason::Lost);
+    emit_agent_state_event(app_handle, agent_id, state, error, reason);
+}
+
+/// Emit `agent-state-change` = "disconnected" with the reason the agent ended
+/// (#4447): every window reads it, so a user Disconnect/Shutdown ends the hosted
+/// tabs everywhere, not only in the window where the user clicked.
+pub(super) fn emit_agent_disconnected<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    reason: AgentEndReason,
+) {
+    emit_agent_state_event(app_handle, agent_id, "disconnected", None, Some(reason));
+}
+
+/// The single choke point: fold the transition, then emit the event.
+fn emit_agent_state_event<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    state: &str,
+    error: Option<&str>,
+    reason: Option<AgentEndReason>,
 ) {
     // Server-authority fold (#2388): reflect the connection-state transition into
     // the shared `AgentsStore` at the source — this function is the single choke
@@ -57,6 +82,7 @@ pub(super) fn emit_agent_state_with_error<R: Runtime>(
             session_id: agent_id.to_string(),
             state: state.to_string(),
             error: error.map(|s| s.to_string()),
+            reason,
         },
     );
 }

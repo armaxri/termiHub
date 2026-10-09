@@ -55,8 +55,8 @@ impl VersionedStore for WolDevicesFile {
     /// unified backup (PROD-068) takes the version from here.
     const CURRENT_VERSION: u32 = 1;
 
-    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
-        salvage_list_store::<Self, WolDevice>(raw, file_name, "devices")
+    fn salvage(value: serde_json::Value, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, WolDevice>(value, file_name, "devices")
     }
 }
 

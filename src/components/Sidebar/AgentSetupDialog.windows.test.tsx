@@ -118,6 +118,26 @@ describe("AgentSetupDialog Windows support", () => {
     expect(pathInput!.value).toContain("termihub-agent.exe");
   });
 
+  it("shows the published .exe download URL for Windows hosts (#4302)", async () => {
+    detectAgentArch.mockResolvedValue(
+      makeArchInfo({ os: "Windows_NT", arch: "AMD64", archSuffix: "windows-x64" })
+    );
+
+    await renderAndDetect(makeAgent());
+
+    const url = document.querySelector(".agent-setup-dialog__url");
+    expect(url?.textContent).toBe(`${baseUrl}windows-x64.exe`);
+  });
+
+  it("shows the extensionless download URL for POSIX hosts", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+
+    await renderAndDetect(makeAgent());
+
+    const url = document.querySelector(".agent-setup-dialog__url");
+    expect(url?.textContent).toBe(`${baseUrl}linux-x64`);
+  });
+
   it("shows the systemd-service checkbox and an editable install path for POSIX hosts", async () => {
     detectAgentArch.mockResolvedValue(makeArchInfo());
 

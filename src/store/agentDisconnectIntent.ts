@@ -1,9 +1,11 @@
 /**
  * Tracks agents the user is deliberately disconnecting or shutting down (#4309).
  *
- * The backend emits the same `agent-state-change` = "disconnected" (no error)
- * for a user Disconnect/Shutdown as for a transport that dropped on its own, so
- * the frontend cannot tell them apart from the event alone. The agents slice
+ * Since #4447 the backend's "disconnected" event carries the end reason
+ * (`user` / `shutdown` / `suspend` / `lost`) to every window, and that reason is
+ * the authority. This per-window intent stays as a fallback for the window
+ * whose user clicked, in case a "disconnected" event reaches it without a user
+ * reason (a path the backend does not tag). The agents slice
  * records the intent here *before* it asks the backend to disconnect, and the
  * `agent-state-change` handler consumes it when the "disconnected" event lands:
  * a consumed intent ends the hosted tabs cleanly instead of arming a reconnect
