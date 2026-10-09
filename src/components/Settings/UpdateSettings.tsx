@@ -7,7 +7,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
-import { Button, Spinner, StatusDot } from "@/components/ui";
+import { Button, RadioGroup, Spinner, StatusDot } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import "./UpdateSettings.css";
 
@@ -165,35 +165,36 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
       {show("updateAutoCheck") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title">Auto-check for updates</h3>
-          <div className="settings-panel__radio-group" role="radiogroup">
-            <button
-              role="radio"
-              aria-checked={autoCheck}
-              className={`settings-panel__radio-option${autoCheck ? " settings-panel__radio-option--active" : ""}`}
-              onClick={() => !savingAutoCheck && handleAutoCheckToggle(true)}
-              disabled={savingAutoCheck}
-              data-testid="update-auto-check-on"
-            >
-              <div className="settings-panel__radio-option-label">On startup</div>
-              <p className="settings-panel__radio-option-desc">
-                Check for updates on startup and every 24 hours while running.
-              </p>
-            </button>
-            <button
-              role="radio"
-              aria-checked={!autoCheck}
-              className={`settings-panel__radio-option${!autoCheck ? " settings-panel__radio-option--active" : ""}`}
-              onClick={() => !savingAutoCheck && handleAutoCheckToggle(false)}
-              disabled={savingAutoCheck}
-              data-testid="update-auto-check-off"
-            >
-              <div className="settings-panel__radio-option-label">Never</div>
-              <p className="settings-panel__radio-option-desc">
-                Disable automatic checks. Use &ldquo;Check Now&rdquo; to check manually.
-              </p>
-            </button>
-          </div>
+          <h3 className="settings-panel__section-title" id="update-auto-check-title">
+            Auto-check for updates
+          </h3>
+          <RadioGroup
+            variant="cards"
+            className="settings-panel__radio-group"
+            value={autoCheck ? "on" : "off"}
+            onValueChange={(v) => {
+              if (!savingAutoCheck) void handleAutoCheckToggle(v === "on");
+            }}
+            disabled={savingAutoCheck}
+            aria-labelledby="update-auto-check-title"
+            data-testid="update-auto-check-group"
+            options={[
+              {
+                value: "on",
+                label: "On startup",
+                description: "Check for updates on startup and every 24 hours while running.",
+                "data-testid": "update-auto-check-on",
+              },
+              {
+                value: "off",
+                label: "Never",
+                description: (
+                  <>Disable automatic checks. Use &ldquo;Check Now&rdquo; to check manually.</>
+                ),
+                "data-testid": "update-auto-check-off",
+              },
+            ]}
+          />
         </div>
       )}
 

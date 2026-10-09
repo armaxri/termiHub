@@ -567,6 +567,86 @@
   background: var(--accent-color);
 }
 
+/* Card variant (UISF2-002 / UI2-006): the Radix radio IS the card, so the
+   whole card is clickable and roving-focusable. One selected style for every
+   "pick one of N described options" selector: accent border + accent tint. */
+.ui-radio-group--cards {
+  gap: var(--spacing-xs);
+}
+
+.ui-radio-group--cards[data-orientation="horizontal"] {
+  flex-wrap: nowrap;
+  gap: var(--spacing-sm);
+}
+
+.ui-radio-group--cards[data-orientation="horizontal"] > .ui-radio-card {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ui-radio-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.ui-radio-card:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+}
+
+.ui-radio-card:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.ui-radio-card[data-state="checked"] {
+  border-color: var(--accent-color);
+  background-color: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.ui-radio-card[data-state="checked"]:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+.ui-radio-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-radio-card__label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.ui-radio-card__desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-radio-card {
+    transition: none;
+  }
+}
+
 /* ── Progress (accessible div) ──────────────────────────────────────── */
 .ui-progress {
   position: relative;
@@ -1345,4 +1425,43 @@
 
 .ui-chip--denied .ui-chip__label {
   text-decoration: line-through;
+}
+
+/* Toggle chip (multi-select, aria-pressed): same selected skin as the radio
+   card — accent border + accent tint (UI2-006). */
+.ui-chip--toggle {
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm-md);
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.ui-chip--toggle:hover {
+  border-color: var(--focus-border);
+}
+
+.ui-chip--pressed {
+  border-color: var(--accent-color);
+  background-color: color-mix(in srgb, var(--accent-color) 12%, var(--bg-input));
+  color: var(--text-primary);
+}
+
+.ui-chip--pressed .ui-chip__icon {
+  color: var(--accent-color);
+}
+
+.ui-chip--pressed:hover {
+  border-color: var(--accent-color);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-chip--toggle {
+    transition: none;
+  }
 }

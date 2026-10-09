@@ -3,7 +3,7 @@ import type { SettingsField } from "@/types/schema";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { DynamicField } from "@/components/DynamicForm/DynamicField";
-import { Field, Select, SelectItem } from "@/components/ui";
+import { Field, RadioGroup, Select, SelectItem } from "@/components/ui";
 
 interface JumpHostEntryProps {
   /** The hop being edited. */
@@ -128,30 +128,27 @@ export function JumpHostEntry({
   return (
     <>
       <Field variant="settings" label="Source">
-        <div className="jump-host__source-toggle" role="radiogroup" aria-label="Jump host source">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === "saved"}
-            className={`jump-host__source-opt${mode === "saved" ? " jump-host__source-opt--active" : ""}`}
-            onClick={selectSaved}
-            disabled={noSavedAvailable && mode !== "saved"}
-            title={noSavedAvailable ? "No saved SSH connections to reference" : undefined}
-            data-testid={`jump-host-source-saved-${index}`}
-          >
-            Saved connection
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={mode === "inline"}
-            className={`jump-host__source-opt${mode === "inline" ? " jump-host__source-opt--active" : ""}`}
-            onClick={selectInline}
-            data-testid={`jump-host-source-inline-${index}`}
-          >
-            Inline configuration
-          </button>
-        </div>
+        <RadioGroup
+          variant="cards"
+          orientation="horizontal"
+          value={mode}
+          onValueChange={(v) => (v === "saved" ? selectSaved() : selectInline())}
+          aria-label="Jump host source"
+          options={[
+            {
+              value: "saved",
+              label: "Saved connection",
+              disabled: noSavedAvailable && mode !== "saved",
+              title: noSavedAvailable ? "No saved SSH connections to reference" : undefined,
+              "data-testid": `jump-host-source-saved-${index}`,
+            },
+            {
+              value: "inline",
+              label: "Inline configuration",
+              "data-testid": `jump-host-source-inline-${index}`,
+            },
+          ]}
+        />
       </Field>
 
       {mode === "saved" ? (

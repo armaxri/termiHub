@@ -17,8 +17,8 @@ evidence:
   - src/components/WorkflowSidebar/WorkflowTriggersEditor.tsx:90
   - src/components/WorkflowSidebar/WorkflowEditorDialog.css:219
   - src/components/ui/RadioGroup.tsx:17
-status: open
-resolution: ""
+status: fixed
+resolution: "#4352 — one shared ui/RadioGroup cards skin plus a toggle ui/Chip replace the three bespoke selector styles"
 audit: 2026-10
 commit: 663465d52
 relation: new

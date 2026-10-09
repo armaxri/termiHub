@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { SavedConnection } from "@/types/connection";
 import type { WorkflowTrigger } from "@/types/workflow";
 import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
+import { checkA11y } from "@/test/axe";
 
 const connections = [
   { id: "conn-1", name: "prod-web" } as SavedConnection,
@@ -129,5 +130,43 @@ describe("WorkflowTriggersEditor — on-disconnect / on-output-match (#3791)", (
     mount([{ kind: "on-disconnect", connectionIds: [] }], spy);
     click("workflow-trigger-on-disconnect");
     expect(last(spy)).toEqual([]);
+  });
+});
+
+describe("WorkflowTriggersEditor — trigger chips use the shared toggle Chip (UI2-006)", () => {
+  const CHIPS = [
+    "workflow-trigger-manual",
+    "workflow-trigger-on-connect",
+    "workflow-trigger-hotkey",
+    "workflow-trigger-on-disconnect",
+    "workflow-trigger-on-output-match",
+  ];
+
+  it("renders every trigger as an aria-pressed toggle button", () => {
+    mount([{ kind: "manual" }], vi.fn());
+    for (const id of CHIPS) {
+      const chip = query(id) as HTMLElement;
+      expect(chip.tagName).toBe("BUTTON");
+      expect(chip.getAttribute("type")).toBe("button");
+      expect(chip.classList.contains("ui-chip--toggle")).toBe(true);
+    }
+    expect(query("workflow-trigger-manual")?.getAttribute("aria-pressed")).toBe("true");
+    expect(query("workflow-trigger-hotkey")?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("toggles aria-pressed and the trigger list on click", () => {
+    const spy = vi.fn();
+    mount([], spy);
+    click("workflow-trigger-on-connect");
+    expect(query("workflow-trigger-on-connect")?.getAttribute("aria-pressed")).toBe("true");
+    expect(last(spy)?.some((t) => t.kind === "on-connect")).toBe(true);
+    click("workflow-trigger-on-connect");
+    expect(query("workflow-trigger-on-connect")?.getAttribute("aria-pressed")).toBe("false");
+    expect(last(spy)?.some((t) => t.kind === "on-connect")).toBe(false);
+  });
+
+  it("has no a11y violations", async () => {
+    mount([{ kind: "manual" }], vi.fn());
+    expect(await checkA11y(container)).toHaveNoViolations();
   });
 });

@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { SecuritySettings } from "./SecuritySettings";
+import { checkA11y } from "@/test/axe";
+import { pressRadioArrow } from "@/test/radioKeyboard";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -756,6 +758,43 @@ describe("SecuritySettings", () => {
       expect(panel.textContent).toContain("none of your 1 credential could be removed");
       expect(query("migration-remaining")?.textContent).toContain("conn-9:password");
       expect(mockedToast.error).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("storage-mode selector semantics (UISF2-002)", () => {
+    beforeEach(() => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "none", status: "unlocked" },
+      });
+    });
+
+    it("is a named radiogroup that owns radios (not aria-pressed toggles)", async () => {
+      await render();
+      const group = query("storage-mode-group") as HTMLElement;
+      expect(group.getAttribute("role")).toBe("radiogroup");
+      expect(group.getAttribute("aria-label")).toBe("Storage mode");
+      for (const id of ["storage-mode-master-password", "storage-mode-os-keychain"]) {
+        const el = query(id) as HTMLElement;
+        expect(el.getAttribute("role")).toBe("radio");
+        expect(el.hasAttribute("aria-pressed")).toBe(false);
+        expect(el.getAttribute("aria-checked")).toBe("false");
+      }
+      expect(query("storage-mode-none")?.getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("starts the switch flow for the option reached with an arrow key", async () => {
+      await render();
+      const none = query("storage-mode-none") as HTMLElement;
+      act(() => none.focus());
+      await pressRadioArrow(none, "ArrowUp");
+      expect(document.activeElement).toBe(query("storage-mode-os-keychain"));
+      // The switch still needs confirmation; the confirm step is shown.
+      expect(query("confirm-switch-confirm-btn")).not.toBeNull();
+    });
+
+    it("has no a11y violations", async () => {
+      await render({ visibleFields: new Set(["credentialStorageMode"]) });
+      expect(await checkA11y(container)).toHaveNoViolations();
     });
   });
 });

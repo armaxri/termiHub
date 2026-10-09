@@ -259,33 +259,6 @@
   gap: var(--spacing-xs-sm);
 }
 
-.workflow-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xxs) var(--spacing-sm-md);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-full);
-  background: var(--bg-input);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition:
-    border-color var(--transition-fast),
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-
-.workflow-chip:hover {
-  border-color: var(--focus-border);
-}
-
-.workflow-chip--active {
-  border-color: var(--accent-color);
-  background: var(--accent-color);
-  color: var(--text-on-accent);
-}
-
 .workflow-triggers__detail {
   display: flex;
   flex-direction: column;
@@ -314,10 +287,4 @@
   gap: var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .workflow-chip {
-    transition: none;
-  }
 }

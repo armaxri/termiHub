@@ -1,5 +1,5 @@
 import { Zap, Play, Keyboard, Unplug, ScanText } from "lucide-react";
-import { Input, Field } from "@/components/ui";
+import { Chip, Input, Field } from "@/components/ui";
 import { t } from "@/i18n/catalog";
 import type { WorkflowTrigger, WorkflowTriggerKind } from "@/types/workflow";
 import type { SavedConnection } from "@/types/connection";
@@ -85,51 +85,41 @@ export function WorkflowTriggersEditor({
   return (
     <div className="workflow-triggers" data-testid="workflow-editor-triggers">
       <div className="workflow-triggers__chips">
-        <button
-          type="button"
-          className={`workflow-chip${manual ? " workflow-chip--active" : ""}`}
-          aria-pressed={manual !== undefined}
-          onClick={toggleManual}
+        <Chip
+          label="Manual"
+          icon={<Play size={11} />}
+          pressed={manual !== undefined}
+          onPressedChange={toggleManual}
           data-testid="workflow-trigger-manual"
-        >
-          <Play size={11} aria-hidden="true" /> Manual
-        </button>
-        <button
-          type="button"
-          className={`workflow-chip${onConnect ? " workflow-chip--active" : ""}`}
-          aria-pressed={onConnect !== undefined}
-          onClick={toggleOnConnect}
+        />
+        <Chip
+          label="On connect"
+          icon={<Zap size={11} />}
+          pressed={onConnect !== undefined}
+          onPressedChange={toggleOnConnect}
           data-testid="workflow-trigger-on-connect"
-        >
-          <Zap size={11} aria-hidden="true" /> On connect
-        </button>
-        <button
-          type="button"
-          className={`workflow-chip${hotkey ? " workflow-chip--active" : ""}`}
-          aria-pressed={hotkey !== undefined}
-          onClick={toggleHotkey}
+        />
+        <Chip
+          label="Hotkey"
+          icon={<Keyboard size={11} />}
+          pressed={hotkey !== undefined}
+          onPressedChange={toggleHotkey}
           data-testid="workflow-trigger-hotkey"
-        >
-          <Keyboard size={11} aria-hidden="true" /> Hotkey
-        </button>
-        <button
-          type="button"
-          className={`workflow-chip${onDisconnect ? " workflow-chip--active" : ""}`}
-          aria-pressed={onDisconnect !== undefined}
-          onClick={toggleOnDisconnect}
+        />
+        <Chip
+          label={t("workflow.trigger.onDisconnect.label")}
+          icon={<Unplug size={11} />}
+          pressed={onDisconnect !== undefined}
+          onPressedChange={toggleOnDisconnect}
           data-testid="workflow-trigger-on-disconnect"
-        >
-          <Unplug size={11} aria-hidden="true" /> {t("workflow.trigger.onDisconnect.label")}
-        </button>
-        <button
-          type="button"
-          className={`workflow-chip${onOutputMatch ? " workflow-chip--active" : ""}`}
-          aria-pressed={onOutputMatch !== undefined}
-          onClick={toggleOnOutputMatch}
+        />
+        <Chip
+          label={t("workflow.trigger.onOutputMatch.label")}
+          icon={<ScanText size={11} />}
+          pressed={onOutputMatch !== undefined}
+          onPressedChange={toggleOnOutputMatch}
           data-testid="workflow-trigger-on-output-match"
-        >
-          <ScanText size={11} aria-hidden="true" /> {t("workflow.trigger.onOutputMatch.label")}
-        </button>
+        />
       </div>
 
       {onConnect ? (
