@@ -49,6 +49,7 @@ export const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
   accentColor: "--accent-color",
   accentHover: "--accent-hover",
   focusBorder: "--focus-border",
+  textOnAccent: "--text-on-accent",
 
   colorSuccess: "--color-success",
   colorWarning: "--color-warning",

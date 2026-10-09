@@ -59,6 +59,7 @@ export const darkTheme: ThemeDefinition = {
     accentColor: "#3d7de8",
     accentHover: "#5a94f0",
     focusBorder: "#3d7de8",
+    textOnAccent: "#ffffff",
 
     // Status
     colorSuccess: "#7dcf88",

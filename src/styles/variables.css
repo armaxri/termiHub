@@ -205,9 +205,11 @@
      the underlying terminal/desktop legible rather than fully obscuring it. */
   --overlay-blur-sm: blur(2px);
 
-  /* Foreground on the accent-colored (primary) surface. Static: the accent is
-     blue in every current theme, so white-on-accent reads correctly across all
-     of them. Replaces hardcoded #fff, which broke the light theme. */
+  /* Foreground on the accent-colored (primary) surface. A theme token
+     (ThemeColors.textOnAccent): the built-in themes pin white on their blue
+     accents, while custom and plugin themes derive it from the accent by WCAG
+     contrast, so a light accent gets dark text (UI2-003). This :root value is
+     the dark-theme default for pre-engine rendering. */
   --text-on-accent: #ffffff;
 
   /* Transitions — premium spring-like easing */
