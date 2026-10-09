@@ -154,7 +154,7 @@ core/src/                     # Shared Rust core library (termihub-core)
   errors.rs                   # CoreError, SessionError, FileError
   files/                      # FileBrowser trait, LocalFileBrowser, FileEntry, utilities
   monitoring/                 # SystemStats, CpuCounters, StatsCollector trait, parsers
-  output/                     # OutputCoalescer, screen-clear detection
+  output/                     # OutputCoalescer, OSC 133 prompt-mark detection
   protocol/                   # JSON-RPC message types and error codes
   session/                    # Transport traits (OutputSink, ProcessSpawner, ProcessHandle),
                               # shell/SSH/Docker/serial command builders and validators
