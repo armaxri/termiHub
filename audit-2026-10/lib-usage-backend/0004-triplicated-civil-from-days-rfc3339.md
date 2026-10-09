@@ -15,8 +15,8 @@ evidence:
   - core/src/diagnostics/crash_report.rs:309
   - core/src/embedded_servers/activity.rs:361
   - core/Cargo.toml:173
-status: open
-resolution: ""
+status: fixed
+resolution: "#4363 — core formats RFC 3339 through one chrono-backed util::time; the three civil_from_days copies are gone"
 audit: 2026-10
 commit: 663465d52
 relation: new

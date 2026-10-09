@@ -13,8 +13,8 @@ evidence:
   - agent/src/io/auth.rs:194
   - core/src/embedded_servers/http_server.rs:19
   - core/src/embedded_servers/http_server.rs:283
-status: open
-resolution: ""
+status: fixed
+resolution: "#4363 — master-password and agent listen-token compares use subtle::ConstantTimeEq; bespoke helpers deleted"
 audit: 2026-10
 commit: 663465d52
 relation: new

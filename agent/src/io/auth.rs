@@ -49,6 +49,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -138,7 +139,10 @@ impl ListenAuthToken {
     /// length nor how many leading bytes match can leak through timing.
     pub fn verify(&self, candidate: &str) -> bool {
         let candidate_digest = Sha256::digest(candidate.as_bytes());
-        ct_eq(&self.digest, candidate_digest.as_slice())
+        self.digest
+            .as_slice()
+            .ct_eq(candidate_digest.as_slice())
+            .into()
     }
 }
 
@@ -182,24 +186,6 @@ pub(crate) fn generate_token_string() -> String {
     bytes[..16].copy_from_slice(Uuid::new_v4().as_bytes());
     bytes[16..].copy_from_slice(Uuid::new_v4().as_bytes());
     hex::encode(bytes)
-}
-
-/// Constant-time equality of two byte slices.
-///
-/// Both callers pass SHA-256 digests, so the slices are always 32 bytes and the
-/// length guard never varies with secret content. The XOR-accumulate visits every
-/// byte with no early exit, and [`std::hint::black_box`] stops the optimizer from
-/// short-circuiting the fold — so the comparison time is independent of where (or
-/// whether) the inputs first differ.
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    std::hint::black_box(diff) == 0
 }
 
 /// Write `token` to `path`, creating it owner-only and durably.
@@ -379,13 +365,6 @@ mod tests {
             !token.verify("s3cr3t-token-value-longer"),
             "longer rejected"
         );
-    }
-
-    #[test]
-    fn ct_eq_matches_only_identical_equal_length_slices() {
-        assert!(ct_eq(&[1, 2, 3], &[1, 2, 3]));
-        assert!(!ct_eq(&[1, 2, 3], &[1, 2, 4]));
-        assert!(!ct_eq(&[1, 2, 3], &[1, 2]));
     }
 
     #[test]

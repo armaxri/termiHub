@@ -491,23 +491,17 @@ const INITIALIZE_LEGACY_KEYS: [(&str, &str); 4] = [
     ("updateAuthTokenPath", "update_auth_token_path"),
 ];
 
-/// Parse a `MAJOR.MINOR.PATCH` protocol version into a comparable tuple.
-fn parse_protocol_version(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.trim().split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    parts.next().is_none().then_some((major, minor, patch))
-}
-
 /// Whether a client that negotiated `negotiated` reads the camelCase
-/// `initialize` envelope (#3051). An unparseable version reads as legacy.
+/// `initialize` envelope (#3051). Versions parse through the shared
+/// [`crate::util::version::parse_version`]; an unparseable version reads as
+/// legacy.
 pub fn initialize_result_is_camel_case(negotiated: &str) -> bool {
+    use crate::util::version::parse_version;
     match (
-        parse_protocol_version(negotiated),
-        parse_protocol_version(INITIALIZE_CAMEL_CASE_SINCE),
+        parse_version(negotiated),
+        parse_version(INITIALIZE_CAMEL_CASE_SINCE),
     ) {
-        (Some(v), Some(since)) => v >= since,
+        (Ok(v), Ok(since)) => v >= since,
         _ => false,
     }
 }

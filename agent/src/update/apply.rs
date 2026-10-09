@@ -23,8 +23,8 @@ use super::build_version::{VersionPolicy, VersionPolicyError};
 #[cfg(unix)]
 use super::signature::SignaturePolicy;
 use super::signature::UpdateSignatureError;
-use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
+use termihub_core::util::version;
 
 /// Why a requested update binary path was refused as an apply source (AGT-003).
 ///
