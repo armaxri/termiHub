@@ -123,6 +123,76 @@ describe("Modal", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  describe("initialFocusRef (#4332)", () => {
+    /** A trigger that opens the modal; the modal's field is not its first tabbable. */
+    function Harness({ withRef }: { withRef: boolean }) {
+      const [open, setOpen] = React.useState(false);
+      const fieldRef = React.useRef<HTMLInputElement>(null);
+      return (
+        <>
+          <button type="button" data-testid="trigger" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          {open ? (
+            <Modal
+              data-testid="modal"
+              open
+              onOpenChange={setOpen}
+              title="Pick"
+              initialFocusRef={withRef ? fieldRef : undefined}
+            >
+              <input ref={fieldRef} data-testid="modal-field" />
+            </Modal>
+          ) : null}
+        </>
+      );
+    }
+
+    function openFromTrigger(withRef: boolean): HTMLButtonElement {
+      render(<Harness withRef={withRef} />);
+      const trigger = document.querySelector<HTMLButtonElement>('[data-testid="trigger"]')!;
+      act(() => trigger.focus());
+      act(() => trigger.click());
+      return trigger;
+    }
+
+    it("focuses the given element on open instead of the first tabbable (the X)", () => {
+      openFromTrigger(true);
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="modal-field"]'));
+    });
+
+    it("without it, Radix focuses the first tabbable as before", () => {
+      openFromTrigger(false);
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="modal-close"]'));
+    });
+
+    it("still returns focus to the trigger once the modal closes and unmounts", async () => {
+      const trigger = openFromTrigger(true);
+      act(() => (document.querySelector('[data-testid="modal-close"]') as HTMLElement).click());
+      expect(document.querySelector('[data-testid="modal"]')).toBeNull();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it("does not pull focus back from an element that claimed it on close", async () => {
+      openFromTrigger(true);
+      const elsewhere = document.createElement("input");
+      document.body.appendChild(elsewhere);
+      try {
+        act(() => (document.querySelector('[data-testid="modal-close"]') as HTMLElement).click());
+        act(() => elsewhere.focus());
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        expect(document.activeElement).toBe(elsewhere);
+      } finally {
+        elsewhere.remove();
+      }
+    });
+  });
+
   describe("IME composition (#3767)", () => {
     function openWithInput(onOpenChange: (open: boolean) => void): HTMLInputElement {
       render(

@@ -9,8 +9,8 @@ subsystem: "src/components/WorkspaceEditor"
 evidence:
   - src/components/WorkspaceEditor/ConnectionPicker.tsx:74-84
   - src/components/WorkspaceEditor/LayoutDesigner.tsx:120
-status: open
-resolution: ""
+status: fixed
+resolution: "#4332 — ConnectionPicker rebuilt on ui/Modal: labelled dialog, focus trap, Escape, focus restore, combobox + listbox search"
 audit: 2026-10
 commit: 663465d52
 relation: new
