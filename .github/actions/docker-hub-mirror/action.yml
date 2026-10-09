@@ -43,11 +43,11 @@ runs:
       run: |
         set -euo pipefail
         helper="$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh"
-        read -r -a images <<<"$IMAGES" || true
+        read -r -a pull_list <<<"$IMAGES" || true
         if [ "$FIXTURE_IMAGES" = "true" ]; then
-          mapfile -t -O "${#images[@]}" images < <("$helper" fixture-images)
+          mapfile -t -O "${#pull_list[@]}" pull_list < <("$helper" fixture-images)
         fi
-        "$helper" pull "${images[@]}"
+        "$helper" pull "${pull_list[@]}"
 
     - name: Pre-pull Podman images (retried with backoff)
       if: runner.os == 'Linux' && inputs.podman-images != ''
@@ -57,5 +57,5 @@ runs:
         CONTAINER_CMD: podman
       run: |
         set -euo pipefail
-        read -r -a images <<<"$IMAGES" || true
-        "$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh" pull "${images[@]}"
+        read -r -a pull_list <<<"$IMAGES" || true
+        "$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh" pull "${pull_list[@]}"
