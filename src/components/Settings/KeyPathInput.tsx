@@ -6,6 +6,7 @@ import { validateSshKey, SshKeyValidation } from "@/services/api";
 import { Input, Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 
 /** Debounce (ms) before validating a typed key path against the backend. */
 const VALIDATION_DEBOUNCE_MS = 300;
@@ -70,11 +71,9 @@ export function KeyPathInput({
   }, [value, debouncedValidate]);
 
   const filtered = useMemo(() => {
-    if (!value) return keyFiles;
-    const lower = value.toLowerCase();
-    return keyFiles.filter(
-      (f) => f.name.toLowerCase().includes(lower) || f.path.toLowerCase().includes(lower)
-    );
+    const q = value.trim();
+    if (!q) return keyFiles;
+    return keyFiles.filter((f) => itemMatchesQuery(f, (k) => [k.name, k.path], q));
   }, [keyFiles, value]);
 
   // Reset highlight when filtered list changes

@@ -6,8 +6,8 @@ severity: info
 category: ux
 is_workaround: false
 subsystem: "src (filter UIs)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4372 — useListFilter delegates to textFieldsMatchQuery; Quick Connect, Recent Sessions and the workspace ConnectionPicker use it"
 audit: 2026-10
 commit: "663465d52"
 relation: new

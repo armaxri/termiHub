@@ -1,4 +1,5 @@
 import { Modal, Button, Checkbox } from "@/components/ui";
+import { getBasename } from "@/utils/paths";
 import "./OpenSavedFileDialog.css";
 
 interface OpenSavedFileDialogProps {
@@ -27,7 +28,7 @@ export function OpenSavedFileDialog({
   onOpen,
   onCancel,
 }: OpenSavedFileDialogProps) {
-  const fileName = filePath.split(/[/\\]/).pop() || filePath;
+  const fileName = getBasename(filePath);
 
   return (
     <Modal

@@ -20,25 +20,19 @@ import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybin
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
 import { Button, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
-import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import "./KeyboardSettings.css";
 
 /**
- * Case-insensitive match of a keybinding against the (already normalized) query
- * on its label, action id, category, or its currently-effective combo string.
- * Module-level so the {@link useListFilter} memo stays stable across renders.
+ * Searchable text of a keybinding: its label, action id, category, and its
+ * currently-effective combo string. Module-level so the {@link useListFilter}
+ * memo stays stable across renders.
  */
-const keybindingMatches: ListFilterMatcher<KeyBinding> = (binding, query) => {
-  if (!query) return true;
+const keybindingFields: ListFilterFields<KeyBinding> = (binding) => {
   const effective = getEffectiveCombo(binding.action);
   const combo = effective ?? binding.winLinuxDefault;
   const comboStr = isUnboundCombo(effective) ? "unbound" : combo ? serializeBinding(combo) : "";
-  return (
-    binding.label.toLowerCase().includes(query) ||
-    binding.action.toLowerCase().includes(query) ||
-    binding.category.toLowerCase().includes(query) ||
-    comboStr.toLowerCase().includes(query)
-  );
+  return [binding.label, binding.action, binding.category, comboStr];
 };
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
@@ -89,11 +83,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const [, forceRender] = useState(0);
 
   const bindings = getDefaultBindings();
-  const {
-    query,
-    setQuery,
-    filtered: filteredBindings,
-  } = useListFilter(bindings, keybindingMatches);
+  const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, keybindingFields);
 
   const persistOverrides = useCallback(() => {
     const overrideEntries = getOverrides();

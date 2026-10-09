@@ -4,6 +4,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import type { TransferDirection } from "@/types/transfer";
 import { errorMessage } from "@/utils/errorMessage";
+import { getBasename } from "@/utils/paths";
 
 /**
  * Shared transfer-feedback helpers used by both the SFTP (`useFileSystem`) and
@@ -12,12 +13,6 @@ import { errorMessage } from "@/utils/errorMessage";
  * the pending toast, the single-terminal-toast rule, and the Transfer-Queue seed
  * — over their respective dedicated-channel commands (`sftp_*` vs `session_*`).
  */
-
-/** Basename of a POSIX/Windows path (the file name the queue row displays). */
-export function baseName(path: string): string {
-  const parts = path.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] || path;
-}
 
 /** Extract a human-readable message from an unknown transfer error. */
 function transferErrorMessage(error: unknown): string {
@@ -45,7 +40,7 @@ export function seedTransferQueueRow(seed: {
       id: seed.transferId,
       sessionId: seed.sessionId,
       direction: seed.direction,
-      name: baseName(seed.remotePath),
+      name: getBasename(seed.remotePath),
       path: seed.remotePath,
     },
   });

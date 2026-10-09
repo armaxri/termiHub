@@ -21,21 +21,16 @@ import { errorMessage } from "@/utils/errorMessage";
 import type { FileChannelUnavailable } from "@/types/generated/FileChannelUnavailable";
 import type { FileSideChannel } from "@/types/generated/FileSideChannel";
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
+import { getBasename } from "@/utils/paths";
 
 /** `1 file` / `3 files`. */
 export function countLabel(count: number, noun = "file"): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** The last path segment of a local path (either separator). */
-function baseName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? path;
-}
-
 /** What a drop of `paths` uploads: the one name, or a count. */
 export function dropSubject(paths: string[]): string {
-  return paths.length === 1 ? baseName(paths[0]) : countLabel(paths.length);
+  return paths.length === 1 ? getBasename(paths[0]) : countLabel(paths.length);
 }
 
 /** `user@host`, or just the host when the account is unknown. */

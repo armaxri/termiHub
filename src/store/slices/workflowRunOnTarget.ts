@@ -315,7 +315,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // streaming its output into the LogViewer (the app's observable surface)
   // and forwarding a cancel from the run's signal to the backend.
   const runLocalProcess: WorkflowRunLocalProcessSeam = async (program, args, options) => {
-    const processRunId = `wf-lp-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const processRunId = newId(`wf-lp-${workflowId}`);
     frontendLog("workflow", `local process starting: ${[program, ...args].join(" ")}`);
 
     // Open the inline run-output surface for this spawn (#1865). A fresh

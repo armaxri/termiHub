@@ -4,7 +4,7 @@ import { open } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin } from "@/types/plugin";
 import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
-import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
@@ -18,13 +18,10 @@ import {
 } from "@/plugins/pluginUpdateStore";
 
 /**
- * Case-insensitive match of a plugin against the (already normalized) query on
- * its manifest name. Module-level so the {@link useListFilter} memo stays stable.
+ * Searchable text of a plugin: its manifest name. Module-level so the
+ * {@link useListFilter} memo stays stable.
  */
-const pluginNameMatches: ListFilterMatcher<InstalledPlugin> = (plugin, query) => {
-  if (!query) return true;
-  return plugin.manifest.name.toLowerCase().includes(query);
-};
+const pluginNameFields: ListFilterFields<InstalledPlugin> = (plugin) => [plugin.manifest.name];
 
 /**
  * The Plugins sidebar view (#1997): a search box, the installed-plugin list, and
@@ -72,7 +69,7 @@ export function PluginManagerView() {
     }
   }, [checkForUpdates, plugins]);
 
-  const { query, setQuery, filtered } = useListFilter(plugins, pluginNameMatches);
+  const { query, setQuery, filtered } = useListFilter(plugins, pluginNameFields);
 
   const handlePickFile = useCallback(async () => {
     let filePath: string | null;

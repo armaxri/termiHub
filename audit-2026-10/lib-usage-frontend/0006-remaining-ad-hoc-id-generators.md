@@ -6,8 +6,8 @@ severity: info
 category: arch
 is_workaround: false
 subsystem: "src (ids)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4372 — group, panel, ws-group, wf-lp, network-run and probe ids now come from newId(); module counters deleted"
 audit: 2026-10
 commit: "663465d52"
 relation: new
