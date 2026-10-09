@@ -15,7 +15,7 @@ use crate::credential::CredentialManager;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_cancel::AgentDeployCancellation;
 use crate::terminal::agent_deploy::{
-    AgentDeployConfig, AgentDeployResult, AgentProbeResult, ConnectedHost,
+    AgentDeployConfig, AgentDeployResult, ConnectedHost,
 };
 use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
@@ -857,24 +857,6 @@ pub fn cancel_agent_setup(
 ) -> Result<bool, TerminalError> {
     info!(agent_id, "Cancelling in-flight agent deploy/setup");
     Ok(cancellation.cancel(&agent_id))
-}
-
-/// Probe a remote host for an existing agent binary.
-///
-/// Checks if `termihub-agent` is installed and what version it is,
-/// without modifying anything on the remote host.
-#[tauri::command]
-pub async fn probe_remote_agent(
-    config: RemoteAgentConfig,
-    expected_version: Option<String>,
-) -> Result<AgentProbeResult, TerminalError> {
-    info!(host = %config.host, "Probing remote host for agent");
-    let version = expected_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-    tauri::async_runtime::spawn_blocking(move || {
-        crate::terminal::agent_deploy::probe_remote_agent(&config, &version)
-    })
-    .await
-    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// List the hosts connected to an agent **other than this desktop** (#4038).
