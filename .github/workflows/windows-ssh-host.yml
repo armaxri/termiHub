@@ -36,18 +36,29 @@ on:
     - cron: "17 4 * * *"
   workflow_dispatch:
   pull_request:
+    # Every source the suite exercises (#4618): the desktop deploy/connect
+    # code, the core SSH backend (the shell-integration terminal of #4143 runs
+    # remote_shell.rs / connector.rs / mod.rs and session/shell.rs's setup
+    # command), the core Docker listing the agent answers MT-AGENT-28 with, and
+    # the agent's daemon and session code. Kept in sync by the drift test in
+    # scripts/internal/ci-changes.test.mjs ("live lane path filters").
     paths:
       - "src-tauri/src/terminal/agent_deploy.rs"
       - "src-tauri/src/terminal/agent_install.rs"
+      - "src-tauri/src/terminal/agent_binary.rs"
       - "src-tauri/src/terminal/backend.rs"
-      - "src-tauri/src/terminal/agent_manager/reconnect.rs"
-      - "src-tauri/src/terminal/agent_manager/live_channel_support.rs"
-      - "src-tauri/src/terminal/agent_manager/windows_ssh_host_tests.rs"
+      - "src-tauri/src/terminal/jsonrpc.rs"
+      - "src-tauri/src/terminal/agent_manager/**"
       - "src-tauri/src/utils/remote_exec.rs"
-      - "core/src/backends/ssh/auth.rs"
+      - "src-tauri/src/utils/ssh_auth.rs"
+      - "core/src/backends/ssh/**"
+      - "core/src/session/shell.rs"
+      - "core/src/backends/docker/list.rs"
+      - "core/src/backends/docker/runtime.rs"
       - "agent/tests/native_sshd_agent_backends.rs"
       - "agent/tests/common/**"
       - "agent/src/daemon/**"
+      - "agent/src/session/**"
       - "scripts/internal/run-windows-ssh-host-suite.sh"
       - "scripts/internal/native-sshd-fixture.*"
       - ".github/workflows/windows-ssh-host.yml"
