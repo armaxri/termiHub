@@ -11,6 +11,15 @@
 //! termihub-plugin-sign --key acme.key my-plugin-1.0.0.termihub-plugin
 //! ```
 
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` -> Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+// scripts/internal/check-crate-policy.mjs fails CI if a crate root drops it.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

@@ -13,6 +13,15 @@
 //! out on stdout while applying host input read from stdin. All logging goes to
 //! stderr so it never corrupts the binary IPC stream on stdout.
 
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` -> Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+// scripts/internal/check-crate-policy.mjs fails CI if a crate root drops it.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 // Compressed rdpsnd audio decoding (#1812): gated to the same platforms as the
 // audio sink and its `symphonia` decoder dependency (macOS/Windows/Linux).
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]

@@ -54,15 +54,13 @@ fn non_empty(dn: String) -> Option<String> {
 /// reports.
 pub fn public_key_fingerprint(public_key: &[u8]) -> String {
     let digest = Sha256::digest(public_key);
-    let hex = hex::encode_upper(digest);
-    let mut out = String::with_capacity("sha256:".len() + hex.len() + hex.len() / 2);
+    let mut out = String::with_capacity("sha256:".len() + digest.len() * 3);
     out.push_str("sha256:");
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+    for (i, byte) in digest.iter().enumerate() {
         if i > 0 {
             out.push(':');
         }
-        // `chunk` is always valid ASCII hex from `encode_upper`.
-        out.push_str(std::str::from_utf8(chunk).expect("hex is ascii"));
+        out.push_str(&hex::encode_upper([*byte]));
     }
     out
 }

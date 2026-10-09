@@ -18,6 +18,15 @@
 //!   per-user policy compares; [`DaclSummary`] reads a DACL back so tests can
 //!   assert exactly which ACEs an object carries.
 
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` -> Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+// scripts/internal/check-crate-policy.mjs fails CI if a crate root drops it.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 use std::fmt::Write as _;
 use std::io;
 
