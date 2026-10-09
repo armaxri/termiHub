@@ -17,6 +17,7 @@ import lucideTags from "@/data/lucide-tags.json";
 import { compareNames } from "@/utils/locale";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { isLocalConnectionConfig } from "@/utils/typedConnectionConfig";
+import { getBasename } from "@/utils/paths";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -42,10 +43,7 @@ function getShellIconInfo(shellType: ShellType | string | undefined): {
   // WSL must be checked first because it uses the "wsl:" prefix, not a path.
   if (shellType.startsWith("wsl:")) return { iconNode: labIcons.penguin as IconNode };
   // For path-based values, compare against the basename.
-  const base =
-    shellType.includes("/") || shellType.includes("\\")
-      ? (shellType.split(/[/\\]/).pop() ?? shellType).toLowerCase()
-      : shellType.toLowerCase();
+  const base = getBasename(shellType).toLowerCase();
   if (base === "powershell" || base === "powershell.exe" || base === "pwsh" || base === "pwsh.exe")
     return { component: BicepsFlexed };
   if (shellType === "gitbash" || base.includes("gitbash")) return { component: GitBranch };
