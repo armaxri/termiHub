@@ -67,7 +67,10 @@
 //!   launched with the same environment) is running the staged bytes. The hook
 //!   then **stands down** ([`TestPendingUpdate::already_applied`]) instead of
 //!   re-staging an update that is already installed — the same binary evidence
-//!   the #1551 startup prune uses.
+//!   the #1551 startup prune uses, plus the recorded digest: the re-execed
+//!   agent removes the applied upload at startup (#4287), so for every later
+//!   worker the running binary hashing to `…_SHA256` is the only evidence left
+//!   (#4526).
 //!
 //! # Interaction with the #1551 startup prune
 //!
@@ -98,6 +101,7 @@ use std::path::{Path, PathBuf};
 use tracing::info;
 
 use super::apply::files_identical;
+use super::checksum::verify_file_checksum;
 use super::notify_update_available;
 use super::signature::signature_sidecar_path;
 use crate::io::transport::NotificationSender;
@@ -159,12 +163,27 @@ impl TestPendingUpdate {
     }
 
     /// Whether the staged binary is already the running one — the update was
-    /// applied and this process is its result (#4083). Binary evidence only,
-    /// exactly as the #1551 prune judges it: `current_exe` and the staged file
-    /// are byte-identical. A missing staged file (the default path) is never
-    /// "applied".
+    /// applied and this process is its result (#4083). Either form of binary
+    /// evidence settles it:
+    ///
+    /// 1. `current_exe` and the staged file are byte-identical, exactly as the
+    ///    #1551 prune judges it; or
+    /// 2. `current_exe` hashes to the recorded [`expected_sha256`](Self::expected_sha256).
+    ///
+    /// The digest is what still holds once the staged file is gone: the
+    /// re-execed agent removes the applied upload at startup (AGT2-002, #4287),
+    /// so every later worker would otherwise find no staged file and re-stage
+    /// an update that is already installed (#4526). Without a digest, a missing
+    /// staged file (the default path) is never "applied".
     pub fn already_applied(&self, current_exe: Option<&Path>) -> bool {
-        current_exe.is_some_and(|exe| files_identical(Path::new(&self.binary_path), exe))
+        let Some(exe) = current_exe else {
+            return false;
+        };
+        files_identical(Path::new(&self.binary_path), exe)
+            || self
+                .expected_sha256
+                .as_deref()
+                .is_some_and(|digest| verify_file_checksum(exe, digest).is_ok())
     }
 
     /// The detached signature published next to the staged binary
@@ -421,5 +440,45 @@ mod tests {
         // The default staged path never exists, so it is never "applied".
         let default = TestPendingUpdate::parse(Some("1".to_string()), None).unwrap();
         assert!(!default.already_applied(Some(&running)));
+    }
+
+    #[test]
+    fn hook_stands_down_after_the_applied_upload_was_removed() {
+        // #4526: the re-execed agent discards the applied upload at startup
+        // (#4287), so a later worker finds no staged file. The recorded digest
+        // still proves the running binary is the update — stand down rather
+        // than re-stage (and re-announce) an update that is already installed.
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let staged = dir.path().join("staged");
+        let running = dir.path().join("running");
+        std::fs::write(&running, b"NEW-AGENT").unwrap();
+        let digest = hex::encode(Sha256::digest(b"NEW-AGENT"));
+        let hook = TestPendingUpdate::parse(
+            Some("9.9.9".to_string()),
+            Some(staged.to_string_lossy().into_owned()),
+        )
+        .unwrap()
+        .with_sha256(Some(digest.to_ascii_uppercase()));
+        assert!(!staged.exists(), "the applied upload is gone");
+        assert!(
+            hook.already_applied(Some(&running)),
+            "digest evidence: stand down"
+        );
+        assert!(!hook.already_applied(None), "unknown exe proves nothing");
+
+        // A running binary that is NOT the update keeps the hook armed.
+        std::fs::write(&running, b"OLD-AGENT").unwrap();
+        assert!(!hook.already_applied(Some(&running)), "not swapped yet");
+
+        // No digest and no staged file: nothing proves an apply.
+        let no_digest = TestPendingUpdate::parse(
+            Some("9.9.9".to_string()),
+            Some(staged.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        std::fs::write(&running, b"NEW-AGENT").unwrap();
+        assert!(!no_digest.already_applied(Some(&running)));
     }
 }
