@@ -13,8 +13,8 @@ evidence:
   - core/src/agent_update_signature.rs:265
   - core/src/backends/rdp_sidecar/integrity.rs:73-89
   - core/src/plugin/signature.rs:243-256
-status: open
-resolution: ""
+status: fixed
+resolution: "#4365 — one .sha256 gate in core::agent_update_checksum on util::sha256, also used by rdp_sidecar::integrity and plugin::signature"
 audit: 2026-10
 commit: 663465d52
 relation: new
