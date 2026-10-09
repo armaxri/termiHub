@@ -57,14 +57,67 @@ jobs:
           AUDIT_STRICT: '1'
         run: ./scripts/internal/pnpm-audit-prod-gate.sh
 
+  # Release gate (#4282, CI2-003, SUP2-001, WA-CI2-002): the Rust supply-chain
+  # audit must pass on the EXACT commit being released, graded against the
+  # advisory database AS OF TAG TIME. Per the slim lane (#3325) Security Audit
+  # runs per-PR only on manifest changes and post-merge (cancel-in-progress on
+  # develop), so without this a tag could ship a lockfile that was never audited,
+  # or one that a RUSTSEC advisory / yank published after the merge now flags.
+  # Running the checks here, not reading an old run, makes a fresh advisory block
+  # the release too. Same commands as security-audit.yml (root workspace) and
+  # code-quality.yml's RDP Sidecar Quality job (the sidecar's own lockfile).
+  # create-release and every build job list this job directly in their needs.
+  verify-supply-chain:
+    name: Verify Rust Supply Chain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      # Both lockfiles must already be fresh: the release builds below pass
+      # --locked, so fail here, before anything is created, instead of mid-build.
+      - name: Check the lockfiles are up to date
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 > /dev/null
+          cargo metadata --locked --format-version 1 --manifest-path rdp-sidecar/Cargo.toml > /dev/null
+
+      # Pinned tool versions (prebuilt, SHA-pinned installer), like cargo-about
+      # and cargo-cyclonedx below, so the release gate never runs whatever
+      # version is newest on the day. Bump them deliberately.
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+
+      - name: Cargo Audit (workspace)
+        run: cargo audit
+
+      # advisories (vulnerabilities + yanked crates), bans, licenses and the
+      # crates.io-only source gate. Config: deny.toml.
+      - name: Cargo Deny (workspace)
+        run: cargo deny check advisories bans licenses sources
+
+      # The RDP sidecar ships in every installer but has its own Cargo.lock and
+      # rdp-sidecar/deny.toml, which the workspace checks above never read.
+      - name: Cargo Deny (RDP sidecar)
+        working-directory: rdp-sidecar
+        run: cargo deny check advisories bans licenses sources
+
   # Release gate (#3652, WA-CI-004, WA-CI-024): refuse to publish unless the full
   # integration lanes passed on the EXACT commit being released. Per-PR CI is the
   # slim lane (#3325) — no bridge integration lane, a path-filtered fixture lane,
   # no agent Docker suites — so per-PR green alone must never ship. The script
   # requires the newest "Release Candidate: Full Integration" run (every lane, no
-  # path filter), the newest post-merge Code Quality push run and the newest
-  # post-merge Dev Build push run (full app build, CI-015) on this sha to be
-  # green, and otherwise fails with the commands to fix it: dispatch
+  # path filter), the newest post-merge Code Quality push run, the newest
+  # post-merge Dev Build push run (full app build, CI-015) and the newest
+  # post-merge Security Audit push run (#4282) on this sha to be green, and otherwise fails with the commands to fix it: dispatch
   # release-candidate.yml on the tag, then re-run this workflow's failed jobs.
   # Every other job depends on create-release, which depends on this job.
   verify-integration:
@@ -132,7 +185,7 @@ jobs:
 
   create-release:
     name: Create Release
-    needs: [verify-version, verify-integration]
+    needs: [verify-version, verify-supply-chain, verify-integration]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
@@ -272,7 +325,7 @@ jobs:
     name: Build and Upload - ${{ matrix.platform }}
     # third-party-notices generates the THIRD_PARTY_NOTICES.txt every installer
     # bundles (PKG-009) — generated once so all platforms ship the same file.
-    needs: [verify-version, create-release, third-party-notices]
+    needs: [verify-version, verify-supply-chain, create-release, third-party-notices]
     runs-on: ${{ matrix.os }}
     # A job-level block REPLACES the workflow-level one, so contents: write is
     # restated. id-token + attestations are granted only to the jobs that
@@ -378,7 +431,7 @@ jobs:
       # compile/test jobs stay sidecar-free. Run through Git Bash on all runners.
       - name: Build RDP sidecar for bundling
         shell: bash
-        run: ./scripts/build-rdp-sidecar.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
+        run: ./scripts/build-rdp-sidecar.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
 
       # The plugin runner (#4182) is the second externalBin in
       # tauri.sidecar.conf.json (#4202). Stage it before tauri-action too:
@@ -388,7 +441,7 @@ jobs:
       # re-sign below leaves its bytes, and so the digest, unchanged.
       - name: Build plugin runner for bundling
         shell: bash
-        run: ./scripts/build-plugin-runner.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
+        run: ./scripts/build-plugin-runner.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
 
       # The generated notices (PKG-009) are bundled as an app resource by the
       # bundle-only fragment tauri.notices.conf.json (merged via --config below);
@@ -421,7 +474,7 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ matrix.extra_args }}
+          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ matrix.extra_args }} -- --locked
 
       # Fail the build, not the user, if the sideloaded ConPTY host (#4121) is
       # missing from the installer, misplaced (it must sit next to termihub.exe,
@@ -695,7 +748,7 @@ jobs:
   # Build and upload Linux agent binaries as release assets (static musl)
   agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, create-release]
+    needs: [verify-version, verify-supply-chain, create-release]
     runs-on: ubuntu-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -754,7 +807,7 @@ jobs:
       # on a Linux runner, so dropping CROSS_CONFIG here changes nothing but the
       # image source. Local dev still uses Cross.toml via the build-agents scripts.
       - name: Build agent
-        run: cross build --release --target ${{ matrix.target }} -p termihub-agent
+        run: cross build --release --locked --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload agent binary and checksum as release assets
         run: |
@@ -777,7 +830,7 @@ jobs:
   # Build and upload macOS agent binaries as release assets (native build)
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, create-release]
+    needs: [verify-version, verify-supply-chain, create-release]
     runs-on: macos-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -809,7 +862,7 @@ jobs:
           key: release-agent-${{ matrix.target }}
 
       - name: Build agent
-        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+        run: cargo build --release --locked --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload agent binary and checksum as release assets
         run: |
@@ -843,7 +896,7 @@ jobs:
   # must ship for those hosts to install the agent (#3060).
   agent-binaries-windows:
     name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, create-release]
+    needs: [verify-version, verify-supply-chain, create-release]
     runs-on: windows-latest
     # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
@@ -883,7 +936,7 @@ jobs:
       - name: Build agent
         env:
           RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+        run: cargo build --release --locked --target ${{ matrix.target }} -p termihub-agent
 
       # Fail the release if the agent still imports a VC++ runtime DLL (#4175).
       - name: Verify no Visual C++ runtime dependency in the agent
@@ -922,7 +975,7 @@ jobs:
   # Needs no build — cargo-about reads the lockfiles and crate sources only.
   third-party-notices:
     name: Generate Third-Party Notices
-    needs: [verify-version, create-release]
+    needs: [verify-version, verify-supply-chain, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -995,7 +1048,7 @@ jobs:
   #     npm-shaped node_modules from the same frozen lockfile).
   sbom:
     name: Generate SBOMs
-    needs: [verify-version, create-release]
+    needs: [verify-version, verify-supply-chain, create-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write

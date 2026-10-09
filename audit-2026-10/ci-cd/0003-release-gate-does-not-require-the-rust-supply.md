@@ -13,8 +13,8 @@ evidence:
   - .github/workflows/release.yml:57
   - .github/workflows/security-audit.yml:22
   - .github/branch-protection.json:98
-status: open
-resolution: ""
+status: fixed
+resolution: "#4282 — release.yml verify-supply-chain runs cargo audit + cargo deny at tag time, every build needs it, Security Audit push run required, release cargo builds use --locked"
 audit: 2026-10
 commit: 663465d52
 relation: new

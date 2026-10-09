@@ -10,9 +10,11 @@
 # NEXT TO the desktop binary via Tauri `externalBin` (#1754). The app resolves
 # the helper next to its own executable, or via $TERMIHUB_RDP_HELPER.
 #
-# Usage: ./scripts/build-rdp-sidecar.sh [--release] [--target <triple>]
+# Usage: ./scripts/build-rdp-sidecar.sh [--release] [--locked] [--target <triple>]
 #                                       [--tauri-externalbin] [--out <dir>]
 #   --release             Build with optimizations (default: debug).
+#   --locked              Pass --locked to cargo: fail instead of updating a
+#                         stale Cargo.lock (release builds use it, #4282).
 #   --target <triple>     Cross-build for a specific Rust target triple (e.g.
 #                         x86_64-apple-darwin). Default: the host triple. Output
 #                         lands under rdp-sidecar/target/<triple>/<profile>/.
@@ -46,6 +48,10 @@ while [ $# -gt 0 ]; do
         CARGO_FLAGS+=(--release)
         shift
         ;;
+    --locked)
+        CARGO_FLAGS+=(--locked)
+        shift
+        ;;
     --target)
         TARGET="${2:?--target requires a triple}"
         shift 2
@@ -59,7 +65,7 @@ while [ $# -gt 0 ]; do
         shift 2
         ;;
     --help | -h)
-        sed -n '2,31p' "$0"
+        sed -n '2,33p' "$0"
         exit 0
         ;;
     *)
