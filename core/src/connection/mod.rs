@@ -177,7 +177,7 @@ pub struct Capabilities {
 ///    [`file_browser()`](Self::file_browser)
 /// 6. Disconnect: [`disconnect()`](Self::disconnect)
 #[async_trait::async_trait]
-pub trait ConnectionType: Send {
+pub trait ConnectionType: Send + Sync {
     // --- Static metadata ---
 
     /// Machine-readable identifier (e.g., `"ssh"`, `"serial"`, `"local"`).
