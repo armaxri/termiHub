@@ -11,8 +11,8 @@ evidence:
   - plugin-runner/src/sandbox/linux.rs:498
   - plugin-runner/src/sandbox/linux.rs:528
   - plugin-runner/src/sandbox/linux.rs:529
-status: open
-resolution: ""
+status: fixed
+resolution: "#4342 — inotify answers ENOSYS; the userns layer masks the home folder; the metadata leak without userns is documented"
 audit: 2026-10
 commit: 663465d52
 relation: new

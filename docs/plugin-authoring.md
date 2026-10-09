@@ -623,7 +623,8 @@ your code is mapped, the runner is confined by the operating system:
 
 **What your plugin may do directly:**
 
-- read its install folder and the system libraries;
+- read its install folder, the system libraries and the system's TLS trust
+  store (see [TLS and certificate roots](#tls-and-certificate-roots));
 - read and write its private data folder (`<plugins>/.data/<id>`, the
   `data_dir` of the [host context](#the-host-context-abi-11)). `HOME` and
   `TMPDIR` point inside it (on Windows also `TMP`, `TEMP` and `USERPROFILE`), so
@@ -645,6 +646,10 @@ your code is mapped, the runner is confined by the operating system:
   Windows with `ERROR_CHILD_PROCESS_BLOCKED`); on Linux `execve`, `ptrace`,
   mounts, `io_uring` and similar escape primitives end the runner.
 - **Devices, the clipboard, the GUI and the SSH agent.** None are reachable.
+- **Watching files and other processes.** inotify fails with `ENOSYS` on Linux,
+  so a file-watching library must fall back to polling its data folder. Other
+  processes' information (the process list, their arguments, environment and
+  memory) is not reachable on any OS.
 
 **Use the capability bridge** for everything your declared
 [permissions](#permissions) grant. `open_connection` needs `network`;
@@ -661,6 +666,26 @@ snapshot of the directory and is returned whole; a directory of more than
 1,048,576 entries (or 16 MiB of names) is refused with `ResourceLimit`. Refusals
 return `PermissionDenied` (or `ResourceLimit`).
 
+#### TLS and certificate roots
+
+The bridge hands your plugin a plain connected socket, so TLS happens inside
+the sandbox and your plugin verifies the server certificate itself. Use the
+operating system's roots, so the user's corporate or self-signed CAs work too
+— do not bundle `webpki-roots` as the only source, and never disable
+verification:
+
+| OS      | What the sandbox allows                                                                                                                                                                                                                                                                                              | Load roots with                                                                           |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Linux   | Read-only: the distribution CA bundles and hashed folders (`/etc/ssl/certs`, `/etc/ssl/cert.pem`, `/etc/pki/tls/certs`, `/etc/pki/ca-trust/extracted`, `/etc/ca-certificates`, `/usr/share/ca-certificates`, `/usr/local/share/ca-certificates`, `/var/lib/ca-certificates`) and the OpenSSL / crypto-policies files | `rustls-native-certs`, `rustls-platform-verifier`, or OpenSSL's default verify paths      |
+| macOS   | The platform verifier: `SecTrustEvaluateWithError` reaches the per-user trust daemon (`trustd`), which applies the system, admin and user trust settings. Read-only: `/etc/ssl/cert.pem` (the system roots only)                                                                                                     | `rustls-platform-verifier`, `native-tls`, or `security-framework`'s `SecTrust` evaluation |
+| Windows | Not yet verified inside the Less-Privileged AppContainer ([#4606](https://github.com/armaxri/termiHub/issues/4606))                                                                                                                                                                                                  | `rustls-platform-verifier` or `native-tls`                                                |
+
+On macOS, enumerating the trust anchors (`SecTrustCopyAnchorCertificates`,
+`SecTrustSettingsCopyCertificates`, which `rustls-native-certs` uses) needs the
+keychain, which stays closed: it fails inside the sandbox, so evaluate trust
+with the platform verifier instead. Reading the CA store reveals which roots the
+user trusts (for example a company CA); nothing else under `/etc` is readable.
+
 **Limits and crashes.** A crash, hang or runaway allocation ends only your
 plugin's sessions, never termiHub. The runner is limited to 512 MiB of address
 space on Linux (a 1 GiB resident-size cap on macOS, 512 MiB of committed memory
@@ -674,15 +699,32 @@ refused `socket` / `connect` / `bind`-style call is reported to termiHub's log a
 `Denied{syscall}` (at most one line per call per second) through a `SIGSYS`
 handler the runner owns: do not block `SIGSYS` in your threads (a refused call on
 such a thread ends the runner), and installing your own `SIGSYS` handler fails
-with `EPERM`. The user and network namespace (no network interface up; your uid
-and gid stay the same) is skipped where the system does not allow unprivileged
-user namespaces, without changing the isolation level.
+with `EPERM`. inotify calls answer `ENOSYS`. The user, network and mount
+namespace (no network interface up; your uid and gid stay the same; the home
+folder replaced by an empty read-only folder in which only your install and
+data folders exist, so other files there cannot even be `stat`ed) is skipped
+where the system does not allow unprivileged user namespaces, without changing
+the isolation level. Without it, landlock still stops your plugin from opening
+files outside its folders, but not from reading their metadata (`stat`,
+`readlink`, `access`) — so do not rely on file metadata outside your folders
+either way. The working directory is your data folder (or `/` without one).
+
+**macOS details.** Of the system values (`sysctl`), only the CPU, memory, page
+size, CPU-feature (`hw.optional.*`) and OS version / host name values a runtime
+needs are readable (`kern.proc.*`, `kern.procargs2`, boot time and hardware
+identifiers are not). Information about other processes (`proc_pidinfo`,
+`proc_listallpids`, …) is denied. The one Mach service your plugin can reach is
+the certificate trust daemon.
 
 **Reduced isolation.** If a layer is unavailable — mostly a Linux kernel without
 landlock (older than 5.13), which still gets the system-call filter but no file
 confinement — termiHub reports reduced isolation and loads the plugin only after
 the user accepts it for that exact build (Settings → Plugins → _Load with reduced
-isolation…_). If the sandbox cannot be set up at all, the plugin does not load:
+isolation…_). Where the namespace layer works, the masked home folder keeps the
+user's files out of reach even then. Where it does not, and Yama does not restrict
+`ptrace` either (`kernel.yama.ptrace_scope` 0, or no Yama), the plugin could
+write into the memory of termiHub or another of the user's programs through
+`/proc`, so termiHub refuses to start it: the sandbox setup fails. If the sandbox cannot be set up at all, the plugin does not load:
 there is no fallback to running it without a sandbox, and no setting to turn the
 sandbox off.
 

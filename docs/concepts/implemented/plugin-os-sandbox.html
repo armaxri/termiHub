@@ -2121,6 +2121,15 @@ flowchart LR
 (deny iokit-open)</pre
         >
         <p>
+          <strong>Amended by #4342 (audit 2026-10).</strong> The shipped profile narrows
+          <code>sysctl-read</code> to named values, denies <code>process-info*</code> explicitly
+          before the <code>(target self)</code> allowance (<code>(deny default)</code> alone let a
+          plugin read other processes' information and arguments), allows the one
+          <code>mach-lookup</code> of <code>com.apple.trustd.agent</code> for certificate
+          verification, and reads <code>/private/etc/ssl</code>. See
+          <code>plugin-runner/src/sandbox/macos.rs</code>.
+        </p>
+        <p>
           Evidence: macOS 26.5.2 on arm64 (local), confirmed on the <code>macos-latest</code> (macOS
           26.6.2) runner.
         </p>

@@ -14,8 +14,8 @@ evidence:
   - core/src/plugin/sandbox/bridge.rs:440
   - docs/plugin-authoring.md:504
   - docs/plugin-authoring.md:530
-status: open
-resolution: ""
+status: fixed
+resolution: "#4342 — Linux landlock reads the distribution CA bundles; macOS allows trustd.agent and /private/etc/ssl; policy documented"
 audit: 2026-10
 commit: 663465d52
 relation: new
