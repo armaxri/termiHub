@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use termihub_core::connection::{plugin_type_id, ConnectionType, ConnectionTypeRegistry};
 use termihub_core::plugin::{
-    native_library_hash, pack_plugin, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
+    native_trust_binding, pack_plugin, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
 };
 
 /// The workspace root (core's parent).
@@ -126,10 +126,10 @@ pub fn install_plugin_tagged(work: &Path, tag: &str, lib: &Path, manifest: &str)
         .install(&package, true, false)
         .expect("install the plugin");
     let id = plugin.manifest.id.clone();
-    let hash = native_library_hash(&root, &id).expect("hash the library");
+    let binding = native_trust_binding(&root, &id).expect("bind the plugin");
     let mut trust = NativeTrustStore::load(&root);
     trust.set_native_enabled(true).unwrap();
-    trust.acknowledge(&id, hash).unwrap();
+    trust.acknowledge(&id, &binding).unwrap();
     let connection_type = plugin
         .manifest
         .extensions

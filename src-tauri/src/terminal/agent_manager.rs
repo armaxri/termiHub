@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 use base64::Engine;
-use russh::ChannelMsg;
 use serde_json::Value;
 #[cfg(test)]
 use tauri::Manager;
@@ -20,8 +19,9 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
+use termihub_core::ipc::ndjson::LineSplitter;
 use termihub_core::monitoring::MonitoringSender;
 use termihub_core::protocol::methods::{
     AgentShutdownParams, AgentShutdownResult, ConnectionCreateParams, ConnectionDefinition,
@@ -109,6 +109,7 @@ mod reattach;
 mod reconnect;
 mod recovery;
 mod state_events;
+mod stdout_reader;
 pub(crate) use io_lanes::AgentIoSender;
 use io_lanes::{GateError, IoBudget, AGENT_IO_DATA_BUDGET, AGENT_IO_MAX_CHUNK};
 use io_task::agent_io_task;
@@ -138,6 +139,7 @@ pub(crate) use recovery::{
 #[cfg(test)]
 use state_events::parse_agent_connection_state;
 use state_events::{emit_agent_state, emit_agent_state_with_error};
+use stdout_reader::read_handshake_line;
 
 /// A failed agent JSON-RPC request: the agent's error `code` (when it answered
 /// with a JSON-RPC error) plus the human message. Carrying the code lets
@@ -1296,16 +1298,19 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 const MAX_PRE_INIT_MESSAGES: u32 = 1000;
                 let mut skipped: u32 = 0;
                 let mut pending_notifications: Vec<(String, Value)> = Vec::new();
-                let mut line_buf = String::new();
+                let mut line_buf = LineSplitter::new();
                 let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
                     let resp_line =
                         match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
-                            Some(line) => line,
-                            None => {
+                            Ok(line) => line,
+                            Err(e) => {
                                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                return Err(TerminalError::RemoteError(
-                                    "Channel closed before initialize response".into(),
-                                ));
+                                return Err(TerminalError::RemoteError(match e {
+                                    stdout_reader::AgentReadError::Closed => {
+                                        "Channel closed before initialize response".into()
+                                    }
+                                    other => format!("Initialize read failed: {other}"),
+                                }));
                             }
                         };
 
@@ -3267,71 +3272,6 @@ fn serialize_request(id: u64, method: &str, params: Value) -> Result<String, Str
     let mut line = serde_json::to_string(&req).map_err(|e| format!("Serialize JSON-RPC: {}", e))?;
     line.push('\n');
     Ok(line)
-}
-
-/// Read a single newline-terminated JSON-RPC line from a russh channel during
-/// the handshake phase. Accumulates `ChannelMsg::Data` chunks into `buf` and,
-/// once a `\n` is present, returns the trimmed line while **retaining any bytes
-/// after the newline in `buf`** for the next call. Preserving the leftover is
-/// essential when the caller skips pre-initialize notifications: a notification
-/// and the initialize response can arrive in the same data chunk, and dropping
-/// the remainder would lose the response.
-///
-/// Returns `None` when the channel closes or the agent process exits (stderr is
-/// logged, not returned). The caller decides how to treat closure.
-async fn read_handshake_line(
-    channel: &mut russh::Channel<russh::client::Msg>,
-    agent_id: &str,
-    buf: &mut String,
-) -> Option<String> {
-    loop {
-        if let Some(pos) = buf.find('\n') {
-            let line = buf[..pos].trim().to_string();
-            buf.drain(..=pos);
-            return Some(line);
-        }
-        match channel.wait().await {
-            Some(ChannelMsg::Data { ref data }) => {
-                // Diagnostic for #2480: confirms the desktop is actually
-                // receiving the agent's stdout (the initialize response) over the
-                // SSH channel. A run that logs "awaiting response" but never this
-                // means the bytes are not arriving — a transport/channel issue,
-                // not the agent's initialize handler.
-                info!(
-                    "Agent {}: handshake received {} stdout byte(s) over the channel",
-                    agent_id,
-                    data.len()
-                );
-                buf.push_str(&String::from_utf8_lossy(data));
-            }
-            Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
-                // stderr — re-emit the agent's framed log records at their real
-                // level (#2854); never fails the handshake. Decoded per chunk:
-                // the agent writes each record in one write, so a record is
-                // not split across chunks in practice, and a split one still
-                // degrades to plain `WARN` passthrough rather than being lost.
-                let mut stderr = agent_stderr::AgentStderr::new(agent_id);
-                stderr.push(data);
-                stderr.flush();
-            }
-            Some(ChannelMsg::Eof) | None => {
-                info!("Agent {}: channel EOF/closed during handshake", agent_id);
-                return None;
-            }
-            Some(ChannelMsg::ExitStatus { exit_status }) => {
-                warn!(
-                    "Agent {}: process exited with status {} during handshake",
-                    agent_id, exit_status
-                );
-                return None;
-            }
-            other => {
-                // Any other channel message (window adjust, success, etc.). Logged
-                // at DEBUG so a stalled handshake still shows what russh delivered.
-                debug!("Agent {}: handshake channel message: {:?}", agent_id, other);
-            }
-        }
-    }
 }
 
 /// Build `connection.create` params from the shared DTO. `correlation_id` is

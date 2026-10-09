@@ -113,13 +113,15 @@ fn attach_replies_are_classified_by_id_and_code() {
 /// tab, and a trailing partial line must stay for the resumed I/O loop.
 #[test]
 fn complete_lines_are_collected_and_a_partial_line_is_kept() {
-    let mut buf = String::from(
-        "{\"jsonrpc\":\"2.0\",\"method\":\"connection.output\",\"params\":{\"session_id\":\"s\"}}\n\
+    let mut buf = LineSplitter::new();
+    buf.push(
+        b"{\"jsonrpc\":\"2.0\",\"method\":\"connection.output\",\"params\":{\"session_id\":\"s\"}}\n\
          {\"jsonrpc\":\"2.0\",\"method\":\"connection.out",
     );
     let mut notifications = Vec::new();
-    drain_complete_lines(&mut buf, &mut notifications);
+    drain_complete_lines("a", &mut buf, &mut notifications);
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications[0].0, "connection.output");
-    assert_eq!(buf, "{\"jsonrpc\":\"2.0\",\"method\":\"connection.out");
+    let tail = b"{\"jsonrpc\":\"2.0\",\"method\":\"connection.out";
+    assert_eq!(buf.buffered_len(), tail.len(), "the partial line is kept");
 }

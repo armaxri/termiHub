@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
+import type { NativeAckInfo } from "@/types/generated/NativeAckInfo";
 import type { PluginSandboxStatus, PluginSandboxView } from "@/store/pluginSandboxBridge";
 
 const getNativePluginTrust = vi.fn<() => Promise<NativePluginTrust>>();
@@ -170,6 +171,8 @@ describe("NativePluginGateSettings", () => {
           acknowledgedAt: "t",
           unverifiedToolchainAccepted: false,
           reducedIsolationAccepted: false,
+          state: "current",
+          addedAccess: [],
         },
       ],
     });
@@ -223,6 +226,8 @@ describe("NativePluginGateSettings", () => {
           acknowledgedAt: "t",
           unverifiedToolchainAccepted: false,
           reducedIsolationAccepted: false,
+          state: "current",
+          addedAccess: [],
         },
       ],
     });
@@ -232,6 +237,129 @@ describe("NativePluginGateSettings", () => {
     // shown as trusted and the Trust control is offered again.
     expect(query("native-plugin-trust-old")).not.toBeNull();
     expect(query("native-plugin-revoke-old")).toBeNull();
+  });
+
+  describe("stale acknowledgement (#4294)", () => {
+    function ackIn(state: NativeAckInfo["state"], addedAccess: string[] = []): NativePluginTrust {
+      return {
+        enabled: true,
+        disclosure: "d",
+        acknowledged: [
+          {
+            id: "echo",
+            librarySha256: "abc",
+            acknowledgedAt: "t",
+            unverifiedToolchainAccepted: false,
+            reducedIsolationAccepted: false,
+            state,
+            addedAccess,
+          },
+        ],
+      };
+    }
+
+    beforeEach(() => {
+      mockPlugins = [
+        {
+          ...plugin("echo", "Echo", true),
+          manifest: {
+            ...plugin("echo", "Echo", true).manifest,
+            permissions: ["terminal", "network"],
+          },
+        } as InstalledPlugin,
+      ];
+      mockSandbox = {
+        plugins: {
+          echo: { isolation: "full", enforced: ["seatbelt"], missing: [], denials: [] },
+        },
+      };
+    });
+
+    function rowText(): string {
+      return query("native-plugin-row-echo")!.textContent ?? "";
+    }
+
+    it("shows widened access as needing re-approval, with a review action", async () => {
+      getNativePluginTrust.mockResolvedValue(ackIn("accessChanged", ["network"]));
+      await renderFlushed();
+      expect(rowText()).toContain("needs re-approval");
+      expect(rowText()).not.toContain("· trusted");
+      // No isolation badge: a stale plugin does not load.
+      expect(query("native-plugin-isolation-echo")).toBeNull();
+      expect(query("native-plugin-stale-echo")!.textContent).toContain(
+        "Permissions changed — review"
+      );
+      expect(query("native-plugin-stale-echo")!.textContent).toContain("network");
+      const review = query("native-plugin-trust-echo")!;
+      expect(review.textContent).toContain("Permissions changed — review");
+      // Revoke stays available for a stale acknowledgement.
+      expect(query("native-plugin-revoke-echo")).not.toBeNull();
+
+      // Review opens a dialog listing the access; nothing is trusted until confirmed.
+      await act(async () => review.click());
+      expect(acknowledgeNativePlugin).not.toHaveBeenCalled();
+      expect(
+        (document.querySelector(
+          '[data-testid="native-plugin-review-dialog-echo"]'
+        ) as HTMLElement | null)!.textContent
+      ).toContain("New since you approved it: network");
+      expect(
+        (document.querySelector(
+          '[data-testid="native-plugin-review-access-echo"]'
+        ) as HTMLElement | null)!.textContent
+      ).toContain("Network via termiHub");
+      await act(async () =>
+        (document.querySelector(
+          '[data-testid="native-plugin-review-echo-confirm"]'
+        ) as HTMLElement | null)!.click()
+      );
+      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+        acceptUnverifiedToolchain: false,
+      });
+    });
+
+    it("treats an acknowledgement without recorded access as untrusted", async () => {
+      getNativePluginTrust.mockResolvedValue(ackIn("accessNotRecorded", ["terminal", "network"]));
+      await renderFlushed();
+      expect(rowText()).toContain("needs re-approval");
+      expect(query("native-plugin-stale-echo")!.textContent).toContain(
+        "Permissions changed — review"
+      );
+      expect(query("native-plugin-trust-echo")!.textContent).toContain(
+        "Permissions changed — review"
+      );
+    });
+
+    it("offers Trust new build when only the library changed", async () => {
+      getNativePluginTrust.mockResolvedValue(ackIn("libraryChanged"));
+      await renderFlushed();
+      expect(rowText()).toContain("needs re-approval");
+      expect(query("native-plugin-stale-echo")!.textContent).toContain(
+        "changed since you trusted it"
+      );
+      const trust = query("native-plugin-trust-echo")!;
+      expect(trust.textContent).toContain("Trust new build");
+      await act(async () => trust.click());
+      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+        acceptUnverifiedToolchain: false,
+      });
+    });
+
+    it("never offers trust for a plugin termiHub cannot read", async () => {
+      getNativePluginTrust.mockResolvedValue(ackIn("unavailable"));
+      await renderFlushed();
+      expect(rowText()).toContain("needs re-approval");
+      expect(query("native-plugin-trust-echo")).toBeNull();
+      expect(query("native-plugin-revoke-echo")).not.toBeNull();
+    });
+
+    it("shows a current acknowledgement as trusted", async () => {
+      getNativePluginTrust.mockResolvedValue(ackIn("current"));
+      await renderFlushed();
+      expect(rowText()).toContain("· trusted");
+      expect(query("native-plugin-stale-echo")).toBeNull();
+      expect(query("native-plugin-trust-echo")).toBeNull();
+    });
   });
 
   describe("sandbox status (#4188)", () => {
@@ -245,6 +373,8 @@ describe("NativePluginGateSettings", () => {
           acknowledgedAt: "t",
           unverifiedToolchainAccepted: false,
           reducedIsolationAccepted: false,
+          state: "current" as const,
+          addedAccess: [],
         },
       ],
     };

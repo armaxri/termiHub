@@ -12,8 +12,8 @@ evidence:
   - src-tauri/src/commands/plugin.rs:405
   - core/src/plugin/host.rs:924
   - core/src/plugin/host.rs:1069
-status: open
-resolution: ""
+status: fixed
+resolution: "#4294 — trust state reports whether the ack is current; a stale ack shows as needs re-approval with a review action"
 audit: 2026-10
 commit: 663465d52
 relation: new

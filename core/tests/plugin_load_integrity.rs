@@ -27,7 +27,7 @@ use plugin_fixture::{fixture_library, Variant};
 
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::plugin::{
-    generate_keypair, host_target_triple, native_library_hash, pack_plugin_signed, sha256_digest,
+    generate_keypair, host_target_triple, native_trust_binding, pack_plugin_signed, sha256_digest,
     sign_digests, signing_key_from_base64, HostError, InstallOptions, InstalledPlugin,
     NativeTrustStore, PluginHost, PluginManager, SigningKeyFile, TrustStore, SIGNATURE_FILE_NAME,
 };
@@ -106,10 +106,10 @@ impl Fixture {
     /// Enable native plugins and acknowledge the library currently on disk —
     /// the consent the user gives in the native-trust dialog.
     fn acknowledge_current_library(&self) {
-        let hash = native_library_hash(&self.root(), PLUGIN_ID).expect("library resolves");
+        let binding = native_trust_binding(&self.root(), PLUGIN_ID).expect("library resolves");
         let mut trust = NativeTrustStore::load(&self.root());
         trust.set_native_enabled(true).unwrap();
-        trust.acknowledge(PLUGIN_ID, hash).unwrap();
+        trust.acknowledge(PLUGIN_ID, &binding).unwrap();
     }
 
     fn load(&self, plugin: &InstalledPlugin) -> Result<(), HostError> {

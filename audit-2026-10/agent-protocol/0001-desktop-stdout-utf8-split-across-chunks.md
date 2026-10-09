@@ -11,8 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:3052
   - agent/src/io/transport.rs:247
   - core/src/ipc/ndjson.rs:38
-status: open
-resolution: ""
+status: fixed
+resolution: "#4303 — agent stdout is buffered as bytes and only complete lines are decoded (core LineSplitter), so split UTF-8 survives"
 audit: 2026-10
 commit: 663465d52
 relation: new

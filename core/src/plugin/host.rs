@@ -43,7 +43,7 @@ use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
 use super::log_rate_limit::PluginLogLimiter;
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
-use super::native_trust::NativeTrustStore;
+use super::native_trust::{NativeTrustStore, TrustBinding};
 use super::plugin_state::{self, PluginStateRecord};
 use super::sandbox::{
     default_runner_path, AutoDisableHook, PluginHealth, PluginRunnerConfig, PluginSandboxStatus,
@@ -245,10 +245,15 @@ pub enum HostError {
     NativePluginsDisabled,
 
     /// Native plugins are enabled globally, but *this* plugin has no valid trust
-    /// acknowledgment for the exact library on disk — it was never acknowledged,
-    /// or its library changed since it was (a stale acknowledgment / hash
-    /// mismatch). Refused rather than loaded (SEC-002 / PLG-006 / ARCH-008).
-    #[error("native plugin `{id}` is not trusted for its current library; acknowledge it to load")]
+    /// acknowledgment for the exact library on disk and the access its manifest
+    /// requests — it was never acknowledged, its library changed since it was,
+    /// its manifest now requests different access (#4294), or the
+    /// acknowledgment predates access binding. Refused rather than loaded
+    /// (SEC-002 / PLG-006 / ARCH-008).
+    #[error(
+        "native plugin `{id}` is not trusted for its current library and access; review and \
+         trust it to load"
+    )]
     NativePluginNotTrusted {
         /// The plugin id that lacks a valid acknowledgment.
         id: String,
@@ -921,27 +926,30 @@ impl PluginHost {
         // the trust hash and signed digest below bind to that selected file.
         let lib_path = select_backend_library(&plugin_dir, backend)?;
 
-        // Bind consent to the exact bytes: hash the library on disk and require an
-        // acknowledgment matching that hash. A missing ack or a changed binary
-        // (stale ack / hash mismatch) refuses the load.
+        // Bind consent to the exact bytes AND the approved access: hash the
+        // library on disk and require an acknowledgment matching that hash and
+        // exactly the access this manifest requests (#4294). A missing ack, a
+        // changed binary, a manifest asking for different access, or an ack
+        // recorded before access binding refuses the load.
         let library_sha256 = super::signature::sha256_file(&lib_path).map_err(|source| {
             HostError::NativeLibraryUnreadable {
                 path: lib_path.clone(),
                 detail: source.to_string(),
             }
         })?;
-        if !trust.is_acknowledged(&id, &library_sha256) {
+        let binding = TrustBinding::new(library_sha256, &plugin.manifest);
+        if !trust.is_acknowledged(&id, &binding) {
             return Err(HostError::NativePluginNotTrusted { id });
         }
         // An ABI 1.0 plugin cannot prove its build toolchain; the loader refuses
         // it unless this same hash-bound acknowledgment records the user's
         // explicit acceptance of that (PLG-013, ADR-15). Never relaxes the
         // exact-match check for a plugin that does report its toolchain.
-        let accept_unverified_toolchain = trust.accepts_unverified_toolchain(&id, &library_sha256);
+        let accept_unverified_toolchain = trust.accepts_unverified_toolchain(&id, &binding);
         // Reduced sandbox isolation loads only with the same hash-bound
         // acknowledgement's explicit `reducedIsolationAccepted` (#4188); the
         // runner and the host both refuse it otherwise.
-        let accept_reduced_isolation = trust.accepts_reduced_isolation(&id, &library_sha256);
+        let accept_reduced_isolation = trust.accepts_reduced_isolation(&id, &binding);
 
         // Bind the exact library bytes about to be loaded (CORE-034, #2796):
         // re-verify the extracted plugin against its co-located signature, anchor
@@ -1567,8 +1575,10 @@ mod tests {
         let hash = write_dummy_backend(tmp.path(), "host-sec");
         let mut trust = NativeTrustStore::load(tmp.path());
         trust.set_native_enabled(true).unwrap();
-        trust.acknowledge("host-sec", hash).unwrap();
         let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        trust
+            .acknowledge("host-sec", &TrustBinding::new(hash, &plugin.manifest))
+            .unwrap();
         assert!(matches!(
             host.load(&plugin),
             Err(HostError::RunnerUnavailable { .. })
@@ -1608,8 +1618,13 @@ mod tests {
         // it was trusted) → the stale ack does not authorize the current bytes.
         let mut trust = NativeTrustStore::load(tmp.path());
         trust.set_native_enabled(true).unwrap();
-        trust.acknowledge("host-sec", "some-other-hash").unwrap();
         let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        trust
+            .acknowledge(
+                "host-sec",
+                &TrustBinding::new("some-other-hash", &plugin.manifest),
+            )
+            .unwrap();
         match host.load(&plugin) {
             Err(HostError::NativePluginNotTrusted { id }) => assert_eq!(id, "host-sec"),
             other => panic!("expected NativePluginNotTrusted on hash mismatch, got {other:?}"),
@@ -1627,8 +1642,10 @@ mod tests {
         // reached the runner, i.e. the gate did NOT refuse.
         let mut trust = NativeTrustStore::load(tmp.path());
         trust.set_native_enabled(true).unwrap();
-        trust.acknowledge("host-sec", hash).unwrap();
         let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        trust
+            .acknowledge("host-sec", &TrustBinding::new(hash, &plugin.manifest))
+            .unwrap();
         match host.load(&plugin) {
             Err(HostError::RunnerUnavailable { .. }) => {}
             Err(HostError::NativePluginsDisabled | HostError::NativePluginNotTrusted { .. }) => {
@@ -1636,6 +1653,69 @@ mod tests {
             }
             other => panic!("expected the load to reach the runner, got {other:?}"),
         }
+    }
+
+    /// SEC2-002 / PLG2-005 (#4294): an update or reinstall that keeps the same
+    /// library but widens the manifest's access is refused until the user
+    /// trusts it again; an update requesting identical access keeps loading.
+    #[test]
+    fn a_permission_widening_update_with_the_same_library_is_refused() {
+        let (host, tmp) = test_host();
+        let hash = write_dummy_backend(tmp.path(), "host-sec");
+        let approved = installed(&manifest_json(r#"["terminal"]"#, ""));
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust
+            .acknowledge("host-sec", &TrustBinding::new(hash, &approved.manifest))
+            .unwrap();
+
+        let identical = installed(&manifest_json(r#"["terminal"]"#, ""));
+        assert!(
+            matches!(
+                host.load(&identical),
+                Err(HostError::RunnerUnavailable { .. })
+            ),
+            "identical access passes the trust gate"
+        );
+
+        for wider in [
+            installed(&manifest_json(r#"["terminal", "network"]"#, "")),
+            installed(&manifest_json(
+                r#"["terminal", "filesystem"]"#,
+                r#"["/opt/termihub-test/logs"]"#,
+            )),
+        ] {
+            match host.load(&wider) {
+                Err(HostError::NativePluginNotTrusted { id }) => assert_eq!(id, "host-sec"),
+                other => panic!(
+                    "a widened manifest must be refused, got {other:?} for {:?}",
+                    wider.manifest.permissions
+                ),
+            }
+            assert!(!host.is_loaded("host-sec"));
+        }
+    }
+
+    /// Migration (#4294): an acknowledgment recorded before access binding
+    /// fails closed even when its library hash still matches.
+    #[test]
+    fn an_old_format_acknowledgment_is_refused() {
+        let (host, tmp) = test_host();
+        let hash = write_dummy_backend(tmp.path(), "host-sec");
+        std::fs::write(
+            tmp.path()
+                .join(super::super::native_trust::NATIVE_TRUST_FILE_NAME),
+            format!(
+                r#"{{"nativePluginsEnabled":true,"acks":{{"host-sec":{{"librarySha256":"{hash}","acknowledgedAt":"t"}}}}}}"#
+            ),
+        )
+        .unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        assert!(matches!(
+            host.load(&plugin),
+            Err(HostError::NativePluginNotTrusted { .. })
+        ));
+        assert!(!host.is_loaded("host-sec"));
     }
 
     // --- Multi-platform packages (PLG-011) ---
@@ -1782,7 +1862,12 @@ mod tests {
         // Acknowledging ANOTHER platform's library does not authorize this one.
         let mut trust = NativeTrustStore::load(tmp.path());
         trust.set_native_enabled(true).unwrap();
-        trust.acknowledge("host-sec", foreign_hash).unwrap();
+        trust
+            .acknowledge(
+                "host-sec",
+                &TrustBinding::new(foreign_hash, &plugin.manifest),
+            )
+            .unwrap();
         assert!(matches!(
             host.load(&plugin),
             Err(HostError::NativePluginNotTrusted { .. })
@@ -1790,7 +1875,9 @@ mod tests {
 
         // Acknowledging the selected library passes the gate and reaches the
         // runner (the test host has none, so it fails there).
-        trust.acknowledge("host-sec", host_hash).unwrap();
+        trust
+            .acknowledge("host-sec", &TrustBinding::new(host_hash, &plugin.manifest))
+            .unwrap();
         match host.load(&plugin) {
             Err(HostError::RunnerUnavailable { .. }) => {}
             other => panic!("expected the load to reach the runner, got {other:?}"),

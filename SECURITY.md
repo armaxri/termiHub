@@ -112,7 +112,13 @@ plugin loads only after the user accepts reduced isolation for that exact build.
 If the sandbox cannot be set up, the plugin does not load; there is no setting
 to run a plugin without it. Native plugins remain off by default, and each one
 still needs the user's trust acknowledgement, because the sandbox limits what a
-plugin can reach, not what it draws in its own terminal. The design is ADR-19 in
+plugin can reach, not what it draws in its own terminal. The acknowledgement
+covers the exact library file and the access the user approved: the plugin's
+permissions, its declared folders and its connection policy. An update or
+reinstall that changes any of these, even only narrowing them, does not load
+until the user reviews and trusts the plugin again. Acknowledgements recorded
+before termiHub stored the approved access are treated as untrusted, and
+uninstalling a plugin removes its acknowledgement. The design is ADR-19 in
 [`docs/architecture.md`](docs/architecture.md); plugin authors find the rules in
 [`docs/plugin-authoring.md`](docs/plugin-authoring.md#the-plugin-sandbox).
 

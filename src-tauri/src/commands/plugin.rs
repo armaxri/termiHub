@@ -17,10 +17,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    check_host_platform, host_target_triple, native_library_hash, validate_package, AckAcceptances,
-    InstallOptions, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
-    PluginManagerError, PluginManifest, SignerChange, TrustAssessment, TrustLevel,
-    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
+    check_host_platform, host_target_triple, native_trust_binding, validate_package,
+    AckAcceptances, AckStatus, InstallOptions, InstalledPlugin, NativeAck, NativeTrustStore,
+    PluginHost, PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment,
+    TrustBinding, TrustLevel, TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -360,8 +360,40 @@ pub fn update_plugin_settings(
         .map_err(|e| e.to_string())
 }
 
+/// How a recorded native-plugin trust acknowledgment relates to the plugin as
+/// it is installed now (#4294). Only `current` means the plugin may load; the
+/// Settings row shows every other state as "needs re-approval", never trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub enum NativeAckState {
+    /// Same library and exactly the approved access.
+    Current,
+    /// The library changed since the user trusted it.
+    LibraryChanged,
+    /// The manifest requests different access than the user approved.
+    AccessChanged,
+    /// Recorded before termiHub bound trust to the approved access.
+    AccessNotRecorded,
+    /// The installed plugin's library or manifest cannot be read.
+    Unavailable,
+}
+
+impl From<AckStatus> for NativeAckState {
+    fn from(status: AckStatus) -> Self {
+        match status {
+            AckStatus::Current => Self::Current,
+            AckStatus::LibraryChanged => Self::LibraryChanged,
+            AckStatus::AccessChanged => Self::AccessChanged,
+            AckStatus::AccessNotRecorded => Self::AccessNotRecorded,
+        }
+    }
+}
+
 /// One recorded native-plugin trust acknowledgment, flattened for the settings
-/// surface. Mirrors core `NativeAck` plus the plugin id it keys.
+/// surface. Mirrors core `NativeAck` plus the plugin id it keys and how it
+/// compares with the installed plugin.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -379,6 +411,35 @@ pub struct NativeAckInfo {
     /// Whether the user explicitly accepted reduced sandbox isolation on this
     /// system (`reducedIsolationAccepted`, #4188).
     pub reduced_isolation_accepted: bool,
+    /// Whether the acknowledgment still covers the installed plugin (#4294).
+    pub state: NativeAckState,
+    /// Access the installed manifest requests that the user did not approve:
+    /// permission names, folder paths, and `connection policy` when that
+    /// changed. Everything requested when the approved access is unknown.
+    pub added_access: Vec<String>,
+}
+
+impl NativeAckInfo {
+    /// Flatten `ack` for plugin `id`, compared with the installed plugin's
+    /// `binding` (an error when it cannot be read — never shown as current).
+    fn new<E>(id: String, ack: NativeAck, binding: Result<TrustBinding, E>) -> Self {
+        let (state, added_access) = match binding {
+            Ok(binding) => (
+                ack.status(&binding).into(),
+                binding.access.added_since(ack.approved_access.as_ref()),
+            ),
+            Err(_) => (NativeAckState::Unavailable, Vec::new()),
+        };
+        Self {
+            id,
+            library_sha256: ack.library_sha256,
+            acknowledged_at: ack.acknowledged_at,
+            unverified_toolchain_accepted: ack.unverified_toolchain_accepted,
+            reduced_isolation_accepted: ack.reduced_isolation_accepted,
+            state,
+            added_access,
+        }
+    }
 }
 
 /// The native-plugin trust state for the Settings surface (SEC-002 / PLG-006 /
@@ -407,12 +468,9 @@ pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePlugi
     let acknowledged = store
         .acknowledgments()
         .into_iter()
-        .map(|(id, ack)| NativeAckInfo {
-            id,
-            library_sha256: ack.library_sha256,
-            acknowledged_at: ack.acknowledged_at,
-            unverified_toolchain_accepted: ack.unverified_toolchain_accepted,
-            reduced_isolation_accepted: ack.reduced_isolation_accepted,
+        .map(|(id, ack)| {
+            let binding = native_trust_binding(manager.root(), &id);
+            NativeAckInfo::new(id, ack, binding)
         })
         .collect();
     NativePluginTrust {
@@ -446,7 +504,8 @@ pub fn set_native_plugins_enabled(
 }
 
 /// Acknowledge trust for the native plugin `id`, binding the acknowledgment to the
-/// exact backend library currently on disk, then load it.
+/// exact backend library currently on disk and the access its installed manifest
+/// requests (#4294), then load it.
 ///
 /// Fails when the plugin has no backend library (not a native plugin) or its
 /// library cannot be read. After recording the acknowledgment it re-runs the
@@ -471,13 +530,13 @@ pub fn acknowledge_native_plugin(
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstalledPlugin, String> {
-    // Bind consent to the exact library bytes on disk.
-    let hash = native_library_hash(manager.root(), &id).map_err(|e| e.to_string())?;
+    // Bind consent to the exact library bytes and the requested access on disk.
+    let binding = native_trust_binding(manager.root(), &id).map_err(|e| e.to_string())?;
     let mut store = NativeTrustStore::load(manager.root());
     store
         .acknowledge_with(
             &id,
-            hash,
+            &binding,
             AckAcceptances {
                 unverified_toolchain: accept_unverified_toolchain.unwrap_or(false),
                 reduced_isolation: accept_reduced_isolation.unwrap_or(false),
@@ -532,7 +591,73 @@ pub fn read_plugin_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use termihub_core::plugin::{SignerChangeKind, VersionChangeKind};
+    use termihub_core::plugin::{
+        ApprovedAccess, PluginPermission, SignerChangeKind, VersionChangeKind,
+    };
+
+    /// A binding to library `hash` with `permissions` approved.
+    fn binding(hash: &str, permissions: Vec<PluginPermission>) -> TrustBinding {
+        TrustBinding {
+            library_sha256: hash.into(),
+            access: ApprovedAccess {
+                permissions,
+                ..ApprovedAccess::default()
+            },
+        }
+    }
+
+    fn ack_for(binding: &TrustBinding) -> NativeAck {
+        NativeAck {
+            library_sha256: binding.library_sha256.clone(),
+            acknowledged_at: "t".into(),
+            unverified_toolchain_accepted: false,
+            reduced_isolation_accepted: false,
+            approved_access: Some(binding.access.clone()),
+        }
+    }
+
+    /// PLG2-002 (#4294): the Settings surface learns whether a recorded
+    /// acknowledgment still covers the installed plugin, and what was added.
+    #[test]
+    fn ack_info_reports_whether_the_ack_is_current() {
+        let approved = binding("h", vec![PluginPermission::Terminal]);
+        let info = |installed: Result<TrustBinding, ()>, ack: NativeAck| {
+            NativeAckInfo::new("p".into(), ack, installed)
+        };
+
+        let current = info(Ok(approved.clone()), ack_for(&approved));
+        assert_eq!(current.state, NativeAckState::Current);
+        assert!(current.added_access.is_empty());
+
+        let rebuilt = info(
+            Ok(binding("h2", vec![PluginPermission::Terminal])),
+            ack_for(&approved),
+        );
+        assert_eq!(rebuilt.state, NativeAckState::LibraryChanged);
+
+        let wider = info(
+            Ok(binding(
+                "h",
+                vec![PluginPermission::Terminal, PluginPermission::Network],
+            )),
+            ack_for(&approved),
+        );
+        assert_eq!(wider.state, NativeAckState::AccessChanged);
+        assert_eq!(wider.added_access, vec!["network".to_owned()]);
+
+        let mut legacy = ack_for(&approved);
+        legacy.approved_access = None;
+        let legacy = info(Ok(approved.clone()), legacy);
+        assert_eq!(legacy.state, NativeAckState::AccessNotRecorded);
+        assert_eq!(legacy.added_access, vec!["terminal".to_owned()]);
+
+        let gone = info(Err(()), ack_for(&approved));
+        assert_eq!(gone.state, NativeAckState::Unavailable);
+
+        let json = serde_json::to_value(&wider).unwrap();
+        assert_eq!(json["state"], "accessChanged");
+        assert_eq!(json["addedAccess"][0], "network");
+    }
 
     fn downgrade() -> VersionChange {
         VersionChange {

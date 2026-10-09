@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use termihub_core::backends::ssh::handler::SshSession;
+use termihub_core::ipc::ndjson::LineSplitter;
 use termihub_core::protocol::methods::InitializeResult;
 use termihub_core::reconnect_backoff::{
     policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
@@ -272,13 +273,13 @@ pub(super) async fn reconnect_handshake(
         // The buffer is per attempt: a failed attempt's belongs to a channel
         // that is being discarded.
         const MAX_PRE_INIT_MESSAGES: u32 = 1000;
-        let mut line_buf = String::new();
+        let mut line_buf = LineSplitter::new();
         let mut skipped: u32 = 0;
         let mut buffered: Vec<(String, Value)> = Vec::new();
         loop {
             let resp_line = read_handshake_line(&mut channel, &config.host, &mut line_buf)
                 .await
-                .ok_or_else(|| "channel closed during init read".to_string())?;
+                .map_err(|e| format!("init read: {e}"))?;
             let msg = jsonrpc::parse_message(&resp_line)
                 .map_err(|e| format!("parse init response: {e}"))?;
             match jsonrpc::classify_handshake_message(msg, *request_id) {
