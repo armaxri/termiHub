@@ -846,10 +846,105 @@ mod tests {
     }
 
     #[test]
-    fn artifact_name_unknown_falls_back_to_linux() {
+    fn artifact_name_unknown_os_is_unsupported() {
+        // No agent is published for e.g. FreeBSD; resolving it to a Linux binary
+        // would only fail later at exec time on the remote (#4302).
+        assert_eq!(artifact_name_for_os_arch("FreeBSD", "x86_64"), None);
+    }
+
+    #[test]
+    fn artifact_name_delegates_to_the_shared_core_scheme() {
+        use termihub_core::agent_release_asset::agent_asset_suffix;
+        for os in [
+            "Linux",
+            "Darwin",
+            "Windows_NT",
+            "MINGW64_NT-10.0",
+            "FreeBSD",
+        ] {
+            for arch in [
+                "x86_64", "amd64", "AMD64", "aarch64", "arm64", "armv7l", "mips",
+            ] {
+                assert_eq!(
+                    artifact_name_for_os_arch(os, arch),
+                    agent_asset_suffix(os, arch),
+                    "{os}/{arch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_download_url_requests_the_published_exe_asset() {
+        // PKG2-002: release.yml publishes termihub-agent-windows-<arch>.exe.
+        for (suffix, asset) in [
+            ("windows-x64", "termihub-agent-windows-x64.exe"),
+            ("windows-arm64", "termihub-agent-windows-arm64.exe"),
+        ] {
+            assert_eq!(
+                compute_download_url_impl("1.2.3", suffix, false, "main"),
+                format!("https://github.com/armaxri/termiHub/releases/download/v1.2.3/{asset}")
+            );
+            assert_eq!(
+                compute_download_url_impl("1.2.3", suffix, true, "develop"),
+                format!(
+                    "https://github.com/armaxri/termiHub/releases/download/dev-develop-latest/{asset}"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn download_url_sidecars_match_the_published_sidecar_names() {
+        use termihub_core::agent_release_asset::{
+            agent_checksum_asset_name, agent_release_asset_name, agent_signature_asset_name,
+            AGENT_ASSET_SUFFIXES,
+        };
+        for suffix in AGENT_ASSET_SUFFIXES {
+            let url = compute_download_url_impl("1.2.3", suffix, false, "main");
+            let dir = "https://github.com/armaxri/termiHub/releases/download/v1.2.3/";
+            assert_eq!(url, format!("{dir}{}", agent_release_asset_name(suffix)));
+            // download_binary_with_checksum fetches `<url>.sha256` / `<url>.sig`.
+            assert_eq!(
+                format!("{url}.{CHECKSUM_EXT}"),
+                format!("{dir}{}", agent_checksum_asset_name(suffix))
+            );
+            assert_eq!(
+                format!("{url}.{SIGNATURE_EXT}"),
+                format!("{dir}{}", agent_signature_asset_name(suffix))
+            );
+        }
+    }
+
+    #[test]
+    fn windows_cache_and_bundle_paths_use_the_exe_asset_name() {
+        let cached = cached_binary_path("0.1.0", "windows-arm64");
+        assert!(
+            cached.ends_with("0.1.0/termihub-agent-windows-arm64.exe"),
+            "got {}",
+            cached.display()
+        );
+        let bundled = bundled_binary_path(Path::new("/res"), "windows-x64");
+        assert_eq!(bundled, Path::new("/res/termihub-agent-windows-x64.exe"));
+        let bundled = bundled_binary_path(Path::new("/res"), "linux-x64");
+        assert_eq!(bundled, Path::new("/res/termihub-agent-linux-x64"));
+    }
+
+    #[test]
+    fn windows_branch_build_url_uses_the_exe_asset_name() {
         assert_eq!(
-            artifact_name_for_os_arch("FreeBSD", "x86_64"),
-            Some("linux-x64")
+            compute_branch_build_url("main", "windows-x64"),
+            "https://github.com/armaxri/termiHub/releases/download/agent-branch-main/termihub-agent-windows-x64.exe"
+        );
+    }
+
+    #[test]
+    fn download_base_url_plus_suffix_still_names_non_windows_assets() {
+        // The setup dialog builds `<base><suffix>` for display; it appends .exe
+        // itself for Windows suffixes.
+        assert_eq!(
+            compute_download_base_url_impl("1.2.3", false, "main"),
+            "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-"
         );
     }
 
