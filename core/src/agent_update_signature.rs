@@ -64,10 +64,16 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(any(test, feature = "agent-update-signing-test-support"))]
 use base64::engine::general_purpose::STANDARD as BASE64;
+#[cfg(any(test, feature = "agent-update-signing-test-support"))]
 use base64::Engine as _;
 use ed25519_dalek::{Signature, VerifyingKey, SIGNATURE_LENGTH};
 use tracing::warn;
+
+use crate::ed25519_detached::{
+    any_trusted_key_verifies, domain_message, parse_b64_signature, SignatureParseError,
+};
 
 /// File-name suffix of the detached signature sidecar published next to every
 /// agent binary release asset (e.g. `termihub-agent-linux-x64.sig`).
@@ -215,11 +221,7 @@ impl SignaturePolicy {
         }
         let signature = parse_signature(signature_b64)?;
         let message = signed_message(digest_hex)?;
-        if self
-            .trusted_keys
-            .iter()
-            .any(|key| key.verify_strict(&message, &signature).is_ok())
-        {
+        if any_trusted_key_verifies(&self.trusted_keys, &message, &signature) {
             Ok(SignatureVerdict::Verified)
         } else {
             Err(UpdateSignatureError::Invalid)
@@ -232,31 +234,29 @@ impl SignaturePolicy {
 pub fn signed_message(digest_hex: &str) -> Result<Vec<u8>, UpdateSignatureError> {
     let digest = hex::decode(digest_hex.trim())
         .map_err(|e| UpdateSignatureError::Malformed(format!("digest is not hex: {e}")))?;
-    if digest.len() != 32 {
-        return Err(UpdateSignatureError::Malformed(format!(
+    let digest: [u8; 32] = digest.as_slice().try_into().map_err(|_| {
+        UpdateSignatureError::Malformed(format!(
             "digest is {} bytes, expected 32 (SHA-256)",
             digest.len()
-        )));
-    }
-    let mut message = Vec::with_capacity(SIGNING_DOMAIN.len() + digest.len());
-    message.extend_from_slice(SIGNING_DOMAIN);
-    message.extend_from_slice(&digest);
-    Ok(message)
+        ))
+    })?;
+    Ok(domain_message(SIGNING_DOMAIN, &digest))
 }
 
 /// Parse a `.sig` sidecar / RPC `signature` value: base64 of the 64-byte
 /// Ed25519 signature, surrounding whitespace ignored.
+///
+/// The shared [`parse_b64_signature`] does the decoding; its error is mapped
+/// into [`UpdateSignatureError::Malformed`] with this module's wording.
 pub fn parse_signature(signature_b64: &str) -> Result<Signature, UpdateSignatureError> {
-    let bytes = BASE64
-        .decode(signature_b64.trim())
-        .map_err(|e| UpdateSignatureError::Malformed(format!("signature is not base64: {e}")))?;
-    let bytes: [u8; SIGNATURE_LENGTH] = bytes.as_slice().try_into().map_err(|_| {
-        UpdateSignatureError::Malformed(format!(
-            "signature is {} bytes, expected {SIGNATURE_LENGTH}",
-            bytes.len()
-        ))
-    })?;
-    Ok(Signature::from_bytes(&bytes))
+    parse_b64_signature(signature_b64).map_err(|e| {
+        UpdateSignatureError::Malformed(match e {
+            SignatureParseError::NotBase64(e) => format!("signature is not base64: {e}"),
+            SignatureParseError::WrongLength(n) => {
+                format!("signature is {n} bytes, expected {SIGNATURE_LENGTH}")
+            }
+        })
+    })
 }
 
 pub use crate::ed25519_pem::parse_public_keys_pem;
@@ -291,6 +291,18 @@ pub mod test_support {
     pub fn sign_digest(key: &SigningKey, digest_hex: &str) -> String {
         let message = signed_message(digest_hex).expect("valid digest");
         BASE64.encode(key.sign(&message).to_bytes())
+    }
+
+    /// Sign `digest_hex` under a **different** domain-separation prefix,
+    /// returning the base64 value. For regression tests proving a signature
+    /// made for another purpose (e.g. the plugin index) never verifies as an
+    /// agent update.
+    pub fn sign_digest_in_domain(key: &SigningKey, domain: &[u8], digest_hex: &str) -> String {
+        let digest: [u8; 32] = hex::decode(digest_hex.trim())
+            .expect("hex digest")
+            .try_into()
+            .expect("a 32-byte digest");
+        BASE64.encode(key.sign(&domain_message(domain, &digest)).to_bytes())
     }
 
     /// Parse an Ed25519 private key from an `openssl genpkey` PKCS#8 PEM (text
@@ -592,6 +604,53 @@ mod tests {
         assert_eq!(&msg[..SIGNING_DOMAIN.len()], SIGNING_DOMAIN);
         assert_eq!(&msg[SIGNING_DOMAIN.len()..], hex::decode(DIGEST).unwrap());
         assert_eq!(msg.len(), 25 + 32);
+    }
+
+    /// Regression (#4365): the shared `ed25519_detached` parser is mapped back to
+    /// this module's exact `Malformed` wording, digest errors included.
+    #[test]
+    fn malformed_messages_are_unchanged() {
+        let policy = strict_for(1);
+        let Err(UpdateSignatureError::Malformed(msg)) = policy.verify(DIGEST, Some("not base64!!"))
+        else {
+            panic!("expected a malformed rejection");
+        };
+        assert!(msg.starts_with("signature is not base64: "), "{msg}");
+        assert_eq!(
+            policy.verify(DIGEST, Some(&BASE64.encode([0u8; 10]))),
+            Err(UpdateSignatureError::Malformed(
+                "signature is 10 bytes, expected 64".to_string()
+            ))
+        );
+        let sig = sign_digest(&test_signing_key(1), DIGEST);
+        assert_eq!(
+            policy.verify("deadbeef", Some(&sig)),
+            Err(UpdateSignatureError::Malformed(
+                "digest is 4 bytes, expected 32 (SHA-256)".to_string()
+            ))
+        );
+        let Err(UpdateSignatureError::Malformed(msg)) = policy.verify("zz", Some(&sig)) else {
+            panic!("expected a malformed rejection");
+        };
+        assert!(msg.starts_with("digest is not hex: "), "{msg}");
+    }
+
+    /// Regression (#4365): a signature by a trusted key over the same digest but
+    /// under another domain (the plugin-index one) never verifies as an update.
+    #[test]
+    fn wrong_domain_signature_is_rejected() {
+        let sig =
+            sign_digest_in_domain(&test_signing_key(1), b"termihub-plugin-index-v1\0", DIGEST);
+        assert_eq!(
+            strict_for(1).verify(DIGEST, Some(&sig)),
+            Err(UpdateSignatureError::Invalid)
+        );
+        assert_eq!(SIGNING_DOMAIN, b"termihub-agent-update-v1\0");
+        // The helper under the agent's own domain is exactly `sign_digest`.
+        assert_eq!(
+            sign_digest_in_domain(&test_signing_key(1), SIGNING_DOMAIN, DIGEST),
+            sign_digest(&test_signing_key(1), DIGEST)
+        );
     }
 
     #[test]

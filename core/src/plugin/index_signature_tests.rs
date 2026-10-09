@@ -3,6 +3,9 @@
 use super::test_support::*;
 use super::*;
 use crate::ed25519_pem::public_key_pem;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
 
 const INDEX: &[u8] = b"{\"schemaVersion\":1,\"plugins\":[]}\n";
 const TAMPERED: &[u8] = b"{\"schemaVersion\":1,\"plugins\":[ ]}\n";
@@ -73,6 +76,42 @@ fn malformed_signatures_are_rejected() {
             "{raw:?}"
         );
     }
+}
+
+/// Regression (#4365): the shared `ed25519_detached` parser is mapped back to
+/// this module's exact `Malformed` wording.
+#[test]
+fn malformed_signature_messages_are_unchanged() {
+    let p = policy(1, true);
+    assert_eq!(
+        p.check(INDEX, Some(&[0xff, 0xfe, 0x00][..])),
+        Err(IndexSignatureError::Malformed("not UTF-8 text".to_string()))
+    );
+    let Err(IndexSignatureError::Malformed(msg)) = p.check(INDEX, Some(b"not base64!!")) else {
+        panic!("expected a malformed rejection");
+    };
+    assert!(msg.starts_with("not base64: "), "{msg}");
+    assert_eq!(
+        p.check(INDEX, Some(BASE64.encode([0u8; 10]).as_bytes())),
+        Err(IndexSignatureError::Malformed(
+            "10 bytes, expected 64".to_string()
+        ))
+    );
+}
+
+/// Regression (#4365): the message is still exactly the domain prefix plus
+/// the raw SHA-256 of the served bytes.
+#[test]
+fn signed_message_is_domain_prefix_plus_raw_sha256() {
+    let msg = index_signed_message(INDEX);
+    assert_eq!(
+        &msg[..INDEX_SIGNING_DOMAIN.len()],
+        b"termihub-plugin-index-v1\0"
+    );
+    assert_eq!(
+        &msg[INDEX_SIGNING_DOMAIN.len()..],
+        Sha256::digest(INDEX).as_slice()
+    );
 }
 
 /// The placeholder key degrades to "not checked" rather than failing closed,

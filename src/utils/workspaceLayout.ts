@@ -694,13 +694,6 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
   };
 }
 
-let groupIdCounter = 0;
-
-function generateWorkspaceGroupId(): string {
-  groupIdCounter++;
-  return `ws-group-${groupIdCounter}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
 /**
  * Build an array of TabGroup objects from workspace tab group definitions.
  * Each group gets a fresh ID and a newly-built PanelNode tree.
@@ -722,7 +715,7 @@ export function buildTabGroupsFromWorkspace(
     const firstLeaf =
       rootPanel.type === "leaf" ? rootPanel : getAllWorkspaceLeafPanels(rootPanel)[0];
     return {
-      id: generateWorkspaceGroupId(),
+      id: newId("ws-group"),
       name: def.name,
       color: def.color,
       rootPanel,

@@ -559,16 +559,3 @@ fn an_encrypted_import_counts_only_the_connections_it_added() {
     assert_eq!(result.connections_skipped, 1);
     assert_eq!(main_ids(&dst), vec!["a", "b", "c"]);
 }
-
-/// The plain (unencrypted) import path counts only added connections too (#4210).
-#[test]
-fn a_plain_re_import_reports_nothing_imported() {
-    let dir = tempfile::tempdir().unwrap();
-    let (mgr, _r) = manager(dir.path(), Arc::new(RecordingStore::default()));
-    mgr.save_connection(ssh("a", "a", None)).unwrap();
-    mgr.save_connection(ssh("b", "b", None)).unwrap();
-    let json = mgr.export_json().unwrap();
-
-    assert_eq!(mgr.import_json(&json).unwrap(), 0);
-    assert_eq!(main_ids(&mgr), vec!["a", "b"]);
-}

@@ -12,15 +12,6 @@ pub fn list_macros(manager: State<'_, MacroManager>) -> Result<Vec<Macro>, Termi
     manager.list_macros()
 }
 
-/// Get a single macro by ID.
-#[tauri::command]
-pub fn get_macro(
-    macro_id: String,
-    manager: State<'_, MacroManager>,
-) -> Result<Macro, TerminalError> {
-    manager.get_macro(&macro_id)
-}
-
 /// Save (add or update) a macro. Returns the stored macro with authoritative timestamps.
 #[tauri::command]
 pub fn save_macro(

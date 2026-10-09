@@ -48,20 +48,6 @@ impl MacroManager {
         Ok(store.macros.clone())
     }
 
-    /// Get a single macro by ID.
-    pub fn get_macro(&self, id: &str) -> Result<Macro, TerminalError> {
-        let store = self
-            .store
-            .lock()
-            .map_err(|e| TerminalError::MacroError(e.to_string()))?;
-        store
-            .macros
-            .iter()
-            .find(|m| m.id == id)
-            .cloned()
-            .ok_or_else(|| TerminalError::MacroError(format!("Macro not found: {id}")))
-    }
-
     /// Save (add or update) a macro, stamping timestamps.
     ///
     /// On update the original `created_at` is preserved; `updated_at` is always
@@ -196,20 +182,6 @@ mod tests {
         let macros = mgr.list_macros().unwrap();
         assert_eq!(macros.len(), 1);
         assert_eq!(macros[0].name, "Renamed");
-    }
-
-    #[test]
-    fn get_macro_found_and_not_found() {
-        let dir = TempDir::new().unwrap();
-        let mgr = create_test_manager(&dir);
-
-        mgr.save_macro(sample_macro("m-1", "First")).unwrap();
-
-        let got = mgr.get_macro("m-1").unwrap();
-        assert_eq!(got.name, "First");
-        assert_eq!(got.steps[0].data, "echo hi\r");
-
-        assert!(mgr.get_macro("nope").is_err());
     }
 
     #[test]

@@ -38,8 +38,8 @@ evidence:
   - src-tauri/src/lib.rs:980
   - src-tauri/src/commands/connection.rs:291
   - src-tauri/src/commands/connection.rs:335
-status: open
-resolution: ""
+status: fixed
+resolution: "#4344 — 24 orphan commands and wrappers removed (probe_remote_agent deferred to #4570); check-invoke-contract.mjs now fails on orphans"
 audit: 2026-10
 commit: 663465d52
 relation: new

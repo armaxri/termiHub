@@ -473,15 +473,11 @@ fn stage_newer_binary(staging_dir: &Path) -> PathBuf {
     staged
 }
 
-/// Lowercase-hex SHA-256 of a file's contents (mirrors the agent's
-/// `update::checksum::sha256_hex_of_file`), used to send the AGT-004
+/// Lowercase-hex SHA-256 of a file's contents (the same shared core primitive
+/// the agent's checksum gate uses, #4365), used to send the AGT-004
 /// `expectedSha256` the apply path re-verifies against.
 fn sha256_hex_of_file(path: &Path) -> String {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(path).expect("read staged binary for checksum");
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    hex::encode(hasher.finalize())
+    termihub_core::util::sha256::sha256_hex_of_file(path).expect("hash staged binary")
 }
 
 // ── Test ───────────────────────────────────────────────────────────────────────

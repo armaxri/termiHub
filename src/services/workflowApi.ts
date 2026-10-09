@@ -13,11 +13,6 @@ export async function listWorkflows(): Promise<Workflow[]> {
   return await invoke<Workflow[]>("list_workflows");
 }
 
-/** Get a single workflow by ID. */
-export async function getWorkflow(workflowId: string): Promise<Workflow> {
-  return await invoke<Workflow>("get_workflow", { workflowId });
-}
-
 /** Save (add or update) a workflow. Returns the stored workflow with authoritative timestamps. */
 export async function saveWorkflow(workflow: Workflow): Promise<Workflow> {
   return await invoke<Workflow>("save_workflow", { workflowDef: workflow });

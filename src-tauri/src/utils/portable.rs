@@ -29,6 +29,26 @@ impl AppMode {
             AppMode::Installed => None,
         }
     }
+
+    /// Returns the portable base directory — the folder holding the `data/`
+    /// directory (next to the executable, or next to the `.app` bundle on
+    /// macOS) — or `None` if in installed mode.
+    ///
+    /// This is what the `{PORTABLE_DIR}` path placeholder resolves to.
+    pub fn base_dir(&self) -> Option<&Path> {
+        self.data_dir().and_then(Path::parent)
+    }
+}
+
+/// Publish the portable base directory to core's shared path expansion, so
+/// every consumer of `termihub_core::config::expand_config_value` (SSH key
+/// paths, serial ports, file browser, workspace paths) resolves the
+/// `{PORTABLE_DIR}` placeholder. A no-op in installed mode, which leaves the
+/// placeholder verbatim (#4571).
+pub fn publish_portable_base_dir(app_mode: &AppMode) {
+    if let Some(base_dir) = app_mode.base_dir() {
+        termihub_core::config::set_portable_base_dir(base_dir.to_path_buf());
+    }
 }
 
 /// Detect whether the app is running in portable mode.
@@ -70,25 +90,6 @@ fn detect_mode_at(base_dir: &Path) -> AppMode {
         AppMode::Portable { data_dir }
     } else {
         AppMode::Installed
-    }
-}
-
-/// Resolve `{PORTABLE_DIR}` placeholders in a path string.
-///
-/// Replaces `{PORTABLE_DIR}` with the directory containing the executable
-/// (or the directory containing the `.app` bundle on macOS). Returns the
-/// path unchanged if not in portable mode or if no placeholder is present.
-pub fn resolve_portable_path(path: &str, app_mode: &AppMode) -> PathBuf {
-    match app_mode {
-        AppMode::Portable { data_dir } => {
-            if let Some(base_dir) = data_dir.parent() {
-                let resolved = path.replace("{PORTABLE_DIR}", &base_dir.to_string_lossy());
-                PathBuf::from(resolved)
-            } else {
-                PathBuf::from(path)
-            }
-        }
-        AppMode::Installed => PathBuf::from(path),
     }
 }
 
@@ -148,27 +149,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_portable_path_replaces_placeholder() {
+    fn base_dir_is_parent_of_data_dir_in_portable_mode() {
         let mode = AppMode::Portable {
             data_dir: PathBuf::from("/usb/termiHub/data"),
         };
-        let result = resolve_portable_path("{PORTABLE_DIR}/data/keys/id_rsa", &mode);
-        assert_eq!(result, PathBuf::from("/usb/termiHub/data/keys/id_rsa"));
+        assert_eq!(mode.base_dir(), Some(Path::new("/usb/termiHub")));
     }
 
     #[test]
-    fn resolve_portable_path_no_placeholder_returns_unchanged() {
-        let mode = AppMode::Portable {
-            data_dir: PathBuf::from("/usb/termiHub/data"),
-        };
-        let result = resolve_portable_path("/home/user/.ssh/id_rsa", &mode);
-        assert_eq!(result, PathBuf::from("/home/user/.ssh/id_rsa"));
-    }
-
-    #[test]
-    fn resolve_portable_path_installed_mode_returns_unchanged() {
-        let result = resolve_portable_path("{PORTABLE_DIR}/data/keys/id_rsa", &AppMode::Installed);
-        assert_eq!(result, PathBuf::from("{PORTABLE_DIR}/data/keys/id_rsa"));
+    fn base_dir_is_none_in_installed_mode() {
+        assert!(AppMode::Installed.base_dir().is_none());
     }
 
     #[test]

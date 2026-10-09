@@ -6,8 +6,8 @@ severity: low
 category: perf
 is_workaround: true
 subsystem: src-tauri/src/tunnel
-status: open
-resolution: ""
+status: fixed
+resolution: "#4344 — 1 Hz tunnel-stats-updated and tunnel-status-changed emits removed; the tunnels projection region is the only channel"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -337,12 +337,9 @@ export function setSplitSizesInTree(root: PanelNode, splitId: string, sizes: num
   return { ...root, children };
 }
 
-let groupCounter = 0;
-
-/** Generate a unique tab group ID. */
+/** Generate a unique tab group ID (a prefixed ULID). */
 export function generateGroupId(): string {
-  groupCounter++;
-  return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
+  return newId("group");
 }
 
 /**

@@ -176,15 +176,6 @@ pub fn release_session(
     removed
 }
 
-/// The window label currently rendering `session_id`, if any.
-#[tauri::command]
-pub fn get_session_owner(
-    session_id: String,
-    window_manager: State<'_, WindowManager>,
-) -> Option<String> {
-    window_manager.owner_of(&session_id)
-}
-
 /// A snapshot of the full `session_id → owning_window_label` map (#1926).
 ///
 /// The Open Connections panel reads this once when it opens to stamp each

@@ -9,21 +9,17 @@ import {
 } from "@/utils/monacoLanguagePackages";
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
 import { Button, Tooltip, EmptyState, SearchInput } from "@/components/ui";
-import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
 }
 
 /**
- * Case-insensitive match of a language package against the (already normalized)
- * query on its id or display name. Module-level so the {@link useListFilter}
- * memo stays stable across renders.
+ * Searchable text of a language package: its id and display name. Module-level
+ * so the {@link useListFilter} memo stays stable across renders.
  */
-const languagePackageMatches: ListFilterMatcher<LanguagePackageInfo> = (pkg, query) => {
-  if (!query) return true;
-  return pkg.id.toLowerCase().includes(query) || pkg.name.toLowerCase().includes(query);
-};
+const languagePackageFields: ListFilterFields<LanguagePackageInfo> = (pkg) => [pkg.id, pkg.name];
 
 /**
  * Ids uninstalled during this app session. Their grammars stay loaded in Monaco
@@ -57,7 +53,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
     query: searchQuery,
     setQuery: setSearchQuery,
     filtered: filteredPackages,
-  } = useListFilter(ALL_LANGUAGE_PACKAGES, languagePackageMatches);
+  } = useListFilter(ALL_LANGUAGE_PACKAGES, languagePackageFields);
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 

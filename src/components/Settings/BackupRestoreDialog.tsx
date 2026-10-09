@@ -20,6 +20,7 @@ import { Modal, Button, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { BackupSectionRow, type SectionChoice } from "./BackupSectionRow";
 import { BackupCredentialsRow } from "./BackupCredentialsRow";
+import { getBasename } from "@/utils/paths";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
 
@@ -58,11 +59,6 @@ export function buildRestoreRequest(
       .map((s) => ({ id: s.id, mode: choices[s.id].mode, conflicts: choices[s.id].conflicts })),
     credentials,
   };
-}
-
-/** File name shown for a picked path, without leaking the full directory. */
-function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
 }
 
 /**
@@ -107,7 +103,7 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
       const text = await readTextFile(selected);
       setHeader(await readBackupHeader(text));
       setFileContent(text);
-      setFileName(baseName(selected));
+      setFileName(getBasename(selected));
       setPreview(null);
     } catch (err) {
       setHeader(null);

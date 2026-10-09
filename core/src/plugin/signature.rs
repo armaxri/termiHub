@@ -41,9 +41,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zip::ZipArchive;
+
+use crate::util::sha256::{sha256_hex_of_bytes, sha256_hex_of_file};
 
 use super::package::{
     read_entry_bounded, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
@@ -222,8 +223,7 @@ pub enum VerifiedArchive {
 /// Compute the `sha256:`-prefixed, lowercase-hex digest of `bytes`.
 #[must_use]
 pub fn sha256_digest(bytes: &[u8]) -> String {
-    let hash = Sha256::digest(bytes);
-    format!("{DIGEST_ALGORITHM}:{}", hex::encode(hash))
+    format!("{DIGEST_ALGORITHM}:{}", sha256_hex_of_bytes(bytes))
 }
 
 /// Derive the `keyId` fingerprint (`sha256:` + lowercase hex) of a raw public
@@ -239,21 +239,9 @@ pub fn key_id_from_public_key(public_key_bytes: &[u8]) -> String {
 /// Produces exactly the same value as [`sha256_digest`] over the file's bytes.
 /// Used by the host loader to re-check a backend library against its signed
 /// digest immediately before `dlopen` (the verify-then-load TOCTOU guard).
+/// Built on the shared [`crate::util::sha256`] primitive (#4365).
 pub fn sha256_file(path: &Path) -> std::io::Result<String> {
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(format!(
-        "{DIGEST_ALGORITHM}:{}",
-        hex::encode(hasher.finalize())
-    ))
+    Ok(format!("{DIGEST_ALGORITHM}:{}", sha256_hex_of_file(path)?))
 }
 
 /// Build the canonical, deterministic signing payload from the key id and the

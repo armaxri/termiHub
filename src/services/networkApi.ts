@@ -234,18 +234,6 @@ export async function networkHttpMonitorStart(
   });
 }
 
-/**
- * Set (or clear) which machine a monitor runs on — "This computer" or a named
- * agent (#2592). `RunLocation.ThisComputer` clears the preference (back to the
- * desktop default). Mirrors {@link setEmbeddedServerRunLocation}.
- */
-export async function setHttpMonitorRunLocation(
-  monitorId: string,
-  runLocation: RunLocation
-): Promise<void> {
-  await invoke("set_http_monitor_run_location", { monitorId, runLocation });
-}
-
 /** Stop a running HTTP monitor, keeping it listed so it can be resumed. */
 export async function networkHttpMonitorStop(monitorId: string): Promise<void> {
   await invoke("network_http_monitor_stop", { monitorId });

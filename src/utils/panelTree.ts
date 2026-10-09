@@ -1,5 +1,6 @@
 import { LeafPanel, PanelNode, SplitContainer, DropEdge, TabGroup } from "@/types/terminal";
 import type { FocusDirection } from "@/types/generated/FocusDirection";
+import { newId } from "@/services/transport/ids";
 
 // Generated from the Rust `FocusDirection` (core/src/layout/panel_tree.rs) via ts-rs (#3088).
 export type { FocusDirection };
@@ -33,12 +34,9 @@ export function normalizeSizes(sizes: number[]): number[] {
   return sizes.map((s) => (s / total) * 100);
 }
 
-let panelCounter = 0;
-
-/** Generate a unique panel ID. */
+/** Generate a unique panel ID (a prefixed ULID). */
 export function generatePanelId(): string {
-  panelCounter++;
-  return `panel-${Date.now()}-${panelCounter}-${Math.random().toString(36).slice(2, 6)}`;
+  return newId("panel");
 }
 
 /** Create a new empty leaf panel. */

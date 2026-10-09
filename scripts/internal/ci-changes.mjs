@@ -21,7 +21,10 @@
  *   rust      workspace crates, manifests, toolchain/cargo config, ts-rs output
  *   frontend  React/TS app, JS toolchain config, and ALL of scripts/** (the
  *             scripts/internal vitest suite reads files across it, #3942)
- *   sidecar   the workspace-excluded rdp-sidecar crate (own lockfile)
+ *   sidecar   the workspace-excluded rdp-sidecar crate (own lockfile), plus
+ *             what it compiles from outside rdp-sidecar/: termihub-core (a path
+ *             dependency), core's path dependency win-security, and the
+ *             workspace manifest core inherits from (#4357, SUP2-004)
  *   scripts   shell/cmd scripts (ShellCheck, .sh<->.cmd parity, --help smoke)
  *   harness   the Python system-test harness (tests/system, its generators)
  *   markdown  docs/** and *.md (Prettier + markdownlint in Frontend Code Quality)
@@ -131,6 +134,16 @@ export const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
 // inherits. Cargo.lock is not here: the fuzz crate has its own.
 const PLUGIN_FUZZ_ROOTS = ["plugin-runner/", "plugin-api/", "win-security/", ".cargo/"];
 const PLUGIN_FUZZ_FILES = new Set(["Cargo.toml"]);
+
+// What the workspace-excluded rdp-sidecar crate compiles from outside its own
+// directory (#4357, SUP2-004): termihub-core is a path dependency
+// (rdp-sidecar/Cargo.toml), core always pulls win-security by path, and core
+// inherits `workspace = true` dependency versions and rust-version from the root
+// Cargo.toml. A change here can alter the shipped sidecar's dependency graph, so
+// the sidecar job (incl. its cargo-deny gate) must run on the PR. Cargo.lock is
+// not here: the sidecar resolves against its own rdp-sidecar/Cargo.lock.
+const SIDECAR_ROOTS = ["core/", "win-security/"];
+const SIDECAR_FILES = new Set(["Cargo.toml"]);
 
 const FRONTEND_ROOTS = ["src/", "public/"];
 const FRONTEND_FILES = new Set([
@@ -323,6 +336,13 @@ export function classify(paths, { commentOnly = new Set() } = {}) {
       path.startsWith("rust-toolchain")
     ) {
       flags.plugin_fuzz = true;
+    }
+    if (
+      startsWithAny(path, SIDECAR_ROOTS) ||
+      SIDECAR_FILES.has(path) ||
+      path.startsWith("rust-toolchain")
+    ) {
+      flags.sidecar = true;
     }
   }
   if (flags.rust) flags.rustdoc = true;

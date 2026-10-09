@@ -435,43 +435,6 @@ pub fn lock_credential_store(
     Ok(())
 }
 
-/// Set up a new master password for the credential store.
-///
-/// This creates the initial encrypted credentials file. The store must
-/// be in master password mode and not already set up.
-///
-/// This is async because Argon2id key derivation is CPU-intensive.
-#[tauri::command]
-pub async fn setup_master_password(
-    password: String,
-    app_handle: AppHandle,
-    manager: State<'_, Arc<CredentialManager>>,
-) -> Result<(), String> {
-    info!("Setting up master password");
-
-    // Fail-safe gate (WA-RS-004): setting up a master password unlocks the store,
-    // so refuse it when no auto-lock timer is installed rather than create a
-    // freshly-unlocked store that nothing could auto-lock.
-    auto_lock_permits_unlock(manager.has_auto_lock_timer()).map_err(|m| m.to_string())?;
-
-    let result = manager
-        .with_master_password_store(|store| store.setup(&password).map_err(|e| e.to_string()))
-        .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
-
-    result?;
-
-    manager.notify_auto_lock_unlocked();
-
-    sync_embedded_server_secrets(&app_handle);
-    sync_connection_credential_scopes(&app_handle);
-    resume_transfers_waiting_for_credentials(&app_handle);
-    if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
-        warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
-    }
-    emit_status_changed(&app_handle, &manager);
-    Ok(())
-}
-
 /// Change the master password for the credential store.
 ///
 /// Verifies the current password, then re-encrypts all credentials

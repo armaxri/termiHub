@@ -5,7 +5,7 @@
 /// [`SshSession`] (russh `Handle`); the [`ForwardedChannelRegistry`] is
 /// returned separately only when remote forwarding is needed (tunnel module).
 use termihub_core::backends::ssh::auth::{
-    check_ssh_agent_status as core_check_agent, connect_and_authenticate as core_connect,
+    connect_and_authenticate as core_connect,
     connect_and_authenticate_cancellable as core_connect_cancellable,
 };
 pub use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
@@ -74,32 +74,11 @@ pub fn connect_and_authenticate_cancellable(
     .map_err(TerminalError::from_session_ssh)
 }
 
-/// Check whether the SSH agent is running or stopped.
-pub fn check_ssh_agent_status() -> String {
-    core_check_agent()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn check_ssh_agent_status_returns_valid_value() {
-        let status = check_ssh_agent_status();
-        assert!(
-            status == "running" || status == "stopped",
-            "unexpected status: {status}"
-        );
-    }
-
-    // The unset/empty/set `SSH_AUTH_SOCK` → running/stopped mapping is covered
-    // by value in core (`agent_status_for_sock_maps_each_case`). It is not
-    // re-tested here by unsetting the process-global `SSH_AUTH_SOCK`: that
-    // mutation is visible to every concurrently running test (#3419).
-
     /// Regression guard for #828.
     ///
-    /// [`connect_and_authenticate`]/[`connect_with_registry_cancellable`] run the async
+    /// `connect_and_authenticate` / `connect_with_registry_cancellable` run the async
     /// russh connect via `tokio::task::block_in_place` +
     /// `Handle::current().block_on(..)`. Both require a Tokio runtime context on
     /// the calling thread. A `spawn_blocking` thread carries that context; a

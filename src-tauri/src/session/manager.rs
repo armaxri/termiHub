@@ -117,11 +117,11 @@ pub struct PersistentSessionStateEvent {
     pub error_message: Option<String>,
 }
 
-/// Public summary of a persistent session, returned by `list_persistent_sessions`.
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
-#[serde(rename_all = "camelCase")]
+/// Summary of a persistent session, returned by `list_persistent_sessions` —
+/// a test introspection hook since its IPC command had no frontend caller and
+/// was removed (#4344).
+#[cfg(test)]
+#[derive(Debug, Clone)]
 pub struct PersistentSessionSummary {
     pub connection_id: String,
     pub session_id: String,
@@ -2284,7 +2284,9 @@ impl SessionManager {
         }
     }
 
-    /// List all registered persistent sessions and their current state.
+    /// List all registered persistent sessions and their current state (test
+    /// introspection only, #4344).
+    #[cfg(test)]
     pub async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
         self.persistent().list_persistent_sessions().await
     }

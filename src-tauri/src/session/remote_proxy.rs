@@ -2028,13 +2028,6 @@ mod tests {
             })
         }
 
-        fn list_definitions(
-            &self,
-            _agent_id: &str,
-        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-            Ok(vec![])
-        }
-
         fn save_definition(
             &self,
             _agent_id: &str,
@@ -2728,12 +2721,6 @@ mod tests {
                 folders: vec![],
             })
         }
-        fn list_definitions(
-            &self,
-            _agent_id: &str,
-        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-            Ok(vec![])
-        }
         fn save_definition(
             &self,
             _agent_id: &str,
@@ -3013,12 +3000,6 @@ mod tests {
                 connections: vec![],
                 folders: vec![],
             })
-        }
-        fn list_definitions(
-            &self,
-            _agent_id: &str,
-        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-            Ok(vec![])
         }
         fn save_definition(
             &self,

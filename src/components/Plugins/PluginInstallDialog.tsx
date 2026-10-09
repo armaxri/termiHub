@@ -19,6 +19,7 @@ import { platformLabel, pluginPlatformSupport } from "./pluginPlatforms";
 import { PluginPlatformList } from "./PluginPlatformList";
 import { PluginSignerChangeDialog } from "./PluginSignerChangeDialog";
 import { PluginVersionChangeDialog } from "./PluginVersionChangeDialog";
+import { getBasename } from "@/utils/paths";
 import "./Plugins.css";
 
 /** Props for {@link PluginInstallDialog}. */
@@ -42,12 +43,6 @@ export interface PluginInstallDialogProps {
   platformSupported?: boolean;
   /** Called after a successful install, or on cancel/close. */
   onClose: () => void;
-}
-
-/** Basename of a path, tolerating both POSIX and Windows separators. */
-function baseName(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
 }
 
 /** Title-case a plugin's primary type for the meta line (e.g. "Terminal Backend"). */
@@ -267,7 +262,7 @@ export function PluginInstallDialog({
               <span className="plugin-install__label">File</span>
               <span className="plugin-install__file">
                 <Package aria-hidden="true" />
-                {baseName(filePath)}
+                {getBasename(filePath)}
               </span>
             </div>
             <div className="plugin-install__row">

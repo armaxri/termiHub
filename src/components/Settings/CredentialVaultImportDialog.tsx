@@ -11,6 +11,7 @@ import type {
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, RadioGroup, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
+import { getBasename } from "@/utils/paths";
 import "./CredentialVault.css";
 
 interface CredentialVaultImportDialogProps {
@@ -46,11 +47,6 @@ export function importSummary(result: VaultImportResult): string {
   if (result.skippedCount > 0) parts.push(`${result.skippedCount} kept as-is`);
   if (result.unchangedCount > 0) parts.push(`${result.unchangedCount} already up to date`);
   return `Credential vault imported: ${parts.join(", ")}.`;
-}
-
-/** File name shown for a picked path, without leaking the full directory. */
-function baseName(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
 }
 
 /**
@@ -93,7 +89,7 @@ export function CredentialVaultImportDialog({
     try {
       const text = await readTextFile(selected);
       setFileContent(text);
-      setFileName(baseName(selected));
+      setFileName(getBasename(selected));
       setPreview(null);
     } catch (err) {
       setError(`Could not read the file: ${errorMessage(err)}`);

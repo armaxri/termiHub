@@ -19,7 +19,6 @@ import {
   openWindow,
   claimSession,
   releaseSession,
-  getSessionOwner,
   listSessionOwners,
   focusWindow,
   listWindows,
@@ -60,8 +59,6 @@ import {
   sessionSetOwner,
   sessionCreateSymlink,
   sessionCopy,
-  ftpDownload,
-  ftpUpload,
   // session monitoring
   sessionGetCapabilities,
   sessionMonitoringClose,
@@ -89,12 +86,10 @@ import {
   requestAgentDeferredUpdate,
   requestAgentUpdate,
   disconnectAgent,
-  getAgentCapabilities,
   listAgentSessions,
   listAgentHostSessions,
   takeOverAgentSession,
   closeAgentSession,
-  listAgentDefinitions,
   saveAgentDefinition,
   deleteAgentDefinition,
   listAgentConnections,
@@ -110,7 +105,6 @@ import {
   // portable mode + update checker + logging
   getAppMode,
   listConfigFiles,
-  resolvePortablePath,
   exportConfigToPortable,
   importConfigFromPortable,
   getAppInfo,
@@ -119,7 +113,6 @@ import {
   skipUpdateVersion,
   clearSkippedVersion,
   setUpdateAutoCheck,
-  getUpdateSettings,
   setFileLogLevel,
   getLogFilePath,
   sessionLoggingStart,
@@ -214,15 +207,6 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("release_session", { sessionId: "session-1" });
       expect(result).toBe(true);
-    });
-
-    it("getSessionOwner returns the owning window label", async () => {
-      mockedInvoke.mockResolvedValue("window-2");
-
-      const result = await getSessionOwner("session-1");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("get_session_owner", { sessionId: "session-1" });
-      expect(result).toBe("window-2");
     });
 
     it("listSessionOwners returns the owner map", async () => {
@@ -686,34 +670,6 @@ describe("api pass-through wrappers (#2975)", () => {
         dest: "/b",
       });
     });
-
-    it("ftpDownload forwards config/paths and returns the transfer id", async () => {
-      mockedInvoke.mockResolvedValue("transfer-1");
-
-      const result = await ftpDownload("s-1", { host: "ftp" }, "/remote/f", "/local/f");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("ftp_download", {
-        sessionId: "s-1",
-        config: { host: "ftp" },
-        remotePath: "/remote/f",
-        localPath: "/local/f",
-      });
-      expect(result).toBe("transfer-1");
-    });
-
-    it("ftpUpload forwards config/paths and returns the transfer id", async () => {
-      mockedInvoke.mockResolvedValue("transfer-2");
-
-      const result = await ftpUpload("s-1", { host: "ftp" }, "/local/f", "/remote/f");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("ftp_upload", {
-        sessionId: "s-1",
-        config: { host: "ftp" },
-        localPath: "/local/f",
-        remotePath: "/remote/f",
-      });
-      expect(result).toBe("transfer-2");
-    });
   });
 
   // ── Session monitoring ────────────────────────────────────────────────────
@@ -988,16 +944,6 @@ describe("api pass-through wrappers (#2975)", () => {
       });
     });
 
-    it("getAgentCapabilities returns the capabilities", async () => {
-      const caps = { monitoring: true };
-      mockedInvoke.mockResolvedValue(caps);
-
-      const result = await getAgentCapabilities("agent-1");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("get_agent_capabilities", { agentId: "agent-1" });
-      expect(result).toEqual(caps);
-    });
-
     it("listAgentSessions returns the session list", async () => {
       const sessions = [{ sessionId: "s1", title: "t", type: "ssh", status: "ok", attached: true }];
       mockedInvoke.mockResolvedValue(sessions);
@@ -1040,16 +986,6 @@ describe("api pass-through wrappers (#2975)", () => {
         agentId: "agent-1",
         sessionId: "s-1",
       });
-    });
-
-    it("listAgentDefinitions returns the definitions", async () => {
-      const defs = [{ id: "d1", name: "n", sessionType: "ssh", config: {}, persistent: false }];
-      mockedInvoke.mockResolvedValue(defs);
-
-      const result = await listAgentDefinitions("agent-1");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_definitions", { agentId: "agent-1" });
-      expect(result).toEqual(defs);
     });
 
     it("saveAgentDefinition forwards the definition and returns the saved record", async () => {
@@ -1229,17 +1165,6 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(result).toEqual(files);
     });
 
-    it("resolvePortablePath forwards the path", async () => {
-      mockedInvoke.mockResolvedValue("/abs/data");
-
-      const result = await resolvePortablePath("{PORTABLE_DIR}/data");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("resolve_portable_path_cmd", {
-        path: "{PORTABLE_DIR}/data",
-      });
-      expect(result).toBe("/abs/data");
-    });
-
     it("exportConfigToPortable forwards dest and files", async () => {
       const migration = { copied: ["settings.json"], skipped: [] };
       mockedInvoke.mockResolvedValue(migration);
@@ -1317,16 +1242,6 @@ describe("api pass-through wrappers (#2975)", () => {
       await setUpdateAutoCheck(false);
 
       expect(mockedInvoke).toHaveBeenCalledWith("set_update_auto_check", { enabled: false });
-    });
-
-    it("getUpdateSettings returns the settings", async () => {
-      const settings = { autoCheck: true, lastCheck: null, skippedVersion: null };
-      mockedInvoke.mockResolvedValue(settings);
-
-      const result = await getUpdateSettings();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("get_update_settings");
-      expect(result).toEqual(settings);
     });
 
     it("setFileLogLevel forwards the level", async () => {

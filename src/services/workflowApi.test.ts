@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow } from "./workflowApi";
+import { listWorkflows, saveWorkflow, deleteWorkflow } from "./workflowApi";
 import type { Workflow } from "@/types/workflow";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -33,14 +33,6 @@ describe("workflowApi", () => {
     const result = await listWorkflows();
     expect(mockedInvoke).toHaveBeenCalledWith("list_workflows");
     expect(result).toEqual([]);
-  });
-
-  it("getWorkflow invokes correct command with id", async () => {
-    const workflow = sampleWorkflow();
-    mockedInvoke.mockResolvedValue(workflow);
-    const result = await getWorkflow("wf-1");
-    expect(mockedInvoke).toHaveBeenCalledWith("get_workflow", { workflowId: "wf-1" });
-    expect(result).toEqual(workflow);
   });
 
   it("saveWorkflow invokes correct command with workflowDef arg", async () => {

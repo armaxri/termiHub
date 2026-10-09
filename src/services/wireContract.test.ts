@@ -51,7 +51,7 @@ import {
   connectAgent,
   createTerminal,
   getSettings,
-  listAgentDefinitions,
+  listAgentConnections,
   loadConnectionsAndFolders,
   transferList,
 } from "./api";
@@ -228,10 +228,12 @@ describe("wire contract: agent connect / definitions", () => {
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {
-    respondWith(agentFixture.listAgentDefinitions);
-    const [serial, shell] = await listAgentDefinitions("agent-pi");
+    respondWith(agentFixture.listAgentConnections);
+    const { connections, folders } = await listAgentConnections("agent-pi");
+    const [serial, shell] = connections;
 
-    expect(mockedInvoke).toHaveBeenCalledWith("list_agent_definitions", { agentId: "agent-pi" });
+    expect(mockedInvoke).toHaveBeenCalledWith("list_agent_connections", { agentId: "agent-pi" });
+    expect(folders).toEqual([]);
     expect(keys(serial)).toEqual([
       "config",
       "folderId",
@@ -309,7 +311,7 @@ describe("wire contract: workspace load", () => {
       {
         agents: agents.map((a) => ({ id: a.id, name: a.name, connected: true })),
         definitions: {
-          "agent-pi": agentFixture.listAgentDefinitions.map((d) => ({
+          "agent-pi": agentFixture.listAgentConnections.connections.map((d) => ({
             id: d.id,
             name: d.name,
             sessionType: d.sessionType,

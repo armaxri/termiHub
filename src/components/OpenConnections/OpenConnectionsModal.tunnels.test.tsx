@@ -1,9 +1,10 @@
 /**
  * Tests for the "SSH Tunnels" section of the Open Connections panel (#1141,
  * GAP 9): the tunnel list must be driven by the store's live `tunnelStates`
- * (the single source of truth) rather than a one-shot `getTunnelStatuses`
- * snapshot fetched only when the modal opens. This keeps the panel in sync with
- * the sidebar and reflects store updates without re-opening the modal.
+ * (the single source of truth) rather than a one-shot status snapshot fetched
+ * only when the modal opens (that `get_tunnel_statuses` command is gone, #4344).
+ * This keeps the panel in sync with the sidebar and reflects store updates
+ * without re-opening the modal.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -44,12 +45,10 @@ vi.mock("@/services/api", () => ({
   xServerStop: vi.fn(() => Promise.resolve()),
 }));
 
-// The one-shot fetch, if the component still used it, would return an EMPTY
-// list — so any tunnel rows that render must come from the store's live map.
-const getTunnelStatuses = vi.fn(() => Promise.resolve([] as TunnelState[]));
+// No status fetch is mocked: any tunnel rows that render must come from the
+// store's live map.
 const stopTunnel = vi.fn((_id: string) => Promise.resolve());
 vi.mock("@/services/tunnelApi", () => ({
-  getTunnelStatuses: () => getTunnelStatuses(),
   stopTunnel: (id: string) => stopTunnel(id),
 }));
 
@@ -100,7 +99,6 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    getTunnelStatuses.mockClear();
     stopTunnel.mockClear();
   });
 
@@ -120,8 +118,8 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     await flushAsync();
   }
 
-  it("renders tunnels from the store's live tunnelStates, not the one-shot fetch", async () => {
-    // Store holds a connected tunnel; the one-shot fetch returns nothing.
+  it("renders tunnels from the store's live tunnelStates", async () => {
+    // Store holds a connected tunnel; nothing else supplies statuses.
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "web-forward")],
       tunnelStates: { t1: tunnelState("t1", "connected") },

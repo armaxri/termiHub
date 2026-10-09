@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
 import {
@@ -11,10 +11,13 @@ import {
 } from "./third-party-notices-model.mjs";
 import {
   CARGO_ABOUT_VERSION,
+  EXTERNAL_TEXTS,
   cargoAboutPinProblems,
   configProblems,
   externalNoticeBody,
   flattenPnpmLicenses,
+  fontNoticeProblems,
+  listFontFiles,
   tomlStringArray,
 } from "./third-party-notices.mjs";
 
@@ -237,5 +240,83 @@ describe("NoticesBuilder", () => {
     expect(text).toContain("(standard license text - the package ships no license file)");
     expect(text).toContain("Used by: foo 1.0.0, pkg 2.0.0");
     expect(build().render({ version: "9.9.9", externalNotice: "X servers here" })).toBe(text);
+  });
+});
+
+// #4357 (SUP2-003): bundled fonts come from no lockfile, so the notices only
+// cover them through EXTERNAL_TEXTS. `notices:check` fails on an uncovered font.
+describe("fontNoticeProblems", () => {
+  const texts = [{ file: "licenses/a.txt", fonts: ["public/fonts/A.ttf"] }, { file: "x.txt" }];
+
+  it("passes when every shipped font is covered", () => {
+    expect(fontNoticeProblems(["public/fonts/A.ttf"], texts)).toEqual([]);
+  });
+
+  it("reports a shipped font with no license entry", () => {
+    const problems = fontNoticeProblems(["public/fonts/A.ttf", "src/assets/B.woff2"], texts);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("bundled font src/assets/B.woff2 has no license entry");
+  });
+
+  it("reports a stale entry for a font that no longer exists", () => {
+    expect(fontNoticeProblems([], texts)).toEqual([
+      "EXTERNAL_TEXTS lists font public/fonts/A.ttf, which does not exist",
+    ]);
+  });
+});
+
+describe("bundled fonts in the real tree", () => {
+  const fonts = listFontFiles(ROOT);
+
+  it("finds the vendored Geist and MesloLGS Nerd Font files", () => {
+    expect(fonts).toEqual(
+      expect.arrayContaining([
+        "public/fonts/MesloLGSNerdFontMono-Bold.ttf",
+        "public/fonts/MesloLGSNerdFontMono-Regular.ttf",
+        "src/assets/fonts/Geist-Variable.woff2",
+      ])
+    );
+  });
+
+  it("covers every shipped font file with an EXTERNAL_TEXTS entry", () => {
+    expect(fontNoticeProblems(fonts, EXTERNAL_TEXTS)).toEqual([]);
+  });
+
+  it("ships the Geist OFL text and the Meslo / Nerd Fonts glyph-set texts", () => {
+    for (const { file } of EXTERNAL_TEXTS)
+      expect(existsSync(path.join(ROOT, file)), file).toBe(true);
+    const files = EXTERNAL_TEXTS.map((t) => t.file);
+    expect(files).toContain("licenses/OFL-1.1-geist.txt");
+    expect(files).toContain("licenses/Apache-2.0-meslo-lg.txt");
+    expect(read("licenses/OFL-1.1-geist.txt")).toContain("SIL Open Font License, Version 1.1");
+    // Every Nerd Fonts glyph source from upstream license-audit.md (v3.3.0).
+    for (const glyphs of [
+      "codicons",
+      "devicons",
+      "font-awesome",
+      "font-awesome-extension",
+      "font-logos",
+      "iec-power-symbols",
+      "material-design-icons",
+      "octicons",
+      "pomicons",
+      "powerline-extra-symbols",
+      "powerline-symbols",
+      "seti-ui",
+      "weather-icons",
+    ]) {
+      expect(
+        files.some((f) => f.startsWith(`licenses/nerd-fonts-${glyphs}`)),
+        glyphs
+      ).toBe(true);
+    }
+  });
+
+  it("documents both fonts in THIRD_PARTY_LICENSES.md", () => {
+    const md = read("THIRD_PARTY_LICENSES.md");
+    expect(md).toContain("## Bundled fonts");
+    expect(md).toContain("Geist");
+    expect(md).toContain("MesloLGS Nerd Font Mono");
+    for (const { file } of EXTERNAL_TEXTS) expect(md, file).toContain(file);
   });
 });

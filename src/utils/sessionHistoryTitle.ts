@@ -1,5 +1,5 @@
 import type { ConnectionConfig } from "@/types/terminal";
-import { getBasename } from "@/utils/formatters";
+import { getBasename } from "@/utils/paths";
 
 /** Read a config field as a trimmed non-empty string, else undefined. */
 function str(config: Record<string, unknown>, key: string): string | undefined {

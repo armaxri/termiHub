@@ -27,7 +27,6 @@ vi.mock("@/services/storage", () => ({
 
 vi.mock("@/services/macroApi", () => ({
   listMacros: vi.fn(() => Promise.resolve([])),
-  getMacro: vi.fn(),
   saveMacro: vi.fn((m: unknown) => Promise.resolve(m)),
   deleteMacro: vi.fn(() => Promise.resolve()),
   listMacroRuns: vi.fn(() => Promise.resolve([])),

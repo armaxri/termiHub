@@ -126,7 +126,6 @@ fn exports_and_backups_carry_no_secret() {
     mgr.save_connection(tunnelled_vnc()).unwrap();
     mgr.save_connection(jump_ssh()).unwrap();
 
-    assert_no_secret(&mgr.export_json().unwrap(), "export");
     assert_no_secret(&mgr.export_encrypted_json(None, None).unwrap(), "export");
 
     // A backup of a connections.json still holding legacy plaintext.

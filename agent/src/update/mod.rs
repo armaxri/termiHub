@@ -49,7 +49,8 @@
 
 mod apply;
 mod build_version;
-mod checksum;
+/// The `.sha256` sidecar gate, shared with the desktop in core (#4365).
+use termihub_core::agent_update_checksum as checksum;
 mod coordinate;
 mod download;
 mod github;

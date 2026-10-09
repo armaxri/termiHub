@@ -37,15 +37,11 @@ vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
   getDefaultShell: vi.fn(() => Promise.resolve(null)),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
   setUpdateAutoCheck: vi.fn(),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  getTunnels: vi.fn(() => Promise.resolve([])),
-  getTunnelStatuses: vi.fn(() => Promise.resolve([])),
-}));
+vi.mock("@/services/tunnelApi", () => ({}));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),

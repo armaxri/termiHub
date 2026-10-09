@@ -132,10 +132,12 @@ flowchart LR
 - **npm:** production dependencies only, each with its own `LICENSE`/`NOTICE` files. A
   package that ships no license file gets the standard text of its SPDX license and is
   marked as such.
-- **External programs and bundled native binaries:** the content of
-  `THIRD_PARTY_LICENSES.md` plus the texts under `licenses/` — the X servers termiHub
-  installs but does not bundle, and the Microsoft ConPTY host (`conpty.dll` +
-  `OpenConsole.exe`, MIT) the Windows installer bundles (#4121).
+- **External programs, bundled native binaries and bundled fonts:** the content of
+  `THIRD_PARTY_LICENSES.md` plus the texts under `licenses/` (`EXTERNAL_TEXTS` in the
+  generator) — the X servers termiHub installs but does not bundle, the Microsoft ConPTY
+  host (`conpty.dll` + `OpenConsole.exe`, MIT) the Windows installer bundles (#4121), and
+  the fonts in the frontend bundle: Geist (OFL-1.1) and MesloLGS Nerd Font Mono (the
+  Apache-2.0 Meslo LG base font plus the Nerd Fonts glyph sets, #4357).
 
 Identical texts are printed once and cross-referenced by number. The output is a pure
 function of the lockfiles and the pinned cargo-about version (about 1.1 MB).
@@ -164,7 +166,8 @@ pnpm notices:check               # config + npm license gate only (no cargo-abou
   `verify-release` requires the asset.
 - `security-audit.yml` → **Third-Party Notices** runs on dependency PRs and on pushes to
   `develop`/`main`: `pnpm notices:check` (about.toml equals deny.toml's allowlist, every
-  npm production license is allowlisted, the cargo-about pin matches in every workflow)
+  npm production license is allowlisted, the cargo-about pin matches in every workflow,
+  every font file under `src/` and `public/` has a license entry)
   and a dry-run `pnpm notices:generate`, which fails if any crate has no license text.
   An unapproved Rust license is rejected by the `cargo deny check licenses` step.
 

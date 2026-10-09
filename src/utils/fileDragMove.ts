@@ -1,5 +1,6 @@
 import type { FileEntry } from "@/types/connection";
 import type { FileClipboard } from "@/store/appStore";
+import { normalizeDirPath, parentDir } from "@/utils/paths";
 
 /**
  * Pure planning helpers for moving/copying file-browser entries into another
@@ -20,29 +21,6 @@ export type FileDropPlan =
   | { kind: "refuse"; reason: FileDropRefusal; message: string }
   | { kind: "noop" }
   | { kind: "ok"; entries: FileEntry[] };
-
-/** Normalise separators and drop a trailing slash (except on a root). */
-export function normalizeDirPath(path: string): string {
-  const slashed = path.replace(/\\/g, "/");
-  if (slashed === "/" || /^[A-Za-z]:\/$/.test(slashed)) return slashed;
-  return slashed.endsWith("/") ? slashed.slice(0, -1) : slashed;
-}
-
-/** Join a directory and an entry name with a single `/`. */
-export function joinDirPath(dir: string, name: string): string {
-  const base = normalizeDirPath(dir);
-  return base.endsWith("/") ? `${base}${name}` : `${base}/${name}`;
-}
-
-/** The parent directory of an absolute path (`/` for a top-level entry). */
-export function parentDirPath(path: string): string {
-  const normalized = normalizeDirPath(path);
-  const idx = normalized.lastIndexOf("/");
-  if (idx <= 0) return "/";
-  const parent = normalized.slice(0, idx);
-  // Keep a Windows drive root as "C:/" rather than a bare "C:".
-  return /^[A-Za-z]:$/.test(parent) ? `${parent}/` : parent;
-}
 
 /** True when `dir` is `entryPath` itself or lies somewhere beneath it. */
 export function isSameOrDescendant(entryPath: string, dir: string): boolean {
@@ -88,7 +66,7 @@ export function planFileDrop(
     };
   }
   const dest = normalizeDirPath(destDir);
-  const effective = entries.filter((e) => normalizeDirPath(parentDirPath(e.path)) !== dest);
+  const effective = entries.filter((e) => normalizeDirPath(parentDir(e.path)) !== dest);
   if (effective.length === 0) return { kind: "noop" };
   return { kind: "ok", entries: effective };
 }

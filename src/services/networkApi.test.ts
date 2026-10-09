@@ -27,7 +27,6 @@ import {
   networkWolDeviceSave,
   networkWolDeviceDelete,
   networkHttpMonitorStart,
-  setHttpMonitorRunLocation,
   networkHttpMonitorStop,
   networkHttpMonitorStopAll,
   networkHttpMonitorList,
@@ -284,17 +283,6 @@ describe("networkApi", () => {
         timeoutMs: 10000,
         runLocation: { kind: "agent", agentId: "edge" },
         allowPrivateNetwork: true,
-      });
-    });
-
-    it("setHttpMonitorRunLocation records a monitor's chosen machine", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await setHttpMonitorRunLocation("mon-1", { kind: "agent", agentId: "edge" });
-
-      expect(mockedInvoke).toHaveBeenCalledWith("set_http_monitor_run_location", {
-        monitorId: "mon-1",
-        runLocation: { kind: "agent", agentId: "edge" },
       });
     });
 
