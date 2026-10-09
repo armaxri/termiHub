@@ -9,10 +9,11 @@
 //! * a PTY + shell that echoes its input (the terminal tab);
 //! * an `sftp` subsystem over an in-memory file system (the temp upload);
 //! * exec channels that read stdin to EOF, then act like the remote host:
-//!   `sudo -S …` checks the stdin line against [`SUDO_PASSWORD`] and, when it
-//!   matches, moves the temp upload over the destination the way the fixed
+//!   `env LC_ALL=C … sudo -k -S -p <prompt> …` checks the stdin line against
+//!   [`SUDO_PASSWORD`] and, when it matches, echoes the authorization marker and
+//!   moves the temp upload over the destination the way the fixed
 //!   `cat "$1" > "$2" && rm -f "$1"` script does; when it does not, it answers
-//!   with sudo's real wrong-password stderr. `rm -f` removes the file and
+//!   with real sudo's wrong-password stderr (re-prompt, then EOF). `rm -f` removes the file and
 //!   `echo <marker>` echoes, so the cleanup and exec-capability probe work.
 //!
 //! What sudo was handed on stdin is recorded in [`Observed`], so a test can
@@ -33,8 +34,17 @@ pub const LOGIN_PASSWORD: &str = "Sudo-Server-Login-Pw-4c2e17";
 /// The only password the scripted `sudo` accepts on stdin.
 pub const SUDO_PASSWORD: &str = "Sudo-Server-Sudo-Pw-a9d031";
 
-/// sudo's stderr for a rejected password, as `sudo -S -p ''` prints it.
-const SUDO_REJECTED_STDERR: &str = "Sorry, try again.\nsudo: 1 incorrect password attempt\n";
+/// Line the elevated script echoes once sudo has authorized it (#4290).
+const SUDO_AUTHORIZED_MARKER: &str = "termihub-sudo-authorized";
+
+/// sudo's stderr for a rejected password under `sudo -S -p <prompt>` with one
+/// stdin line: it prompts, rejects, re-prompts and then hits EOF (#4290).
+fn sudo_rejected_stderr(prompt: &str) -> String {
+    format!(
+        "{prompt}Sorry, try again.\n{prompt}\nsudo: no password was provided\n\
+         sudo: 1 incorrect password attempt\n"
+    )
+}
 
 /// How long the SFTP subsystem takes to apply each write (see `MemorySftp::write`).
 const WRITE_LAG: std::time::Duration = std::time::Duration::from_millis(50);
@@ -132,23 +142,35 @@ impl ConnectionHandler {
     fn run_exec(&self, state: &ExecState) -> (String, String, u32) {
         let mut obs = self.observed.lock().expect("observed");
         let command = state.command.as_str();
-        if command.starts_with("sudo ") {
+        let words = shell_words(command);
+        if let Some(sudo_at) = words.iter().position(|w| w == "sudo") {
             let stdin = String::from_utf8_lossy(&state.stdin).into_owned();
             obs.sudo_stdin.push(stdin.clone());
+            let prompt = words[sudo_at..]
+                .iter()
+                .position(|w| w == "-p")
+                .and_then(|i| words.get(sudo_at + i + 1))
+                .cloned()
+                .unwrap_or_default();
             if stdin != format!("{SUDO_PASSWORD}\n") {
-                return (String::new(), SUDO_REJECTED_STDERR.to_string(), 1);
+                return (String::new(), sudo_rejected_stderr(&prompt), 1);
             }
-            // `… sh <temp> <dest>`: the script moves the temp over the dest.
-            let words = shell_words(command);
+            // `… sh <temp> <dest>`: the script echoes the marker, then moves
+            // the temp over the dest.
             let [.., temp, dest] = words.as_slice() else {
                 return (String::new(), "sh: missing operand\n".into(), 2);
             };
+            let authorized = format!("{SUDO_AUTHORIZED_MARKER}\n");
             return match obs.files.remove(temp) {
                 Some(content) => {
                     obs.files.insert(dest.clone(), content);
-                    (String::new(), String::new(), 0)
+                    (authorized, prompt, 0)
                 }
-                None => (String::new(), format!("cat: {temp}: No such file\n"), 1),
+                None => (
+                    authorized,
+                    format!("{prompt}cat: {temp}: No such file\n"),
+                    1,
+                ),
             };
         }
         if let Some(path) = command.strip_prefix("rm -f ") {
