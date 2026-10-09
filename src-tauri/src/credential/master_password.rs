@@ -82,6 +82,10 @@ pub struct MasterPasswordStore {
     /// persisted on the next save always agree even if the compiled-in
     /// constants change under an existing vault (#2362).
     kdf_cost: RwLock<Option<Argon2Cost>>,
+    /// Test-only fault injection: when set, every vault write fails before
+    /// touching the disk, as a full disk or a locked file would (#4295).
+    #[cfg(test)]
+    fail_writes: std::sync::atomic::AtomicBool,
 }
 
 impl MasterPasswordStore {
@@ -97,7 +101,17 @@ impl MasterPasswordStore {
             credentials: RwLock::new(None),
             derived_key: RwLock::new(None),
             kdf_cost: RwLock::new(None),
+            #[cfg(test)]
+            fail_writes: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Make every following vault write fail (or succeed again) — test-only
+    /// fault injection for the rollback paths (#4295).
+    #[cfg(test)]
+    pub(crate) fn set_fail_writes(&self, fail: bool) {
+        self.fail_writes
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Create the initial encrypted credentials file with an empty credential
@@ -112,27 +126,43 @@ impl MasterPasswordStore {
         let mut salt = vec![0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
 
-        let key = derive_key(password, &salt)?;
+        let mut raw_key = derive_key(password, &salt)?;
+        let mut key = raw_key.to_vec();
+        raw_key.zeroize();
+        let cost = Argon2Cost::current();
 
+        // Write the file first and adopt the key only once it is on disk, so a
+        // failed write never leaves the store unlocked without a vault behind
+        // it (#4295).
+        if let Err(e) = self.seal_and_write(&salt, &key, &cost, &HashMap::new()) {
+            key.zeroize();
+            return Err(e.context("Failed to write initial credentials file"));
+        }
+        self.adopt_key(salt, key, cost);
+        {
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
+            *creds_guard = Some(HashMap::new());
+        }
+        Ok(())
+    }
+
+    /// Replace the in-memory salt, key and KDF cost, zeroizing the old key.
+    fn adopt_key(&self, salt: Vec<u8>, key: Vec<u8>, cost: Argon2Cost) {
         {
             let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
             *salt_guard = Some(salt);
         }
         {
             let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
-            *key_guard = Some(key.to_vec());
+            if let Some(ref mut old_key) = *key_guard {
+                old_key.zeroize();
+            }
+            *key_guard = Some(key);
         }
         {
             let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
-            *cost_guard = Some(Argon2Cost::current());
+            *cost_guard = Some(cost);
         }
-        {
-            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
-            *creds_guard = Some(HashMap::new());
-        }
-
-        self.save_to_disk()
-            .context("Failed to write initial credentials file")
     }
 
     /// Decrypt the credentials file with the given master password and
@@ -315,21 +345,7 @@ impl MasterPasswordStore {
             }
         };
 
-        {
-            let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
-            *salt_guard = Some(sealed.salt);
-        }
-        {
-            let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
-            if let Some(ref mut old_key) = *key_guard {
-                old_key.zeroize();
-            }
-            *key_guard = Some(key);
-        }
-        {
-            let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
-            *cost_guard = Some(sealed.cost);
-        }
+        self.adopt_key(sealed.salt, key, sealed.cost);
         {
             let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             *creds_guard = Some(credentials);
@@ -428,31 +444,39 @@ impl MasterPasswordStore {
         // upgrades the vault to any strengthened KDF parameters.
         let mut new_salt = vec![0u8; SALT_LEN];
         OsRng.fill_bytes(&mut new_salt);
-        let new_key = derive_key(new_password, &new_salt)?;
+        let mut raw_key = derive_key(new_password, &new_salt)?;
+        let mut new_key = raw_key.to_vec();
+        raw_key.zeroize();
+        let new_cost = Argon2Cost::current();
 
-        {
-            let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
-            *salt_guard = Some(new_salt);
+        // Seal and write the vault under the new key *before* touching the
+        // in-memory key (PER2-003, #4295). If the write fails, the store keeps
+        // the old key, so memory still matches the file on disk and the next
+        // save does not silently re-key the vault to the rejected password.
+        let creds = self.credentials_snapshot()?;
+        let written = self.seal_and_write(&new_salt, &new_key, &new_cost, &creds);
+        drop(creds);
+        if let Err(e) = written {
+            new_key.zeroize();
+            return Err(e.context("Failed to re-encrypt credentials with new password"));
         }
-        {
-            let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
-            if let Some(ref mut old_key) = *key_guard {
-                old_key.zeroize();
-            }
-            *key_guard = Some(new_key.to_vec());
-        }
-        {
-            let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
-            *cost_guard = Some(Argon2Cost::current());
-        }
-
-        self.save_to_disk()
-            .context("Failed to re-encrypt credentials with new password")
+        self.adopt_key(new_salt, new_key, new_cost);
+        Ok(())
     }
 
     /// Returns `true` if the credentials file exists on disk.
     pub fn has_credentials_file(&self) -> bool {
         self.file_path.exists()
+    }
+
+    /// A copy of the in-memory credential map whose values are zeroized on
+    /// drop. Errors when the store is locked.
+    fn credentials_snapshot(&self) -> Result<ZeroizingMap> {
+        let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
+        creds_guard
+            .clone()
+            .map(ZeroizingMap)
+            .context("Cannot save — store is locked")
     }
 
     /// Encrypt the in-memory credential map and write it to disk atomically.
@@ -465,26 +489,37 @@ impl MasterPasswordStore {
         };
         let key = {
             let key_guard = self.derived_key.read().unwrap_or_else(|e| e.into_inner());
-            key_guard.clone().context("Cannot save — store is locked")?
+            zeroize::Zeroizing::new(key_guard.clone().context("Cannot save — store is locked")?)
         };
         let cost = {
             let cost_guard = self.kdf_cost.read().unwrap_or_else(|e| e.into_inner());
             cost_guard.context("Cannot save — store is locked")?
         };
-        let creds = {
-            let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
-            creds_guard
-                .clone()
-                .context("Cannot save — store is locked")?
-        };
+        let creds = self.credentials_snapshot()?;
+        self.seal_and_write(&salt, &key, &cost, &creds)
+    }
 
-        let mut plaintext =
-            serde_json::to_vec(&creds).context("Failed to serialize credentials")?;
+    /// Seal `creds` under `key` (derived from `salt` with `cost`) and write the
+    /// envelope to disk atomically. Touches no in-memory state, so a caller can
+    /// write under a new key and adopt it only once the write succeeded.
+    fn seal_and_write(
+        &self,
+        salt: &[u8],
+        key: &[u8],
+        cost: &Argon2Cost,
+        creds: &HashMap<String, String>,
+    ) -> Result<()> {
+        #[cfg(test)]
+        if self.fail_writes.load(std::sync::atomic::Ordering::SeqCst) {
+            bail!("Failed to write credentials file: injected write failure");
+        }
+
+        let mut plaintext = serde_json::to_vec(creds).context("Failed to serialize credentials")?;
 
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
-        let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
+        let cipher = Aes256Gcm::new_from_slice(key).context("Failed to create cipher")?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         // Writes always seal at the current version (upgrade-on-write): a vault
@@ -504,7 +539,7 @@ impl MasterPasswordStore {
             version: ENVELOPE_VERSION,
             kdf: KdfParams {
                 algorithm: "argon2id".to_string(),
-                salt: BASE64.encode(&salt),
+                salt: BASE64.encode(salt),
                 memory_cost: cost.memory_cost,
                 time_cost: cost.time_cost,
                 parallelism: cost.parallelism,
@@ -528,6 +563,25 @@ impl MasterPasswordStore {
         write_atomic(&self.file_path, &json).context("Failed to write credentials file")?;
 
         Ok(())
+    }
+}
+
+/// A credential map whose values are zeroized when it is dropped.
+struct ZeroizingMap(HashMap<String, String>);
+
+impl std::ops::Deref for ZeroizingMap {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for ZeroizingMap {
+    fn drop(&mut self) {
+        for value in self.0.values_mut() {
+            value.zeroize();
+        }
     }
 }
 
@@ -667,6 +721,10 @@ impl CredentialStore for MasterPasswordStore {
             }
         }
         outcome.context("Batch credential write failed and was rolled back")
+    }
+
+    fn vault_file(&self) -> Option<PathBuf> {
+        Some(self.file_path.clone())
     }
 
     fn status(&self) -> CredentialStoreStatus {
@@ -1332,5 +1390,126 @@ mod tests {
 
         let key = CredentialKey::new("conn-a", CredentialType::Password);
         assert!(store.set_many(&[(key, "v".to_string())]).is_err());
+    }
+
+    // --- failed writes leave memory and disk in agreement (PER2-003, #4295) ---
+
+    /// Assert the vault on disk still opens with `password` and holds `entry`.
+    fn assert_disk_opens_with(dir: &Path, password: &str, entry: (&CredentialKey, &str)) {
+        let fresh = make_store(dir);
+        fresh
+            .unlock(password)
+            .expect("the vault on disk must still open with this password");
+        assert_eq!(fresh.get(entry.0).unwrap().as_deref(), Some(entry.1));
+    }
+
+    #[test]
+    fn failed_password_change_keeps_the_old_key_in_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("old-pw").unwrap();
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+        let file_before = fs::read(&store.file_path).unwrap();
+
+        store.set_fail_writes(true);
+        assert!(store.change_password("old-pw", "new-pw").is_err());
+        store.set_fail_writes(false);
+
+        // Disk untouched, and memory still holds the old key.
+        assert_eq!(fs::read(&store.file_path).unwrap(), file_before);
+        assert!(store.is_unlocked());
+        assert!(store.verify_password("old-pw").unwrap());
+        assert!(!store.verify_password("new-pw").unwrap());
+        assert_eq!(store.get(&key).unwrap().as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn save_after_failed_password_change_still_seals_under_old_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("old-pw").unwrap();
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+
+        store.set_fail_writes(true);
+        assert!(store.change_password("old-pw", "new-pw").is_err());
+        store.set_fail_writes(false);
+
+        // The next save must not silently re-key the vault to the rejected
+        // password: it still opens with the old one only.
+        let other = CredentialKey::new("conn-2", CredentialType::Password);
+        store.set(&other, "later").unwrap();
+        assert_disk_opens_with(dir.path(), "old-pw", (&other, "later"));
+        assert!(make_store(dir.path()).unlock("new-pw").is_err());
+
+        store.lock();
+        store.unlock("old-pw").unwrap();
+        assert_eq!(store.get(&key).unwrap().as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn password_change_works_after_a_failed_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("old-pw").unwrap();
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+
+        store.set_fail_writes(true);
+        assert!(store.change_password("old-pw", "new-pw").is_err());
+        store.set_fail_writes(false);
+        store.change_password("old-pw", "new-pw").unwrap();
+
+        assert_disk_opens_with(dir.path(), "new-pw", (&key, "secret"));
+        assert!(make_store(dir.path()).unlock("old-pw").is_err());
+    }
+
+    /// The audit's real-filesystem reproduction: a read-only vault directory
+    /// makes the atomic write fail mid-change (#4295).
+    #[cfg(unix)]
+    #[test]
+    fn password_change_into_read_only_dir_keeps_old_password() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("vault");
+        fs::create_dir(&sub).unwrap();
+        let store = make_store(&sub);
+        store.setup("old-pw").unwrap();
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o555)).unwrap();
+        let probe = sub.join("probe");
+        let read_only_enforced = fs::write(&probe, "x").is_err();
+        let result = store.change_password("old-pw", "new-pw");
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o755)).unwrap();
+        if !read_only_enforced {
+            // Running as root: permissions are not enforced, nothing to test.
+            return;
+        }
+
+        assert!(result.is_err(), "the change must report the failed write");
+        let other = CredentialKey::new("conn-2", CredentialType::Password);
+        store.set(&other, "later").unwrap();
+        assert_disk_opens_with(&sub, "old-pw", (&other, "later"));
+        assert_disk_opens_with(&sub, "old-pw", (&key, "secret"));
+    }
+
+    #[test]
+    fn failed_setup_leaves_the_store_locked_without_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+
+        store.set_fail_writes(true);
+        assert!(store.setup("pw").is_err());
+        store.set_fail_writes(false);
+
+        assert!(!store.is_unlocked());
+        assert!(!store.has_credentials_file());
+        assert_eq!(store.status(), CredentialStoreStatus::Unavailable);
+        store.setup("pw").unwrap();
+        assert!(store.is_unlocked());
     }
 }

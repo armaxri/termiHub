@@ -647,6 +647,14 @@ impl CredentialStore for CredentialManager {
             StoreBackend::OsKeychain(ref s) => s.status(),
         }
     }
+
+    fn vault_file(&self) -> Option<PathBuf> {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        match *inner {
+            StoreBackend::MasterPassword(ref s) => s.vault_file(),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
