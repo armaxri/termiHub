@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act, useState } from "react";
+import { act, useState } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { checkA11y } from "@/test/axe";
 import { pressRadioArrow } from "@/test/radioKeyboard";

@@ -6,8 +6,8 @@ severity: medium
 category: ui
 is_workaround: false
 subsystem: "src/components (TunnelEditor, ConnectionEditor, Settings)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4352 — tunnel type, jump-host source, update auto-check and storage mode now use ui/RadioGroup variant=cards (Radix radiogroup, aria-checked, arrow keys)"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
