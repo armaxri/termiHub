@@ -10,7 +10,7 @@
 //! to the exit hook the plugin handle installs (crash budget, respawn).
 
 use std::collections::HashMap;
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
@@ -45,6 +45,10 @@ const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Called once with the final cause when the runner is gone.
 pub(super) type ExitHook = Box<dyn FnOnce(&RunnerExitCause) + Send>;
+
+/// The host's own measurement of whether the runner is close to a memory
+/// limit right now (see `watchdog::memory_pressure`).
+pub(super) type MemoryProbe = Box<dyn Fn() -> bool + Send + Sync>;
 
 /// The final exit cause and the hook waiting for it.
 #[derive(Default)]
@@ -104,8 +108,12 @@ pub(super) struct Shared {
     /// Requests with their own deadline in flight (`CreateSession`); while
     /// any is, a missing pong is not yet a hang.
     pub(super) calls_in_flight: AtomicUsize,
-    /// The runner reported a failed allocation on stderr.
-    out_of_memory: AtomicBool,
+    /// The runner reported a failed allocation on stderr (its own word only).
+    allocation_failure_reported: AtomicBool,
+    /// The host measured memory pressure when that report arrived.
+    memory_pressure_seen: AtomicBool,
+    /// Measures the runner's memory pressure (none in unit tests by default).
+    memory_probe: Mutex<Option<MemoryProbe>>,
     /// The stderr forwarder is done (or there is none).
     stderr_done: AtomicBool,
     /// The capability-bridge service answering this runner's requests (#4183).
@@ -134,7 +142,9 @@ impl Shared {
             exit: Mutex::new(ExitState::default()),
             heartbeat: Mutex::new(HeartbeatState::default()),
             calls_in_flight: AtomicUsize::new(0),
-            out_of_memory: AtomicBool::new(false),
+            allocation_failure_reported: AtomicBool::new(false),
+            memory_pressure_seen: AtomicBool::new(false),
+            memory_probe: Mutex::new(None),
             stderr_done: AtomicBool::new(true),
             output_meter: Mutex::new(OutputMeter::new(OutputRateCap::default(), Instant::now())),
         })
@@ -147,10 +157,22 @@ impl Shared {
             OutputMeter::new(cap, Instant::now());
     }
 
-    /// Forward the runner's stderr (the plugin's own diagnostics) to the
-    /// host's, line by line, noting a failed allocation on the way (a Rust
+    /// Install the host-side memory measurement an allocation-failure report
+    /// on stderr is checked against (before the stderr forwarder starts).
+    pub(super) fn set_memory_probe(&self, probe: MemoryProbe) {
+        *self.memory_probe.lock().unwrap_or_else(|e| e.into_inner()) = Some(probe);
+    }
+
+    /// Forward the runner's stderr (the plugin's own diagnostics) into the
+    /// host log, line by line, noting a failed allocation on the way (a Rust
     /// plugin under `RLIMIT_AS` prints `memory allocation of N bytes failed`
     /// and aborts). Runs on its own thread until end of stream.
+    ///
+    /// Every line is untrusted plugin output (#4335, PLG2-006): it goes through
+    /// the plugin's log rate limiter at warn level, tagged with the
+    /// host-trusted plugin id, bounded and stripped of control characters —
+    /// the same path as a `Log` frame. A reported allocation failure is only
+    /// a claim; the host measures the runner's memory as it arrives.
     pub(super) fn forward_stderr<R: std::io::Read>(self: Arc<Self>, stderr: R) {
         let mut reader = std::io::BufReader::new(stderr);
         let mut line = Vec::new();
@@ -160,13 +182,55 @@ impl Shared {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     if is_allocation_failure(&line) {
-                        self.out_of_memory.store(true, Ordering::SeqCst);
+                        // Measure first: the runner aborts right after.
+                        if self.memory_pressure_now() {
+                            self.memory_pressure_seen.store(true, Ordering::SeqCst);
+                        }
+                        self.allocation_failure_reported
+                            .store(true, Ordering::SeqCst);
                     }
-                    let _ = std::io::stderr().write_all(&line);
+                    self.log_stderr_line(&line);
                 }
             }
         }
         self.stderr_done.store(true, Ordering::SeqCst);
+    }
+
+    /// Emit one runner stderr line through the plugin's log limiter.
+    fn log_stderr_line(&self, line: &[u8]) {
+        let cut_at_cap = !line.ends_with(b"\n")
+            && u64::try_from(line.len()).unwrap_or(u64::MAX) >= MAX_STDERR_LINE;
+        let text = line.trim_ascii_end();
+        if text.is_empty() {
+            return;
+        }
+        emit_runner_log(
+            &self.log_limiter,
+            &self.plugin_id,
+            termihub_plugin_api::PluginLogLevel::Warn.as_wire(),
+            &text[..text.len().min(MAX_LOG_MESSAGE_BYTES)],
+            cut_at_cap || text.len() > MAX_LOG_MESSAGE_BYTES,
+        );
+    }
+
+    /// The installed probe's verdict (`false` without one).
+    fn memory_pressure_now(&self) -> bool {
+        self.memory_probe
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|probe| probe())
+    }
+
+    /// Whether the exit counts as out of memory on the runner's stderr report.
+    /// The report is the plugin's own text, so it counts only when the host's
+    /// observations agree (#4335): it measured memory pressure when the report
+    /// arrived, or the runner then ended by abort — what Rust's allocation
+    /// failure handler does — rather than being killed or exiting otherwise.
+    fn reported_out_of_memory(&self, status: Option<std::process::ExitStatus>) -> bool {
+        self.allocation_failure_reported.load(Ordering::SeqCst)
+            && (self.memory_pressure_seen.load(Ordering::SeqCst)
+                || status.is_some_and(ended_by_abort))
     }
 
     /// Mark a stderr forwarder as running (before its thread starts).
@@ -447,7 +511,7 @@ impl Shared {
                 std::thread::sleep(Duration::from_millis(5));
             }
         }
-        let out_of_memory = self.out_of_memory.load(Ordering::SeqCst);
+        let out_of_memory = self.reported_out_of_memory(status);
         let cause = match pending {
             None => RunnerExitCause::from_status(status, out_of_memory),
             Some(pending) => prefer_memory_evidence(pending, out_of_memory),
@@ -572,6 +636,23 @@ fn prefer_memory_evidence(pending: RunnerExitCause, out_of_memory: bool) -> Runn
     match pending {
         RunnerExitCause::NotResponding if out_of_memory => RunnerExitCause::OutOfMemory,
         other => other,
+    }
+}
+
+/// Whether the runner ended by abort: `SIGABRT` on Unix; on Windows a
+/// fail-fast (`STATUS_STACK_BUFFER_OVERRUN`, what `std::process::abort` raises)
+/// or the C runtime's `abort` exit code 3.
+pub(super) fn ended_by_abort(status: std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::process::ExitStatusExt::signal(&status) == Some(libc::SIGABRT)
+    }
+    #[cfg(windows)]
+    {
+        const STATUS_STACK_BUFFER_OVERRUN: u32 = 0xC000_0409;
+        status.code().is_some_and(|code| {
+            u32::from_ne_bytes(code.to_ne_bytes()) == STATUS_STACK_BUFFER_OVERRUN || code == 3
+        })
     }
 }
 
