@@ -96,6 +96,7 @@ const RUST_ROOTS = [
   "agent/",
   "plugin-api/",
   "plugin-runner/",
+  "win-security/",
   "vendor/",
   "examples/",
   ".cargo/",
@@ -106,15 +107,24 @@ const RUST_FILES = new Set(["Cargo.toml", "Cargo.lock", "deny.toml", "Cross.toml
 // agent itself, core (a path dependency) and core's own path dependencies, plus
 // the workspace-wide manifests/toolchain. src-tauri/ and examples/ are NOT here —
 // the agent does not build from them.
-const AGENT_ROOTS = ["agent/", "core/", "plugin-api/", "plugin-runner/", "vendor/", ".cargo/"];
+const AGENT_ROOTS = [
+  "agent/",
+  "core/",
+  "plugin-api/",
+  "plugin-runner/",
+  "win-security/",
+  "vendor/",
+  ".cargo/",
+];
 const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
 
 // What the workspace-excluded plugin-runner/fuzz crate compiles from (#4257): the
 // fuzz crate itself (under plugin-runner/), the plugin-runner crate whose IPC
 // types its message generator constructs, plugin-api (whose types those IPC
-// messages embed), and the workspace manifest/cargo config/toolchain that
-// plugin-runner inherits. Cargo.lock is not here: the fuzz crate has its own.
-const PLUGIN_FUZZ_ROOTS = ["plugin-runner/", "plugin-api/", ".cargo/"];
+// messages embed), win-security (a Windows path dependency of plugin-runner,
+// #4322), and the workspace manifest/cargo config/toolchain that plugin-runner
+// inherits. Cargo.lock is not here: the fuzz crate has its own.
+const PLUGIN_FUZZ_ROOTS = ["plugin-runner/", "plugin-api/", "win-security/", ".cargo/"];
 const PLUGIN_FUZZ_FILES = new Set(["Cargo.toml"]);
 
 const FRONTEND_ROOTS = ["src/", "public/"];

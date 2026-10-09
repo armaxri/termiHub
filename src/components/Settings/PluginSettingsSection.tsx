@@ -4,6 +4,8 @@ import { useAppStore } from "@/store/appStore";
 import { useKeyedDebouncedCallback } from "@/hooks/useDebounce";
 import type { InstalledPlugin, JsonValue } from "@/types/plugin";
 import { EmptyState } from "@/components/ui";
+import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 import { ConnectionSettingsForm } from "@/components/DynamicForm";
 import { hasSettings, pluginTypeIcon } from "@/components/Plugins/pluginPresentation";
 import { pluginSettingsDefaults, pluginSettingsToSchema } from "./pluginSettingsSchema";
@@ -75,8 +77,9 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
           if (ackTimer.current) clearTimeout(ackTimer.current);
           ackTimer.current = setTimeout(() => setSavedAckId(null), SAVED_ACK_MS);
         })
-        .catch(() => {
-          // The store already surfaced a recoverable error toast.
+        .catch((err: unknown) => {
+          // The store already surfaced a recoverable error toast; only keep a trace.
+          frontendLog("plugin_settings", `save ${pluginId} failed: ${errorMessage(err)}`);
         });
     },
     SAVE_DEBOUNCE_MS

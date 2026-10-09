@@ -20,6 +20,7 @@
  */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { fireAndForget } from "@/utils/frontendLog";
 
 export const KIND_FRAME = 1;
 export const KIND_CURSOR = 2;
@@ -176,8 +177,10 @@ export async function subscribeRemoteDesktopFrames(
   return () => {
     if (!active) return;
     active = false;
-    void invoke("remote_desktop_unsubscribe_frames", { sessionId, subscriptionId }).catch(() => {
-      // The session or window may already be gone; nothing is left to drop.
-    });
+    // The session or window may already be gone; nothing is left to drop.
+    fireAndForget(
+      invoke("remote_desktop_unsubscribe_frames", { sessionId, subscriptionId }),
+      `unsubscribe remote-desktop frames ${subscriptionId}`
+    );
   };
 }

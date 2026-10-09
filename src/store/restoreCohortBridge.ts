@@ -243,9 +243,10 @@ function mirrorRestore(
   // non-Tauri env without a socket throws *synchronously* from transport
   // construction (not as a rejection) — logged via the dispatch catch below.
   try {
-    void ensureRestoreSubscribed().catch(() => {
-      /* logged in ensureRestoreSubscribed */
-    });
+    // ensureRestoreSubscribed logs the failure itself; keep a call-site trace too.
+    void ensureRestoreSubscribed().catch((err: unknown) =>
+      frontendLog("restore_cohort", `keep-warm subscribe failed: ${errorMessage(err)}`)
+    );
   } catch {
     /* handled by the dispatch try/catch below */
   }

@@ -67,6 +67,8 @@ import { listWindows } from "@/services/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
+import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 function App() {
   useKeyboardShortcuts();
@@ -172,8 +174,9 @@ function App() {
         if (cliWorkspaceName) {
           handledByCli = await launchWorkspaceByName(cliWorkspaceName);
         }
-      } catch {
-        // CLI plugin not available (e.g., browser dev mode)
+      } catch (err) {
+        // CLI plugin not available (e.g., browser dev mode) — fall back to the last session.
+        frontendLog("app", `CLI workspace lookup unavailable: ${errorMessage(err)}`);
       }
 
       const store = useAppStore.getState();
@@ -283,9 +286,10 @@ function App() {
       let others: Awaited<ReturnType<typeof listWindows>> = [];
       try {
         others = (await listWindows()).filter((w) => w.label !== win.label);
-      } catch {
+      } catch (err) {
         // Window listing unavailable (e.g. browser dev mode) — fall back to the
         // no-other-windows case, which still classifies and prompts correctly.
+        frontendLog("app", `window listing on close unavailable: ${errorMessage(err)}`);
       }
       const decision = await useAppStore.getState().prepareWindowClose(others);
       if (decision === "proceed") {

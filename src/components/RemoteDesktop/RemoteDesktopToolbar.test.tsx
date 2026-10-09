@@ -77,6 +77,13 @@ describe("RemoteDesktopToolbar", () => {
     expect(container.querySelector(".rd-toolbar__res")?.textContent).toBe("1280×720");
   });
 
+  it("discloses the keyboard release chord (#4328)", () => {
+    render();
+    const hint = query("remote-desktop-release-hint");
+    expect(hint?.textContent).toContain("Ctrl+Alt+Shift");
+    expect(hint?.getAttribute("title")).toMatch(/return keyboard focus to termiHub/i);
+  });
+
   it("omits the resolution span before the first frame", () => {
     render({ resolution: null });
     expect(container.querySelector(".rd-toolbar__res")).toBeNull();

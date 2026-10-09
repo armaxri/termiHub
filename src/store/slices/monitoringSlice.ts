@@ -14,7 +14,7 @@ import {
   ensureMonitorsSubscribed,
 } from "@/store/systemMonitorBridge";
 import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 
 import type { AppState } from "../appStore";
@@ -119,7 +119,7 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
     // Ensure the region subscription is live so the connecting / opened / failed
     // diffs reach the UI (the status bar mounts it too, but a connect can race
     // that mount). Non-Tauri / no socket just leaves the UI on the empty view.
-    void ensureMonitorsSubscribed().catch(() => {});
+    fireAndForget(ensureMonitorsSubscribed(), "subscribe system-monitors region");
 
     // Preserve a previously-chosen refresh interval across a reconnect so the
     // user's rate selection is not silently reset (#1233), sourced from the
@@ -156,8 +156,12 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
         // errors — the entry is torn down regardless.
         try {
           await sessionMonitoringClose(entry.monitorSessionId);
-        } catch {
-          // Ignore — torn down regardless.
+        } catch (err) {
+          // Torn down regardless; keep a trace for a leaked provider subscription.
+          frontendLog(
+            "monitoring",
+            `close monitor ${entry.monitorSessionId} failed: ${errorMessage(err)}`
+          );
         }
       } else {
         // A still-connecting or failed entry has no backend session to close, so

@@ -20,7 +20,11 @@ vi.mock("@/services/api", () => ({
   unwatchLocalDir: (id: string) => unwatchLocalDir(id),
 }));
 
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+vi.mock("@/utils/frontendLog", () => ({
+  frontendLog: vi.fn(),
+  // Run the best-effort promise so the unwatch call is observable.
+  fireAndForget: vi.fn((p: Promise<unknown>) => void Promise.resolve(p).catch(() => undefined)),
+}));
 
 import { useLocalDirWatch } from "./useLocalDirWatch";
 

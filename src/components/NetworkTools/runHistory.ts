@@ -18,6 +18,8 @@ import type {
 } from "@/types/network";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { tableToCsv, type ResultTable } from "./exportResults";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendLog } from "@/utils/frontendLog";
 
 /** Rows sent to the backend per run; the backend trims further to its byte cap. */
 export const MAX_HISTORY_ROWS = 2000;
@@ -142,7 +144,12 @@ export function useRerunAfterUpdate(start: () => unknown): () => void {
     if (!pending) return;
     setPending(false);
     const result = start();
-    if (result instanceof Promise) result.catch(() => {});
+    // The tool's start handler surfaces its own failure inline; keep a trace here.
+    if (result instanceof Promise) {
+      result.catch((err: unknown) =>
+        frontendLog("network_tools", `re-run failed: ${errorMessage(err)}`)
+      );
+    }
   }, [pending, start]);
   return useCallback(() => setPending(true), []);
 }

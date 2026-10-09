@@ -438,6 +438,7 @@ mod windows_impl {
     use std::io;
     use std::os::windows::io::{AsRawHandle, RawHandle};
 
+    use termihub_win_security::ProtectedDacl;
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 
     use windows_sys::Win32::Foundation::{
@@ -454,7 +455,7 @@ mod windows_impl {
         name: String,
         /// The per-user security descriptor applied to each pipe instance, or
         /// `None` for the default (inherit) permission policy.
-        security: Option<security::SecurityAttributes>,
+        security: Option<ProtectedDacl>,
         /// The next pipe instance, waiting for a client to connect.
         next: Option<NamedPipeServer>,
         /// Whether to verify each accepted peer is the same local user
@@ -491,7 +492,7 @@ mod windows_impl {
         ) -> io::Result<Self> {
             let security = match options.security {
                 ListenerSecurity::CurrentUserOnly => {
-                    Some(security::SecurityAttributes::for_current_user()?)
+                    Some(ProtectedDacl::current_user_and_system()?)
                 }
                 ListenerSecurity::Inherit => None,
             };
@@ -586,8 +587,8 @@ mod windows_impl {
     /// this is a second layer, and a false reject would break a legitimate
     /// same-user reconnect.
     fn peer_is_current_user(pipe_handle: RawHandle) -> bool {
-        match security::peer_sid_string(pipe_handle) {
-            Ok(peer_sid) => match security::current_user_sid_string() {
+        match termihub_win_security::peer_sid_string(pipe_handle) {
+            Ok(peer_sid) => match termihub_win_security::current_user_sid_string() {
                 Ok(our_sid) if peer_sid == our_sid => true,
                 Ok(our_sid) => {
                     // Daemon stderr is redirected to its per-session log file, so
@@ -624,19 +625,22 @@ mod windows_impl {
     /// descriptor.
     fn create_instance(
         name: &str,
-        security: Option<&security::SecurityAttributes>,
+        security: Option<&ProtectedDacl>,
         first: bool,
     ) -> io::Result<NamedPipeServer> {
         match security {
             Some(security) => {
                 // SAFETY: `security` outlives this call (owned by the
-                // `LocalSocketListener`), and `as_ptr` points at a valid
-                // `SECURITY_ATTRIBUTES` whose descriptor is owned and freed by
-                // `security`.
+                // `LocalSocketListener`), and `security_attributes` points at a
+                // valid `SECURITY_ATTRIBUTES` whose descriptor is owned and freed
+                // by `security`.
                 unsafe {
                     ServerOptions::new()
                         .first_pipe_instance(first)
-                        .create_with_security_attributes_raw(name, security.as_ptr() as *mut c_void)
+                        .create_with_security_attributes_raw(
+                            name,
+                            security.security_attributes() as *mut c_void,
+                        )
                 }
             }
             None => ServerOptions::new().first_pipe_instance(first).create(name),
@@ -657,7 +661,7 @@ mod windows_impl {
     /// (AGT-020). The pipe's per-user DACL still enforces access; this only makes
     /// the *name* itself collision-free across users.
     pub fn current_user_sid_string() -> io::Result<String> {
-        security::current_user_sid_string()
+        termihub_win_security::current_user_sid_string()
     }
 
     /// Whether a failed [`connect`] means "endpoint not ready yet" (worth a
@@ -670,203 +674,6 @@ mod windows_impl {
             Some(code)
                 if code == ERROR_FILE_NOT_FOUND as i32 || code == ERROR_PIPE_BUSY as i32
         )
-    }
-
-    /// Per-user security descriptor construction for the named pipe.
-    mod security {
-        use std::io;
-        use std::os::windows::io::RawHandle;
-        use std::ptr;
-
-        use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
-        use windows_sys::Win32::Security::Authorization::{
-            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-            SDDL_REVISION_1,
-        };
-        use windows_sys::Win32::Security::{
-            GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
-            TOKEN_USER,
-        };
-        use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
-        use windows_sys::Win32::System::Threading::{
-            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-
-        /// RAII guard that closes an owned Win32 `HANDLE` on drop, so every early
-        /// return from the token-query sequence still releases its handles.
-        struct HandleGuard(HANDLE);
-
-        impl Drop for HandleGuard {
-            fn drop(&mut self) {
-                if !self.0.is_null() {
-                    // SAFETY: `self.0` is a handle this guard exclusively owns
-                    // (from OpenProcess / OpenProcessToken); it is closed exactly
-                    // once, here.
-                    unsafe { CloseHandle(self.0) };
-                }
-            }
-        }
-
-        /// Owns a security descriptor restricting the pipe to the current user
-        /// and `LocalSystem`, plus the `SECURITY_ATTRIBUTES` referencing it.
-        pub struct SecurityAttributes {
-            descriptor: PSECURITY_DESCRIPTOR,
-            attributes: SECURITY_ATTRIBUTES,
-        }
-
-        // The owned raw pointers are exclusively managed here; sending the
-        // listener (and thus this owner) across threads is safe.
-        unsafe impl Send for SecurityAttributes {}
-        unsafe impl Sync for SecurityAttributes {}
-
-        impl SecurityAttributes {
-            /// Build a DACL granting `GENERIC_ALL` only to the current user's
-            /// SID and `LocalSystem` (`SY`), protected from inheritance (`P`).
-            pub fn for_current_user() -> io::Result<Self> {
-                let sid_string = current_user_sid_string()?;
-                let sddl = format!("D:P(A;;GA;;;{sid_string})(A;;GA;;;SY)");
-                let sddl_wide = to_wide(&sddl);
-
-                let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-                // SAFETY: `sddl_wide` is a valid null-terminated UTF-16 string;
-                // `descriptor` receives a LocalAlloc'd descriptor we free on drop.
-                let ok = unsafe {
-                    ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                        sddl_wide.as_ptr(),
-                        SDDL_REVISION_1,
-                        &mut descriptor,
-                        ptr::null_mut(),
-                    )
-                };
-                if ok == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                let attributes = SECURITY_ATTRIBUTES {
-                    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                    lpSecurityDescriptor: descriptor,
-                    bInheritHandle: 0,
-                };
-                Ok(Self {
-                    descriptor,
-                    attributes,
-                })
-            }
-
-            /// Pointer to the `SECURITY_ATTRIBUTES` for passing to pipe creation.
-            pub fn as_ptr(&self) -> *const SECURITY_ATTRIBUTES {
-                &self.attributes
-            }
-        }
-
-        impl Drop for SecurityAttributes {
-            fn drop(&mut self) {
-                if !self.descriptor.is_null() {
-                    // SAFETY: `descriptor` was allocated by
-                    // ConvertStringSecurityDescriptorToSecurityDescriptorW.
-                    unsafe { LocalFree(self.descriptor as HLOCAL) };
-                }
-            }
-        }
-
-        /// Resolve the current process user's SID into its string form.
-        pub(super) fn current_user_sid_string() -> io::Result<String> {
-            // SAFETY: standard token-query FFI sequence; the token handle is
-            // owned by `HandleGuard` and closed on every return path.
-            unsafe {
-                let mut token: HANDLE = ptr::null_mut();
-                if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                let _token_guard = HandleGuard(token);
-                sid_string_from_token(token)
-            }
-        }
-
-        /// Resolve the SID (string form) of the process on the client end of a
-        /// connected named-pipe server `pipe_handle` (AGT-022).
-        ///
-        /// `GetNamedPipeClientProcessId` → `OpenProcess(QUERY_LIMITED_INFORMATION)`
-        /// → `OpenProcessToken(TOKEN_QUERY)` → `TokenUser`. Every opened handle is
-        /// owned by a [`HandleGuard`] and closed on every return path; any FFI
-        /// failure returns an error so the caller can fail **open**. No `unwrap`:
-        /// each Win32 return is checked (a null/zero return becomes an error).
-        pub(super) fn peer_sid_string(pipe_handle: RawHandle) -> io::Result<String> {
-            // SAFETY: token-query FFI sequence over the connected pipe handle.
-            // `process`/`token` are each owned by a `HandleGuard` that closes them
-            // on scope exit, including the early-return error paths.
-            unsafe {
-                let mut pid: u32 = 0;
-                if GetNamedPipeClientProcessId(pipe_handle as HANDLE, &mut pid) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-                if process.is_null() {
-                    return Err(io::Error::last_os_error());
-                }
-                let _process_guard = HandleGuard(process);
-
-                let mut token: HANDLE = ptr::null_mut();
-                if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                let _token_guard = HandleGuard(token);
-
-                sid_string_from_token(token)
-            }
-        }
-
-        /// Extract the `TokenUser` SID from an open access token as a string.
-        ///
-        /// # Safety
-        /// `token` must be a valid open access token handle carrying
-        /// `TOKEN_QUERY` access.
-        unsafe fn sid_string_from_token(token: HANDLE) -> io::Result<String> {
-            // First call sizes the buffer; it is expected to "fail".
-            let mut len: u32 = 0;
-            GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut len);
-            if len == 0 {
-                return Err(io::Error::last_os_error());
-            }
-
-            let mut buf = vec![0u8; len as usize];
-            let ok =
-                GetTokenInformation(token, TokenUser, buf.as_mut_ptr() as *mut _, len, &mut len);
-            if ok == 0 {
-                return Err(io::Error::last_os_error());
-            }
-
-            let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
-            let mut sid_ptr: *mut u16 = ptr::null_mut();
-            if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_ptr) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let sid_string = wide_to_string(sid_ptr);
-            LocalFree(sid_ptr as HLOCAL);
-            Ok(sid_string)
-        }
-
-        /// Encode a Rust string as a null-terminated UTF-16 buffer.
-        fn to_wide(s: &str) -> Vec<u16> {
-            s.encode_utf16().chain(std::iter::once(0)).collect()
-        }
-
-        /// Read a null-terminated UTF-16 string into a Rust `String`.
-        fn wide_to_string(ptr: *const u16) -> String {
-            if ptr.is_null() {
-                return String::new();
-            }
-            let mut len = 0usize;
-            // SAFETY: `ptr` is a valid null-terminated wide string from Win32.
-            unsafe {
-                while *ptr.add(len) != 0 {
-                    len += 1;
-                }
-                let slice = std::slice::from_raw_parts(ptr, len);
-                String::from_utf16_lossy(slice)
-            }
-        }
     }
 }
 
@@ -1276,6 +1083,61 @@ mod tests {
         assert_eq!(&got, b"ok", "same-user round-trip must succeed");
 
         server.await.expect("server task");
+    }
+
+    /// #4322 (windows): every instance of a `CurrentUserOnly` pipe — the first
+    /// and each one the listener re-stages after an accept — carries the shared
+    /// helper's protected DACL granting the current user and `LocalSystem` only.
+    /// Read through the connected client handle, so it checks the descriptor the
+    /// kernel actually stored, not the one the listener meant to pass.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn current_user_only_pipe_instances_carry_the_protected_dacl() {
+        use std::os::windows::io::AsRawHandle;
+        use termihub_win_security::{current_user_sid_string, dacl_of_handle, LOCAL_SYSTEM_SID};
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let address = unique_address("dacl");
+        let mut listener = LocalSocketListener::bind_with_options(
+            &address,
+            ListenerOptions {
+                security: ListenerSecurity::CurrentUserOnly,
+                stale_reclaim: StaleReclaim::Unconditional,
+            },
+        )
+        .await
+        .expect("bind current-user-only listener");
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            for _ in 0..2 {
+                held.push(listener.accept().await.expect("accept"));
+            }
+            held
+        });
+
+        let user = current_user_sid_string().expect("current user SID");
+        // Each client stays connected so the next connect reaches a fresh
+        // instance.
+        let mut clients = Vec::new();
+        for instance in ["first", "re-staged"] {
+            let client = loop {
+                match ClientOptions::new().open(&address) {
+                    Ok(client) => break client,
+                    Err(e) if super::is_retryable(&e) => {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    Err(e) => panic!("connect to the {instance} instance: {e}"),
+                }
+            };
+            let summary = dacl_of_handle(client.as_raw_handle()).expect("read pipe DACL");
+            assert!(
+                summary.grants_full_control_to_exactly(&[&user, LOCAL_SYSTEM_SID]),
+                "{instance} instance DACL: {summary:?}"
+            );
+            clients.push(client);
+        }
+        server.await.expect("server task");
+        drop(clients);
     }
 
     /// AGT-022: the peer-credential helper reads the uid of the process on the

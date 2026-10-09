@@ -52,6 +52,9 @@ libc = "0.2"
 nix = { version = "0.29", features = ["socket", "uio"] }
 
 [target.'cfg(windows)'.dependencies]
+# The shared current-user SID / protected-DACL helper for the channel pipe
+# (#4322); a windows-sys leaf crate, so the library still pulls in no core.
+termihub-win-security = { path = "../win-security" }
 # The Windows transport (#4201): a private overlapped named pipe driven with
 # ReadFile / WriteFile (never Winsock: it cannot start under LPAC), the runner
 # spawned by a hand-written `CreateProcessW` with an explicit handle list, inside

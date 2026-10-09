@@ -139,6 +139,23 @@ describe("PortableModeSettings", () => {
     expect(mockListConfigFiles).toHaveBeenCalledWith("/data");
   });
 
+  it("shows a persistent error toast when the config file list cannot be loaded (#4333)", async () => {
+    const { listConfigFiles } = await import("@/services/api");
+    const { toast } = await import("@/components/ui");
+    const errorSpy = vi.spyOn(toast, "error");
+    vi.mocked(listConfigFiles).mockRejectedValueOnce({ code: "io", message: "data dir gone" });
+    useAppStore.setState({ isPortableMode: true, portableDataDir: "/data" });
+
+    await act(async () => {
+      root.render(<PortableModeSettings />);
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith("Could not list portable config files", {
+      description: "data dir gone",
+    });
+    errorSpy.mockRestore();
+  });
+
   it("does not load config files in installed mode", async () => {
     const { listConfigFiles } = await import("@/services/api");
     const mockListConfigFiles = vi.mocked(listConfigFiles);

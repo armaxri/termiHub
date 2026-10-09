@@ -7,12 +7,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { toast } from "sonner";
+import { toast } from "@/components/ui";
 import { sessionLoggingStart } from "@/services/api";
-
-vi.mock("sonner", () => ({
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -62,7 +58,7 @@ vi.mock("@/services/api", () => ({
   sessionLoggingStop: vi.fn(() => Promise.resolve(null)),
   sessionLoggingStatus: vi.fn(() => Promise.resolve(null)),
 }));
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn(), frontendWarn: vi.fn() }));
 
 import { TerminalView } from "./TerminalView";
 

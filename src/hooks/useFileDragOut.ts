@@ -24,7 +24,7 @@ import {
   type DragOutSource,
 } from "@/utils/fileDragOut";
 import { errorMessage } from "@/utils/errorMessage";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { startQueuedDownload } from "@/services/paneTransfer";
 
 /** Discard staged copies whose reuse window has lapsed (best-effort). */
@@ -104,7 +104,8 @@ async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<str
     return roots;
   } catch (err) {
     if (dir) {
-      dragOutDiscardStaging(dir).catch(() => {});
+      // A failed discard leaves downloaded remote files on disk: log it as an error.
+      fireAndForget(dragOutDiscardStaging(dir), `discard drag-out staging dir ${dir}`, "error");
     }
     reportStagingFailure(err, label, toastId);
     return null;

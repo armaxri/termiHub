@@ -4,10 +4,11 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
-import { Button, SearchInput } from "@/components/ui";
+import { Button, SearchInput, toast } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
-import { onFrontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendWarn, onFrontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
@@ -47,7 +48,11 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           });
         }
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        // Live entries still stream in; only the backlog is missing. Say so in
+        // the log itself (frontend entries reach this viewer directly).
+        frontendWarn("log_viewer", `loading buffered backend logs failed: ${errorMessage(err)}`);
+      });
 
     const addEntry = (entry: LogEntry) => {
       if (!cancelled) {
@@ -66,7 +71,10 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
     return () => {
       cancelled = true;
-      unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+      fireAndForget(
+        unlistenPromise.then((unlisten) => unlisten()),
+        "unsubscribe log viewer from backend log events"
+      );
       unsubFrontend();
     };
   }, []);
@@ -94,8 +102,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     try {
       await clearLogs();
       setEntries([]);
-    } catch {
-      // Ignore errors
+    } catch (err) {
+      toast.error("Could not clear logs", { description: errorMessage(err) });
     }
   }, []);
 
@@ -111,8 +119,10 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       });
       if (!filePath) return;
       await writeTextFile(filePath, content);
-    } catch {
-      // Ignore errors (user cancelled dialog, etc.)
+      toast.success("Logs saved", { description: filePath });
+    } catch (err) {
+      // A cancelled dialog resolves to null above; reaching here is a real failure.
+      toast.error("Could not save logs", { description: errorMessage(err) });
     }
   }, []);
 
@@ -120,8 +130,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     try {
       // Redact secrets before copying to the clipboard (OBS-008).
       await navigator.clipboard.writeText(redactLogText(formatEntry(entry)));
-    } catch {
-      // Ignore errors
+    } catch (err) {
+      toast.error("Could not copy log entry", { description: errorMessage(err) });
     }
   }, []);
 
@@ -130,8 +140,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       // Redact secrets before copying to the clipboard (OBS-008).
       const content = redactLogText(entriesToCopy.map(formatEntry).join("\n"));
       await navigator.clipboard.writeText(content);
-    } catch {
-      // Ignore errors
+    } catch (err) {
+      toast.error("Could not copy logs", { description: errorMessage(err) });
     }
   }, []);
 
