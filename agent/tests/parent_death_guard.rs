@@ -11,6 +11,12 @@
 //! agent worker the way every suite does, SIGKILLs the helper (on Windows:
 //! `TerminateProcess`), and asserts the orphaned worker exits within a few
 //! seconds. Only processes this test spawned are touched, and only by PID.
+//!
+//! The watchdog exists only in debug and `test-hooks` agents (WA-RS2-003,
+//! #4362), so this suite is compiled out of a plain `cargo test --release`,
+//! whose agent has no watchdog to test.
+
+#![cfg(any(debug_assertions, feature = "test-hooks"))]
 
 mod common;
 
