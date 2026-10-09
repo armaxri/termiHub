@@ -15,25 +15,34 @@
 //!    unprivileged process, and it keeps set-uid binaries from gaining
 //!    privileges (there is no `execve` anyway).
 //! 2. **namespaces** ([`layer::NETNS`], optional, #4237) — an unprivileged
-//!    user + network + IPC namespace: the runner's own ids mapped to
+//!    user + network + IPC + mount namespace: the runner's own ids mapped to
 //!    themselves, every capability the new user namespace grants dropped again,
-//!    and an empty network namespace (no interface up, not even the loopback).
+//!    an empty network namespace (no interface up, not even the loopback), and
+//!    the home folder replaced by an empty read-only `tmpfs` with only the
+//!    plugin's install and data folders bound back (#4342, see [`mask`]).
 //!    Entered before landlock (which would deny writing the id maps) and
-//!    seccomp (which kills `unshare`). Defence in depth behind the seccomp
-//!    `socket` denial and landlock's TCP rules. Where unprivileged user
-//!    namespaces are not allowed (Ubuntu 23.10+ AppArmor restriction,
-//!    `kernel.unprivileged_userns_clone = 0`, Docker's default seccomp profile)
-//!    it is skipped silently: never `missing`, never required, so it does not
-//!    change the isolation class. See [`namespaces`].
+//!    seccomp (which kills `unshare` and `mount`). Defence in depth behind the
+//!    seccomp `socket` denial and landlock's TCP rules, and what hides the
+//!    metadata of the user's files, which landlock does not mediate. Where
+//!    unprivileged user namespaces are not allowed (Ubuntu 23.10+ AppArmor
+//!    restriction, `kernel.unprivileged_userns_clone = 0`, Docker's default
+//!    seccomp profile) it is skipped silently: never `missing`, never
+//!    required, so it does not change the isolation class. See [`namespaces`].
 //! 3. **landlock** ([`layer::LANDLOCK`]) — default-deny filesystem: the
 //!    install folder read (+ execute), the data folder read/write (when it
 //!    exists: the host creates it for ABI 1.1 plugins only), the system
-//!    libraries and a few device and time-zone files read-only, nothing else.
+//!    libraries, a few device and time-zone files and the TLS trust store
+//!    ([`TRUST_STORE_PATHS`], #4342) read-only, nothing else.
 //!    On ABI v4+ (Linux 6.7) every TCP `bind` / `connect` is denied as a second
 //!    network layer; on ABI v6+ (Linux 6.12) signals and abstract Unix sockets
 //!    are scoped to the runner. A kernel without landlock (< 5.13, or landlock
 //!    not enabled) is reported as `missing` — **reduced** isolation, which the
 //!    host gates behind the `reducedIsolationAccepted` acknowledgement (#4188).
+//!    Reduced isolation is refused outright (the setup fails) when the
+//!    namespace layer is unavailable too and Yama does not restrict `ptrace`
+//!    (`ptrace_scope` 0, or no Yama): nothing would then keep the plugin from
+//!    opening `/proc/<pid>/mem` of termiHub or another program of the user
+//!    for writing (#4342, see [`check_reduced_isolation`]).
 //! 4. **seccomp** ([`layer::SECCOMP`]) — required: if it cannot be installed
 //!    the setup fails and the plugin never loads. See [`filters`]. Its
 //!    `EPERM` denials of network and signal calls are reported to the host as
@@ -59,6 +68,8 @@ use landlock::{
 use super::{layer, SandboxError, SandboxPolicy};
 use crate::ipc::SandboxReport;
 
+pub mod mask;
+
 /// The newest landlock ABI the ruleset asks for; older kernels get the subset
 /// they support (best-effort), newer ones are not asked for rights this code
 /// does not know.
@@ -83,6 +94,33 @@ const SYSTEM_READ_DIRS: &[&str] = &[
     "/dev/zero",
 ];
 
+/// The TLS trust store, read-only (#4342, PLG2-004): a plugin does TLS itself
+/// over the socket the bridge passes in, so it must be able to load the
+/// system's CA certificates (`rustls-native-certs`, `openssl-probe`, OpenSSL's
+/// default paths). Only certificate bundles, their hashed folders and the
+/// OpenSSL / crypto-policies configuration — never `/etc/ssl/private` or
+/// `/etc/pki/tls/private`. Symlinks are followed where the rule is added, and
+/// the targets of the per-certificate links (`/usr/share/ca-certificates`,
+/// `/etc/pki/ca-trust/extracted`, `/var/lib/ca-certificates`) are listed
+/// themselves. Missing paths are skipped.
+pub const TRUST_STORE_PATHS: &[&str] = &[
+    // Debian, Ubuntu, Alpine, Arch, openSUSE.
+    "/etc/ssl/certs",
+    "/etc/ssl/cert.pem",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/openssl.cnf",
+    "/etc/ca-certificates",
+    "/usr/share/ca-certificates",
+    "/usr/local/share/ca-certificates",
+    "/var/lib/ca-certificates",
+    // Fedora, RHEL and derivatives.
+    "/etc/pki/tls/certs",
+    "/etc/pki/tls/cert.pem",
+    "/etc/pki/tls/openssl.cnf",
+    "/etc/pki/ca-trust/extracted",
+    "/etc/crypto-policies",
+];
+
 /// Device files a plugin may also write.
 const SYSTEM_WRITE_FILES: &[&str] = &["/dev/null"];
 
@@ -103,14 +141,23 @@ pub struct Skip {
 /// requires it; the attempt is skipped otherwise).
 pub fn apply(policy: &SandboxPolicy, skip: Skip) -> Result<SandboxReport, SandboxError> {
     set_no_new_privs()?;
+    // Read while `/proc/sys` is still readable (landlock denies it).
+    let ptrace_scope = yama_ptrace_scope();
     // Before landlock (which would deny writing the id maps under `/proc`)
-    // and before seccomp (which kills `unshare`).
-    let namespaces = !skip.namespaces && namespaces::enter()?;
+    // and before seccomp (which kills `unshare` and `mount`).
+    let namespaces = !skip.namespaces && {
+        let plan = mask::Plan::for_policy(policy).map_err(|e| SandboxError::Apply {
+            layer: layer::NETNS,
+            detail: format!("preparing the home-folder mask failed: {e}"),
+        })?;
+        namespaces::enter(&plan)?
+    };
     let landlock = if skip.landlock {
         false
     } else {
         apply_landlock(policy)?
     };
+    check_reduced_isolation(landlock, namespaces, ptrace_scope)?;
     filters::install()?;
     let mut report = SandboxReport::enforced(&[layer::SECCOMP]);
     if landlock {
@@ -123,6 +170,57 @@ pub fn apply(policy: &SandboxPolicy, skip: Skip) -> Result<SandboxReport, Sandbo
         report.enforced.push(layer::NETNS.to_owned());
     }
     Ok(report)
+}
+
+/// Yama's `ptrace_scope`, `None` where Yama is not enabled.
+fn yama_ptrace_scope() -> Option<u32> {
+    std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// Refuse reduced isolation where nothing protects other processes' memory
+/// (#4342, audit SEC2-003).
+///
+/// The runner is a same-user child of termiHub, and seccomp cannot filter
+/// paths, so without landlock a plugin can `open` any file — including
+/// `/proc/<pid>/mem` of termiHub or another program of the user, for writing,
+/// whenever the kernel's ptrace access check lets it. Three things can stop
+/// that check, and one of them must hold:
+///
+/// * **landlock** — `/proc` is outside the allow-list (full isolation);
+/// * **the namespace layer** — a process in a child user namespace has no
+///   `CAP_SYS_PTRACE` over processes of the parent namespace, so the access
+///   check fails for every process outside the sandbox, whatever the uid;
+/// * **Yama `ptrace_scope` ≥ 1** — only a process's ancestors may attach to
+///   it, and the runner is no one's ancestor.
+///
+/// This was chosen over the other options of the finding: making the host
+/// non-dumpable (`PR_SET_DUMPABLE 0`) protects termiHub's memory only (not the
+/// user's shells or agents), changes how the whole application behaves (core
+/// dumps, debuggers, its own `/proc` entries) and lives outside the sandbox;
+/// masking `/proc` in the mount namespace would also hide `/proc/self/fd`,
+/// through which the runner loads the pinned plugin library. The check
+/// instead holds the sandbox itself to "no write access to another process's
+/// memory", on every kernel.
+fn check_reduced_isolation(
+    landlock: bool,
+    namespaces: bool,
+    ptrace_scope: Option<u32>,
+) -> Result<(), SandboxError> {
+    if landlock || namespaces || ptrace_scope.is_some_and(|scope| scope >= 1) {
+        return Ok(());
+    }
+    Err(SandboxError::Apply {
+        layer: layer::LANDLOCK,
+        detail: format!(
+            "landlock and unprivileged user namespaces are unavailable and Yama \
+             ptrace_scope is {}, so a plugin could write into the memory of termiHub \
+             and your other programs; reduced isolation is refused (enable landlock, \
+             unprivileged user namespaces or kernel.yama.ptrace_scope=1)",
+            ptrace_scope.map_or_else(|| "off".to_owned(), |s| s.to_string())
+        ),
+    })
 }
 
 fn set_no_new_privs() -> Result<(), SandboxError> {
@@ -170,6 +268,11 @@ fn apply_landlock(policy: &SandboxPolicy) -> Result<bool, SandboxError> {
         ))
         .map_err(|e| failed(&e))?
         .add_rules(path_beneath_rules(
+            TRUST_STORE_PATHS,
+            AccessFs::from_read(abi),
+        ))
+        .map_err(|e| failed(&e))?
+        .add_rules(path_beneath_rules(
             SYSTEM_WRITE_FILES,
             AccessFs::from_read(abi) | AccessFs::WriteFile,
         ))
@@ -201,7 +304,7 @@ fn is_dir(fd: &PathFd) -> bool {
 }
 
 /// The optional namespace layer (#4237): an unprivileged user + network + IPC
-/// namespace the runner enters before landlock and seccomp.
+/// + mount namespace the runner enters before landlock and seccomp.
 ///
 /// * **user** — required to create the other two without privileges. The
 ///   runner's effective uid and gid are mapped to themselves (so files it
@@ -215,24 +318,31 @@ fn is_dir(fd: &PathFd) -> bool {
 ///   socket belongs to the namespace it was created in.
 /// * **IPC** — no access to the host's System V IPC objects and POSIX message
 ///   queues.
+/// * **mount** (#4342) — a private mount tree in which the home folder is
+///   masked ([`mask`](super::mask)), so a plugin cannot even `stat` the user's
+///   files, which landlock does not mediate.
 ///
 /// Whether the kernel allows it is first tried in a throw-away child
 /// ([`available`](namespaces::available)): `unshare` itself can succeed where writing the id maps
 /// then fails (Ubuntu's AppArmor userns restriction drops the capabilities
 /// the write needs), and once the runner is in a user namespace it cannot
 /// leave it. Only if the child succeeded does the runner enter for real; if
-/// that then fails half way (the maps, the capability drop), the setup fails
-/// closed rather than run a plugin with unmapped ids or namespace
-/// capabilities.
+/// that then fails half way (the maps, the mask, the capability drop), the
+/// setup fails closed rather than run a plugin with unmapped ids, a half-built
+/// mask or namespace capabilities. The child runs the same mask plan, so a
+/// system that allows the user namespace but not the mounts skips the layer
+/// as a whole.
 pub mod namespaces {
     use std::ffi::CStr;
     use std::io;
 
     use super::super::{layer, SandboxError};
+    use super::mask::Plan;
 
     /// The namespaces entered together. `unshare` is all-or-nothing: if one
     /// of them cannot be created, none is.
-    const FLAGS: libc::c_int = libc::CLONE_NEWUSER | libc::CLONE_NEWNET | libc::CLONE_NEWIPC;
+    const FLAGS: libc::c_int =
+        libc::CLONE_NEWUSER | libc::CLONE_NEWNET | libc::CLONE_NEWIPC | libc::CLONE_NEWNS;
 
     const SETGROUPS: &CStr = c"/proc/self/setgroups";
     const UID_MAP: &CStr = c"/proc/self/uid_map";
@@ -291,7 +401,7 @@ pub mod namespaces {
         }
     }
 
-    fn errno() -> i32 {
+    pub(super) fn errno() -> i32 {
         io::Error::last_os_error().raw_os_error().unwrap_or(0)
     }
 
@@ -314,23 +424,33 @@ pub mod namespaces {
         }
     }
 
-    /// Whether this process could enter the namespaces: a forked child tries
-    /// `unshare` and the id maps, and exits with the verdict. Leaves the
-    /// caller untouched. Safe to call from a multi-threaded process (the
-    /// child makes only async-signal-safe calls on memory prepared before the
-    /// fork). `false` also when `fork` itself is refused.
+    /// Whether this process could enter the namespaces, with the generic
+    /// [`Plan::probe`] mount plan: see [`available_with`].
     #[must_use]
     pub fn available() -> bool {
+        available_with(&Plan::probe())
+    }
+
+    /// Whether this process could enter the namespaces and run `plan` in
+    /// them: a forked child tries `unshare`, the id maps and the plan, and
+    /// exits with the verdict. Leaves the caller untouched. Safe to call from
+    /// a multi-threaded process (the child makes only async-signal-safe calls
+    /// on memory prepared before the fork). `false` also when `fork` itself
+    /// is refused.
+    #[must_use]
+    pub fn available_with(plan: &Plan) -> bool {
         let maps = IdMaps::of_caller();
-        // SAFETY: the child only calls `unshare`, `open`, `write`, `close`
-        // and `_exit` on memory that exists before the fork; the parent
-        // reaps it below.
+        // SAFETY: the child only calls `unshare`, `open`, `write`, `close`,
+        // `mount`, `mkdir`, `chdir` and `_exit` on memory that exists before
+        // the fork; the parent reaps it below.
         match unsafe { libc::fork() } {
             -1 => false,
             0 => {
                 // SAFETY: as above; `_exit` skips every atexit handler and
                 // buffer flush of the parent's state.
-                let entered = unsafe { libc::unshare(FLAGS) } == 0 && maps.write().is_ok();
+                let entered = unsafe { libc::unshare(FLAGS) } == 0
+                    && maps.write().is_ok()
+                    && plan.run().is_ok();
                 unsafe { libc::_exit(i32::from(!entered)) }
             }
             child => exited_cleanly(child),
@@ -352,12 +472,13 @@ pub mod namespaces {
         }
     }
 
-    /// Enter the namespaces if this system allows it: `Ok(true)` when the
-    /// process now runs in them, `Ok(false)` when they are unavailable (the
-    /// process is unchanged), an error when entering failed half way (fail
-    /// closed). Must run single-threaded, before landlock and seccomp.
-    pub fn enter() -> Result<bool, SandboxError> {
-        if !available() {
+    /// Enter the namespaces and run the mount `plan` in them if this system
+    /// allows it: `Ok(true)` when the process now runs in them, `Ok(false)`
+    /// when they are unavailable (the process is unchanged), an error when
+    /// entering failed half way (fail closed). Must run single-threaded,
+    /// before landlock and seccomp.
+    pub fn enter(plan: &Plan) -> Result<bool, SandboxError> {
+        if !available_with(plan) {
             return Ok(false);
         }
         let maps = IdMaps::of_caller();
@@ -371,6 +492,13 @@ pub mod namespaces {
             failed(format!(
                 "writing {} failed: {}",
                 path.to_string_lossy(),
+                io::Error::from_raw_os_error(errno)
+            ))
+        })?;
+        // Needs the namespace's CAP_SYS_ADMIN: before the capability drop.
+        plan.run().map_err(|(what, errno)| {
+            failed(format!(
+                "masking the home folder failed ({what}): {}",
                 io::Error::from_raw_os_error(errno)
             ))
         })?;
@@ -525,9 +653,9 @@ pub mod filters {
             libc::SYS_splice,
             libc::SYS_pipe2,
             libc::SYS_memfd_create,
-            libc::SYS_inotify_init1,
-            libc::SYS_inotify_add_watch,
-            libc::SYS_inotify_rm_watch,
+            // No inotify (#4342, SEC2-006): landlock does not mediate
+            // watches, which would report the names of files the user
+            // creates or opens anywhere the plugin can name. `ENOSYS`.
             // Polling, events, timers.
             libc::SYS_epoll_create1,
             libc::SYS_epoll_ctl,
@@ -655,7 +783,6 @@ pub mod filters {
             libc::SYS_epoll_wait,
             libc::SYS_eventfd,
             libc::SYS_signalfd,
-            libc::SYS_inotify_init,
             libc::SYS_fadvise64,
             libc::SYS_sendfile,
             libc::SYS_time,
@@ -954,6 +1081,67 @@ mod tests {
         for nr in super::super::sigsys::trapped() {
             assert!(allowed.contains(nr), "trapped syscall {nr} is not allowed");
             assert!(!killed.contains(nr), "trapped syscall {nr} is killed");
+        }
+    }
+
+    /// #4342 (SEC2-006): no file-watching call passes the allow-list —
+    /// landlock does not mediate watches, so they would report file names
+    /// from anywhere the plugin can name.
+    #[test]
+    fn file_watching_is_not_allowed() {
+        let allowed: HashSet<_> = filters::allowed().into_iter().collect();
+        let mut watchers = vec![
+            libc::SYS_inotify_init1,
+            libc::SYS_inotify_add_watch,
+            libc::SYS_inotify_rm_watch,
+            libc::SYS_fanotify_init,
+            libc::SYS_fanotify_mark,
+        ];
+        #[cfg(target_arch = "x86_64")]
+        watchers.push(libc::SYS_inotify_init);
+        for nr in watchers {
+            assert!(!allowed.contains(&nr), "syscall {nr} must answer ENOSYS");
+        }
+    }
+
+    /// #4342 (PLG2-004): the distribution CA bundles are on the read-only
+    /// list; private-key folders and `/etc` as a whole are not.
+    #[test]
+    fn the_trust_store_is_readable_but_nothing_more() {
+        for path in [
+            "/etc/ssl/certs",
+            "/etc/pki/tls/certs",
+            "/etc/ca-certificates",
+            "/usr/share/ca-certificates",
+            "/etc/pki/ca-trust/extracted",
+        ] {
+            assert!(super::TRUST_STORE_PATHS.contains(&path), "{path} missing");
+        }
+        let readable = super::SYSTEM_READ_DIRS
+            .iter()
+            .chain(super::TRUST_STORE_PATHS)
+            .chain(super::SYSTEM_WRITE_FILES);
+        for path in readable {
+            for forbidden in ["/etc", "/etc/ssl", "/etc/pki", "/proc", "/home", "/root", "/var"] {
+                assert_ne!(path, &forbidden, "{forbidden} must not be granted whole");
+            }
+            assert!(!path.contains("private"), "{path} must not be granted");
+            assert!(!path.starts_with("/proc"), "{path}");
+        }
+    }
+
+    /// #4342 (SEC2-003): reduced isolation needs landlock, the namespace
+    /// layer or Yama `ptrace_scope` ≥ 1; with none of them the setup fails.
+    #[test]
+    fn reduced_isolation_needs_some_proc_protection() {
+        use super::check_reduced_isolation as check;
+        assert!(check(true, false, None).is_ok());
+        assert!(check(false, true, Some(0)).is_ok());
+        assert!(check(false, false, Some(1)).is_ok());
+        assert!(check(false, false, Some(3)).is_ok());
+        for scope in [None, Some(0)] {
+            let error = check(false, false, scope).unwrap_err().to_string();
+            assert!(error.contains("ptrace_scope"), "{error}");
         }
     }
 

@@ -10,6 +10,10 @@
 //! to themselves (a file it creates keeps its owner), no capabilities, its
 //! parent-death signal intact, and every socket it opened before — the
 //! stand-ins for the IPC channel and a passed bridge socket — still working.
+//! It also asserts the home-folder mask of the mount namespace (#4342): a
+//! stand-in home folder becomes an empty read-only `tmpfs` in which only the
+//! kept install and data folders are reachable — the rest cannot even be
+//! `stat`ed — and the working directory moves to the data folder.
 //! Where they are not allowed (Docker's default seccomp profile, Ubuntu's
 //! AppArmor restriction) it asserts that entering is skipped cleanly and
 //! nothing changed.
@@ -43,7 +47,7 @@ mod linux {
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
-    use termihub_plugin_runner::sandbox::linux::namespaces;
+    use termihub_plugin_runner::sandbox::linux::{mask::Plan, namespaces};
 
     fn net_namespace() -> std::path::PathBuf {
         std::fs::read_link("/proc/self/ns/net").expect("readlink /proc/self/ns/net")
@@ -113,7 +117,23 @@ mod linux {
             Ok("0") => assert!(!available, "user namespaces expected to be unavailable"),
             _ => {}
         }
-        let data = tempfile::TempDir::new().unwrap();
+        // A stand-in home folder: a secret, and the plugin's install and data
+        // folders inside it.
+        let home_dir = tempfile::TempDir::new().unwrap();
+        let home = home_dir.path().canonicalize().unwrap();
+        let secret = home.join("secret.txt");
+        std::fs::write(&secret, b"secret").unwrap();
+        let install = home.join("plugins/acme");
+        let data = home.join("plugins/.data/acme");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(install.join("manifest.json"), b"{}").unwrap();
+        let plan = Plan::mask(
+            std::slice::from_ref(&home),
+            &[install.clone(), data.clone()],
+            &data,
+        )
+        .unwrap();
         // Opened before: an outside listener, a connected TCP pair (a bridge
         // socket the host would pass in) and a Unix pair (the IPC channel).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -128,11 +148,13 @@ mod linux {
         // SAFETY: neither call takes arguments or can fail.
         let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
 
-        let entered = namespaces::enter().expect("entering never fails half way here");
+        let entered = namespaces::enter(&plan).expect("entering never fails half way here");
         assert_eq!(entered, available, "enter() must follow the probe");
+        drop(plan);
 
         if !entered {
             assert_eq!(net_namespace(), before, "nothing may change when skipped");
+            assert!(std::fs::metadata(&secret).is_ok(), "no mask when skipped");
             println!("linux_namespaces: unprivileged user namespaces unavailable; skipped cleanly");
             return;
         }
@@ -150,8 +172,26 @@ mod linux {
             "parent-death signal kept"
         );
 
+        // The home folder is masked: nothing but the kept folders is visible,
+        // not even as metadata, and the mask itself is read-only.
+        let error = std::fs::metadata(&secret).expect_err("the secret must be hidden");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "{error}");
+        let listed: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(listed, vec![std::ffi::OsString::from("plugins")]);
+        let error = std::fs::write(home.join("dropped"), b"x").expect_err("read-only mask");
+        assert_eq!(error.raw_os_error(), Some(libc::EROFS), "{error}");
+        assert_eq!(
+            std::fs::read(install.join("manifest.json")).unwrap(),
+            b"{}",
+            "the install folder is kept"
+        );
+        assert_eq!(std::env::current_dir().unwrap(), data, "cwd left the mask");
+
         // Files created in the data folder keep their owner.
-        let file = data.path().join("written-inside");
+        let file = data.join("written-inside");
         std::fs::write(&file, b"x").expect("create a file under the id map");
         assert_eq!(std::fs::metadata(&file).unwrap().uid(), uid);
 
@@ -174,6 +214,8 @@ mod linux {
         echo(&mut bridge_peer, &mut bridge);
         echo(&mut ipc, &mut ipc_peer);
         echo(&mut ipc_peer, &mut ipc);
-        println!("linux_namespaces: entered user + net + IPC namespaces; all checks passed");
+        println!(
+            "linux_namespaces: entered user + net + IPC + mount namespaces; all checks passed"
+        );
     }
 }
