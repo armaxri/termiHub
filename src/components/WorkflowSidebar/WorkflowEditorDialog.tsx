@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller } from "react-hook-form";
 import { z } from "zod";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -127,10 +127,14 @@ export function WorkflowEditorDialog({
   // Scalar fields live in react-hook-form; the typed step list and triggers
   // stay in imperative local state (their edit surface is not a natural field
   // array), and their validity is AND-ed into the Save gate below.
-  const { control, getValues, reset } = useForm<WorkflowFormValues>({
+  const {
+    form: { control, getValues, reset },
+    draft: formDraft,
+    errors,
+    valid: formValid,
+  } = useZodEditorForm<WorkflowFormValues>({
+    schema: workflowFormSchema,
     defaultValues: { name: "", description: "", tags: "" },
-    resolver: zodResolver(workflowFormSchema),
-    mode: "onChange",
   });
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
@@ -156,19 +160,6 @@ export function WorkflowEditorDialog({
     }
   }, [open, workflow, reset]);
 
-  // Deterministic, synchronous form validity derived straight from the schema
-  // (same approach as CustomRuleEditor / ConnectionSettingsForm) rather than
-  // react-hook-form's async error proxy, so the Save gate updates on the same
-  // render as the edit and stays testable without awaiting.
-  const watched = useWatch({ control });
-  const formValid = useMemo(() => {
-    return workflowFormSchema.safeParse({
-      name: watched.name ?? "",
-      description: watched.description ?? "",
-      tags: watched.tags ?? "",
-    }).success;
-  }, [watched.name, watched.description, watched.tags]);
-
   // A valid form AND at least one step AND every step's error-handling policy
   // (PROD-045) within the runner's bounds.
   const policiesValid = useMemo(
@@ -186,9 +177,7 @@ export function WorkflowEditorDialog({
   const isDirty =
     workflow !== null &&
     draftKey({
-      name: watched.name ?? "",
-      description: watched.description ?? "",
-      tags: watched.tags ?? "",
+      ...formDraft,
       steps: entries.map((e) => e.step),
       triggers,
       parameters,
@@ -284,10 +273,11 @@ export function WorkflowEditorDialog({
         name="name"
         control={control}
         render={({ field }) => (
-          <Field label="Name" htmlFor="workflow-editor-name">
+          <Field label="Name" htmlFor="workflow-editor-name" error={errors["name"]}>
             <Input
               id="workflow-editor-name"
               value={field.value ?? ""}
+              error={Boolean(errors["name"])}
               onChange={(e) => field.onChange(e.target.value)}
               onBlur={field.onBlur}
               placeholder="Workflow name"
