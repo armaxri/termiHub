@@ -140,7 +140,8 @@ impl VersionPolicy {
     /// Check the binary held open as `file` against the policy, reading its
     /// embedded build version through the handle from the start (AGT2-002:
     /// the apply path never re-opens a verified binary by path). `path` only
-    /// labels error messages.
+    /// labels error messages. Unix-only, like the apply path that uses it.
+    #[cfg(unix)]
     pub fn check_file(
         &self,
         file: &std::fs::File,
@@ -444,6 +445,7 @@ mod tests {
         Version::parse(s).unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_file_reads_the_version_through_the_open_handle() {
         // AGT2-002: the apply path checks the version of the verified copy it
