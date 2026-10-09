@@ -899,6 +899,70 @@ async fn without_landlock_or_namespaces_host_memory_stays_out_of_reach() {
     conn.disconnect().await.unwrap();
 }
 
+/// Linux (#4342): installed the way termiHub installs plugins — inside the
+/// user's home folder — the plugin keeps working where the namespace layer
+/// masks that folder: its install and data folders are bound back into the
+/// mask, while a sibling file in the same folder tree cannot even be
+/// `stat`ed.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plugin_installed_in_the_home_folder_works_inside_the_mask() {
+    let Ok(work) = tempfile::Builder::new()
+        .prefix(".termihub-sandbox-")
+        .tempdir_in(home_dir())
+    else {
+        println!("the home folder is not writable here; skipped");
+        return;
+    };
+    let sibling = work.path().join("sibling-secret.txt");
+    std::fs::write(&sibling, b"secret").unwrap();
+    let probe_plugin = Probe::load(Probe::install(work.path()), config()).expect("the probe loads");
+    let report = probe_plugin.report();
+    assert_eq!(report.isolation(), Isolation::Full, "{report:?}");
+    let masked = report
+        .enforced
+        .iter()
+        .any(|l| l == termihub_core::plugin::sandbox::layer::NETNS);
+    assert_eq!(masked, netns_available(), "{report:?}");
+
+    let (mut conn, mut rx) = probe_plugin.session(serde_json::json!({})).await;
+    let data_dir = PathBuf::from(canonical(
+        &probe_plugin
+            .installed
+            .root
+            .join(".data")
+            .join(probe_plugin.id()),
+    ));
+    let install_dir = PathBuf::from(canonical(&probe_plugin.install_dir()));
+    let data_file = data_dir.join("probe-data.txt");
+    for (op, arg) in [
+        (
+            "read",
+            install_dir.join("manifest.json").display().to_string(),
+        ),
+        ("write", data_file.display().to_string()),
+        ("read", data_file.display().to_string()),
+        ("list", data_dir.display().to_string()),
+        ("tmp", String::new()),
+    ] {
+        let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
+        assert!(
+            allowed,
+            "positive control failed inside the home folder: {line}"
+        );
+    }
+    let secret = canonical(&sibling);
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "read", &secret).await;
+    assert!(!allowed, "{line}");
+    let (allowed, line) = probe(conn.as_ref(), &mut rx, "stat", &secret).await;
+    println!("{line}");
+    assert_eq!(
+        !allowed, masked,
+        "metadata is hidden exactly where masked: {line}"
+    );
+    conn.disconnect().await.unwrap();
+}
+
 /// Linux: every reported seccomp denial reaches the host as a
 /// `Denied{syscall}` report (#4236) while the plugin still sees `EPERM`; a
 /// burst is coalesced (rate-limited) into a few reports; and the plugin cannot
