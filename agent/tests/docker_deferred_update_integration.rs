@@ -65,6 +65,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
+use termihub_core::test_fixtures;
 
 mod common;
 
@@ -113,6 +114,21 @@ fn docker_available() -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Whether the Docker tests should run: `true` with a reachable daemon; with
+/// none, skip — or panic under `TERMIHUB_REQUIRE_DOCKER`, which the nightly
+/// agent-Docker lane sets so the suite cannot go green by skipping (#4338).
+fn docker_ready() -> bool {
+    test_fixtures::require(
+        docker_available(),
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        "Docker not available (`docker info` failed)",
+        DOCKER_HINT,
+    )
+}
+
+/// How to provide what the Docker tests need.
+const DOCKER_HINT: &str = "needs a running Docker daemon that can pull and run Linux images";
 
 /// Pre-pull the container image so session activation is not gated on a first-run
 /// image download. Fork under the lock, wait outside it (#1597).
@@ -481,8 +497,7 @@ fn sha256_hex_of_file(path: &Path) -> String {
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn deferred_update_applies_on_last_docker_disconnect() {
-    if !docker_available() {
-        eprintln!("Skipping: Docker not available");
+    if !docker_ready() {
         return;
     }
     // Pre-pull so the container starts fast enough for the session to activate.
