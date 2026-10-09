@@ -165,7 +165,9 @@ async fn verify_downloaded(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::update::signature::test_support::{sign_digest, test_signing_key};
+    use crate::update::signature::test_support::{
+        sign_digest, sign_digest_in_domain, test_signing_key,
+    };
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -407,6 +409,69 @@ mod tests {
         .unwrap_err();
 
         assert!(format!("{err:#}").contains("signature"));
+        assert!(!dest.exists());
+    }
+
+    /// Regression (#4365): the shared checksum gate keeps the exact mismatch
+    /// wording this consumer has always surfaced.
+    #[tokio::test]
+    async fn checksum_mismatch_error_wording_is_unchanged() {
+        let server = MockServer::start().await;
+        mount_binary(&server, b"abc").await;
+        mount_checksum(&server, "0".repeat(64)).await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+        let err = download_and_verify(
+            &reqwest::Client::new(),
+            &urls(&server, true),
+            &dest,
+            &dev_policy(),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(&format!(
+                "expected SHA-256 {}, computed {SHA256_OF_ABC}. Refusing to use an agent binary \
+                 that does not match its published checksum.",
+                "0".repeat(64)
+            )),
+            "{msg}"
+        );
+    }
+
+    /// Regression (#4365): a signature by the trusted key over the right digest
+    /// but under another domain (the plugin-index one) is refused, and the
+    /// downloaded binary is removed.
+    #[tokio::test]
+    async fn refuses_a_signature_made_under_another_domain() {
+        let server = MockServer::start().await;
+        mount_binary(&server, b"abc").await;
+        mount_checksum(&server, SHA256_OF_ABC.to_string()).await;
+        mount_signature(
+            &server,
+            sign_digest_in_domain(
+                &test_signing_key(5),
+                b"termihub-plugin-index-v1\0",
+                SHA256_OF_ABC,
+            ),
+        )
+        .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("termihub-agent-linux-x64");
+        let err = download_and_verify(
+            &reqwest::Client::new(),
+            &signed_urls(&server),
+            &dest,
+            &strict_policy(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(format!("{err:#}").contains("does not verify"), "{err:#}");
         assert!(!dest.exists());
     }
 }
