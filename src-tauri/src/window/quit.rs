@@ -9,7 +9,7 @@
 //! This module routes every explicit quit through the same decision:
 //!
 //! 1. The quit arrives as `RunEvent::ExitRequested { code: Some(_) }`. On macOS,
-//!    Cmd+Q / "Quit termiHub" is a custom menu item ([`QUIT_MENU_ID`]) that calls
+//!    Cmd+Q / "Quit termiHub" is a custom menu item (`QUIT_MENU_ID`) that calls
 //!    `AppHandle::exit(0)`, because the stock predefined Quit item sends
 //!    `-[NSApp terminate:]`, which ends the process without ever raising an
 //!    `ExitRequested` that could be prevented.
@@ -53,6 +53,7 @@ use super::recover;
 
 /// Id of the custom "Quit termiHub" (Cmd+Q) menu item that replaces the stock
 /// predefined Quit on macOS, so a quit raises a preventable `ExitRequested`.
+#[cfg(target_os = "macos")]
 pub const QUIT_MENU_ID: &str = "termihub-quit";
 
 /// Event emitted to every window when an explicit quit needs their decision.
