@@ -8,7 +8,6 @@
 //! anywhere. The hook then chains to the previous hook, so stderr output and
 //! abort behaviour are unchanged.
 
-use std::backtrace::Backtrace;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -44,31 +43,18 @@ pub fn install(crash_dir: PathBuf) {
 
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let payload = info.payload();
-        let message = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "Box<dyn Any>".to_string());
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
-        let backtrace = Backtrace::force_capture().to_string();
+        // Release builds keep their symbol table (`strip = "debuginfo"`, #4316),
+        // so the backtrace names functions; see `CrashDetails::capture`.
+        let details =
+            CrashDetails::capture(info, APP_NAME, env!("CARGO_PKG_VERSION"), env!("GIT_HASH"));
 
         tracing::error!(
             target: PANIC_TARGET,
-            "panic at {}: {message}",
-            location.as_deref().unwrap_or("unknown location")
+            "panic at {}: {}",
+            details.location.as_deref().unwrap_or("unknown location"),
+            details.message
         );
 
-        let details = CrashDetails {
-            app: APP_NAME.to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            thread: std::thread::current().name().map(str::to_string),
-            location,
-            message,
-            backtrace,
-        };
         match crash_report::write_report(&crash_dir, &details, SystemTime::now(), &redactor) {
             Ok(path) => tracing::error!(
                 target: PANIC_TARGET,
