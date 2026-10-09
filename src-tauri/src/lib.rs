@@ -1110,13 +1110,10 @@ pub fn run() -> anyhow::Result<()> {
                         info!("Last window closed; keeping app alive (macOS Dock) (#1903)");
                         api.prevent_exit();
                     }
-                    window::quit::ExitDecision::PreventAndPrompt => {
+                    window::quit::ExitDecision::PreventAndPrompt
+                    | window::quit::ExitDecision::PreventWhilePrompting => {
                         api.prevent_exit();
                         window::quit::start_quit_flow(app_handle);
-                    }
-                    window::quit::ExitDecision::PreventWhilePrompting => {
-                        info!("Quit already awaiting a decision; ignoring repeat (#4296)");
-                        api.prevent_exit();
                     }
                     window::quit::ExitDecision::Proceed => {
                         if code.is_some() || cfg!(target_os = "macos") {

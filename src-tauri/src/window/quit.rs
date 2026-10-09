@@ -28,9 +28,10 @@
 //!
 //! # Bounds (never hang a quit)
 //!
-//! * **Repeated quit.** A second Cmd+Q while the dialog is open is prevented and
-//!   ignored ([`ExitDecision::PreventWhilePrompting`]). It neither raises a second
-//!   dialog nor force-quits.
+//! * **Repeated quit.** A second Cmd+Q while the dialog is open is prevented
+//!   ([`ExitDecision::PreventWhilePrompting`]) and only re-sends the request: a
+//!   window already showing the quit dialog re-acknowledges it, so it neither
+//!   raises a second dialog nor force-quits.
 //! * **Unresponsive window.** A window must acknowledge within
 //!   [`QUIT_ACK_TIMEOUT`], either ready or prompting. One that does neither (a
 //!   hung or crashed webview) stops blocking the quit when the timeout fires
@@ -85,7 +86,8 @@ pub enum ExitDecision {
     KeepAliveInDock,
     /// Prevent the exit and ask the windows ([`QUIT_REQUESTED_EVENT`]).
     PreventAndPrompt,
-    /// Prevent the exit; a quit prompt is already open, so do not raise another.
+    /// Prevent the exit; a quit prompt is already open. Windows are re-asked,
+    /// which a window already showing the dialog answers without a second one.
     PreventWhilePrompting,
 }
 
@@ -297,7 +299,7 @@ impl QuitCoordinator {
     }
 }
 
-/// Start (or swallow a repeat of) an explicit quit: ask every open window via
+/// Start (or re-ask for) an explicit quit: ask every open window via
 /// [`QUIT_REQUESTED_EVENT`] and arm the acknowledgement timeout.
 ///
 /// Called from the `RunEvent::ExitRequested` handler after it prevented the
@@ -315,7 +317,17 @@ pub fn start_quit_flow(app: &tauri::AppHandle) {
     let labels: Vec<String> = app.webview_windows().into_keys().collect();
     match coordinator.begin(labels) {
         BeginOutcome::AlreadyPrompting => {
-            tracing::info!("Quit already awaiting a decision; ignoring repeat (#4296)");
+            // Re-ask rather than ignore: a window already showing the quit
+            // dialog just re-acknowledges it, while one whose dialog went away
+            // (e.g. replaced by its own close dialog, then cancelled) answers
+            // afresh, so a pending quit can never wedge every later Cmd+Q.
+            tracing::info!("Quit already awaiting a decision; re-asking windows (#4296)");
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = handle.emit(QUIT_REQUESTED_EVENT, ()) {
+                    tracing::warn!("Failed to emit {QUIT_REQUESTED_EVENT}: {e}");
+                }
+            });
         }
         BeginOutcome::ExitNow => {
             tracing::info!("Quit needs no decision; exiting (#4296)");
