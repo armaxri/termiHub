@@ -4179,7 +4179,7 @@ async fn test_connection_succeeds_tears_down_and_leaves_no_session() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("spy", serde_json::json!({}), None, Some("test-1:0"))
+        .test_connection("spy", serde_json::json!({}), None, Some("test-1:0"), None)
         .await;
 
     assert!(
@@ -4213,7 +4213,7 @@ async fn test_connection_classifies_auth_failure() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("auth-failing", serde_json::json!({}), None, None)
+        .test_connection("auth-failing", serde_json::json!({}), None, None, None)
         .await;
 
     assert!(
@@ -4244,7 +4244,7 @@ async fn test_connection_classifies_unreachable_host() {
     let manager = SessionManager::new(registry, Arc::new(NullAgent));
 
     let result = manager
-        .test_connection("unreachable", serde_json::json!({}), None, None)
+        .test_connection("unreachable", serde_json::json!({}), None, None, None)
         .await;
 
     assert!(
@@ -4279,7 +4279,13 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
     let spawned = manager.clone();
     let join = tokio::spawn(async move {
         spawned
-            .test_connection("blocking", serde_json::json!({}), None, Some("test-c:0"))
+            .test_connection(
+                "blocking",
+                serde_json::json!({}),
+                None,
+                Some("test-c:0"),
+                None,
+            )
             .await
     });
 
@@ -5049,4 +5055,80 @@ async fn close_session_does_not_hold_the_session_map_during_a_stalled_disconnect
 
     release.notify_one();
     closer.await.unwrap().unwrap();
+}
+
+// ── test_connection: graphical backends that establish asynchronously (#4320) ──
+
+fn probe_manager(outcome: crate::session::graphical_probe::tests::Outcome) -> SessionManager {
+    use crate::session::graphical_probe::tests::{ProbeFake, PROBE_FAKE};
+    let mut registry = ConnectionTypeRegistry::new();
+    registry.register(
+        PROBE_FAKE,
+        "Probe Fake",
+        "mock",
+        Box::new(move || Box::new(ProbeFake::new(outcome.clone()))),
+    );
+    SessionManager::new(registry, Arc::new(NullAgent))
+}
+
+/// RDP Test connection against a peer that never finishes the negotiation
+/// used to report success as soon as the helper started (PARITY2-001). It now
+/// waits for the real outcome and times out with the typed `timeout` code
+/// after the connect timeout — leaving no session behind.
+#[tokio::test(start_paused = true)]
+async fn test_connection_times_out_a_graphical_backend_that_never_establishes() {
+    use crate::session::graphical_probe::tests::{Outcome, PROBE_FAKE};
+    let manager = probe_manager(Outcome::Never);
+
+    let result = manager
+        .test_connection(
+            PROBE_FAKE,
+            serde_json::json!({ "host": "rdp.example", "connectTimeoutSecs": 3 }),
+            None,
+            Some("test-g:0"),
+            None,
+        )
+        .await;
+
+    let err = result.expect_err("a never-established probe must fail");
+    let ipc = serde_json::to_value(TerminalError::from_session_spawn(err)).unwrap();
+    assert_eq!(ipc["code"], "timeout", "{ipc}");
+    assert!(
+        ipc["message"]
+            .as_str()
+            .unwrap()
+            .contains("timed out after 3s"),
+        "{ipc}"
+    );
+    assert!(manager.sessions.lock().await.is_empty());
+    assert!(!manager.cancel_connecting("test-g:0"));
+}
+
+/// A refused connect inside the helper (a closed port) surfaces as the coded
+/// `unreachable` failure instead of a false success.
+#[tokio::test]
+async fn test_connection_reports_an_unreachable_graphical_backend() {
+    use crate::session::graphical_probe::tests::{Outcome, PROBE_FAKE};
+    let manager = probe_manager(Outcome::Fails(SessionError::ConnectionFailed(
+        "RDP TCP connect to rdp.example:1 failed: connection refused".to_string(),
+    )));
+
+    let err = manager
+        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None)
+        .await
+        .expect_err("a refused connect must fail");
+    let ipc = serde_json::to_value(TerminalError::from_session_spawn(err)).unwrap();
+    assert_eq!(ipc["code"], "unreachable", "{ipc}");
+}
+
+/// A graphical backend that establishes still validates successfully.
+#[tokio::test]
+async fn test_connection_passes_an_established_graphical_backend() {
+    use crate::session::graphical_probe::tests::{Outcome, PROBE_FAKE};
+    let manager = probe_manager(Outcome::Established);
+    let result = manager
+        .test_connection(PROBE_FAKE, serde_json::json!({}), None, None, None)
+        .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(manager.sessions.lock().await.is_empty());
 }
