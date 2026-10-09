@@ -458,6 +458,11 @@ function SortHeader({
   onToggle: (col: FileSortKey) => void;
 }) {
   const active = activeKey === col;
+  // `aria-sort` is only valid on columnheader/rowheader, and these headers are
+  // plain buttons outside any grid — so the sort state goes in the name (#4349).
+  const accessibleLabel = active
+    ? `${label}, sorted ${direction === "asc" ? "ascending" : "descending"}`
+    : `Sort by ${label}`;
   return (
     <button
       type="button"
@@ -465,7 +470,7 @@ function SortHeader({
         active ? " file-browser__col--active" : ""
       }`}
       onClick={() => onToggle(col)}
-      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}
+      aria-label={accessibleLabel}
       data-testid={`file-browser-sort-${col}`}
     >
       <span>{label}</span>
@@ -477,6 +482,20 @@ function SortHeader({
         ))}
     </button>
   );
+}
+
+/**
+ * Screen-reader name for a file row: the entry name plus its type, which the
+ * glyph alone conveys only visually (#4349).
+ */
+export function fileRowAccessibleName(entry: FileEntry): string {
+  if (entry.isSymlink) {
+    const kind = entry.isDirectory ? "symbolic link to a folder" : "symbolic link";
+    return entry.symlinkTarget
+      ? `${entry.name}, ${kind}, target ${entry.symlinkTarget}`
+      : `${entry.name}, ${kind}`;
+  }
+  return `${entry.name}, ${entry.isDirectory ? "folder" : "file"}`;
 }
 
 /** The leading folder/file glyph shared by file rows and the rename editor. */
@@ -639,6 +658,10 @@ function FileRow({
           <button
             ref={rowRef}
             className="file-browser__row"
+            // Selection is a toggle state on the row button (#4349). A listbox
+            // of options would forbid the per-row actions button beside it.
+            aria-pressed={isSelected}
+            aria-label={fileRowAccessibleName(entry)}
             tabIndex={tabIndex}
             data-testid={`file-row-${entry.name}`}
             // Mirrored from the wrapper so the row's own testid exposes the drop
@@ -2087,6 +2110,9 @@ export function FileBrowser() {
                 ) : (
                   <div
                     className="file-browser__list-inner"
+                    // A named list of file rows (#4349); each virtual row is an item.
+                    role="list"
+                    aria-label={`Files in ${currentPath || "/"}`}
                     style={{ height: rowVirtualizer.getTotalSize() }}
                   >
                     {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -2097,6 +2123,7 @@ export function FileBrowser() {
                         <div
                           key={virtualRow.key}
                           className="file-browser__virtual-row"
+                          role="listitem"
                           style={{ transform: `translateY(${virtualRow.start}px)` }}
                         >
                           <FileRow
