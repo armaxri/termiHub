@@ -19,6 +19,14 @@ The watchdog is a Python timer thread (blocking syscalls release the GIL), with
 :func:`faulthandler.dump_traceback_later` as a C-level backstop shortly after it
 in case the interpreter itself is wedged.
 
+Before it kills anything the guard records what a hang post-mortem needs
+(#4315): the hung test's node id, every running process (this worker's
+descendants with their command lines, then the busiest processes on the host),
+and — through the ``on_hang`` callback the conftest passes — the app's failure
+bundle (state, terminal, a screenshot over the bridge if it still answers) and
+the tail of the app log. The callback runs on its own thread under
+:data:`ON_HANG_BUDGET`, so a wedged bridge cannot stop the kill.
+
 It is armed only on xdist workers (a replacement worker picks up the remaining
 tests; exiting a plain, unsharded run would end it), unless forced with
 ``TERMIHUB_TEST_HANG_GUARD=1``; ``TERMIHUB_TEST_HANG_GUARD=0`` disables it. The
@@ -33,7 +41,7 @@ import faulthandler
 import os
 import threading
 from pathlib import Path
-from typing import IO, Mapping, Optional
+from typing import IO, Callable, Mapping, Optional
 
 import psutil
 
@@ -52,8 +60,16 @@ DEFAULT_BUDGETS: dict[str, float] = {
     "teardown": 300.0,
 }
 
-#: Seconds after the Python watchdog that the faulthandler backstop fires.
-BACKSTOP_GRACE = 60.0
+#: Seconds the ``on_hang`` diagnostics callback may take before the guard gives
+#: up on it and kills anyway (bridge probes inside it use a shorter timeout).
+ON_HANG_BUDGET = 90.0
+
+#: Seconds after the Python watchdog that the faulthandler backstop fires. Must
+#: exceed :data:`ON_HANG_BUDGET` so the diagnostics get their chance.
+BACKSTOP_GRACE = ON_HANG_BUDGET + 60.0
+
+#: How many of the host's busiest processes the dump lists.
+TOP_PROCESSES = 25
 
 _DISABLED = ("0", "false", "no", "off")
 _ENABLED = ("1", "true", "yes", "on")
@@ -61,6 +77,8 @@ _ENABLED = ("1", "true", "yes", "on")
 _stream: Optional[IO[str]] = None
 _stream_path: Optional[Path] = None
 _timer: Optional[threading.Timer] = None
+_nodeid: Optional[str] = None
+_on_hang: Optional[Callable[[], Optional[str]]] = None
 
 
 def enabled(env: Mapping[str, str] = os.environ) -> bool:
@@ -92,10 +110,23 @@ def traceback_path(artifact_root: Path, env: Mapping[str, str] = os.environ) -> 
     return artifact_root / "hang-tracebacks" / f"{worker}-{os.getpid()}.txt"
 
 
-def arm(phase: str, artifact_root: Path) -> None:
-    """Start the ``phase`` watchdog (replacing any previous one)."""
-    global _stream, _stream_path, _timer
+def arm(
+    phase: str,
+    artifact_root: Path,
+    *,
+    nodeid: Optional[str] = None,
+    on_hang: Optional[Callable[[], Optional[str]]] = None,
+) -> None:
+    """Start the ``phase`` watchdog (replacing any previous one).
+
+    ``nodeid`` names the test in the dump; ``on_hang`` is called (bounded by
+    :data:`ON_HANG_BUDGET`) when the phase overruns, before anything is killed,
+    and whatever text it returns is appended to the dump.
+    """
+    global _stream, _stream_path, _timer, _nodeid, _on_hang
     disarm()
+    _nodeid = nodeid
+    _on_hang = on_hang
     if _stream is None:
         _stream_path = traceback_path(artifact_root)
         _stream_path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +140,9 @@ def arm(phase: str, artifact_root: Path) -> None:
 
 def disarm() -> None:
     """Cancel the pending watchdog, if any."""
-    global _timer
+    global _timer, _nodeid, _on_hang
+    _nodeid = None
+    _on_hang = None
     if _timer is not None:
         _timer.cancel()
         _timer = None
@@ -117,21 +150,99 @@ def disarm() -> None:
 
 
 def _fire(phase: str, seconds: float) -> None:
-    """The phase overran: dump all stacks, kill child processes, exit the worker."""
+    """The phase overran: dump stacks and diagnostics, kill children, exit."""
     stream = _stream
+    _write(
+        stream,
+        f"[hang-guard] the {phase} phase of {_nodeid or '<unknown test>'} exceeded "
+        f"{seconds:.0f}s: dumping all thread stacks and diagnostics, killing child "
+        "processes, exiting the worker (#4017, #4315)\n",
+    )
     try:
         if stream is not None:
-            stream.write(
-                f"[hang-guard] the {phase} phase exceeded {seconds:.0f}s: dumping all "
-                "thread stacks, killing child processes, exiting the worker (#4017)\n"
-            )
-            stream.flush()
             faulthandler.dump_traceback(file=stream, all_threads=True)
             stream.flush()
     except (OSError, ValueError):
         pass
+    _write(stream, describe_processes())
+    _write(stream, run_on_hang(_on_hang))
     kill_child_processes()
     os._exit(1)
+
+
+def _write(stream: Optional[IO[str]], text: str) -> None:
+    if stream is None or not text:
+        return
+    try:
+        stream.write(text if text.endswith("\n") else text + "\n")
+        stream.flush()
+    except (OSError, ValueError):
+        pass
+
+
+def run_on_hang(
+    callback: Optional[Callable[[], Optional[str]]], budget: float = ON_HANG_BUDGET
+) -> str:
+    """Run the diagnostics ``callback`` on its own thread, bounded by ``budget``.
+
+    Returns the text for the dump: the callback's result, its error, or a note
+    that it overran (the guard then proceeds to the kill regardless).
+    """
+    if callback is None:
+        return ""
+    result: list[str] = []
+
+    def target() -> None:
+        try:
+            result.append(callback() or "")
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never raise
+            result.append(f"[hang-guard] diagnostics failed: {exc!r}")
+
+    worker = threading.Thread(target=target, name="hang-guard-diagnostics", daemon=True)
+    worker.start()
+    worker.join(budget)
+    if worker.is_alive():
+        return f"[hang-guard] diagnostics still running after {budget:.0f}s; giving up"
+    return "[hang-guard] diagnostics:\n" + (result[0] if result else "")
+
+
+def _process_line(proc: "psutil.Process") -> str:
+    try:
+        info = proc.as_dict(attrs=["pid", "ppid", "name", "status", "cmdline", "cpu_times"])
+    except psutil.Error as exc:
+        return f"  <pid {getattr(proc, 'pid', '?')}: {exc}>"
+    times = info.get("cpu_times")
+    cpu = f"{times.user + times.system:.1f}s" if times else "?"
+    cmdline = " ".join(info.get("cmdline") or []) or info.get("name") or "?"
+    return (
+        f"  pid={info.get('pid')} ppid={info.get('ppid')} status={info.get('status')} "
+        f"cpu={cpu} {cmdline[:300]}"
+    )
+
+
+def describe_processes(top: int = TOP_PROCESSES) -> str:
+    """This worker's descendants, then the host's ``top`` busiest processes by
+    cumulative CPU time — what was running when the phase hung."""
+    lines = ["[hang-guard] descendants of this worker:"]
+    try:
+        children = psutil.Process().children(recursive=True)
+    except psutil.Error as exc:
+        children = []
+        lines.append(f"  <unavailable: {exc}>")
+    lines.extend(_process_line(child) for child in children)
+    if not children:
+        lines.append("  (none)")
+    lines.append(f"[hang-guard] top {top} processes on the host by CPU time:")
+    ranked = []
+    for proc in psutil.process_iter():
+        try:
+            times = proc.cpu_times()
+            ranked.append((times.user + times.system, proc))
+        except psutil.Error:
+            continue
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    lines.extend(_process_line(proc) for _, proc in ranked[:top])
+    return "\n".join(lines) + "\n"
 
 
 def kill_child_processes(timeout: float = 3.0) -> None:

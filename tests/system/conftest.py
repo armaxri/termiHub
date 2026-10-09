@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from termihub_harness import hang_guard, timing
+from termihub_harness import hang_guard, skip_guard, timing
 from termihub_harness.artifacts import (
     ARTIFACT_ROOT,
     sanitize_nodeid,
@@ -127,6 +127,7 @@ def pytest_configure(config):
         "Skipped unless --manual is passed with an interactive TTY.",
     )
     config._manual_session = ManualSession()
+    _SESSION_CONFIG["config"] = config
     config._manual_started = datetime.datetime.now(datetime.timezone.utc)
 
 
@@ -160,14 +161,45 @@ def pytest_collection_modifyitems(config, items):
 # ── Hang guard (#4017) ───────────────────────────────────────────────────────
 # A blocking call with no timeout froze the macOS lane on 2026-10-06 until the
 # job ceiling cancelled it. On xdist workers each test phase now runs under a
-# faulthandler watchdog: an overrun dumps all stacks into the artifacts dir and
-# exits the worker, so xdist reports the hung test and the lane carries on.
+# faulthandler watchdog: an overrun dumps all stacks, the running processes and
+# the app's failure bundle into the artifacts dir and exits the worker, so xdist
+# reports the hung test and the lane carries on. The nightly runs every lane
+# under xdist (the serial ones with ``-n 1``) so all of them are guarded (#4315).
 # See termihub_harness/hang_guard.py.
-def _guarded_phase(phase):
+
+#: Bridge-probe timeout for the hang diagnostics — three probes must fit in
+#: hang_guard.ON_HANG_BUDGET, and a hung webview will not answer late anyway.
+_HANG_PROBE_TIMEOUT = 20.0
+_HANG_LOG_TAIL_LINES = 80
+
+
+def _hang_diagnostics(item):
+    """Capture the hung test's app state for the hang dump (runs off-thread)."""
+    instance = getattr(item, "instance", None)
+    driver = getattr(instance, "driver", None)
+    app = getattr(instance, "app", None) or getattr(item, "funcargs", {}).get("app")
+    if driver is None and app is None:
+        return "no app or driver attached to this test"
+    dest = ARTIFACT_ROOT / sanitize_nodeid(item.nodeid) / "hang"
+    write_failure_artifacts(dest, driver, app, probe_timeout=_HANG_PROBE_TIMEOUT)
+    lines = [f"failure bundle (state, terminal, screenshot, app log): {dest}"]
+    if app is not None:
+        try:
+            tail = app.read_log().splitlines()[-_HANG_LOG_TAIL_LINES:]
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never raise
+            tail = [f"<app log unreadable: {exc!r}>"]
+        lines.append(f"--- app log tail (last {_HANG_LOG_TAIL_LINES} lines) ---")
+        lines.extend(tail)
+    return "\n".join(lines)
+
+
+def _guarded_phase(phase, item):
     if not hang_guard.enabled():
         yield
         return
-    hang_guard.arm(phase, ARTIFACT_ROOT)
+    hang_guard.arm(
+        phase, ARTIFACT_ROOT, nodeid=item.nodeid, on_hang=lambda: _hang_diagnostics(item)
+    )
     try:
         yield
     finally:
@@ -176,17 +208,109 @@ def _guarded_phase(phase):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_setup(item):
-    yield from _guarded_phase("setup")
+    yield from _guarded_phase("setup", item)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_call(item):
-    yield from _guarded_phase("call")
+    yield from _guarded_phase("call", item)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
-    yield from _guarded_phase("teardown")
+    yield from _guarded_phase("teardown", item)
+
+
+# ── Skip report + skip guard (#4315) ─────────────────────────────────────────
+# A skip is green, so a lane whose fixtures never came up looks healthy. Every
+# run lists its skips and reasons in the terminal summary (and the GitHub step
+# summary when the guard is on); a nightly lane that names itself in
+# TERMIHUB_SKIP_GUARD_LANE fails on a skip its committed allowlist
+# (skip-allowlist.json) does not expect, on more skips than its baseline, and
+# when it ran nothing. Under xdist the controller sees every worker's reports,
+# so this runs there only. See termihub_harness/skip_guard.py.
+#: The running session's config, for the report hooks (which receive none).
+_SESSION_CONFIG = {}
+
+
+class _SkipRecorder:
+    def __init__(self):
+        self.skips = {}
+        self.collected = set()
+        self.ran = set()
+        self.verdict = None
+
+    def add_test_report(self, report):
+        if report.when == "setup":
+            self.collected.add(report.nodeid)
+        if report.skipped and not hasattr(report, "wasxfail"):
+            reason = skip_guard.skip_reason(report.longrepr)
+            self.skips[report.nodeid] = skip_guard.Skip(report.nodeid, reason)
+        elif report.when == "call":
+            self.ran.add(report.nodeid)
+
+
+def _skip_recorder(config):
+    recorder = getattr(config, "_termihub_skips", None)
+    if recorder is None:
+        recorder = config._termihub_skips = _SkipRecorder()
+    return recorder
+
+
+def pytest_runtest_logreport(report):
+    config = _SESSION_CONFIG.get("config")
+    if config is not None and not hasattr(config, "workerinput"):
+        _skip_recorder(config).add_test_report(report)
+
+
+def pytest_collectreport(report):
+    config = _SESSION_CONFIG.get("config")
+    if config is None or hasattr(config, "workerinput") or not report.skipped:
+        return
+    reason = skip_guard.skip_reason(report.longrepr)
+    _skip_recorder(config).skips[report.nodeid] = skip_guard.Skip(report.nodeid, reason)
+
+
+def _enforce_skip_guard(session):
+    """Controller only: evaluate the lane's skips and red the run on a problem."""
+    config = session.config
+    lane = skip_guard.lane_from_env()
+    if lane is None or hasattr(config, "workerinput"):
+        return
+    recorder = _skip_recorder(config)
+    verdict = skip_guard.evaluate(
+        lane,
+        collected=len(recorder.collected),
+        skips=list(recorder.skips.values()),
+        allowlist=skip_guard.load_allowlist(),
+        require_fixtures=skip_guard.require_fixtures(),
+    )
+    recorder.verdict = verdict
+    if not verdict.ok and session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def _report_skips(terminalreporter, config):
+    recorder = getattr(config, "_termihub_skips", None)
+    if recorder is None or (not recorder.skips and recorder.verdict is None):
+        return
+    skips = sorted(recorder.skips.values(), key=lambda skip: skip.nodeid)
+    lines = skip_guard.format_summary(
+        skips,
+        fully_skipped=skip_guard.fully_skipped_modules(skips, recorder.ran),
+        verdict=recorder.verdict,
+    )
+    terminalreporter.section("termihub skipped tests (#4315)")
+    for line in lines:
+        terminalreporter.write_line(line)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary and recorder.verdict is not None:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"## Skipped tests ({recorder.verdict.lane})\n\n```\n")
+                fh.write("\n".join(lines) + "\n```\n\n")
+        except OSError:
+            pass
 
 
 # ── Per-operation timing summary (#3660) ─────────────────────────────────────
@@ -207,7 +331,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     ``scripts/system-test-timing.py`` aggregates these across runs to size the
     per-operation deadlines in ``termihub_harness/deadlines.py``.
     """
-    if hasattr(config, "workerinput") or not timing.enabled():
+    if hasattr(config, "workerinput"):
+        return
+    _report_skips(terminalreporter, config)
+    if not timing.enabled():
         return
     lines = timing.format_lines(timing.summarize(timing.os_name()))
     if not lines:
@@ -218,8 +345,10 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Hand timing samples to the xdist controller; flush the guided-manual report."""
+    """Enforce the skip guard; hand timing samples to the xdist controller;
+    flush the guided-manual report."""
     hang_guard.close()
+    _enforce_skip_guard(session)
     config = session.config
     if hasattr(config, "workeroutput"):
         config.workeroutput[_TIMING_KEY] = timing.snapshot()
@@ -462,10 +591,19 @@ def rdp_fixtures():
     """
     helper = find_rdp_helper()
     if helper is None:
-        pytest.skip(
+        message = (
             "RDP sidecar not built: run ./scripts/build-rdp-sidecar.sh "
             f"or set {RDP_HELPER_ENV}"
         )
+        # The Linux nightly builds the sidecar (build-system-test-app.sh), so a
+        # missing one there is a build gap, not an environment gap (#4315).
+        # Keyed on the lane's TERMIHUB_REQUIRE_FIXTURES opt-in rather than on
+        # CI alone: the scheduled nightly runs main's copy of the workflow,
+        # which lags develop's, and must not red before its copy installs
+        # libasound2-dev.
+        if sys.platform.startswith("linux") and skip_guard.require_fixtures():
+            pytest.fail(f"{message} ({skip_guard.REQUIRE_FIXTURES_ENV}=1, #4315)")
+        pytest.skip(message)
     os.environ[RDP_HELPER_ENV] = str(helper)
     fixture = ComposeFixture()
     try:
