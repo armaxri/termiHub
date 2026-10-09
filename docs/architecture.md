@@ -912,6 +912,19 @@ it keeps 3 retries doubling from 100 ms to a 1.6 s cap (700 ms of worst-case bac
 on the same engine and jitter. A test pins that every policy is bounded, jittered and
 inside the give-up window.
 
+**Graphical sessions: one budget, and server ends are not drops (#4321).** The
+graphical supervisor's engine is the only reconnect authority: the core
+`SessionStateMachine` has no attempt cap of its own and only records the attempt the
+engine entered (`enter_reconnecting`), so the emitted "Attempt n of 10" cannot drift
+from the budget actually enforced. A session the server ended on purpose — an RDP
+`ERRINFO` remote logoff, administrator disconnect, session time limit or takeover by
+another client — reaches the backend's `fatal_error` as `SessionError::ServerClosed`
+and rests in `ServerClosed` ("Session ended by the server", manual Reconnect) without a
+single re-dial, because a re-dial would log the user straight back in. A bare RDP
+disconnect (a restarting server sends one) and any VNC close stay ordinary drops: VNC has
+no protocol-level "session ended" signal. A user's Stop moves the machine to `Closed`,
+which is sticky, so no later backend or reconnect event can reopen the tab.
+
 **Telnet and serial** have no automatic reconnect: they do not expose Auto-Reconnect,
 and a dropped tab shows the manual reconnect prompt.
 

@@ -199,6 +199,38 @@ pub const AUTH_ERROR_INFO: &[ProtocolIndependentCode] = &[
     ProtocolIndependentCode::ServerFreshCredentialsRequired,
 ];
 
+/// `ERRINFO_*` codes (MS-RDPBCGR 2.2.5.1.1) that mean the server ended the
+/// session **on purpose** (#4321): a remote logoff, an administrator's
+/// disconnect or forced logoff, a session time limit, or another client taking
+/// the session over. Re-dialling would log the user straight back in (or fight
+/// the other client), so the desktop rests in "Session ended by the server".
+///
+/// A bare MCS Disconnect Provider Ultimatum carries no such reason — a server
+/// that is shutting down or restarting sends one too — so it stays an ordinary
+/// drop the desktop may auto-reconnect from, as do the remaining codes (server
+/// faults such as `ERRINFO_OUT_OF_MEMORY`).
+pub const SERVER_CLOSE_ERROR_INFO: &[ProtocolIndependentCode] = &[
+    ProtocolIndependentCode::RpcInitiatedDisconnect,
+    ProtocolIndependentCode::RpcInitiatedLogoff,
+    ProtocolIndependentCode::IdleTimeout,
+    ProtocolIndependentCode::LogonTimeout,
+    ProtocolIndependentCode::DisconnectedByOtherconnection,
+    ProtocolIndependentCode::RpcInitiatedDisconnectByuser,
+    ProtocolIndependentCode::LogoffByUser,
+];
+
+/// The deliberate session-end code behind a server graceful disconnect, if it
+/// is one ([`SERVER_CLOSE_ERROR_INFO`]).
+pub fn server_close_code(reason: &GracefulDisconnectReason) -> Option<ProtocolIndependentCode> {
+    let GracefulDisconnectReason::Other(description) = reason else {
+        return None;
+    };
+    SERVER_CLOSE_ERROR_INFO
+        .iter()
+        .copied()
+        .find(|code| description.contains(code.description()))
+}
+
 /// The server rejected the logon after the session had been established — a
 /// credential / privilege `ERRINFO` graceful disconnect. Carried as the source
 /// of the sidecar's fatal error so [`classify`] recognises it by type.
@@ -286,17 +318,22 @@ pub enum SessionEnd {
 /// The typed [`SidecarMessage::Failure`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::Failure)
 /// a [`SessionEnd`] reports, or `None` for an ordinary drop.
 ///
-/// A graceful server end is a deliberate one — a remote logoff, an admin
-/// disconnect, another client taking the session over, an idle timeout — so it
-/// is [`SidecarFailureKind::ServerClosed`] and the desktop does not
-/// auto-reconnect into it (re-dialling would log the user straight back in).
-/// The caller handles a logon rejection ([`is_auth_disconnect`]) first.
+/// A graceful server end with a deliberate session-end code
+/// ([`SERVER_CLOSE_ERROR_INFO`]: a remote logoff, an admin disconnect, another
+/// client taking the session over, an idle timeout) is
+/// [`SidecarFailureKind::ServerClosed`], carrying the code's description, so
+/// the desktop does not auto-reconnect into it. Any other graceful end — a bare
+/// disconnect, as a restarting server sends — is an ordinary drop. The caller
+/// handles a logon rejection ([`is_auth_disconnect`]) first.
 pub fn end_failure(end: &SessionEnd) -> Option<(SidecarFailureKind, String)> {
     match end {
         SessionEnd::Dropped => None,
-        SessionEnd::Server(reason) => {
-            Some((SidecarFailureKind::ServerClosed, reason.description()))
-        }
+        SessionEnd::Server(reason) => server_close_code(reason).map(|code| {
+            (
+                SidecarFailureKind::ServerClosed,
+                code.description().to_string(),
+            )
+        }),
         SessionEnd::Failed(kind, message) => Some((*kind, message.clone())),
     }
 }
@@ -659,25 +696,54 @@ mod tests {
 
     // ── How the driver loop ended (#4321, #4509) ──────────────────────
 
+    fn errinfo_end(code: ProtocolIndependentCode) -> SessionEnd {
+        SessionEnd::Server(GracefulDisconnectReason::Other(format!(
+            "[Protocol independent error] {}",
+            code.description()
+        )))
+    }
+
     #[test]
     fn a_remote_logoff_is_a_typed_server_close_with_its_reason() {
-        let logoff = format!(
-            "[Protocol independent error] {}",
-            ProtocolIndependentCode::LogoffByUser.description()
-        );
-        let end = SessionEnd::Server(GracefulDisconnectReason::Other(logoff.clone()));
+        let code = ProtocolIndependentCode::LogoffByUser;
         assert_eq!(
-            end_failure(&end),
-            Some((SidecarFailureKind::ServerClosed, logoff))
+            end_failure(&errinfo_end(code)),
+            Some((
+                SidecarFailureKind::ServerClosed,
+                code.description().to_string()
+            ))
         );
     }
 
     #[test]
-    fn a_bare_server_initiated_end_is_a_server_close() {
-        let end = SessionEnd::Server(GracefulDisconnectReason::ServerInitiated);
-        let (kind, message) = end_failure(&end).expect("typed");
-        assert_eq!(kind, SidecarFailureKind::ServerClosed);
-        assert_eq!(message, "server initiated disconnect");
+    fn every_deliberate_session_end_code_is_a_server_close() {
+        for &code in SERVER_CLOSE_ERROR_INFO {
+            let (kind, _) = end_failure(&errinfo_end(code)).expect("typed");
+            assert_eq!(kind, SidecarFailureKind::ServerClosed, "{code:?}");
+            assert!(!AUTH_ERROR_INFO.contains(&code), "{code:?}");
+        }
+        // An admin disconnect and an idle timeout are among them.
+        assert!(SERVER_CLOSE_ERROR_INFO.contains(&ProtocolIndependentCode::RpcInitiatedDisconnect));
+        assert!(SERVER_CLOSE_ERROR_INFO.contains(&ProtocolIndependentCode::IdleTimeout));
+    }
+
+    #[test]
+    fn a_bare_server_disconnect_stays_an_ordinary_drop() {
+        // A restarting server sends a bare Disconnect Provider Ultimatum; the
+        // desktop must keep auto-reconnecting through it.
+        for reason in [
+            GracefulDisconnectReason::ServerInitiated,
+            GracefulDisconnectReason::UserInitiated,
+            GracefulDisconnectReason::Other("domain disconnected".into()),
+        ] {
+            assert_eq!(end_failure(&SessionEnd::Server(reason)), None);
+        }
+    }
+
+    #[test]
+    fn a_server_fault_code_stays_an_ordinary_drop() {
+        let end = errinfo_end(ProtocolIndependentCode::OutOfMemory);
+        assert_eq!(end_failure(&end), None);
     }
 
     #[test]

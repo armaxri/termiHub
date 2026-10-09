@@ -703,10 +703,11 @@ where
         }
     }
 
-    // Any other server end is deliberate (a remote logoff, an admin disconnect,
-    // #4321) and a process / reactivation error carries its reason (#4509):
-    // both are typed so the desktop shows them instead of auto-reconnecting. A
-    // plain transport drop reports nothing, so the desktop retries it.
+    // A server end with a deliberate session-end `ERRINFO` (a remote logoff,
+    // an admin disconnect, #4321) and a process / reactivation error with its
+    // reason (#4509) are typed, so the desktop shows them instead of
+    // auto-reconnecting. A transport drop or a bare server disconnect (a
+    // restarting server) reports nothing, so the desktop retries it.
     if let Some((kind, message)) = failure::end_failure(&end) {
         info!(?kind, %message, "rdp session ended");
         let _ = write_message(

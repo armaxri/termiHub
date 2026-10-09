@@ -967,8 +967,8 @@ async fn server_close_mid_session_rests_server_closed_with_zero_retries() {
 
 #[tokio::test(start_paused = true)]
 async fn server_close_on_first_connect_rests_server_closed() {
-    // xrdp ends a failed login with a bare server disconnect, before any
-    // frame: rest instead of looping on re-dials.
+    // The server ends the session on purpose before any frame (another
+    // client took it over): rest instead of looping on re-dials.
     let h = open_first(
         serde_json::json!({}),
         Dial::OkThenFail(Fatal::ServerClosed),
