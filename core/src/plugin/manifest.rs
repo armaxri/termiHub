@@ -1062,4 +1062,95 @@ mod tests {
             ApiCompatibility::Incompatible
         );
     }
+
+    // ── docs/plugin-authoring.md examples stay valid (#4324) ─────────
+
+    /// The plugin authoring guide, embedded so a doc edit rebuilds the test.
+    const AUTHORING_DOC: &str = include_str!("../../../docs/plugin-authoring.md");
+
+    /// The body of every fenced ```` ```json ```` block in the authoring guide.
+    fn doc_json_blocks() -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut current: Option<String> = None;
+        for line in AUTHORING_DOC.lines() {
+            match current.as_mut() {
+                None if line.trim_start() == "```json" => current = Some(String::new()),
+                None => {}
+                Some(_) if line.trim_start() == "```" => blocks.extend(current.take()),
+                Some(body) => {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+            }
+        }
+        blocks
+    }
+
+    #[test]
+    fn authoring_guide_example_manifests_load() {
+        // Every complete manifest in the guide (a block carrying `apiVersion`)
+        // must pass the same checks a real plugin does: strict parsing, semantic
+        // validation, and the permission checks `PluginHost::load` runs. An
+        // author who copies the example must get a plugin that loads (PLG2-003).
+        let manifests: Vec<String> = doc_json_blocks()
+            .into_iter()
+            .filter(|b| b.contains("\"apiVersion\""))
+            .collect();
+        assert!(
+            !manifests.is_empty(),
+            "no example manifest found in docs/plugin-authoring.md"
+        );
+        for json in &manifests {
+            let manifest = parse_manifest(json)
+                .unwrap_or_else(|e| panic!("example manifest does not parse: {e}\n{json}"));
+            manifest
+                .validate()
+                .unwrap_or_else(|e| panic!("example manifest does not validate: {e}\n{json}"));
+            let permissions = crate::plugin::PermissionSet::from_manifest(&manifest);
+            permissions
+                .check_consistency(&manifest.extensions)
+                .unwrap_or_else(|e| panic!("example manifest is refused at load: {e}\n{json}"));
+            permissions
+                .check_protected_folders(
+                    Some(std::path::Path::new("/home/author")),
+                    &[std::path::Path::new("/home/author/.config/termihub")],
+                )
+                .unwrap_or_else(|e| panic!("example manifest roots are over-broad: {e}\n{json}"));
+        }
+    }
+
+    #[test]
+    fn authoring_guide_example_manifest_documents_connection_policy() {
+        // The guide's full example shows `connectionPolicy`, so the field it
+        // documents is exercised by the real parser above.
+        let with_policy = doc_json_blocks()
+            .into_iter()
+            .filter(|b| b.contains("\"apiVersion\""))
+            .filter_map(|b| parse_manifest(&b).ok())
+            .any(|m| m.connection_policy.is_some());
+        assert!(with_policy, "no example manifest declares connectionPolicy");
+    }
+
+    #[test]
+    fn authoring_guide_connection_policy_snippets_parse() {
+        // A `"connectionPolicy": {...}` fragment in the guide must deserialize
+        // into the real (unknown-key-rejecting) type.
+        let snippets: Vec<String> = doc_json_blocks()
+            .into_iter()
+            .filter(|b| b.trim_start().starts_with("\"connectionPolicy\""))
+            .collect();
+        assert!(
+            !snippets.is_empty(),
+            "no connectionPolicy snippet found in docs/plugin-authoring.md"
+        );
+        for snippet in &snippets {
+            let wrapped = format!("{{{snippet}}}");
+            let value: serde_json::Value = serde_json::from_str(&wrapped)
+                .unwrap_or_else(|e| panic!("snippet is not JSON: {e}\n{snippet}"));
+            let policy: ConnectionPolicyManifest =
+                serde_json::from_value(value["connectionPolicy"].clone())
+                    .unwrap_or_else(|e| panic!("snippet does not parse: {e}\n{snippet}"));
+            assert!(policy.max_connections.is_some() || policy.connect_timeout_ms.is_some());
+        }
+    }
 }

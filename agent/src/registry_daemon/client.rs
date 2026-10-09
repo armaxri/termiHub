@@ -342,7 +342,7 @@ fn spawn_registry_daemon() -> std::io::Result<()> {
         .stdout(std::process::Stdio::null());
 
     #[cfg(unix)]
-    let log = crate::daemon::transport::open_registry_log();
+    let log = crate::file_log::open_registry_stderr();
     #[cfg(not(unix))]
     let log = None;
     crate::daemon::spawn::configure_detached_stderr(&mut command, log);

@@ -336,3 +336,59 @@ describe("durable-log forwarding (OBS-001)", () => {
 beforeEach(() => {
   vi.clearAllMocks();
 });
+
+// #4327 (OBS2-004): the Log Viewer replays the frontend history on mount so it
+// never needs the backend's echo of a forwarded WARN/ERROR to show it.
+describe("frontendLog history replay (#4327)", () => {
+  it("replays every retained entry to a replaying subscriber, even after a flush", async () => {
+    vi.resetModules();
+    const { frontendLog, frontendWarn, onFrontendLog } = await import("./frontendLog");
+
+    frontendLog("mod", "before any listener");
+    const first: LogEntry[] = [];
+    const unsubFirst = onFrontendLog((e) => first.push(e));
+    frontendWarn("mod", "while first listener is live");
+    unsubFirst();
+
+    const replayed: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => replayed.push(e), { replayHistory: true });
+    expect(replayed.map((e) => e.message)).toEqual([
+      "before any listener",
+      "while first listener is live",
+    ]);
+
+    frontendLog("mod", "live");
+    expect(replayed.map((e) => e.message)).toContain("live");
+    expect(replayed).toHaveLength(3);
+    unsub();
+  });
+
+  it("consumes the startup buffer so a later plain subscriber does not re-receive it", async () => {
+    vi.resetModules();
+    const { frontendLog, onFrontendLog } = await import("./frontendLog");
+
+    frontendLog("mod", "early");
+    const unsubReplay = onFrontendLog(() => undefined, { replayHistory: true });
+    unsubReplay();
+
+    const plain: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => plain.push(e));
+    expect(plain).toHaveLength(0);
+    unsub();
+  });
+
+  it("bounds the history to the most recent entries", async () => {
+    vi.resetModules();
+    const { frontendLog, onFrontendLog, FRONTEND_LOG_HISTORY_LIMIT } =
+      await import("./frontendLog");
+
+    for (let i = 0; i < FRONTEND_LOG_HISTORY_LIMIT + 10; i++) {
+      frontendLog("mod", `entry ${i}`);
+    }
+    const replayed: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => replayed.push(e), { replayHistory: true });
+    expect(replayed).toHaveLength(FRONTEND_LOG_HISTORY_LIMIT);
+    expect(replayed[0].message).toBe("entry 10");
+    unsub();
+  });
+});

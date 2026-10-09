@@ -16,8 +16,8 @@ evidence:
   - core/src/plugin/host.rs:877
   - core/src/plugin/manifest.rs:313
   - core/src/plugin/manifest.rs:321
-status: open
-resolution: ""
+status: fixed
+resolution: "#4324 — documented connectionPolicy (and that ~ / env vars are not expanded in filesystemPaths) in plugin-authoring.md; the example manifest declares filesystemPaths and connectionPolicy and a core test loads it through the real validator; placeholders split to #4533, zero-timeout validation to #4534"
 audit: 2026-10
 commit: 663465d52
 relation: new

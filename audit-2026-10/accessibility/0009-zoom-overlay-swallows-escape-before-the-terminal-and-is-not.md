@@ -10,8 +10,8 @@ evidence:
   - src/components/SplitView/SplitView.tsx:296-307
   - src/components/SplitView/SplitView.tsx:471-473
   - src/components/SplitView/SplitView.tsx:505-506
-status: open
-resolution: ""
+status: fixed
+resolution: "#4329 — zoom overlay rebuilt on Modal; Escape left to terminal/editor, Shift+Escape closes"
 audit: 2026-10
 commit: 663465d52
 relation: new

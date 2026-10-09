@@ -175,3 +175,25 @@ tests:
       - "The family emoji shows as three emoji people in six columns (xterm does not join ZWJ sequences); no boxes, no stray joiner glyph."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-47
+    release_gate: true
+    manual_reason: "real WebView focus, Escape routing into xterm/Monaco and pointer events inside a Radix modal; jsdom has no layout or real input"
+    name: "Zoom overlay is a modal dialog that leaves Escape to the terminal"
+    pr: 4531
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell, run 'vim', press i, then zoom the tab with Ctrl+Shift+Enter (Cmd+Shift+Enter on macOS)."
+      - "Press Escape, then type ':q!' and Enter."
+      - "Run 'less /etc/hosts' in the zoomed terminal and scroll with the mouse wheel, then quit less."
+      - "Press Tab repeatedly with focus on the overlay's close button; right-click the overlay title and pick Set Color..."
+      - "Press Shift+Escape in the terminal."
+    expected:
+      - "Escape leaves vim insert mode; the overlay stays open and vim quits normally."
+      - "The wheel scrolls less inside the overlay."
+      - "Tab never reaches the panels behind the overlay; the title menu opens and its items are clickable."
+      - "Shift+Escape closes the overlay and focus returns to the terminal tab."
+    verification: manual
+    tags: [visual]

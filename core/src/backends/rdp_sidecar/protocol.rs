@@ -217,6 +217,16 @@ pub enum SidecarFailureKind {
     /// [`Connect`](Self::Connect). Appended (never reordered) for wire
     /// compatibility.
     Timeout,
+    /// The server ended the session on purpose (#4321): a remote logoff, an
+    /// administrator disconnect, or any other graceful server-side end that is
+    /// not a logon rejection. Not retried. Appended for wire compatibility —
+    /// an older desktop cannot decode it and takes its ordinary read-error exit.
+    ServerClosed,
+    /// The server sent data the client cannot process, or a server-driven
+    /// deactivation-reactivation failed without a transport error (#4509).
+    /// Maps to the shared terminal protocol error. Appended for wire
+    /// compatibility.
+    Protocol,
 }
 
 /// Serialize `msg` and write it as one length-prefixed MessagePack frame.
@@ -473,6 +483,8 @@ mod tests {
             SidecarFailureKind::Auth,
             SidecarFailureKind::Connect,
             SidecarFailureKind::Timeout,
+            SidecarFailureKind::ServerClosed,
+            SidecarFailureKind::Protocol,
         ] {
             let msg = SidecarMessage::Failure {
                 kind,

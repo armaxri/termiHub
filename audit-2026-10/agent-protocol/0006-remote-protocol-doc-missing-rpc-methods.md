@@ -15,8 +15,8 @@ evidence:
   - agent/src/handler/dispatch.rs:1414
   - agent/src/handler/dispatch.rs:2197
   - agent/src/handler/dispatch.rs:2610
-status: open
-resolution: ""
+status: fixed
+resolution: "#4325 — every dispatcher method now has a docs/remote-protocol.md section with params, result, errors and the version it was added in; protocol_doc_tests fails on any undocumented or stale method"
 audit: 2026-10
 commit: 663465d52
 relation: new

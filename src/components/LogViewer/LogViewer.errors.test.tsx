@@ -15,8 +15,10 @@ vi.mock("@/services/events", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({
   onFrontendLog: vi.fn(() => () => {}),
+  clearFrontendLogHistory: vi.fn(),
   fireAndForget: vi.fn(),
   frontendWarn: vi.fn(),
+  frontendError: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -30,7 +32,7 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
 import { getLogs, clearLogs } from "@/services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { frontendWarn } from "@/utils/frontendLog";
+import { frontendError, frontendWarn } from "@/utils/frontendLog";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -95,6 +97,8 @@ describe("LogViewer failure feedback", () => {
     await click("Save logs to file");
 
     expect(errorSpy).toHaveBeenCalledWith("Could not save logs", { description: "disk full" });
+    // #4327 (OBS2-006): the failure also lands in the log itself.
+    expect(frontendError).toHaveBeenCalledWith("log_viewer", expect.stringContaining("disk full"));
   });
 
   it("confirms a successful save and stays quiet on a cancelled dialog", async () => {

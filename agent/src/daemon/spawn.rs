@@ -23,9 +23,9 @@
 /// keeping it tethers the daemon's lifetime to the SSH connection — a disconnect
 /// tears the channel down and takes the daemon with it (so a reconnect finds
 /// nothing to re-attach). A detached daemon owns its own stderr on every
-/// platform: callers pass a log file in the per-user socket dir (diagnostics
-/// without the coupling) where one is available, and `None` falls back to a null
-/// stderr.
+/// platform: callers pass a capped capture file in the agent's log dir
+/// ([`crate::file_log::open_daemon_stderr`], diagnostics without the coupling)
+/// where one is available, and `None` falls back to a null stderr.
 pub fn configure_detached_stderr(command: &mut std::process::Command, log: Option<std::fs::File>) {
     let stderr = match log {
         Some(file) => std::process::Stdio::from(file),

@@ -65,10 +65,51 @@ const listeners: LogCallback[] = [];
 const startupBuffer: LogEntry[] = [];
 const STARTUP_BUFFER_LIMIT = 500;
 
+/**
+ * Every emitted entry, newest last, bounded to {@link FRONTEND_LOG_HISTORY_LIMIT}.
+ *
+ * The Log Viewer replays this on mount (#4327). Frontend WARN/ERROR entries are
+ * also forwarded to the backend, which echoes them back under the `frontend`
+ * target; the viewer drops that echo and shows the direct copy instead, so the
+ * direct copy must outlive a closed/reopened viewer and StrictMode's re-run.
+ */
+const history: LogEntry[] = [];
+
+/** Maximum number of entries kept in the replayable history (matches the viewer). */
+export const FRONTEND_LOG_HISTORY_LIMIT = 2000;
+
+/**
+ * Drop the replayable history (and any startup-buffered entries). The Log
+ * Viewer calls this alongside the backend `clear_logs`, so a cleared log stays
+ * cleared when the viewer is reopened.
+ */
+export function clearFrontendLogHistory(): void {
+  history.length = 0;
+  startupBuffer.length = 0;
+}
+
+/** Options for {@link onFrontendLog}. */
+export interface FrontendLogSubscribeOptions {
+  /**
+   * Replay the whole retained history (not just the startup buffer) to the new
+   * subscriber before live delivery starts. Consumes the startup buffer, which
+   * is a subset of the history.
+   */
+  replayHistory?: boolean;
+}
+
 /** Subscribe to frontend log entries. Returns an unsubscribe function. */
-export function onFrontendLog(cb: LogCallback): () => void {
-  // Flush any entries that were buffered before this listener connected.
-  if (startupBuffer.length > 0) {
+export function onFrontendLog(
+  cb: LogCallback,
+  options: FrontendLogSubscribeOptions = {}
+): () => void {
+  if (options.replayHistory) {
+    for (const entry of history.slice()) {
+      cb(entry);
+    }
+    startupBuffer.length = 0;
+  } else if (startupBuffer.length > 0) {
+    // Flush any entries that were buffered before this listener connected.
     for (const entry of startupBuffer) {
       cb(entry);
     }
@@ -99,6 +140,10 @@ function emitFrontendLog(
     target: `frontend::${target}`,
     message,
   };
+  history.push(entry);
+  if (history.length > FRONTEND_LOG_HISTORY_LIMIT) {
+    history.splice(0, history.length - FRONTEND_LOG_HISTORY_LIMIT);
+  }
   if (listeners.length === 0) {
     if (startupBuffer.length < STARTUP_BUFFER_LIMIT) {
       startupBuffer.push(entry);

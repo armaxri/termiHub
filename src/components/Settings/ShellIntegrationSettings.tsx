@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
-import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  DndContext,
+  DragEndEvent,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -65,7 +77,13 @@ export function ShellIntegrationSettings() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<ShellEntry | null>(null);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  // The grip is a drag-only button, so it also takes the keyboard sensor
+  // (Space to lift, arrows to move, Space to drop); the Move up/down buttons are
+  // the simpler keyboard path (A11Y2-003, #4329).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const platform = getPlatform();
 
   useEffect(() => {
@@ -147,6 +165,14 @@ export function ShellIntegrationSettings() {
       const from = si.entries.findIndex((e) => e.id === active.id);
       const to = si.entries.findIndex((e) => e.id === over.id);
       if (from === -1 || to === -1) return;
+      void persist({ ...si, entries: reorderEntries(si.entries, from, to) });
+    },
+    [si, persist]
+  );
+
+  const handleMoveEntry = useCallback(
+    (from: number, to: number) => {
+      if (to < 0 || to >= si.entries.length) return;
       void persist({ ...si, entries: reorderEntries(si.entries, from, to) });
     },
     [si, persist]
@@ -239,6 +265,10 @@ export function ShellIntegrationSettings() {
                   key={entry.id}
                   entry={entry}
                   index={index}
+                  isFirst={index === 0}
+                  isLast={index === si.entries.length - 1}
+                  onMoveUp={() => handleMoveEntry(index, index - 1)}
+                  onMoveDown={() => handleMoveEntry(index, index + 1)}
                   connectionLabel={connectionName(entry.connectionId)}
                   onEdit={() => openEditEntry(entry)}
                   onDelete={() => handleDeleteEntry(entry.id)}
@@ -249,7 +279,8 @@ export function ShellIntegrationSettings() {
         </DndContext>
       )}
       <p className="settings-panel__description">
-        Drag the handle to reorder. The first “Always” entry is the default.
+        Drag the handle or use the arrow buttons to reorder. The first “Always” entry is the
+        default.
       </p>
 
       {/* Fallback + window behaviour */}
@@ -331,6 +362,10 @@ export function ShellIntegrationSettings() {
 interface SortableEntryRowProps {
   entry: ShellEntry;
   index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   connectionLabel: string;
   onEdit: () => void;
   onDelete: () => void;
@@ -340,6 +375,10 @@ interface SortableEntryRowProps {
 function SortableEntryRow({
   entry,
   index,
+  isFirst,
+  isLast,
+  onMoveUp,
+  onMoveDown,
   connectionLabel,
   onEdit,
   onDelete,
@@ -377,6 +416,30 @@ function SortableEntryRow({
         {entry.visibility === "always" ? "Always" : "Extended"}
       </span>
       <div className="shell-integration__entry-actions">
+        <Tooltip content="Move up">
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<ArrowUp size={14} />}
+            onClick={onMoveUp}
+            disabled={isFirst}
+            aria-label={`Move ${entry.name} up`}
+            data-testid={`shell-integration-entry-move-up-${entry.id}`}
+          />
+        </Tooltip>
+        <Tooltip content="Move down">
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<ArrowDown size={14} />}
+            onClick={onMoveDown}
+            disabled={isLast}
+            aria-label={`Move ${entry.name} down`}
+            data-testid={`shell-integration-entry-move-down-${entry.id}`}
+          />
+        </Tooltip>
         <Tooltip content="Edit entry">
           <Button
             variant="ghost"

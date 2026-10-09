@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
@@ -44,6 +44,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const setTabColor = useAppStore((s) => s.setTabColor);
   const renameTab = useAppStore((s) => s.renameTab);
   const moveTabToWindow = useAppStore((s) => s.moveTabToWindow);
+  const reorderTabs = useAppStore((s) => s.reorderTabs);
+  const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
@@ -203,10 +205,31 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // they live in different split panels.
   const allTabs = useMemo(() => getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs), [rootPanel]);
 
+  // Keyboard alternative to dragging a tab (A11Y2-003, #4329). The moved tab
+  // keeps focus: React re-inserts its node, which can blur it, so focus is
+  // restored once the reordered strip renders.
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const refocusTabIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const tabId = refocusTabIdRef.current;
+    if (!tabId) return;
+    refocusTabIdRef.current = null;
+    tabListRef.current?.querySelector<HTMLElement>(`[data-testid="tab-${tabId}"]`)?.focus();
+  }, [tabs]);
+
+  const moveTabBy = (tabId: string, delta: -1 | 1) => {
+    const from = tabs.findIndex((t) => t.id === tabId);
+    const to = from + delta;
+    if (from === -1 || to < 0 || to >= tabs.length) return;
+    refocusTabIdRef.current = tabId;
+    reorderTabs(panelId, from, to);
+  };
+
   // Roving-focus keyboard navigation for the tab strip (#2071). Only the active
   // tab is a Tab stop (`tabIndex=0`); Arrow/Home/End move focus between the
   // `role="tab"` elements, matching the WAI-ARIA tabs pattern. Activation stays
   // on click / the app's existing shortcuts — dnd-kit owns Space/Enter for drag.
+  // Ctrl/Cmd+Shift+ArrowLeft/Right instead moves the focused tab itself.
   const handleTabsKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     const tabEls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
@@ -214,6 +237,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     const current = tabEls.indexOf(document.activeElement as HTMLElement);
     if (current === -1) return;
     e.preventDefault();
+    const isMove = (e.ctrlKey || e.metaKey) && e.shiftKey;
+    if (isMove && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.stopPropagation();
+      const tabId = tabs[current]?.id;
+      if (tabId) moveTabBy(tabId, e.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
     let next = current;
     if (e.key === "ArrowLeft") next = (current - 1 + tabEls.length) % tabEls.length;
     else if (e.key === "ArrowRight") next = (current + 1) % tabEls.length;
@@ -231,8 +261,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
           aria-label="Open sessions"
           aria-orientation="horizontal"
           onKeyDown={handleTabsKeyDown}
+          ref={tabListRef}
         >
-          {tabs.map((tab) => (
+          {tabs.map((tab, index) => (
             <Tab
               key={tab.id}
               tab={tab}
@@ -264,6 +295,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onContextMenuOpenChange={refreshWindowsOnOpen}
               onMoveToNewWindow={() => handleMoveTabToWindow(tab.id, { kind: "new" })}
               onMoveToWindow={(label) => handleMoveTabToWindow(tab.id, { kind: "existing", label })}
+              onMoveLeft={index > 0 ? () => moveTabBy(tab.id, -1) : undefined}
+              onMoveRight={index < tabs.length - 1 ? () => moveTabBy(tab.id, 1) : undefined}
+              onMoveToNewPanel={
+                tabs.length > 1
+                  ? () => splitPanelWithTab(tab.id, panelId, panelId, "right")
+                  : undefined
+              }
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
               macroReceiving={macroReceivingInfo(macroPlayback, tab.id)}

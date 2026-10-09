@@ -16,8 +16,8 @@ evidence:
   - agent/src/daemon/transport.rs:261
   - agent/src/daemon/spawn.rs:29
   - agent/src/session/manager.rs:605
-status: open
-resolution: ""
+status: fixed
+resolution: "#4319 — daemons mirror to stderr only without a log file; capture is append, 1 MiB capped, kept in the log dir"
 audit: 2026-10
 commit: "663465d52"
 relation: new

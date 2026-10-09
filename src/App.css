@@ -37,7 +37,8 @@
 }
 
 .sidebar-resize-handle:hover,
-.sidebar-resize-handle--active {
+.sidebar-resize-handle--active,
+.sidebar-resize-handle:focus-visible {
   background: var(--resize-handle-hover-color);
 }
 

@@ -75,24 +75,23 @@ pub(crate) fn init_tracing() -> TracingInit {
         .and_then(|settings| settings.file_log_level)
         .map(|level| level.as_str());
 
-    let (file_layer, file_reload_handle, file_log_status) =
-        match file_log::RotatingLogFile::with_defaults() {
-            Ok(writer) => {
-                // Reloadable per-layer filter so the Settings control can change
-                // the file verbosity live, without a restart (OBS-009).
-                let (filter, handle) = tracing_subscriber::reload::Layer::new(
-                    file_log::file_env_filter_with(persisted_file_log_level),
-                );
-                let layer = tracing_subscriber::fmt::layer()
-                    // No terminal on the other end of a file: escape codes would
-                    // just make it unreadable.
-                    .with_ansi(false)
-                    .with_writer(writer)
-                    .with_filter(filter);
-                (Some(layer), Some(handle), Ok(()))
-            }
-            Err(e) => (None, None, Err(e)),
-        };
+    let (file_layer, file_reload_handle, file_log_status) = match file_log::open_default_log() {
+        Ok(writer) => {
+            // Reloadable per-layer filter so the Settings control can change
+            // the file verbosity live, without a restart (OBS-009).
+            let (filter, handle) = tracing_subscriber::reload::Layer::new(
+                file_log::file_env_filter_with(persisted_file_log_level),
+            );
+            let layer = tracing_subscriber::fmt::layer()
+                // No terminal on the other end of a file: escape codes would
+                // just make it unreadable.
+                .with_ansi(false)
+                .with_writer(writer)
+                .with_filter(filter);
+            (Some(layer), Some(handle), Ok(()))
+        }
+        Err(e) => (None, None, Err(e)),
+    };
 
     tracing_subscriber::registry()
         // The file layer is attached first so its reloadable per-layer filter's

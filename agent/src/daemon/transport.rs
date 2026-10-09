@@ -22,7 +22,7 @@
 //! The concrete socket/pipe types are erased behind [`BoxedReader`] and
 //! [`BoxedWriter`] so the daemon event loop in [`super::process`] is fully
 //! platform-independent. This module keeps only the daemon's **session-policy**
-//! path helpers ([`session_endpoint`], [`endpoint_alive`], [`open_daemon_log`]);
+//! path helpers ([`session_endpoint`], [`endpoint_alive`], [`remove_session_files`]);
 //! the transport primitives live in [`termihub_core::ipc`].
 
 use std::io;
@@ -155,8 +155,7 @@ pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, Bo
 #[cfg(unix)]
 pub use unix_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, ki_prompt_endpoint,
-    open_daemon_log, open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
-    socket_dir,
+    registry_endpoint, remove_session_files, session_endpoint, socket_dir,
 };
 // allow(unused_imports): `agent_forward_endpoint` has only unix-side consumers
 // in some builds; kept to mirror the unix surface. There is no windows
@@ -237,7 +236,11 @@ mod unix_impl {
         Path::new(endpoint).exists()
     }
 
-    /// Path to a session's daemon log file, a sibling of its socket.
+    /// Path to the per-session stderr log older agents kept beside the socket.
+    ///
+    /// Daemon stderr now goes to a capped capture file in the agent's log dir
+    /// (#4319, [`crate::file_log::open_daemon_stderr`]) that outlives the
+    /// session; this path is still reclaimed so an upgrade leaves nothing behind.
     fn session_log_path(session_id: &str) -> PathBuf {
         socket_dir().join(format!("session-{session_id}.log"))
     }
@@ -247,7 +250,7 @@ mod unix_impl {
     /// A daemon killed with `SIGKILL` (or that crashed) never runs
     /// [`DaemonListener::cleanup`](super::DaemonListener::cleanup), so its
     /// per-session socket (`session-<id>.sock`), ssh-agent relay socket
-    /// (`session-<id>-agent.sock`), and truncating log (`session-<id>.log`)
+    /// (`session-<id>-agent.sock`), and legacy log (`session-<id>.log`)
     /// linger in the per-user socket dir indefinitely — nothing but the owner
     /// rebinding its *own* path would ever remove them. Session recovery calls
     /// this once it has positively determined a session is **dead** (its
@@ -279,7 +282,7 @@ mod unix_impl {
     /// Ensure the per-user socket directory exists (mode `0700`, owned by us) so
     /// the ssh-agent relay can bind its listener there before spawning the
     /// daemon (#1727). The daemon's own socket dir is created lazily on first
-    /// log/bind; the relay binds first, so it must create it explicitly.
+    /// bind; the relay binds first, so it must create it explicitly.
     pub fn ensure_agent_forward_dir() -> io::Result<()> {
         ensure_socket_dir(&socket_dir())
     }
@@ -290,34 +293,6 @@ mod unix_impl {
     /// applied identically here and on the listener bind path.
     fn ensure_socket_dir(dir: &Path) -> io::Result<()> {
         termihub_core::ipc::ensure_private_dir(dir)
-    }
-
-    /// Open (truncating) the daemon's per-session log file in the socket dir.
-    ///
-    /// The launcher points the detached daemon's stderr here instead of
-    /// inheriting the agent's stderr: over SSH that stderr is the exec channel,
-    /// and keeping it tethers the daemon's life to the SSH connection (a
-    /// disconnect then kills the persistent session). A sibling of the socket
-    /// (`session-{id}.log`) keeps daemon diagnostics without that coupling.
-    /// Best-effort: returns `None` if the dir or file can't be created, and the
-    /// caller falls back to a null stderr.
-    pub fn open_daemon_log(session_id: &str) -> Option<std::fs::File> {
-        open_log(&format!("session-{session_id}.log"))
-    }
-
-    /// Open (truncating) the registry daemon's log file in the socket dir.
-    ///
-    /// Same reasoning as [`open_daemon_log`]: the registry is spawned by a
-    /// worker that may itself be running over an SSH exec channel, so it must
-    /// never inherit that stderr. Logs beside its socket as `registry.log`.
-    pub fn open_registry_log() -> Option<std::fs::File> {
-        open_log("registry.log")
-    }
-
-    fn open_log(file_name: &str) -> Option<std::fs::File> {
-        let dir = socket_dir();
-        ensure_socket_dir(&dir).ok()?;
-        std::fs::File::create(dir.join(file_name)).ok()
     }
 }
 
@@ -489,25 +464,6 @@ mod tests {
                 "remove_session_files must reclaim {path}"
             );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn open_daemon_log_creates_a_writable_sibling_of_the_socket() {
-        // The daemon logs beside its socket (never into the inherited SSH
-        // channel), so the file must land in the same per-user dir and be
-        // writable — otherwise the launcher falls back to a null stderr.
-        let session = unique_session("log");
-        let mut file = open_daemon_log(&session).expect("daemon log file");
-        use std::io::Write;
-        file.write_all(b"ok").expect("write to daemon log");
-        // Same per-user dir as the socket, with a `.log` extension.
-        let expected = session_endpoint(&session).replace(".sock", ".log");
-        assert!(
-            std::path::Path::new(&expected).exists(),
-            "missing {expected}"
-        );
-        let _ = std::fs::remove_file(&expected);
     }
 
     #[cfg(windows)]
