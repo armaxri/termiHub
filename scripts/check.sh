@@ -72,6 +72,16 @@ else
 fi
 
 echo ""
+echo "=== First-party crate policy (release profile + no-panic lints) ==="
+# rdp-sidecar release overflow-checks/strip mirror the root; every crate root
+# denies unwrap/expect/panic (ERR-010, TOOL-010, #4343).
+if node scripts/internal/check-crate-policy.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== pnpm overrides documented and live ==="
 # Every pnpm.overrides entry has a row in docs/supply-chain.md; none dead (WA-CI-020).
 if node scripts/internal/check-pnpm-overrides.mjs; then

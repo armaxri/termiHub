@@ -88,6 +88,13 @@ jobs:
       - name: Check Rust toolchain pin consistency
         run: node scripts/internal/check-rust-version.mjs
 
+      # Fails if rdp-sidecar's own `[profile.release]` overflow-checks/strip
+      # drift from the root profile (which does not apply to a
+      # workspace-excluded crate), or if a first-party crate root drops the
+      # TOOL-010 no-panic lint header (ERR-010, TOOL-010, #4343). Plain Node.
+      - name: Check first-party crate policy
+        run: node scripts/internal/check-crate-policy.mjs
+
       # Fails if Cargo.lock or rdp-sidecar/Cargo.lock locks a pre-release crate
       # version (e.g. `-rc.N`) that is not in the reviewed set
       # .github/prerelease-allowlist.json, or the list has a stale entry

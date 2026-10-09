@@ -46,6 +46,13 @@ node scripts\internal\check-rust-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === First-party crate policy (release profile + no-panic lints) ===
+REM rdp-sidecar release overflow-checks/strip mirror the root; every crate root
+REM denies unwrap/expect/panic (ERR-010, TOOL-010, #4343).
+node scripts\internal\check-crate-policy.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === pnpm overrides documented and live ===
 REM Every pnpm.overrides entry has a row in docs/supply-chain.md; none dead (WA-CI-020).
 node scripts\internal\check-pnpm-overrides.mjs
