@@ -13,6 +13,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 
 import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
+import { consumeTerminalRefocusPending } from "./terminalRefocus";
 
 const TAB_ID = "tab-a11y";
 const PANEL_ID = "panel-a11y";
@@ -106,5 +107,30 @@ describe("TerminalConnectionOverlay — failed state a11y (#4331)", () => {
     });
     observer.disconnect();
     expect(mutations).toHaveLength(0);
+  });
+});
+
+describe("TerminalConnectionOverlay — refocus after Retry (#4513)", () => {
+  it("marks the tab so the terminal is refocused once the retry connects", () => {
+    const retryTerminalSpawn = vi.fn();
+    useAppStore.setState({ retryTerminalSpawn });
+    consumeTerminalRefocusPending(TAB_ID);
+    render(true);
+    expect(consumeTerminalRefocusPending(TAB_ID)).toBe(false);
+    act(() => retryButton()?.click());
+    expect(retryTerminalSpawn).toHaveBeenCalledWith(TAB_ID);
+    expect(consumeTerminalRefocusPending(TAB_ID)).toBe(true);
+  });
+
+  it("does not mark the tab on Cancel", () => {
+    useAppStore.setState({ closeTab: vi.fn() });
+    consumeTerminalRefocusPending(TAB_ID);
+    render(true);
+    act(() =>
+      container
+        .querySelector<HTMLElement>("[data-testid='terminal-connection-cancel-btn']")
+        ?.click()
+    );
+    expect(consumeTerminalRefocusPending(TAB_ID)).toBe(false);
   });
 });

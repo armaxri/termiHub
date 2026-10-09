@@ -15,6 +15,7 @@ import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import { CredentialReentry } from "./CredentialReentry";
+import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import "./TerminalDisconnectOverlay.css";
 
@@ -196,7 +197,10 @@ export function TerminalDisconnectOverlay({
   // The error text is part of each failure overlay's accessible description.
   const errorTextId = useId();
 
+  // A user-started reconnect returns focus to the terminal once the session is
+  // back, unless the user has moved focus elsewhere meanwhile (#4513).
   const handleReconnect = useCallback(() => {
+    markTerminalRefocusPending(tabId);
     reconnectTerminal(tabId);
   }, [tabId, reconnectTerminal]);
 
@@ -212,6 +216,7 @@ export function TerminalDisconnectOverlay({
   }, [tabId, cancelAutoReconnect]);
 
   const handleStartNewShell = useCallback(() => {
+    markTerminalRefocusPending(tabId);
     startFreshShellForTab(tabId);
   }, [tabId, startFreshShellForTab]);
 
