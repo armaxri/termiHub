@@ -25,6 +25,7 @@ import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
 import { RenameDialog } from "./RenameDialog";
 import { errorMessage } from "@/utils/errorMessage";
+import { rovingTabIndexFromKey, focusRovingTab } from "@/utils/rovingTablist";
 import "./TabBar.css";
 
 interface TabBarProps {
@@ -231,25 +232,17 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // on click / the app's existing shortcuts — dnd-kit owns Space/Enter for drag.
   // Ctrl/Cmd+Shift+ArrowLeft/Right instead moves the focused tab itself.
   const handleTabsKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
-    const tabEls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
-    if (tabEls.length === 0) return;
-    const current = tabEls.indexOf(document.activeElement as HTMLElement);
+    const current = rovingTabIndexFromKey(e);
     if (current === -1) return;
-    e.preventDefault();
     const isMove = (e.ctrlKey || e.metaKey) && e.shiftKey;
     if (isMove && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
       e.stopPropagation();
       const tabId = tabs[current]?.id;
       if (tabId) moveTabBy(tabId, e.key === "ArrowLeft" ? -1 : 1);
       return;
     }
-    let next = current;
-    if (e.key === "ArrowLeft") next = (current - 1 + tabEls.length) % tabEls.length;
-    else if (e.key === "ArrowRight") next = (current + 1) % tabEls.length;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = tabEls.length - 1;
-    tabEls[next].focus();
+    focusRovingTab(e, current);
   };
 
   return (

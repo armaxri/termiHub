@@ -13,8 +13,8 @@ evidence:
   - src/test/mockXterm.ts:95
   - src/test/mockXterm.ts:106-107
   - src/components/Terminal/Terminal.xterm-integration.test.ts:134-144
-status: open
-resolution: ""
+status: fixed
+resolution: "#4350 — key routing and OSC 7 / OSC 9;9 cwd parsing extracted to terminalInputRouting.ts with table-driven unit tests plus a mount wiring test"
 audit: 2026-10
 commit: 663465d52
 relation: new

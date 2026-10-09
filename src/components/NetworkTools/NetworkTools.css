@@ -345,11 +345,19 @@
   padding: var(--spacing-xxs) var(--spacing-md);
 }
 
+/* A real <button> (#4349) — reset to the row's plain look. */
 .network-sidebar__monitor-info {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
   flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   overflow: hidden;
 }

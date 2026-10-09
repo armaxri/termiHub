@@ -14,8 +14,8 @@ evidence:
   - core/src/network/types.rs:75
   - src/components/NetworkTools/exportResults.ts:50
   - core/Cargo.toml:21
-status: open
-resolution: ""
+status: fixed
+resolution: "#4337 — ping reports the reply TTL from surge-ping (None when the socket strips the IP header or on TCP), rounds RTT, uses rand for the ICMP id; fractional ms deferred to #4542"
 audit: 2026-10
 commit: 663465d52
 relation: new

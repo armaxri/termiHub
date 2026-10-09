@@ -1564,4 +1564,12 @@ mod tests {
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
         assert_eq!(back.groups.len(), 6);
     }
+
+    /// #4348: VNC's `fileTransfer` opt-in is what makes the side channel offered.
+    #[test]
+    fn vnc_schema_offers_side_channel_file_transfer() {
+        assert!(crate::connection::schema_offers_file_side_channel(
+            &vnc_settings_schema()
+        ));
+    }
 }

@@ -10,8 +10,8 @@ evidence:
   - src/components/RemoteDesktop/RemoteDesktopTab.tsx:122-128
   - src/hooks/useRemoteDesktopFiles.ts:43
   - src/hooks/useRemoteDesktopFiles.ts:108-131
-status: open
-resolution: ""
+status: fixed
+resolution: "#4348 — a canceled, rejected or failed prompt after a drop now toasts why nothing was uploaded"
 audit: 2026-10
 commit: 663465d52
 relation: new

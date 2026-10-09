@@ -3,4 +3,4 @@
 /**
  * Why a graphical session has no usable file side channel.
  */
-export type FileChannelUnavailable = "disabled" | "viewOnly" | "noRoute";
+export type FileChannelUnavailable = "disabled" | "viewOnly" | "noRoute" | "notOffered";
