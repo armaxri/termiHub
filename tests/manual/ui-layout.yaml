@@ -222,6 +222,7 @@ tests:
     release_gate: true
     manual_reason: "Monaco paints its editor theme on a real canvas/DOM in a WebView; the colorScheme mapping is unit-tested in monacoCustomLanguages.test.ts"
     name: "Every light theme gets a light file editor"
+    pr: 4600
     platforms: [all]
     prerequisites:
       - app: true
@@ -240,6 +241,7 @@ tests:
     release_gate: true
     manual_reason: "uPlot draws on a <canvas>; seeing the repaint needs a WebView (the rebuild with new colours is unit-tested in themeRecolour.test.tsx)"
     name: "Charts and primary buttons follow a live theme switch"
+    pr: 4600
     platforms: [all]
     prerequisites:
       - app: true
