@@ -59,6 +59,7 @@ import {
   sessionWriteFile,
   readPluginFile,
   sessionHasExecCapability,
+  sessionFileCapabilities,
   sessionSupportsTransferQueue,
   sessionDownload,
   localCopyStart,
@@ -533,6 +534,18 @@ describe("api service", () => {
         sessionId: "ssh-1",
       });
       expect(result).toBe(true);
+    });
+
+    it("sessionFileCapabilities invokes with session ID", async () => {
+      const ops = { permissions: true, owner: true, symlink: true };
+      mockedInvoke.mockResolvedValue(ops);
+
+      const result = await sessionFileCapabilities("agent-ssh-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_file_capabilities", {
+        sessionId: "agent-ssh-1",
+      });
+      expect(result).toEqual(ops);
     });
 
     it("sessionSupportsTransferQueue invokes with session ID", async () => {

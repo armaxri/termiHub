@@ -67,6 +67,11 @@ vi.mock("@/services/api", () => ({
   // use the byte-based fallback. The SFTP and FTP suites override this to true
   // (PROD-010).
   sessionSupportsTransferQueue: vi.fn(() => Promise.resolve(false)),
+  // Default: no chmod / chown / symlink (Docker / FTP / WSL). The attribute-op
+  // suite overrides this per session type (#4353).
+  sessionFileCapabilities: vi.fn(() =>
+    Promise.resolve({ permissions: false, owner: false, symlink: false })
+  ),
   // Default: false → the session cannot be an end of a streamed remote copy
   // (FTP / agent). SFTP-backed suites override this to true, and so does the
   // Docker case (#3586).
@@ -884,7 +889,12 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
     container.remove();
   });
 
-  it("supportsPermissions tracks the resolved SFTP-backed probe", async () => {
+  it("supportsPermissions tracks the session file-capability probe", async () => {
+    vi.mocked(sessionFileCapabilities).mockResolvedValue({
+      permissions: true,
+      owner: true,
+      symlink: true,
+    });
     const api = await mountHook();
     expect(api.isConnected).toBe(true);
     expect(api.supportsPermissions).toBe(true);
@@ -1110,6 +1120,12 @@ describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () 
     vi.mocked(sessionSupportsRemoteCopy).mockResolvedValue(false);
     // …but FTP IS queue-capable → download/upload use the rich queue engine.
     vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    // FTP has no chmod / chown / symlink (#4353).
+    vi.mocked(sessionFileCapabilities).mockResolvedValue({
+      permissions: false,
+      owner: false,
+      symlink: false,
+    });
   });
 
   afterEach(() => {
@@ -1210,7 +1226,7 @@ describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () 
       await api.openInVscode("/remote/dir/file.txt");
     });
     expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
-    // chmod/chown/symlink stay SFTP-only.
+    // FTP's capability probe reports no chmod/chown/symlink.
     expect(api.supportsPermissions).toBe(false);
   });
 });
@@ -2203,5 +2219,100 @@ describe("useSessionFileSystem — dropping a local folder (#3966)", () => {
       "/remote/dir/data.csv",
       expect.any(Function)
     );
+  });
+});
+
+// Attribute-op gating (#4353): chmod / chown / symlink follow the per-session
+// `session_file_capabilities` probe, not `sftpCapable` — so an agent-hosted SSH
+// or local session (not SFTP-backed on the desktop) still offers them.
+import { sessionFileCapabilities } from "@/services/api";
+
+describe("useSessionFileSystem — attribute-op capabilities", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(sessionId: string | null = "agent-ssh-1"): Promise<() => SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: sessionId });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return () => api!;
+  }
+
+  const ALL = { permissions: true, owner: true, symlink: true };
+
+  it("offers chmod / chown / symlink for an agent-hosted session that is not SFTP-backed", async () => {
+    // Agent-hosted SSH: the SFTP probe rejects (RemoteProxy), yet the
+    // capability probe reports all three.
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionFileCapabilities).mockResolvedValue(ALL);
+    const api = await mountHook("agent-ssh-1");
+    expect(vi.mocked(sessionFileCapabilities)).toHaveBeenCalledWith("agent-ssh-1");
+    expect(api().supportsPermissions).toBe(true);
+    expect(api().supportsOwner).toBe(true);
+    expect(api().supportsSymlink).toBe(true);
+  });
+
+  it("hides them for a session whose backend does not support them (Docker / FTP / WSL)", async () => {
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionFileCapabilities).mockResolvedValue({
+      permissions: false,
+      owner: false,
+      symlink: false,
+    });
+    const api = await mountHook("docker-1");
+    expect(api().supportsPermissions).toBe(false);
+    expect(api().supportsOwner).toBe(false);
+    expect(api().supportsSymlink).toBe(false);
+  });
+
+  it("follows each flag independently", async () => {
+    vi.mocked(sessionFileCapabilities).mockResolvedValue({
+      permissions: true,
+      owner: false,
+      symlink: true,
+    });
+    const api = await mountHook("mixed-1");
+    expect(api().supportsPermissions).toBe(true);
+    expect(api().supportsOwner).toBe(false);
+    expect(api().supportsSymlink).toBe(true);
+  });
+
+  it("hides them when the capability probe fails, even for an SFTP-backed session", async () => {
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionFileCapabilities).mockRejectedValue(new Error("session gone"));
+    const api = await mountHook("ssh-1");
+    expect(api().supportsPermissions).toBe(false);
+    expect(api().supportsOwner).toBe(false);
+    expect(api().supportsSymlink).toBe(false);
+  });
+
+  it("does not probe without a session", async () => {
+    const api = await mountHook(null);
+    expect(vi.mocked(sessionFileCapabilities)).not.toHaveBeenCalled();
+    expect(api().supportsPermissions).toBe(false);
   });
 });

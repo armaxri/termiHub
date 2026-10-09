@@ -136,7 +136,19 @@ pub struct FileEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::FileEntry;
+    use super::{FileAttributeOps, FileEntry};
+
+    #[test]
+    fn file_attribute_ops_default_is_none_and_serializes_camel_case() {
+        assert_eq!(FileAttributeOps::default(), FileAttributeOps::NONE);
+        assert_eq!(FileAttributeOps::all_if(true), FileAttributeOps::ALL);
+        assert_eq!(FileAttributeOps::all_if(false), FileAttributeOps::NONE);
+        let json = serde_json::to_value(FileAttributeOps::ALL).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"permissions": true, "owner": true, "symlink": true})
+        );
+    }
 
     #[test]
     fn symlink_fields_serialize_camel_case() {

@@ -13,10 +13,12 @@ import {
   sessionCreateSymlink,
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
+  sessionFileCapabilities,
   sessionSupportsTransferQueue,
   localStat,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
+import type { FileAttributeOps } from "@/types/generated/FileAttributeOps";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   runBlockingTransfer,
@@ -36,6 +38,9 @@ import {
 } from "./sessionFolderPaste";
 import { downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
 import { getBasename, joinPath, normalizeDirPath, parentDir } from "@/utils/paths";
+
+/** No attribute op offered — before the capability probe resolves, or on error. */
+const NO_ATTRIBUTE_OPS: FileAttributeOps = { permissions: false, owner: false, symlink: false };
 
 /** Toast wording for one Upload / Download button leg. */
 const LEG_LABELS = {
@@ -97,9 +102,12 @@ function runButtonLeg(
  *   through the queue engine vs the byte-based fallback.
  * - {@link sftpCapable} — from the `session_has_exec_capability` probe, which
  *   **resolves** only for an SFTP-backed session — gates the SFTP-only features:
- *   VS Code remote open, chmod/chown/symlink, and the direct SFTP↔SFTP
- *   remote-copy stream. FTP has none of these, so it stays queue-capable but not
- *   `sftpCapable`.
+ *   VS Code remote open and the direct SFTP↔SFTP remote-copy stream. FTP has
+ *   none of these, so it stays queue-capable but not `sftpCapable`.
+ *
+ * chmod / chown / symlink are gated on their own per-session capability, the
+ * `session_file_capabilities` probe (#4353): an agent-hosted SSH or local
+ * session supports them through the agent although it is not `sftpCapable`.
  */
 export function useSessionFileSystem() {
   // The session pane's view (listing, cwd, loading, error) is sourced from the
@@ -157,6 +165,33 @@ export function useSessionFileSystem() {
   // `session_supports_transfer_queue` probe; `false` until it resolves, so the
   // brief pre-probe window (and a byte-based backend) stays on the fallback.
   const [transferQueueCapable, setTransferQueueCapable] = useState(false);
+
+  // Which attribute ops (chmod / chown / symlink) the session's file browser
+  // performs (#4353), from the `session_file_capabilities` probe. All off until
+  // it resolves, and when it rejects, so no action is offered that would fail.
+  const [attributeOps, setAttributeOps] = useState<FileAttributeOps>(NO_ATTRIBUTE_OPS);
+
+  useEffect(() => {
+    setAttributeOps(NO_ATTRIBUTE_OPS);
+    if (!sessionFileBrowserId) return;
+    let cancelled = false;
+    const sessionId = sessionFileBrowserId;
+    sessionFileCapabilities(sessionId)
+      .then((ops) => {
+        if (!cancelled) setAttributeOps(ops);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setAttributeOps(NO_ATTRIBUTE_OPS);
+        frontendLog(
+          "session_file_browser",
+          `session ${sessionId} file capabilities unavailable: ${errorMessage(err)}`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionFileBrowserId]);
 
   useEffect(() => {
     setTransferQueueCapable(false);
@@ -510,12 +545,12 @@ export function useSessionFileSystem() {
     setPermissions,
     setOwner,
     createSymlink,
-    // chmod / chown / symlink map to SFTP `setstat` / `symlink`, so only an
-    // SFTP-backed (SSH) session supports them; byte-based backends (Docker / FTP /
-    // remote-agent) do not.
-    supportsPermissions: sftpCapable,
-    supportsOwner: sftpCapable,
-    supportsSymlink: sftpCapable,
+    // chmod / chown / symlink follow the session's own capability (#4353):
+    // SSH (SFTP), a Unix local filesystem and an agent-hosted SSH or local
+    // session support them; Docker / FTP / WSL do not.
+    supportsPermissions: attributeOps.permissions,
+    supportsOwner: attributeOps.owner,
+    supportsSymlink: attributeOps.symlink,
     // Picks the remote drag-out staging path: a queue-capable (SFTP / FTP /
     // Docker) session stages through the transfer queue (#3457); byte-based
     // (agent) sessions are staged by the backend instead (#3491).
