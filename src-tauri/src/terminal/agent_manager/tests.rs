@@ -331,6 +331,7 @@ fn capabilities_round_trip_serialization() {
         session_files: false,
         unattended_connect: false,
         file_ranges: false,
+        output_flow: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -728,7 +729,7 @@ fn preinit_notification_is_buffered_and_replayed() {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
     session_outputs.insert("sess-1".to_string(), tx);
 
     for (method, params) in &buffered {
@@ -901,6 +902,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             session_files: false,
             unattended_connect: false,
             file_ranges: false,
+            output_flow: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -1040,8 +1042,8 @@ fn reconcile_output_senders_drops_non_recovered_sessions() {
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
-    let (out_survivor, _r1) = std::sync::mpsc::sync_channel(1);
-    let (out_gone, _r2) = std::sync::mpsc::sync_channel(1);
+    let (out_survivor, _r1) = std::sync::mpsc::channel();
+    let (out_gone, _r2) = std::sync::mpsc::channel();
     session_outputs.insert("survivor".to_string(), out_survivor);
     session_outputs.insert("gone".to_string(), out_gone);
 
@@ -1098,6 +1100,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             session_files: false,
             unattended_connect: false,
             file_ranges: false,
+            output_flow: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -2491,7 +2494,7 @@ fn evicted_session_ids_parse_the_shared_dto() {
 #[test]
 fn handle_notification_routes_connection_output_via_the_dto() {
     let b64 = base64::engine::general_purpose::STANDARD;
-    let (tx, rx) = std::sync::mpsc::sync_channel(4);
+    let (tx, rx) = std::sync::mpsc::channel();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     session_outputs.insert("sess-1".to_string(), tx);
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
@@ -2581,8 +2584,8 @@ fn dispatch_agent_notification_preserves_connection_output_order() {
     };
     let app = tauri::test::mock_app();
     let b64 = base64::engine::general_purpose::STANDARD;
-    let (tx1, rx1) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
-    let (tx2, rx2) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+    let (tx1, rx1) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (tx2, rx2) = std::sync::mpsc::channel::<Vec<u8>>();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     session_outputs.insert("sess-1".to_string(), tx1);
     session_outputs.insert("sess-2".to_string(), tx2);

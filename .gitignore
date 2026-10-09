@@ -112,3 +112,7 @@ graft/
 # Generated third-party notices (PKG-009): produced at release time by
 # `pnpm notices:generate` and bundled via src-tauri/tauri.notices.conf.json.
 /src-tauri/resources/THIRD_PARTY_NOTICES.txt
+
+# Generated Windows MSI version fragment (#4283): written by
+# scripts/internal/msi-version.mjs --config-out on the Release workflow's Windows leg.
+/src-tauri/tauri.wix-version.conf.json

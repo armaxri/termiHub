@@ -219,6 +219,8 @@ pub(crate) struct FeatureChannels {
     pub monitoring: Arc<MonitoringChannel>,
     /// Session file browsing (#3242).
     pub files: Arc<FileChannel>,
+    /// Whether the daemon honors [`MSG_OUTPUT_FLOW`] (#4416).
+    pub output_flow: Arc<AtomicBool>,
 }
 
 impl FeatureChannels {
@@ -232,6 +234,7 @@ impl FeatureChannels {
         self.files.set_supported(false);
         self.files.set_ranges_supported(false);
         self.files.fail_all();
+        self.output_flow.store(false, Ordering::SeqCst);
     }
 
     /// Apply the daemon's [`MSG_CAPABILITIES`] flags.
@@ -241,6 +244,8 @@ impl FeatureChannels {
         self.files.set_supported(flags & CAP_FILES != 0);
         self.files
             .set_ranges_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_RANGES != 0);
+        self.output_flow
+            .store(flags & CAP_OUTPUT_FLOW != 0, Ordering::SeqCst);
     }
 
     /// The connection ended: nothing sent over it will be answered.
@@ -426,6 +431,38 @@ impl DaemonClient {
             .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
         let payload = protocol::encode_resize(cols, rows);
         write_frame_timed(writer, MSG_RESIZE, &payload).await?;
+        Ok(())
+    }
+
+    /// Whether the connected daemon honors output flow control (#4416). A
+    /// daemon from before it (daemons outlive agent upgrades) does not, and is
+    /// then never sent a pause.
+    pub fn output_flow_supported(&self) -> bool {
+        self.features.output_flow.load(Ordering::SeqCst)
+    }
+
+    /// Pause (`true`) or resume (`false`) reading the session's output on the
+    /// daemon (#4416). A no-op on a daemon that does not support it. The
+    /// session manager sends through a cloned handle instead, outside its lock.
+    #[cfg(test)]
+    pub async fn set_output_paused(&self, paused: bool) -> Result<(), anyhow::Error> {
+        if !self.output_flow_supported() {
+            return Ok(());
+        }
+        Self::output_flow_via_handle(&self.writer, paused).await
+    }
+
+    /// Send [`MSG_OUTPUT_FLOW`] through a previously cloned writer handle. The
+    /// caller checks [`output_flow_supported`](Self::output_flow_supported).
+    pub async fn output_flow_via_handle(
+        handle: &DaemonWriterHandle,
+        paused: bool,
+    ) -> Result<(), anyhow::Error> {
+        let mut guard = handle.lock().await;
+        let writer = guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
+        write_frame_timed(writer, MSG_OUTPUT_FLOW, &[u8::from(paused)]).await?;
         Ok(())
     }
 

@@ -59,6 +59,10 @@ pub const CONNECTION_ATTACH: &str = "connection.attach";
 pub const CONNECTION_DETACH: &str = "connection.detach";
 pub const CONNECTION_WRITE: &str = "connection.write";
 pub const CONNECTION_RESIZE: &str = "connection.resize";
+/// Pause or resume one agent-hosted session's output stream (protocol
+/// 0.27.0, #4416). Sent only to an agent advertising
+/// [`Capabilities::output_flow`].
+pub const CONNECTION_OUTPUT_FLOW: &str = "connection.output_flow";
 pub const CONNECTION_CLOSE: &str = "connection.close";
 pub const CONNECTION_TYPES: &str = "connection.types";
 pub const SESSION_GET_BUFFER: &str = "session.getBuffer";
@@ -327,6 +331,11 @@ pub struct Capabilities {
     /// session (protocol 0.26.0, #3587). Absent (read as `false`) on older
     /// agents, whose sessions keep whole-file transfers.
     pub file_ranges: bool,
+    /// Whether the agent honors [`CONNECTION_OUTPUT_FLOW`]: pausing a
+    /// session's output stops the agent reading it, so the program on the
+    /// agent host is backpressured (protocol 0.27.0, #4416). Absent (read as
+    /// `false`) on older agents, which the desktop never pauses.
+    pub output_flow: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -847,6 +856,18 @@ pub struct SessionResizeParams {
     pub session_id: String,
     pub cols: u16,
     pub rows: u16,
+}
+
+// ── connection.output_flow ─────────────────────────────────────────
+
+/// Params of [`CONNECTION_OUTPUT_FLOW`] (#4416): the desktop terminal fell
+/// behind (`paused: true`) or caught up (`paused: false`). While paused the
+/// agent stops reading the session's output, so the program on the agent host
+/// is backpressured through its PTY; input is never held back.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionOutputFlowParams {
+    pub session_id: String,
+    pub paused: bool,
 }
 
 // ── session.getBuffer ───────────────────────────────────────────────
@@ -2582,6 +2603,7 @@ mod tests {
                 session_files: true,
                 unattended_connect: true,
                 file_ranges: true,
+                output_flow: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2606,6 +2628,8 @@ mod tests {
         assert_eq!(v["capabilities"]["unattendedConnect"], true);
         // #3587: offset-addressed file slices.
         assert_eq!(v["capabilities"]["fileRanges"], true);
+        // #4416: per-session output flow control.
+        assert_eq!(v["capabilities"]["outputFlow"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3766,6 +3790,22 @@ mod tests {
         assert!(dbg.contains("redacted"));
     }
 
+    // #4416: the `connection.output_flow` params keep their snake_case keys.
+    #[test]
+    fn session_output_flow_params_wire_shape() {
+        let params = SessionOutputFlowParams {
+            session_id: "s-1".to_string(),
+            paused: true,
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "session_id": "s-1", "paused": true })
+        );
+        let back: SessionOutputFlowParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back, params);
+    }
+
     // ── Method-name constants (DUP-002) ─────────────────────────────
     //
     // These lock every shared method constant to its exact wire string. A
@@ -3784,6 +3824,7 @@ mod tests {
         assert_eq!(CONNECTION_DETACH, "connection.detach");
         assert_eq!(CONNECTION_WRITE, "connection.write");
         assert_eq!(CONNECTION_RESIZE, "connection.resize");
+        assert_eq!(CONNECTION_OUTPUT_FLOW, "connection.output_flow");
         assert_eq!(CONNECTION_CLOSE, "connection.close");
         assert_eq!(CONNECTION_TYPES, "connection.types");
         assert_eq!(SESSION_GET_BUFFER, "session.getBuffer");

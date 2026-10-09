@@ -215,6 +215,7 @@ describe("wire contract: agent connect / definitions", () => {
       "fileRanges",
       "maxSessions",
       "monitoringSupported",
+      "outputFlow",
       "sessionFiles",
       "sessionMonitoring",
       "sessionProcesses",

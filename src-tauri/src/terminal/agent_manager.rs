@@ -305,6 +305,9 @@ pub(crate) enum AgentIoCommand {
         cols: u16,
         rows: u16,
     },
+    /// Pause or resume a session's output on the agent (fire-and-forget,
+    /// `connection.output_flow`, #4416).
+    SessionOutputFlow { session_id: String, paused: bool },
     /// Register an output sender for a session.
     RegisterSession {
         session_id: String,
@@ -832,6 +835,31 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         cols: u16,
         rows: u16,
     ) -> Result<(), TerminalError>;
+
+    /// Whether the agent pauses a session's output on request
+    /// ([`AgentCapabilities::output_flow`], #4416). Only then does the desktop
+    /// pause an agent-hosted session's output reader: pausing it in front of
+    /// an agent that keeps streaming would only move the backlog to the
+    /// desktop. Read from [`get_capabilities`](Self::get_capabilities), so an
+    /// agent that reports none (or a mock that sets none) is never paused.
+    fn supports_output_flow(&self, agent_id: &str) -> bool {
+        self.get_capabilities(agent_id)
+            .is_some_and(|caps| caps.output_flow)
+    }
+
+    /// Pause (`true`) or resume (`false`) an agent-hosted session's output
+    /// (fire-and-forget `connection.output_flow`, #4416). Non-blocking. A
+    /// silent no-op for an agent that does not
+    /// [support it](Self::supports_output_flow). Default no-op so mock clients
+    /// need not implement it.
+    fn set_session_output_paused(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+        _paused: bool,
+    ) -> Result<(), TerminalError> {
+        Ok(())
+    }
 
     /// Push updated AgentSettings to a running agent session (live reload).
     ///
@@ -2794,6 +2822,36 @@ impl<R: Runtime> AgentConnectionManager<R> {
     }
 }
 
+impl<R: Runtime> AgentConnectionManager<R> {
+    /// Pause or resume a session's output on the agent (fire-and-forget,
+    /// #4416). An agent without [`AgentCapabilities::output_flow`] is never
+    /// sent the method: it would not pause, so the call is a silent no-op.
+    pub fn set_session_output_paused(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        paused: bool,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        let Some(conn) = agents.get(agent_id) else {
+            // Gone already: nothing streams, so there is nothing to pause.
+            return Ok(());
+        };
+        if !conn.capabilities.output_flow {
+            return Ok(());
+        }
+        conn.command_tx
+            .send(AgentIoCommand::SessionOutputFlow {
+                session_id: remote_session_id.to_string(),
+                paused,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+    }
+}
+
 // ── AgentRpcClient impl ────────────────────────────────────────────
 
 impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
@@ -3159,6 +3217,15 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         AgentConnectionManager::resize_session(self, agent_id, remote_session_id, cols, rows)
     }
 
+    fn set_session_output_paused(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        paused: bool,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::set_session_output_paused(self, agent_id, remote_session_id, paused)
+    }
+
     fn apply_agent_settings(
         &self,
         agent_id: &str,
@@ -3317,6 +3384,9 @@ mod tests;
 mod connect_off_lock_tests;
 #[cfg(test)]
 mod fake_agent_sshd;
+// Output flow control + lossless output delivery for agent sessions (#4416).
+#[cfg(test)]
+mod output_flow_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //
