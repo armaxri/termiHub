@@ -69,6 +69,8 @@ termihub-core = { path = "../core", features = [
     # with the desktop (#3330). The public key is compiled in from
     # `keys/update-signing.pub.pem`.
     "agent-update-signing",
+    # The shared rotating log-file writer and russh clamp (#4319).
+    "file-log",
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

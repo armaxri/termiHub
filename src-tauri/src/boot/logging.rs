@@ -76,7 +76,7 @@ pub(crate) fn init_tracing() -> TracingInit {
         .map(|level| level.as_str());
 
     let (file_layer, file_reload_handle, file_log_status) =
-        match file_log::RotatingLogFile::with_defaults() {
+        match file_log::open_default_log() {
             Ok(writer) => {
                 // Reloadable per-layer filter so the Settings control can change
                 // the file verbosity live, without a restart (OBS-009).
