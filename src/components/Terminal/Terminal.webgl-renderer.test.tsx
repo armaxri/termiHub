@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
+import { DEFAULT_WEBGL_CONTEXT_CAPACITY } from "./webglRenderer";
 
 // Regression tests for #2078: the WebGL renderer (@xterm/addon-webgl) is the
 // GPU-accelerated path for xterm. It must degrade to the DOM renderer on any
@@ -177,15 +178,24 @@ afterEach(() => {
   globalThis.cancelAnimationFrame = originalCAF;
 });
 
-function renderTerminal() {
+function renderTerminal(isVisible = true) {
   act(() => {
     root.render(
       <TerminalPortalProvider>
-        <Terminal tabId="tab-1" config={{ type: "local", config: {} }} isVisible={true} />
+        <Terminal tabId="tab-1" config={{ type: "local", config: {} }} isVisible={isVisible} />
       </TerminalPortalProvider>
     );
   });
 }
+
+function rendererOf(tabId = "tab-1") {
+  return document
+    .querySelector(`[data-testid="terminal-renderer-${tabId}"]`)
+    ?.getAttribute("data-terminal-renderer");
+}
+
+const liveWebglCount = () =>
+  h.webglInstances.filter((w) => w.dispose.mock.calls.length === 0).length;
 
 // Drive one output chunk through the flush pipeline: output event → flushOutput
 // RAF → xterm.write → afterWrite → repaint RAF. Mirrors the real ordering so the
@@ -307,5 +317,64 @@ describe("Terminal per-flush refresh gating (#2107)", () => {
 
     // Back on the DOM path, the #1849 stale-row fix must fire again.
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
+  });
+});
+
+describe("Terminal WebGL context per visible tab (#4308)", () => {
+  it("does not create a WebGL context for a terminal mounted hidden", () => {
+    renderTerminal(false);
+    expect(h.webglInstances).toHaveLength(0);
+    expect(rendererOf()).toBe("dom");
+  });
+
+  it("releases the context when the tab is hidden and reacquires it when shown", () => {
+    renderTerminal(true);
+    expect(liveWebglCount()).toBe(1);
+
+    renderTerminal(false);
+    expect(h.webglInstances[0].dispose).toHaveBeenCalledTimes(1);
+    expect(liveWebglCount()).toBe(0);
+    expect(rendererOf()).toBe("dom");
+
+    renderTerminal(true);
+    expect(h.webglInstances).toHaveLength(2);
+    expect(liveWebglCount()).toBe(1);
+    expect(rendererOf()).toBe("webgl");
+  });
+
+  it("retries WebGL after a context loss on the next time the tab is shown", () => {
+    renderTerminal(true);
+    act(() => h.webglInstances[0].triggerContextLoss());
+    expect(rendererOf()).toBe("dom");
+
+    renderTerminal(false);
+    renderTerminal(true);
+    expect(h.webglInstances).toHaveLength(2);
+    expect(rendererOf()).toBe("webgl");
+  });
+
+  it("keeps the number of live contexts bounded with many visible tabs", () => {
+    const tabIds = Array.from({ length: 20 }, (_, i) => `tab-${i}`);
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          {tabIds.map((id) => (
+            <Terminal key={id} tabId={id} config={{ type: "local", config: {} }} isVisible={true} />
+          ))}
+        </TerminalPortalProvider>
+      );
+    });
+    expect(liveWebglCount()).toBeLessThanOrEqual(DEFAULT_WEBGL_CONTEXT_CAPACITY);
+    expect(liveWebglCount()).toBeGreaterThan(0);
+    // The evicted (least recently shown) terminals render through the DOM path.
+    expect(rendererOf("tab-0")).toBe("dom");
+    expect(rendererOf("tab-19")).toBe("webgl");
+  });
+
+  it("releases every context when the terminals unmount", () => {
+    renderTerminal(true);
+    act(() => root.unmount());
+    expect(liveWebglCount()).toBe(0);
+    root = createRoot(container);
   });
 });
