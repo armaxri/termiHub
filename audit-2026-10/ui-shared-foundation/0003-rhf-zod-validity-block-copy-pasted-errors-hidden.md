@@ -6,8 +6,8 @@ severity: medium
 category: arch
 is_workaround: false
 subsystem: "src/components (editors)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4346 — shared useZodEditorForm hook serves all 9 editors; hidden name/root/port/colour errors now render inline"
 audit: "2026-10"
 commit: "663465d52"
 relation: previous-incomplete
