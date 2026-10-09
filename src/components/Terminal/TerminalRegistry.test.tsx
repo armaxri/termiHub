@@ -46,6 +46,9 @@ function createMockXterm(selection?: string): XTerm {
     buffer: {
       active: {
         length: 1,
+        // At the bottom by default (viewportY === baseY).
+        viewportY: 0,
+        baseY: 0,
         getLine: vi.fn(() => ({ translateToString: () => "line content" })),
       },
     },
@@ -745,6 +748,50 @@ describe("fitTerminal", () => {
     expect(fitAddon.fit).toHaveBeenCalled();
     expect(xterm.scrollToBottom).toHaveBeenCalled();
     // 80×24 mock → refresh the full 0..rows-1 range.
+    expect(xterm.refresh).toHaveBeenCalledWith(0, 23);
+  });
+
+  /** Registers a laid-out terminal whose viewport sits at `viewportY` of `baseY`. */
+  function registerScrolledTerminal(tabId: string, viewportY: number, baseY: number) {
+    const xterm = createMockXterm();
+    const active = xterm.buffer.active as unknown as { viewportY: number; baseY: number };
+    active.viewportY = viewportY;
+    active.baseY = baseY;
+    const fitAddon = createMockFitAddon();
+    const el = document.createElement("div");
+    Object.defineProperty(el, "offsetWidth", { configurable: true, value: 640 });
+    Object.defineProperty(el, "offsetHeight", { configurable: true, value: 480 });
+    act(() => {
+      registryActions.register(tabId, el, xterm, fitAddon);
+    });
+    return xterm;
+  }
+
+  it("keeps a scrolled-up terminal at its position when the slot is adopted (#4350)", () => {
+    // Zooming or moving a tab remounts its slot, which re-fits the terminal.
+    // A user who scrolled up to read history must not be yanked to the bottom.
+    const xterm = registerScrolledTerminal("tab-scrolled-up", 40, 200);
+
+    act(() => {
+      registryActions.fitTerminal("tab-scrolled-up");
+      // TerminalSlot fits twice per adoption (sync + one rAF).
+      registryActions.fitTerminal("tab-scrolled-up");
+    });
+
+    expect(xterm.scrollToBottom).not.toHaveBeenCalled();
+    expect(xterm.buffer.active.viewportY).toBe(40);
+    // The repaint still runs so the reparented content shows (#1823).
+    expect(xterm.refresh).toHaveBeenCalledWith(0, 23);
+  });
+
+  it("keeps a terminal that was at the bottom pinned to the bottom (#4350)", () => {
+    const xterm = registerScrolledTerminal("tab-at-bottom", 200, 200);
+
+    act(() => {
+      registryActions.fitTerminal("tab-at-bottom");
+    });
+
+    expect(xterm.scrollToBottom).toHaveBeenCalled();
     expect(xterm.refresh).toHaveBeenCalledWith(0, 23);
   });
 });
