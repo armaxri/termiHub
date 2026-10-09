@@ -9,7 +9,7 @@
 use std::any::Any;
 
 use crate::errors::FileError;
-use crate::files::{FileEntry, RangedFileAccess};
+use crate::files::{FileAttributeOps, FileEntry, RangedFileAccess};
 
 /// Async file browsing capability exposed by connection types.
 ///
@@ -141,6 +141,20 @@ pub trait FileBrowser: Send {
     /// only, and its agent-hosted sessions stay on the byte-based path.
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         None
+    }
+
+    /// Which of [`set_permissions`](Self::set_permissions),
+    /// [`set_owner`](Self::set_owner) and [`create_symlink`](Self::create_symlink)
+    /// this browser actually performs rather than answering
+    /// [`FileError::NotSupported`] (#4353).
+    ///
+    /// The default is [`FileAttributeOps::NONE`]; a backend that implements
+    /// them (SFTP, the Unix local filesystem, and the desktop proxies that
+    /// forward to such a backend on an agent) overrides it. The file-browser
+    /// UI shows its permission, owner and symlink actions only for what this
+    /// reports.
+    fn attribute_ops(&self) -> FileAttributeOps {
+        FileAttributeOps::NONE
     }
 }
 

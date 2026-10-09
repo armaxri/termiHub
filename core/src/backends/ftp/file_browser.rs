@@ -624,6 +624,18 @@ mod tests {
         );
     }
 
+    /// FTP has no chmod / chown / symlink primitive, so none is offered
+    /// (#4353).
+    #[test]
+    fn attribute_ops_reports_none_for_ftp() {
+        let browser = FtpFileBrowser::new(FtpConfig::default());
+        let dynamic: &dyn FileBrowser = &browser;
+        assert_eq!(
+            dynamic.attribute_ops(),
+            crate::files::FileAttributeOps::NONE
+        );
+    }
+
     #[test]
     fn browser_is_send() {
         fn assert_send<T: Send>() {}

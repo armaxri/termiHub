@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
-use termihub_core::files::{FileBrowser, FileEntry};
+use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 
 use crate::files::sftp::{sftp_op_error, ElevatedWriteResult, Writability};
 use crate::utils::errors::TerminalError;
@@ -227,6 +227,19 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
             .create_symlink(target, link_path)
             .await
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Which attribute operations (chmod / chown / symlink) the session's file
+    /// browser performs (#4353) — the capability the file-browser UI gates its
+    /// permission, owner and symlink actions on.
+    pub(super) async fn attribute_ops(
+        &self,
+        session_id: &str,
+    ) -> Result<FileAttributeOps, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let mut side = None;
+        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        Ok(browser.attribute_ops())
     }
 
     /// Copy `src` → `dest` within the session's backend (same-backend copy).

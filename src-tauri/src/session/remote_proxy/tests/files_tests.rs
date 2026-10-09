@@ -147,3 +147,71 @@ async fn a_local_session_on_an_older_agent_still_browses() {
 
     proxy.disconnect().await.ok();
 }
+
+/// Chmod / chown / symlink are offered for an agent-hosted session exactly
+/// when its hosted backend performs them (#4353): SSH (SFTP) and local do;
+/// Docker, FTP and WSL answer `NotSupported` on the agent, so they do not.
+#[tokio::test]
+async fn attribute_ops_follow_the_hosted_session_type() {
+    use termihub_core::files::FileAttributeOps;
+    for (session_type, expected) in [
+        ("ssh", FileAttributeOps::ALL),
+        ("local", FileAttributeOps::ALL),
+        ("docker", FileAttributeOps::NONE),
+        ("ftp", FileAttributeOps::NONE),
+        ("wsl", FileAttributeOps::NONE),
+    ] {
+        let mock = mock_agent(session_type, true);
+        let mut proxy = connected_proxy(&mock, session_type).await;
+        let browser = proxy.file_browser().expect("file browser");
+        assert_eq!(browser.attribute_ops(), expected, "{session_type}");
+        proxy.disconnect().await.ok();
+    }
+}
+
+/// An agent too old to browse the session offers no attribute ops (#4353):
+/// every request would only fail as `agent_outdated`.
+#[tokio::test]
+async fn an_outdated_agent_offers_no_attribute_ops() {
+    let mock = mock_agent("ssh", false);
+    let mut proxy = connected_proxy(&mock, "ssh").await;
+    let browser = proxy.file_browser().expect("file browser");
+    assert_eq!(
+        browser.attribute_ops(),
+        termihub_core::files::FileAttributeOps::NONE
+    );
+    proxy.disconnect().await.ok();
+}
+
+/// chmod / chown / symlink of an agent-hosted SSH session reach the agent's
+/// `connection.files.*` RPC under the remote session id (#4353).
+#[tokio::test]
+async fn attribute_ops_route_to_the_agent_rpc() {
+    let mock = mock_agent("ssh", true);
+    let mut proxy = connected_proxy(&mock, "ssh").await;
+    let browser = proxy.file_browser().expect("file browser");
+
+    browser.set_permissions("/srv/a", 0o750).await.unwrap();
+    browser.set_owner("/srv/a", Some(1000), None).await.unwrap();
+    browser.create_symlink("/srv/a", "/srv/l").await.unwrap();
+
+    let sent = file_requests(&mock);
+    let methods: Vec<&str> = sent.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(
+        methods,
+        [
+            "connection.files.set_permissions",
+            "connection.files.set_owner",
+            "connection.files.create_symlink",
+        ]
+    );
+    for (method, params) in &sent {
+        let id = params
+            .get("connection_id")
+            .or_else(|| params.get("connectionId"))
+            .unwrap_or(&serde_json::Value::Null);
+        assert_eq!(id, "mock-session-1", "{method} {params}");
+    }
+    assert_eq!(sent[0].1["mode"], 0o750);
+    proxy.disconnect().await.ok();
+}

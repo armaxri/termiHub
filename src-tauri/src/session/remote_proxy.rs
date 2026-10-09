@@ -49,7 +49,7 @@ use tracing::{debug, warn};
 
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
-use termihub_core::files::{FileBrowser, FileEntry};
+use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry};
 use termihub_core::monitoring::{
     agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusReason,
     MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
@@ -726,6 +726,7 @@ impl RemoteProxy {
                         agent_outdated,
                         file_ranges,
                         definition_id: definition_id.clone(),
+                        attribute_ops: hosted_attribute_ops(&session_type, agent_outdated),
                     });
                 }
                 // Set up monitoring proxy if supported.
@@ -812,6 +813,24 @@ pub struct RemoteFileBrowserProxy {
     /// from, if any — with `agent_id`, the identity a queued transfer records
     /// so a relaunch after a restart can find the reopened session (#4114).
     definition_id: Option<String>,
+    /// Which of chmod / chown / symlink the hosted backend performs (#4353),
+    /// resolved from the hosted session type by [`hosted_attribute_ops`].
+    attribute_ops: FileAttributeOps,
+}
+
+/// The attribute operations (chmod / chown / symlink) an agent-hosted session
+/// of `session_type` supports (#4353).
+///
+/// The agent forwards `connection.files.set_permissions`, `set_owner` and
+/// `create_symlink` to the hosted session's own file browser: an SSH session's
+/// SFTP browser and a local session's filesystem implement all three; the
+/// Docker, FTP and WSL browsers answer `NotSupported`, so they are not
+/// offered. A local session's filesystem is the agent host's: a Windows agent
+/// host answers `NotSupported`, which the file browser shows as an error —
+/// the agent does not report its host OS yet. Nothing is offered when the
+/// agent is too old to browse the session at all.
+pub(crate) fn hosted_attribute_ops(session_type: &str, agent_outdated: bool) -> FileAttributeOps {
+    FileAttributeOps::all_if(!agent_outdated && matches!(session_type, "ssh" | "local"))
 }
 
 mod ranged;
@@ -1085,6 +1104,10 @@ impl FileBrowser for RemoteFileBrowserProxy {
         )
         .await?;
         Ok(())
+    }
+
+    fn attribute_ops(&self) -> FileAttributeOps {
+        self.attribute_ops
     }
 
     async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError> {

@@ -516,6 +516,12 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     fn ranged(&self) -> Option<&dyn super::RangedFileAccess> {
         Some(self)
     }
+
+    /// chmod / chown / symlink are implemented on Unix only; elsewhere they
+    /// answer `NotSupported`.
+    fn attribute_ops(&self) -> super::FileAttributeOps {
+        super::FileAttributeOps::all_if(cfg!(unix))
+    }
 }
 
 /// Offset-addressed access to the local filesystem (#3587): what an
@@ -592,6 +598,20 @@ async fn create_symlink_impl(_target: &str, _link_path: &str) -> Result<(), File
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The local filesystem performs chmod / chown / symlink on Unix only
+    /// (#4353).
+    #[test]
+    fn attribute_ops_follow_the_platform() {
+        let browser = LocalFileBrowser::new();
+        let dynamic: &dyn crate::files::FileBrowser = &browser;
+        let expected = if cfg!(unix) {
+            crate::files::FileAttributeOps::ALL
+        } else {
+            crate::files::FileAttributeOps::NONE
+        };
+        assert_eq!(dynamic.attribute_ops(), expected);
+    }
 
     #[test]
     fn list_dir_sync_empty() {
