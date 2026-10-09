@@ -4303,6 +4303,9 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
 /// Tab close vs. session ownership (#3401).
 mod close_ownership;
 
+// One stalled session must not freeze the others (#4300).
+mod blocking_io;
+
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;
 
