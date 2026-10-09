@@ -501,3 +501,137 @@ describe("SyntaxHighlightingEngine lifecycle", () => {
     engine.dispose();
   });
 });
+
+describe("SyntaxHighlightingEngine after the scrollback is full (#4354, PERF2-003)", () => {
+  let term: Terminal;
+  const errorRule = rule({ id: "err", pattern: "ERROR", style: { color: "#f44747" } });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    term?.dispose();
+  });
+
+  function writeAsync(data: string): Promise<void> {
+    return new Promise((resolve) => term.write(data, () => resolve()));
+  }
+
+  /** Lets a deferred (throttled) drain run. */
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+      else setTimeout(resolve, 0);
+    });
+  }
+
+  /**
+   * Tracks every decoration the engine registers so a test can ask which buffer
+   * rows currently carry a live (undisposed) highlight.
+   */
+  function trackDecorations(): () => Set<number> {
+    const decorations: Array<NonNullable<ReturnType<Terminal["registerDecoration"]>>> = [];
+    const real = term.registerDecoration.bind(term);
+    vi.spyOn(term, "registerDecoration").mockImplementation((opts) => {
+      const deco = real(opts);
+      if (deco) decorations.push(deco);
+      return deco;
+    });
+    return () => {
+      const rows = new Set<number>();
+      for (const d of decorations) {
+        if (!d.isDisposed && !d.marker.isDisposed) rows.add(d.marker.line);
+      }
+      return rows;
+    };
+  }
+
+  /** Buffer rows whose text contains ERROR. */
+  function errorRows(): Set<number> {
+    const rows = new Set<number>();
+    const buffer = term.buffer.active;
+    for (let row = 0; row < buffer.length; row++) {
+      if (buffer.getLine(row)?.translateToString(true).includes("ERROR")) rows.add(row);
+    }
+    return rows;
+  }
+
+  it("decorates every matching line written after the buffer starts trimming", async () => {
+    term = new Terminal({ cols: 80, rows: 4, allowProposedApi: true, scrollback: 5 });
+    // Fill the circular buffer (rows + scrollback) so every further line trims.
+    for (let i = 0; i < 20; i++) await writeAsync(`filler ${i}\r\n`);
+    const liveRows = trackDecorations();
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+
+    // 50 matching lines, several per write, all after the buffer is full.
+    for (let i = 0; i < 50; i += 5) {
+      let chunk = "";
+      for (let j = i; j < i + 5; j++) chunk += `ERROR line ${j}\r\n`;
+      await writeAsync(chunk);
+    }
+    await nextFrame();
+
+    const expected = errorRows();
+    expect(expected.size).toBeGreaterThan(0);
+    expect(liveRows()).toEqual(expected);
+    engine.dispose();
+  });
+
+  it("keeps the previous line's decoration when one matching line is written per write", async () => {
+    term = new Terminal({ cols: 80, rows: 4, allowProposedApi: true, scrollback: 5 });
+    for (let i = 0; i < 20; i++) await writeAsync(`filler ${i}\r\n`);
+    const liveRows = trackDecorations();
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+
+    for (let i = 0; i < 30; i++) await writeAsync(`ERROR line ${i}\r\n`);
+    await nextFrame();
+
+    expect(liveRows()).toEqual(errorRows());
+    // Bounded: never more tracked lines than the buffer can hold.
+    expect(engine.trackedLineCount).toBeLessThanOrEqual(term.buffer.active.length);
+    engine.dispose();
+  });
+
+  it("rescans the whole buffer when one write outruns the entire scrollback", async () => {
+    term = new Terminal({ cols: 80, rows: 4, allowProposedApi: true, scrollback: 5 });
+    for (let i = 0; i < 20; i++) await writeAsync(`filler ${i}\r\n`);
+    const liveRows = trackDecorations();
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+
+    // One write that is longer than rows + scrollback trims every tracked row.
+    let chunk = "";
+    for (let i = 0; i < 30; i++) chunk += i % 3 === 0 ? `ERROR big ${i}\r\n` : `ok ${i}\r\n`;
+    await writeAsync(chunk);
+    await nextFrame();
+
+    expect(liveRows()).toEqual(errorRows());
+    expect(engine.trackedLineCount).toBeLessThanOrEqual(term.buffer.active.length);
+    engine.dispose();
+  });
+
+  it("highlights lines that arrive on the throttled (deferred drain) path after trimming", async () => {
+    term = new Terminal({ cols: 80, rows: 4, allowProposedApi: true, scrollback: 5 });
+    for (let i = 0; i < 20; i++) await writeAsync(`filler ${i}\r\n`);
+    const liveRows = trackDecorations();
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+
+    // Far more than the throttle threshold of writes in one burst, without
+    // yielding to the drain in between.
+    const writes: Promise<void>[] = [];
+    for (let i = 0; i < 80; i++) {
+      writes.push(writeAsync(i % 2 === 0 ? `ERROR burst ${i}\r\n` : `quiet ${i}\r\n`));
+    }
+    await Promise.all(writes);
+    await nextFrame();
+    await nextFrame();
+
+    expect(liveRows()).toEqual(errorRows());
+    engine.dispose();
+  });
+});

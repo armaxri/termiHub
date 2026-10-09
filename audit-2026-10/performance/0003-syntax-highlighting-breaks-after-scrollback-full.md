@@ -6,8 +6,8 @@ severity: medium
 category: correctness
 is_workaround: false
 subsystem: src/services/syntaxHighlighting.ts
-status: open
-resolution: ""
+status: fixed
+resolution: "#4354 — rows tracked as buffer row + trimmed count (cursor-anchored marker), so new lines scan and decorations survive trimming"
 audit: 2026-10
 commit: 663465d52
 relation: new
