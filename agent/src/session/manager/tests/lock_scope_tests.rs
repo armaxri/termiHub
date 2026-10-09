@@ -574,9 +574,12 @@ async fn a_stuck_in_process_write_does_not_block_other_sessions() {
 
     promptly("list", mgr.list()).await;
     promptly("active_count", mgr.active_count()).await;
-    promptly("write_input", SessionManagerApi::write_input(&*mgr, &b, b"hi"))
-        .await
-        .expect("input reaches the healthy session");
+    promptly(
+        "write_input",
+        SessionManagerApi::write_input(&*mgr, &b, b"hi"),
+    )
+    .await
+    .expect("input reaches the healthy session");
     promptly("resize", SessionManagerApi::resize(&*mgr, &b, 80, 24))
         .await
         .expect("resize the healthy session");
@@ -621,7 +624,10 @@ async fn in_process_input_queued_behind_a_stuck_write_keeps_its_order() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     let two = spawn_write(&mgr, &a, b"two");
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(state.ops().is_empty(), "nothing overtakes the stalled write");
+    assert!(
+        state.ops().is_empty(),
+        "nothing overtakes the stalled write"
+    );
 
     state.released.store(true, Ordering::SeqCst);
     for op in [stalled, one, resize, two] {
@@ -679,15 +685,20 @@ async fn close_all_with_a_stuck_daemon_meets_its_deadline() {
         "close_all waited {:?} past its deadline",
         started.elapsed()
     );
-    assert!(mgr.list().await.iter().all(|s| !s.attached), "nothing held");
     assert_eq!(stuck.seen.detaches.load(Ordering::SeqCst), 1);
     for daemon in &healthy {
         until("every healthy daemon to be detached", || {
             daemon.seen.detaches.load(Ordering::SeqCst) == 1
         })
         .await;
-        assert_eq!(daemon.seen.kills.load(Ordering::SeqCst), 0, "detached, not killed");
+        assert_eq!(
+            daemon.seen.kills.load(Ordering::SeqCst),
+            0,
+            "detached, not killed"
+        );
     }
+    // Listed at most as running unattached on the host, never held.
+    assert!(mgr.list().await.iter().all(|s| !s.attached), "nothing held");
     stuck.release();
 }
 

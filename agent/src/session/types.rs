@@ -44,7 +44,11 @@ pub enum SessionBackend {
     ///
     /// Used for non-persistent connection types.
     InProcess {
-        connection: Box<dyn ConnectionType>,
+        /// Shared so a write or resize runs outside the manager's sessions
+        /// lock (#4476): the I/O holds a clone, and the session's turn, until
+        /// the backend returns. `disconnect` needs the only reference, which
+        /// whoever holds the turn has.
+        connection: Arc<dyn ConnectionType>,
         /// Handle for the background output-forwarding task.
         output_task: Option<tokio::task::JoinHandle<()>>,
         /// Cleared by the output-forwarder when the connection's output channel
