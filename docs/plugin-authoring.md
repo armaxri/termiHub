@@ -111,7 +111,7 @@ silently ignored.
 | `platforms`        | string[] | yes               | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                        |
 | `permissions`      | string[] | yes               | Requested capabilities (see below). May be empty.                                                                                                                                                                |
 | `filesystemPaths`  | string[] | with `filesystem` | Folders the plugin may read and write through termiHub. Required with, and only allowed with, the `filesystem` permission — see [Filesystem paths](#filesystem-paths).                                           |
-| `connectionPolicy` | object   | no                | Limits on the network connections a session opens through termiHub: `maxConnections` and `connectTimeoutMs`. Absent keeps the defaults — see [Connection policy](#connection-policy).                            |
+| `connectionPolicy` | object   | no                | Limits on the network connections a session opens through termiHub: `maxConnections`, `connectTimeoutMs` and `allowLocalNetwork`. Absent keeps the defaults — see [Connection policy](#connection-policy).       |
 | `extensions`       | object   | yes               | Extension points provided; **at least one** required.                                                                                                                                                            |
 | `settings`         | object   | no                | User-configurable settings, keyed by setting name.                                                                                                                                                               |
 | `updateUrl`        | string   | no                | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                             |
@@ -168,13 +168,14 @@ so is a path that leaves the declared folders through `..` or a symlink.
 
 The optional `connectionPolicy` object bounds the network connections a plugin
 session opens through termiHub's capability bridge (`open_connection`, which
-needs the `network` permission). Both fields are optional; an absent field, or
+needs the `network` permission). Every field is optional; an absent field, or
 an absent object, keeps termiHub's default. Unknown keys are rejected.
 
-| Field              | Type    | Default | Allowed      | Notes                                                                                                                                          |
-| ------------------ | ------- | ------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `maxConnections`   | integer | `8`     | `1`–`256`    | How many connections one session may hold open at once. The next `open_connection` is refused with `ResourceLimit` until the plugin drops one. |
-| `connectTimeoutMs` | integer | `30000` | `1`–`600000` | How long, in milliseconds, termiHub waits for each connection to be established before it gives up and returns `Io`.                           |
+| Field               | Type    | Default | Allowed      | Notes                                                                                                                                          |
+| ------------------- | ------- | ------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxConnections`    | integer | `8`     | `1`–`256`    | How many connections one session may hold open at once. The next `open_connection` is refused with `ResourceLimit` until the plugin drops one. |
+| `connectTimeoutMs`  | integer | `30000` | `1`–`600000` | How long, in milliseconds, termiHub waits for each connection to be established before it gives up and returns `Io`.                           |
+| `allowLocalNetwork` | boolean | `false` | —            | Lets the plugin reach this computer (`localhost`) and private networks. See [Reachable addresses](#reachable-addresses).                       |
 
 A value outside its range fails manifest validation with an error naming the
 field, the value, and the allowed range, for example
@@ -197,6 +198,33 @@ valid limits.
 The limits apply to each session separately, not to the plugin as a whole.
 They are part of the access the user approves when trusting a native plugin, so
 changing them in an update asks the user to trust the plugin again.
+
+#### Reachable addresses
+
+termiHub resolves the host of every `open_connection` once and connects only to
+addresses it allows, so a name cannot switch to a refused address between the
+check and the connection. The same rules guard the HTTP monitor.
+
+| Addresses                                                                                      | Reachable                     |
+| ---------------------------------------------------------------------------------------------- | ----------------------------- |
+| Public internet addresses                                                                      | Always                        |
+| This computer: `127.0.0.0/8`, `::1`                                                            | Only with `allowLocalNetwork` |
+| Private networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `fc00::/7` | Only with `allowLocalNetwork` |
+| Link-local `169.254.0.0/16` and `fe80::/10`, `0.0.0.0/8`, `::`, `255.255.255.255`              | Never                         |
+| Cloud metadata: `169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`                          | Never                         |
+
+An IPv4 address written in IPv4-mapped (`::ffff:a.b.c.d`) or NAT64
+(`64:ff9b::a.b.c.d`) form follows the rule for the IPv4 address. A host that
+resolves only to refused addresses is refused with `PermissionDenied`, and the
+refusal shows up in termiHub like any other denied request.
+
+Set `allowLocalNetwork` only when the plugin really talks to services on the
+user's machine or LAN. termiHub shows the setting in the plugin's access
+summary, so users see it before they trust the plugin:
+
+```json
+"connectionPolicy": { "allowLocalNetwork": true }
+```
 
 ### Settings
 
@@ -622,7 +650,8 @@ your code is mapped, the runner is confined by the operating system:
 [permissions](#permissions) grant. `open_connection` needs `network`;
 `read_file`, `write_file`, `stat_path` and `list_dir` need `filesystem` and a
 path inside the declared roots. termiHub checks each request against the
-permissions, the path scope and the connection policy, then performs it. For an
+permissions, the path scope and the connection policy (including the
+[reachable addresses](#reachable-addresses)), then performs it. For an
 approved `open_connection` termiHub connects and hands your plugin the connected
 socket, which works normally; use it only through the stream the bridge returns
 (its `Read` / `Write`), never by converting it to a `std::net` socket. Large

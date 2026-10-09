@@ -35,6 +35,8 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# Unique same-directory temp files for `util::persist::write_atomic` (#4334).
+tempfile = "3"
 tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 surge-ping = "0.8"
@@ -295,7 +297,6 @@ required-features = ["plugin"]
 
 [dev-dependencies]
 async-trait = { workspace = true }
-tempfile = "3"
 # `ServiceExt::oneshot` for driving the embedded HTTP router in unit tests
 # (#2192) without binding a real socket.
 tower = { version = "0.5", features = ["util"] }

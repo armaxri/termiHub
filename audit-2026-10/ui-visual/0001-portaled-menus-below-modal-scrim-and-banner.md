@@ -20,8 +20,8 @@ evidence:
   - src/components/Sidebar/ConnectionList.css:252
   - src/components/ActivityBar/ActivityBar.css:120
   - src/components/UpdateNotification/UpdateNotification.css:10
-status: open
-resolution: ""
+status: fixed
+resolution: "#4347 — every portaled Radix menu content now stacks at --z-popover; the Open Connections interval menu portals into its modal; tokenDiscipline guards it"
 audit: 2026-10
 commit: 663465d52
 relation: new

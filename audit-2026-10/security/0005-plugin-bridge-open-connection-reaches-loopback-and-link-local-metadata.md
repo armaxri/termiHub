@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/capabilities.rs:232
   - core/src/plugin/capabilities.rs:248
   - src/components/Settings/nativePluginSandbox.ts:189
-status: open
-resolution: ""
+status: fixed
+resolution: "#4367 — plugin open_connection resolves once and connects only to addresses the shared network::address_guard allows; loopback/private need connectionPolicy.allowLocalNetwork (shown as a trust chip)"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -35,9 +35,7 @@
 //! makes the change forward-migrating and downgrade-safe automatically.
 
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -47,36 +45,12 @@ use serde_json::Value;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::fs::write_atomic;
 
-/// The schema version an unversioned or version-less-parse file is assumed to
-/// carry. A file with no readable `version` is treated as the baseline (v1)
-/// rather than as newer, so a legacy/pre-versioning file still loads.
-const ASSUMED_VERSION: u32 = 1;
-
-/// A parsed store was written by a **newer** app version than this binary
-/// supports. Carried out of the load path (never reset) and returned by
-/// [`guard_not_newer`] to refuse an overwriting save.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewerVersionError {
-    /// Diagnostic name of the store (e.g. `"workspaces.json"`).
-    pub store: &'static str,
-    /// The schema version found on disk.
-    pub found: u32,
-    /// The newest schema version this binary understands.
-    pub supported: u32,
-}
-
-impl std::fmt::Display for NewerVersionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} was written by a newer version of termiHub (schema v{}, this build supports v{}); \
-             refusing to overwrite it to avoid data loss",
-            self.store, self.found, self.supported
-        )
-    }
-}
-
-impl std::error::Error for NewerVersionError {}
+// The primitives themselves live in the shared core layer (#4334), so the
+// desktop, the agent and the plugin stores run one implementation.
+pub use termihub_core::util::persist::{
+    backup_corrupt_file, is_unbacked_corrupt, protect_unbacked_corrupt, read_version,
+    release_unbacked_corrupt, NewerVersionError, OverwriteError, ASSUMED_VERSION,
+};
 
 /// Outcome of [`load_versioned`].
 pub enum LoadOutcome<T> {
@@ -126,16 +100,6 @@ pub trait VersionedStore: DeserializeOwned {
     }
 }
 
-/// Read a `version` field as an integer, accepting either a JSON string (`"2"`)
-/// or a JSON number (`2`). Absent or unparseable → `None`.
-pub fn read_version(value: &Value) -> Option<u32> {
-    match value.get("version") {
-        Some(Value::String(s)) => s.trim().parse().ok(),
-        Some(Value::Number(n)) => u32::try_from(n.as_u64()?).ok(),
-        _ => None,
-    }
-}
-
 /// Parse `raw`, read its version, and produce a [`LoadOutcome`]:
 ///
 /// * unparseable JSON → [`LoadOutcome::Corrupt`]
@@ -182,38 +146,21 @@ pub fn load_versioned<T: VersionedStore>(raw: &str) -> LoadOutcome<T> {
     }
 }
 
-/// Refuse to overwrite a file that was written by a **newer** schema version.
+/// Refuse to overwrite a file that was written by a **newer** schema version,
+/// or a corrupt file whose backup failed this session ([`protect_unbacked_corrupt`]).
 ///
-/// Reads `path` (if present) and, if it parses as JSON whose `version` is newer
-/// than `current`, returns a [`NewerVersionError`]. A missing, unparseable, or
-/// same/older file is fine to overwrite — only a *parseable-but-newer* file is
-/// protected, so genuine corruption can still be reset. Being stateless (it
-/// re-reads the file), it protects a save even across a fresh storage instance
-/// or after the in-memory data was reset to defaults on a newer-version load.
+/// An adapter over the shared [`termihub_core::util::persist::guard_not_newer`]
+/// (#4334): stateless (it re-reads the file), so it protects a save even across
+/// a fresh storage instance or after the in-memory data was reset to defaults on
+/// a newer-version load. A missing, unparseable, or same/older file is fine to
+/// overwrite, so genuine corruption can still be reset.
 pub fn guard_not_newer(path: &Path, store: &'static str, current: u32) -> Result<()> {
     if is_unbacked_corrupt(path) {
-        anyhow::bail!(
-            "{store} is corrupt and could not be backed up; refusing to overwrite the only copy \
-             (free disk space or fix the file, then restart termiHub)"
-        );
+        return Err(OverwriteError::UnbackedCorrupt { store }.into());
     }
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Ok(());
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-        return Ok(());
-    };
-    if let Some(found) = read_version(&value) {
-        if found > current {
-            return Err(NewerVersionError {
-                store,
-                found,
-                supported: current,
-            }
-            .into());
-        }
-    }
-    Ok(())
+    Ok(termihub_core::util::persist::guard_not_newer(
+        path, store, current,
+    )?)
 }
 
 /// The top-level fields of the store file at `path` that are **not** in `known`
@@ -410,71 +357,6 @@ pub fn newer_version_warning(file_name: &str, err: &NewerVersionError) -> Recove
         ),
         details: Some(err.to_string()),
     }
-}
-
-/// How many corrupt-store backups (`<name>.bak`, `<name>.bak.1`, …) are kept
-/// per file before a new corruption can no longer be backed up — in which case
-/// recovery leaves the live file untouched rather than overwrite an earlier
-/// backup that may hold the only copy of salvage-dropped entries (ERR2-002).
-pub const MAX_CORRUPT_BACKUPS: usize = 20;
-
-/// Copy a corrupt store to the first free `<file>.bak`, `<file>.bak.1`, …, so
-/// an earlier backup is never clobbered (ERR2-002). Fails — copying nothing —
-/// when the copy cannot be completed or every slot is taken.
-pub fn backup_corrupt_file(path: &Path) -> std::io::Result<PathBuf> {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    for n in 0..MAX_CORRUPT_BACKUPS {
-        let candidate = if n == 0 {
-            path.with_file_name(format!("{name}.bak"))
-        } else {
-            path.with_file_name(format!("{name}.bak.{n}"))
-        };
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(_) => {
-                if let Err(e) = fs::copy(path, &candidate) {
-                    let _ = fs::remove_file(&candidate);
-                    return Err(e);
-                }
-                return Ok(candidate);
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    Err(std::io::Error::other(format!(
-        "{MAX_CORRUPT_BACKUPS} backups of {name} already exist"
-    )))
-}
-
-/// Files whose corrupt original could not be backed up this session. While a
-/// path is listed, [`guard_not_newer`] refuses every save to it, so the only
-/// copy of the user's data is never overwritten (ERR2-002).
-static UNBACKED_CORRUPT: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-
-fn unbacked_corrupt() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
-    UNBACKED_CORRUPT.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Arm the save guard for `path`: its corrupt original could not be backed
-/// up, so no save may overwrite it until it loads cleanly again (or termiHub
-/// restarts and the backup succeeds).
-pub fn protect_unbacked_corrupt(path: &Path) {
-    let mut paths = unbacked_corrupt();
-    if !paths.iter().any(|p| p == path) {
-        paths.push(path.to_path_buf());
-    }
-}
-
-fn release_unbacked_corrupt(path: &Path) {
-    unbacked_corrupt().retain(|p| p != path);
-}
-
-fn is_unbacked_corrupt(path: &Path) -> bool {
-    unbacked_corrupt().iter().any(|p| p == path)
 }
 
 /// The JSON a corrupt file's salvage should see: the raw document brought up

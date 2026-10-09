@@ -74,12 +74,13 @@ pub enum Platform {
 /// The optional `connectionPolicy` object: host-side limits on the connections a
 /// plugin session may open through the capability bridge (#2028).
 ///
-/// Both fields are optional; an absent field (or an absent `connectionPolicy`
+/// Every field is optional; an absent field (or an absent `connectionPolicy`
 /// object entirely) leaves the host's built-in default in force
 /// ([`ConnectionPolicy`](super::ConnectionPolicy)). Declaring these lets a plugin
 /// author raise or lower the ceiling for a session — for example a plugin that
 /// legitimately fans out to many endpoints, or one deliberately restricted to a
-/// single slow dial-out.
+/// single slow dial-out — or opt in to local-network targets
+/// ([`allow_local_network`](Self::allow_local_network)).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -95,6 +96,17 @@ pub struct ConnectionPolicyManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub connect_timeout_ms: Option<u64>,
+    /// Opt in to dialling the local machine and private networks (SEC2-005,
+    /// #4367): loopback (`127/8`, `::1`), RFC 1918, shared address space
+    /// (`100.64/10`) and IPv6 unique-local (`fc00::/7`). Without it the bridge
+    /// refuses those targets. Link-local, unspecified, broadcast and cloud
+    /// metadata addresses stay refused either way (see
+    /// [`crate::network::address_guard`]). The trust surface shows the opt-in, and
+    /// it is part of the access a trust acknowledgment binds to. Defaults to
+    /// `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(optional, as = "Option<bool>"))]
+    pub allow_local_network: bool,
 }
 
 /// Smallest `connectionPolicy.maxConnections` a manifest may declare (#4534).
@@ -1315,7 +1327,11 @@ mod tests {
             let policy: ConnectionPolicyManifest =
                 serde_json::from_value(value["connectionPolicy"].clone())
                     .unwrap_or_else(|e| panic!("snippet does not parse: {e}\n{snippet}"));
-            assert!(policy.max_connections.is_some() || policy.connect_timeout_ms.is_some());
+            assert!(
+                policy.max_connections.is_some()
+                    || policy.connect_timeout_ms.is_some()
+                    || policy.allow_local_network
+            );
         }
     }
 

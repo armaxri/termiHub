@@ -11,7 +11,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import * as ContextMenu from "@radix-ui/react-context-menu";
 import { ZoomOverlay } from "./ZoomOverlay";
+
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 let container: HTMLDivElement;
 let root: Root;
@@ -187,5 +193,63 @@ describe("ZoomOverlay — modal dialog semantics (#4329)", () => {
   it("states how to close it in the header hint", () => {
     openOverlay();
     expect(q("zoom-overlay-hint")?.textContent).toContain("Shift+Esc");
+  });
+});
+
+describe("ZoomOverlay — menus open above the overlay (#4347)", () => {
+  /** Read a `--z-*` token's numeric value from variables.css. */
+  function zToken(name: string): number {
+    const css = readFileSync(join(SRC_DIR, "styles", "variables.css"), "utf8");
+    const m = new RegExp(`${name}\\s*:\\s*(\\d+)\\s*;`).exec(css);
+    expect(m, `variables.css must define ${name}`).not.toBeNull();
+    return Number(m![1]);
+  }
+
+  /** The `--z-*` token `.context-menu__content` stacks at. */
+  function contextMenuZToken(): string {
+    const css = readFileSync(join(SRC_DIR, "components", "Sidebar", "ConnectionList.css"), "utf8");
+    const rule = /\.context-menu__content\s*\{([^}]*)\}/.exec(css);
+    expect(rule).not.toBeNull();
+    const z = /z-index\s*:\s*var\((--z-[a-z0-9-]+)\)/.exec(rule![1]);
+    expect(z, ".context-menu__content must set a --z-* token").not.toBeNull();
+    return z![1];
+  }
+
+  it("portals the title's right-click menu into the dialog, stacked above the scrim", async () => {
+    act(() =>
+      root.render(
+        <ZoomOverlay
+          title="build-server"
+          icon={<span />}
+          onClose={() => {}}
+          menu={
+            <ContextMenu.Item className="context-menu__item" data-testid="zoom-menu-item">
+              Rename
+            </ContextMenu.Item>
+          }
+        >
+          <div>terminal</div>
+        </ZoomOverlay>
+      )
+    );
+    const label = document.querySelector<HTMLElement>(".zoom-overlay__label")!;
+    expect(label).not.toBeNull();
+    act(() => {
+      label.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })
+      );
+    });
+    await settle();
+
+    const item = q("zoom-menu-item");
+    expect(item, "the right-click menu should be open").not.toBeNull();
+    const menu = item!.closest<HTMLElement>(".context-menu__content");
+    expect(menu).not.toBeNull();
+    // Inside the dialog: the modal's pointer-events lock leaves it clickable.
+    expect(q("zoom-overlay")!.contains(menu)).toBe(true);
+    // Its tier sits above the modal scrim and the modal surface.
+    const tier = zToken(contextMenuZToken());
+    expect(tier).toBeGreaterThan(zToken("--z-scrim"));
+    expect(tier).toBeGreaterThan(zToken("--z-modal"));
   });
 });

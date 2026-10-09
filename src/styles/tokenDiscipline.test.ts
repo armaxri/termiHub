@@ -524,12 +524,21 @@ describe("z-index scale (UI-002)", () => {
     expect(z("--z-tooltip")).toBeGreaterThan(z("--z-modal"));
   });
 
-  it("uses --z-* tokens for every z-index in component CSS (no raw literals)", () => {
+  it("uses --z-* tokens for every z-index in app CSS (no raw literals)", () => {
     // A raw numeric z-index bypasses the scale and reintroduces the drift this
-    // finding fixed. Every component z-index must reference a token.
+    // finding fixed. Every z-index — component CSS, the shared styles (except
+    // the scale itself in variables.css) and top-level app CSS — must reference
+    // a token (#4347 widened this from components-only).
     const rawZIndexRe = /z-index\s*:\s*-?\d/i;
     const offenders: string[] = [];
-    for (const file of cssFiles) {
+    const appCss = [
+      ...cssFiles,
+      ...collectFiles(STYLES_DIR, (name) => name.endsWith(".css") && name !== "variables.css"),
+      ...readdirSync(SRC_DIR)
+        .filter((name) => name.endsWith(".css"))
+        .map((name) => join(SRC_DIR, name)),
+    ];
+    for (const file of appCss) {
       const css = stripCssComments(readFileSync(file, "utf8"));
       if (css.split("\n").some((line) => rawZIndexRe.test(line))) {
         offenders.push(toPosix(file));
@@ -540,6 +549,108 @@ describe("z-index scale (UI-002)", () => {
       "Reference a --z-* token from src/styles/variables.css instead of a raw z-index in: " +
         `${offenders.join(", ")}`
     ).toEqual([]);
+  });
+
+  it("sets no numeric inline zIndex in component TSX", () => {
+    // Inline styles bypass the CSS guard above; a `zIndex: 50` in a style prop
+    // is the same magic number in a different place.
+    const tsxFiles = collectFiles(
+      COMPONENTS_DIR,
+      (name) => name.endsWith(".tsx") && !name.includes(".test.")
+    );
+    const offenders = tsxFiles
+      .filter((file) => /zIndex\s*:\s*-?\d/.test(readFileSync(file, "utf8")))
+      .map(toPosix);
+    expect(
+      offenders,
+      `Use a --z-* token instead of a numeric inline zIndex in: ${offenders}`
+    ).toEqual([]);
+  });
+
+  /**
+   * UI2-001 / #4347: every portaled Radix content (Select, DropdownMenu,
+   * ContextMenu, Popover, Tooltip, incl. SubContent) must stack at or above
+   * `--z-popover`. Radix copies the content's z-index onto its popper wrapper
+   * in document.body, so a menu styled with `--z-sticky` (100) opened under the
+   * modal scrim (900), the modal (1000) and the update banner (500).
+   */
+  describe("portaled Radix content stacks above modals and banners (#4347)", () => {
+    const radixContentRe =
+      /<(?:DropdownMenu|ContextMenu|RadixSelect|Select|Popover|RadixPopover|RadixTooltip)\.(?:Sub)?Content\b[^>]*?className="([^"]+)"/g;
+
+    /** First class of every Radix popper Content's className across components. */
+    function radixContentClasses(): Map<string, string> {
+      const out = new Map<string, string>();
+      const tsxFiles = collectFiles(
+        COMPONENTS_DIR,
+        (name) => name.endsWith(".tsx") && !name.includes(".test.")
+      );
+      for (const file of tsxFiles) {
+        const src = readFileSync(file, "utf8");
+        for (const m of src.matchAll(radixContentRe)) {
+          const first = m[1].trim().split(/\s+/)[0];
+          if (!out.has(first)) out.set(first, toPosix(file));
+        }
+      }
+      return out;
+    }
+
+    /** The `--z-*` token each `.cls { ... z-index: var(--z-x) }` rule uses. */
+    function zTokensForClass(cls: string): string[] {
+      const found: string[] = [];
+      const ruleRe = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`, "g");
+      for (const file of cssFiles) {
+        const css = stripCssComments(readFileSync(file, "utf8"));
+        for (const rule of css.matchAll(ruleRe)) {
+          const zm = /z-index\s*:\s*var\((--z-[a-z0-9-]+)\)/.exec(rule[1]);
+          if (zm) found.push(zm[1]);
+        }
+      }
+      return found;
+    }
+
+    const classes = radixContentClasses();
+
+    it("finds the known portaled menu content classes", () => {
+      // Sanity check that the scan is not silently matching nothing.
+      for (const cls of [
+        "context-menu__content",
+        "settings-menu__content",
+        "indent-menu__content",
+        "lang-menu__content",
+        "monitoring-menu__content",
+        "ui-select__content",
+        "ui-tooltip__content",
+      ]) {
+        expect(classes.has(cls), `expected a Radix Content using .${cls}`).toBe(true);
+      }
+    });
+
+    it("styles every Radix Content class with a z-index tier above the modal", () => {
+      const offenders: string[] = [];
+      for (const [cls, file] of classes) {
+        const used = zTokensForClass(cls);
+        if (used.length === 0) {
+          offenders.push(`.${cls} (${file}): no z-index token`);
+          continue;
+        }
+        for (const token of used) {
+          if (z(token) < z("--z-popover")) offenders.push(`.${cls} (${file}): ${token}`);
+        }
+      }
+      expect(
+        offenders,
+        "Portaled Radix content must use --z-popover or higher, or it opens behind modals"
+      ).toEqual([]);
+    });
+
+    it("keeps menus above the modal scrim, the modal and the update banner", () => {
+      const menu = z("--z-popover");
+      expect(menu).toBeGreaterThan(z("--z-scrim"));
+      expect(menu).toBeGreaterThan(z("--z-modal"));
+      expect(menu).toBeGreaterThan(z("--z-banner"));
+      expect(z("--z-banner")).toBeGreaterThan(z("--z-sticky"));
+    });
   });
 });
 

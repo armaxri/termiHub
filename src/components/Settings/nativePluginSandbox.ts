@@ -189,6 +189,23 @@ export function accessChips(plugin: InstalledPlugin): AccessChip[] {
       rule: `Outbound TCP only through termiHub, max ${max} connections`,
       denied: false,
     });
+    // Loopback and private ranges are refused unless the manifest opts in
+    // (SEC2-005); cloud metadata addresses are refused either way.
+    chips.push(
+      connectionPolicy?.allowLocalNetwork
+        ? {
+            id: "local-network",
+            label: "Local network",
+            rule: "May reach this computer (localhost) and private networks; cloud metadata stays blocked",
+            denied: false,
+          }
+        : {
+            id: "local-network",
+            label: "Local network",
+            rule: "Cannot reach this computer (localhost) or private networks",
+            denied: true,
+          }
+    );
   }
   chips.push({
     id: "data",

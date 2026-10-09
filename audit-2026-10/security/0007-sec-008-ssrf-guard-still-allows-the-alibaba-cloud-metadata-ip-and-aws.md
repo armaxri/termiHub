@@ -11,8 +11,8 @@ evidence:
   - core/src/monitoring/http_monitor.rs:673
   - core/src/monitoring/http_monitor.rs:676
   - core/src/monitoring/http_monitor.rs:687
-status: open
-resolution: ""
+status: fixed
+resolution: "#4367 — shared network::address_guard always blocks 100.100.100.200, fd00:ec2::254 and NAT64/mapped forms; 100.64/10 needs allowPrivateNetwork"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

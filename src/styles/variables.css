@@ -245,12 +245,12 @@
 
   /* App-level surfaces */
   --z-dropdown: 50; /* low, in-layout dropdown (recent-sessions sidebar) */
-  --z-sticky: 100; /* sticky/pinned in-layout chrome + in-panel popovers, menus & overlays */
+  --z-sticky: 100; /* sticky/pinned in-layout chrome + in-panel overlays (never portaled menus) */
   --z-overlay: 400; /* full-viewport decorative/utility overlay below modals (noise texture) */
   --z-banner: 500; /* app-level notification banners (update notification) */
   --z-scrim: 900; /* modal backdrop/scrim — just below the modal surface */
   --z-modal: 1000; /* modal dialog surfaces */
-  --z-popover: 1100; /* portaled Select/menu/popover content — above modals (works in modal forms) */
+  --z-popover: 1100; /* every portaled Radix content (Select, DropdownMenu, ContextMenu, Popover) — above modals and banners */
   --z-toast: 1200; /* toasts — above modals */
   --z-tooltip: 1300; /* tooltips — topmost interactive layer */
   --z-max: 2147483647; /* reserved absolute top */

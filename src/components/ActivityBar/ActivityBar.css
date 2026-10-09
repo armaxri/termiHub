@@ -117,7 +117,7 @@
   border-radius: var(--radius-lg);
   padding: var(--spacing-xs) 0;
   box-shadow: var(--shadow-dropdown);
-  z-index: var(--z-sticky);
+  z-index: var(--z-popover);
 }
 
 .settings-menu__item {

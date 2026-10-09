@@ -56,10 +56,15 @@ use thiserror::Error;
 use super::manifest::{parse_manifest, ConnectionPolicyManifest, PluginManifest, PluginPermission};
 use super::package::MANIFEST_FILE_NAME;
 use super::signature::now_rfc3339;
+use crate::util::persist::{self, OverwriteError};
 
 /// The file, alongside the manager's other plugin state files under the plugins
 /// root, that persists the native-plugin trust decisions.
 pub const NATIVE_TRUST_FILE_NAME: &str = "native-plugin-trust.json";
+
+/// The schema version of the native trust file this build reads and writes
+/// (#4334). An unversioned file is the original v1 shape.
+const NATIVE_TRUST_VERSION: u32 = 1;
 
 /// The plain-language informed-consent disclosure the trust-acknowledgment
 /// surface shows when native plugins run **out of process in the OS sandbox**
@@ -87,6 +92,11 @@ pub enum NativeTrustError {
     /// The store document could not be serialized.
     #[error("native-plugin trust-store serialization error: {0}")]
     Serde(String),
+
+    /// The file on disk may not be overwritten: a newer schema wrote it, or it
+    /// is corrupt and could not be backed up (#4334).
+    #[error(transparent)]
+    Refused(#[from] OverwriteError),
 }
 
 /// One per-plugin trust acknowledgment, bound to the exact library bytes the user
@@ -306,9 +316,12 @@ pub struct AckAcceptances {
 
 /// The persisted `native-plugin-trust.json` document: the global default-OFF
 /// switch plus the per-plugin acknowledgments keyed by plugin id.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeTrustDoc {
+    /// Schema version, gated by [`crate::util::persist`]; absent → v1.
+    #[serde(default = "native_trust_version")]
+    version: u32,
     /// Whether native plugins may load at all. **Absent → `false`**:
     /// the default, and every fail-closed path, is "native plugins off".
     #[serde(default)]
@@ -316,6 +329,39 @@ struct NativeTrustDoc {
     /// Per-plugin acknowledgments, keyed by plugin id.
     #[serde(default)]
     acks: BTreeMap<String, NativeAck>,
+    /// Unknown top-level fields, carried forward unchanged.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
+}
+
+fn native_trust_version() -> u32 {
+    NATIVE_TRUST_VERSION
+}
+
+impl Default for NativeTrustDoc {
+    fn default() -> Self {
+        Self {
+            version: NATIVE_TRUST_VERSION,
+            native_plugins_enabled: false,
+            acks: BTreeMap::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Parse a native trust document, **failing closed** to the all-off default
+/// for anything this build must not act on: unparseable, the wrong shape, or
+/// written by a newer schema (whose consent semantics this build cannot know).
+/// Saves over such a file are gated by [`persist::prepare_overwrite`]: a
+/// newer file is never overwritten and a corrupt one is backed up first.
+fn parse_native_trust_doc(raw: &str) -> NativeTrustDoc {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return NativeTrustDoc::default();
+    };
+    if persist::check_version(&value, NATIVE_TRUST_FILE_NAME, NATIVE_TRUST_VERSION).is_err() {
+        return NativeTrustDoc::default();
+    }
+    serde_json::from_value(value).unwrap_or_default()
 }
 
 /// The native-plugin trust store: the global enable flag plus per-plugin,
@@ -342,7 +388,7 @@ impl NativeTrustStore {
     pub fn load(plugins_root: &Path) -> Self {
         let path = plugins_root.join(NATIVE_TRUST_FILE_NAME);
         let doc = match std::fs::read_to_string(&path) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Ok(s) => parse_native_trust_doc(&s),
             // Missing file or any read error → the safe default (all-off).
             Err(_) => NativeTrustDoc::default(),
         };
@@ -503,17 +549,23 @@ impl NativeTrustStore {
         Ok(())
     }
 
-    /// Persist the document atomically: write a sibling temp file, then rename it
-    /// over the target so a crash mid-write cannot corrupt the store.
+    /// Persist the document through the shared layer (#4334): refused over a
+    /// file a newer schema wrote, a corrupt file is backed up first, and the
+    /// bytes land via a unique fsynced temp file renamed over the target.
     fn save(&self) -> Result<(), NativeTrustError> {
+        persist::prepare_overwrite::<NativeTrustDoc>(
+            &self.path,
+            NATIVE_TRUST_FILE_NAME,
+            NATIVE_TRUST_VERSION,
+        )?;
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(&self.doc)
+        let mut doc = self.doc.clone();
+        doc.version = NATIVE_TRUST_VERSION;
+        let json = serde_json::to_string_pretty(&doc)
             .map_err(|e| NativeTrustError::Serde(e.to_string()))?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, &self.path)?;
+        persist::write_atomic(&self.path, json)?;
         Ok(())
     }
 }
