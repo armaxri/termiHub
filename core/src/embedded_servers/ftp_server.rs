@@ -803,6 +803,12 @@ impl PresenceListener for StatsTracker {
 mod relay_tests;
 
 #[cfg(test)]
+mod auth_tests;
+
+#[cfg(test)]
+mod limits_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::embedded_servers::config::AtomicServerStats;
@@ -824,6 +830,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            max_concurrent_sessions: None,
             extra: Default::default(),
         }
     }
@@ -1055,6 +1062,7 @@ mod tests {
             auth,
             ServerActivity::new(),
             "127.0.0.1".parse().expect("ip"),
+            Arc::new(LoginThrottle::new()),
         )
     }
 
@@ -1338,6 +1346,7 @@ mod tests {
             }),
             Arc::clone(&activity),
             "127.0.0.1".parse().expect("ip"),
+            Arc::new(LoginThrottle::new()),
         );
         assert!(auth
             .authenticate("alice", &creds(Some("hunter2-secret")))
