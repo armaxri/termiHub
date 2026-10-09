@@ -226,6 +226,13 @@ pub fn require_with(
     }
 }
 
+/// Report a dependency found missing during setup (no daemon, an image that
+/// cannot be pulled, a container that will not start): print a `SKIPPED:` line,
+/// or panic when `require_env` is set. The caller returns after it.
+pub fn missing(require_env: &str, what: &str, hint: &str) {
+    require(false, require_env, what, hint);
+}
+
 /// The `dev.local.json` keys the fixtures depend on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DevLocal {

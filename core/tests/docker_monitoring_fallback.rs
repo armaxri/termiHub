@@ -23,7 +23,7 @@ use std::time::Duration;
 use bollard::container::{Config, CreateContainerOptions, StartContainerOptions};
 use bollard::image::CreateImageOptions;
 use futures_util::StreamExt;
-use support::container::{runtime_client, CleanupGuard};
+use support::container::{docker_missing, runtime_client, CleanupGuard};
 use termihub_core::backends::docker::Docker;
 use termihub_core::connection::ConnectionType;
 use termihub_core::monitoring::{StatsMetric, StatsSource};
@@ -90,16 +90,18 @@ async fn sample_container(
     shell: &str,
 ) -> Option<Vec<termihub_core::monitoring::SystemStats>> {
     let Some(client) = runtime_client().await else {
-        eprintln!("SKIPPED: no reachable container daemon (docker stats fallback, #3202)");
+        docker_missing("no reachable container daemon (docker stats fallback, #3202)");
         return None;
     };
     if !ensure_image(&client, image).await {
-        eprintln!("SKIPPED: could not pull {image} (docker stats fallback, #3202)");
+        docker_missing(&format!(
+            "could not pull {image} (docker stats fallback, #3202)"
+        ));
         return None;
     }
     let mut cleanup = CleanupGuard::default();
     let Some(name) = start_container(&client, &mut cleanup, image, cmd).await else {
-        eprintln!("SKIPPED: could not start a {image} container (#3202)");
+        docker_missing(&format!("could not start a {image} container (#3202)"));
         return None;
     };
 
