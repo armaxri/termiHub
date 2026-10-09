@@ -1,6 +1,6 @@
-import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onAgentUpdateAvailable } from "@/services/events";
+import { useTauriSubscription } from "./useTauriListener";
 
 /**
  * Hook that folds backend `agent-update-available` events (#1352) into the
@@ -11,23 +11,15 @@ import { onAgentUpdateAvailable } from "@/services/events";
 export function useAgentUpdateEvents(): void {
   const setAgentUpdateAvailable = useAppStore((s) => s.setAgentUpdateAvailable);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-
-    const setup = async () => {
-      unlisten = await onAgentUpdateAvailable((update) => {
-        setAgentUpdateAvailable(update.agentId, {
-          currentVersion: update.currentVersion,
-          availableVersion: update.availableVersion,
-          staged: update.staged,
-        });
+  useTauriSubscription(
+    onAgentUpdateAvailable,
+    (update) => {
+      setAgentUpdateAvailable(update.agentId, {
+        currentVersion: update.currentVersion,
+        availableVersion: update.availableVersion,
+        staged: update.staged,
       });
-    };
-
-    void setup();
-
-    return () => {
-      unlisten?.();
-    };
-  }, [setAgentUpdateAvailable]);
+    },
+    "agent_update"
+  );
 }

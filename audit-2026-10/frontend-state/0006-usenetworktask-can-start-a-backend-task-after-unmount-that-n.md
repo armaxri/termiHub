@@ -11,8 +11,8 @@ evidence:
   - src/hooks/useNetworkTask.ts:107
   - src/hooks/useNetworkTask.ts:108
   - src/hooks/useNetworkTask.ts:131
-status: open
-resolution: ""
+status: fixed
+resolution: "#4375 — run token cancels a task started after unmount or supersession; late listeners dropped; finished runs never re-arm the id"
 audit: 2026-10
 commit: 663465d52
 relation: new

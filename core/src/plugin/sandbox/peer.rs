@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use termihub_plugin_api::{PluginError, MAX_LOG_MESSAGE_BYTES};
@@ -55,6 +55,46 @@ pub(super) type MemoryProbe = Box<dyn Fn() -> bool + Send + Sync>;
 struct ExitState {
     cause: Option<RunnerExitCause>,
     hook: Option<ExitHook>,
+}
+
+/// Whether the stderr forwarder has drained, as an awaitable event (#4366):
+/// classifying an exit blocks on the condition variable instead of spinning on
+/// a flag.
+struct StderrDrain {
+    /// `true` once the forwarder is done (or when there is none).
+    done: Mutex<bool>,
+    drained: Condvar,
+}
+
+impl StderrDrain {
+    /// No forwarder yet, so nothing to wait for.
+    fn new() -> Self {
+        Self {
+            done: Mutex::new(true),
+            drained: Condvar::new(),
+        }
+    }
+
+    /// A forwarder is about to run: waiters block until [`Self::finish`].
+    fn expect(&self) {
+        *self.done.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
+
+    /// The forwarder reached end of stream: wake every waiter.
+    fn finish(&self) {
+        *self.done.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.drained.notify_all();
+    }
+
+    /// Block until drained or `timeout` passes; `true` if drained.
+    fn wait(&self, timeout: Duration) -> bool {
+        let done = self.done.lock().unwrap_or_else(|e| e.into_inner());
+        let (done, _timed_out) = self
+            .drained
+            .wait_timeout_while(done, timeout, |done| !*done)
+            .unwrap_or_else(|e| e.into_inner());
+        *done
+    }
 }
 
 /// Ping bookkeeping for hang detection (#4184).
@@ -114,8 +154,8 @@ pub(super) struct Shared {
     memory_pressure_seen: AtomicBool,
     /// Measures the runner's memory pressure (none in unit tests by default).
     memory_probe: Mutex<Option<MemoryProbe>>,
-    /// The stderr forwarder is done (or there is none).
-    stderr_done: AtomicBool,
+    /// Signalled when the stderr forwarder is done (set while there is none).
+    stderr_drain: StderrDrain,
     /// The capability-bridge service answering this runner's requests (#4183).
     pub(super) bridge: Arc<BridgeHost>,
     /// Meters the runner's `Output` bytes across all its sessions (#4203).
@@ -145,7 +185,7 @@ impl Shared {
             allocation_failure_reported: AtomicBool::new(false),
             memory_pressure_seen: AtomicBool::new(false),
             memory_probe: Mutex::new(None),
-            stderr_done: AtomicBool::new(true),
+            stderr_drain: StderrDrain::new(),
             output_meter: Mutex::new(OutputMeter::new(OutputRateCap::default(), Instant::now())),
         })
     }
@@ -193,7 +233,7 @@ impl Shared {
                 }
             }
         }
-        self.stderr_done.store(true, Ordering::SeqCst);
+        self.stderr_drain.finish();
     }
 
     /// Emit one runner stderr line through the plugin's log limiter.
@@ -235,7 +275,7 @@ impl Shared {
 
     /// Mark a stderr forwarder as running (before its thread starts).
     pub(super) fn expect_stderr(&self) {
-        self.stderr_done.store(false, Ordering::SeqCst);
+        self.stderr_drain.expect();
     }
 
     pub(super) fn read_loop<R: std::io::Read>(self: Arc<Self>, reader: R) {
@@ -506,10 +546,8 @@ impl Shared {
         // not missed: it decides a natural exit, and it overrides a hang
         // verdict that raced it (#4239).
         if natural || pending == Some(RunnerExitCause::NotResponding) {
-            let deadline = Instant::now() + STDERR_DRAIN_TIMEOUT;
-            while !self.stderr_done.load(Ordering::SeqCst) && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(5));
-            }
+            // Woken by the forwarder's end of stream; no spin (#4366).
+            self.stderr_drain.wait(STDERR_DRAIN_TIMEOUT);
         }
         let out_of_memory = self.reported_out_of_memory(status);
         let cause = match pending {

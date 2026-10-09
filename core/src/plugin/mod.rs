@@ -67,6 +67,8 @@ mod fat_pack;
 mod host;
 mod host_context;
 mod index_signature;
+#[cfg(test)]
+mod invalid_manifest_tests;
 mod log_rate_limit;
 mod manager;
 mod manifest;

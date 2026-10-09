@@ -12,8 +12,8 @@ evidence:
   - src/hooks/useOsFileDrop.ts:81
   - src/hooks/useSessionOwnershipSuperseded.ts:35
   - src/components/RemoteDesktop/RemoteDesktopTab.tsx:143
-status: open
-resolution: ""
+status: fixed
+resolution: "#4375 — useOsFileDrop registers through subscribeGuarded (disposed guard + frontendLog on failure)"
 audit: 2026-10
 commit: 663465d52
 relation: new

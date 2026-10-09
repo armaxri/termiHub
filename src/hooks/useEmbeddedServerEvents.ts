@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onEmbeddedServerStatusChanged } from "@/services/events";
+import { useTauriSubscription } from "./useTauriListener";
 
 /** How often to poll live server stats while at least one server is running (#1145, GAP G6). */
 const STATS_POLL_INTERVAL_MS = 1500;
@@ -20,21 +21,7 @@ export function useEmbeddedServerEvents(): void {
     Object.values(s.embeddedServerStates).some((state) => state.status === "running")
   );
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-
-    const setup = async () => {
-      unlisten = await onEmbeddedServerStatusChanged((state) => {
-        updateEmbeddedServerState(state);
-      });
-    };
-
-    setup();
-
-    return () => {
-      unlisten?.();
-    };
-  }, [updateEmbeddedServerState]);
+  useTauriSubscription(onEmbeddedServerStatusChanged, updateEmbeddedServerState, "embedded_server");
 
   useEffect(() => {
     if (!hasRunningServer) return;
