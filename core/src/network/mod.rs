@@ -16,7 +16,9 @@
 //! | [`traceroute`] | Hop-by-hop traceroute |
 //! | [`wol`] | Wake-on-LAN magic packet |
 //! | [`open_ports`] | Local listening ports |
+//! | [`address_guard`] | Blocked-address guard for outbound connections (SSRF) |
 
+pub mod address_guard;
 pub mod defaults;
 pub mod dns;
 pub mod error;

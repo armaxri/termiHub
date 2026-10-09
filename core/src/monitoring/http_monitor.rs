@@ -20,7 +20,7 @@
 //! ambient runtime, and the agent can start it from its async dispatcher, both
 //! without a "no reactor running" panic.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 use crate::connection::schema::{FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::SettingsSchema;
+use crate::network::address_guard::is_blocked_ip;
 use crate::service::{
     EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
     ServiceRegistry, ServiceStatus,
@@ -103,11 +104,13 @@ pub struct HttpMonitorConfig {
     /// Opt-in escape hatch for monitoring an internal host (SEC-008).
     ///
     /// When `true`, the monitor is allowed to reach loopback (`127/8`, `::1`),
-    /// RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), and IPv6
-    /// unique-local (`fc00::/7`) addresses — e.g. a local dev server on
-    /// `localhost` or an internal host. Link-local (including the cloud-metadata
-    /// endpoint `169.254.169.254`) and the unspecified address stay blocked
-    /// regardless, as no legitimate monitor targets them. Defaults to `false`
+    /// RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), shared address
+    /// space (`100.64/10`), and IPv6 unique-local (`fc00::/7`) addresses — e.g. a
+    /// local dev server on `localhost` or an internal host. Link-local, the
+    /// unspecified address, broadcast and the cloud-metadata endpoints
+    /// (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`) stay blocked
+    /// regardless, as no legitimate monitor targets them (see
+    /// [`crate::network::address_guard`]). Defaults to `false`
     /// (deny-internal) so the SSRF guard is safe by default; `#[serde(default)]`
     /// keeps configs stored before this field deserializing.
     #[serde(default)]
@@ -637,7 +640,8 @@ fn build_client_outcome(
 // agents, the agent's own loopback ports) become reachable. Defence is two-part
 // so both name- and literal-addressed targets — and every redirect hop — are
 // covered, and DNS-rebinding is closed by validating the exact address connected
-// to:
+// to. Which addresses are refused is decided by the blocked-address guard shared
+// with the plugin bridge ([`crate::network::address_guard`], #4367):
 //
 //   1. [`SsrfResolver`] — a custom `reqwest` DNS resolver used for hostnames. It
 //      resolves, drops every disallowed address, and connects only to the
@@ -649,62 +653,6 @@ fn build_client_outcome(
 //      host is an IP literal, so those are validated directly: the initial URL
 //      before sending (see [`check_once`]) and each redirect target via the
 //      client's redirect policy.
-
-/// Whether `ip` is a target the monitor must refuse (SSRF guard).
-///
-/// Link-local (incl. the metadata endpoint `169.254.169.254`), the unspecified
-/// address, and IPv4 broadcast are **always** blocked — no legitimate monitor
-/// targets them. Loopback (`127/8`, `::1`), RFC 1918 private ranges, and IPv6
-/// unique-local (`fc00::/7`) are blocked unless `allow_private` (the monitor's
-/// opt-in `allowPrivateNetwork`, for the legitimate "monitor my local/internal
-/// host" case) is set.
-fn is_blocked_ip(ip: IpAddr, allow_private: bool) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_blocked_ipv4(v4, allow_private),
-        // Classify an IPv4-mapped address (`::ffff:a.b.c.d`) by its IPv4 value so
-        // `::ffff:169.254.169.254` cannot smuggle past the v4 rules.
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_blocked_ipv4(v4, allow_private),
-            None => is_blocked_ipv6(v6, allow_private),
-        },
-    }
-}
-
-fn is_blocked_ipv4(ip: Ipv4Addr, allow_private: bool) -> bool {
-    // Always-blocked: 0.0.0.0, 169.254/16 (incl. metadata), broadcast.
-    if ip.is_unspecified() || ip.is_link_local() || ip.is_broadcast() {
-        return true;
-    }
-    // 127/8 loopback and 10/8, 172.16/12, 192.168/16 private — blocked unless the
-    // operator opted in to internal targets.
-    if (ip.is_loopback() || ip.is_private()) && !allow_private {
-        return true;
-    }
-    false
-}
-
-fn is_blocked_ipv6(ip: Ipv6Addr, allow_private: bool) -> bool {
-    // Always-blocked: :: and fe80::/10 link-local.
-    if ip.is_unspecified() || is_ipv6_link_local(ip) {
-        return true;
-    }
-    // ::1 loopback and fc00::/7 unique-local (the IPv6 analogue of RFC 1918) —
-    // blocked unless the operator opted in to internal targets.
-    if (ip.is_loopback() || is_ipv6_unique_local(ip)) && !allow_private {
-        return true;
-    }
-    false
-}
-
-/// `fe80::/10` — IPv6 link-local unicast.
-fn is_ipv6_link_local(ip: Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xffc0) == 0xfe80
-}
-
-/// `fc00::/7` — IPv6 unique-local addresses.
-fn is_ipv6_unique_local(ip: Ipv6Addr) -> bool {
-    (ip.octets()[0] & 0xfe) == 0xfc
-}
 
 /// If `url`'s host is an IP **literal** that the guard blocks, return the reason
 /// string; otherwise `None`. Hostnames return `None` here — they are validated

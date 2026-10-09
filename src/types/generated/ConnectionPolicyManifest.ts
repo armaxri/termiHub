@@ -4,12 +4,13 @@
  * The optional `connectionPolicy` object: host-side limits on the connections a
  * plugin session may open through the capability bridge (#2028).
  *
- * Both fields are optional; an absent field (or an absent `connectionPolicy`
+ * Every field is optional; an absent field (or an absent `connectionPolicy`
  * object entirely) leaves the host's built-in default in force
  * ([`ConnectionPolicy`](super::ConnectionPolicy)). Declaring these lets a plugin
  * author raise or lower the ceiling for a session — for example a plugin that
  * legitimately fans out to many endpoints, or one deliberately restricted to a
- * single slow dial-out.
+ * single slow dial-out — or opt in to local-network targets
+ * ([`allow_local_network`](Self::allow_local_network)).
  */
 export type ConnectionPolicyManifest = { 
 /**
@@ -21,4 +22,15 @@ maxConnections?: number,
  * Connect timeout, in milliseconds, applied to each mediated dial-out,
  * 1 to 600000 (ten minutes). `None` keeps the host default.
  */
-connectTimeoutMs?: number, };
+connectTimeoutMs?: number, 
+/**
+ * Opt in to dialling the local machine and private networks (SEC2-005,
+ * #4367): loopback (`127/8`, `::1`), RFC 1918, shared address space
+ * (`100.64/10`) and IPv6 unique-local (`fc00::/7`). Without it the bridge
+ * refuses those targets. Link-local, unspecified, broadcast and cloud
+ * metadata addresses stay refused either way (see
+ * [`crate::network::address_guard`]). The trust surface shows the opt-in, and
+ * it is part of the access a trust acknowledgment binds to. Defaults to
+ * `false`.
+ */
+allowLocalNetwork?: boolean, };

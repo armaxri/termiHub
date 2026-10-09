@@ -25,7 +25,7 @@
 //! through. See the [`termihub_plugin_api::capabilities`] module docs.
 
 use std::io::Write;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -39,6 +39,7 @@ use termihub_plugin_runner::ipc::{
 use super::manifest::ConnectionPolicyManifest;
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
+use crate::network::address_guard::is_blocked_ip;
 
 /// Default connect timeout applied to a mediated `open_connection` when the
 /// session's [`ConnectionPolicy`] does not override it (#2024).
@@ -65,10 +66,18 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 8;
 /// ([`DEFAULT_MAX_CONNECTIONS`], [`DEFAULT_CONNECT_TIMEOUT`]) and can be raised or
 /// lowered per plugin through the manifest's `connectionPolicy`
 /// ([`ConnectionPolicyManifest`]).
+///
+/// It also decides which addresses a dial-out may reach (SEC2-005, #4367): the
+/// shared blocked-address guard ([`crate::network::address_guard`]) always
+/// refuses link-local, unspecified, broadcast and cloud metadata targets, and
+/// refuses loopback and private ranges unless the manifest opts in with
+/// `connectionPolicy.allowLocalNetwork`
+/// ([`allow_local_network`](Self::allow_local_network)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectionPolicy {
     max_connections: usize,
     connect_timeout: Duration,
+    allow_local_network: bool,
 }
 
 impl Default for ConnectionPolicy {
@@ -76,18 +85,28 @@ impl Default for ConnectionPolicy {
         Self {
             max_connections: DEFAULT_MAX_CONNECTIONS,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            allow_local_network: false,
         }
     }
 }
 
 impl ConnectionPolicy {
-    /// A policy with explicit values.
+    /// A policy with explicit limits; local-network targets stay refused (see
+    /// [`with_local_network`](Self::with_local_network)).
     #[must_use]
     pub fn new(max_connections: usize, connect_timeout: Duration) -> Self {
         Self {
             max_connections,
             connect_timeout,
+            allow_local_network: false,
         }
+    }
+
+    /// This policy with the local-network opt-in set to `allow`.
+    #[must_use]
+    pub fn with_local_network(mut self, allow: bool) -> Self {
+        self.allow_local_network = allow;
+        self
     }
 
     /// Derive a policy from a manifest's optional `connectionPolicy`, falling back
@@ -102,6 +121,7 @@ impl ConnectionPolicy {
             if let Some(ms) = p.connect_timeout_ms {
                 resolved.connect_timeout = Duration::from_millis(ms);
             }
+            resolved.allow_local_network = p.allow_local_network;
         }
         resolved
     }
@@ -116,6 +136,12 @@ impl ConnectionPolicy {
     #[must_use]
     pub fn connect_timeout(&self) -> Duration {
         self.connect_timeout
+    }
+
+    /// Whether dial-outs may reach loopback and private-network addresses.
+    #[must_use]
+    pub fn allow_local_network(&self) -> bool {
+        self.allow_local_network
     }
 }
 
@@ -172,25 +198,60 @@ impl Drop for ConnectionGuard {
     }
 }
 
-/// Resolve `host:port` and connect, bounding each attempt by `timeout`.
+/// Why a mediated dial-out failed.
+#[derive(Debug)]
+enum DialError {
+    /// Every resolved address is refused by the blocked-address guard.
+    Blocked,
+    /// Resolution or every connect attempt failed.
+    Io,
+}
+
+/// Resolve `host:port` once and return only the addresses the blocked-address
+/// guard ([`crate::network::address_guard`]) allows under `allow_local_network`.
 ///
-/// Each resolved address is tried with [`TcpStream::connect_timeout`] so a
-/// black-holed host cannot hang the connect indefinitely; the last error is
-/// returned if every address fails or resolution yields none. `timeout` comes
-/// from the session's [`ConnectionPolicy`] (#2028).
-fn connect_with_timeout(host: &str, port: u16, timeout: Duration) -> std::io::Result<TcpStream> {
-    let addrs = (host, port).to_socket_addrs()?;
-    let mut last_err = std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "no addresses resolved for host",
-    );
-    for addr in addrs {
-        match TcpStream::connect_timeout(&addr, timeout) {
-            Ok(stream) => return Ok(stream),
-            Err(e) => last_err = e,
+/// The caller connects to exactly these addresses, so a hostname cannot rebind
+/// to a refused address between the check and the connection (SEC2-005).
+fn vetted_addrs(
+    host: &str,
+    port: u16,
+    allow_local_network: bool,
+) -> Result<Vec<SocketAddr>, DialError> {
+    let resolved: Vec<SocketAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| DialError::Io)?
+        .collect();
+    if resolved.is_empty() {
+        return Err(DialError::Io);
+    }
+    let allowed: Vec<SocketAddr> = resolved
+        .into_iter()
+        .filter(|addr| !is_blocked_ip(addr.ip(), allow_local_network))
+        .collect();
+    if allowed.is_empty() {
+        return Err(DialError::Blocked);
+    }
+    Ok(allowed)
+}
+
+/// Resolve `host:port`, keep only the addresses `policy` allows, and connect,
+/// bounding each attempt by the policy's timeout.
+///
+/// Each vetted address is tried with [`TcpStream::connect_timeout`] so a
+/// black-holed host cannot hang the connect indefinitely; the dial-out fails if
+/// every address fails. `timeout` comes from the session's [`ConnectionPolicy`]
+/// (#2028).
+fn connect_vetted(
+    host: &str,
+    port: u16,
+    policy: &ConnectionPolicy,
+) -> Result<TcpStream, DialError> {
+    for addr in vetted_addrs(host, port, policy.allow_local_network)? {
+        if let Ok(stream) = TcpStream::connect_timeout(&addr, policy.connect_timeout) {
+            return Ok(stream);
         }
     }
-    Err(last_err)
+    Err(DialError::Io)
 }
 
 /// Map a filesystem-scope check failure to the status the ABI reports. A missing
@@ -222,10 +283,11 @@ fn scoped(permissions: &PermissionSet, requested: &str) -> Result<PathBuf, Plugi
 }
 
 /// `open_connection`: require `network`, reserve a connection slot, then
-/// connect within the policy's timeout. The returned guard holds the slot until
-/// dropped.
+/// connect within the policy's timeout to an address the blocked-address guard
+/// allows. The returned guard holds the slot until dropped.
 ///
-/// A missing `network` permission is [`PluginStatus::PermissionDenied`]; a
+/// A missing `network` permission, or a target that resolves only to refused
+/// addresses (SEC2-005), is [`PluginStatus::PermissionDenied`]; a
 /// session at its concurrent-connection ceiling is
 /// [`PluginStatus::ResourceLimit`] (#2030); a failed dial-out is
 /// [`PluginStatus::Io`] (and frees the slot again).
@@ -244,8 +306,10 @@ pub(crate) fn guarded_connect(
     // Resource enforcement, released when the guard drops (or right here, on
     // connect failure).
     let guard = slots.try_reserve().ok_or(PluginStatus::ResourceLimit)?;
-    let stream =
-        connect_with_timeout(host, port, policy.connect_timeout).map_err(|_| PluginStatus::Io)?;
+    let stream = connect_vetted(host, port, policy).map_err(|e| match e {
+        DialError::Blocked => PluginStatus::PermissionDenied,
+        DialError::Io => PluginStatus::Io,
+    })?;
     Ok((stream, guard))
 }
 
@@ -438,7 +502,11 @@ mod tests {
 
         for host in ["127.0.0.1", "localhost"] {
             let err = guarded_connect(&granted, &policy, &slots, host, port).unwrap_err();
-            assert_eq!(err, PluginStatus::PermissionDenied, "{host} must be refused");
+            assert_eq!(
+                err,
+                PluginStatus::PermissionDenied,
+                "{host} must be refused"
+            );
         }
         listener.set_nonblocking(true).unwrap();
         assert!(
@@ -468,7 +536,37 @@ mod tests {
             "64:ff9b::a9fe:a9fe",
         ] {
             let err = guarded_connect(&granted, &policy, &slots, host, 80).unwrap_err();
-            assert_eq!(err, PluginStatus::PermissionDenied, "{host} must be refused");
+            assert_eq!(
+                err,
+                PluginStatus::PermissionDenied,
+                "{host} must be refused"
+            );
+        }
+    }
+
+    /// SEC2-005: with `allowLocalNetwork` a plugin may reach loopback, but the
+    /// always-blocked metadata / link-local targets stay refused.
+    #[test]
+    fn local_network_opt_in_allows_loopback_but_not_metadata() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let policy = ConnectionPolicy::new(DEFAULT_MAX_CONNECTIONS, Duration::from_millis(300))
+            .with_local_network(true);
+        let slots = ConnectionSlots::new(&policy);
+        let granted = perms(&[PluginPermission::Network], &[]);
+
+        let (_stream, _guard) =
+            guarded_connect(&granted, &policy, &slots, "127.0.0.1", port).expect("opted in");
+        assert!(listener.accept().is_ok(), "the opted-in dial-out connected");
+
+        for host in [
+            "169.254.169.254",
+            "100.100.100.200",
+            "fd00:ec2::254",
+            "fe80::1",
+        ] {
+            let err = guarded_connect(&granted, &policy, &slots, host, 80).unwrap_err();
+            assert_eq!(err, PluginStatus::PermissionDenied, "{host} stays refused");
         }
     }
 
@@ -487,7 +585,7 @@ mod tests {
             buf
         });
 
-        let policy = ConnectionPolicy::default();
+        let policy = ConnectionPolicy::default().with_local_network(true);
         let slots = ConnectionSlots::new(&policy);
         let (mut stream, _guard) = connect(
             &perms(&[PluginPermission::Network], &[]),
@@ -529,7 +627,7 @@ mod tests {
             held
         });
 
-        let policy = ConnectionPolicy::new(2, DEFAULT_CONNECT_TIMEOUT);
+        let policy = ConnectionPolicy::new(2, DEFAULT_CONNECT_TIMEOUT).with_local_network(true);
         let slots = ConnectionSlots::new(&policy);
         let granted = perms(&[PluginPermission::Network], &[]);
 
@@ -564,7 +662,7 @@ mod tests {
 
         // Ceiling of 1, and a short timeout so a refusal (Linux/Windows) or a
         // dropped SYN (macOS) resolves fast.
-        let policy = ConnectionPolicy::new(1, Duration::from_secs(2));
+        let policy = ConnectionPolicy::new(1, Duration::from_secs(2)).with_local_network(true);
         let slots = ConnectionSlots::new(&policy);
         let granted = perms(&[PluginPermission::Network], &[]);
 
@@ -621,6 +719,7 @@ mod tests {
         let only_max = ConnectionPolicyManifest {
             max_connections: Some(3),
             connect_timeout_ms: None,
+            allow_local_network: false,
         };
         let p = ConnectionPolicy::from_manifest(Some(&only_max));
         assert_eq!(p.max_connections(), 3);
@@ -630,10 +729,24 @@ mod tests {
         let both = ConnectionPolicyManifest {
             max_connections: Some(5),
             connect_timeout_ms: Some(1500),
+            allow_local_network: false,
         };
         let p = ConnectionPolicy::from_manifest(Some(&both));
         assert_eq!(p.max_connections(), 5);
         assert_eq!(p.connect_timeout(), Duration::from_millis(1500));
+        assert!(
+            !p.allow_local_network(),
+            "local network is refused by default"
+        );
+
+        // The local-network opt-in carries over (SEC2-005).
+        let local = ConnectionPolicyManifest {
+            allow_local_network: true,
+            ..ConnectionPolicyManifest::default()
+        };
+        let p = ConnectionPolicy::from_manifest(Some(&local));
+        assert!(p.allow_local_network());
+        assert_eq!(p.max_connections(), DEFAULT_MAX_CONNECTIONS);
     }
 
     #[test]

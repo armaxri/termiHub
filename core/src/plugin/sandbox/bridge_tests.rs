@@ -64,13 +64,21 @@ impl Harness {
         }
     }
 
-    /// Allocate a session id and grant it `permissions`.
+    /// Allocate a session id and grant it `permissions`, with the local-network
+    /// opt-in so the loopback test fixtures are reachable.
     fn session(&self, permissions: PermissionSet) -> u32 {
+        self.session_with(
+            permissions,
+            ConnectionPolicy::default().with_local_network(true),
+        )
+    }
+
+    /// Allocate a session id and grant it `permissions` under `policy`.
+    fn session_with(&self, permissions: PermissionSet, policy: ConnectionPolicy) -> u32 {
         let id = self.shared.next_session.fetch_add(1, Ordering::SeqCst);
-        self.shared.bridge.open_session(
-            id,
-            BridgeGrant::new(permissions, ConnectionPolicy::default()),
-        );
+        self.shared
+            .bridge
+            .open_session(id, BridgeGrant::new(permissions, policy));
         id
     }
 
@@ -424,6 +432,39 @@ fn network_without_the_permission_is_denied_and_recorded() {
     assert_eq!(denials[0].target, "127.0.0.1:9");
 }
 
+/// SEC2-005: a target the blocked-address guard refuses is a recorded
+/// permission denial, never a dial-out — loopback without the opt-in, and cloud
+/// metadata regardless.
+#[test]
+fn a_blocked_address_is_denied_and_recorded() {
+    let mut h = Harness::new();
+    let net = || PermissionSet::from_parts([PluginPermission::Network], &[]);
+    let plain = h.session_with(net(), ConnectionPolicy::default());
+    let local = h.session(net());
+    for (request_id, session, host) in [
+        (1, plain, "127.0.0.1"),
+        (2, plain, "169.254.169.254"),
+        (3, local, "169.254.169.254"),
+        (4, local, "100.100.100.200"),
+    ] {
+        h.request(
+            request_id,
+            session,
+            BridgeOp::OpenConnection {
+                host: host.into(),
+                port: 9,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            status(&h.reply_to(request_id)),
+            PluginStatus::PermissionDenied,
+            "{host} must be refused"
+        );
+    }
+    assert_eq!(h.shared.bridge.denials().len(), 4);
+}
+
 /// A local TCP echo server; returns its port.
 fn echo_server() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -669,7 +710,7 @@ fn denial_targets_are_sanitised_and_bounded() {
 fn the_connect_deadline_covers_the_policy_timeout() {
     let grant = BridgeGrant::new(
         PermissionSet::from_parts([], &[]),
-        ConnectionPolicy::new(1, Duration::from_secs(5)),
+        ConnectionPolicy::new(1, Duration::from_secs(5)).with_local_network(true),
     );
     assert!(grant.connect_deadline() > Duration::from_secs(5));
 }
@@ -696,7 +737,7 @@ fn an_approved_connection_passes_the_socket_over_the_channel() {
         id,
         BridgeGrant::new(
             PermissionSet::from_parts([PluginPermission::Network], &[]),
-            ConnectionPolicy::default(),
+            ConnectionPolicy::default().with_local_network(true),
         ),
     );
     let port = echo_server();
@@ -777,7 +818,7 @@ fn a_passed_socket_is_counted_before_its_reply_is_sent() {
         id,
         BridgeGrant::new(
             PermissionSet::from_parts([PluginPermission::Network], &[]),
-            ConnectionPolicy::default(),
+            ConnectionPolicy::default().with_local_network(true),
         ),
     );
     shared
@@ -844,7 +885,7 @@ fn a_socket_passed_into_a_full_channel_waits_for_room() {
         id,
         BridgeGrant::new(
             PermissionSet::from_parts([PluginPermission::Network], &[]),
-            ConnectionPolicy::default(),
+            ConnectionPolicy::default().with_local_network(true),
         ),
     );
     shared
