@@ -15,12 +15,15 @@
 //! is given keeps working. Lookups of anything else under the home folder fail
 //! with `ENOENT`, whatever landlock does or does not mediate.
 //!
-//! A [`Plan`] is built in full before the runner forks or unshares: the
-//! folders to keep are opened first (as `O_PATH` descriptors, bound through
-//! `/proc/self/fd/<n>` once the `tmpfs` hides their paths) and every path is
-//! a ready `CString`, so [`Plan::run`] makes only async-signal-safe system
-//! calls and can run in the throw-away child that tests whether the namespace
-//! layer is available.
+//! A [`Plan`] is built in full before the runner forks or unshares — every
+//! path a ready `CString` — so [`Plan::run`] allocates nothing and makes only
+//! async-signal-safe system calls, and can run in the throw-away child that
+//! tests whether the namespace layer is available. The folders to keep are
+//! opened (as `O_PATH` descriptors) by [`Plan::run`] itself, inside the new
+//! mount namespace and before the `tmpfs` hides their paths, then bound
+//! through `/proc/self/fd/<n>`: a bind mount's source must be a mount of the
+//! caller's own namespace, so a descriptor opened before `unshare` would be
+//! refused with `EINVAL`.
 //!
 //! The process's working directory is moved to the data folder (or `/`) at
 //! the end: a working directory inside the masked folder would keep a
@@ -29,9 +32,7 @@
 
 use std::ffi::{CStr, CString};
 use std::io;
-use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use super::super::SandboxPolicy;
@@ -40,6 +41,10 @@ use super::super::SandboxPolicy;
 /// readable to it, never writable once remounted read-only.
 const TMPFS_OPTIONS: &CStr = c"mode=0755";
 
+/// How many folders one plan can keep (the install and the data folder need
+/// two; the descriptors live in a fixed array on [`Plan::run`]'s stack).
+const MAX_KEPT: usize = 8;
+
 /// One mount-namespace operation.
 #[derive(Debug)]
 enum Step {
@@ -47,10 +52,12 @@ enum Step {
     Private,
     /// Mount an empty `tmpfs` over the folder.
     Tmpfs(CString),
+    /// Open a kept folder (`O_PATH`) into descriptor slot `slot`.
+    Open { path: CString, slot: usize },
     /// Create a folder inside the `tmpfs` (an existing one is fine).
     MkDir(CString),
-    /// Bind-mount `source` (a `/proc/self/fd/<n>` link) at `target`.
-    Bind { source: CString, target: CString },
+    /// Bind-mount the folder held in slot `slot` at `target`, then close it.
+    Bind { slot: usize, target: CString },
     /// Make the `tmpfs` at the folder read-only.
     ReadOnly(CString),
     /// Change the working directory.
@@ -65,9 +72,6 @@ pub type StepError = (&'static str, i32);
 #[derive(Debug, Default)]
 pub struct Plan {
     steps: Vec<Step>,
-    /// The kept folders, opened before their paths are masked; closed when
-    /// the plan is dropped.
-    fds: Vec<OwnedFd>,
 }
 
 fn c_path(path: &Path) -> io::Result<CString> {
@@ -105,24 +109,33 @@ impl Plan {
         Self::mask(&denied, &keep, &workdir)
     }
 
-    /// The plan the availability probe runs without a policy: the same kinds
-    /// of operations (a private mount tree, a `tmpfs` remounted read-only) on
-    /// the temporary folder, inside the probe's own throw-away namespace.
+    /// The plan the availability probe runs without a policy: the same
+    /// operations as a real plan, on the temporary folder and inside the
+    /// probe's own throw-away namespace — keep the folder itself, mask it with
+    /// a `tmpfs`, bind the kept folder back below the mask, make the mask
+    /// read-only.
     #[must_use]
     pub fn probe() -> Self {
         let temp = std::env::temp_dir();
         let mut plan = Self::default();
         plan.steps.push(Step::Private);
-        if let Ok(path) = c_path(&temp).and_then(|p| {
-            if is_dir(&temp) {
-                Ok(p)
-            } else {
-                Err(io::ErrorKind::NotFound.into())
-            }
-        }) {
-            plan.steps.push(Step::Tmpfs(path.clone()));
-            plan.steps.push(Step::ReadOnly(path));
+        let paths = c_path(&temp).and_then(|t| Ok((t, c_path(&temp.join("termihub-probe"))?)));
+        if let (true, Ok((temp, inner))) = (is_dir(&temp), paths) {
+            plan.steps.extend([
+                Step::Open {
+                    path: temp.clone(),
+                    slot: 0,
+                },
+                Step::Tmpfs(temp.clone()),
+                Step::MkDir(inner.clone()),
+                Step::Bind {
+                    slot: 0,
+                    target: inner,
+                },
+                Step::ReadOnly(temp),
+            ]);
         }
+        plan.steps.push(Step::Chdir(c"/".to_owned()));
         plan
     }
 
@@ -137,29 +150,39 @@ impl Plan {
                 .into_iter()
                 .filter(|d| !keep.iter().any(|k| d.starts_with(k)))
                 .collect();
+        if keep.len() > MAX_KEPT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "too many folders to keep",
+            ));
+        }
         let mut plan = Self::default();
         plan.steps.push(Step::Private);
         for dir in &denied {
+            let kept: Vec<(usize, &PathBuf)> = keep
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| k.starts_with(dir))
+                .collect();
+            // Open them first: once the tmpfs is mounted their paths name the
+            // empty mask, while the descriptors still name the folders.
+            for (slot, path) in &kept {
+                plan.steps.push(Step::Open {
+                    path: c_path(path)?,
+                    slot: *slot,
+                });
+            }
             plan.steps.push(Step::Tmpfs(c_path(dir)?));
-            for kept in keep.iter().filter(|k| k.starts_with(dir)) {
-                // Open it now: once the tmpfs is mounted its path names the
-                // empty mask, while the descriptor still names the folder.
-                let fd = OwnedFd::from(
-                    std::fs::OpenOptions::new()
-                        .read(true)
-                        .custom_flags(libc::O_PATH | libc::O_DIRECTORY)
-                        .open(kept)?,
-                );
-                let mut path = dir.clone();
-                for part in kept.strip_prefix(dir).unwrap_or(Path::new("")) {
-                    path.push(part);
-                    plan.steps.push(Step::MkDir(c_path(&path)?));
+            for (slot, path) in kept {
+                let mut parent = dir.clone();
+                for part in path.strip_prefix(dir).unwrap_or(Path::new("")) {
+                    parent.push(part);
+                    plan.steps.push(Step::MkDir(c_path(&parent)?));
                 }
                 plan.steps.push(Step::Bind {
-                    source: c_path(Path::new(&format!("/proc/self/fd/{}", fd.as_raw_fd())))?,
-                    target: c_path(kept)?,
+                    slot,
+                    target: c_path(path)?,
                 });
-                plan.fds.push(fd);
             }
             plan.steps.push(Step::ReadOnly(c_path(dir)?));
         }
@@ -183,6 +206,16 @@ impl Plan {
     /// `CAP_SYS_ADMIN` in the user namespace that owns it. Async-signal-safe:
     /// only system calls on memory prepared by the constructor.
     pub fn run(&self) -> Result<(), StepError> {
+        let mut fds: [libc::c_int; MAX_KEPT] = [-1; MAX_KEPT];
+        let result = self.run_steps(&mut fds);
+        for fd in fds.into_iter().filter(|fd| *fd >= 0) {
+            // SAFETY: a descriptor `run_steps` opened and did not close.
+            unsafe { libc::close(fd) };
+        }
+        result
+    }
+
+    fn run_steps(&self, fds: &mut [libc::c_int; MAX_KEPT]) -> Result<(), StepError> {
         let check = |what: &'static str, rc: libc::c_int| {
             if rc == 0 {
                 Ok(())
@@ -213,6 +246,19 @@ impl Plan {
                         TMPFS_OPTIONS.as_ptr().cast(),
                     )
                 })?,
+                Step::Open { path, slot } => {
+                    // SAFETY: as above.
+                    let fd = unsafe {
+                        libc::open(
+                            path.as_ptr(),
+                            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                        )
+                    };
+                    if fd < 0 {
+                        return Err(("open a kept folder", super::namespaces::errno()));
+                    }
+                    fds[*slot] = fd;
+                }
                 Step::MkDir(dir) => {
                     // SAFETY: as above.
                     let rc = unsafe { libc::mkdir(dir.as_ptr(), 0o755) };
@@ -220,15 +266,23 @@ impl Plan {
                         return Err(("create a mount point", super::namespaces::errno()));
                     }
                 }
-                Step::Bind { source, target } => check("bind a kept folder", unsafe {
-                    libc::mount(
-                        source.as_ptr(),
-                        target.as_ptr(),
-                        null,
-                        libc::MS_BIND | libc::MS_REC,
-                        std::ptr::null(),
-                    )
-                })?,
+                Step::Bind { slot, target } => {
+                    let source = FdPath::new(fds[*slot]);
+                    // SAFETY: as above; `source` is NUL-terminated.
+                    let rc = unsafe {
+                        libc::mount(
+                            source.as_ptr(),
+                            target.as_ptr(),
+                            null,
+                            libc::MS_BIND | libc::MS_REC,
+                            std::ptr::null(),
+                        )
+                    };
+                    check("bind a kept folder", rc)?;
+                    // SAFETY: the descriptor opened by `Step::Open`.
+                    unsafe { libc::close(fds[*slot]) };
+                    fds[*slot] = -1;
+                }
                 Step::ReadOnly(dir) => check("make the masking tmpfs read-only", unsafe {
                     libc::mount(
                         null,
@@ -252,6 +306,39 @@ impl Plan {
     }
 }
 
+/// `/proc/self/fd/<fd>` as a NUL-terminated string on the stack (no
+/// allocation: [`Plan::run`] must stay async-signal-safe).
+struct FdPath {
+    bytes: [u8; 32],
+}
+
+impl FdPath {
+    fn new(fd: libc::c_int) -> Self {
+        const PREFIX: &[u8] = b"/proc/self/fd/";
+        let mut bytes = [0u8; 32];
+        bytes[..PREFIX.len()].copy_from_slice(PREFIX);
+        let mut digits = [0u8; 10];
+        let mut n = fd.unsigned_abs();
+        let mut len = 0;
+        loop {
+            digits[len] = b'0' + (n % 10) as u8;
+            len += 1;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        for (i, digit) in digits[..len].iter().rev().enumerate() {
+            bytes[PREFIX.len() + i] = *digit;
+        }
+        Self { bytes }
+    }
+
+    fn as_ptr(&self) -> *const libc::c_char {
+        self.bytes.as_ptr().cast()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,8 +349,11 @@ mod tests {
             .map(|s| match s {
                 Step::Private => "private".to_owned(),
                 Step::Tmpfs(d) => format!("tmpfs {}", d.to_string_lossy()),
+                Step::Open { path, slot } => format!("open {slot} {}", path.to_string_lossy()),
                 Step::MkDir(d) => format!("mkdir {}", d.to_string_lossy()),
-                Step::Bind { target, .. } => format!("bind {}", target.to_string_lossy()),
+                Step::Bind { slot, target } => {
+                    format!("bind {slot} {}", target.to_string_lossy())
+                }
                 Step::ReadOnly(d) => format!("ro {}", d.to_string_lossy()),
                 Step::Chdir(d) => format!("chdir {}", d.to_string_lossy()),
             })
@@ -292,19 +382,20 @@ mod tests {
             steps(&plan),
             vec![
                 "private".to_owned(),
+                format!("open 0 {h}/plugins/.data/acme"),
+                format!("open 1 {h}/plugins/acme"),
                 format!("tmpfs {h}"),
                 format!("mkdir {h}/plugins"),
                 format!("mkdir {h}/plugins/.data"),
                 format!("mkdir {h}/plugins/.data/acme"),
-                format!("bind {h}/plugins/.data/acme"),
+                format!("bind 0 {h}/plugins/.data/acme"),
                 format!("mkdir {h}/plugins"),
                 format!("mkdir {h}/plugins/acme"),
-                format!("bind {h}/plugins/acme"),
+                format!("bind 1 {h}/plugins/acme"),
                 format!("ro {h}"),
                 format!("chdir {h}/plugins/.data/acme"),
             ]
         );
-        assert_eq!(plan.fds.len(), 2, "one descriptor per kept folder");
         assert_eq!(plan.masked(), vec![c_path(&home).unwrap().as_c_str()]);
     }
 
@@ -324,7 +415,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(steps(&plan), vec!["private", "chdir /"]);
-        assert!(plan.fds.is_empty());
 
         let outer = root.join("outer");
         std::fs::create_dir_all(outer.join("nested")).unwrap();
@@ -349,7 +439,23 @@ mod tests {
         let plan = Plan::for_policy(&policy).unwrap();
         let s = steps(&plan);
         assert_eq!(s.last().map(String::as_str), Some("chdir /"));
-        assert!(s.contains(&format!("bind {}", install.display())));
+        assert!(s.contains(&format!("bind 0 {}", install.display())));
         assert!(!s.iter().any(|step| step.contains("absent")));
+    }
+
+    #[test]
+    fn descriptor_paths_are_spelled_without_allocating() {
+        let read = |fd| {
+            let path = FdPath::new(fd);
+            // SAFETY: `FdPath` is NUL-terminated.
+            unsafe { CStr::from_ptr(path.as_ptr()) }
+                .to_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(read(0), "/proc/self/fd/0");
+        assert_eq!(read(7), "/proc/self/fd/7");
+        assert_eq!(read(255), "/proc/self/fd/255");
+        assert_eq!(read(i32::MAX), "/proc/self/fd/2147483647");
     }
 }

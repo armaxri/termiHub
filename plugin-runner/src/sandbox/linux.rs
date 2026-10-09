@@ -42,7 +42,7 @@
 //!    namespace layer is unavailable too and Yama does not restrict `ptrace`
 //!    (`ptrace_scope` 0, or no Yama): nothing would then keep the plugin from
 //!    opening `/proc/<pid>/mem` of termiHub or another program of the user
-//!    for writing (#4342, see [`check_reduced_isolation`]).
+//!    for writing (#4342, see `check_reduced_isolation`).
 //! 4. **seccomp** ([`layer::SECCOMP`]) — required: if it cannot be installed
 //!    the setup fails and the plugin never loads. See [`filters`]. Its
 //!    `EPERM` denials of network and signal calls are reported to the host as
@@ -319,7 +319,7 @@ fn is_dir(fd: &PathFd) -> bool {
 /// * **IPC** — no access to the host's System V IPC objects and POSIX message
 ///   queues.
 /// * **mount** (#4342) — a private mount tree in which the home folder is
-///   masked ([`mask`](super::mask)), so a plugin cannot even `stat` the user's
+///   masked ([`mask`]), so a plugin cannot even `stat` the user's
 ///   files, which landlock does not mediate.
 ///
 /// Whether the kernel allows it is first tried in a throw-away child
