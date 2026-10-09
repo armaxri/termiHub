@@ -266,7 +266,65 @@ pub fn failure_state(kind: SidecarFailureKind) -> GraphicalState {
     match kind {
         SidecarFailureKind::Auth => GraphicalState::AuthFailed,
         SidecarFailureKind::Connect | SidecarFailureKind::Timeout => GraphicalState::ConnectFailed,
+        SidecarFailureKind::ServerClosed => GraphicalState::ServerClosed,
+        SidecarFailureKind::Protocol => GraphicalState::Disconnected,
     }
+}
+
+/// How the sidecar's driver loop ended once the session was active (#4321).
+#[derive(Debug, Clone)]
+pub enum SessionEnd {
+    /// The transport closed, the host disconnected or the IPC failed: an
+    /// ordinary drop the desktop may auto-reconnect from. No failure is sent.
+    Dropped,
+    /// The server ended the session gracefully, with this reason.
+    Server(GracefulDisconnectReason),
+    /// A typed failure ended the session.
+    Failed(SidecarFailureKind, String),
+}
+
+/// The typed [`SidecarMessage::Failure`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::Failure)
+/// a [`SessionEnd`] reports, or `None` for an ordinary drop.
+///
+/// A graceful server end is a deliberate one — a remote logoff, an admin
+/// disconnect, another client taking the session over, an idle timeout — so it
+/// is [`SidecarFailureKind::ServerClosed`] and the desktop does not
+/// auto-reconnect into it (re-dialling would log the user straight back in).
+/// The caller handles a logon rejection ([`is_auth_disconnect`]) first.
+pub fn end_failure(end: &SessionEnd) -> Option<(SidecarFailureKind, String)> {
+    match end {
+        SessionEnd::Dropped => None,
+        SessionEnd::Server(reason) => {
+            Some((SidecarFailureKind::ServerClosed, reason.description()))
+        }
+        SessionEnd::Failed(kind, message) => Some((*kind, message.clone())),
+    }
+}
+
+/// The end of a session whose active stage could not process a server PDU
+/// (#4509). The PDU was read whole, so this is not a transport drop: the server
+/// sent data the client cannot handle, and a re-dial would meet it again.
+pub fn process_error_end(error: &dyn fmt::Display) -> SessionEnd {
+    SessionEnd::Failed(
+        SidecarFailureKind::Protocol,
+        format!("The RDP server sent data termiHub can't process: {error}"),
+    )
+}
+
+/// The end of a session whose server-driven deactivation-reactivation failed
+/// (#4509): an I/O error anywhere in the chain is a transport drop (retried);
+/// anything else is the server's protocol behaviour, terminal with its reason.
+pub fn reactivation_end(error: &anyhow::Error) -> SessionEnd {
+    if error
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+    {
+        return SessionEnd::Dropped;
+    }
+    SessionEnd::Failed(
+        SidecarFailureKind::Protocol,
+        format!("The RDP server's display reconfiguration failed: {error:#}"),
+    )
 }
 
 /// Whether an IronRDP connector error is a credential rejection.
@@ -589,5 +647,78 @@ mod tests {
             failure_state(SidecarFailureKind::Connect),
             GraphicalState::ConnectFailed
         );
+        assert_eq!(
+            failure_state(SidecarFailureKind::ServerClosed),
+            GraphicalState::ServerClosed
+        );
+        assert_eq!(
+            failure_state(SidecarFailureKind::Protocol),
+            GraphicalState::Disconnected
+        );
+    }
+
+    // ── How the driver loop ended (#4321, #4509) ──────────────────────
+
+    #[test]
+    fn a_remote_logoff_is_a_typed_server_close_with_its_reason() {
+        let logoff = format!(
+            "[Protocol independent error] {}",
+            ProtocolIndependentCode::LogoffByUser.description()
+        );
+        let end = SessionEnd::Server(GracefulDisconnectReason::Other(logoff.clone()));
+        assert_eq!(
+            end_failure(&end),
+            Some((SidecarFailureKind::ServerClosed, logoff))
+        );
+    }
+
+    #[test]
+    fn a_bare_server_initiated_end_is_a_server_close() {
+        let end = SessionEnd::Server(GracefulDisconnectReason::ServerInitiated);
+        let (kind, message) = end_failure(&end).expect("typed");
+        assert_eq!(kind, SidecarFailureKind::ServerClosed);
+        assert_eq!(message, "server initiated disconnect");
+    }
+
+    #[test]
+    fn a_transport_drop_reports_no_failure_so_the_desktop_reconnects() {
+        assert_eq!(end_failure(&SessionEnd::Dropped), None);
+    }
+
+    #[test]
+    fn a_typed_failure_passes_through() {
+        let end = SessionEnd::Failed(SidecarFailureKind::Protocol, "bad pdu".into());
+        assert_eq!(
+            end_failure(&end),
+            Some((SidecarFailureKind::Protocol, "bad pdu".into()))
+        );
+    }
+
+    #[test]
+    fn a_process_error_is_a_terminal_protocol_failure_with_its_reason() {
+        let SessionEnd::Failed(kind, message) = process_error_end(&"unexpected PDU type 0x42")
+        else {
+            panic!("a process error must be typed");
+        };
+        assert_eq!(kind, SidecarFailureKind::Protocol);
+        assert!(message.contains("unexpected PDU type 0x42"), "{message}");
+        assert!(message.starts_with("The RDP server sent data"), "{message}");
+    }
+
+    #[test]
+    fn a_reactivation_transport_error_is_an_ordinary_drop() {
+        let io = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset by peer");
+        let err = anyhow::Error::new(io).context("reactivation sequence");
+        assert!(matches!(reactivation_end(&err), SessionEnd::Dropped));
+    }
+
+    #[test]
+    fn a_reactivation_protocol_error_is_terminal_with_its_reason() {
+        let err = anyhow::anyhow!("unexpected capability set").context("reactivation sequence");
+        let SessionEnd::Failed(kind, message) = reactivation_end(&err) else {
+            panic!("a non-transport reactivation failure must be typed");
+        };
+        assert_eq!(kind, SidecarFailureKind::Protocol);
+        assert!(message.contains("unexpected capability set"), "{message}");
     }
 }

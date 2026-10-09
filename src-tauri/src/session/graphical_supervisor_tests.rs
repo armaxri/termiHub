@@ -50,7 +50,12 @@ enum Fatal {
     Connect,
     /// The server sent data the client cannot handle (#3479).
     Protocol,
+    /// The server ended the session on purpose — a remote logoff (#4321).
+    ServerClosed,
 }
+
+/// The reason a [`Fatal::ServerClosed`] backend reports.
+const SERVER_CLOSE_REASON: &str = "The user logged off.";
 
 /// The reason a [`Fatal::Protocol`] backend reports.
 const PROTOCOL_REASON: &str =
@@ -62,6 +67,7 @@ impl Fatal {
             Fatal::Auth => SessionError::AuthFailed,
             Fatal::Connect => SessionError::ConnectionFailed("tcp refused".into()),
             Fatal::Protocol => SessionError::ProtocolError(PROTOCOL_REASON.into()),
+            Fatal::ServerClosed => SessionError::ServerClosed(SERVER_CLOSE_REASON.into()),
         }
     }
 }
@@ -932,6 +938,117 @@ async fn transport_drop_without_a_typed_reason_is_still_retried() {
     })
     .await;
     assert!(!never_reconnected(&h.sink));
+}
+
+// ── A deliberate server end is not a drop (#4321) ─────────────────────
+
+#[tokio::test(start_paused = true)]
+async fn server_close_mid_session_rests_server_closed_with_zero_retries() {
+    // A remote logoff / admin disconnect must not be re-dialled: that would log
+    // the user straight back in. It rests in ServerClosed with the reason.
+    let h = open(serde_json::json!({}), vec![Dial::Ok, Dial::Ok]).await;
+    h.ctl.send_frame().await;
+    wait_until("first frame", || h.sink.frames.load(Ordering::SeqCst) == 1).await;
+
+    h.ctl.fail_live(Fatal::ServerClosed);
+    wait_until("server closed", || {
+        last_state(&h.sink) == Some(GraphicalState::ServerClosed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 1, "never re-dial after a server close");
+    assert!(never_reconnected(&h.sink));
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::ServerClosed, 0)]);
+    assert_eq!(
+        h.sink.last().unwrap().message.as_deref(),
+        Some(SERVER_CLOSE_REASON)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn server_close_on_first_connect_rests_server_closed() {
+    // xrdp ends a failed login with a bare server disconnect, before any
+    // frame: rest instead of looping on re-dials.
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::ServerClosed),
+        vec![Dial::Ok],
+    )
+    .await;
+    wait_until("server closed", || {
+        last_state(&h.sink) == Some(GraphicalState::ServerClosed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 1);
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::ServerClosed, 0)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn server_close_on_redial_stops_the_retry_loop() {
+    // A network loss is retried; if the re-dialled server then ends the
+    // session on purpose, the loop stops instead of spending the budget.
+    let h = open(
+        serde_json::json!({}),
+        vec![Dial::OkThenFail(Fatal::ServerClosed), Dial::Ok, Dial::Ok],
+    )
+    .await;
+    h.ctl.drop_stream();
+    wait_until("server closed", || {
+        last_state(&h.sink) == Some(GraphicalState::ServerClosed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 2, "one retry for the drop, none after");
+    assert_eq!(
+        h.sink.tail(3),
+        vec![
+            (GraphicalState::Reconnecting, 1),
+            (GraphicalState::ServerClosed, 1)
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_loss_retries_and_recovers_within_the_budget() {
+    // The same mid-session end without a typed reason is a network loss: it
+    // retries on the shared schedule and the session comes back.
+    let refused = || Dial::Err(SessionError::ConnectionFailed("unreachable".into()));
+    let mut redials = dials(2, refused);
+    redials.push(Dial::Ok);
+    let h = open(serde_json::json!({}), redials).await;
+    h.ctl.send_frame().await;
+    wait_until("first frame", || h.sink.frames.load(Ordering::SeqCst) == 1).await;
+    h.ctl.drop_stream();
+    wait_until("third re-dial", || h.ctl.dials() == 4).await;
+    h.ctl.send_frame().await;
+    wait_until("active again", || {
+        last_state(&h.sink) == Some(GraphicalState::Active)
+    })
+    .await;
+    assert_eq!(
+        h.sink.tail(3),
+        vec![
+            (GraphicalState::Reconnecting, 1),
+            (GraphicalState::Reconnecting, 2),
+            (GraphicalState::Reconnecting, 3),
+            (GraphicalState::Active, 0),
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn user_stop_during_a_redial_never_reconnects() {
+    // The user's Stop wins over Auto-Reconnect (maintainer decision): stopping
+    // while an attempt is dialling ends the session for good.
+    let h = open(serde_json::json!({}), vec![Dial::Ok, Dial::Ok]).await;
+    h.ctl.drop_stream();
+    wait_until("re-dial", || h.ctl.dials() == 2).await;
+    h.mgr.disconnect(&h.sid, h.sink.clone()).await.unwrap();
+    idle().await;
+    assert_eq!(h.ctl.dials(), 2, "no attempt after the Stop");
+    assert_eq!(last_state(&h.sink), Some(GraphicalState::Closed));
+    assert_eq!(h.mgr.session_count().await, 0);
 }
 
 #[tokio::test(start_paused = true)]

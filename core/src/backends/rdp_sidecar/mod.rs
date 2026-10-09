@@ -451,7 +451,9 @@ impl SidecarShared {
 /// The shared [`SessionError`] for a typed sidecar failure (#3390): a credential
 /// rejection is [`SessionError::AuthFailed`] — the same typed discriminant every
 /// other backend reports — a timeout the typed [`ConnectFailureKind::Timeout`],
-/// and anything else a connect failure.
+/// a deliberate server end [`SessionError::ServerClosed`] (#4321), a server
+/// protocol failure [`SessionError::ProtocolError`] (#4509), and anything else a
+/// connect failure.
 fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionError {
     match kind {
         SidecarFailureKind::Auth => SessionError::AuthFailed,
@@ -462,6 +464,8 @@ fn failure_to_session_error(kind: SidecarFailureKind, message: &str) -> SessionE
             kind: ConnectFailureKind::Timeout,
             message: message.to_string(),
         },
+        SidecarFailureKind::ServerClosed => SessionError::ServerClosed(message.to_string()),
+        SidecarFailureKind::Protocol => SessionError::ProtocolError(message.to_string()),
     }
 }
 
@@ -1859,6 +1863,41 @@ mod tests {
                 assert_eq!(msg, "RDP TCP connect failed")
             }
             other => panic!("expected ConnectionFailed, got {other:?}"),
+        }
+    }
+
+    /// A deliberate server end (#4321) is typed, so the supervisor rests the
+    /// session instead of auto-reconnecting.
+    #[tokio::test]
+    async fn typed_server_close_maps_to_server_closed() {
+        let (fatal, closed) = fatal_after(vec![
+            SidecarMessage::State(GraphicalState::ServerClosed),
+            SidecarMessage::Failure {
+                kind: SidecarFailureKind::ServerClosed,
+                message: "The user logged off.".to_string(),
+            },
+        ])
+        .await;
+        assert!(closed);
+        match fatal {
+            Some(SessionError::ServerClosed(reason)) => assert_eq!(reason, "The user logged off."),
+            other => panic!("expected ServerClosed, got {other:?}"),
+        }
+    }
+
+    /// A server protocol failure (#4509) carries its reason verbatim.
+    #[tokio::test]
+    async fn typed_protocol_failure_maps_to_protocol_error() {
+        let (fatal, _) = fatal_after(vec![SidecarMessage::Failure {
+            kind: SidecarFailureKind::Protocol,
+            message: "The RDP server sent data termiHub can't process.".to_string(),
+        }])
+        .await;
+        match fatal {
+            Some(SessionError::ProtocolError(reason)) => {
+                assert_eq!(reason, "The RDP server sent data termiHub can't process.")
+            }
+            other => panic!("expected ProtocolError, got {other:?}"),
         }
     }
 

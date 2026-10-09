@@ -1117,7 +1117,7 @@ impl GraphicalSessionManager {
                     &sink,
                     session_id,
                     GraphicalState::Resizing,
-                    sm.reconnect_attempts(),
+                    sm.reconnect_attempt(),
                     None,
                 );
             }
@@ -1135,7 +1135,7 @@ impl GraphicalSessionManager {
         {
             let mut sm = state.lock().await;
             let s = sm.resize_complete();
-            emit_state(&sink, session_id, s, sm.reconnect_attempts(), None);
+            emit_state(&sink, session_id, s, sm.reconnect_attempt(), None);
         }
         result
     }

@@ -31,6 +31,9 @@
 //!   reset the budget on every dial and loop forever.
 //! - **Auto-Reconnect off / budget spent**: rest in `Disconnected` (the manual
 //!   reconnect prompt), as before.
+//! - **One budget.** The canonical engine is the only reconnect authority
+//!   (#4321): [`SessionStateMachine`] has no attempt cap of its own and only
+//!   records the attempt the engine entered, for the emitted state.
 //!
 //! # Non-retryable ends (never auto-reconnect)
 //!
@@ -65,6 +68,13 @@
 //!   **terminal** — `Disconnected` with [`REJECTED_FRAMES_MESSAGE`] and no
 //!   retry. Re-dialling the same server would most likely replay the same
 //!   hostile stream in a loop; the user can still reconnect manually.
+//! - **Server ended the session on purpose** (#4321): the backend reports
+//!   [`SessionError::ServerClosed`] on `fatal_error` — an RDP remote logoff, an
+//!   administrator disconnect or any other graceful server-side end. The session
+//!   rests in `ServerClosed` ("Session ended by the server", with a manual
+//!   Reconnect) and is never re-dialled, on the first connect, mid-session and on
+//!   a re-dial alike. VNC has no protocol-level "session ended" signal — its
+//!   server just closes the socket — so a VNC close stays an ordinary drop.
 //! - **Evicted** (SM-003) does not exist for graphical sessions: they have no
 //!   daemon-side single-attach ownership, so there is nothing that can evict
 //!   them. Should one ever be added it must join the list above.
@@ -247,6 +257,9 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     /// - [`SessionError::AuthFailed`] always rests in `AuthFailed`.
     /// - [`SessionError::ProtocolError`] always rests in `Disconnected` with its
     ///   reason (#3479): the server would replay the same data on a re-dial.
+    /// - [`SessionError::ServerClosed`] always rests in `ServerClosed` with the
+    ///   server's reason (#4321): the server ended the session on purpose, and a
+    ///   re-dial would log the user straight back in.
     /// - Any other typed failure rests in `ConnectFailed` only for the first
     ///   generation that never painted — the asynchronous twin of a failed
     ///   initial `connect()`.
@@ -258,6 +271,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         match fatal {
             SessionError::AuthFailed => Some((GraphicalState::AuthFailed, fatal.to_string())),
             SessionError::ProtocolError(reason) => Some((GraphicalState::Disconnected, reason)),
+            SessionError::ServerClosed(reason) => Some((GraphicalState::ServerClosed, reason)),
             other if !retrying && !end.painted && !end.aborted => {
                 Some((GraphicalState::ConnectFailed, other.to_string()))
             }
@@ -350,21 +364,20 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         None
     }
 
-    /// Enter `Reconnecting` for `attempt` and tell the frontend. Returns
-    /// `false` when the session was closed meanwhile.
+    /// Enter `Reconnecting` for the engine's `attempt` and tell the frontend.
+    /// Returns `false` when the user closed the session meanwhile — a Stop is
+    /// never overridden by Auto-Reconnect.
     async fn begin_attempt(&self, attempt: i64) -> bool {
         let mut sm = self.state.lock().await;
-        if sm.state() == GraphicalState::Closed {
+        let attempt = u32::try_from(attempt).unwrap_or(u32::MAX);
+        if sm.enter_reconnecting(attempt) != GraphicalState::Reconnecting {
             return false;
         }
-        sm.connection_dropped();
-        sm.reconnect_attempt_failed();
-        sm.begin_reconnect();
         emit_state(
             &self.sink,
             &self.session_id,
             GraphicalState::Reconnecting,
-            u32::try_from(attempt).unwrap_or(u32::MAX),
+            attempt,
             None,
         );
         true
@@ -379,16 +392,14 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         let state = match target {
             GraphicalState::AuthFailed => sm.auth_failed(),
             GraphicalState::ConnectFailed => sm.connect_failed(),
-            _ => {
-                sm.connection_dropped();
-                sm.reconnect_attempt_failed()
-            }
+            GraphicalState::ServerClosed => sm.server_closed(),
+            _ => sm.disconnected(),
         };
         emit_state(
             &self.sink,
             &self.session_id,
             state,
-            sm.reconnect_attempts(),
+            sm.reconnect_attempt(),
             message,
         );
     }
