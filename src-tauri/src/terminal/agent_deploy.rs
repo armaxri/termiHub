@@ -9,9 +9,9 @@
 //!   version.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
@@ -123,17 +123,6 @@ pub struct AgentDeployConfig {
     /// Override the remote install path (defaults to `~/.local/bin/termihub-agent`).
     #[cfg_attr(test, ts(optional))]
     pub remote_path: Option<String>,
-}
-
-/// Progress event emitted during agent deployment.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentDeployProgress {
-    pub agent_id: String,
-    pub step: String,
-    pub message: String,
-    /// Progress fraction (0.0–1.0), or -1 for indeterminate.
-    pub progress: f64,
 }
 
 /// A host (other than the initiating desktop) connected to the agent when an
@@ -291,13 +280,7 @@ pub fn deploy_agent(
 
     // 1. SSH connect
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "connecting",
-        "Connecting to host…",
-        -1.0,
-    );
+    log_progress(agent_id, "connecting", "Connecting to host…", -1.0);
     // Expand `${env:…}` / `~` in host / username / key path like the agent
     // connect path does (#3661); the password stays verbatim.
     let ssh_config = config.clone().expand().to_ssh_config();
@@ -305,13 +288,7 @@ pub fn deploy_agent(
 
     // 2. Detect remote arch
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "detecting",
-        "Detecting remote system…",
-        -1.0,
-    );
+    log_progress(agent_id, "detecting", "Detecting remote system…", -1.0);
     let (remote_os, remote_arch) = detect_remote_info(&session)?;
 
     let arch_suffix = agent_binary::artifact_name_for_os_arch(&remote_os, &remote_arch)
@@ -323,16 +300,9 @@ pub fn deploy_agent(
 
     // 3. Resolve binary locally
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "resolving",
-        "Resolving agent binary…",
-        0.1,
-    );
+    log_progress(agent_id, "resolving", "Resolving agent binary…", 0.1);
     let version = env!("CARGO_PKG_VERSION");
     let agent_id_owned = agent_id.to_string();
-    let app_clone = app_handle.clone();
     let binary_path =
         agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, move |dl, total| {
             let pct = if total > 0 {
@@ -340,8 +310,7 @@ pub fn deploy_agent(
             } else {
                 -1.0
             };
-            emit_progress(
-                &app_clone,
+            log_progress(
                 &agent_id_owned,
                 "downloading",
                 &format!("Downloading agent binary ({dl} bytes)…"),
@@ -351,8 +320,7 @@ pub fn deploy_agent(
         .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
 
     // 4. Validate ELF architecture
-    emit_progress(
-        app_handle,
+    log_progress(
         agent_id,
         "validating",
         "Validating binary architecture…",
@@ -380,7 +348,7 @@ pub fn deploy_agent(
 
     // 6–9. Upload, install, verify, resolve the install path.
     let progress = |step: &str, message: &str, pct: f64| {
-        emit_progress(app_handle, agent_id, step, message, pct);
+        log_progress(agent_id, step, message, pct);
     };
     install_agent_bytes(
         &session,
@@ -557,13 +525,7 @@ where
     }
 
     // 1. Shut down the running agent
-    emit_progress(
-        app_handle,
-        agent_id,
-        "shutdown",
-        "Shutting down running agent…",
-        -1.0,
-    );
+    log_progress(agent_id, "shutdown", "Shutting down running agent…", -1.0);
     match shutdown_fn() {
         Ok(detached) => {
             info!("Agent shut down gracefully ({detached} sessions detached)");
@@ -609,13 +571,7 @@ pub fn stage_agent_binary(
 
     // 1. SSH connect
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "connecting",
-        "Connecting to host…",
-        -1.0,
-    );
+    log_progress(agent_id, "connecting", "Connecting to host…", -1.0);
     // Expand `${env:…}` / `~` in host / username / key path like the agent
     // connect path does (#3661); the password stays verbatim.
     let ssh_config = config.clone().expand().to_ssh_config();
@@ -623,13 +579,7 @@ pub fn stage_agent_binary(
 
     // 2. Detect remote OS/arch
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "detecting",
-        "Detecting remote system…",
-        -1.0,
-    );
+    log_progress(agent_id, "detecting", "Detecting remote system…", -1.0);
     let (remote_os, remote_arch) = detect_remote_info(&session)?;
 
     // Windows agents cannot self-swap a running binary (apply.rs is Unix-only):
@@ -657,16 +607,9 @@ pub fn stage_agent_binary(
 
     // 3. Resolve binary locally
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "resolving",
-        "Resolving agent binary…",
-        0.1,
-    );
+    log_progress(agent_id, "resolving", "Resolving agent binary…", 0.1);
     let version = env!("CARGO_PKG_VERSION");
     let agent_id_owned = agent_id.to_string();
-    let app_clone = app_handle.clone();
     let binary_path =
         agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, move |dl, total| {
             let pct = if total > 0 {
@@ -674,8 +617,7 @@ pub fn stage_agent_binary(
             } else {
                 -1.0
             };
-            emit_progress(
-                &app_clone,
+            log_progress(
                 &agent_id_owned,
                 "downloading",
                 &format!("Downloading agent binary ({dl} bytes)…"),
@@ -685,8 +627,7 @@ pub fn stage_agent_binary(
         .map_err(|e| TerminalError::RemoteError(format!("Failed to resolve binary: {e}")))?;
 
     // 4. Validate ELF architecture (POSIX hosts only reach here)
-    emit_progress(
-        app_handle,
+    log_progress(
         agent_id,
         "validating",
         "Validating binary architecture…",
@@ -713,13 +654,7 @@ pub fn stage_agent_binary(
     let upload_dir = prepare_posix_upload_dir(&session)?;
     let plan = posix_install_plan(remote_path, &upload_dir);
     bail_if_cancelled(cancel)?;
-    emit_progress(
-        app_handle,
-        agent_id,
-        "staging",
-        "Staging agent binary…",
-        0.4,
-    );
+    log_progress(agent_id, "staging", "Staging agent binary…", 0.4);
     let binary_bytes = std::fs::read(&binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
     // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
@@ -746,8 +681,7 @@ pub fn stage_agent_binary(
         binary_bytes.len(),
         plan.upload_path
     );
-    emit_progress(
-        app_handle,
+    log_progress(
         agent_id,
         "staged",
         "Binary staged; coordinating with connected hosts…",
@@ -802,16 +736,15 @@ fn rollback_partial_upload(
     }
 }
 
-fn emit_progress(app_handle: &AppHandle, agent_id: &str, step: &str, message: &str, progress: f64) {
-    let _ = app_handle.emit(
-        "agent-deploy-progress",
-        AgentDeployProgress {
-            agent_id: agent_id.to_string(),
-            step: step.to_string(),
-            message: message.to_string(),
-            progress,
-        },
-    );
+/// Trace one deploy/update step.
+///
+/// This used to emit an `agent-deploy-progress` event, but nothing in the
+/// frontend listened for it (DEAD2-004, #4344): the Update dialog follows the
+/// update through the `update_agent*` command results and the agents
+/// projection region. The steps stay as log lines for diagnostics.
+/// `progress` is a fraction (0.0–1.0), or -1 for indeterminate.
+fn log_progress(agent_id: &str, step: &str, message: &str, progress: f64) {
+    trace!(agent_id, step, progress, "agent deploy: {message}");
 }
 
 #[cfg(test)]
