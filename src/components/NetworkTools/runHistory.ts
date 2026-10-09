@@ -20,6 +20,7 @@ import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { tableToCsv, type ResultTable } from "./exportResults";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { newId } from "@/services/transport/ids";
 
 /** Rows sent to the backend per run; the backend trims further to its byte cap. */
 export const MAX_HISTORY_ROWS = 2000;
@@ -56,7 +57,7 @@ function currentRunLocation(tool: NetworkHistoryTool): RunLocation {
 /** Build a history record from a finished run (new id, `endedAt` = now). */
 export function buildRunRecord(run: FinishedRun, now: Date = new Date()): NetworkToolRun {
   const record: NetworkToolRun = {
-    id: crypto.randomUUID(),
+    id: newId(),
     tool: run.tool,
     params: run.params,
     runLocation: run.runLocation ?? currentRunLocation(run.tool),

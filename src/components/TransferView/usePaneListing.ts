@@ -4,7 +4,7 @@ import type { PaneSide } from "@/services/paneTransfer";
 import type { FileEntry } from "@/types/connection";
 import { errorMessage } from "@/utils/errorMessage";
 import { sortEntries } from "@/utils/fileBrowserNav";
-import { normalizeDirPath, parentDirPath } from "@/utils/fileDragMove";
+import { normalizeDirPath, parentDir } from "@/utils/paths";
 
 /** One pane's directory listing and navigation. */
 export interface PaneListing {
@@ -35,7 +35,7 @@ export function isRootPath(path: string): boolean {
  */
 function resolveListedPath(requested: string, entries: FileEntry[]): string {
   if (requested !== "~" || entries.length === 0) return requested;
-  return parentDirPath(entries[0].path);
+  return parentDir(entries[0].path);
 }
 
 /**
@@ -87,7 +87,7 @@ export function usePaneListing(
   const up = useCallback(async () => {
     const current = pathRef.current;
     if (!current || isRootPath(current)) return;
-    await navigate(parentDirPath(current));
+    await navigate(parentDir(current));
   }, [navigate]);
 
   // Initial listing, and a fresh start whenever the remote session changes.

@@ -25,12 +25,8 @@ import {
   seedTransferQueueRow,
 } from "./transferFeedback";
 import { toast } from "@/components/ui";
-import {
-  describeEntries,
-  joinDirPath,
-  pasteVerbLabels,
-  type PasteOptions,
-} from "@/utils/fileDragMove";
+import { describeEntries, pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
+import { getBasename, joinPath, normalizeDirPath, parentDir } from "@/utils/paths";
 
 /** How many skipped paths a toast names before summarising the rest. */
 const SKIPPED_NAMED = 3;
@@ -93,18 +89,9 @@ export function useLocalFileSystem() {
   );
 
   const navigateUp = useCallback(() => {
-    if (currentPath === "/") return;
-    // Windows drive root (e.g. "C:/" or "C:"): nothing above this
-    if (/^[A-Za-z]:\/?$/.test(currentPath)) return;
-    // Remove any trailing slash, then strip the last path segment
-    const noTrailing = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-    const parts = noTrailing.split("/");
-    parts.pop();
-    let parentPath = parts.join("/") || "/";
-    // A bare drive letter like "C:" becomes the drive root "C:/"
-    if (/^[A-Za-z]:$/.test(parentPath)) {
-      parentPath = parentPath + "/";
-    }
+    // A root (`/`, `C:/`, a UNC share) is its own parent: nothing above it.
+    const parentPath = parentDir(currentPath);
+    if (parentPath === normalizeDirPath(currentPath)) return;
     navigateTo(parentPath);
   }, [currentPath, navigateTo]);
 
@@ -115,9 +102,7 @@ export function useLocalFileSystem() {
 
   const createDirectory = useCallback(
     async (name: string) => {
-      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-      const dirPath = base ? `${base}/${name}` : `/${name}`;
-      await localMkdir(dirPath);
+      await localMkdir(joinPath(currentPath, name));
       refreshLocal();
     },
     [currentPath, refreshLocal]
@@ -125,9 +110,7 @@ export function useLocalFileSystem() {
 
   const createFile = useCallback(
     async (name: string) => {
-      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-      const filePath = base ? `${base}/${name}` : `/${name}`;
-      await localWriteFile(filePath, "");
+      await localWriteFile(joinPath(currentPath, name), "");
       refreshLocal();
     },
     [currentPath, refreshLocal]
@@ -143,9 +126,7 @@ export function useLocalFileSystem() {
 
   const renameEntry = useCallback(
     async (oldPath: string, newName: string) => {
-      const parentDir = oldPath.split("/").slice(0, -1).join("/") || "/";
-      const newPath = parentDir === "/" ? `/${newName}` : `${parentDir}/${newName}`;
-      await localRename(oldPath, newPath);
+      await localRename(oldPath, joinPath(parentDir(oldPath), newName));
       refreshLocal();
     },
     [refreshLocal]
@@ -169,9 +150,7 @@ export function useLocalFileSystem() {
 
   const createSymlink = useCallback(
     async (target: string, linkName: string) => {
-      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-      const linkPath = base ? `${base}/${linkName}` : `/${linkName}`;
-      await localCreateSymlink(target, linkPath);
+      await localCreateSymlink(target, joinPath(currentPath, linkName));
       refreshLocal();
     },
     [currentPath, refreshLocal]
@@ -183,11 +162,9 @@ export function useLocalFileSystem() {
 
   const uploadFileFromPath = useCallback(
     async (localPath: string) => {
-      const parts = localPath.replace(/\\/g, "/").split("/");
-      const fileName = parts[parts.length - 1] || "file";
-      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-      const destPath = base ? `${base}/${fileName}` : `/${fileName}`;
-      if (localPath === destPath) return;
+      const fileName = getBasename(localPath) || "file";
+      const destPath = joinPath(currentPath, fileName);
+      if (normalizeDirPath(localPath) === destPath) return;
       // An OS drop onto the local pane: a large file is a queued copy whose event
       // path owns the terminal toast, a small one a direct copy we toast here.
       const ok = await runMaybeTrackedTransfer(
@@ -273,7 +250,7 @@ export function useLocalFileSystem() {
           let tracked = false;
           const remote = srcSession ? await probePaneRemote(srcSession) : null;
           for (const clipEntry of clipboard.entries) {
-            const destPath = joinDirPath(destDir, clipEntry.name);
+            const destPath = joinPath(destDir, clipEntry.name);
             if (remote) {
               // Session → local: queued download or byte round-trip. A folder
               // is recreated and copied file by file, recorded in the

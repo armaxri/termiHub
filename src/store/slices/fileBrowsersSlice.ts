@@ -8,7 +8,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
 import type { FileEntry } from "@/types/connection";
-import { parentDirPath } from "@/utils/fileDragMove";
+import { parentDir } from "@/utils/paths";
 
 const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
 
@@ -97,7 +97,7 @@ export async function resolveSessionListedPath(
   entries: FileEntry[]
 ): Promise<string> {
   if (requested !== "~") return requested;
-  if (entries.length > 0) return parentDirPath(entries[0].path);
+  if (entries.length > 0) return parentDir(entries[0].path);
   try {
     const home = await sessionStat(sessionId, "~");
     return home?.path && home.path !== "~" ? home.path : requested;

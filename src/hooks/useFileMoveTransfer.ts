@@ -8,12 +8,12 @@ import { frontendDurableInfo, frontendLog } from "@/utils/frontendLog";
 import {
   describeEntries,
   findNameConflicts,
-  parentDirPath,
   planFileDrop,
   type FileTransferOperation,
   type PasteOptions,
 } from "@/utils/fileDragMove";
 import { errorMessage } from "@/utils/errorMessage";
+import { parentDir } from "@/utils/paths";
 
 /** A move/copy waiting on the user's overwrite confirmation. */
 export interface PendingFileMoveConflict {
@@ -90,7 +90,7 @@ export function useFileMoveTransfer({
         entries,
         operation: operation === "move" ? "cut" : "copy",
         sourceMode,
-        sourcePath: parentDirPath(entries[0].path),
+        sourcePath: parentDir(entries[0].path),
         terminalSessionId: sourceMode === "session" ? sessionId : null,
       };
       const verb = operation === "move" ? "Move" : "Copy";
