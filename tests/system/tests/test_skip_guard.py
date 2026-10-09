@@ -91,6 +91,11 @@ def test_a_lane_where_every_test_skipped_fails_even_when_allowlisted():
     assert any("all 1 collected tests skipped" in problem for problem in verdict.problems)
 
 
+def test_a_skipped_module_does_not_count_as_a_skipped_collected_test():
+    module = sg.Skip("tests/test_gone.py", "guided-manual test: pass --manual to run")
+    assert _evaluate("bulk-linux", [module], collected=1).ok
+
+
 def test_more_skips_than_the_baseline_fails():
     skips = [sg.Skip(f"tests/test_a.py::t{i}", _MANUAL.reason) for i in range(4)]
     verdict = _evaluate("bulk-linux", skips)

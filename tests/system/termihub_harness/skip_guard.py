@@ -173,7 +173,9 @@ def evaluate(
     unexpected = [skip for skip in skips if not any(entry.matches(skip) for entry in allowed)]
     if collected == 0:
         problems.append("collected no tests: the lane ran nothing")
-    elif len(skips) >= collected:
+    # A skipped *module* (``pytest.skip(allow_module_level=True)``) has no
+    # ``::`` in its node id and is not counted in ``collected``.
+    elif sum("::" in skip.nodeid for skip in skips) >= collected:
         problems.append(f"all {collected} collected tests skipped: the lane ran nothing")
     if unexpected:
         problems.append(
