@@ -15,6 +15,7 @@ import { useAppStore } from "@/store/appStore";
 import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { compareNames } from "@/utils/locale";
 
 /** Show the Files sidebar (expanding it if collapsed) without toggling it shut. */
 function showFilesSidebar(): void {
@@ -107,6 +108,6 @@ export async function listRemoteFolders(
   const folders = entries
     .filter((e) => e.isDirectory)
     .map((e) => ({ name: e.name, path: e.path }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => compareNames(a.name, b.name));
   return { path: opened.startDir, folders };
 }

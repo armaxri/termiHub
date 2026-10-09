@@ -61,6 +61,7 @@ import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferReg
 import "./FileEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { getBasename } from "@/utils/paths";
+import { modKeyAccelerator } from "@/services/keybindings";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;
@@ -1732,9 +1733,7 @@ export function FileEditor({
                 ? "This file is read-only — use “Save a copy…” or Download"
                 : listingReadonly
                   ? "This file is read-only on the server — saving is disabled"
-                  : isUnsavedScratch
-                    ? "Save As... (Ctrl+S)"
-                    : "Save (Ctrl+S)"
+                  : `${isUnsavedScratch ? "Save As..." : "Save"} (${modKeyAccelerator("S")})`
             }
             data-testid="file-editor-save"
           >

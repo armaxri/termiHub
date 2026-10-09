@@ -11,7 +11,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace, warn};
+#[cfg(test)]
+use tracing::debug;
+use tracing::{info, trace, warn};
 
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
@@ -26,6 +28,7 @@ use crate::utils::remote_exec::{
     run_remote_command, upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
+#[cfg(test)]
 use termihub_core::util::version;
 
 /// Default install path on the remote host.
@@ -33,11 +36,16 @@ const DEFAULT_REMOTE_PATH: &str = agent_install::POSIX_DEFAULT_INSTALL_PATH;
 
 // ── Probe ──────────────────────────────────────────────────────────────
 
+// The probe has no IPC caller since the `probe_remote_agent` Tauri command was
+// removed (#4570); it is kept test-only for the Windows SSH host suite
+// (`agent_manager/windows_ssh_host_tests.rs`).
+
 /// Result of probing a remote host for the agent binary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
-#[serde(rename_all = "camelCase")]
+#[cfg(test)]
+// The Windows suite reads `found`/`version`; the rest shows in its `{probe:?}`
+// failure messages, which dead-code analysis ignores.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct AgentProbeResult {
     /// Whether the agent binary was found on the remote host.
     pub found: bool,
@@ -57,6 +65,7 @@ pub struct AgentProbeResult {
 /// annotation (`termihub-agent 0.1.0 (branch: foo)`) or carrying a pre-release
 /// suffix (`termihub-agent 0.2.0-beta.1`). Only the version token is returned so
 /// annotations are ignored.
+#[cfg(test)]
 fn agent_version_token(output: &str) -> &str {
     output
         .strip_prefix("termihub-agent ")
@@ -74,6 +83,7 @@ fn agent_version_token(output: &str) -> &str {
 /// Uses the configured agent path (with `~/` → `$HOME/` expansion) so the
 /// binary is found even when `~/.local/bin` is not on the non-interactive
 /// SSH PATH.
+#[cfg(test)]
 pub fn probe_remote_agent(
     config: &RemoteAgentConfig,
     expected_version: &str,
@@ -757,36 +767,6 @@ fn log_progress(agent_id: &str, step: &str, message: &str, progress: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn probe_result_serde_round_trip() {
-        let result = AgentProbeResult {
-            found: true,
-            version: Some("0.1.0".to_string()),
-            remote_arch: "aarch64".to_string(),
-            remote_os: "Linux".to_string(),
-            compatible: true,
-        };
-        let json = serde_json::to_string(&result).unwrap();
-        let parsed: AgentProbeResult = serde_json::from_str(&json).unwrap();
-        assert!(parsed.found);
-        assert_eq!(parsed.version.as_deref(), Some("0.1.0"));
-        assert!(parsed.compatible);
-    }
-
-    #[test]
-    fn probe_result_not_found() {
-        let result = AgentProbeResult {
-            found: false,
-            version: None,
-            remote_arch: "x86_64".to_string(),
-            remote_os: "Linux".to_string(),
-            compatible: false,
-        };
-        let json = serde_json::to_string(&result).unwrap();
-        assert!(json.contains("\"found\":false"));
-        assert!(json.contains("\"version\":null"));
-    }
 
     #[test]
     fn deploy_config_serde() {

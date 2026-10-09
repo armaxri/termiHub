@@ -21,6 +21,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { BackupSectionRow, type SectionChoice } from "./BackupSectionRow";
 import { BackupCredentialsRow } from "./BackupCredentialsRow";
 import { getBasename } from "@/utils/paths";
+import { formatAbsoluteTime } from "@/utils/formatters";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
 
@@ -227,7 +228,7 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
           </div>
           {header && (
             <p className="credential-vault__note" data-testid="backup-restore-header">
-              Created {new Date(header.createdAt).toLocaleString()}
+              Created {formatAbsoluteTime(header.createdAt) || header.createdAt}
               {header.appVersion ? ` by termiHub ${header.appVersion}` : ""}
               {header.encrypted ? " · encrypted" : " · not encrypted"}
             </p>

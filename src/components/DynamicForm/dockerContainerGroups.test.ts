@@ -82,3 +82,24 @@ describe("composeServicesFromContainers (#3784)", () => {
     expect(groups[0].services.map((s) => s.value)).toEqual(["Blog/app"]);
   });
 });
+
+describe("docker grouping uses the shared name collator (#4374, I18N2-003)", () => {
+  it("orders compose projects naturally (proj2 before proj10)", () => {
+    const groups = groupContainersByComposeProject([
+      c("a", "proj10"),
+      c("b", "proj2"),
+      c("c", "Proj1"),
+    ]);
+    expect(groups.map((g) => g.project)).toEqual(["Proj1", "proj2", "proj10"]);
+  });
+
+  it("orders services naturally and keeps a deterministic tie-break on case", () => {
+    const groups = composeServicesFromContainers([
+      c("x1", "shop", "worker10"),
+      c("x2", "shop", "worker2"),
+      c("x3", "shop", "Web"),
+      c("x4", "shop", "web"),
+    ]);
+    expect(groups[0].services.map((s) => s.service)).toEqual(["Web", "web", "worker2", "worker10"]);
+  });
+});

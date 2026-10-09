@@ -29,7 +29,6 @@ import {
   sshTrustForget,
   shutdownAgent,
   createAgentFolder,
-  probeRemoteAgent,
   exportConnectionsEncrypted,
   resolveContainerSpawn,
   resolveShellSpawn,
@@ -427,25 +426,6 @@ describe("api response-validation (TFE-004)", () => {
         parentId: null,
       });
       expect(result).toEqual(folder);
-    });
-
-    it("probeRemoteAgent defaults expectedVersion to null and returns the probe", async () => {
-      const probe = {
-        found: true,
-        version: "1.2.3",
-        remoteArch: "x86_64",
-        remoteOs: "Linux",
-        compatible: true,
-      };
-      mockedInvoke.mockResolvedValue(probe);
-
-      const result = await probeRemoteAgent(agentConfig);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("probe_remote_agent", {
-        config: agentConfig,
-        expectedVersion: null,
-      });
-      expect(result).toEqual(probe);
     });
 
     it("exportConnectionsEncrypted forwards explicit nulls verbatim", async () => {

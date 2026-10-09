@@ -12,8 +12,8 @@ evidence:
   - src/components/DynamicForm/dockerContainerGroups.ts:68
   - src/components/Plugins/pluginPlatforms.ts:75
   - src/utils/locale.ts:103
-status: open
-resolution: ""
+status: fixed
+resolution: "#4374 — the remaining raw localeCompare sorts now use compareNames; an ESLint no-restricted-syntax rule forbids new ones"
 audit: 2026-10
 commit: 663465d52
 relation: regression

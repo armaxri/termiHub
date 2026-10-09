@@ -260,6 +260,9 @@ impl RemoteAgentConfig {
     /// POSIX hosts get the same `~/` → `$HOME/` expansion as
     /// [`agent_exec_command`] plus a `2>/dev/null` redirect. Windows hosts get
     /// a plain `--version` invocation with no POSIX redirect.
+    ///
+    /// Test-only: its sole caller is the test-only agent probe (#4570).
+    #[cfg(test)]
     pub fn agent_version_command(&self) -> String {
         let path = self.agent_path();
         if crate::terminal::agent_install::is_windows_path(path) {

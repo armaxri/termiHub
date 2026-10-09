@@ -9,8 +9,8 @@ subsystem: "src/components/TransferView"
 evidence:
   - src/components/TransferView/TransferPane.tsx:183
   - src/services/keybindings.ts:481
-status: open
-resolution: ""
+status: fixed
+resolution: "#4374 — TransferPane select-all reuses the physical-key eventKeyMatches matcher; unused keybindingHelpers.ts deleted"
 audit: 2026-10
 commit: 663465d52
 relation: regression

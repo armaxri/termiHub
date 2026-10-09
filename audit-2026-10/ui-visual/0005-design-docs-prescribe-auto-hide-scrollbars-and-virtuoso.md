@@ -14,8 +14,8 @@ evidence:
   - .claude/agents/ui-design.md:55
   - src/styles/global.css:50
   - package.json:42
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — concept + ui-design agent now say persistent scrollbar, current --shadow-focus, @tanstack/react-virtual; ledger synced"
 audit: 2026-10
 commit: 663465d52
 relation: new

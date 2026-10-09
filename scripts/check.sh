@@ -110,6 +110,15 @@ else
 fi
 
 echo ""
+echo "=== Doc code-reference drift ==="
+# Symbol-based `file` -> `Symbol` references in reference docs resolve (#4369).
+if node scripts/internal/check-doc-symbols.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1

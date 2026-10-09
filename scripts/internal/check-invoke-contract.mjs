@@ -70,12 +70,7 @@ export const INJECTED_TYPES = new Set([
  *
  * @type {Map<string, string>}
  */
-export const ORPHAN_ALLOWLIST = new Map([
-  [
-    "probe_remote_agent",
-    "removal deferred until #4363 (PR #4568) has rewritten probe_remote_agent — see #4570",
-  ],
-]);
+export const ORPHAN_ALLOWLIST = new Map();
 
 /**
  * Convert a Rust parameter name to the invoke key Tauri expects (heck's

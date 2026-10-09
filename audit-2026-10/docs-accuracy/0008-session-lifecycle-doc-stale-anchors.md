@@ -6,8 +6,8 @@ severity: low
 category: stale-reference
 is_workaround: false
 subsystem: "docs/session-lifecycle-state-machine.md"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — lifecycle doc uses symbol-based references, verified by scripts/internal/check-doc-symbols.mjs"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
