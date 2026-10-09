@@ -252,7 +252,7 @@ async fn reap_during_connect_leaves_a_consistent_state() {
 
     // The new connection's own task can still reap it, budget and all.
     let new_alive = manager.agents.lock().unwrap()["agent-a"].alive.clone();
-    new_alive.store(false, Ordering::SeqCst);
+    new_alive.stop();
     reap_agent(&reaper, "agent-a", &new_alive);
     assert!(!manager.agents.lock().unwrap().contains_key("agent-a"));
     assert!(!has_budget(&manager, "agent-a"));
@@ -392,9 +392,7 @@ async fn give_up_clears_alive_before_disconnected_is_observed() {
         if payload["session_id"].as_str() == Some("agent-a")
             && payload["state"].as_str() == Some("disconnected")
         {
-            sink.lock()
-                .unwrap()
-                .push(observed_alive.load(Ordering::SeqCst));
+            sink.lock().unwrap().push(observed_alive.is_alive());
         }
     });
 

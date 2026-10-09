@@ -11,7 +11,6 @@
 //! gap G3). The single sequential collect loop is the in-flight guard — no
 //! overlapping collects.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,6 +19,7 @@ use tracing::{debug, warn};
 
 use crate::config::SshConfig;
 use crate::errors::CoreError;
+use crate::monitoring::loop_control::{cancellable_sleep, LoopControls};
 use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
     MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
@@ -35,12 +35,6 @@ use super::jump_host::{connect_target, GatewayHold};
 /// Live-overridable per subscription via [`MonitoringProvider::set_interval`]
 /// (#1233); this is only the starting value.
 const MONITORING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MONITORING_INTERVAL_MS);
-
-/// How often a paused loop wakes to re-check whether it should resume (#1233).
-///
-/// Short enough that Resume feels immediate, long enough to keep an idle paused
-/// monitor cheap.
-const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
@@ -115,47 +109,8 @@ impl MonitoringTransport for SshTransport {
     }
 }
 
-/// Shared, live-updatable controls for a running collect loop (#1233).
-///
-/// The loop reads these every tick, so the provider's `set_interval` /
-/// `set_paused` methods can steer a running subscription without tearing it
-/// down. `interval_ms` is stored as an atomic so updates are lock-free.
-struct LoopControls {
-    /// Poll interval in milliseconds, read afresh before each wait.
-    interval_ms: AtomicU64,
-    /// When set, the loop skips collection but keeps the transport open.
-    paused: AtomicBool,
-}
-
-impl LoopControls {
-    fn new(interval: Duration) -> Self {
-        Self {
-            interval_ms: AtomicU64::new(interval.as_millis() as u64),
-            paused: AtomicBool::new(false),
-        }
-    }
-
-    fn interval(&self) -> Duration {
-        Duration::from_millis(self.interval_ms.load(Ordering::SeqCst).max(1))
-    }
-
-    fn set_interval(&self, interval: Duration) {
-        self.interval_ms
-            .store(interval.as_millis().max(1) as u64, Ordering::SeqCst);
-    }
-
-    fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::SeqCst)
-    }
-
-    fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::SeqCst);
-    }
-}
-
 /// Background monitoring task state.
 struct MonitoringTask {
-    alive: Arc<AtomicBool>,
     /// Cancels an in-flight connect / collect (Cancel control, #1233).
     /// Cancelled on drop so a torn-down subscription aborts any pending SSH
     /// handshake promptly.
@@ -166,7 +121,6 @@ struct MonitoringTask {
 
 impl Drop for MonitoringTask {
     fn drop(&mut self) {
-        self.alive.store(false, Ordering::SeqCst);
         self.cancel.cancel();
     }
 }
@@ -257,29 +211,6 @@ async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopSt
     let _ = status_tx.send(loop_state.update()).await;
 }
 
-/// Sleep `delay` in small increments, returning early if the loop is asked to
-/// stop (either `alive` cleared or `cancel` fired).
-///
-/// Returns `true` if the full delay elapsed, `false` if interrupted — mirrors
-/// the incremental sleep the collect loop uses between ticks so a torn-down
-/// subscription aborts a long backoff promptly.
-async fn interruptible_sleep(
-    mut delay: Duration,
-    alive: &AtomicBool,
-    cancel: &CancellationToken,
-) -> bool {
-    let tick = Duration::from_millis(100);
-    while delay > Duration::ZERO {
-        if !alive.load(Ordering::SeqCst) || cancel.is_cancelled() {
-            return false;
-        }
-        let step = tick.min(delay);
-        tokio::time::sleep(step).await;
-        delay = delay.saturating_sub(step);
-    }
-    true
-}
-
 /// What one collect tick produced, folded into the [`CollectLoopState`].
 enum TickOutcome {
     /// A parsed sample was pushed.
@@ -304,7 +235,6 @@ async fn reconnect_with_backoff<T: MonitoringTransport>(
     mut backoff: BackoffSchedule,
     loop_state: &mut CollectLoopState,
     status_tx: &MonitorStatusSender,
-    alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> Option<T::Session> {
     if loop_state.begin_reconnect().is_some() {
@@ -312,7 +242,7 @@ async fn reconnect_with_backoff<T: MonitoringTransport>(
     }
 
     while let Some(delay) = backoff.next_delay() {
-        if !interruptible_sleep(delay, alive, cancel).await {
+        if !cancellable_sleep(delay, cancel).await {
             return None;
         }
         match transport.connect(cancel.clone()).await {
@@ -346,8 +276,6 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
             tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
         let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
 
-        let alive = Arc::new(AtomicBool::new(true));
-        let alive_clone = alive.clone();
         let transport = self.transport.clone();
         let collect_timeout = self.collect_timeout;
         let stale_threshold = self.stale_threshold;
@@ -369,14 +297,18 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
             let mut net_tracker = NetDeltaTracker::new();
             let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
-            while alive_clone.load(Ordering::SeqCst) {
+            while !loop_cancel.is_cancelled() {
                 // Paused: keep the transport open but skip collection. Emit
                 // `Paused` on the transition, then idle until resumed (#1233).
                 if loop_controls.is_paused() {
                     if loop_state.pause().is_some() {
                         emit_status(&status_tx, &loop_state).await;
                     }
-                    interruptible_sleep(PAUSE_POLL_INTERVAL, &alive_clone, &loop_cancel).await;
+                    // Await the resume event (or teardown) instead of
+                    // polling the pause flag.
+                    if !loop_controls.wait_until_resumed(&loop_cancel).await {
+                        break;
+                    }
                     continue;
                 }
                 // Just resumed after a pause: announce the transition so the UI
@@ -447,7 +379,6 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                         reconnect_backoff.clone(),
                         &mut loop_state,
                         &status_tx,
-                        &alive_clone,
                         &loop_cancel,
                     )
                     .await
@@ -472,20 +403,18 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     }
                 }
 
-                // Wait the (live-updatable) poll interval in small increments so
-                // a torn-down subscription, a cancel, or an interval change take
-                // effect promptly (#1233).
-                interruptible_sleep(loop_controls.interval(), &alive_clone, &loop_cancel).await;
+                // Wait the (live-updatable) poll interval, waking the instant
+                // the subscription is torn down or cancelled (#1233, #4366).
+                // An interval change applies from the next wait.
+                if !cancellable_sleep(loop_controls.interval(), &loop_cancel).await {
+                    break;
+                }
             }
             debug!("Monitoring task stopped");
         });
 
         if let Ok(mut guard) = self.task.lock() {
-            *guard = Some(MonitoringTask {
-                alive,
-                cancel,
-                controls,
-            });
+            *guard = Some(MonitoringTask { cancel, controls });
         }
 
         Ok(MonitoringSubscription {
@@ -526,7 +455,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 mod tests {
     use super::*;
     use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     /// A valid `MONITORING_COMMAND` output that `parse_stats` accepts, so the
     /// collect loop can produce a real `Live` sample in tests. Matches the
