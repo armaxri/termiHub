@@ -29,6 +29,7 @@ from typing import Callable, IO, Optional, Sequence
 import psutil
 
 from . import coverage
+from . import known_hosts
 from . import portable as portable_staging
 from .relaunch import describe_candidates, find_relaunched_app
 
@@ -389,7 +390,8 @@ class AppInstance:
 
         A normal launch pins ``TERMIHUB_CONFIG_DIR`` and ``TERMIHUB_LOG_DIR``. A
         portable launch removes both and redirects the installed-mode profile where the OS allows (see
-        :func:`termihub_harness.portable.profile_env`).
+        :func:`termihub_harness.portable.profile_env`). Both point the app at the
+        harness's per-run known_hosts file (:mod:`termihub_harness.known_hosts`).
         """
         env = dict(os.environ)
         if self._portable is None:
@@ -403,6 +405,8 @@ class AppInstance:
             # also where :attr:`log_dir` points.
             env.pop("TERMIHUB_LOG_DIR", None)
         env.update(self._profile_overrides())
+        # Read the harness's per-run known_hosts, never the user's (#4339).
+        env.update(known_hosts.app_env())
         return env
 
     def _profile_overrides(self) -> dict[str, str]:
@@ -462,6 +466,7 @@ class AppInstance:
         env["TERMIHUB_LOG_DIR"] = str(self.log_dir)
         env["TERMIHUB_SPAWN_ENDPOINT"] = self.spawn_endpoint
         env.update(self._profile_overrides())
+        env.update(known_hosts.app_env())
         return env
 
     def run_cli(
