@@ -7,6 +7,7 @@
 )]
 
 pub mod agent_release_asset;
+pub mod agent_update_checksum;
 #[cfg(feature = "agent-update-signing")]
 pub mod agent_update_signature;
 #[cfg(any(
@@ -26,6 +27,8 @@ pub mod buffer;
 pub mod config;
 pub mod connection;
 pub mod diagnostics;
+#[cfg(any(feature = "agent-update-signing", feature = "plugin"))]
+pub mod ed25519_detached;
 #[cfg(any(feature = "agent-update-signing", feature = "plugin"))]
 pub mod ed25519_pem;
 #[cfg(feature = "embedded-servers")]

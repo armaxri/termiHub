@@ -80,7 +80,6 @@ aes = { version = "0.9", optional = true }
 cbc = { version = "0.2", optional = true }
 md5 = { version = "0.7", optional = true }
 sec1 = { version = "0.8", features = ["der"], optional = true }
-hex = { version = "0.4", optional = true }
 data-encoding = { version = "2", optional = true }
 p256 = { version = "=0.14.0-rc.9", optional = true }
 p384 = { version = "=0.14.0-rc.9", optional = true }
@@ -103,10 +102,12 @@ argon2 = { version = "=0.6.0-rc.8", default-features = false, optional = true }
 blake2 = { version = "=0.11.0-rc.6", default-features = false, optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
-# Hashing the Docker CLI context name to locate its `contexts/meta/<id>` entry
-# (the id is the lowercase hex SHA-256 of the context name) — see
-# backends/docker/runtime.rs.
-sha2 = { version = "0.10", optional = true }
+# The single streaming SHA-256 primitive (`util::sha256`, #4365) behind the
+# agent release-asset checksum gate, the RDP sidecar integrity check and plugin
+# digests, plus the Docker CLI context id (`backends/docker/runtime.rs`). Always
+# on: the desktop and the agent both verify `.sha256` sidecars through it.
+sha2 = "0.10"
+hex = "0.4"
 # FTP / FTPS client. The `tokio` + `tokio-rustls-aws-lc-rs` features run the
 # client on termiHub's native tokio runtime (suppaftp 6 pulled the now-
 # unmaintained `async-std` executor — RUSTSEC-2025-0052 — which suppaftp itself
@@ -360,7 +361,6 @@ file-log = ["dep:tracing-subscriber", "dep:tracing"]
 agent-update-signing = [
     "dep:ed25519-dalek",
     "dep:base64",
-    "dep:hex",
     "dep:tracing",
 ]
 # Deterministic test signing helpers (`agent_update_signature::test_support`)
@@ -395,10 +395,10 @@ embedded-servers = [
     "dep:anyhow",
     "tokio/fs",
     # Optional HTTP Basic auth for the HTTP server (PROD-0035): `base64` decodes
-    # the `Authorization: Basic` header, `sha2` reduces credentials to a
-    # fixed-length digest, and `subtle` compares those digests in constant time.
+    # the `Authorization: Basic` header, (always-on) `sha2` reduces credentials
+    # to a fixed-length digest, and `subtle` compares those digests in constant
+    # time.
     "dep:base64",
-    "dep:sha2",
     "dep:subtle",
     # Access-log body wrapper for the HTTP server (PROD-034).
     "dep:http-body",
@@ -413,12 +413,10 @@ plugin = [
     "dep:termihub-plugin-api",
     "dep:termihub-plugin-runner",
     # Package code-signing substrate (#2036): Ed25519 signatures over a per-entry
-    # SHA-256 digest map, base64-encoded in `signature.json`, hex for the key
-    # fingerprint / digest rendering.
+    # SHA-256 digest map, base64-encoded in `signature.json` (the always-on
+    # `sha2`/`hex` do the digest and key-fingerprint rendering, #4365).
     "dep:ed25519-dalek",
     "dep:base64",
-    "dep:sha2",
-    "dep:hex",
     # A log line for each confirmed install/update downgrade (PLG-012); the
     # semver precedence compare itself uses the always-on `semver` dependency.
     "dep:tracing",
@@ -442,7 +440,6 @@ ssh = [
     "dep:cbc",
     "dep:md5",
     "dep:sec1",
-    "dep:hex",
     "dep:data-encoding",
     "dep:p256",
     "dep:p384",
@@ -463,8 +460,6 @@ docker = [
     "dep:bollard",
     "dep:futures-util",
     "dep:tracing",
-    "dep:sha2",
-    "dep:hex",
     # base64 codec for moving file content across the `docker exec` boundary
     # (LIBBE-001) — replaces a hand-rolled encoder/decoder with the battle-tested
     # crate. Already compiled into every shipping build (src-tauri + agent both
@@ -518,9 +513,8 @@ rdp-sidecar = [
     "dep:rmp-serde",
     "dep:tracing",
     "tokio/process",
-    # Pre-spawn SHA-256 integrity verification of the bundled sidecar (#1762).
-    "dep:sha2",
-    "dep:hex",
+    # Pre-spawn SHA-256 integrity verification of the bundled sidecar (#1762)
+    # uses the always-on `util::sha256` (sha2/hex are no longer optional, #4365).
     # Resolve the bare-name helper fallback to an absolute PATH entry so the
     # integrity check hashes the exact file that is spawned (CORE-011).
     "dep:which",

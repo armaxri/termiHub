@@ -108,6 +108,9 @@ pub(crate) fn resolve_and_manage_config_dir(
             utils::portable::AppMode::Installed
         }
     };
+    // Resolve the `{PORTABLE_DIR}` path placeholder against the portable
+    // base directory everywhere core expands config paths (#4571).
+    utils::portable::publish_portable_base_dir(&app_mode);
 
     // Resolve the effective config directory once, explicitly. Priority:
     //   1. an external `TERMIHUB_CONFIG_DIR` override (public knob used by

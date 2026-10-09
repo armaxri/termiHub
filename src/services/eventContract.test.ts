@@ -11,7 +11,8 @@
  * the production Rust code emits, written by the `ipc_wire_fixtures` test
  * (`src-tauri/src/ipc_wire_fixtures/event_names.rs`) and kept current by the
  * `code-quality` CI job. This suite parses every production `listen(..)` /
- * `once(..)` call (from `@tauri-apps/api/event`) under `src/` and checks both
+ * `once(..)` call (from `@tauri-apps/api/event`) under `src/`, plus every call of a
+ * forwarding wrapper such as `useTauriListener("x", ..)` (#4590), and checks both
  * directions against that list.
  */
 import { describe, it, expect } from "vitest";
@@ -66,7 +67,7 @@ function tauriEventValue(expr: ts.Expression): string | null {
 }
 
 /** Parse every production source file once. */
-function parseSources(): { rel: string; sf: ts.SourceFile }[] {
+function parseSources(): Source[] {
   return walk(SRC_ROOT)
     .map((full) => path.relative(SRC_ROOT, full).split(path.sep).join("/"))
     .filter(isProductionFile)
@@ -101,28 +102,72 @@ function collectStringConsts(sources: { sf: ts.SourceFile }[]): Map<string, Set<
   return consts;
 }
 
-/** Every production `listen` / `once` call imported from `@tauri-apps/api/event`. */
-function collectListenSites(): ListenSite[] {
-  const sources = parseSources();
+/**
+ * Generic wrappers whose inner `listen(<param>, ..)` forwards a caller-supplied
+ * event name (mirrors the backend's `FORWARDING_SITES` in
+ * `src-tauri/src/ipc_wire_fixtures/event_names.rs`). The inner call is not a
+ * listen site itself; instead every call of the exported `via` function, from
+ * any file that imports it, is scanned as a listen site with its first argument
+ * as the event name — so `useTauriListener("x", ..)` is held to the same
+ * contract as `listen("x", ..)`.
+ */
+const FORWARDING_SITES: { file: string; expr: string; via: string }[] = [
+  { file: "hooks/useTauriListener.ts", expr: "event", via: "useTauriListener" },
+];
+
+type Source = { rel: string; sf: ts.SourceFile };
+
+/** Resolve an import specifier from `fromRel` to a `src/`-relative path without extension. */
+function resolveImport(fromRel: string, spec: string): string | null {
+  if (spec.startsWith("@/")) return spec.slice(2);
+  if (spec.startsWith("."))
+    return path.posix.normalize(path.posix.join(path.posix.dirname(fromRel), spec));
+  return null;
+}
+
+const stripExt = (rel: string) => rel.replace(/\.(ts|tsx)$/, "");
+
+interface ScanResult {
+  sites: ListenSite[];
+  /** Forwarding sites (`file|expr`) whose inner `listen` call was found. */
+  forwardingSeen: Set<string>;
+}
+
+/**
+ * Every `listen` / `once` call imported from `@tauri-apps/api/event`, plus every
+ * call of a forwarding wrapper (see {@link FORWARDING_SITES}).
+ */
+function collectListenSites(sources: Source[]): ScanResult {
   const consts = collectStringConsts(sources);
   const sites: ListenSite[] = [];
+  const forwardingSeen = new Set<string>();
   for (const { rel, sf } of sources) {
     const names = new Set<string>();
     for (const stmt of sf.statements) {
       if (
-        ts.isImportDeclaration(stmt) &&
-        ts.isStringLiteral(stmt.moduleSpecifier) &&
-        stmt.moduleSpecifier.text === "@tauri-apps/api/event" &&
-        stmt.importClause?.namedBindings &&
-        ts.isNamedImports(stmt.importClause.namedBindings)
+        !ts.isImportDeclaration(stmt) ||
+        !ts.isStringLiteral(stmt.moduleSpecifier) ||
+        !stmt.importClause?.namedBindings ||
+        !ts.isNamedImports(stmt.importClause.namedBindings)
       ) {
-        for (const el of stmt.importClause.namedBindings.elements) {
-          const imported = (el.propertyName ?? el.name).text;
+        continue;
+      }
+      const spec = stmt.moduleSpecifier.text;
+      const target = spec === "@tauri-apps/api/event" ? null : resolveImport(rel, spec);
+      for (const el of stmt.importClause.namedBindings.elements) {
+        const imported = (el.propertyName ?? el.name).text;
+        if (spec === "@tauri-apps/api/event") {
           if (imported === "listen" || imported === "once") names.add(el.name.text);
+        } else if (
+          target !== null &&
+          FORWARDING_SITES.some((f) => stripExt(f.file) === target && f.via === imported)
+        ) {
+          names.add(el.name.text);
         }
       }
     }
     if (names.size === 0) continue;
+    const forwarding = FORWARDING_SITES.filter((f) => f.file === rel);
     const visit = (node: ts.Node) => {
       if (
         ts.isCallExpression(node) &&
@@ -130,25 +175,30 @@ function collectListenSites(): ListenSite[] {
         names.has(node.expression.text)
       ) {
         const arg = node.arguments[0];
-        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
-        let name: string | null = null;
-        if (arg && ts.isStringLiteralLike(arg)) name = arg.text;
-        else if (arg) name = tauriEventValue(arg);
-        if (name === null && arg && ts.isIdentifier(arg)) {
-          const values = consts.get(arg.text);
-          if (values?.size === 1) name = [...values][0];
+        const fwd = arg && ts.isIdentifier(arg) && forwarding.find((f) => f.expr === arg.text);
+        if (fwd) {
+          forwardingSeen.add(`${fwd.file}|${fwd.expr}`);
+        } else {
+          const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+          let name: string | null = null;
+          if (arg && ts.isStringLiteralLike(arg)) name = arg.text;
+          else if (arg) name = tauriEventValue(arg);
+          if (name === null && arg && ts.isIdentifier(arg)) {
+            const values = consts.get(arg.text);
+            if (values?.size === 1) name = [...values][0];
+          }
+          sites.push({ where: `src/${rel}:${line}`, name, expr: arg ? arg.getText(sf) : "" });
         }
-        sites.push({ where: `src/${rel}:${line}`, name, expr: arg ? arg.getText(sf) : "" });
       }
       ts.forEachChild(node, visit);
     };
     visit(sf);
   }
-  return sites;
+  return { sites, forwardingSeen };
 }
 
 const emitted = new Set<string>(eventsFixture.emitted);
-const sites = collectListenSites();
+const { sites, forwardingSeen } = collectListenSites(parseSources());
 
 describe("Tauri event-name contract (TFE2-006, #4344)", () => {
   it("scans a realistic event surface", () => {
@@ -189,6 +239,48 @@ describe("Tauri event-name contract (TFE2-006, #4344)", () => {
       (name) => !emitted.has(name) || listened.has(name)
     );
     expect(stale).toEqual([]);
+  });
+
+  it("has no stale FORWARDING_SITES entry", () => {
+    const stale = FORWARDING_SITES.filter((f) => !forwardingSeen.has(`${f.file}|${f.expr}`)).map(
+      (f) => `${f.file}: listen(${f.expr})`
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it("scans useTauriListener(..) call sites as listen sites", () => {
+    const fixture = (rel: string, text: string): Source => ({
+      rel,
+      sf: ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+    });
+    const scanned = collectListenSites([
+      fixture(
+        "hooks/useTauriListener.ts",
+        'import { listen } from "@tauri-apps/api/event";\n' +
+          "export function useTauriListener(event: string) { void listen(event, () => {}); }\n"
+      ),
+      fixture(
+        "components/Probe.tsx",
+        'import { useTauriListener as hook } from "@/hooks/useTauriListener";\n' +
+          'hook("no-such-backend-event", () => {});\n'
+      ),
+      fixture(
+        "hooks/useProbe.ts",
+        'import { useTauriListener } from "./useTauriListener";\n' +
+          "useTauriListener(dynamicName, () => {});\n"
+      ),
+    ]);
+    expect(scanned.forwardingSeen).toEqual(new Set(["hooks/useTauriListener.ts|event"]));
+    expect(scanned.sites).toEqual([
+      {
+        where: "src/components/Probe.tsx:2",
+        name: "no-such-backend-event",
+        expr: '"no-such-backend-event"',
+      },
+      { where: "src/hooks/useProbe.ts:2", name: null, expr: "dynamicName" },
+    ]);
+    // The unknown literal is caught by the "emitted by the backend" direction.
+    expect(emitted.has("no-such-backend-event")).toBe(false);
   });
 
   it("no longer listens for or emits the events #4344 removed", () => {

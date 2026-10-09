@@ -1,8 +1,11 @@
 # cargo-deny configuration — supply-chain gate for the Rust workspace.
 # https://embarkstudios.github.io/cargo-deny/
 #
-# CI runs `cargo deny check advisories bans licenses sources` (see
-# .github/workflows/code-quality.yml -> "Security Audit"). Four gates:
+# CI runs `cargo deny check advisories bans licenses sources` in
+# .github/workflows/security-audit.yml -> "Security Audit" (moved out of
+# code-quality.yml in #3325). The workspace-excluded RDP sidecar has its own
+# lockfile and config, rdp-sidecar/deny.toml, gated by the "Security Audit
+# (RDP sidecar)" job in the same workflow (#4357). Four gates:
 #   - advisories: YANKED-crate gate (#2074) — a lockfile pinning a crate version
 #     that has been yanked from crates.io fails CI instead of the app silently
 #     shipping a withdrawn dependency.
@@ -14,9 +17,15 @@
 # cargo-audit (also in the Security Audit job) covers RUSTSEC *vulnerability*
 # advisories.
 #
-# A yanked TRANSITIVE crate reds every open PR here at once. It is auto-mitigated
-# by the weekly `cargo update` chore (.github/workflows/cargo-update-lockfile.yml)
-# and, when one slips through, fixed via the runbook: docs/ci-yanked-crate-runbook.md.
+# When it runs: on every push to develop/main (post-merge), DAILY on a schedule
+# over both develop and main (advisories and yanks are time-based — the
+# database changes, not the tree), and on a PR only when that PR changes a
+# dependency manifest/lockfile or this gate's config (#3326). So a newly yanked
+# TRANSITIVE crate surfaces on the post-merge/daily lane, not on every open PR.
+# It is auto-mitigated by the daily `cargo update` chore
+# (.github/workflows/cargo-update-lockfile.yml, daily since #3291, which also
+# refreshes rdp-sidecar/Cargo.lock) and, when one slips through, fixed via the
+# runbook: docs/ci-yanked-crate-runbook.md.
 
 [advisories]
 # A yanked crate in the lockfile fails CI. This is the headline gate: it is how
@@ -102,9 +111,18 @@ private = { ignore = true }
 [sources]
 # Every crate must come from crates.io. An unexpected registry or a git
 # dependency (a common supply-chain injection vector) fails CI. The workspace
-# currently has no git dependencies; the vendored `vnc-rs` is an in-tree path
-# member (no external source) and is not subject to this check. Add a git URL to
-# `allow-git` here if a vetted git dependency is ever introduced.
+# currently has no git dependencies. Add a git URL to `allow-git` here if a
+# vetted git dependency is ever introduced.
+#
+# In-tree forks are path crates with no external source, so neither this check
+# nor the RUSTSEC/yank advisories gate sees them:
+#   - vendor/vnc-rs     — a workspace member, a path dependency of termihub-core;
+#   - vendor/serial2    — a [patch.crates-io] replacement (root Cargo.toml);
+#   - vendor/libunftp   — a [patch.crates-io] replacement (root Cargo.toml).
+# (The sidecar's own vendored ironrdp-* forks: see rdp-sidecar/deny.toml.)
+# Their upstream drift and advisories are monitored through
+# vendor/vendored-forks.json instead (checked by
+# scripts/internal/check-vendored-forks.mjs and vendored-fork-drift.mjs).
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]

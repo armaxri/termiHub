@@ -6,8 +6,8 @@ severity: low
 category: docs
 is_workaround: false
 subsystem: "workspace / deny.toml"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4357 — deny.toml headers point at security-audit.yml, describe the daily post-merge lane and list every path/[patch] fork with vendored-forks.json"
 audit: 2026-10
 commit: 663465d52
 relation: new

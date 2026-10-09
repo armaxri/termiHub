@@ -6,8 +6,8 @@ severity: low
 category: licensing
 is_workaround: false
 subsystem: "licensing / frontend assets"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4357 — Geist + MesloLGS Nerd Font (base + all glyph sets) licences in THIRD_PARTY_LICENSES.md, licenses/ and EXTERNAL_TEXTS; notices:check fails on an unlisted font"
 audit: 2026-10
 commit: 663465d52
 relation: new

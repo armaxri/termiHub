@@ -93,6 +93,42 @@ describe("cargo-update-lockfile.yml pre-PR gate", () => {
   });
 });
 
+// #4357 (SUP2-004): rdp-sidecar is workspace-excluded with its own lockfile, so
+// the chore refreshes it too and must gate it the same way before the PR.
+describe("cargo-update-lockfile.yml refreshes and gates rdp-sidecar/Cargo.lock", () => {
+  const gate = step("Gate the refreshed lockfile");
+
+  it("runs cargo update on the sidecar manifest", () => {
+    expect(step("Run cargo update").text).toContain(
+      "cargo update --manifest-path rdp-sidecar/Cargo.toml"
+    );
+  });
+
+  it("detects a change to either lockfile", () => {
+    const diff = step("Detect lockfile changes").text;
+    expect(diff).toContain("git diff --quiet -- Cargo.lock");
+    expect(diff).toContain("git diff --quiet -- rdp-sidecar/Cargo.lock");
+  });
+
+  it("compiles the sidecar against its refreshed lock", () => {
+    expect(gate.text).toMatch(
+      /cargo check --manifest-path rdp-sidecar\/Cargo\.toml --all-targets --locked(\s|$)/
+    );
+  });
+
+  it("runs cargo-deny with the sidecar's own deny.toml", () => {
+    expect(gate.text).toMatch(
+      /cd rdp-sidecar && cargo deny .*check advisories bans licenses sources/
+    );
+  });
+
+  it("commits the sidecar lockfile with the workspace one", () => {
+    expect(step("Open or update pull request").text).toContain(
+      "git add Cargo.lock rdp-sidecar/Cargo.lock"
+    );
+  });
+});
+
 describe("cargo-update-lockfile.yml PR step honours the gate", () => {
   const pr = step("Open or update pull request");
   const run = pr.text.slice(pr.text.indexOf("run: |"));
