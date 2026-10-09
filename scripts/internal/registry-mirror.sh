@@ -19,6 +19,8 @@
 #                   docker), so `CONTAINER_CMD=podman` pre-pulls into Podman.
 #                   Short names are qualified to docker.io/library/... so a
 #                   non-interactive Podman never hits short-name resolution.
+#                   When a pull fails but the image is already present
+#                   locally, the local copy is used without further retries.
 #   fixture-images  Print the base images the tests/docker fixtures build FROM
 #                   (plus compose `image:` refs), one per line, for `pull`.
 #
@@ -216,6 +218,12 @@ cmd_pull() {
         n=1
         delay="$backoff"
         until "$cmd" pull "$ref"; do
+            # A local copy beats waiting out an outage (offline dev box, or a
+            # runner image that already ships it): use it rather than retry.
+            if "$cmd" image inspect "$ref" >/dev/null 2>&1; then
+                warn "pull $ref failed; using the local copy"
+                break
+            fi
             if [ "$n" -ge "$attempts" ]; then
                 err "could not pull $ref after $attempts attempts (registry outage or pull limit?)"
                 failed=$((failed + 1))
