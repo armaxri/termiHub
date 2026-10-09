@@ -3,6 +3,8 @@ import { xServerEnsure } from "@/services/api";
 import { onXServerProgress } from "@/services/events";
 import { isXServerError, type XServerError, type XServerStatusReport } from "@/types/xserver";
 import type { XServerProgress } from "@/types/xserver";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendLog } from "@/utils/frontendLog";
 
 /** Callbacks invoked by {@link driveXServerEnsure} as provisioning advances. */
 export interface XServerEnsureHandlers {
@@ -28,9 +30,21 @@ export function driveXServerEnsure(handlers: XServerEnsureHandlers): () => void 
   let unlisten: UnlistenFn | undefined;
 
   void (async () => {
-    unlisten = await onXServerProgress((p) => {
-      if (!cancelled) handlers.onProgress(p);
-    });
+    try {
+      const off = await onXServerProgress((p) => {
+        if (!cancelled) handlers.onProgress(p);
+      });
+      // Disposed guard (FEC2-005): torn down while the listener registered —
+      // drop it and do not start provisioning for a dialog that is gone.
+      if (cancelled) {
+        off();
+        return;
+      }
+      unlisten = off;
+    } catch (e) {
+      frontendLog("x_server", `Failed to subscribe to x-server-progress: ${errorMessage(e)}`);
+    }
+    if (cancelled) return;
     try {
       const report = await xServerEnsure();
       if (!cancelled) handlers.onSuccess(report);

@@ -1,9 +1,8 @@
-import { useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { quitWindowPrompting, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
+import { useTauriListener } from "./useTauriListener";
 
 /** Backend event: an explicit app quit (Cmd+Q / menu Quit) needs this window's answer. */
 export const APP_QUIT_REQUESTED_EVENT = "app-quit-requested";
@@ -46,14 +45,6 @@ export function handleAppQuitCancelled(): void {
  * the exit until every window agreed.
  */
 export function useAppQuitRequests(): void {
-  useEffect(() => {
-    const unlistenRequested = listen<void>(APP_QUIT_REQUESTED_EVENT, () => {
-      void handleAppQuitRequested();
-    });
-    const unlistenCancelled = listen<void>(APP_QUIT_CANCELLED_EVENT, handleAppQuitCancelled);
-    return () => {
-      void unlistenRequested.then((fn) => fn());
-      void unlistenCancelled.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<void>(APP_QUIT_REQUESTED_EVENT, () => void handleAppQuitRequested(), "app_quit");
+  useTauriListener<void>(APP_QUIT_CANCELLED_EVENT, handleAppQuitCancelled, "app_quit");
 }
