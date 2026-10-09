@@ -402,12 +402,22 @@ export interface ReopenTabPayload {
 
 /**
  * A pending confirmation before tearing down a live session by closing a tab
- * (X / middle-click) or a split panel. The `tab` variant carries the optional
+ * (X / middle-click), a split panel, or a whole tab group (which may also discard
+ * unsaved editors). The `tab` variant carries the optional
  * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen.
  */
 export type SessionCloseConfirmRequest =
   | { kind: "tab"; tabId: string; panelId: string; label: string; reopen: ReopenTabPayload | null }
-  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number };
+  | { kind: "panel"; panelId: string; liveCount: number; tabCount: number }
+  | {
+      kind: "group";
+      tabGroupId: string;
+      label: string;
+      /** Tabs in the group whose live session would end. */
+      liveCount: number;
+      /** Editor tabs in the group with unsaved changes that would be discarded. */
+      dirtyCount: number;
+    };
 
 /*
  * The layout tree types below (`LeafPanel`, `SplitContainer`, `PanelNode`,

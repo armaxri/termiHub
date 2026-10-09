@@ -14,8 +14,8 @@ evidence:
   - src/services/contextCommands.ts:161-177
   - src/components/Terminal/TerminalView.tsx:401-422
   - src/components/Terminal/Terminal.tsx:1258-1281
-status: open
-resolution: ""
+status: fixed
+resolution: "#4306 — chip X and Close Group route through a group-close confirm for live sessions and unsaved editors"
 audit: 2026-10
 commit: 663465d52
 relation: new

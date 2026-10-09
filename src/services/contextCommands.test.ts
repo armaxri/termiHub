@@ -184,6 +184,21 @@ describe("close-tab-group", () => {
     expect(confirm?.kind).toBe("tab-group");
   });
 
+  it("raises the count-aware group confirm when the group holds a live session (UX2-001)", () => {
+    const groupId = useAppStore.getState().addTabGroup();
+    addActiveTab("terminal");
+    seedSettings({ confirmCloseTabOnShortcut: false });
+    const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
+    cmd.run();
+    expect(spy).not.toHaveBeenCalled();
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+    expect(useAppStore.getState().pendingSessionCloseConfirm).toMatchObject({
+      kind: "group",
+      tabGroupId: groupId,
+      liveCount: 1,
+    });
+  });
+
   it("run() is inert with a single tab group", () => {
     const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
     cmd.run();

@@ -30,6 +30,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { ConfirmSessionCloseDialog } from "@/components/Terminal/ConfirmSessionCloseDialog";
+import { ConfirmWorkspaceLaunchDialog } from "@/components/WorkspaceSidebar/ConfirmWorkspaceLaunchDialog";
 import { ConfirmDetachTabDialog } from "@/components/Terminal/ConfirmDetachTabDialog";
 import { CloseWindowDecisionDialog } from "@/components/Terminal/CloseWindowDecisionDialog";
 import { SessionRestoreDialog } from "@/components/SessionRestoreDialog";
@@ -244,7 +245,8 @@ function App() {
   useEffect(() => {
     if (getCurrentWindow().label !== MAIN_WINDOW_LABEL) return;
     const unlistenPromise = listen<string>(CLI_WORKSPACE_REQUESTED_EVENT, (event) => {
-      void launchWorkspaceByName(event.payload, { reload: true });
+      // Confirm first if the launch would end live sessions (UX2-002).
+      void launchWorkspaceByName(event.payload, { reload: true, confirmIfLive: true });
     });
     return () => {
       void unlistenPromise.then((fn) => fn());
@@ -415,6 +417,7 @@ function App() {
           <PluginDenialToasts />
           <ConfirmCloseTabDialog />
           <ConfirmSessionCloseDialog />
+          <ConfirmWorkspaceLaunchDialog />
           <ConfirmDetachTabDialog />
           <CloseWindowDecisionDialog />
           <SessionRestoreDialog />

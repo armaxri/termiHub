@@ -14,8 +14,8 @@ evidence:
   - CHANGELOG.md:17
   - scripts/release-check.sh:322
   - scripts/internal/emit-release-notes.mjs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4278 — release notes come from a tested script that extracts the exact CHANGELOG section and caps the body under GitHub's limit"
 audit: 2026-10
 commit: 663465d52
 relation: regression
