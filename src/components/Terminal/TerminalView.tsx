@@ -12,7 +12,6 @@ import {
   ScrollText,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
   useActivePanelId,
@@ -24,7 +23,7 @@ import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";

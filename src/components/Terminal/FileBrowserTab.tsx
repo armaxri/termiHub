@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderOpen, Loader2, AlertCircle, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
-import { Button } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";

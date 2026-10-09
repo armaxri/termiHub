@@ -14,6 +14,8 @@ vi.mock("@/services/events", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({
   onFrontendLog: vi.fn(() => () => {}),
+  fireAndForget: vi.fn(),
+  frontendWarn: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
