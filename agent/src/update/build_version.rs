@@ -134,7 +134,29 @@ impl VersionPolicy {
         path: &Path,
         pinned: Option<&str>,
     ) -> Result<(), VersionPolicyError> {
-        match read_binary_version(path) {
+        self.check_read_version(read_binary_version(path), pinned)
+    }
+
+    /// Check the binary held open as `file` against the policy, reading its
+    /// embedded build version through the handle from the start (AGT2-002:
+    /// the apply path never re-opens a verified binary by path). `path` only
+    /// labels error messages.
+    pub fn check_file(
+        &self,
+        file: &std::fs::File,
+        path: &Path,
+        pinned: Option<&str>,
+    ) -> Result<(), VersionPolicyError> {
+        self.check_read_version(read_file_version(file, path), pinned)
+    }
+
+    /// Apply the policy to the outcome of reading a candidate's version.
+    fn check_read_version(
+        &self,
+        read: Result<Version, VersionPolicyError>,
+        pinned: Option<&str>,
+    ) -> Result<(), VersionPolicyError> {
+        match read {
             Ok(candidate) => self.check(&candidate, pinned),
             Err(e) if self.allow_unknown => {
                 warn!(
@@ -207,7 +229,19 @@ pub fn read_binary_version(path: &Path) -> Result<Version, VersionPolicyError> {
     let file = std::fs::File::open(path).map_err(|e| {
         VersionPolicyError::UnknownVersion(format!("cannot open {}: {e}", path.display()))
     })?;
-    let versions = scan_versions(file).map_err(|e| {
+    read_file_version(&file, path)
+}
+
+/// [`read_binary_version`] over an already-open `file`, read from its start.
+/// `path` only labels error messages.
+fn read_file_version(file: &std::fs::File, path: &Path) -> Result<Version, VersionPolicyError> {
+    use std::io::{Seek, SeekFrom};
+
+    let mut handle = file;
+    handle.seek(SeekFrom::Start(0)).map_err(|e| {
+        VersionPolicyError::UnknownVersion(format!("cannot rewind {}: {e}", path.display()))
+    })?;
+    let versions = scan_versions(handle).map_err(|e| {
         VersionPolicyError::UnknownVersion(format!("cannot read {}: {e}", path.display()))
     })?;
     let mut distinct: Vec<Version> = Vec::new();

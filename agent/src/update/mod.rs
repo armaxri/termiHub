@@ -54,6 +54,7 @@ mod coordinate;
 mod download;
 mod github;
 mod signature;
+mod staged;
 use signature::SignaturePolicy;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 mod test_hook;
@@ -72,8 +73,6 @@ use crate::protocol::methods::{UpdateAvailableNotification, AGENT_UPDATE_AVAILAB
 use crate::session::manager::SessionManager;
 use crate::state::persistence::AgentState;
 
-#[cfg(unix)]
-pub use apply::POSIX_COORDINATED_UPLOAD_PATH;
 pub use apply::{
     cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
     should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
@@ -84,6 +83,7 @@ pub use build_version::{VersionPolicy, MARKER_PREFIX as BUILD_VERSION_MARKER_PRE
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
 pub use signature::UpdateSignatureError;
+pub use staged::discard_applied_upload;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 pub use test_hook::TestPendingUpdate;
 

@@ -55,6 +55,13 @@ pub enum StagingConfinementError {
         /// The canonical path that escaped confinement.
         path: String,
     },
+    /// A component of the requested path **below** the trusted staging root is
+    /// a symlink (AGT2-002, #4287). The staged binary must be named directly,
+    /// never through a link that could be re-pointed between check and use.
+    SymlinkInPath {
+        /// The path component that is a symlink.
+        path: String,
+    },
 }
 
 impl fmt::Display for StagingConfinementError {
@@ -72,6 +79,10 @@ impl fmt::Display for StagingConfinementError {
             Self::OutsideStaging { path } => write!(
                 f,
                 "update binary path {path} is outside the trusted staging directory"
+            ),
+            Self::SymlinkInPath { path } => write!(
+                f,
+                "update binary path component {path} is a symlink inside the staging directory"
             ),
         }
     }
@@ -102,10 +113,24 @@ impl std::error::Error for StagingConfinementError {
 /// regular file, or lies outside every root is rejected. A root that does not
 /// exist (cannot be canonicalized) simply contains nothing and is skipped, so a
 /// missing staging dir never widens the check — it only ever narrows it.
+///
+/// A symlink **below** the root — the file itself or any directory between the
+/// root and the file — is refused too (AGT2-002, #4287), even when it points
+/// back inside the root. The root itself may be reached through a symlink (a
+/// dotfiles-managed `~/.config`, say).
 pub fn confine_to_staging(
     roots: &[PathBuf],
     requested: &Path,
 ) -> Result<PathBuf, StagingConfinementError> {
+    confine_to_staging_root(roots, requested).map(|(canonical, _root)| canonical)
+}
+
+/// [`confine_to_staging`], also returning the canonical root the path was
+/// confined to, so the apply path can check every directory below it.
+fn confine_to_staging_root(
+    roots: &[PathBuf],
+    requested: &Path,
+) -> Result<(PathBuf, PathBuf), StagingConfinementError> {
     let canonical = std::fs::canonicalize(requested).map_err(|source| {
         StagingConfinementError::Unresolvable {
             path: requested.display().to_string(),
@@ -125,7 +150,8 @@ pub fn confine_to_staging(
         // never becomes a bypass and never spuriously rejects a valid sibling.
         if let Ok(canonical_root) = std::fs::canonicalize(root) {
             if canonical.starts_with(&canonical_root) {
-                return Ok(canonical);
+                reject_symlinks_below_root(requested, &canonical_root)?;
+                return Ok((canonical, canonical_root));
             }
         }
     }
@@ -133,6 +159,31 @@ pub fn confine_to_staging(
     Err(StagingConfinementError::OutsideStaging {
         path: canonical.display().to_string(),
     })
+}
+
+/// Refuse `requested` when it, or any of its ancestors that still resolve
+/// strictly below `canonical_root`, is a symlink. Walking the *requested*
+/// spelling (not the canonical one) is what catches a link: canonicalization
+/// would already have resolved it away.
+fn reject_symlinks_below_root(
+    requested: &Path,
+    canonical_root: &Path,
+) -> Result<(), StagingConfinementError> {
+    for candidate in requested.ancestors() {
+        match std::fs::canonicalize(candidate) {
+            Ok(resolved) if resolved != canonical_root && resolved.starts_with(canonical_root) => {}
+            _ => break,
+        }
+        let is_link = std::fs::symlink_metadata(candidate)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true);
+        if is_link {
+            return Err(StagingConfinementError::SymlinkInPath {
+                path: candidate.display().to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Decide whether a pending update should be applied right now.
@@ -362,24 +413,15 @@ fn apply_update_binary(
     )
 }
 
-/// The fixed remote path the desktop coordinated-push deploy uploads a staged
-/// agent binary to before calling `agent.request_update` (#1616). Kept in sync
-/// with the desktop's `agent_install::POSIX_UPLOAD_PATH`; a binary staged here
-/// by the desktop's authenticated SFTP channel is trusted the same as a
-/// self-downloaded one (AGT-003).
-#[cfg(unix)]
-pub const POSIX_COORDINATED_UPLOAD_PATH: &str = "/tmp/termihub-agent-upload";
-
-/// The agent-owned staging locations a self-update binary may legitimately live
-/// in (AGT-003): the self-update download dir (`<config>/updates`) and the fixed
-/// desktop coordinated-push upload path. Nonexistent roots are skipped by
+/// The agent-owned staging location a self-update binary may legitimately live
+/// in (AGT-003): `<config>/updates`. It holds both the self-update downloads and
+/// the desktop's coordinated-push uploads, which arrive in a fresh private
+/// `upload.XXXXXX` dir inside it (AGT2-002, #4287). No world-shared path such
+/// as `/tmp` is ever trusted. A nonexistent root is skipped by
 /// [`confine_to_staging`].
 #[cfg(unix)]
 fn production_staging_roots() -> Vec<PathBuf> {
-    vec![
-        AgentState::config_dir().join("updates"),
-        PathBuf::from(POSIX_COORDINATED_UPLOAD_PATH),
-    ]
+    vec![AgentState::config_dir().join("updates")]
 }
 
 /// Swap-and-re-exec, but refuse a source outside `staging_roots` (AGT-003
@@ -393,12 +435,14 @@ fn production_staging_roots() -> Vec<PathBuf> {
 ///    already confined the path when the update was staged, the apply path
 ///    re-asserts it here so a source outside the trusted staging locations is
 ///    refused — it must never rely solely on the upstream check.
-/// 2. **Integrity (AGT-004).** The on-disk bytes at the confined path are
-///    SHA-256-hashed and compared to `expected_sha256`. A missing digest, a read
-///    error, or a mismatch all reject. This re-verification at apply time is what
-///    closes the stage-then-tamper TOCTOU: a binary verified at download/upload
-///    can still be swapped on disk before it is applied, so the bytes are
-///    re-hashed here, immediately before the swap.
+/// 2. **Private staging + integrity (AGT2-002, AGT-004).** The confined file is
+///    opened once (`O_NOFOLLOW`), refused unless it and its directories are
+///    private to this user, and copied into a private temp file next to the
+///    executable while being SHA-256-hashed. That digest must equal
+///    `expected_sha256`; a missing digest, a read error, or a mismatch all
+///    reject. Because every later guard and the final rename use this copy,
+///    the bytes installed are exactly the bytes verified — swapping the staged
+///    file after it was opened changes nothing.
 /// 3. **Authenticity (AGT-005, #3213).** The now-verified digest must carry an
 ///    Ed25519 signature from a key compiled into this agent. Integrity alone
 ///    only proves the bytes are what the *initiator* intended; the signature
@@ -422,20 +466,25 @@ fn apply_update_binary_confined(
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    // All guards run — confinement, digest, signature, downgrade policy —
-    // before the running binary is ever touched. Extracted so the tamper-vector
-    // tests can exercise the gate without driving the (destructive)
-    // swap+re-exec.
-    let src = confine_and_verify(
+    let current = std::env::current_exe().context("resolve current agent executable")?;
+    let exe_dir = current.parent().unwrap_or_else(|| Path::new("."));
+
+    // All guards run — confinement, private staging, digest, signature,
+    // downgrade policy — before the running binary is ever touched. They all
+    // work on one private copy made from a single open of the staged file, and
+    // that same copy is what gets renamed into place (AGT2-002). Extracted so
+    // the tamper-vector tests can exercise the gate without driving the
+    // (destructive) swap+re-exec.
+    let verified = confine_and_verify(
         binary_path,
         expected_sha256,
         signature,
         staging_roots,
         policy,
+        exe_dir,
     )?;
-    check_version_policy(&src, pinned_version, version_policy)?;
+    check_version_policy(&verified, pinned_version, version_policy)?;
 
-    let current = std::env::current_exe().context("resolve current agent executable")?;
     let backup = backup_path_for(&current);
 
     // Preserve the currently-running (working) binary. A *copy* — not a rename —
@@ -444,7 +493,7 @@ fn apply_update_binary_confined(
     back_up_current_binary(&current, &backup)
         .with_context(|| format!("back up current agent binary at {}", current.display()))?;
 
-    if let Err(e) = replace_binary(&src, &current)
+    if let Err(e) = install_verified(verified, &current)
         .with_context(|| format!("replace agent binary at {}", current.display()))
     {
         // The swap failed before any re-exec: `current` still holds the old
@@ -487,18 +536,18 @@ fn apply_update_binary_confined(
     }
 }
 
-/// Run the apply-time guards — confinement (AGT-003), integrity (AGT-004), then
-/// authenticity (AGT-005) — and return the confined, verified source path. None
-/// touches the running binary, so this is the non-destructive gate the swap
-/// depends on (and the seam the tamper-vector tests drive without a real
-/// swap+re-exec).
+/// Run the apply-time guards — confinement (AGT-003), private staging
+/// (AGT2-002), integrity (AGT-004), then authenticity (AGT-005) — and return a
+/// private copy of the verified bytes in `dest_dir`. None touches the running
+/// binary, so this is the non-destructive gate the swap depends on (and the
+/// seam the tamper-vector tests drive without a real swap+re-exec).
 ///
 /// Order matters: confinement is FIRST so an out-of-staging path is rejected
 /// before its bytes are ever read, and the signature is checked over the digest
-/// only AFTER that digest has been re-bound to the on-disk bytes. Fails
-/// **closed** on any guard; a signature refusal keeps its typed
-/// [`UpdateSignatureError`] in the error chain so the RPC layer can surface a
-/// dedicated error code.
+/// only AFTER that digest has been bound to the copied bytes. Fails **closed**
+/// on any guard (the temp copy is deleted on drop); a signature refusal keeps
+/// its typed [`UpdateSignatureError`] in the error chain so the RPC layer can
+/// surface a dedicated error code.
 #[cfg(unix)]
 fn confine_and_verify(
     binary_path: &str,
@@ -506,66 +555,101 @@ fn confine_and_verify(
     signature: Option<&str>,
     staging_roots: &[PathBuf],
     policy: &SignaturePolicy,
-) -> anyhow::Result<PathBuf> {
+    dest_dir: &Path,
+) -> anyhow::Result<tempfile::NamedTempFile> {
+    confine_and_verify_with_hook(
+        binary_path,
+        expected_sha256,
+        signature,
+        staging_roots,
+        policy,
+        dest_dir,
+        |_| {},
+    )
+}
+
+/// [`confine_and_verify`] with `after_open` run on the staged path right after
+/// the file was opened and before a byte of it is read — the window an
+/// attacker would race. Tests use it to swap or rewrite the file there.
+#[cfg(unix)]
+fn confine_and_verify_with_hook(
+    binary_path: &str,
+    expected_sha256: Option<&str>,
+    signature: Option<&str>,
+    staging_roots: &[PathBuf],
+    policy: &SignaturePolicy,
+    dest_dir: &Path,
+    after_open: impl FnOnce(&Path),
+) -> anyhow::Result<tempfile::NamedTempFile> {
     use anyhow::Context;
 
-    let src = confine_to_staging(staging_roots, Path::new(binary_path))
+    const INTEGRITY: &str =
+        "refuse to apply an agent update binary that failed integrity verification";
+
+    let (src, root) = confine_to_staging_root(staging_roots, Path::new(binary_path))
         .context("refuse to apply an agent update binary outside the trusted staging directory")?;
 
-    verify_confined_digest(&src, expected_sha256)
-        .context("refuse to apply an agent update binary that failed integrity verification")?;
+    let mut staged = super::staged::open_private_staged(&root, &src)
+        .context("refuse to apply an agent update binary that is not privately staged")?;
+    after_open(&src);
+    let (copy, actual) =
+        super::staged::copy_into_private_temp(&mut staged, dest_dir).context(INTEGRITY)?;
+    check_expected_digest(&src, &actual, expected_sha256).context(INTEGRITY)?;
 
-    // `verify_confined_digest` succeeded, so a digest was supplied and matches
-    // the bytes on disk; the signature is checked over exactly that digest.
-    let digest = expected_sha256.unwrap_or_default();
+    // The digest is now bound to the copied bytes; the signature is checked
+    // over exactly that digest.
     policy
-        .verify(digest, signature)
+        .verify(&actual, signature)
         .map_err(anyhow::Error::from)
         .context("refuse to apply an agent update binary that failed signature verification")?;
 
-    Ok(src)
+    Ok(copy)
 }
 
-/// The downgrade-policy guard (SEC-006, #3213), run on the confined source only
-/// after [`confine_and_verify`] has proven it authentic — so the version it
-/// embeds can be trusted. Keeps the typed [`VersionPolicyError`] in the chain.
+/// The downgrade-policy guard (SEC-006, #3213), run on the verified private
+/// copy only after [`confine_and_verify`] has proven it authentic — so the
+/// version it embeds can be trusted. Reads through the copy's open handle,
+/// never by path. Keeps the typed [`VersionPolicyError`] in the chain.
 #[cfg(unix)]
 fn check_version_policy(
-    src: &Path,
+    verified: &tempfile::NamedTempFile,
     pinned_version: Option<&str>,
     version_policy: &VersionPolicy,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
     version_policy
-        .check_binary(src, pinned_version)
+        .check_file(verified.as_file(), verified.path(), pinned_version)
         .map_err(anyhow::Error::from)
         .context("refuse to apply an agent update binary that violates the downgrade policy")
 }
 
-/// Verify the confined update binary at `src` against its `expected_sha256`
-/// digest (AGT-004), failing **closed**.
-///
-/// Re-hashes the on-disk bytes at `src` and compares them to the digest the
-/// route that staged the update recorded. This runs immediately before the swap
-/// so a binary that was verified at download/upload but then swapped on disk is
-/// still caught (the stage-then-tamper TOCTOU).
-///
-/// Fails closed on all three failure modes:
-/// - **Missing digest** (`None`) — no route supplied one, so there is nothing to
-///   verify against; reject rather than skip.
-/// - **Read error** — the bytes cannot be hashed, so integrity cannot be proven.
-/// - **Mismatch** — the bytes are not the ones the initiator intended.
+/// Compare the `actual` SHA-256 of the bytes copied from `src` with the
+/// `expected_sha256` the route that staged the update recorded (AGT-004),
+/// failing **closed**: a missing digest or a mismatch is rejected. The
+/// comparison ignores case.
 #[cfg(unix)]
-fn verify_confined_digest(src: &Path, expected_sha256: Option<&str>) -> anyhow::Result<()> {
-    let expected = expected_sha256.ok_or_else(|| {
-        anyhow::anyhow!(
+fn check_expected_digest(
+    src: &Path,
+    actual: &str,
+    expected_sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    let Some(expected) = expected_sha256 else {
+        anyhow::bail!(
             "no expected SHA-256 digest was carried to the apply path for {} — refusing to \
              apply an unverified agent binary (fail closed)",
             src.display()
-        )
-    })?;
-    super::checksum::verify_file_checksum(src, expected)
+        );
+    };
+    let expected = expected.trim().to_ascii_lowercase();
+    if actual != expected {
+        anyhow::bail!(
+            "Checksum verification failed for {}: expected SHA-256 {expected}, computed \
+             {actual}. Refusing to apply an agent binary that does not match its digest.",
+            src.display()
+        );
+    }
+    Ok(())
 }
 
 /// Path of the sibling backup kept for the current agent binary during a
@@ -666,59 +750,36 @@ fn apply_update_binary(
 /// target's own directory) keeps the final rename on one filesystem and thus
 /// atomic.
 #[cfg(unix)]
-fn new_staging_temp(dir: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
+pub(super) fn new_staging_temp(dir: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
     use anyhow::Context;
 
     tempfile::NamedTempFile::new_in(dir)
         .with_context(|| format!("create staging temp file in {}", dir.display()))
 }
 
-/// Atomically replace the executable at `dst` with the file at `src`, marking it
-/// executable. Stages into a **uniquely-named** sibling temp file first so a
-/// crash mid-copy can never leave a truncated agent binary in place, and so
-/// concurrent/retried applies never collide on a shared temp name (AGT-006).
+/// Atomically replace the executable at `dst` with the `verified` private
+/// copy, marking it executable. The copy was made in `dst`'s directory under a
+/// **unique** name (AGT-006) and already flushed to disk, so the final rename is
+/// atomic: the target always holds either the complete old binary or the
+/// complete new one. The mode is set through the open handle, so the file
+/// renamed into place is the very file whose bytes were verified (AGT2-002).
 #[cfg(unix)]
-fn replace_binary(src: &Path, dst: &Path) -> anyhow::Result<()> {
+fn install_verified(verified: tempfile::NamedTempFile, dst: &Path) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let mut tmp = new_staging_temp(dir)?;
-
-    // Copy the staged binary into the temp file through its handle, then flush to
-    // disk before the rename so a crash right after the rename can never expose a
-    // temp file whose bytes were not durably written.
-    {
-        let mut staged = std::fs::File::open(src)
-            .with_context(|| format!("open staged binary {}", src.display()))?;
-        std::io::copy(&mut staged, tmp.as_file_mut()).with_context(|| {
-            format!(
-                "copy staged binary {} -> {}",
-                src.display(),
-                tmp.path().display()
-            )
-        })?;
-    }
-    tmp.as_file()
-        .sync_all()
-        .with_context(|| format!("flush staged binary {} to disk", tmp.path().display()))?;
-
-    let mut perms = tmp
+    verified
         .as_file()
-        .metadata()
-        .with_context(|| format!("stat staged binary {}", tmp.path().display()))?
-        .permissions();
-    perms.set_mode(0o755);
-    tmp.as_file()
-        .set_permissions(perms)
-        .with_context(|| format!("chmod staged binary {}", tmp.path().display()))?;
-
-    // `persist` renames the temp file over `dst`; the target always holds either
-    // the complete old binary or the complete new one, never a partial mix.
-    tmp.persist(dst)
+        .set_permissions(std::fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("chmod verified binary {}", verified.path().display()))?;
+    verified
+        .as_file()
+        .sync_all()
+        .with_context(|| format!("flush verified binary {}", verified.path().display()))?;
+    verified
+        .persist(dst)
         .map_err(|e| e.error)
         .with_context(|| format!("atomically replace {}", dst.display()))?;
-
     Ok(())
 }
 
@@ -1823,7 +1884,10 @@ mod tests {
             tmp.path(),
         )
         .expect_err("a binary other users can write must be refused");
-        assert!(format!("{err:#}").contains("privately staged"), "got: {err:#}");
+        assert!(
+            format!("{err:#}").contains("privately staged"),
+            "got: {err:#}"
+        );
     }
 
     #[cfg(unix)]
@@ -1850,6 +1914,9 @@ mod tests {
             .expect("an upgrade passes the version policy");
         install_verified(copy, &current).expect("the verified copy installs");
 
-        assert_eq!(std::fs::read(&current).unwrap(), std::fs::read(&staged).unwrap());
+        assert_eq!(
+            std::fs::read(&current).unwrap(),
+            std::fs::read(&staged).unwrap()
+        );
     }
 }
