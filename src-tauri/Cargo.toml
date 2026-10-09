@@ -130,7 +130,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "local-transfer", "plugin", "embedded-servers", "http-monitor", "tracing", "agent-update-signing"] }
+termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "local-transfer", "plugin", "embedded-servers", "http-monitor", "tracing", "agent-update-signing", "file-log"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 async-trait = { workspace = true }

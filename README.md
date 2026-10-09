@@ -441,6 +441,8 @@ In portable mode (a `portable.marker` file or `data/` folder next to the executa
 
 The file is rotated automatically and capped at roughly 15 MB total (the current file plus two archives named `termihub.1.log` / `termihub.2.log`), so it can never grow without bound. Passwords, key material, and terminal contents are never written to it.
 
+The remote agent keeps its own logs on the host it runs on, in the `logs/` folder of its config directory (on Linux `~/.config/termihub-agent/logs/`, or under `$XDG_CONFIG_HOME` when set). Each agent process writes its own file, named `termihub-agent-<role>-<pid>.log`, and all agent log files together are capped at roughly 20 MB. `TERMIHUB_AGENT_FILE_LOG` raises the agent's file log level the same way `TERMIHUB_FILE_LOG` does for the app.
+
 ### Controlling how much is logged
 
 By default the file records **Info** level and above — enough to be readable without drowning in per-keystroke noise. When you are chasing a bug, raise the detail:

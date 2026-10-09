@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/utils/file_log.rs:93
   - agent/src/main.rs:239
   - agent/src/file_log.rs:300-436
-status: open
-resolution: ""
+status: fixed
+resolution: "#4319 — writer, log-family budget and russh clamp moved to core::diagnostics::file_log; agent and desktop keep only paths"
 audit: 2026-10
 commit: 663465d52
 relation: new

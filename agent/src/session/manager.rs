@@ -517,16 +517,18 @@ pub struct KiPromptLaunch {
     pub activity: Arc<PromptActivity>,
 }
 
-/// Open the per-session daemon log, where the platform provides one.
+/// Open the per-session daemon's stderr capture file, where the platform
+/// provides one.
 ///
-/// On unix the daemon logs to a per-session file in its socket dir; elsewhere it
-/// is discarded to null (a Windows per-session log path is a future refinement).
-/// See [`crate::daemon::spawn::configure_detached_stderr`] for why it must never
+/// On unix the daemon's stderr goes to a capped capture file in the agent's log
+/// directory (#4319, [`crate::file_log::open_daemon_stderr`]); elsewhere it is
+/// discarded to null (a Windows capture is a future refinement). See
+/// [`crate::daemon::spawn::configure_detached_stderr`] for why it must never
 /// simply inherit the agent's stderr.
 fn daemon_log(session_id: &str) -> Option<std::fs::File> {
     #[cfg(unix)]
     {
-        crate::daemon::transport::open_daemon_log(session_id)
+        crate::file_log::open_daemon_stderr(session_id)
     }
     #[cfg(not(unix))]
     {
