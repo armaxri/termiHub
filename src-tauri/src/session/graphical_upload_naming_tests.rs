@@ -279,9 +279,17 @@ async fn agent_probe_treats_only_file_not_found_as_free() {
         ..StatAgent::default()
     });
 
-    assert_eq!(files.probe("/d/missing.txt").await, Ok(None));
-    assert_eq!(files.probe("/d/there.txt").await, Ok(Some(false)));
-    let err = files.probe("/d/locked.txt").await.unwrap_err();
+    assert_eq!(
+        UploadDestination::probe(&files, "/d/missing.txt").await,
+        Ok(None)
+    );
+    assert_eq!(
+        UploadDestination::probe(&files, "/d/there.txt").await,
+        Ok(Some(false))
+    );
+    let err = UploadDestination::probe(&files, "/d/locked.txt")
+        .await
+        .unwrap_err();
     assert!(err.contains("permission denied"), "{err}");
 }
 

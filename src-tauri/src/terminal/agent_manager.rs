@@ -160,6 +160,43 @@ pub(crate) struct AgentRpcFailure {
     pub transport_closed: bool,
 }
 
+/// Why an agent request returned no result: the agent answered with an error
+/// (its code kept), or the request failed locally — a timeout, a closed
+/// transport, an agent that is not connected (#4299).
+#[derive(Debug)]
+pub(crate) enum AgentRequestFailure {
+    /// The agent answered with a JSON-RPC error (or its transport closed).
+    Agent(AgentRpcFailure),
+    /// The request failed on this side, typed already.
+    Local(TerminalError),
+}
+
+impl AgentRequestFailure {
+    /// The typed desktop error, exactly as a plain request reports it.
+    pub(crate) fn into_terminal_error(self) -> TerminalError {
+        match self {
+            Self::Agent(failure) => failure.into_terminal_error(),
+            Self::Local(error) => error,
+        }
+    }
+
+    /// The file-level error: only the agent's own `FILE_NOT_FOUND` answer is
+    /// [`FileError::NotFound`](termihub_core::errors::FileError::NotFound);
+    /// everything else keeps the desktop error's text as an operation failure.
+    pub(crate) fn into_file_error(self) -> termihub_core::errors::FileError {
+        use termihub_core::errors::FileError;
+        match self {
+            Self::Agent(failure)
+                if !failure.transport_closed
+                    && failure.code == Some(termihub_core::protocol::errors::FILE_NOT_FOUND) =>
+            {
+                FileError::NotFound(failure.message)
+            }
+            other => FileError::OperationFailed(other.into_terminal_error().to_string()),
+        }
+    }
+}
+
 impl From<String> for AgentRpcFailure {
     fn from(message: String) -> Self {
         Self {
@@ -518,6 +555,22 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         method: &str,
         params: Value,
     ) -> Result<Value, TerminalError>;
+
+    /// [`send_request`](Self::send_request) for a `connection.files.*` call:
+    /// the agent's `FILE_NOT_FOUND` answer comes back as
+    /// [`FileError::NotFound`](termihub_core::errors::FileError::NotFound) and
+    /// every other failure as an operation failure (#4299). Defaults to the
+    /// plain request with every failure untyped — never "not found" — so mock
+    /// clients need not implement it.
+    fn send_file_request(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, termihub_core::errors::FileError> {
+        self.send_request(agent_id, method, params)
+            .map_err(|e| termihub_core::errors::FileError::OperationFailed(e.to_string()))
+    }
 
     /// Route a streaming tool run's notifications (`tool.event` / `tool.done`,
     /// #3353) to `tx`. The channel closes without a `Done` if the agent transport
@@ -1885,13 +1938,28 @@ impl<R: Runtime> AgentConnectionManager<R> {
         params: Value,
         timeout: std::time::Duration,
     ) -> Result<Value, TerminalError> {
-        let agents = self
-            .agents
-            .lock()
-            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        self.request_with_timeout(agent_id, method, params, timeout)
+            .map_err(AgentRequestFailure::into_terminal_error)
+    }
+
+    /// [`send_request_with_timeout`](Self::send_request_with_timeout), but an
+    /// error the agent answered with keeps its JSON-RPC code (#4299).
+    fn request_with_timeout(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value, AgentRequestFailure> {
+        let agents = self.agents.lock().map_err(|e| {
+            AgentRequestFailure::Local(TerminalError::RemoteError(format!("Lock failed: {}", e)))
+        })?;
 
         let conn = agents.get(agent_id).ok_or_else(|| {
-            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+            AgentRequestFailure::Local(TerminalError::RemoteError(format!(
+                "Agent {} not connected",
+                agent_id
+            )))
         })?;
 
         let (resp_tx, resp_rx) = oneshot::channel();
@@ -1901,7 +1969,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 params,
                 response_tx: resp_tx,
             })
-            .map_err(|_| TerminalError::agent_transport_closed("Agent I/O task gone"))?;
+            .map_err(|_| {
+                AgentRequestFailure::Local(TerminalError::agent_transport_closed(
+                    "Agent I/O task gone",
+                ))
+            })?;
 
         // Drop the lock before waiting for response
         drop(agents);
@@ -1915,13 +1987,15 @@ impl<R: Runtime> AgentConnectionManager<R> {
         {
             // No reply within the deadline while the transport was up: typed as
             // an agent timeout, not an agent-reported error (#3959).
-            Err(_elapsed) => Err(TerminalError::agent_timeout(timeout)),
+            Err(_elapsed) => Err(AgentRequestFailure::Local(TerminalError::agent_timeout(
+                timeout,
+            ))),
             // The reply sender was dropped with no answer: the I/O task (and the
             // transport) went away under the request — typed, not text (#2840).
-            Ok(Err(_recv)) => Err(TerminalError::agent_transport_closed(
-                "Agent connection lost",
+            Ok(Err(_recv)) => Err(AgentRequestFailure::Local(
+                TerminalError::agent_transport_closed("Agent connection lost"),
             )),
-            Ok(Ok(inner)) => inner.map_err(AgentRpcFailure::into_terminal_error),
+            Ok(Ok(inner)) => inner.map_err(AgentRequestFailure::Agent),
         }
     }
 
@@ -2758,6 +2832,16 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         timeout: std::time::Duration,
     ) -> Result<Value, TerminalError> {
         self.send_request_with_timeout(agent_id, method, params, timeout)
+    }
+
+    fn send_file_request(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, termihub_core::errors::FileError> {
+        self.request_with_timeout(agent_id, method, params, AGENT_REQUEST_TIMEOUT)
+            .map_err(AgentRequestFailure::into_file_error)
     }
 
     fn prune_dead_agents(&self) -> Vec<String> {

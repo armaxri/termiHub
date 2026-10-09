@@ -96,7 +96,26 @@ impl FakeAgentHost {
 }
 
 impl AgentRequests for FakeAgentHost {
-    fn request(&self, _agent_id: &str, method: &str, params: Value) -> Result<Value, String> {
+    fn request(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, termihub_core::errors::FileError> {
+        use termihub_core::errors::FileError;
+        // A missing path is the agent's typed "not found" (#4299).
+        self.answer(agent_id, method, params).map_err(|e| {
+            if e.ends_with(": not found") {
+                FileError::NotFound(e)
+            } else {
+                FileError::OperationFailed(e)
+            }
+        })
+    }
+}
+
+impl FakeAgentHost {
+    fn answer(&self, _agent_id: &str, method: &str, params: Value) -> Result<Value, String> {
         use base64::Engine;
         self.requests
             .lock()

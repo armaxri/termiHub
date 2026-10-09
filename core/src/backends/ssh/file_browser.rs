@@ -27,6 +27,23 @@ use super::jump_host::{connect_target, GatewayHold};
 use super::sftp;
 use super::sftp_ops::{self, ElevatedWriteResult, Writability};
 
+/// Map a failed SFTP `stat` to a [`FileError`]: only the server's definite
+/// `NO_SUCH_FILE` is [`FileError::NotFound`] (#4299). Every other failure —
+/// permission denied, a generic failure, a lost connection, a timeout — is an
+/// operation failure, so a caller choosing a free name can never mistake an
+/// existing file it could not stat for a missing one.
+fn stat_error(path: &str, e: russh_sftp::client::error::Error) -> FileError {
+    use russh_sftp::protocol::StatusCode;
+    match e {
+        russh_sftp::client::error::Error::Status(status)
+            if status.status_code == StatusCode::NoSuchFile =>
+        {
+            FileError::NotFound(path.to_string())
+        }
+        other => FileError::OperationFailed(format!("stat failed: {other}")),
+    }
+}
+
 /// State of a connected SFTP session.
 struct SftpState {
     /// The SSH session carrying this SFTP channel. Kept alive for the session
@@ -256,6 +273,30 @@ impl SftpTransferChannel {
             .create(path)
             .await
             .map_err(|e| FileError::OperationFailed(format!("create remote file failed: {e}")))
+    }
+
+    /// Create `path` as a new, empty remote file, failing when anything is
+    /// already there (`CREATE | EXCLUDE`, the SFTP form of `O_EXCL`; #4299).
+    ///
+    /// Never truncates and never follows a dangling symbolic link, so the
+    /// caller owns the file it gets. A refusal because the name is taken is
+    /// reported like any other failure (SFTP v3 has no dedicated status for
+    /// it); re-check the path to tell a clash from a real error.
+    pub async fn create_new(&self, path: &str) -> Result<(), FileError> {
+        use tokio::io::AsyncWriteExt;
+        let mut file = self
+            .sftp
+            .open_with_flags(
+                path,
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|e| {
+                FileError::OperationFailed(format!("create new remote file failed: {e}"))
+            })?;
+        file.shutdown()
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("close new remote file failed: {e}")))
     }
 
     /// Open an existing remote file for streaming reads, seeked to `offset`
@@ -502,7 +543,7 @@ impl FileBrowser for SftpFileBrowser {
 
         sftp::stat(&state.sftp, path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
+            .map_err(|e| stat_error(path, e))
     }
 
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
