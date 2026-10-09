@@ -12,8 +12,8 @@ evidence:
   - src/components/RemoteDesktop/fileTransfer.ts:216-234
   - src/hooks/useTransferEvents.ts:26-38
   - src/hooks/useTransferEvents.ts:129
-status: open
-resolution: ""
+status: fixed
+resolution: "#4348 — summary watch has an inactivity bound + session abort, listener rejection handled, per-file toasts suppressed for batches"
 audit: 2026-10
 commit: 663465d52
 relation: new
