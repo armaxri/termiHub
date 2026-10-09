@@ -26,8 +26,8 @@ use tracing::{error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::protocol::methods::{
-    AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams, SessionOutputFlowParams,
-    SessionResizeParams,
+    AgentForwardAckParams, AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams,
+    SessionOutputFlowParams, SessionResizeParams,
 };
 
 use super::agent_stderr::AgentStderr;
@@ -98,6 +98,10 @@ pub(super) fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<Agen
             AgentIoCommand::KiRespond { .. } => {
                 // An answer for a round of the dropped agent connection: that
                 // round is gone, and secrets are never replayed (#3375).
+            }
+            AgentIoCommand::AgentForwardAck { .. } => {
+                // Credit for a stream of the dropped connection: every forward
+                // stream ended with it (#4284).
             }
             AgentIoCommand::SessionResize {
                 session_id,
@@ -384,6 +388,21 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                 if let Ok(line) = serialize_request(
                                     request_id,
                                     termihub_core::protocol::methods::AGENT_FORWARD_DATA,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
+                            }
+                        }
+                        AgentIoCommand::AgentForwardAck { stream_id, bytes } => {
+                            // Fire-and-forget like resize (#4284).
+                            request_id += 1;
+                            if let Ok(params) =
+                                serde_json::to_value(AgentForwardAckParams { stream_id, bytes })
+                            {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::AGENT_FORWARD_ACK,
                                     params,
                                 ) {
                                     let _ = channel.data(line.as_bytes()).await;

@@ -8,6 +8,7 @@ use std::time::Duration;
 use termihub_core::session::forward_window::{ForwardWindow, AGENT_FORWARD_WINDOW};
 
 use crate::terminal::agent_forward::ForwardEvent;
+use tokio::sync::mpsc::UnboundedSender;
 
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -612,13 +613,18 @@ async fn a_flow_controlled_stream_carries_bulk_both_ways() {
         .unwrap();
     let (mut rd, mut wr) = c.into_split();
     let to_send = payload.clone();
-    let writer = tokio::spawn(async move { wr.write_all(&to_send).await.unwrap() });
+    // The writer hands its half back: dropping it would half-close the
+    // stream, which the forward treats as the backend hanging up.
+    let writer = tokio::spawn(async move {
+        wr.write_all(&to_send).await.unwrap();
+        wr
+    });
     let mut got = vec![0u8; payload.len()];
     tokio::time::timeout(Duration::from_secs(30), rd.read_exact(&mut got))
         .await
         .expect("echo in time")
         .unwrap();
-    writer.await.unwrap();
+    let _wr = writer.await.unwrap();
     assert!(got == payload, "bulk bytes arrive intact and in order");
     let peak = agent.inbound_peak.load(AtomicOrdering::SeqCst);
     assert!(

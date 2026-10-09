@@ -19,32 +19,38 @@
 //! dial fails and [`AgentPortForward::last_error`] says why, so the session
 //! shows "agent not connected" / "cannot reach host from the agent" rather than
 //! a bare protocol EOF.
+//!
+//! Flow control (#4284): every stream asks the agent for a window
+//! ([`AGENT_FORWARD_WINDOW`]). An agent that grants one keeps at most that
+//! many unacknowledged bytes in flight toward the desktop, and the desktop
+//! acknowledges them only once written to the backend's socket — so a slow
+//! canvas stops the acks and the agent stops reading the remote desktop server,
+//! instead of frames queuing up on the agent or here. The desktop likewise
+//! keeps its own bytes within the window, released by the agent's acks. An
+//! agent that predates flow control grants nothing and the stream is relayed
+//! unbounded, exactly as before.
 
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
+use termihub_core::session::forward_window::{ack_threshold, ForwardWindow, AGENT_FORWARD_WINDOW};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
+use crate::terminal::agent_forward::{ForwardEvent, ForwardSink};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
-
-/// Read size for backend → agent bytes: the relay's own chunk size.
-const FORWARD_CHUNK_SIZE: usize = 64 * 1024;
 
 /// The settings key that routes a graphical connection through an agent: the
 /// id of the agent that hosts it (the same key agent-hosted terminal sessions
 /// carry).
 pub const AGENT_ROUTE_KEY: &str = "agentId";
-
-/// Default VNC port (display 0) — mirrors the VNC backend's `VNC_BASE_PORT`.
-const VNC_BASE_PORT: u16 = 5900;
-/// Default RDP port.
-const RDP_DEFAULT_PORT: u16 = 3389;
 
 /// Where an agent-routed graphical connection goes: the agent carrying it and
 /// the target as seen **from the agent host**.
@@ -67,23 +73,17 @@ impl AgentRoute {
     }
 }
 
-/// Read a port-ish settings value (a JSON number or a numeric string).
-fn read_u16(settings: &Value, key: &str) -> Option<u16> {
-    match settings.get(key)? {
-        Value::Number(n) => n.as_u64().and_then(|v| u16::try_from(v).ok()),
-        Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    }
-}
-
 /// The agent route of a graphical connection, or `None` when it connects
 /// directly from this computer (no `agentId`).
 ///
-/// The target port follows each backend's own rule — VNC's display number wins
-/// (`5900 + display`), else its port, else 5900; RDP's port, else 3389 — so the
-/// agent connects exactly where a direct connection would. Errors (as the text
-/// the user sees) for a route that cannot work: no host, a type without a TCP
-/// target, or VNC's own SSH tunnel combined with the agent route.
+/// The target port is resolved by the backend's own config — core's
+/// `VncConfig::effective_port` / `RdpConfig::effective_port`, the very rule
+/// the direct connection dials (DUP2-008, #4284) — so the agent connects
+/// exactly where a direct connection would, and settings the direct path would
+/// reject are rejected here too. Errors (as the text the user sees) for a
+/// route that cannot work: no host, invalid settings, no target port, a type
+/// without a TCP target, or VNC's own SSH tunnel combined with the agent
+/// route.
 pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>, String> {
     let agent_id = match settings.get(AGENT_ROUTE_KEY).and_then(Value::as_str) {
         Some(id) if !id.trim().is_empty() => id.to_string(),
@@ -96,40 +96,44 @@ pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>
         .filter(|h| !h.is_empty())
         .ok_or_else(|| "A host is required to connect through the agent".to_string())?
         .to_string();
-    let target_port = match type_id {
+    let target_port = routed_target_port(type_id, settings)?;
+    if target_port == 0 {
+        return Err("A target port is required to connect through the agent".to_string());
+    }
+    Ok(Some(AgentRoute {
+        agent_id,
+        target_host,
+        target_port,
+    }))
+}
+
+/// The port the backend of `type_id` would dial for `settings`, from core's own
+/// config type (DUP2-008).
+fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
+    match type_id {
+        #[cfg(feature = "vnc")]
         "vnc" => {
-            if settings
-                .get("useSshTunnel")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
+            let cfg = termihub_core::backends::vnc::VncConfig::from_settings(settings.clone())
+                .map_err(|e| format!("Invalid VNC settings: {e}"))?;
+            if cfg.use_ssh_tunnel {
                 return Err(
                     "An SSH tunnel cannot be combined with connecting through an agent \
                      — the agent already carries the connection"
                         .to_string(),
                 );
             }
-            match read_u16(settings, "display") {
-                Some(display) => VNC_BASE_PORT.saturating_add(display),
-                None => read_u16(settings, "port")
-                    .filter(|p| *p != 0)
-                    .unwrap_or(VNC_BASE_PORT),
-            }
+            Ok(cfg.effective_port())
         }
-        "rdp" => read_u16(settings, "port")
-            .filter(|p| *p != 0)
-            .unwrap_or(RDP_DEFAULT_PORT),
-        other => {
-            return Err(format!(
-                "Connection type '{other}' cannot be routed through an agent"
-            ))
+        #[cfg(feature = "rdp-sidecar")]
+        "rdp" => {
+            termihub_core::backends::rdp_sidecar::config::RdpConfig::from_settings(settings.clone())
+                .map(|cfg| cfg.effective_port())
+                .map_err(|e| format!("Invalid RDP settings: {e}"))
         }
-    };
-    Ok(Some(AgentRoute {
-        agent_id,
-        target_host,
-        target_port,
-    }))
+        other => Err(format!(
+            "Connection type '{other}' cannot be routed through an agent"
+        )),
+    }
 }
 
 /// The settings the desktop backend dials with once the forward is up: the
@@ -157,19 +161,27 @@ pub fn rewrite_for_forward(type_id: &str, settings: &Value, local_port: u16) -> 
 /// implementation is [`AgentClientTransport`]; tests substitute an in-process
 /// fake so the forward lifecycle is exercised without a live agent.
 pub trait ForwardTransport: Send + Sync + 'static {
-    /// Open `stream_id` to `host:port` from the agent host, routing the agent's
-    /// bytes into `sink`. **Blocking** (called from `spawn_blocking`). The error
-    /// is the user-facing reason.
+    /// Open `stream_id` to `host:port` from the agent host, requesting a
+    /// flow-control `window` (#4284), routing the agent's events into `sink`.
+    /// Returns the window the agent granted (`None`: an agent without flow
+    /// control). **Blocking** (called from `spawn_blocking`). The error is the
+    /// user-facing reason.
     fn open(
         &self,
         stream_id: &str,
         host: &str,
         port: u16,
-        sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), String>;
+        window: Option<u64>,
+        sink: ForwardSink,
+    ) -> Result<Option<u64>, String>;
 
-    /// Send backend → target bytes. Non-blocking.
+    /// Send backend → target bytes. Waits only for the agent link's own queue
+    /// budget (#3018).
     fn send(&self, stream_id: &str, data: Vec<u8>) -> Result<(), String>;
+
+    /// Acknowledge `bytes` of target data written to the backend, returning
+    /// that much window credit to the agent (#4284). Non-blocking.
+    fn ack(&self, stream_id: &str, bytes: u64);
 
     /// Close the stream from the desktop end. Non-blocking, best effort.
     fn close(&self, stream_id: &str);
@@ -217,11 +229,17 @@ impl ForwardTransport for AgentClientTransport {
         stream_id: &str,
         host: &str,
         port: u16,
-        sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), String> {
+        window: Option<u64>,
+        sink: ForwardSink,
+    ) -> Result<Option<u64>, String> {
         self.client
-            .open_forward_stream(&self.agent_id, stream_id, host, port, sink)
+            .open_forward_stream(&self.agent_id, stream_id, host, port, window, sink)
             .map_err(|e| forward_failure_message(host, port, &e))
+    }
+
+    fn ack(&self, stream_id: &str, bytes: u64) {
+        self.client
+            .ack_forward_data(&self.agent_id, stream_id, bytes);
     }
 
     fn send(&self, stream_id: &str, data: Vec<u8>) -> Result<(), String> {
@@ -366,17 +384,22 @@ async fn serve_connection(
     cancel: CancellationToken,
 ) {
     let stream_id = format!("pf-{}", uuid::Uuid::new_v4());
-    // TAURI-014-style note: unbounded like the ssh-agent relay it shares — the
-    // producer is the agent I/O loop, which must never block on one slow stream.
-    let (sink, mut from_agent) = mpsc::unbounded_channel::<Vec<u8>>();
+    // Unbounded so the agent I/O loop never blocks on one slow stream; on a
+    // flow-controlled stream it holds at most the granted window of data,
+    // because nothing is acked before it reaches the backend (#4284).
+    let (sink, from_agent) = mpsc::unbounded_channel::<ForwardEvent>();
 
     let open = {
         let transport = transport.clone();
         let (sid, host) = (stream_id.clone(), host.clone());
-        tokio::task::spawn_blocking(move || transport.open(&sid, &host, port, sink)).await
+        let window = Some(AGENT_FORWARD_WINDOW as u64);
+        tokio::task::spawn_blocking(move || transport.open(&sid, &host, port, window, sink)).await
     };
-    match open {
-        Ok(Ok(())) => set_error(&last_error, None),
+    let granted = match open {
+        Ok(Ok(granted)) => {
+            set_error(&last_error, None);
+            granted
+        }
         Ok(Err(reason)) => {
             debug!(%stream_id, %reason, "agent port forward stream failed to open");
             // Recorded before `conn` drops, so the backend's resulting EOF is
@@ -391,43 +414,129 @@ async fn serve_connection(
             );
             return;
         }
-    }
+    };
     if cancel.is_cancelled() {
         transport.close(&stream_id);
         return;
     }
+    // Never trust a grant past our own request.
+    let window = granted.map(|w| {
+        usize::try_from(w)
+            .unwrap_or(usize::MAX)
+            .clamp(1, AGENT_FORWARD_WINDOW)
+    });
+    debug!(%stream_id, ?window, "agent port forward stream open");
     let _ = conn.set_nodelay(true);
-    let (mut rd, mut wr) = conn.into_split();
+    let (rd, wr) = conn.into_split();
+    let outbound = window.map(|w| Arc::new(ForwardWindow::new(w)));
 
-    // agent → backend
-    let to_backend = async {
-        while let Some(bytes) = from_agent.recv().await {
-            if wr.write_all(&bytes).await.is_err() {
-                break;
-            }
-        }
-        let _ = wr.shutdown().await;
+    let pipe = StreamPipe {
+        transport: transport.as_ref(),
+        stream_id: &stream_id,
+        window,
+        outbound: outbound.as_deref(),
     };
-    // backend → agent
-    let to_agent = async {
-        let mut buf = vec![0u8; FORWARD_CHUNK_SIZE];
+    tokio::select! {
+        _ = pipe.agent_to_backend(from_agent, wr) => {
+            debug!(%stream_id, "agent ended the forwarded stream");
+        }
+        _ = pipe.backend_to_agent(rd) => debug!(%stream_id, "backend closed the forwarded stream"),
+        _ = cancel.cancelled() => debug!(%stream_id, "forward dropped with its session"),
+    }
+    if let Some(outbound) = &outbound {
+        outbound.close();
+    }
+    transport.close(&stream_id);
+}
+
+/// The two pumps of one forwarded stream.
+struct StreamPipe<'a> {
+    transport: &'a dyn ForwardTransport,
+    stream_id: &'a str,
+    /// The granted window; `None` for an agent without flow control.
+    window: Option<usize>,
+    /// Credit for backend → agent bytes, released by the agent's acks.
+    outbound: Option<&'a ForwardWindow>,
+}
+
+impl StreamPipe<'_> {
+    /// Agent → backend: route the agent's events — acks to the outbound credit,
+    /// data to the backend writer — until the agent ends the stream.
+    ///
+    /// The router never waits on the backend socket, so the agent's acks keep
+    /// releasing credit even while a slow backend holds the writer up.
+    async fn agent_to_backend(
+        &self,
+        mut from_agent: mpsc::UnboundedReceiver<ForwardEvent>,
+        mut wr: OwnedWriteHalf,
+    ) {
+        let (data_tx, mut data_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let route = async move {
+            while let Some(event) = from_agent.recv().await {
+                match event {
+                    ForwardEvent::Data(bytes) => {
+                        if data_tx.send(bytes).is_err() {
+                            break;
+                        }
+                    }
+                    ForwardEvent::Ack(bytes) => {
+                        if let Some(outbound) = self.outbound {
+                            outbound.release(usize::try_from(bytes).unwrap_or(usize::MAX));
+                        }
+                    }
+                }
+            }
+            // Dropping `data_tx` lets the writer finish what it has.
+        };
+        let write = async {
+            let threshold = self.window.map(ack_threshold);
+            let mut consumed = 0usize;
+            while let Some(bytes) = data_rx.recv().await {
+                if wr.write_all(&bytes).await.is_err() {
+                    break;
+                }
+                if let Some(threshold) = threshold {
+                    consumed += bytes.len();
+                    if consumed >= threshold {
+                        self.transport.ack(self.stream_id, consumed as u64);
+                        consumed = 0;
+                    }
+                }
+            }
+            let _ = wr.shutdown().await;
+        };
+        tokio::join!(route, write);
+    }
+
+    /// Backend → agent: read only while the agent's window has credit (when it
+    /// granted one) and send each read through the transport.
+    async fn backend_to_agent(&self, mut rd: OwnedReadHalf) {
+        let mut buf = vec![0u8; AGENT_FORWARD_CHUNK_SIZE];
         loop {
-            match rd.read(&mut buf).await {
+            let limit = match self.outbound {
+                Some(outbound) => match outbound.wait_credit().await {
+                    Some(credit) => credit.min(buf.len()),
+                    None => break,
+                },
+                None => buf.len(),
+            };
+            match rd.read(&mut buf[..limit]).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if transport.send(&stream_id, buf[..n].to_vec()).is_err() {
+                    if let Some(outbound) = self.outbound {
+                        outbound.consume(n);
+                    }
+                    if self
+                        .transport
+                        .send(self.stream_id, buf[..n].to_vec())
+                        .is_err()
+                    {
                         break;
                     }
                 }
             }
         }
-    };
-    tokio::select! {
-        _ = to_backend => debug!(%stream_id, "agent ended the forwarded stream"),
-        _ = to_agent => debug!(%stream_id, "backend closed the forwarded stream"),
-        _ = cancel.cancelled() => debug!(%stream_id, "forward dropped with its session"),
     }
-    transport.close(&stream_id);
 }
 
 #[cfg(test)]
