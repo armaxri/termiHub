@@ -1739,3 +1739,100 @@ fn io_task_reconnect_fold_order_evicts_before_resolving() {
         assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 0);
     }
 }
+
+/// #4301: a resilient agent tab the redrive re-attaches keeps its saved
+/// connection on the new desktop session and fires the same transfer-resume
+/// triggers (saved connection + agent session) a user-initiated connect does.
+#[test]
+fn agent_reattach_keeps_the_saved_connection_and_fires_resume_triggers() {
+    use crate::files::transfer::relaunch_auto::WaitTrigger;
+    use crate::session::manager::SessionOrigin;
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    let triggers = Arc::new(Mutex::new(Vec::new()));
+    let sink = triggers.clone();
+    manager.set_session_opened_hook(Arc::new(move |t: WaitTrigger| sink.lock().unwrap().push(t)));
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.0));
+    handle.manage(store.clone());
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let redrive: Arc<dyn ReconnectRedrive> = Arc::new(AppReconnectRedrive::new(handle.clone()));
+    let driver = Arc::new(
+        ReconnectTimerDriver::new(
+            store.clone(),
+            scheduler.clone(),
+            Arc::new(move || {
+                publish_sessions(&projector, &store_for_publish);
+            }),
+        )
+        .with_redrive(redrive),
+    );
+    handle.manage(driver.clone());
+
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": { "definitionId": "def-1" } });
+    let s1 = tauri::async_runtime::block_on(manager_ref.create_connection(
+        "shell",
+        settings.clone(),
+        Some("agent-1"),
+        Some("tab-1:0"),
+        false,
+        true, // resilient
+        handle.clone(),
+    ))
+    .expect("initial connect succeeds");
+    let origin = SessionOrigin::new(Some("Lab/agent-shell"), Some("agent-1"), &settings);
+    tauri::async_runtime::block_on(manager_ref.on_session_opened(&s1, &origin));
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some(s1.clone()));
+    triggers.lock().unwrap().clear();
+
+    // Drop, then the redrive re-attaches the surviving live agent session.
+    store.reconnect("tab-1");
+    driver.sync("tab-1");
+    scheduler.fire("tab-1");
+    poll_until(
+        || store.get("tab-1").map(|s| s.status) == Some(SessionStatus::Connected),
+        "redrive re-attaches the agent tab",
+    );
+    let s2 = store
+        .get("tab-1")
+        .and_then(|s| s.backend_session_id)
+        .expect("a new desktop session id");
+    assert_ne!(s2, s1);
+
+    assert_eq!(
+        manager_ref.saved_connection_of(&s2).as_deref(),
+        Some("Lab/agent-shell"),
+        "the re-attached session keeps its saved-connection binding"
+    );
+    assert_eq!(
+        *triggers.lock().unwrap(),
+        vec![
+            WaitTrigger::ConnectionOpened("Lab/agent-shell".to_string()),
+            WaitTrigger::AgentSessionOpened {
+                agent_id: "agent-1".to_string(),
+                definition_id: Some("def-1".to_string()),
+            },
+        ],
+        "the re-attach fires the same resume triggers as a user connect"
+    );
+}
