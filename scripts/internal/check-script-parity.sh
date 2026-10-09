@@ -109,6 +109,10 @@ ALLOWLIST=(
   # Dev release publisher (#4471): CI-only `gh` helper run by dev-build.yml's
   # Ubuntu publish job; never run by hand, so a `.cmd` twin would be dead weight.
   "scripts/internal/dev-release-publish.sh" # CI-only staged dev release swap (Ubuntu)
+  # Docker Hub resilience (#4614): configures the Linux runner's Docker/Podman
+  # registry mirror (writes /etc, systemctl) and retries image pulls for the
+  # fixture jobs and tests/docker/polkit/run.sh; a .cmd twin has no runner to serve.
+  "scripts/internal/registry-mirror.sh" # CI-only mirror config + retried pulls (bash)
 )
 
 in_allowlist() {
