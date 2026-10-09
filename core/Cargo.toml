@@ -57,9 +57,13 @@ tracing = { version = "0.1", optional = true }
 # `tracing_subscriber::fmt::MakeWriter` and builds the file sink's `EnvFilter`.
 # Already in the workspace tree via the desktop and the agent.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"], optional = true }
-# Plugin install/update version comparison (PLG-012): detect downgrades by
-# semantic-version precedence. Already in the workspace lockfile via src-tauri.
-semver = { version = "1", optional = true }
+# The shared version parser and agent-compatibility rule (`util::version`,
+# #4363), plus plugin install/update downgrade detection (PLG-012). Always on:
+# the desktop and the agent both parse versions through it.
+semver = "1"
+# The single RFC 3339 timestamp formatter (`util::time`, #4363). Always on, but
+# only `std` — `clock` (`Utc::now`) and `serde` come with `embedded-servers`.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 russh = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
 # Privilege-elevated SFTP writes (sftp_ops): POSIX-quote the untrusted remote
@@ -196,7 +200,6 @@ libunftp = { version = "0.23", optional = true }
 # The auth/storage traits `libunftp` builds on moved into `unftp-core` in 0.23.
 unftp-core = { version = "0.1", optional = true }
 unftp-sbe-fs = { version = "0.4", optional = true }
-chrono = { version = "0.4", features = ["serde"], optional = true }
 # Ed25519 plugin package signing / verification (#2036). Mature, misuse-resistant
 # Ed25519 implementation (library-first over hand-rolled curve code). The
 # `rand_core` feature enables `SigningKey::generate` for the keygen tool; the
@@ -386,7 +389,8 @@ embedded-servers = [
     "dep:libunftp",
     "dep:unftp-core",
     "dep:unftp-sbe-fs",
-    "dep:chrono",
+    "chrono/clock",
+    "chrono/serde",
     "dep:tracing",
     "dep:anyhow",
     "tokio/fs",
@@ -415,9 +419,8 @@ plugin = [
     "dep:base64",
     "dep:sha2",
     "dep:hex",
-    # Install/update downgrade detection (PLG-012): semver precedence compare of
-    # incoming vs installed version, and a log line for each confirmed downgrade.
-    "dep:semver",
+    # A log line for each confirmed install/update downgrade (PLG-012); the
+    # semver precedence compare itself uses the always-on `semver` dependency.
     "dep:tracing",
 ]
 # Periodic HTTP monitor service (#2592), hostable on the desktop or a remote

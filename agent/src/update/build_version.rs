@@ -38,7 +38,7 @@ use std::path::Path;
 use semver::Version;
 use tracing::warn;
 
-use super::version::parse_version;
+use termihub_core::util::version::parse_version;
 
 /// Prefix of the embedded build-version record. The version and a terminating
 /// NUL follow it. The leading NUL keeps the record from matching in the middle

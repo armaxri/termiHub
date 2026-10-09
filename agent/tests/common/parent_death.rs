@@ -9,8 +9,9 @@
 //! - **All platforms:** [`guard`] sets `TERMIHUB_TEST_PARENT_PID` to this test
 //!   process's PID. The agent (see `agent/src/test_parent_watchdog.rs`) then
 //!   watches that PID and exits once it is gone; daemons it spawns inherit the
-//!   variable and do the same. The agent ignores the variable when unset, so
-//!   production is unaffected.
+//!   variable and do the same. The agent ignores the variable when unset, and
+//!   a default `--release` agent does not contain the watchdog at all (#4362):
+//!   only debug and `test-hooks` builds do.
 //! - **Windows, additionally:** [`adopt`] assigns the child to a process-wide
 //!   Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The job handle is
 //!   only closed when this process exits, however it exits, and the kernel then

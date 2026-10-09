@@ -45,7 +45,6 @@ pub mod ssh_key_validate;
 /// feature so the shipped binary can never be switched into bridge mode.
 #[cfg(feature = "test-bridge")]
 pub mod test_bridge;
-pub mod version;
 pub mod vscode;
 /// Linux-only WebKitGTK webview console + page-load diagnostics for the full-app
 /// test bridge (#2646). Test-bridge-only (SEC-005); compiled out of release.

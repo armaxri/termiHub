@@ -100,7 +100,53 @@ fn require_sshd_and_agent() -> Option<(PathBuf, PathBuf)> {
     )
     .then_some(agent_bin)
     .flatten()
-    .map(|agent_bin| (sshd, agent_bin))
+    .map(|agent_bin| {
+        warn_if_no_parent_watchdog(&agent_bin);
+        (sshd, agent_bin)
+    })
+}
+
+/// Env var that arms the agent's test-only parent-death watchdog (#3641).
+/// Mirrors `PARENT_PID_ENV` in `agent/src/test_parent_watchdog.rs`.
+const PARENT_PID_ENV: &str = "TERMIHUB_TEST_PARENT_PID";
+
+/// Whether an agent binary's bytes carry the parent-death watchdog. The
+/// watchdog — and with it the env-var name — is compiled only into debug and
+/// `test-hooks` agents, never into a default `--release` one (WA-RS2-003).
+fn has_parent_watchdog(binary: &[u8]) -> bool {
+    binary
+        .windows(PARENT_PID_ENV.len())
+        .any(|w| w == PARENT_PID_ENV.as_bytes())
+}
+
+/// Say so, once, when the agent under test cannot arm its parent-death
+/// watchdog: a killed test run would then leak the agent and its daemons.
+///
+/// The `cargo test` debug agent always has it. A release-profile run must
+/// build the agent with the hooks: `cargo test --release --workspace
+/// --features termihub-agent/test-hooks` (or point `TERMIHUB_TEST_AGENT_BIN` at
+/// such a build). The tests still run without it; only the leak guard is off.
+fn warn_if_no_parent_watchdog(agent_bin: &Path) {
+    static CHECKED: std::sync::Once = std::sync::Once::new();
+    CHECKED.call_once(|| {
+        if std::fs::read(agent_bin).is_ok_and(|bytes| !has_parent_watchdog(&bytes)) {
+            eprintln!(
+                "warning: {} has no parent-death watchdog ({PARENT_PID_ENV} is ignored); \
+                 build it with `--features termihub-agent/test-hooks` so a killed test \
+                 run cannot leak agents (#4362)",
+                agent_bin.display()
+            );
+        }
+    });
+}
+
+#[test]
+fn parent_watchdog_detection_matches_the_env_name() {
+    assert!(has_parent_watchdog(
+        b"\0prefix TERMIHUB_TEST_PARENT_PID suffix\0"
+    ));
+    assert!(!has_parent_watchdog(b"\0release agent bytes\0"));
+    assert!(!has_parent_watchdog(b"TERMIHUB_TEST_PARENT_PI"));
 }
 
 /// Lowest port of the kernel's ephemeral (auto-assigned) range: every port-0
@@ -750,7 +796,9 @@ impl LocalAgentSshd {
         // inherit it) outlive the test if `Drop` never runs (#3636).
         // `TERMIHUB_TEST_PARENT_PID` arms the agent's test-only parent-death
         // watchdog on this test process, so a killed test run takes the agent
-        // and its daemons down with it instead of leaking them (#3641).
+        // and its daemons down with it instead of leaking them (#3641). Only
+        // debug and `test-hooks` agents have the watchdog (#4362); see
+        // `warn_if_no_parent_watchdog`.
         // `LLVM_PROFILE_FILE` sends an instrumented agent's coverage profile
         // (and its daemons') to the llvm-cov target instead of `$HOME` (#3831).
         let cwd = std::env::current_dir()?;

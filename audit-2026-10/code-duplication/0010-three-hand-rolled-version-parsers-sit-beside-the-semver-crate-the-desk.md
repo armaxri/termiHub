@@ -16,8 +16,8 @@ evidence:
   - agent/src/handler/dispatch.rs:626-627
   - core/src/plugin/version_change.rs:139-141
   - .github/workflows/release.yml:242-245
-status: open
-resolution: ""
+status: fixed
+resolution: "#4363 — shared semver-based core::util::version replaces the three parsers; pre-release agents are compatible"
 audit: 2026-10
 commit: 663465d52
 relation: new
