@@ -114,4 +114,18 @@ describe("ThemeEditor", () => {
     act(() => (q("theme-editor-cancel") as HTMLButtonElement).click());
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
+    render(createCustomTheme("dark", "Named"));
+    const nameError = () => document.getElementById("theme-editor-name-error");
+    expect(nameError()).toBeNull();
+
+    setValue(q<HTMLInputElement>("theme-editor-name"), "  ");
+    expect(nameError()?.textContent).toBe("Name is required.");
+    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+
+    setValue(q<HTMLInputElement>("theme-editor-name"), "Named");
+    expect(nameError()).toBeNull();
+    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
 });

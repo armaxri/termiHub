@@ -34,6 +34,7 @@ import {
 import type { Workflow, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { AnsiStreamStripper } from "@/utils/stripAnsi";
 
 import type { AppState } from "../appStore";
 import { currentSettingsView } from "../settingsBridge";
@@ -70,17 +71,6 @@ const WAIT_FOR_OUTPUT_CANCEL_POLL_MS = 200;
  * because the tail is preserved.
  */
 const WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS = 65_536;
-
-/**
- * Strips the common ANSI/VT escape sequences (CSI/SGR and friends) from
- * terminal output so a `wait-for-output` pattern matches the visible text, not
- * the control codes. Built with `\u001b`/`\u009b` escapes so no literal control
- * character appears in the source; `no-control-regex` is disabled because
- * matching the escape introducer is exactly the intent.
- */
-const ANSI_ESCAPE_RE =
-  // eslint-disable-next-line no-control-regex
-  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 /**
  * Handles of the in-flight runs keyed by run id, held at module scope so
@@ -405,6 +395,8 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       let settled = false;
       let buffer = "";
       const decoder = new TextDecoder();
+      // Holds an escape sequence split across two output chunks until it completes.
+      const stripper = new AnsiStreamStripper();
       let unlisten: (() => void) | null = null;
 
       // A cancel already requested before we start waiting ends immediately.
@@ -423,7 +415,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       };
 
       const feed = (text: string): void => {
-        buffer += text.replace(ANSI_ESCAPE_RE, "");
+        buffer += stripper.push(text);
         if (buffer.length > WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS) {
           buffer = buffer.slice(buffer.length - WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS);
         }

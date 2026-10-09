@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller } from "react-hook-form";
 import { z } from "zod";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Button, ColorInput, Field, Input, Modal, ModalClose, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
@@ -81,11 +81,14 @@ function toSwatch(value: string): string {
  * grid and its live-preview side effect stay imperative local state.
  */
 export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEditorProps) {
-  const { control, getValues, reset, setValue } = useForm<ThemeMeta>({
-    defaultValues: metaOf(initialTheme),
-    resolver: zodResolver(themeMetaSchema),
-    mode: "onChange",
-  });
+  // The shared RHF + zod scaffold (UISF2-003): `meta` is a complete, stable
+  // snapshot of the form-owned fields.
+  const {
+    form: { control, getValues, reset, setValue },
+    draft: meta,
+    errors,
+    canSave,
+  } = useZodEditorForm<ThemeMeta>({ schema: themeMetaSchema, defaultValues: metaOf(initialTheme) });
 
   // The color grid is held imperatively (see {@link ThemeMeta}).
   const [colors, setColors] = useState<ThemeColors>(initialTheme.colors);
@@ -103,47 +106,21 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
     setColors(initialTheme.colors);
   }, [initialTheme, reset]);
 
-  // Live meta values. `useWatch` can lag the seeded defaults by a render and only
-  // surfaces registered fields, so merge it over the initial meta to keep a
-  // complete draft for the preview and validity checks.
-  const watched = useWatch({ control });
-  const meta: ThemeMeta = { ...metaOf(initialTheme), ...watched };
-  const draft: ThemeDefinition = { ...meta, colors };
-  const draftKey = JSON.stringify(draft);
+  const draft: ThemeDefinition = useMemo(() => ({ ...meta, colors }), [meta, colors]);
 
   // Apply the working draft live while the editor is open.
   useEffect(() => {
     if (open) previewTheme(draft);
-    // `draft` is rebuilt every render; key the effect on its serialization.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draftKey]);
+  }, [open, draft]);
 
   const baseColors = useMemo(() => resolveBaseTheme(meta.baseTheme).colors, [meta.baseTheme]);
-
-  // Deterministic, synchronous validity derived straight from the schema — the
-  // same approach CustomRuleEditor uses — rather than react-hook-form's async
-  // error proxy, so errors and the Save gate update on the same render as the
-  // edit (and stay testable without awaiting).
-  const validity = useMemo(() => {
-    const errors: Record<string, string> = {};
-    const result = themeMetaSchema.safeParse(meta);
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const key = issue.path.join(".");
-        if (!(key in errors)) errors[key] = issue.message;
-      }
-    }
-    return { valid: result.success, errors };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(meta)]);
 
   // Any difference from the opened theme (a colour pick, a rename, a new base)
   // arms the Modal's dismiss guard (UX2-004).
   const isDirty =
     toDraftKey(draft) !== toDraftKey({ ...metaOf(initialTheme), colors: initialTheme.colors });
 
-  const nameError = validity.errors["name"];
-  const canSave = validity.valid;
+  const nameError = errors["name"];
 
   const setColor = (key: keyof ThemeColors, value: string) =>
     setColors((c) => ({ ...c, [key]: value }));

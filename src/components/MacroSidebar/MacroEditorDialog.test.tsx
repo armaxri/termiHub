@@ -327,4 +327,31 @@ describe("MacroEditorDialog", () => {
       expect(await play(result.steps)).toEqual(["cd /srv\r", "tail -f log\r", "\x03"]);
     });
   });
+
+  describe("zod field errors (UISF2-003)", () => {
+    const save = () => query("macro-editor-save") as HTMLButtonElement;
+    const nameError = () => document.getElementById("macro-editor-name-error");
+
+    it("shows 'Name is required.' on the Name field and re-enables Save once named", () => {
+      render();
+      expect(nameError()).toBeNull();
+      expect(save().disabled).toBe(false);
+
+      setInput("macro-editor-name", "   ");
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(query("macro-editor-name")?.getAttribute("aria-invalid")).toBe("true");
+      expect(save().disabled).toBe(true);
+
+      setInput("macro-editor-name", "Deploy");
+      expect(nameError()).toBeNull();
+      expect(save().disabled).toBe(false);
+    });
+
+    it("shows a step's input error under that step and blocks Save", () => {
+      render();
+      setInput("macro-editor-step-data-1", "");
+      expect(query("macro-editor-step-error-1")?.textContent).toBe("Step input cannot be empty.");
+      expect(save().disabled).toBe(true);
+    });
+  });
 });

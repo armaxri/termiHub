@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
-import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
 import { Modal, ModalClose, Button, Input, Field, NumberInput } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
@@ -121,11 +121,15 @@ function toFormStep(step: MacroStep): MacroStepFormValue {
  * and only persisted when the user saves, so cancelling discards them.
  */
 export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEditorDialogProps) {
-  const { control, getValues, reset, setValue } = useForm<MacroFormValues>({
-    defaultValues: EMPTY_FORM,
-    resolver: zodResolver(macroFormSchema),
-    mode: "onChange",
-  });
+  // The shared RHF + zod scaffold (UISF2-003): `draft` is a complete, stable
+  // snapshot of the form, and `errors` / `canSave` update on the same render as
+  // the edit.
+  const {
+    form: { control, getValues, reset, setValue },
+    draft,
+    errors,
+    canSave,
+  } = useZodEditorForm<MacroFormValues>({ schema: macroFormSchema, defaultValues: EMPTY_FORM });
   const { fields, append, remove, move } = useFieldArray({ control, name: "steps" });
 
   const isNew = macro === null;
@@ -148,41 +152,12 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
     if (open) reset(initialForm);
   }, [open, initialForm, reset]);
 
-  // Live form values. `useWatch` can lag the seeded defaults by a render, so
-  // merge it over blank defaults to keep a complete draft for the synchronous
-  // validity check.
-  const watched = useWatch({ control });
-  const draft: MacroFormValues = {
-    name: watched?.name ?? "",
-    description: watched?.description ?? "",
-    tags: watched?.tags ?? "",
-    steps: (watched?.steps ?? []).map((s) => ({ text: s?.text ?? "", delayMs: s?.delayMs ?? 0 })),
-  };
-
-  // Deterministic, synchronous validation derived straight from the schema —
-  // the same approach CustomRuleEditor uses — rather than react-hook-form's
-  // async error proxy, so the Save gate and the per-step messages update on the
-  // same render as the edit.
-  const draftKey = JSON.stringify(draft);
   // Any difference from the opened macro arms the Modal's dismiss guard (UX2-004).
   const isDirty = toDraftKey(draft) !== toDraftKey(initialForm);
-  const validation = useMemo(() => {
-    const result = macroFormSchema.safeParse(draft);
-    const stepErrors = new Map<number, string>();
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        if (issue.path[0] === "steps" && typeof issue.path[1] === "number") {
-          if (!stepErrors.has(issue.path[1])) stepErrors.set(issue.path[1], issue.message);
-        }
-      }
-    }
-    return { valid: result.success, stepErrors };
-    // `draft` is rebuilt every render from the watched values; keying on its
-    // serialization avoids recomputing when nothing actually changed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
 
-  const canSave = validation.valid;
+  /** The first error for step `index` (its input text, then its delay). */
+  const stepError = (index: number): string | undefined =>
+    errors[`steps.${index}.text`] ?? errors[`steps.${index}.delayMs`];
 
   const addStep = () => {
     append(
@@ -221,7 +196,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   };
 
   const stepRows = fields.map((field, index) => {
-    const error = validation.stepErrors.get(index);
+    const error = stepError(index);
     const errorId = `macro-editor-step-error-${index}`;
     return (
       <div className="macro-editor__step-row" key={field.id}>
@@ -359,10 +334,11 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
         name="name"
         control={control}
         render={({ field }) => (
-          <Field label="Name" htmlFor="macro-editor-name">
+          <Field label="Name" htmlFor="macro-editor-name" error={errors["name"]}>
             <Input
               id="macro-editor-name"
               value={field.value ?? ""}
+              error={Boolean(errors["name"])}
               onChange={(e) => field.onChange(e.target.value)}
               onBlur={field.onBlur}
               placeholder="Macro name"

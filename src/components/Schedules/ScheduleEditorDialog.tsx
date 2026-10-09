@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useRef, useState } from "react";
+import { Controller } from "react-hook-form";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { draftKey } from "@/utils/draftKey";
 import {
   Button,
@@ -89,10 +89,17 @@ export function ScheduleEditorDialog({
   onOpenChange,
   onSave,
 }: ScheduleEditorDialogProps) {
-  const { control, getValues, setValue, reset } = useForm<ScheduleFormValues>({
+  // The shared RHF + zod scaffold (UISF2-003): `watched` is a complete, stable
+  // snapshot of the form, and `errors` / `canSave` update on the same render as
+  // the edit.
+  const {
+    form: { control, getValues, setValue, reset },
+    draft: watched,
+    errors,
+    canSave,
+  } = useZodEditorForm<ScheduleFormValues>({
+    schema: scheduleFormSchema,
     defaultValues: blankScheduleForm(),
-    resolver: zodResolver(scheduleFormSchema),
-    mode: "onChange",
   });
 
   // Load the working copy when the dialog opens or switches to another schedule
@@ -120,16 +127,11 @@ export function ScheduleEditorDialog({
     if (next !== ids) setValue("connectionIds", next, { shouldValidate: true });
   }, open);
 
-  const watched = useWatch({ control }) as ScheduleFormValues;
   const isDirty = baselineKey !== null && draftKey(watched) !== baselineKey;
-  const validation = useMemo(() => scheduleFormSchema.safeParse(watched), [watched]);
-  const errorFor = (path: keyof ScheduleFormValues): string | undefined =>
-    validation.success
-      ? undefined
-      : validation.error.issues.find((i) => i.path[0] === path)?.message;
+  const errorFor = (path: keyof ScheduleFormValues): string | undefined => errors[path];
 
   const handleSave = () => {
-    if (!validation.success) return;
+    if (!canSave) return;
     return onSave(formToScheduleInput(scheduleId, getValues()));
   };
 
@@ -153,7 +155,7 @@ export function ScheduleEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={!validation.success}
+            disabled={!canSave}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
