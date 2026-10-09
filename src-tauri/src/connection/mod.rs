@@ -9,6 +9,8 @@ pub mod plugin_type_ids;
 #[cfg(test)]
 pub(crate) mod recording_credential_store;
 pub mod recovery;
+pub mod secret_fields;
+pub(crate) mod secret_migration;
 pub mod settings;
 pub mod shell_integration;
 pub mod storage;

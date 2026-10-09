@@ -268,22 +268,29 @@ fn normalize_plain<T: PlainStore>(data: Value) -> Result<Value, NormalizeError> 
     serde_json::to_value(&typed).map_err(|e| NormalizeError::Invalid(e.to_string()))
 }
 
-/// Remove any password from a `connections.json` document. The store never
-/// writes one (passwords live in the credential store), so this is defence in
-/// depth: a backup never carries — and a restore never writes — a connection or
-/// agent password in the clear.
+/// Remove every secret from a `connections.json` document: each connection
+/// setting its type's schema declares as a secret (`password`, the VNC
+/// `sshPassword`, plugin password fields, inline jump-host hop passwords —
+/// #4289) and each agent password. The store never writes them (secrets live
+/// in the credential store), so this is defence in depth: a backup never
+/// carries — and a restore never writes — a connection or agent secret in the
+/// clear.
 pub fn strip_connection_passwords(doc: &mut Value) {
     fn strip_nodes(nodes: &mut Value) {
         let Some(nodes) = nodes.as_array_mut() else {
             return;
         };
         for node in nodes {
-            if let Some(settings) = node
-                .get_mut("config")
-                .and_then(|c| c.get_mut("config"))
-                .and_then(Value::as_object_mut)
-            {
-                settings.remove("password");
+            if let Some(config) = node.get_mut("config").and_then(Value::as_object_mut) {
+                let type_id = config
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if let Some(settings) = config.get_mut("config").filter(|s| s.is_object()) {
+                    *settings =
+                        crate::connection::secret_fields::without_secrets(&type_id, settings);
+                }
             }
             if let Some(children) = node.get_mut("children") {
                 strip_nodes(children);

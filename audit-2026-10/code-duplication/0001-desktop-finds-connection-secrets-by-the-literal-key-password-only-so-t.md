@@ -16,8 +16,8 @@ evidence:
   - agent/src/state/persistence.rs:184-205
   - core/src/protocol/log_frame.rs:119-165
   - core/src/diagnostics/redact.rs:51
-status: open
-resolution: ""
+status: fixed
+resolution: "#4289 — secrets are classified from the schema (FieldType::Password) in one core classifier used by save, export, backup, logs and agent redaction; non-password secrets move to a field_secrets credential entry, migrated on load"
 audit: 2026-10
 commit: 663465d52
 relation: new

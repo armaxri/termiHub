@@ -5,7 +5,7 @@
  */
 export type VaultConflict = { connectionId: string, 
 /**
- * `"password"`, `"key_passphrase"` or `"sudo_password"`.
+ * `"password"`, `"key_passphrase"`, `"sudo_password"` or `"field_secrets"`.
  */
 credentialType: string, 
 /**

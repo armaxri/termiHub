@@ -20,7 +20,7 @@ export const REDACTION_MARKER = "***redacted***";
  * inside compound names are handled by the pattern fragments below.
  */
 const SECRET_KEY_PATTERN =
-  "(?:passwords?|passphrases?|passwd|pwd|secrets?|" +
+  "(?:passwords?|ssh[-_ ]?passwords?|passphrases?|passwd|pwd|secrets?|" +
   "tokens?|access[-_ ]?tokens?|auth[-_ ]?tokens?|id[-_ ]?tokens?|refresh[-_ ]?tokens?|" +
   "api[-_ ]?keys?|access[-_ ]?keys?|secret[-_ ]?keys?|private[-_ ]?keys?|" +
   "client[-_ ]?secrets?|credentials?)";

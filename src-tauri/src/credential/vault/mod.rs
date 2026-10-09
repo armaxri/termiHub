@@ -202,7 +202,7 @@ pub enum ConflictStrategy {
 #[serde(rename_all = "camelCase")]
 pub struct VaultConflict {
     pub connection_id: String,
-    /// `"password"`, `"key_passphrase"` or `"sudo_password"`.
+    /// `"password"`, `"key_passphrase"`, `"sudo_password"` or `"field_secrets"`.
     pub credential_type: String,
     /// Display name of the owning connection/agent on this machine, if known.
     pub owner_name: Option<String>,
