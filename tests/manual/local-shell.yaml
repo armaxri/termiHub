@@ -110,3 +110,22 @@ tests:
       - "The app log shows no 'write data discarded' errors."
     verification: manual
     tags: [visual]
+
+  - id: MT-LOCAL-33
+    release_gate: true
+    manual_reason: "real WebGL context limits and GPU rendering need a foreground display"
+    name: "Twenty terminal tabs all render with GPU contexts released while hidden"
+    pr: 4308
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open 20 local shell tabs and run ls in each one."
+      - "Click through every tab, then split the view and show two tabs side by side."
+      - "Open the Log Viewer and filter for 'renderer'."
+    expected:
+      - "Every tab shows its text sharply and promptly when selected; none is blank or garbled."
+      - "Switching tabs logs 'renderer webgl (visible)' for the shown tab and 'renderer dom (hidden)' for the hidden one."
+      - "No 'webgl context lost' entries appear."
+    verification: manual
+    tags: [visual]
