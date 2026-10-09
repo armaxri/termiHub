@@ -1066,14 +1066,23 @@ jobs:
   #     tree. It reads the tree via `npm ls`, which cannot follow pnpm's
   #     symlinked store, so this job installs with node-linker=hoisted (an
   #     npm-shaped node_modules from the same frozen lockfile).
-  sbom:
+  #
+  # Split in two (SUP2-002, #4280) so no third-party code runs next to a write
+  # or signing token:
+  #   - sbom-generate runs the generators with a read-only token and no OIDC.
+  #     Both generators are pinned: cargo-cyclonedx by version through the
+  #     SHA-pinned installer, @cyclonedx/cyclonedx-npm as an exact devDependency
+  #     installed from pnpm-lock.yaml (integrity-checked, --ignore-scripts) and
+  #     run with `pnpm exec`. Never `npx` (an unlocked tree with install scripts).
+  #   - sbom only downloads that artifact, attests it and uploads it with
+  #     first-party actions and `gh`; it checks nothing out and runs no npm code.
+  # release-sbom-split.test.mjs pins both halves.
+  sbom-generate:
     name: Generate SBOMs
     needs: [verify-version, verify-supply-chain, create-release]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
 
     steps:
       - name: Checkout code
@@ -1113,15 +1122,16 @@ jobs:
       - name: Generate frontend SBOM
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
-          CYCLONEDX_NPM_VERSION: '6.0.1'
         run: |
           set -euo pipefail
+          # Installs the pinned @cyclonedx/cyclonedx-npm devDependency too; the
+          # SBOM itself omits dev dependencies.
           pnpm install --frozen-lockfile --ignore-scripts --config.node-linker=hoisted
           out="termiHub-${VERSION}-sbom-frontend.cdx.json"
           # --ignore-npm-errors: npm ls flags a few pnpm-hoisted packages as
           # "extraneous"; that is a layout quirk, not a missing package. The
           # completeness check below is what guards the result instead.
-          npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_NPM_VERSION}" \
+          pnpm exec cyclonedx-npm \
             --ignore-npm-errors --omit dev --spec-version 1.6 --output-reproducible \
             --output-format JSON --output-file "$out"
           # Every direct production dependency must appear in the SBOM.
@@ -1137,6 +1147,48 @@ jobs:
             done <<< "$missing"
             exit 1
           fi
+
+      - name: Upload SBOMs as a workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sboms
+          path: termiHub-${{ needs.create-release.outputs.version }}-sbom-*.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # Privileged half of the SBOM publish (#4280): attest + upload only. No
+  # checkout and no third-party code, so the write, OIDC and attestation tokens
+  # never share a runner with the generators.
+  sbom:
+    name: Attest and Upload SBOMs
+    needs: [verify-version, verify-supply-chain, create-release, sbom-generate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-sboms
+
+      - name: Check the SBOM set
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for c in desktop agent rdp-sidecar frontend; do
+            f="termiHub-${VERSION}-sbom-${c}.cdx.json"
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty SBOM: ${f}"
+              exit 1
+            fi
+          done
 
       - name: Attest SBOM provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

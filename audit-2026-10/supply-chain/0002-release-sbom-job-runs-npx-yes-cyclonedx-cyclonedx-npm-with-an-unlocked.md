@@ -6,8 +6,8 @@ severity: medium
 category: supply-chain
 is_workaround: false
 subsystem: "release / sbom"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4280 — cyclonedx-npm is a locked exact devDependency run via pnpm exec; generation split from the privileged attest+upload job"
 audit: 2026-10
 commit: 663465d52
 relation: new
