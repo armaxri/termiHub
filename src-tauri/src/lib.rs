@@ -1153,8 +1153,8 @@ pub fn run() -> anyhow::Result<()> {
                 }
                 // Drop the window's binary remote-desktop frame channels (#4291).
                 if let Some(frames) = app_handle
-                    .try_state::<session::remote_desktop_frames::RemoteDesktopFrameChannels>()
-                {
+                    .try_state::<session::remote_desktop_frames::RemoteDesktopFrameChannels>(
+                ) {
                     frames.remove_window(label);
                 }
 

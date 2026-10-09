@@ -95,9 +95,7 @@ pub fn encode_frame(frame: &FrameUpdate) -> Vec<u8> {
             .iter()
             .filter(|r| rgba_len(r.width, r.height) == Some(r.data.len()))
     };
-    let payload: usize = well_formed()
-        .map(|r| RECT_HEADER_LEN + r.data.len())
-        .sum();
+    let payload: usize = well_formed().map(|r| RECT_HEADER_LEN + r.data.len()).sum();
     let mut buf = Vec::with_capacity(FRAME_HEADER_LEN + payload);
     buf.extend_from_slice(&[KIND_FRAME, WIRE_VERSION, 0, 0]);
     push_u32(&mut buf, frame.width);

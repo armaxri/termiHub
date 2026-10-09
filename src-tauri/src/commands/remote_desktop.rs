@@ -42,11 +42,11 @@ use crate::session::graphical_file_channel::{AgentFiles, RemoteDesktopFileChanne
 use crate::session::graphical_manager::{
     GraphicalEventSink, GraphicalSessionManager, RemoteDesktopCertPromptEvent,
 };
-use crate::session::remote_desktop_frames::{FrameSink, RemoteDesktopFrameChannels};
 use crate::session::graphical_upload::{
     place, plan_local, resolve_dest_dir, start_uploads, AgentHostFiles, AgentRequests,
     RemoteDesktopUploadStarted, UploadCarrier,
 };
+use crate::session::remote_desktop_frames::{FrameSink, RemoteDesktopFrameChannels};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
@@ -540,9 +540,8 @@ pub fn remote_desktop_subscribe_frames(
     window: tauri::WebviewWindow,
     channels: State<'_, RemoteDesktopFrameChannels>,
 ) -> u64 {
-    let sink: FrameSink = Arc::new(move |bytes| {
-        channel.send(InvokeResponseBody::Raw(bytes)).is_ok()
-    });
+    let sink: FrameSink =
+        Arc::new(move |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok());
     channels.subscribe(&session_id, window.label(), sink)
 }
 

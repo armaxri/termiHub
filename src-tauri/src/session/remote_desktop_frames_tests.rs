@@ -275,10 +275,7 @@ fn subscriptions_per_session_are_capped_oldest_first() {
         let (sink, _) = recording_sink(true);
         channels.subscribe("s1", "main", sink);
     }
-    assert_eq!(
-        channels.subscriber_count("s1"),
-        MAX_SUBSCRIBERS_PER_SESSION
-    );
+    assert_eq!(channels.subscriber_count("s1"), MAX_SUBSCRIBERS_PER_SESSION);
     channels.send("s1", &OutputEmitTarget::Broadcast, vec![1]);
     assert_eq!(received(&first_inbox), 0);
 }
