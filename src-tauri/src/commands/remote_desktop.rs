@@ -236,16 +236,26 @@ pub(crate) async fn gated_remote_clipboard_files(
 /// The connect is bounded by the connection's connect timeout (#4298). When
 /// `connect_id` is given, [`remote_desktop_cancel_connect`] with the same id
 /// aborts it while it is still connecting.
+// Tauri command: the argument list is the IPC surface (typed params + injected
+// State), so it cannot be collapsed into a struct without losing the command
+// binding — the arity lint does not apply here.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn remote_desktop_connect(
     type_id: String,
-    settings: Value,
+    mut settings: Value,
     saved_connection_id: Option<String>,
     connect_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    conn_manager: State<'_, crate::connection::manager::ConnectionManager>,
 ) -> Result<String, TerminalError> {
+    // A saved connection's schema secrets other than `password` — e.g. the VNC
+    // SSH-gateway `sshPassword` — live in the credential store (#4289).
+    if let Some(id) = saved_connection_id.as_deref().filter(|id| !id.is_empty()) {
+        conn_manager.restore_saved_secrets(&mut settings, id);
+    }
     let agents = Some(agent_manager.inner().clone());
     let session_id = manager
         .connect_routed(

@@ -19,6 +19,8 @@ use super::jump_host_resolver::{
 use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
+use super::secret_fields;
+use super::secret_migration::migrate_plaintext_field_secrets;
 use super::settings::{default_serial_port_scan_prefixes, AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use super::tree::{
@@ -31,8 +33,16 @@ use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 use crate::utils::fs::write_atomic;
 use termihub_core::connection::LegacyTypeIdResolver;
 
-/// Route credentials to the active store (if `savePassword` is set),
-/// then strip the password field so it is never written to disk.
+/// Route credentials to the active store, then strip every secret field so
+/// none is ever written to disk (#4289).
+///
+/// Which fields are secrets comes from the connection type's settings schema
+/// ([`secret_fields::secret_keys_for`]). `password` goes to the store only when
+/// `savePassword` is set (it is otherwise prompted for at connect time). Every
+/// other secret — e.g. the VNC SSH-gateway `sshPassword`, a plugin's password
+/// field or an inline jump-host hop's password — has no prompt, so it is kept
+/// in the connection's field-secrets entry whenever it is non-empty; an empty
+/// one leaves the stored value as it is.
 ///
 /// `file_scope` is the credential scope of the file the connection is stored
 /// in — `None` for the main store (#3591, see [`owner_id`]).
@@ -41,11 +51,35 @@ use termihub_core::connection::LegacyTypeIdResolver;
 /// stores a per-connection secret: the reference is authoritative, so a typed
 /// password is dropped rather than saved where it would never be read.
 pub(crate) fn prepare_for_storage(
+    connection: SavedConnection,
+    file_scope: Option<&str>,
+    store: &dyn CredentialStore,
+) -> Result<SavedConnection> {
+    let mut connection = prepare_password_for_storage(connection, file_scope, store)?;
+    let keys = secret_fields::secret_keys_for(&connection.config.type_id);
+    let field_keys = secret_fields::field_secret_keys(&keys);
+    let taken = termihub_core::connection::secrets::take_secrets(
+        &field_keys,
+        &mut connection.config.settings,
+    );
+    if !taken.is_empty() {
+        let owner = owner_id(&connection.id, file_scope);
+        secret_fields::store_field_secrets(store, &owner, taken)?;
+    }
+    Ok(connection)
+}
+
+/// The `password` half of [`prepare_for_storage`]: route it to the store when
+/// `savePassword` is set, and strip it. Other secret fields are left as they
+/// are — a loaded file's are moved by
+/// [`migrate_plaintext_field_secrets`](super::secret_migration::migrate_plaintext_field_secrets).
+fn prepare_password_for_storage(
     mut connection: SavedConnection,
     file_scope: Option<&str>,
     store: &dyn CredentialStore,
 ) -> Result<SavedConnection> {
     let uses_named = named::settings_ref(&connection.config.settings).is_some();
+    let owner = owner_id(&connection.id, file_scope);
     let settings = &mut connection.config.settings;
     // The remote-desktop types' legacy `saveToStore` flag means `savePassword`
     // (#3818); only the unified key is ever written.
@@ -68,7 +102,6 @@ pub(crate) fn prepare_for_storage(
             } else {
                 CredentialType::Password
             };
-            let owner = owner_id(&connection.id, file_scope);
             store.set(&CredentialKey::new(&owner, cred_type), &password)?;
         }
         if let Some(obj) = settings.as_object_mut() {
@@ -76,6 +109,15 @@ pub(crate) fn prepare_for_storage(
         }
     }
     Ok(connection)
+}
+
+/// `connection` for an export: its legacy `saveToStore` flag normalized and
+/// every secret field its schema declares removed, nothing written anywhere.
+fn strip_for_export(mut connection: SavedConnection) -> SavedConnection {
+    let settings = &mut connection.config.settings;
+    termihub_core::connection::normalize_save_password(settings);
+    *settings = secret_fields::without_secrets(&connection.config.type_id, settings);
+    connection
 }
 
 /// Route agent credentials to the active store, then strip the password.
@@ -144,6 +186,9 @@ pub struct ConnectionManager {
     file_scopes: FileScopes,
     /// Serializes migrations of pre-#3591 external-file secrets.
     scope_migration: Mutex<()>,
+    /// Set once the main store's plaintext field secrets were moved to the
+    /// credential store (#4289), so later calls skip the scan.
+    main_field_secrets_moved: std::sync::atomic::AtomicBool,
 }
 
 impl ConnectionManager {
@@ -170,6 +215,7 @@ impl ConnectionManager {
             id_change_listener: Mutex::new(None),
             file_scopes,
             scope_migration: Mutex::new(()),
+            main_field_secrets_moved: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -194,6 +240,7 @@ impl ConnectionManager {
             id_change_listener: Mutex::new(None),
             file_scopes: FileScopes::load(dir.join(STATE_FILE_NAME)),
             scope_migration: Mutex::new(()),
+            main_field_secrets_moved: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -391,6 +438,11 @@ impl ConnectionManager {
         settings: &mut serde_json::Value,
         root_id: Option<&str>,
     ) -> Result<()> {
+        // The root's own stored schema secrets (e.g. its inline hops'
+        // passwords, #4289) are not in settings loaded from a saved connection.
+        if let Some(id) = root_id {
+            self.restore_saved_secrets(settings, id);
+        }
         // Skip the (disk-reloading) connection load for the common case of no
         // chain or an inline-only chain — there is nothing to resolve.
         if !super::jump_host_resolver::chain_has_reference(settings) {
@@ -833,14 +885,16 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Export all connections and folders as a JSON string. Passwords are stripped.
+    /// Export all connections and folders as a JSON string. Every secret field
+    /// the connection types' schemas declare is stripped (#4289).
     pub fn export_json(&self) -> Result<String> {
         let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let mut export_conns = store.connections.clone();
-        export_conns = export_conns
-            .into_iter()
-            .map(|c| prepare_for_storage(c, None, &*self.credential_store))
-            .collect::<Result<Vec<_>>>()?;
+        let export_conns: Vec<SavedConnection> = store
+            .connections
+            .iter()
+            .cloned()
+            .map(strip_for_export)
+            .collect();
 
         let tree = build_tree(&export_conns, &store.folders);
         let export_store = ConnectionStore {
@@ -1095,11 +1149,9 @@ impl ConnectionManager {
         let agents = store.agents.clone();
         drop(store);
 
-        // Strip inline passwords
-        let connections: Vec<SavedConnection> = connections
-            .into_iter()
-            .map(|c| prepare_for_storage(c, None, &*self.credential_store))
-            .collect::<Result<Vec<_>>>()?;
+        // Strip every secret field (#4289); saved ones travel encrypted below.
+        let connections: Vec<SavedConnection> =
+            connections.into_iter().map(strip_for_export).collect();
 
         // Build the encrypted credentials section if a password is provided
         let encrypted = match password {
@@ -1118,6 +1170,11 @@ impl ConnectionManager {
                         if let Ok(Some(value)) = self.credential_store.get(&key) {
                             cred_map.insert(key.to_string(), value);
                         }
+                    }
+                    // Schema secrets other than `password` (#4289).
+                    let key = secret_fields::field_secrets_key(&conn.id);
+                    if let Ok(Some(value)) = self.credential_store.get(&key) {
+                        cred_map.insert(key.to_string(), value);
                     }
                 }
 
@@ -1598,6 +1655,23 @@ pub(crate) fn try_load_external_file(
 
     let type_ids_migrated = resolver.is_some_and(|r| migrate_connections(&mut connections, r));
 
+    // Migrate: move plaintext schema secrets other than `password` (#4289) to
+    // the store in one batch. A failure (or a locked store) leaves them in the
+    // file and in memory, so nothing is lost; the move is retried next load.
+    let field_secrets_migrated =
+        match migrate_plaintext_field_secrets(&mut connections, Some(file_scope), store) {
+            Ok(migrated) => migrated,
+            Err(e) => {
+                tracing::warn!(
+                    file = %file_path,
+                    error = %e,
+                    "Could not move plaintext connection secrets to the credential store; \
+                     they stay in the file until the next load"
+                );
+                false
+            }
+        };
+
     // Migrate: strip plaintext passwords and route to credential store
     let has_plaintext_passwords = connections.iter().any(|conn| {
         conn.config
@@ -1610,11 +1684,11 @@ pub(crate) fn try_load_external_file(
     if has_plaintext_passwords {
         connections = connections
             .into_iter()
-            .map(|c| prepare_for_storage(c, Some(file_scope), store))
+            .map(|c| prepare_password_for_storage(c, Some(file_scope), store))
             .collect::<Result<Vec<_>>>()?;
     }
 
-    if has_plaintext_passwords || type_ids_migrated {
+    if has_plaintext_passwords || type_ids_migrated || field_secrets_migrated {
         // Rewrite the external file with passwords stripped / type ids migrated.
         // The file's own folders are kept so foldered connections survive the
         // rewrite.
@@ -1632,9 +1706,10 @@ pub(crate) fn try_load_external_file(
         match written {
             // Plaintext passwords must not stay on disk: a failed strip is an error.
             Err(e) if has_plaintext_passwords => return Err(e),
-            // A type-id-only rewrite is best-effort (e.g. a read-only shared
-            // file): the in-memory ids are already resolved for this session.
-            Err(e) => tracing::warn!("Failed to persist migrated plugin connection types: {e:#}"),
+            // A type-id or field-secret rewrite is best-effort (e.g. a
+            // read-only shared file): the in-memory ids are already resolved,
+            // and moved secrets already have their copy in the store.
+            Err(e) => tracing::warn!("Failed to persist migrated connection file: {e:#}"),
             Ok(()) => {}
         }
     }
@@ -1649,10 +1724,11 @@ pub(crate) fn try_load_external_file(
         }
     }
 
-    // Strip passwords from in-memory connections
+    // Strip passwords from in-memory connections. Field secrets whose move
+    // was deferred stay, exactly as they are in the file.
     connections = connections
         .into_iter()
-        .map(|c| prepare_for_storage(c, Some(file_scope), store))
+        .map(|c| prepare_password_for_storage(c, Some(file_scope), store))
         .collect::<Result<Vec<_>>>()?;
 
     Ok(ExternalSource {
@@ -3349,3 +3425,7 @@ mod graphical_password_tests;
 #[cfg(test)]
 #[path = "manager_unknown_fields_tests.rs"]
 mod unknown_fields_tests;
+
+#[cfg(test)]
+#[path = "manager_secret_fields_tests.rs"]
+mod secret_fields_tests;

@@ -113,9 +113,10 @@ pub fn parse_line(line: &str) -> StderrLine {
 
 /// Whether a field named `name` holds a secret and must never be logged.
 ///
-/// Matched case-insensitively on the whole name or a `_`/`-`/`.`-separated
-/// component, so `password`, `ssh_password`, `auth-token` and `api_key` are all
-/// caught while `session_id` or `key_count` are not.
+/// Matched case-insensitively on the whole name or a `_`/`-`/`.`-separated or
+/// camelCase component, so `password`, `ssh_password`, `sshPassword`,
+/// `auth-token` and `api_key` are all caught while `session_id` or `keyCount`
+/// are not.
 pub fn is_secret_field(name: &str) -> bool {
     const WHOLE: &[&str] = &[
         "password",
@@ -137,8 +138,7 @@ pub fn is_secret_field(name: &str) -> bool {
         "access_key",
         "authorization",
     ];
-    let lower = name.to_ascii_lowercase();
-    let normalized = lower.replace(['-', '.'], "_");
+    let normalized = snake_case(name).replace(['-', '.'], "_");
     if WHOLE.contains(&normalized.as_str()) {
         return true;
     }
@@ -164,6 +164,21 @@ pub fn is_secret_field(name: &str) -> bool {
                 | "totp"
         )
     })
+}
+
+/// `name` lowercased, with a `_` at every lower-to-upper camelCase boundary
+/// (`sshPassword` → `ssh_password`).
+fn snake_case(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    let mut prev_lower = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() && prev_lower {
+            out.push('_');
+        }
+        prev_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
 }
 
 /// Truncate `s` to at most `max` bytes on a char boundary, marking the cut.

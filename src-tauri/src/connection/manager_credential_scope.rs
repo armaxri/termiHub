@@ -16,6 +16,10 @@ use crate::connection::credential_scope::{
 };
 use crate::connection::placement::PlaceMode;
 use crate::connection::recovery::RecoveryWarning;
+use crate::connection::secret_fields::{
+    has_plaintext_field_secrets, may_have_field_secrets, restore_saved_field_secrets,
+};
+use crate::connection::secret_migration::migrate_plaintext_field_secrets;
 use crate::connection::tree::flatten_tree;
 use crate::credential::{CredentialKey, CredentialStoreStatus, CredentialType};
 
@@ -78,6 +82,33 @@ impl ConnectionManager {
         Ok((conn, owner))
     }
 
+    /// Put the schema secrets other than `password` stored for saved
+    /// connection `connection_id` — e.g. a VNC `sshPassword` or an inline
+    /// jump-host hop's password (#4289) — back into `settings` for a connect,
+    /// where `settings` do not carry them already.
+    ///
+    /// Best effort and never prompting: a connection that cannot own such
+    /// secrets, an unknown or ambiguous id, or a store that is not unlocked is
+    /// skipped (the connect then reports the missing secret itself).
+    pub fn restore_saved_secrets(&self, settings: &mut serde_json::Value, connection_id: &str) {
+        if self.credential_store.status() != CredentialStoreStatus::Unlocked {
+            return;
+        }
+        let (conn, owner) = match self.transfer_connection(connection_id) {
+            Ok(found) => found,
+            Err(e) => {
+                tracing::debug!(connection_id, error = %e, "No saved connection to restore secrets for");
+                return;
+            }
+        };
+        if !may_have_field_secrets(&conn.config.type_id, &conn.config.settings) {
+            return;
+        }
+        if let Err(e) = restore_saved_field_secrets(&*self.credential_store, &owner, settings) {
+            tracing::warn!(connection_id, error = %e, "Could not restore saved connection secrets");
+        }
+    }
+
     /// The credential store saved connections' secrets live in.
     pub(crate) fn credential_store(&self) -> &dyn crate::credential::CredentialStore {
         &*self.credential_store
@@ -92,6 +123,7 @@ impl ConnectionManager {
         if self.credential_store.status() != CredentialStoreStatus::Unlocked {
             return;
         }
+        self.migrate_main_store_field_secrets();
         for path in self.configured_external_paths() {
             let done = self
                 .file_scopes
@@ -102,6 +134,51 @@ impl ConnectionManager {
             }
         }
         self.clean_up_kept_bare_keys();
+    }
+
+    /// Move the main store's plaintext schema secrets other than `password`
+    /// (e.g. the VNC `sshPassword`, #4289) to the credential store and rewrite
+    /// `connections.json` without them — once per run, after it succeeds or
+    /// finds nothing. A failed store write changes nothing and is retried on
+    /// the next call; a failed rewrite leaves the plaintext on disk with its
+    /// copy already in the store.
+    pub(crate) fn migrate_main_store_field_secrets(&self) {
+        use std::sync::atomic::Ordering;
+        if self.main_field_secrets_moved.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        self.sync_from_disk(&mut store);
+        let mut connections = store.connections.clone();
+        match migrate_plaintext_field_secrets(&mut connections, None, &*self.credential_store) {
+            Ok(false) => {
+                let pending = connections
+                    .iter()
+                    .any(|c| has_plaintext_field_secrets(&c.config.type_id, &c.config.settings));
+                if !pending {
+                    self.main_field_secrets_moved.store(true, Ordering::SeqCst);
+                }
+            }
+            Ok(true) => {
+                let previous = std::mem::replace(&mut store.connections, connections);
+                match self.storage.save_flat(&store) {
+                    Ok(()) => self.main_field_secrets_moved.store(true, Ordering::SeqCst),
+                    Err(e) => {
+                        store.connections = previous;
+                        tracing::warn!(
+                            error = %e,
+                            "Could not rewrite connections.json without its plaintext \
+                             secrets (they are already in the credential store); will retry"
+                        );
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                "Could not move plaintext connection secrets to the credential store; \
+                 they stay in connections.json until the next attempt"
+            ),
+        }
     }
 
     /// Delete the bare keys a migration kept only because some configured

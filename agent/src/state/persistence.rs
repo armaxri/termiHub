@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use termihub_core::connection::secrets::FALLBACK_SECRET_KEYS;
 use tracing::{debug, error, warn};
 
 use crate::store_version::{check_version, guard_not_newer};
@@ -158,11 +159,17 @@ pub struct PersistedSession {
     pub definition_id: Option<String>,
 }
 
-/// JSON object keys (matched case-insensitively) that carry a plaintext secret
-/// across the backend connection config schemas: SSH/FTP/RDP/VNC and jump-host
-/// `password` (which also holds a key **passphrase** for key auth — see
-/// `core::backends::ssh::auth`), and the VNC SSH-gateway `sshPassword`.
-const SECRET_SETTINGS_KEYS: &[&str] = &["password", "sshpassword"];
+/// Whether the settings key `key` carries a plaintext secret, matched
+/// case-insensitively against the core classifier's built-in secret keys
+/// ([`FALLBACK_SECRET_KEYS`]): SSH/FTP/RDP/VNC and jump-host `password` (which
+/// also holds a key **passphrase** for key auth — see
+/// `core::backends::ssh::auth`), and the VNC SSH-gateway `sshPassword`. Agents
+/// host only built-in types, whose schema secrets that list covers (#4289).
+fn is_secret_settings_key(key: &str) -> bool {
+    FALLBACK_SECRET_KEYS
+        .iter()
+        .any(|secret| secret.eq_ignore_ascii_case(key))
+}
 
 /// Object keys whose *values* are free-form user data we must not walk into:
 /// `env`/`envVars` map arbitrary user-named variables to values we cannot
@@ -190,7 +197,7 @@ pub fn redact_persisted_secrets(settings: &serde_json::Value) -> serde_json::Val
 fn redact_in_place(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
-            map.retain(|k, _| !SECRET_SETTINGS_KEYS.contains(&k.to_ascii_lowercase().as_str()));
+            map.retain(|k, _| !is_secret_settings_key(k));
             for (k, v) in map.iter_mut() {
                 if OPAQUE_SETTINGS_SUBTREES.contains(&k.to_ascii_lowercase().as_str()) {
                     continue;
@@ -572,6 +579,24 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn redaction_covers_every_secret_field_an_agent_backend_declares() {
+        // The schema is the source of truth for secrets (#4289): every secret
+        // field of every type this agent hosts must be redacted at rest.
+        let registry = crate::registry::build_registry();
+        for info in registry.available_types() {
+            for key in termihub_core::connection::secrets::schema_secret_keys(&info.schema) {
+                let settings = json!({ key.clone(): "s3cr3t" });
+                assert_eq!(
+                    redact_persisted_secrets(&settings),
+                    json!({}),
+                    "{}.{key} survives redaction",
+                    info.type_id
+                );
+            }
+        }
+    }
 
     #[test]
     fn redact_persisted_secrets_strips_secret_fields_keeps_the_rest() {

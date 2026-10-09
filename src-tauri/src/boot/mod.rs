@@ -215,6 +215,11 @@ pub(crate) fn init_plugin_host(
     // connection-type list the UI offers — no separate wiring per plugin.
     let plugins_root = config_dir.join("plugins");
     let connection_registry = std::sync::Arc::new(std::sync::Mutex::new(build_desktop_registry()));
+    // Saved-connection secrets are classified by their type's schema, plugin
+    // types included (#4289).
+    crate::connection::secret_fields::install_type_registry(std::sync::Arc::clone(
+        &connection_registry,
+    ));
     // ABI 1.1 plugins receive the app version in their host context (#3576).
     let plugin_host = termihub_core::plugin::PluginHost::new(
         plugins_root.clone(),
