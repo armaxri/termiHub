@@ -152,6 +152,14 @@ describe("ConnectionPicker", () => {
     expect(query("connection-picker-item-c2")).toBeNull();
   });
 
+  it("filters diacritic-insensitively, like the sidebar search (#4372)", () => {
+    mockConnections = [conn("c1", "Müller-Server", "ssh"), conn("c2", "beta", "ssh")];
+    render();
+    typeSearch("muller");
+    expect(query("connection-picker-item-c1")).not.toBeNull();
+    expect(query("connection-picker-item-c2")).toBeNull();
+  });
+
   it("shows the empty state when nothing matches", () => {
     mockConnections = [conn("c1", "alpha", "ssh")];
     render();

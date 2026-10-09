@@ -180,11 +180,6 @@ export function formatAbsoluteTime(dateString: string | null | undefined): strin
   return date.toLocaleString(resolveUiLocale());
 }
 
-/** Extract the final path segment (file name) from a POSIX or Windows path. */
-export function getBasename(path: string): string {
-  return path.split(/[/\\]/).pop() ?? path;
-}
-
 /** Truncate string with ellipsis (default max length 60). */
 export function truncate(str: string, maxLength = 60): string {
   if (str.length <= maxLength) return str;

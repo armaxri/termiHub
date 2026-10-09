@@ -3,9 +3,10 @@ import { act, createElement } from "react";
 import { createRoot, Root } from "react-dom/client";
 import {
   useListFilter,
-  nameDescriptionTagsMatcher,
+  nameDescriptionTagsFields,
+  itemMatchesQuery,
   ListFilter,
-  ListFilterMatcher,
+  ListFilterFields,
 } from "./useListFilter";
 
 interface Item {
@@ -22,14 +23,14 @@ const ITEMS: Item[] = [
 
 function Harness({
   items,
-  matcher,
+  fields,
   onResult,
 }: {
   items: Item[];
-  matcher: ListFilterMatcher<Item>;
+  fields: ListFilterFields<Item>;
   onResult: (r: ListFilter<Item>) => void;
 }) {
-  onResult(useListFilter(items, matcher));
+  onResult(useListFilter(items, fields));
   return null;
 }
 
@@ -38,9 +39,9 @@ describe("useListFilter", () => {
   let root: Root;
   let latest: ListFilter<Item>;
 
-  function render(items: Item[], matcher: ListFilterMatcher<Item> = nameDescriptionTagsMatcher) {
+  function render(items: Item[], fields: ListFilterFields<Item> = nameDescriptionTagsFields) {
     act(() => {
-      root.render(createElement(Harness, { items, matcher, onResult: (r) => (latest = r) }));
+      root.render(createElement(Harness, { items, fields, onResult: (r) => (latest = r) }));
     });
   }
 
@@ -84,40 +85,64 @@ describe("useListFilter", () => {
     expect(latest.filtered).toHaveLength(0);
   });
 
-  it("trims and lower-cases the query before matching", () => {
+  it("trims the query and matches case-insensitively", () => {
     render(ITEMS);
     act(() => latest.setQuery("  BACKUP  "));
     expect(latest.filtered.map((i) => i.name)).toEqual(["Backup"]);
   });
 
-  it("uses a caller-supplied matcher", () => {
-    const nameOnly: ListFilterMatcher<Item> = (item, q) =>
-      !q || item.name.toLowerCase().includes(q);
+  it("matches diacritic-insensitively, like the sidebar tree search (#4372)", () => {
+    const people: Item[] = [
+      { name: "Müller Server", tags: [] },
+      { name: "Café", description: "São Paulo office", tags: [] },
+      { name: "Other", tags: [] },
+    ];
+    render(people);
+    act(() => latest.setQuery("muller"));
+    expect(latest.filtered.map((i) => i.name)).toEqual(["Müller Server"]);
+    act(() => latest.setQuery("sao"));
+    expect(latest.filtered.map((i) => i.name)).toEqual(["Café"]);
+  });
+
+  it("keeps substring semantics (no acronym or fuzzy matches)", () => {
+    render([{ name: "Web Server", tags: [] }]);
+    act(() => latest.setQuery("ws"));
+    expect(latest.filtered).toHaveLength(0);
+  });
+
+  it("uses caller-supplied fields", () => {
+    const nameOnly: ListFilterFields<Item> = (item) => [item.name];
     render(ITEMS, nameOnly);
-    // "nightly" only appears in a description, so the name-only matcher excludes it.
+    // "nightly" only appears in a description, so the name-only fields exclude it.
     act(() => latest.setQuery("nightly"));
     expect(latest.filtered).toHaveLength(0);
   });
 });
 
-describe("nameDescriptionTagsMatcher", () => {
+describe("itemMatchesQuery with nameDescriptionTagsFields", () => {
   const item: Item = { name: "Alpha", description: "beta", tags: ["gamma"] };
+  const match = (it: Item, q: string) => itemMatchesQuery(it, nameDescriptionTagsFields, q);
 
   it("matches everything on an empty query", () => {
-    expect(nameDescriptionTagsMatcher(item, "")).toBe(true);
+    expect(match(item, "")).toBe(true);
   });
 
   it("matches name, description, and tags", () => {
-    expect(nameDescriptionTagsMatcher(item, "alph")).toBe(true);
-    expect(nameDescriptionTagsMatcher(item, "beta")).toBe(true);
-    expect(nameDescriptionTagsMatcher(item, "gamma")).toBe(true);
+    expect(match(item, "alph")).toBe(true);
+    expect(match(item, "BETA")).toBe(true);
+    expect(match(item, "gamma")).toBe(true);
   });
 
   it("rejects a non-match", () => {
-    expect(nameDescriptionTagsMatcher(item, "delta")).toBe(false);
+    expect(match(item, "delta")).toBe(false);
   });
 
   it("tolerates a missing description", () => {
-    expect(nameDescriptionTagsMatcher({ name: "x", tags: [] }, "y")).toBe(false);
+    expect(match({ name: "x", tags: [] }, "y")).toBe(false);
+  });
+
+  it("skips null and undefined fields", () => {
+    expect(itemMatchesQuery(item, () => [null, undefined, "Zürich"], "zurich")).toBe(true);
+    expect(itemMatchesQuery(item, () => [null, undefined], "x")).toBe(false);
   });
 });

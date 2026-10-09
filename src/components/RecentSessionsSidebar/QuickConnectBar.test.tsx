@@ -130,6 +130,13 @@ describe("QuickConnectBar", () => {
     expect(query("quick-connect-suggestion-telnet:box:23")).toBeNull();
   });
 
+  it("matches suggestions diacritic-insensitively (#4372)", () => {
+    render([sshEntry({ dedupKey: "ssh:jürgen@prod:22", title: "jürgen@prod" })]);
+    focusInput();
+    typeInto("jurgen");
+    expect(query("quick-connect-suggestion-ssh:jürgen@prod:22")).not.toBeNull();
+  });
+
   it("connects to the exact history entry when a suggestion is chosen", () => {
     const onConnect = render([sshEntry()]);
     focusInput();
