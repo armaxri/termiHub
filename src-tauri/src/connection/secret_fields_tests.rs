@@ -13,7 +13,7 @@ fn every_builtin_secret_field_is_classified() {
     let registry = crate::session::registry::build_desktop_registry();
     for info in registry.available_types() {
         let expected: &[&str] = match info.type_id.as_str() {
-            "ssh" | "telnet" | "ftp" | "rdp" => &["password"],
+            "ssh" | "telnet" | "ftp" | "rdp" | "mock-remote-desktop" => &["password"],
             "vnc" => &["password", "sshPassword"],
             _ => &[],
         };
