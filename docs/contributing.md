@@ -1547,6 +1547,12 @@ and Security Audit cancel superseded runs on `develop` too (never on `main`). Re
 cancelled run (`gh run rerun <run id>`) and wait for green. A _failed_ Dev Build is a broken
 full build on the release commit: fix it and re-tag.
 
+Only Dev Build's last job, **Publish Dev Release**, touches the rolling `dev-latest` /
+`dev-develop-latest` release, and only after every build job succeeded and every required
+artifact is present (#4471). It stages the new assets in a draft release, verifies the
+upload, then swaps the draft in for the old release, so a failed build or a failed upload
+leaves the previous dev binaries downloadable (see `scripts/internal/dev-release-publish.sh`).
+
 **Rust supply chain at tag time (#4282).** Next to the integration gate, the Release
 workflow's **Verify Rust Supply Chain** job re-runs `cargo audit` and
 `cargo deny check advisories bans licenses sources` (workspace and RDP sidecar, pinned tool
@@ -1673,7 +1679,11 @@ The release workflow adds two supply-chain records to every release (CI-022,
   Feed them to a scanner (e.g. `grype sbom:termiHub-X.Y.Z-sbom-desktop.cdx.json`) for
   vulnerability response. The frontend SBOM is generated from a `node-linker=hoisted` install
   of the frozen lockfile because `cyclonedx-npm` cannot read pnpm's symlinked store; the job
-  fails if any direct production dependency is missing from it.
+  fails if any direct production dependency is missing from it. Both generators are pinned
+  (`cargo-cyclonedx` by version, `@cyclonedx/cyclonedx-npm` as an exact devDependency in
+  `pnpm-lock.yaml`, run with `pnpm exec`, never `npx`) and run in a read-only job; a separate
+  job with no checkout and no third-party code attests and uploads them
+  ([#4280](https://github.com/armaxri/termiHub/issues/4280)).
 
 - **Third-party license notices.** `termiHub-X.Y.Z-THIRD_PARTY_NOTICES.txt` holds the full
   license text of every Rust crate and npm production package shipped in the desktop app,
@@ -1687,6 +1697,10 @@ To reproduce the SBOMs locally (no build needed; generated files land next to ea
 cargo cyclonedx --format json --spec-version 1.5 --target all --override-filename sbom
 cargo cyclonedx --manifest-path rdp-sidecar/Cargo.toml --format json --spec-version 1.5 \
   --target all --override-filename sbom
+# frontend, in a scratch copy of package.json + pnpm-lock.yaml (needs a hoisted tree)
+pnpm install --frozen-lockfile --ignore-scripts --config.node-linker=hoisted
+pnpm exec cyclonedx-npm --ignore-npm-errors --omit dev --spec-version 1.6 \
+  --output-format JSON --output-file sbom-frontend.cdx.json
 ```
 
 ### Agent Update Signing Key

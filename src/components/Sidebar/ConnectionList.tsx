@@ -73,6 +73,7 @@ import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { resolveConnectionDrop } from "@/utils/connectionDropTarget";
+import { startSavedPersistentSession } from "@/utils/startSavedPersistentSession";
 
 /**
  * Shared keyboard-navigation / filter plumbing threaded through the tree so
@@ -365,7 +366,6 @@ function ConnectionItem({
       false
   );
   const persistentEntry = useAppStore((s) => s.persistentSessions[connection.id]);
-  const startPersistentSession = useAppStore((s) => s.startPersistentSession);
   const attachPersistentSession = useAppStore((s) => s.attachPersistentSession);
   const stopPersistentSession = useAppStore((s) => s.stopPersistentSession);
 
@@ -376,8 +376,8 @@ function ConnectionItem({
   const isPersistentStopped = !runState || runState === "stopped" || hasPersistentError;
 
   const handleStartPersistent = useCallback(() => {
-    void startPersistentSession(connection.id);
-  }, [startPersistentSession, connection.id]);
+    void startSavedPersistentSession(connection.id);
+  }, [connection.id]);
 
   const handleAttachPersistent = useCallback(() => {
     void attachPersistentSession(connection.id);

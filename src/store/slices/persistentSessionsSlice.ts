@@ -55,8 +55,16 @@ export interface PersistentSessionsSlice {
   // Persistent connection sessions
   /** Live state of all persistent connection sessions, keyed by connectionId. */
   persistentSessions: Record<string, PersistentSessionEntry>;
-  /** Start the background process for a persistent connection (does not open a tab). */
-  startPersistentSession: (connectionId: string) => Promise<void>;
+  /**
+   * Start the background process for a persistent connection (does not open a
+   * tab), connecting with `settings` when given — the saved settings with
+   * their field secrets resolved (see `startSavedPersistentSession`) — else
+   * with the saved settings as loaded.
+   */
+  startPersistentSession: (
+    connectionId: string,
+    settings?: Record<string, unknown>
+  ) => Promise<void>;
   /** Attach a new terminal tab to an already-running persistent session. */
   attachPersistentSession: (connectionId: string, panelId?: string) => Promise<void>;
   /** Gracefully stop the background process for a persistent connection. */
@@ -132,7 +140,7 @@ export const createPersistentSessionsSlice: StateCreator<
   // Persistent connection sessions
   persistentSessions: {},
 
-  startPersistentSession: async (connectionId) => {
+  startPersistentSession: async (connectionId, settings) => {
     const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
     if (!conn) return;
     set((state) => ({
@@ -147,7 +155,11 @@ export const createPersistentSessionsSlice: StateCreator<
       },
     }));
     try {
-      await apiStartPersistentSession(connectionId, conn.config.type, conn.config.config);
+      await apiStartPersistentSession(
+        connectionId,
+        conn.config.type,
+        settings ?? conn.config.config
+      );
     } catch (err) {
       // The entry may have been dropped (a `stopped` event) while the start was
       // in flight; rebuild a complete entry so readers never see a partial one.

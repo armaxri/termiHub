@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onRemoteAgentUpdatePending } from "@/services/events";
+import { cancelAllAgentUpdateReconnects } from "@/store/agentUpdateReconnect";
 
 /**
  * Hook that bridges backend `remote-agent-update-pending` events (#1602) to the
@@ -8,8 +9,9 @@ import { onRemoteAgentUpdatePending } from "@/services/events";
  * `agent.update_pending` notification — broadcast when *another* host initiates
  * a coordinated update (#1351) — forwarded by the desktop backend. Handling it
  * shows the "being updated by another host" notice, suspends the affected agent
- * connection (the disconnect is the ack) and queues an auto-reconnect to the new
- * version.
+ * connection (the disconnect is the ack) and reconnects to the new version with
+ * backoff (#4311). Unmounting stops every running reconnect loop, so no timer
+ * outlives the window that owns it.
  */
 export function useAgentUpdatePendingEvents(): void {
   const handleAgentUpdatePending = useAppStore((s) => s.handleAgentUpdatePending);
@@ -31,6 +33,7 @@ export function useAgentUpdatePendingEvents(): void {
 
     return () => {
       unlisten?.();
+      cancelAllAgentUpdateReconnects();
     };
   }, [handleAgentUpdatePending]);
 }

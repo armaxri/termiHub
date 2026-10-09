@@ -74,6 +74,15 @@ describe("toast API", () => {
     );
   });
 
+  it("loading passes through an inline action (e.g. Cancel)", () => {
+    const onClick = vi.fn();
+    toast.loading("Working", { action: { label: "Cancel", onClick } });
+    expect(loading).toHaveBeenCalledWith(
+      "Working",
+      expect.objectContaining({ action: { label: "Cancel", onClick } })
+    );
+  });
+
   it("promise resolves the loading toast in place into success", async () => {
     const p = Promise.resolve("done");
     await toast.promise(p, { loading: "Load", success: "OK", error: "Err" });
