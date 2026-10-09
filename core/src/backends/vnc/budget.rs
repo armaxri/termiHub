@@ -31,6 +31,12 @@ use crate::connection::{CursorUpdate, FrameUpdate};
 /// has drained, so this bounds what queues up without dropping anything.
 pub(super) const MAX_QUEUED_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
+// Compile-time bound (#4291): room for a couple of full 1080p frames, but far
+// below a maximum-size framebuffer so a burst cannot pin hundreds of MiB.
+const _: () = assert!(
+    MAX_QUEUED_FRAME_BYTES >= 2 * 1920 * 1080 * 4 && MAX_QUEUED_FRAME_BYTES <= 64 * 1024 * 1024
+);
+
 /// Cursor-shape bytes that may sit in the cursor channel at once. Real cursors
 /// are a few KiB; a larger one is still delivered, alone.
 pub(super) const MAX_QUEUED_CURSOR_BYTES: usize = 16 * 1024 * 1024;
@@ -189,13 +195,6 @@ mod tests {
         }
         let peak = producer.await.unwrap();
         assert!(peak <= 1000, "peak {peak}");
-    }
-
-    #[test]
-    fn frame_budget_is_a_few_full_hd_frames_not_a_max_size_framebuffer() {
-        let full_hd = 1920 * 1080 * 4;
-        assert!(MAX_QUEUED_FRAME_BYTES >= 2 * full_hd);
-        assert!(MAX_QUEUED_FRAME_BYTES <= 64 * 1024 * 1024);
     }
 
     #[tokio::test]
