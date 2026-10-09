@@ -6,8 +6,8 @@ severity: low
 category: correctness
 is_workaround: false
 subsystem: "src/components/LogViewer, src/components/Settings"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4327 — copies use plugin-clipboard-manager writeText; eslint bans navigator.clipboard"
 audit: 2026-10
 commit: "663465d52"
 relation: new

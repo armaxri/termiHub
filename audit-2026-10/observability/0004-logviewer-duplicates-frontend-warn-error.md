@@ -15,8 +15,8 @@ evidence:
   - src-tauri/src/commands/logs.rs:96
   - src-tauri/src/utils/log_capture.rs:20
   - src-tauri/src/utils/log_capture.rs:231
-status: open
-resolution: ""
+status: fixed
+resolution: "#4327 — viewer replays frontend log history and drops the backend frontend-target echo"
 audit: 2026-10
 commit: "663465d52"
 relation: new
