@@ -16,11 +16,14 @@ name: Coverage (unified, ratchet)
 #
 # NIGHTLY LANE (#4119; post-merge since #3325): this no longer runs on every
 # push to develop (a ~21-minute Ubuntu runner per merge). It grades:
-#   * develop — once a night: the `schedule` trigger fires on the DEFAULT branch
-#     (main) only, so the scheduled run just dispatches this workflow on
-#     develop (the `nightly-dispatch` job), like integration-coverage-nightly.yml.
-#     Timed after develop's integration-fixtures (03:47 dispatch) and
-#     system-integration (05:05) nightlies so their lcov overlays are fresh.
+#   * develop — once a day, dispatched on develop by scheduled-dispatch.yml
+#     (#4277). That file owns the cron because GitHub fires `schedule:` only
+#     from the default branch (main), and this file is not on main between
+#     releases. Until scheduled-dispatch.yml itself reaches main, every develop
+#     push dispatches this lane when its newest develop run is older than 28 h,
+#     and the heartbeat there fails when no develop run succeeded within 36 h.
+#     Timed after develop's integration-fixtures and system-integration
+#     nightlies so their lcov overlays are fresh.
 #   * main — on every push (release commits): the release coverage summary
 #     (scripts/internal/release-coverage-summary.mjs) reads the Coverage push or
 #     dispatch run on the exact release commit.
@@ -31,14 +34,11 @@ name: Coverage (unified, ratchet)
 on:
   push:
     branches: [ main ]
-  schedule:
-    # 07:23 UTC daily (off the hour to dodge scheduler congestion).
-    - cron: '23 7 * * *'
   workflow_dispatch:
 
-# A blocking gate on a low-volume trigger set (main pushes, the nightly, manual
-# dispatch): every run completes, so none cancels in progress. The event name is
-# part of the group so the nightly dispatch never queues behind a main push.
+# A blocking gate on a low-volume trigger set (main pushes, the nightly dispatch,
+# manual dispatch): every run completes, so none cancels in progress. The event
+# name is part of the group so the nightly dispatch never queues behind a main push.
 concurrency:
   group: coverage-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -53,26 +53,8 @@ permissions:
   actions: read
 
 jobs:
-  # The scheduled run (on main, the default branch) only re-dispatches this
-  # workflow on develop. A GITHUB_TOKEN-created workflow_dispatch is allowed to
-  # start a new workflow run, so no PAT is needed.
-  nightly-dispatch:
-    name: Dispatch nightly coverage on develop
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - name: Dispatch coverage.yml on develop
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: gh workflow run coverage.yml --ref develop
-
   coverage:
     name: Unified Coverage (ratchet)
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     steps:

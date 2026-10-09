@@ -36,8 +36,18 @@ on:
     # Daily, 04:00 UTC — before the weekday PR traffic so a fresh lockfile is
     # usually already merged when contributors branch, and so an advisory
     # published mid-week is proposed within ~a day rather than up to a week.
+    # GitHub fires this only from main (the default branch). Until this file
+    # is on main, scheduled-dispatch.yml dispatches it on develop at the same
+    # time (#4277); see scripts/internal/scheduled-lanes.mjs.
     - cron: '0 4 * * *'
   workflow_dispatch:
+  # A change to this chore runs it once on develop. That first run also
+  # registers the workflow with GitHub, which a dispatch needs (#4277): a
+  # schedule/dispatch-only file that is not on main is unknown to the API.
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/cargo-update-lockfile.yml'
 
 # Cancel a superseded manual run; a scheduled run and a manual run should not
 # race to push the same automation branch.
