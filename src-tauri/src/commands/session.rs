@@ -1572,12 +1572,7 @@ pub async fn start_persistent_session(
     conn_manager: State<'_, ConnectionManager>,
 ) -> Result<String, TerminalError> {
     info!(connection_id, type_id, agent_id = ?agent_id, "Starting persistent session");
-    // Expand saved-connection jump-host references to inline hops before core
-    // sees them; seed the visited set with this connection so a hop that
-    // references itself is rejected as circular (#940).
-    conn_manager
-        .resolve_jump_host_refs(&mut settings, Some(&connection_id))
-        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
+    prepare_persistent_settings(&conn_manager, &connection_id, &mut settings)?;
     manager
         .start_persistent_session(
             &connection_id,
@@ -1587,6 +1582,24 @@ pub async fn start_persistent_session(
             app_handle,
         )
         .await
+}
+
+/// Complete the settings of saved connection `connection_id` for a persistent
+/// session's connect, as `create_connection` does for a regular session: put
+/// back the schema field secrets stored for it (#4289, #4454) and expand its
+/// saved-connection jump-host references to inline hops (#940).
+///
+/// Passing `connection_id` as the root does both: `resolve_jump_host_refs`
+/// restores the root's saved secrets first, and seeds the visited set with it
+/// so a hop that references its own connection is rejected as circular.
+fn prepare_persistent_settings(
+    conn_manager: &ConnectionManager,
+    connection_id: &str,
+    settings: &mut Value,
+) -> Result<(), TerminalError> {
+    conn_manager
+        .resolve_jump_host_refs(settings, Some(connection_id))
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))
 }
 
 /// Adopt an already-running agent session into the persistent registry.
@@ -1704,7 +1717,7 @@ pub async fn get_agent_session_buffer(
 mod tests {
     use super::{
         container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
-        killed_disconnect_tab_id, parse_container_runtime,
+        killed_disconnect_tab_id, parse_container_runtime, prepare_persistent_settings,
     };
     use termihub_core::config::ContainerRuntime;
     use termihub_core::errors::SessionError;
@@ -1858,5 +1871,52 @@ mod tests {
         assert_eq!(initial_connect_tab_id(None), None);
         // A connect_id not carrying the tab-id:retry form → None.
         assert_eq!(initial_connect_tab_id(Some("no-colon")), None);
+    }
+
+    /// A persistent session of a saved connection connects with the field
+    /// secrets stored for it (#4454) — here an inline jump-host hop's password,
+    /// which lives only in the credential store, not in the loaded settings.
+    #[test]
+    fn persistent_session_settings_restore_saved_field_secrets() {
+        use crate::connection::config::SavedConnection;
+        use crate::connection::manager::ConnectionManager;
+        use crate::connection::recording_credential_store::RecordingStore;
+        use crate::terminal::backend::ConnectionConfig;
+        use serde_json::json;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(RecordingStore::default());
+        let mgr = ConnectionManager::new_for_test(dir.path(), store).unwrap();
+        let id = mgr
+            .save_connection(SavedConnection {
+                extra: Default::default(),
+                icon: None,
+                id: "Target".to_string(),
+                name: "Target".to_string(),
+                config: ConnectionConfig {
+                    type_id: "ssh".to_string(),
+                    settings: json!({ "host": "target", "username": "me", "authMethod": "key",
+                        "proxyJump": [{ "host": "bastion", "username": "ops",
+                                        "authMethod": "password", "password": "hop-pw" }] }),
+                },
+                folder_id: None,
+                terminal_options: None,
+                source_file: None,
+            })
+            .unwrap();
+        let loaded = mgr
+            .get_all()
+            .unwrap()
+            .connections
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap();
+        let mut settings = loaded.config.settings;
+        assert!(settings["proxyJump"][0].get("password").is_none());
+
+        prepare_persistent_settings(&mgr, &id, &mut settings).unwrap();
+
+        assert_eq!(settings["proxyJump"][0]["password"], "hop-pw");
     }
 }
