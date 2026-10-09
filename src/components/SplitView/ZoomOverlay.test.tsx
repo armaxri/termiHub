@@ -133,7 +133,7 @@ describe("ZoomOverlay — modal dialog semantics (#4329)", () => {
   it("the close button closes it", () => {
     const onClose = vi.fn();
     openOverlay(undefined, onClose);
-    act(() => q("zoom-overlay-close")!.click());
+    act(() => q("modal-close")!.click());
     expect(onClose).toHaveBeenCalledOnce();
   });
 

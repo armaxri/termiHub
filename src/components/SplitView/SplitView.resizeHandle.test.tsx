@@ -86,4 +86,30 @@ describe("split resize handle (#3693)", () => {
       expect(handle.getAttribute("aria-orientation")).toBe(ariaOrientation);
     }
   );
+
+  // react-resizable-panels owns the split separator's keyboard handling
+  // (arrows resize by 5%); jsdom has no layout to resize, so this pins the
+  // semantics it needs, and the sidebar handles' own arrow tests cover resizing.
+  it("is a focusable separator exposing its value (#4329)", async () => {
+    seedSplit("horizontal");
+    await act(async () => {
+      root.render(<App />);
+    });
+    const handle = container.querySelector<HTMLElement>(".split-view__resize-handle")!;
+    expect(handle.getAttribute("role")).toBe("separator");
+    expect(handle.getAttribute("tabindex")).toBe("0");
+    expect(Number.isFinite(Number(handle.getAttribute("aria-valuenow")))).toBe(true);
+    act(() => handle.focus());
+    expect(document.activeElement).toBe(handle);
+  });
+
+  it("the app's sidebar handle is a keyboard separator too (#4329)", async () => {
+    seedSplit("horizontal");
+    await act(async () => {
+      root.render(<App />);
+    });
+    const handle = container.querySelector<HTMLElement>('[data-testid="sidebar-resize-handle"]');
+    expect(handle?.getAttribute("role")).toBe("separator");
+    expect(handle?.getAttribute("tabindex")).toBe("0");
+  });
 });
