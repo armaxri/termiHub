@@ -187,25 +187,31 @@ mod tests {
 
     #[test]
     fn is_windows_path_rejects_posix_forms() {
-        assert!(!is_windows_path("/tmp/termihub-agent-upload"));
+        assert!(!is_windows_path("/home/me/.config/termihub-agent/updates/upload.x"));
         assert!(!is_windows_path("~/.local/bin/termihub-agent"));
         assert!(!is_windows_path(".local/bin/termihub-agent"));
         assert!(!is_windows_path("/usr/local/bin/termihub-agent"));
         assert!(!is_windows_path(""));
     }
 
+    const UPLOAD_DIR: &str = "/home/me/.config/termihub-agent/updates/upload.Ab12Cd";
+
     #[test]
-    fn posix_plan_preserves_legacy_commands() {
-        let plan = posix_install_plan(".local/bin/termihub-agent");
-        assert_eq!(plan.upload_path, "/tmp/termihub-agent-upload");
+    fn posix_plan_installs_from_the_private_upload_dir() {
+        let plan = posix_install_plan(".local/bin/termihub-agent", UPLOAD_DIR);
+        assert_eq!(plan.upload_path, format!("{UPLOAD_DIR}/termihub-agent"));
         assert_eq!(plan.install_path, ".local/bin/termihub-agent");
-        // Same command shape as the original deploy_agent install step.
         assert!(plan.install_command.contains("mkdir -p"));
         assert!(plan
             .install_command
-            .contains("mv -f /tmp/termihub-agent-upload"));
+            .contains(&format!("mv -f '{UPLOAD_DIR}/termihub-agent' .local/bin/termihub-agent")));
         assert!(plan.install_command.contains("chmod +x"));
-        assert!(plan.install_command.contains(".local/bin/termihub-agent"));
+        assert!(
+            plan.install_command.contains(&format!("rmdir '{UPLOAD_DIR}'")),
+            "the emptied private upload dir is removed: {}",
+            plan.install_command
+        );
+        assert!(!plan.install_command.contains("/tmp"));
         assert_eq!(
             plan.verify_command,
             ".local/bin/termihub-agent --version 2>/dev/null"
@@ -214,11 +220,107 @@ mod tests {
 
     #[test]
     fn posix_plan_custom_path() {
-        let plan = posix_install_plan("/opt/termihub-agent");
+        let plan = posix_install_plan("/opt/termihub-agent", UPLOAD_DIR);
         assert!(plan.install_command.contains("/opt/termihub-agent"));
         assert!(plan
             .verify_command
             .starts_with("/opt/termihub-agent --version"));
+    }
+
+    #[test]
+    fn prepare_command_makes_a_fresh_private_dir_not_a_fixed_tmp_name() {
+        let cmd = POSIX_PREPARE_UPLOAD_DIR_COMMAND;
+        assert!(cmd.starts_with("sh -c '"), "must not depend on the login shell");
+        assert!(cmd.contains("umask 077"));
+        assert!(cmd.contains("chmod 700"));
+        assert!(cmd.contains("mktemp -d"));
+        assert!(cmd.contains("termihub-agent/updates"));
+        assert!(!cmd.contains("/tmp"), "no world-shared location: {cmd}");
+        // The inner script is single-quoted, so it must not contain a quote.
+        assert_eq!(cmd.matches('\'').count(), 2);
+    }
+
+    #[test]
+    fn parse_prepared_upload_dir_takes_the_last_line() {
+        let out = format!("Welcome to host\n\n{UPLOAD_DIR}\n");
+        assert_eq!(parse_prepared_upload_dir(&out).unwrap(), UPLOAD_DIR);
+        let mac = "/Users/me/Library/Application Support/termihub-agent/updates/upload.x1Y2z3";
+        assert_eq!(parse_prepared_upload_dir(mac).unwrap(), mac);
+    }
+
+    #[test]
+    fn parse_prepared_upload_dir_rejects_anything_unexpected() {
+        for bad in [
+            "",
+            "mktemp: failed",
+            "relative/termihub-agent/updates/upload.abc",
+            "/tmp/termihub-agent-upload",
+            "/home/me/.config/termihub-agent/updates",
+            "/home/it's/.config/termihub-agent/updates/upload.abc",
+            "/home/$me/.config/termihub-agent/updates/upload.abc",
+            "/home/me/.config/termihub-agent/updates/upload.abc/../../x",
+        ] {
+            assert!(
+                parse_prepared_upload_dir(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    /// Run the real prepare command through `sh` with a fake `$HOME`.
+    #[cfg(unix)]
+    fn run_prepare(home: &std::path::Path, xdg: Option<&std::path::Path>) -> String {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(POSIX_PREPARE_UPLOAD_DIR_COMMAND)
+            .env("HOME", home)
+            .env_remove("XDG_CONFIG_HOME");
+        if let Some(xdg) = xdg {
+            cmd.env("XDG_CONFIG_HOME", xdg);
+        }
+        let out = cmd.output().expect("run sh");
+        assert!(out.status.success(), "{out:?}");
+        parse_prepared_upload_dir(&String::from_utf8_lossy(&out.stdout)).expect("valid dir")
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_command_creates_unique_owner_only_dirs_in_the_agent_config() {
+        let home = tempfile::tempdir().unwrap();
+        let a = run_prepare(home.path(), None);
+        let b = run_prepare(home.path(), None);
+        assert_ne!(a, b, "each upload gets its own dir");
+
+        let config = if cfg!(target_os = "macos") {
+            home.path().join("Library/Application Support")
+        } else {
+            home.path().join(".config")
+        };
+        let updates = config.join("termihub-agent").join("updates");
+        for dir in [&a, &b] {
+            let dir = std::path::Path::new(dir);
+            assert_eq!(dir.parent().unwrap(), updates);
+            assert_eq!(mode_of(dir), 0o700, "{} must be 0700", dir.display());
+        }
+        assert_eq!(mode_of(&updates), 0o700, "the updates dir must be 0700");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_command_honours_xdg_config_home_like_the_agent() {
+        let home = tempfile::tempdir().unwrap();
+        let xdg = home.path().join("xdg");
+        let dir = run_prepare(home.path(), Some(&xdg));
+        assert!(
+            std::path::Path::new(&dir).starts_with(xdg.join("termihub-agent").join("updates")),
+            "{dir}"
+        );
     }
 
     #[test]

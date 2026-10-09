@@ -933,9 +933,36 @@ mod tests {
         );
     }
 
+    const TEST_UPLOAD_DIR: &str = "/home/me/.config/termihub-agent/updates/upload.Ab12Cd";
+    const TEST_BINARY_SRC: &str =
+        "/home/me/.config/termihub-agent/updates/upload.Ab12Cd/termihub-agent";
+
+    #[test]
+    fn setup_script_installs_from_the_private_upload_dir() {
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false, TEST_BINARY_SRC);
+        assert!(script.contains(&format!("BINARY_SRC=\"{TEST_BINARY_SRC}\"")));
+        assert!(
+            !script.contains("/tmp/termihub-agent"),
+            "no world-shared /tmp path may remain"
+        );
+    }
+
+    #[test]
+    fn setup_runs_its_script_from_the_private_dir_and_cleans_up() {
+        let cmd = setup_exec_command(TEST_UPLOAD_DIR);
+        assert_eq!(
+            cmd,
+            format!(
+                "sh '{TEST_UPLOAD_DIR}/setup.sh'; rm -f '{TEST_UPLOAD_DIR}/setup.sh'; \
+                 rmdir '{TEST_UPLOAD_DIR}' 2>/dev/null\n"
+            )
+        );
+        assert!(!cmd.contains("/tmp"));
+    }
+
     #[test]
     fn generate_setup_script_basic() {
-        let script = generate_setup_script("/usr/local/bin/termihub-agent", false);
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false, TEST_BINARY_SRC);
         assert!(script.starts_with("#!/bin/sh\n"));
         assert!(script.contains("set -e"));
         assert!(script.contains("INSTALL_PATH=\"/usr/local/bin/termihub-agent\""));
@@ -950,7 +977,7 @@ mod tests {
 
     #[test]
     fn generate_setup_script_with_service() {
-        let script = generate_setup_script("/usr/local/bin/termihub-agent", true);
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", true, TEST_BINARY_SRC);
         assert!(script.contains("INSTALL_SERVICE=true"));
         assert!(script.contains("systemd service"));
         assert!(script.contains("$SUDO tee /etc/systemd/system/termihub-agent.service"));
@@ -962,7 +989,7 @@ mod tests {
 
     #[test]
     fn generate_setup_script_custom_path() {
-        let script = generate_setup_script("/opt/termihub/agent", false);
+        let script = generate_setup_script("/opt/termihub/agent", false, TEST_BINARY_SRC);
         assert!(script.contains("INSTALL_PATH=\"/opt/termihub/agent\""));
         assert!(script.contains("$SUDO mv"));
         assert!(script.contains("$SUDO chmod +x"));
@@ -970,7 +997,7 @@ mod tests {
 
     #[test]
     fn generate_setup_script_sudo_detection() {
-        let script = generate_setup_script("/usr/local/bin/termihub-agent", false);
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false, TEST_BINARY_SRC);
         assert!(script.contains("id -u"));
         assert!(script.contains("command -v sudo"));
         assert!(script.contains("SUDO=\"sudo\""));
@@ -980,14 +1007,14 @@ mod tests {
 
     #[test]
     fn generate_setup_script_tilde_expansion() {
-        let script = generate_setup_script("~/.local/bin/termihub-agent", false);
+        let script = generate_setup_script("~/.local/bin/termihub-agent", false, TEST_BINARY_SRC);
         assert!(script.contains("INSTALL_PATH=\"~/.local/bin/termihub-agent\""));
         assert!(script.contains("$HOME/${INSTALL_PATH#\\~/}"));
     }
 
     #[test]
     fn generate_setup_script_walks_up_to_existing_ancestor() {
-        let script = generate_setup_script("~/.local/bin/termihub-agent", false);
+        let script = generate_setup_script("~/.local/bin/termihub-agent", false, TEST_BINARY_SRC);
         assert!(script.contains("CHECK_DIR=$(dirname \"$CHECK_DIR\")"));
         assert!(script.contains("while"));
         assert!(!script.contains("PARENT_DIR=$(dirname \"$TARGET_DIR\")"));
@@ -995,7 +1022,7 @@ mod tests {
 
     #[test]
     fn generate_setup_script_no_bashisms() {
-        let script = generate_setup_script("/usr/local/bin/termihub-agent", true);
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", true, TEST_BINARY_SRC);
         assert!(!script.contains("[["));
         assert!(!script.contains("local "));
         assert!(!script.contains("declare "));
