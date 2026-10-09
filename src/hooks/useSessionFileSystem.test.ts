@@ -2310,6 +2310,15 @@ describe("useSessionFileSystem — attribute-op capabilities", () => {
     expect(api().supportsSymlink).toBe(false);
   });
 
+  it("offers nothing when the capability probe answers no value", async () => {
+    vi.mocked(sessionFileCapabilities).mockResolvedValue(
+      undefined as unknown as Awaited<ReturnType<typeof sessionFileCapabilities>>
+    );
+    const api = await mountHook("old-1");
+    expect(api().supportsPermissions).toBe(false);
+    expect(api().supportsSymlink).toBe(false);
+  });
+
   it("does not probe without a session", async () => {
     const api = await mountHook(null);
     expect(vi.mocked(sessionFileCapabilities)).not.toHaveBeenCalled();

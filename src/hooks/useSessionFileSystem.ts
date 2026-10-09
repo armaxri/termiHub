@@ -178,7 +178,8 @@ export function useSessionFileSystem() {
     const sessionId = sessionFileBrowserId;
     sessionFileCapabilities(sessionId)
       .then((ops) => {
-        if (!cancelled) setAttributeOps(ops);
+        // A missing reply (e.g. an older backend) offers nothing.
+        if (!cancelled) setAttributeOps(ops ?? NO_ATTRIBUTE_OPS);
       })
       .catch((err) => {
         if (cancelled) return;
