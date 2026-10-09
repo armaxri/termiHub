@@ -166,6 +166,68 @@ describe("ShellIntegrationSettings", () => {
     expect(mockedApi.saveShellIntegrationSettings.mock.calls[0][0].entries).toHaveLength(0);
   });
 
+  describe("reordering without a pointer (A11Y2-003, #4329)", () => {
+    const entry = (id: string) => ({
+      id,
+      name: `Entry ${id}`,
+      visibility: "always" as const,
+      showFor: { folders: true, files: false, folderBackground: false },
+    });
+
+    beforeEach(() => {
+      seedSettings({
+        shellIntegration: {
+          ...defaultShellIntegrationSettings(),
+          entries: [entry("e1"), entry("e2"), entry("e3")],
+        },
+      });
+    });
+
+    const savedOrder = () =>
+      mockedApi.saveShellIntegrationSettings.mock.calls[0][0].entries.map(
+        (e: { id: string }) => e.id
+      );
+
+    it("Move down swaps an entry with the next one", async () => {
+      await render();
+      await act(async () => {
+        byTestId("shell-integration-entry-move-down-e1")?.click();
+      });
+      expect(savedOrder()).toEqual(["e2", "e1", "e3"]);
+    });
+
+    it("Move up swaps an entry with the previous one", async () => {
+      await render();
+      await act(async () => {
+        byTestId("shell-integration-entry-move-up-e3")?.click();
+      });
+      expect(savedOrder()).toEqual(["e1", "e3", "e2"]);
+    });
+
+    it("disables Move up on the first entry and Move down on the last", async () => {
+      await render();
+      expect((byTestId("shell-integration-entry-move-up-e1") as HTMLButtonElement).disabled).toBe(
+        true
+      );
+      expect((byTestId("shell-integration-entry-move-down-e3") as HTMLButtonElement).disabled).toBe(
+        true
+      );
+      expect((byTestId("shell-integration-entry-move-down-e1") as HTMLButtonElement).disabled).toBe(
+        false
+      );
+    });
+
+    it("labels the move buttons with the entry they act on", async () => {
+      await render();
+      expect(byTestId("shell-integration-entry-move-up-e2")?.getAttribute("aria-label")).toBe(
+        "Move Entry e2 up"
+      );
+      expect(byTestId("shell-integration-entry-move-down-e2")?.getAttribute("aria-label")).toBe(
+        "Move Entry e2 down"
+      );
+    });
+  });
+
   it("renders the Linux file-manager toggles on Linux", async () => {
     // jsdom's user agent contains neither "Windows" nor "Macintosh" → treated as Linux.
     await render();

@@ -8,6 +8,7 @@ import { isWindows, getPlatform } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { ClipboardCopy } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { setFileLogLevel, getLogFilePath, getCredentialStoreStatus } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
@@ -110,7 +111,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         credentialStoreMode,
         credentialStoreStatus,
       });
-      await navigator.clipboard.writeText(info);
+      // Tauri clipboard plugin: navigator.clipboard rejects on macOS/WKWebView
+      // when the window is not focused (#4327).
+      await writeText(info);
       toast.success("Debug info copied to clipboard");
     } catch (err) {
       const message = errorMessage(err);

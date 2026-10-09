@@ -30,7 +30,6 @@ import {
   Stethoscope,
   Puzzle,
   WifiOff,
-  X,
   Columns2,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -47,11 +46,11 @@ import {
   useLayoutRenderTree,
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
-import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
+import { PanelNode, LeafPanel, TerminalTab } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
-import { isWindows, isMac } from "@/utils/platform";
+import { isWindows } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -76,7 +75,9 @@ import { toast, Spinner } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
+import { ZoomOverlay } from "./ZoomOverlay";
 import { useTerminalRightClickRouting } from "./terminalRightClick";
+import { describePointerHits, resolveTabDrop, type PointerHit } from "./resolveTabDrop";
 import { errorMessage } from "@/utils/errorMessage";
 import "./SplitView.css";
 
@@ -295,19 +296,6 @@ export function SplitView() {
 
   const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
 
-  // Close the zoom overlay on Escape (capture phase to intercept before xterm)
-  useEffect(() => {
-    if (!zoomedTabId) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        setZoomedTabId(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [zoomedTabId, setZoomedTabId]);
-
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -334,86 +322,48 @@ export function SplitView() {
 
       const tabId = dndId(active.id);
       const fromPanelId = readDndPanelId(active.data.current);
-      if (!fromPanelId) return;
 
-      // If not dropped on any registered droppable, check for special drop targets
-      // outside the DndContext (group chips, new-tab button) using elementsFromPoint.
-      // Use elementsFromPoint (plural) to look through the DragOverlay which may be
-      // rendered at the same coordinates and would block elementFromPoint.
+      // Drops outside every registered droppable may still land on targets
+      // outside the DndContext (group chips, the new-group button). Use
+      // elementsFromPoint (plural) to look through the DragOverlay, which may sit
+      // at the same coordinates and would block elementFromPoint.
+      let pointerHits: PointerHit[] = [];
       if (!over) {
         const ae = asPointerEvent(event.activatorEvent);
         if (ae) {
-          const finalX = ae.clientX + event.delta.x;
-          const finalY = ae.clientY + event.delta.y;
-          const elements = document.elementsFromPoint(finalX, finalY);
-          // Prefer a group chip over the adjacent new-group button: the two drop
-          // targets sit side by side in the chip bar, so scan the whole stack for
-          // a chip first and only fall back to the new-group button when no chip
-          // is under the drop point. This keeps a drop that grazes the chip/button
-          // boundary landing on the intended group rather than creating a new one.
-          let chipEl: Element | null = null;
-          let newGroupEl: Element | null = null;
-          for (const el of elements) {
-            const chip = el.closest("[data-tab-group-id]");
-            if (chip) {
-              chipEl = chip;
-              break;
-            }
-            if (!newGroupEl && el.closest("[data-new-group-btn]")) {
-              newGroupEl = el;
-            }
-          }
-          if (chipEl) {
-            const targetGroupId = chipEl.getAttribute("data-tab-group-id");
-            if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
-          } else if (newGroupEl) {
-            // New-group button drop: create a new tab group and move the tab into it
-            addTabGroupWithTab(tabId, fromPanelId);
-          }
+          pointerHits = describePointerHits(
+            document.elementsFromPoint(ae.clientX + event.delta.x, ae.clientY + event.delta.y)
+          );
         }
-        return;
       }
 
-      const overId = dndId(over.id);
-
-      // Edge drop: split panel with tab
-      if (overId.startsWith("edge-")) {
-        const parts = overId.split("-");
-        // edge-{panelId}-{edge} — panelId may contain dashes so parse carefully
-        const edge = parts[parts.length - 1] as DropEdge;
-        const targetPanelId = parts.slice(1, -1).join("-");
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, edge);
-        return;
-      }
-
-      // Center drop: move tab to that panel
-      if (overId.startsWith("center-")) {
-        const targetPanelId = overId.slice("center-".length);
-        if (targetPanelId === fromPanelId) return;
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, "center");
-        return;
-      }
-
-      // Sortable tab drop — find which panel the over tab belongs to
-      const overPanelId = readDndPanelId(over.data.current);
-
-      if (overPanelId && overPanelId !== fromPanelId) {
-        // Cross-panel tab drop: find index of the over tab in destination
-        const destLeaf = getAllLeaves(rootPanel).find((l) => l.id === overPanelId);
-        if (!destLeaf) return;
-        const overIndex = destLeaf.tabs.findIndex((t) => t.id === overId);
-        moveTab(tabId, fromPanelId, overPanelId, overIndex >= 0 ? overIndex : -1);
-        return;
-      }
-
-      // Same-panel reorder
-      if (tabId === overId) return;
-      const sourceLeaf = getAllLeaves(rootPanel).find((l) => l.id === fromPanelId);
-      if (!sourceLeaf) return;
-      const oldIndex = sourceLeaf.tabs.findIndex((t) => t.id === tabId);
-      const newIndex = sourceLeaf.tabs.findIndex((t) => t.id === overId);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        reorderTabs(fromPanelId, oldIndex, newIndex);
+      const action = resolveTabDrop({
+        tabId,
+        fromPanelId,
+        overId: over ? dndId(over.id) : null,
+        overPanelId: over ? readDndPanelId(over.data.current) : undefined,
+        rootPanel,
+        pointerHits,
+      });
+      if (!fromPanelId) return;
+      switch (action.kind) {
+        case "moveToGroup":
+          moveTabToGroup(tabId, fromPanelId, action.groupId);
+          break;
+        case "newGroup":
+          addTabGroupWithTab(tabId, fromPanelId);
+          break;
+        case "split":
+          splitPanelWithTab(tabId, fromPanelId, action.targetPanelId, action.edge);
+          break;
+        case "move":
+          moveTab(tabId, fromPanelId, action.toPanelId, action.index);
+          break;
+        case "reorder":
+          reorderTabs(action.panelId, action.oldIndex, action.newIndex);
+          break;
+        case "none":
+          break;
       }
     },
     [
@@ -471,230 +421,205 @@ export function SplitView() {
         );
       })}
       {zoomedTabId && zoomedTab && (
-        <div className="zoom-overlay" onClick={dismissZoom}>
-          <div className="zoom-overlay__panel" onClick={(e) => e.stopPropagation()}>
-            <ContextMenu.Root>
-              <ContextMenu.Trigger asChild>
-                <div className="zoom-overlay__header">
-                  {zoomedTab.contentType === "settings" ? (
-                    <SettingsIcon size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "log-viewer" ? (
-                    <ScrollText size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "editor" ? (
-                    <FileEdit size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "connection-editor" ? (
-                    <SquarePen size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "tunnel-editor" ? (
-                    <ArrowLeftRight size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "workspace-editor" ? (
-                    <LayoutGrid size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "network-diagnostic" ? (
-                    <Stethoscope size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "transfer-view" ? (
-                    <Columns2 size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "plugin-detail" ? (
-                    <Puzzle size={14} className="zoom-overlay__icon" />
-                  ) : zoomedTab.contentType === "agent-error" ? (
-                    <WifiOff size={14} className="zoom-overlay__icon" />
-                  ) : (
-                    <ConnectionIcon
-                      config={zoomedTab.config}
-                      size={14}
-                      className="zoom-overlay__icon"
-                    />
-                  )}
-                  <span className="zoom-overlay__title">{zoomedTabTitle}</span>
-                  <span className="zoom-overlay__hint">
-                    {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
-                  </span>
-                  <button
-                    className="zoom-overlay__close"
-                    onClick={dismissZoom}
-                    aria-label="Close zoom overlay"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              </ContextMenu.Trigger>
-              <ContextMenu.Portal>
-                <ContextMenu.Content className="context-menu__content">
-                  {zoomedTab.contentType === "terminal" && (
-                    <>
-                      <ContextMenu.Item
-                        className="context-menu__item"
-                        onSelect={() => setZoomRenameOpen(true)}
-                        data-testid="zoom-context-rename"
-                      >
-                        <Pencil size={14} /> Rename
-                      </ContextMenu.Item>
-                      <ContextMenu.Separator className="context-menu__separator" />
-                      <ContextMenu.Item
-                        className="context-menu__item"
-                        onSelect={() => saveTerminalToFile(zoomedTabId)}
-                        data-testid="zoom-context-save"
-                      >
-                        <FileDown size={14} /> Save to File
-                      </ContextMenu.Item>
-                      <ContextMenu.Item
-                        className="context-menu__item"
-                        onSelect={() => copyTerminalToClipboard(zoomedTabId)}
-                        data-testid="zoom-context-copy"
-                      >
-                        <ClipboardCopy size={14} /> Copy to Clipboard
-                      </ContextMenu.Item>
-                      <ContextMenu.Item
-                        className="context-menu__item"
-                        onSelect={() => clearTerminal(zoomedTabId)}
-                        data-testid="zoom-context-clear"
-                      >
-                        <Eraser size={14} /> Clear Terminal
-                      </ContextMenu.Item>
-                      <ContextMenu.Separator className="context-menu__separator" />
-                      <ContextMenu.CheckboxItem
-                        className="context-menu__item"
-                        checked={tabHorizontalScrollingZoom[zoomedTabId] ?? false}
-                        onSelect={() =>
-                          setTabHorizontalScrollingZoom(
-                            zoomedTabId,
-                            !(tabHorizontalScrollingZoom[zoomedTabId] ?? false)
-                          )
-                        }
-                        data-testid="zoom-context-horizontal-scroll"
-                      >
-                        <ContextMenu.ItemIndicator className="context-menu__indicator">
-                          <Check size={14} />
-                        </ContextMenu.ItemIndicator>
-                        <ArrowRightLeft size={14} /> Horizontal Scrolling
-                      </ContextMenu.CheckboxItem>
-                      <ContextMenu.Separator className="context-menu__separator" />
-                    </>
-                  )}
+        <ZoomOverlay
+          title={zoomedTabTitle}
+          onClose={dismissZoom}
+          icon={
+            <>
+              {zoomedTab.contentType === "settings" ? (
+                <SettingsIcon size={14} />
+              ) : zoomedTab.contentType === "log-viewer" ? (
+                <ScrollText size={14} />
+              ) : zoomedTab.contentType === "editor" ? (
+                <FileEdit size={14} />
+              ) : zoomedTab.contentType === "connection-editor" ? (
+                <SquarePen size={14} />
+              ) : zoomedTab.contentType === "tunnel-editor" ? (
+                <ArrowLeftRight size={14} />
+              ) : zoomedTab.contentType === "workspace-editor" ? (
+                <LayoutGrid size={14} />
+              ) : zoomedTab.contentType === "network-diagnostic" ? (
+                <Stethoscope size={14} />
+              ) : zoomedTab.contentType === "transfer-view" ? (
+                <Columns2 size={14} />
+              ) : zoomedTab.contentType === "plugin-detail" ? (
+                <Puzzle size={14} />
+              ) : zoomedTab.contentType === "agent-error" ? (
+                <WifiOff size={14} />
+              ) : (
+                <ConnectionIcon config={zoomedTab.config} size={14} />
+              )}
+            </>
+          }
+          menu={
+            <>
+              {zoomedTab.contentType === "terminal" && (
+                <>
                   <ContextMenu.Item
                     className="context-menu__item"
-                    onSelect={() => setZoomColorPickerOpen(true)}
-                    data-testid="zoom-context-set-color"
+                    onSelect={() => setZoomRenameOpen(true)}
+                    data-testid="zoom-context-rename"
                   >
-                    <Palette size={14} /> Set Color...
+                    <Pencil size={14} /> Rename
                   </ContextMenu.Item>
-                </ContextMenu.Content>
-              </ContextMenu.Portal>
-            </ContextMenu.Root>
-            {/* Overlay host (#4331): a connection-state overlay may take focus from
-                inside the zoomed surface, never from elsewhere in the app. */}
-            <div className="zoom-overlay__content" data-overlay-host>
-              <PanelErrorBoundary label={`zoom ${zoomedTabId}`}>
-                {/* The zoom overlay shows exactly one tab, so a single Suspense
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => saveTerminalToFile(zoomedTabId)}
+                    data-testid="zoom-context-save"
+                  >
+                    <FileDown size={14} /> Save to File
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => copyTerminalToClipboard(zoomedTabId)}
+                    data-testid="zoom-context-copy"
+                  >
+                    <ClipboardCopy size={14} /> Copy to Clipboard
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => clearTerminal(zoomedTabId)}
+                    data-testid="zoom-context-clear"
+                  >
+                    <Eraser size={14} /> Clear Terminal
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.CheckboxItem
+                    className="context-menu__item"
+                    checked={tabHorizontalScrollingZoom[zoomedTabId] ?? false}
+                    onSelect={() =>
+                      setTabHorizontalScrollingZoom(
+                        zoomedTabId,
+                        !(tabHorizontalScrollingZoom[zoomedTabId] ?? false)
+                      )
+                    }
+                    data-testid="zoom-context-horizontal-scroll"
+                  >
+                    <ContextMenu.ItemIndicator className="context-menu__indicator">
+                      <Check size={14} />
+                    </ContextMenu.ItemIndicator>
+                    <ArrowRightLeft size={14} /> Horizontal Scrolling
+                  </ContextMenu.CheckboxItem>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                </>
+              )}
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => setZoomColorPickerOpen(true)}
+                data-testid="zoom-context-set-color"
+              >
+                <Palette size={14} /> Set Color...
+              </ContextMenu.Item>
+            </>
+          }
+        >
+          <PanelErrorBoundary label={`zoom ${zoomedTabId}`}>
+            {/* The zoom overlay shows exactly one tab, so a single Suspense
                     boundary covers whichever lazy surface (settings, editors, network
                     tools, remote desktop, …) is fetched on first open (PERF-003). */}
-                <Suspense fallback={<LazyPanelFallback />}>
-                  {zoomedTab.contentType === "terminal" &&
-                  (terminalSpawnErrors[zoomedTabId] ||
-                    terminalConnecting[zoomedTabId] ||
-                    (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
-                    !!terminalWaitingForAgentZoom[zoomedTabId] ||
-                    !!terminalReattachingZoom[zoomedTabId]) ? (
-                    <TerminalConnectionOverlay
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      panelId={zoomedTab.panelId}
-                      tabTitle={zoomedTab.title}
-                      isVisible={true}
-                      sessionType={
-                        zoomedTab.config.type === "remote-session"
-                          ? readSessionType(zoomedTab.config.config)
-                          : zoomedTab.config.type
-                      }
-                    />
-                  ) : zoomedTab.contentType === "terminal" ? (
-                    <>
-                      <TerminalSearchBar tabId={zoomedTabId} />
-                      {/* key forces a fresh mount on each zoomed-tab change so the
+            <Suspense fallback={<LazyPanelFallback />}>
+              {zoomedTab.contentType === "terminal" &&
+              (terminalSpawnErrors[zoomedTabId] ||
+                terminalConnecting[zoomedTabId] ||
+                (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
+                !!terminalWaitingForAgentZoom[zoomedTabId] ||
+                !!terminalReattachingZoom[zoomedTabId]) ? (
+                <TerminalConnectionOverlay
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  panelId={zoomedTab.panelId}
+                  tabTitle={zoomedTab.title}
+                  isVisible={true}
+                  sessionType={
+                    zoomedTab.config.type === "remote-session"
+                      ? readSessionType(zoomedTab.config.config)
+                      : zoomedTab.config.type
+                  }
+                />
+              ) : zoomedTab.contentType === "terminal" ? (
+                <>
+                  <TerminalSearchBar tabId={zoomedTabId} />
+                  {/* key forces a fresh mount on each zoomed-tab change so the
                       adoption lifecycle always matches the initial-zoom case. */}
-                      <TerminalSlot
-                        key={`zoom-slot-${zoomedTabId}`}
-                        tabId={zoomedTabId}
-                        isVisible={true}
-                      />
-                    </>
-                  ) : zoomedTab.contentType === "settings" ? (
-                    <SettingsPanel tabId={zoomedTabId} isVisible={true} />
-                  ) : zoomedTab.contentType === "log-viewer" ? (
-                    <LogViewer isVisible={true} />
-                  ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
-                    <FileEditor
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      meta={zoomedTab.editorMeta}
-                      isVisible={true}
-                      keepModel={true}
-                    />
-                  ) : zoomedTab.contentType === "connection-editor" &&
-                    zoomedTab.connectionEditorMeta ? (
-                    <ConnectionEditor
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      meta={zoomedTab.connectionEditorMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
-                    <TunnelEditor
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      meta={zoomedTab.tunnelEditorMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "workspace-editor" &&
-                    zoomedTab.workspaceEditorMeta ? (
-                    <WorkspaceEditor
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      meta={zoomedTab.workspaceEditorMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "network-diagnostic" &&
-                    zoomedTab.networkDiagnosticMeta ? (
-                    <NetworkDiagnosticPanel
-                      key={`zoom-${zoomedTabId}`}
-                      meta={zoomedTab.networkDiagnosticMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "transfer-view" && zoomedTab.transferViewMeta ? (
-                    <TransferView
-                      key={`zoom-${zoomedTabId}`}
-                      meta={zoomedTab.transferViewMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
-                    <PluginDetailPanel
-                      key={`zoom-${zoomedTabId}`}
-                      meta={zoomedTab.pluginDetailMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
-                    <AgentErrorTab
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      meta={zoomedTab.agentErrorMeta}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "file-browser" ? (
-                    <FileBrowserTab
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      isVisible={true}
-                    />
-                  ) : zoomedTab.contentType === "remote-desktop" ? (
-                    <RemoteDesktopTab
-                      key={`zoom-${zoomedTabId}`}
-                      tabId={zoomedTabId}
-                      isVisible={true}
-                    />
-                  ) : null}
-                </Suspense>
-              </PanelErrorBoundary>
-            </div>
-          </div>
-        </div>
+                  <TerminalSlot
+                    key={`zoom-slot-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    isVisible={true}
+                  />
+                </>
+              ) : zoomedTab.contentType === "settings" ? (
+                <SettingsPanel tabId={zoomedTabId} isVisible={true} />
+              ) : zoomedTab.contentType === "log-viewer" ? (
+                <LogViewer isVisible={true} />
+              ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
+                <FileEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.editorMeta}
+                  isVisible={true}
+                  keepModel={true}
+                />
+              ) : zoomedTab.contentType === "connection-editor" &&
+                zoomedTab.connectionEditorMeta ? (
+                <ConnectionEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.connectionEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
+                <TunnelEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.tunnelEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "workspace-editor" && zoomedTab.workspaceEditorMeta ? (
+                <WorkspaceEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.workspaceEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "network-diagnostic" &&
+                zoomedTab.networkDiagnosticMeta ? (
+                <NetworkDiagnosticPanel
+                  key={`zoom-${zoomedTabId}`}
+                  meta={zoomedTab.networkDiagnosticMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "transfer-view" && zoomedTab.transferViewMeta ? (
+                <TransferView
+                  key={`zoom-${zoomedTabId}`}
+                  meta={zoomedTab.transferViewMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
+                <PluginDetailPanel
+                  key={`zoom-${zoomedTabId}`}
+                  meta={zoomedTab.pluginDetailMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
+                <AgentErrorTab
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.agentErrorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "file-browser" ? (
+                <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
+              ) : zoomedTab.contentType === "remote-desktop" ? (
+                <RemoteDesktopTab
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  isVisible={true}
+                />
+              ) : null}
+            </Suspense>
+          </PanelErrorBoundary>
+        </ZoomOverlay>
       )}
       {zoomedTabId && (
         <>

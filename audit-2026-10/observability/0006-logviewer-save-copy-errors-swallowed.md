@@ -13,8 +13,8 @@ evidence:
   - src/components/LogViewer/LogViewer.tsx:123
   - src/components/LogViewer/LogViewer.tsx:133
   - src/components/LogViewer/LogViewer.tsx:50
-status: open
-resolution: ""
+status: fixed
+resolution: "#4327 — save/copy failures toast (#4333) and log a frontendError; getLogs failure warns"
 audit: 2026-10
 commit: "663465d52"
 relation: new

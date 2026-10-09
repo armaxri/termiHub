@@ -209,6 +209,16 @@ pub enum SessionError {
     #[error("{0}")]
     ProtocolError(String),
 
+    /// The server ended a remote-desktop session on purpose — the user logged
+    /// off remotely, or an administrator disconnected the session (#4321). The
+    /// payload is the server's reason, as far as the protocol reports one.
+    ///
+    /// A **typed, terminal** discriminant, distinct from a transport drop:
+    /// consumers must not auto-reconnect (that would log the user straight back
+    /// in, or fight the admin), but may offer a manual reconnect.
+    #[error("Session ended by the server: {0}")]
+    ServerClosed(String),
+
     /// A connect/spawn failure carrying a typed [`ConnectFailureKind`]
     /// (I18N-009).
     ///

@@ -55,8 +55,19 @@ export interface ModalProps {
   footer?: React.ReactNode;
   /** Hide the built-in close (X) button in the head. */
   hideClose?: boolean;
-  /** Content width. `md` (default) is 420px; `lg` is 640px for content-heavy panels. */
-  size?: "md" | "lg";
+  /**
+   * Content width. `md` (default) is 420px; `lg` is 640px for content-heavy
+   * panels; `full` fills the window (minus a gutter) with an unpadded body, for
+   * hosting a whole surface such as a zoomed tab (#4329).
+   */
+  size?: "md" | "lg" | "full";
+  /** Extra head content between the title and the close button (e.g. a hint). */
+  headExtra?: React.ReactNode;
+  /**
+   * Called on Escape before the modal closes; `preventDefault()` keeps it open.
+   * Not called for an Escape that ends an IME composition (that never closes).
+   */
+  onEscapeKeyDown?: (event: KeyboardEvent) => void;
   /**
    * Key handler forwarded to the content node (e.g. Enter-to-confirm). Not
    * called for keys that belong to an IME composition.
@@ -105,6 +116,8 @@ export function Modal({
   footer,
   hideClose = false,
   size = "md",
+  headExtra,
+  onEscapeKeyDown,
   onKeyDown,
   dirty = false,
   initialFocusRef,
@@ -149,8 +162,11 @@ export function Modal({
         />
         <Dialog.Content
           ref={setContentEl}
-          className={size === "lg" ? "ui-modal ui-modal--lg" : "ui-modal"}
+          className={size === "md" ? "ui-modal" : `ui-modal ui-modal--${size}`}
           data-testid={rest["data-testid"]}
+          // Radix makes everything outside the content inert (aria-hidden) but
+          // does not state it on the dialog itself; say so explicitly (#4329).
+          aria-modal="true"
           // With no `description`, opt out of `aria-describedby` explicitly
           // (Radix's documented pattern) instead of pointing it at a
           // Description element that is never rendered, which also makes
@@ -185,40 +201,47 @@ export function Modal({
           }
           onEscapeKeyDown={(e) => {
             // Escape that discards an IME preedit must not close the dialog (#3767).
-            if (isImeComposing(e)) e.preventDefault();
+            if (isImeComposing(e)) {
+              e.preventDefault();
+              return;
+            }
+            onEscapeKeyDown?.(e);
           }}
         >
-          <div className="ui-modal__head">
-            <Dialog.Title className="ui-modal__title">{title}</Dialog.Title>
-            {!hideClose ? (
-              <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className="ui-modal__close"
-                  aria-label="Close"
-                  data-testid="modal-close"
-                >
-                  <X className="ui-modal__close-icon" aria-hidden="true" />
-                </button>
-              </Dialog.Close>
-            ) : null}
-          </div>
-          {description ? (
-            <Dialog.Description
-              style={{
-                position: "absolute",
-                width: 1,
-                height: 1,
-                overflow: "hidden",
-                clip: "rect(0 0 0 0)",
-                clipPath: "inset(50%)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {description}
-            </Dialog.Description>
-          ) : null}
+          {/* The provider spans the head too, so a menu in the title (e.g. the
+              zoom overlay's tab menu) can portal inside the dialog (#1868). */}
           <ModalPortalContainerContext.Provider value={contentEl}>
+            <div className="ui-modal__head">
+              <Dialog.Title className="ui-modal__title">{title}</Dialog.Title>
+              {headExtra}
+              {!hideClose ? (
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="ui-modal__close"
+                    aria-label="Close"
+                    data-testid="modal-close"
+                  >
+                    <X className="ui-modal__close-icon" aria-hidden="true" />
+                  </button>
+                </Dialog.Close>
+              ) : null}
+            </div>
+            {description ? (
+              <Dialog.Description
+                style={{
+                  position: "absolute",
+                  width: 1,
+                  height: 1,
+                  overflow: "hidden",
+                  clip: "rect(0 0 0 0)",
+                  clipPath: "inset(50%)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {description}
+              </Dialog.Description>
+            ) : null}
             <div className="ui-modal__body">{children}</div>
             {footer ? <div className="ui-modal__foot">{footer}</div> : null}
           </ModalPortalContainerContext.Provider>
