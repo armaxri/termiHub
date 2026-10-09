@@ -19,6 +19,13 @@ name: Cargo Update Lockfile
 # fast manual fix path for anything that still slips through is documented in
 # docs/ci-yanked-crate-runbook.md.
 #
+# Two lockfiles (#4357, SUP2-004): the workspace Cargo.lock AND
+# rdp-sidecar/Cargo.lock. The RDP sidecar is workspace-excluded with its own
+# lockfile and ships in every release, so it gets the same refresh in the same
+# PR, and the same gate: its own `cargo check --locked` and its own cargo-deny
+# run (rdp-sidecar/deny.toml). Each `cargo check` runs only when its lockfile
+# changed; the tripwire reads both lockfiles; both cargo-deny runs always run.
+#
 # Gate before merge (#3755 CI-012, #4465): the refreshed lockfile must pass, in
 # this job, before the PR is opened ready or armed for auto-merge:
 #   1. `cargo check --workspace --all-targets --all-features --locked` — it
@@ -110,28 +117,39 @@ jobs:
       # Compatible (SemVer-respecting) updates only: `cargo update` never bumps
       # past a Cargo.toml constraint, so this is a lockfile-only refresh, not a
       # dependency-version change. That is exactly what clears a yanked patch.
+      # The rdp-sidecar lockfile is refreshed the same way (#4357).
       - name: Run cargo update
-        run: cargo update
+        run: |
+          cargo update
+          cargo update --manifest-path rdp-sidecar/Cargo.toml
 
       - name: Detect lockfile changes
         id: diff
         run: |
-          if git diff --quiet -- Cargo.lock; then
+          root=false
+          sidecar=false
+          git diff --quiet -- Cargo.lock || root=true
+          git diff --quiet -- rdp-sidecar/Cargo.lock || sidecar=true
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "sidecar=$sidecar" >> "$GITHUB_OUTPUT"
+          if [ "$root" = false ] && [ "$sidecar" = false ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Cargo.lock is already up to date — nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "Cargo.lock and rdp-sidecar/Cargo.lock are already up to date — nothing to do." \
+              >> "$GITHUB_STEP_SUMMARY"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
             {
-              echo "### Cargo.lock updated"
+              echo "### Lockfiles updated"
               echo ''
               echo '```'
-              git diff --stat -- Cargo.lock
+              git diff --stat -- Cargo.lock rdp-sidecar/Cargo.lock
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       # `cargo check` below builds src-tauri, which links the Linux webview stack
-      # (same packages as Code Quality's Rust job).
+      # (same packages as Code Quality's Rust job), and the rdp-sidecar, which
+      # links libasound2 (same as Code Quality's RDP Sidecar Quality job).
       - name: Install system dependencies
         if: steps.diff.outputs.changed == 'true'
         run: |
@@ -142,7 +160,8 @@ jobs:
             wget \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libasound2-dev
 
       # Restore develop's cache (read-only) so the gate's `cargo check` starts
       # warm; this chore never writes the shared cache.
@@ -150,6 +169,10 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # The sidecar has its own lockfile/target (as in RDP Sidecar Quality).
+          workspaces: |
+            .
+            rdp-sidecar
           save-if: false
 
       # Pre-PR gate (#3755 CI-012, #4465): the refreshed lockfile must compile,
@@ -161,6 +184,9 @@ jobs:
       - name: Gate the refreshed lockfile (cargo check, pre-release tripwire, cargo-deny)
         id: gate
         if: steps.diff.outputs.changed == 'true'
+        env:
+          ROOT_CHANGED: ${{ steps.diff.outputs.root }}
+          SIDECAR_CHANGED: ${{ steps.diff.outputs.sidecar }}
         run: |
           set -uo pipefail
           log="$RUNNER_TEMP/lockfile-gate.log"
@@ -190,9 +216,19 @@ jobs:
             fi
           }
 
-          gate "cargo check" cargo check --workspace --all-targets --all-features --locked
+          if [ "$ROOT_CHANGED" = "true" ]; then
+            gate "cargo check" cargo check --workspace --all-targets --all-features --locked
+          fi
+          if [ "$SIDECAR_CHANGED" = "true" ]; then
+            gate "rdp-sidecar cargo check" \
+              cargo check --manifest-path rdp-sidecar/Cargo.toml --all-targets --locked
+          fi
+          # Reads both Cargo.lock and rdp-sidecar/Cargo.lock.
           gate "pre-release tripwire" node scripts/internal/check-prerelease-crates.mjs
           gate "cargo deny" cargo deny --color never check advisories bans licenses sources
+          # Run from rdp-sidecar/ so its own deny.toml applies (#4357).
+          gate "rdp-sidecar cargo deny" \
+            bash -c 'cd rdp-sidecar && cargo deny --color never check advisories bans licenses sources'
 
           if [ "${#failed[@]}" -eq 0 ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
@@ -222,7 +258,7 @@ jobs:
           # applies ONLY to this bot-owned branch; it never touches a human
           # branch, develop, or main.
           git checkout -B "$UPDATE_BRANCH"
-          git add Cargo.lock
+          git add Cargo.lock rdp-sidecar/Cargo.lock
           git commit -m "chore(deps): update cargo lockfile"
           # Checkout did not persist credentials (see above); authenticate this
           # one push the way actions/checkout does, without writing .git/config.
@@ -237,15 +273,17 @@ jobs:
           BODY=$(cat <<'EOF'
           Automated lockfile refresh from the daily `cargo update` chore
           (see `.github/workflows/cargo-update-lockfile.yml`, issue #2645).
+          Covers both `Cargo.lock` and `rdp-sidecar/Cargo.lock` (#4357).
 
-          Pulls compatible patch/minor bumps into `Cargo.lock` proactively so a
+          Pulls compatible patch/minor bumps into the lockfiles proactively so a
           yanked transitive crate — or a freshly-published RUSTSEC advisory fix
           — does not red every open PR's Security Audit before anyone notices.
           Compatible updates only — no `Cargo.toml` constraint is changed.
 
           Before this PR was marked ready, the chore job itself ran the lockfile
-          gate on it: `cargo check --workspace --all-targets --all-features --locked`,
-          the pre-release tripwire and `cargo deny` (#4465). This PR is pushed
+          gate on it: `cargo check --workspace --all-targets --all-features --locked`
+          (and `cargo check --locked` for rdp-sidecar), the pre-release tripwire and
+          `cargo deny` for both lockfiles (#4465, #4357). This PR is pushed
           with `GITHUB_TOKEN`, so no other workflow runs on it by itself.
 
           This PR best-effort enables auto-merge, so it lands on its own once
@@ -339,7 +377,7 @@ jobs:
         env:
           GATE_FAILED: ${{ steps.gate.outputs.failed }}
         run: |
-          echo "::error::The refreshed Cargo.lock fails the lockfile gate ($GATE_FAILED);" \
+          echo "::error::The refreshed lockfile(s) fail the lockfile gate ($GATE_FAILED);" \
             "see the draft PR and the gate step."
           echo "Fix path: docs/ci-yanked-crate-runbook.md"
           exit 1
