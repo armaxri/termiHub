@@ -106,7 +106,7 @@ describe("TerminalView — Toggle Sidebar shortcut label (#4374, WA-FE2-003)", (
   it("shows the Cmd binding on macOS", () => {
     setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     renderView();
-    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (Cmd+b)");
+    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (Cmd+B)");
   });
 
   it("shows the user's customised binding", () => {

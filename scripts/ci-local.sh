@@ -2,7 +2,7 @@
 # Reproduce the per-PR CI gate locally with ONE command (issue TOOL-006).
 #
 # Run from anywhere:
-#   ./scripts/ci-local.sh            # full gate — everything the PR CI runs
+#   ./scripts/ci-local.sh            # full gate — the per-PR CI it can reproduce
 #   ./scripts/ci-local.sh --quick    # quality-only subset (no tests/audits/builds)
 #   ./scripts/ci-local.sh --help
 #
@@ -12,17 +12,23 @@
 # push" guidance and is what the pre-push hook uses; run the full gate before a PR.
 #
 # This mirrors .github/workflows/code-quality.yml (the per-PR "Code Quality"
-# workflow) so a clean run here means a green PR gate. It composes the existing
-# scripts/check.sh (formatting/linting/clippy) and adds the steps that gate CI
-# but check.sh does not cover: tsc, per-feature core builds, cargo audit/deny,
-# the pnpm production-audit gate, the Python machinery suite, plugin packaging,
-# and commitlint.
+# workflow) job by job. It composes the existing scripts/check.sh
+# (formatting/linting/clippy) and adds the steps that gate CI but check.sh does
+# not cover: tsc, per-feature core builds, the ts-rs/wire-fixture staleness
+# diffs, cargo-machete, the rdp-sidecar and fuzz-crate checks, bundle size,
+# rustdoc, shellcheck/parity/headless, actionlint, tests, the machinery suite,
+# the testid drift guard, plugin packaging, audits and commitlint.
+# scripts/internal/ci-local.mjs maps every code-quality.yml job to its gates
+# here (or to why it is not reproduced, e.g. the Windows-only jobs), and the
+# closing summary prints that list; ci-local.test.mjs keeps the map in sync
+# with the workflow (#4358, TOOL2-004).
 #
 # Like CI (fail-fast: false) every gate runs to completion and its own verdict
 # is recorded, so one red gate never hides another — the full list is printed at
-# the end. Optional external tools (cargo-audit, cargo-deny, uv) are SKIPPED with
-# a warning when absent rather than failing the run; a skipped gate means the run
-# did not fully reproduce CI and the summary says so.
+# the end. Optional external tools (cargo-audit, cargo-deny, cargo-machete, uv,
+# actionlint and ShellCheck) are SKIPPED with a warning when absent rather than
+# failing the run; a skipped gate means the run did not fully reproduce CI and
+# the summary says so.
 #
 # NOTE: the integration/system E2E lanes and the per-platform test matrix are NOT
 # reproduced here — they need Docker fixtures / other OSes and are release-cadence
@@ -42,14 +48,16 @@ case "${1:-}" in
 Reproduce the per-PR CI gate locally (mirrors .github/workflows/code-quality.yml).
 
 Usage:
-  ./scripts/ci-local.sh            Full gate — everything the per-PR CI runs.
+  ./scripts/ci-local.sh            Full gate — every per-PR CI check this host can run.
   ./scripts/ci-local.sh --quick    Quality-only subset (check.sh + tsc + commitlint);
                                    skips tests, coverage, audits, and plugin packaging.
                                    This is what the pre-push git hook runs.
   ./scripts/ci-local.sh --help     Show this help.
 
 Every gate runs to completion (CI fail-fast: false); failures are listed at the end.
-Optional tools absent (cargo-audit, cargo-deny, uv) are skipped with a warning.
+Optional tools absent (cargo-audit, cargo-deny, cargo-machete, uv, shellcheck,
+actionlint) are skipped with a warning. The summary lists the CI jobs that are
+deliberately not reproduced (Windows-only jobs, other OS test legs).
 EOF
     exit 0
     ;;
@@ -101,18 +109,73 @@ gate_tsc() { pnpm exec tsc --noEmit; }
 gate_markdownlint() { pnpm run markdownlint; }
 
 # rust-quality: clippy termihub-core with each opt-in feature in isolation
-# (#3318). Mirrors the CI step, which reads the list from `cargo metadata`; keep
-# this list in sync with core/Cargo.toml [features].
-CORE_FEATURES="tracing embedded-servers plugin http-monitor serial local-shell telnet ssh
-  docker wsl ftp mock-remote-desktop vnc rdp-sidecar"
+# (#3318). The list comes from `cargo metadata` via the shared helper, exactly
+# as the CI step derives it, so a new core feature is linted without an edit
+# here (#4358: the old hand-kept list had fallen six features behind).
 gate_core_features() {
+  local features feature
+  features="$(node scripts/internal/ci-local.mjs core-features)" || return 1
   cargo clippy -p termihub-core --no-default-features --all-targets -- -D warnings || return 1
-  local feature
-  for feature in $CORE_FEATURES; do
+  for feature in $features; do
     cargo clippy -p termihub-core --no-default-features --features "$feature" \
       --all-targets -- -D warnings || return 1
   done
 }
+
+gate_prerelease_crates() { node scripts/internal/check-prerelease-crates.mjs; }
+
+# rust-quality: ts-rs + IPC wire-fixture staleness. Regenerating rewrites the
+# files in place, so like CI this fails when they differ from the index — a
+# stale binding is then left regenerated in your tree, ready to commit.
+gate_tsrs_stale() {
+  cargo test -p termihub --lib export_bindings &&
+    cargo test -p termihub-core --lib --features ssh,docker,embedded-servers,plugin,http-monitor \
+      export_bindings &&
+    git diff --exit-code -- src/types/generated
+}
+gate_wire_fixtures_stale() {
+  local stale
+  cargo test -p termihub --lib ipc_wire_fixtures || return 1
+  stale="$(git status --porcelain -- src/test/fixtures/wire)"
+  if [ -n "$stale" ]; then
+    echo "IPC wire fixtures are stale; commit the regenerated files:"
+    echo "$stale"
+    return 1
+  fi
+}
+
+gate_cargo_machete() { cargo machete; }
+
+# rdp-sidecar-quality: the workspace-excluded sidecar has its own lockfile.
+gate_rdp_sidecar() {
+  (cd rdp-sidecar && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings &&
+    cargo test --locked)
+}
+gate_rdp_sidecar_deny() { (cd rdp-sidecar && cargo deny check advisories bans licenses sources); }
+
+gate_manual_inventory() { python3 scripts/manual-inventory.py --check; }
+gate_versions() { ./scripts/release-check.sh --versions-only; }
+gate_bundle_size() { pnpm build && pnpm size; }
+
+gate_rustdoc() {
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p termihub-core &&
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features \
+      -p termihub -p termihub-core -p termihub-agent
+}
+
+# plugin-fuzz-check: the workspace-excluded fuzz crate, seeded from the
+# workspace lockfile like CI (its own Cargo.lock is gitignored).
+gate_plugin_fuzz() {
+  cp Cargo.lock plugin-runner/fuzz/Cargo.lock &&
+    (cd plugin-runner/fuzz && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings)
+}
+
+gate_shellcheck() { node scripts/internal/ci-local.mjs shellcheck; }
+gate_script_parity() { ./scripts/internal/check-script-parity.sh; }
+gate_script_headless() { ./scripts/internal/check-script-headless.sh; }
+gate_actionlint() { actionlint; }
+gate_test_inventory() { python3 scripts/build-test-inventory.py --check-baseline; }
+gate_testid_drift() { python3 scripts/check-testid-drift.py; }
 
 gate_rust_tests() { cargo test --workspace --all-features; }
 gate_frontend_coverage() { pnpm test:coverage; }
@@ -168,32 +231,79 @@ run_gate "Frontend: TypeScript (tsc --noEmit)" gate_tsc
 # team repeatedly hits.
 run_gate "Commit messages (commitlint)" gate_commitlint
 
+# An optional external tool: present on PATH or as a cargo subcommand.
+have() { command -v "$1" >/dev/null 2>&1; }
+have_cargo() { have "cargo-$1" || cargo "$1" --version >/dev/null 2>&1; }
+
+# Full mode follows code-quality.yml job by job; scripts/internal/ci-local.mjs
+# (CI_LOCAL_JOBS) maps each job to these gate titles, and ci-local.test.mjs
+# fails when a job or a gate title drifts. Keep ci-local.cmd in step.
 if [ "$MODE" = "full" ]; then
+  # Rust Code Quality (fmt/clippy/toolchain pin ran in check.sh above).
+  run_gate "Rust: pre-release crates reviewed" gate_prerelease_crates
   run_gate "Rust: core opt-in features in isolation" gate_core_features
+  run_gate "Rust: ts-rs bindings not stale" gate_tsrs_stale
+  run_gate "Rust: IPC wire fixtures not stale" gate_wire_fixtures_stale
+  if have_cargo machete; then
+    run_gate "Rust: unused dependencies (cargo-machete)" gate_cargo_machete
+  else
+    skip_gate "Rust: unused dependencies (cargo-machete)" \
+      "cargo-machete not installed (cargo install cargo-machete)"
+  fi
+  run_gate "Package example plugins" gate_package_plugins
+
+  # RDP Sidecar Quality.
+  run_gate "RDP sidecar: fmt + clippy + tests" gate_rdp_sidecar
+
+  # Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.sh).
+  run_gate "Frontend: manual-test inventory" gate_manual_inventory
+  run_gate "Version sources + Tauri drift" gate_versions
+  run_gate "Frontend: bundle size budget" gate_bundle_size
+
+  run_gate "Rust: rustdoc (-D warnings)" gate_rustdoc
+  run_gate "Plugin IPC fuzz crate (fmt + clippy)" gate_plugin_fuzz
+
+  # Shell Script Quality + Workflow Lint.
+  if have shellcheck; then
+    run_gate "Shell: ShellCheck" gate_shellcheck
+  else
+    skip_gate "Shell: ShellCheck" "shellcheck not installed (https://www.shellcheck.net/)"
+  fi
+  run_gate "Shell: script parity (.sh <-> .cmd)" gate_script_parity
+  run_gate "Shell: headless smoke (--help paths)" gate_script_headless
+  if have actionlint; then
+    run_gate "Workflow lint (actionlint)" gate_actionlint
+  else
+    skip_gate "Workflow lint (actionlint)" "actionlint not installed (https://github.com/rhysd/actionlint)"
+  fi
+
+  # Run Tests (this host's OS only).
   run_gate "Rust workspace: cargo test" gate_rust_tests
   run_gate "Frontend: vitest + coverage floors" gate_frontend_coverage
 
-  if command -v cargo-audit >/dev/null 2>&1 || cargo audit --version >/dev/null 2>&1; then
-    run_gate "Security: cargo audit" gate_cargo_audit
-  else
-    skip_gate "Security: cargo audit" "cargo-audit not installed (cargo install cargo-audit)"
-  fi
-
-  if command -v cargo-deny >/dev/null 2>&1 || cargo deny --version >/dev/null 2>&1; then
-    run_gate "Security: cargo deny (supply-chain)" gate_cargo_deny
-  else
-    skip_gate "Security: cargo deny (supply-chain)" "cargo-deny not installed (cargo install cargo-deny)"
-  fi
-
-  run_gate "Security: pnpm audit (production deps)" gate_pnpm_audit_prod
-
-  if command -v uv >/dev/null 2>&1; then
+  # System-Test Harness (machinery) + Test-ID Drift Guard.
+  if have uv; then
     run_gate "System-test harness (machinery)" gate_machinery
   else
     skip_gate "System-test harness (machinery)" "uv not installed (https://docs.astral.sh/uv/)"
   fi
+  run_gate "Test inventory ratchet" gate_test_inventory
+  run_gate "Test-ID drift guard" gate_testid_drift
 
-  run_gate "Package example plugins" gate_package_plugins
+  # security-audit.yml (runs on PRs that touch a manifest or lockfile).
+  if have_cargo audit; then
+    run_gate "Security: cargo audit" gate_cargo_audit
+  else
+    skip_gate "Security: cargo audit" "cargo-audit not installed (cargo install cargo-audit)"
+  fi
+  if have_cargo deny; then
+    run_gate "Security: cargo deny (supply-chain)" gate_cargo_deny
+    run_gate "RDP sidecar: cargo deny" gate_rdp_sidecar_deny
+  else
+    skip_gate "Security: cargo deny (supply-chain)" "cargo-deny not installed (cargo install cargo-deny)"
+    skip_gate "RDP sidecar: cargo deny" "cargo-deny not installed (cargo install cargo-deny)"
+  fi
+  run_gate "Security: pnpm audit (production deps)" gate_pnpm_audit_prod
 fi
 
 echo ""
@@ -214,5 +324,7 @@ fi
 if [ "$MODE" = "quick" ]; then
   echo "QUICK GATE PASSED. Run ./scripts/ci-local.sh (no --quick) for the full CI gate."
 else
-  echo "ALL CI GATES PASSED."
+  echo "ALL REPRODUCED CI GATES PASSED. Deliberately not reproduced here:"
+  node scripts/internal/ci-local.mjs not-reproduced | sed 's/^/  - /'
+  echo "Nor the integration/system E2E lanes (Docker fixtures; see docs/testing.md)."
 fi

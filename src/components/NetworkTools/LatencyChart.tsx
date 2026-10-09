@@ -80,12 +80,12 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
 
   const makeOptions = (container: HTMLDivElement): uPlot.Options => {
     const styles = getComputedStyle(container);
-    const accent = cssVar(styles, "--accent-color", "#3794ff");
-    const axisText = cssVar(styles, "--text-secondary", "#969696");
+    const accent = cssVar(styles, "--accent-color");
+    const axisText = cssVar(styles, "--text-secondary");
     // Canvas can't resolve CSS var() in a font string, so build a concrete one.
     const fontFamily = cssVar(styles, "--font-mono", "monospace");
-    const grid = cssVar(styles, "--border-primary", "#3c3c3c");
-    const dropColor = cssVar(styles, "--color-error", "#f44747");
+    const grid = cssVar(styles, "--border-primary");
+    const dropColor = cssVar(styles, "--color-error");
 
     const timeAxis = intervalMs != null;
     const axisBase = {
@@ -133,7 +133,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
   const containerRef = useUplot({
     data: chart.data,
     makeOptions,
-    // Recreate only when structural options (axis mode / height) change.
+    // Recreate on structural options (axis mode / height); useUplot adds the theme.
     recreateDeps: [intervalMs, height],
     onUpdate: (plot) => {
       // Refresh drop positions before setData triggers the plugin's redraw.
