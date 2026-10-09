@@ -260,7 +260,7 @@ tests:
     release_gate: true
     manual_reason: "scrollbar paint and overlap with terminal text are a visual judgement (the CSS rules are pinned by tokenDiscipline.test.ts)"
     name: "Terminal and file-browser breadcrumb scrollbars follow the global style"
-    pr: 4585
+    pr: 4615
     platforms: [all]
     prerequisites:
       - app: true
