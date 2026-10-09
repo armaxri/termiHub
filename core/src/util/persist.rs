@@ -4,7 +4,7 @@
 //!
 //! The desktop (`src-tauri::utils::{fs, migrate}`), the agent
 //! (`agent::{fs, store_version}`) and the plugin stores in
-//! [`crate::plugin`] all link this one implementation, so a fix to any of
+//! `crate::plugin` all link this one implementation, so a fix to any of
 //! these rules reaches every store at once.
 //!
 //! * [`write_atomic`] — temp file in the **same directory** (unique name), the
