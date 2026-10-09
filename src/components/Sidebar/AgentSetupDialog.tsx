@@ -306,6 +306,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     addTab,
     onOpenChange,
     stopProgressListener,
+    progressListener,
   ]);
 
   /**
