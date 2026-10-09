@@ -6,8 +6,8 @@ severity: medium
 category: contradiction
 is_workaround: false
 subsystem: "README / plugins"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4317 — README plugin bullet and trust warning now describe the default-off, out-of-process OS sandbox (ADR-19)"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

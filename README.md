@@ -94,7 +94,7 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
 
-> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own (Settings → Plugins → **Browse Plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own (Settings → Plugins → **Browse Plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**; if you turn on Settings → Plugins → **Check for Plugin Updates Automatically**, which is off by default, termiHub also checks the update URL of each installed plugin that publishes one, once a day) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
 
 Prefer to build it yourself? See [Development](#development) below.
 
@@ -122,16 +122,16 @@ Prefer to build it yourself? See [Development](#development) below.
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling
+- **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH Tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow Experimental Features**
 - **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, swap, disk, and network throughput stats for remote hosts
 
 ### Power Tools
 
-- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse Plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
-- **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
-- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
+- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse Plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
+- **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. **Experimental** — the Network Tools view is hidden until you enable **Settings → General → Allow Experimental Features**
+- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. **Experimental** — the Services view that manages them is hidden until you enable **Settings → General → Allow Experimental Features**
 - **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
 
 ### Workspace and Windows
@@ -157,7 +157,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Credential vault backup** — Export saved credentials to a passphrase-protected, encrypted file (Settings → Security → Export vault…; in OS Keychain mode each export is confirmed with Touch ID / Windows Hello) and import it on another machine or after a reinstall (Import vault…)
 - **Unlock with Touch ID / Windows Hello** — Optionally unlock the master-password credential store with biometrics; the master password keeps working and is required to turn it on
 
-> ⚠️ **Plugin trust warning.** termiHub's plugin system can load **native plugins that run arbitrary code with your full user privileges** (native cdylib backends over a C ABI). Plugins carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`), but installing a plugin is a trust decision: **only install plugins from publishers you trust.** An untrusted native plugin can do anything your user account can.
+> ⚠️ **Plugin trust warning.** termiHub can load **native plugins** (cdylib backends). They are **off by default** (Settings → Plugins → **Enable Native Plugins**), and each one loads only after you trust that exact build and the access it asks for. A native plugin never runs inside termiHub: it runs in its own `termihub-plugin-runner` process, confined by an OS sandbox (landlock, seccomp and namespaces on Linux; Seatbelt on macOS; a Less-Privileged AppContainer in a job object on Windows). In that sandbox it can read and write only its own data folder, cannot open sockets, start programs or reach devices, and gets network and file access only through termiHub's permission-checked bridge. If full isolation is unavailable (mostly an older Linux kernel without landlock), the plugin loads only after you accept reduced isolation for that build; there is no setting to turn the sandbox off. Plugins also carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`). The sandbox raises the cost of an attack but does not protect against kernel or operating-system vulnerabilities, or against a plugin misleading you inside its own terminal (for example, asking for a password). **Only install plugins from publishers you trust.** Details: [SECURITY.md](SECURITY.md#native-plugin-sandbox) and [The plugin sandbox](docs/plugin-authoring.md#the-plugin-sandbox).
 
 ### Workflow Automation (experimental)
 
@@ -198,18 +198,18 @@ termiHub uses a VS Code-inspired three-column layout:
 ┌──────────┬────────────────┬──────────────────────────────────────────┐
 │ Activity │    Sidebar     │           Terminal View                  │
 │   Bar    │                │  ┌──────┬──────┬──────┐                 │
-│          │  Connections   │  │ Tab1 │ Tab2 │ Tab3 │                 │
-│  [Con]   │  File Browser  │  ├──────┴──────┴──────┤                 │
-│  [File]  │  Settings      │  │                    │                 │
-│          │                │  │  Terminal Content   │                 │
-│          │                │  │                    │                 │
-│          │                │  │                    │                 │
-│          │                │  └────────────────────┘                 │
+│  [Con]   │  the view      │  │ Tab1 │ Tab2 │ Tab3 │                 │
+│  [File]  │  selected in   │  ├──────┴──────┴──────┤                 │
+│  [Rcnt]  │  the Activity  │  │                    │                 │
+│  [Wksp]  │  Bar           │  │  Terminal Content  │                 │
+│  [Mcro]  │                │  │                    │                 │
+│  [Plug]  │                │  │                    │                 │
+│  [Logs]  │                │  └────────────────────┘                 │
 │  [Gear]  │                │  Status Bar                             │
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons: Connections (network), File Browser (folder), and a gear icon at the bottom for settings, import/export. Click an active icon to toggle the sidebar.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File Browser, Recent Sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow Experimental Features** on, it also shows SSH Tunnels, Services (embedded servers), Network Tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard Shortcuts, Customize Layout, connection import/export, Updates, **Export Diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New Terminal, Split, Close Panel), and status bar.
 
@@ -413,19 +413,23 @@ TERMIHUB_CONFIG_DIR=./my-project/termihub-config pnpm tauri dev
 
 When something misbehaves, termiHub keeps two kinds of logs to help you diagnose it or file a useful bug report.
 
+### Reporting a problem: Export Diagnostics
+
+To attach logs to a bug report, use the gear menu at the bottom of the Activity Bar → **Export Diagnostics…**. It shows exactly which files it will include, then saves a zip wherever you choose: the recent application log files, local crash reports, and your app version, build and platform. Every file in it is **redacted** first: passwords, tokens, keys, host names, IP addresses, usernames and home directory paths are masked. Session transcripts, terminal content, connection settings and the credential store are never included. Nothing is uploaded; you decide whether to share the file.
+
 ### The in-app Log Viewer
 
 Click the **Log Viewer** icon (the scroll icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
 
 - **Filter** by level (Error / Warning / Info / Debug) and **search** the messages.
 - **Copy** a single entry or all visible entries to the clipboard.
-- **Save to file** to export the current logs for attaching to a bug report.
+- **Save to file** to export the visible entries. Copied and saved entries have passwords, tokens and keys masked, but unlike the diagnostics bundle they keep host names, usernames and paths.
 
-The Log Viewer shows the current session only; it is cleared when the app closes.
+The Log Viewer shows the most recent entries of the current session only; it is cleared when the app closes.
 
 ### The persistent log file
 
-termiHub also writes a durable, size-capped log file that survives restarts and crashes — this is the one to attach when reporting a problem. It lives in your platform's conventional location:
+termiHub also writes a durable, size-capped log file that survives restarts and crashes. **Export Diagnostics** includes a redacted copy of it. The raw file itself is **not redacted**: it can contain host names, usernames and file paths, so review it before sharing it and prefer the diagnostics bundle for bug reports. It lives in your platform's conventional location:
 
 | Platform | Log file                                            |
 | -------- | --------------------------------------------------- |
@@ -433,7 +437,7 @@ termiHub also writes a durable, size-capped log file that survives restarts and 
 | Windows  | `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log` |
 | Linux    | `~/.local/share/com.termihub.app/logs/termihub.log` |
 
-In portable mode (a `portable.marker` file or `data/` folder next to the executable) the log lives in the portable folder instead, at `data/logs/termihub.log`, so nothing is written to the host's profile. Session transcripts and crash reports beside it follow the same rule.
+In portable mode (a `portable.marker` file or `data/` folder next to the executable) the log lives in the portable folder instead, at `data/logs/termihub.log`, so nothing is written to the host's profile. Session transcripts and crash reports beside it follow the same rule. Setting the `TERMIHUB_LOG_DIR` environment variable before launch overrides both locations.
 
 The file is rotated automatically and capped at roughly 15 MB total (the current file plus two archives named `termihub.1.log` / `termihub.2.log`), so it can never grow without bound. Passwords, key material, and terminal contents are never written to it.
 
