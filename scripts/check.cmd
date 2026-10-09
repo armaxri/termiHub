@@ -64,6 +64,12 @@ node scripts\internal\check-uv-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Doc code-reference drift ===
+REM Symbol-based file-to-symbol references in reference docs resolve (#4369).
+node scripts\internal\check-doc-symbols.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1
