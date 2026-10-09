@@ -18,6 +18,7 @@ use crate::files::sftp::{ElevatedWriteResult, Writability};
 use crate::files::transfer::{
     self, TransferDirection, TransferPersistenceManager, TransferRegistry,
 };
+use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager, SessionOrigin,
@@ -213,6 +214,7 @@ pub async fn test_connection(
     connect_id: Option<String>,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
+    graphical: State<'_, GraphicalSessionManager>,
 ) -> Result<(), TerminalError> {
     info!(type_id, agent_id = ?agent_id, "Testing connection");
     // Expand any saved-connection jump-host references to inline hops before the
@@ -227,6 +229,9 @@ pub async fn test_connection(
             settings,
             agent_id.as_deref(),
             connect_id.as_deref(),
+            // An RDP probe auto-accepts only an already-trusted certificate
+            // (#4320); it never prompts.
+            Some(graphical.trust_store().as_ref()),
         )
         .await
         .map_err(TerminalError::from_session_spawn)
