@@ -105,21 +105,61 @@ describe("executeStep", () => {
       expect(send).toHaveBeenCalledTimes(2);
     });
 
-    it("reads the body from sourcePath when a read seam is provided", async () => {
+    it("reads the body from a user-confirmed sourcePath", async () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "fromdisk1\nfromdisk2");
+      const isScriptSourceTrusted = vi.fn((path: string) => path === "/tmp/s.sh");
       const step: WorkflowStep = {
         kind: "run-script",
         script: "stale",
         sourcePath: "/tmp/s.sh",
       };
-      await executeStep(step, deps({ send, readScriptFile }));
+      const outcome = await executeStep(
+        step,
+        deps({ send, readScriptFile, isScriptSourceTrusted })
+      );
 
+      expect(outcome).toEqual({ ok: true });
+      expect(isScriptSourceTrusted).toHaveBeenCalledWith("/tmp/s.sh");
       expect(readScriptFile).toHaveBeenCalledWith("/tmp/s.sh");
       expect(send.mock.calls.map((c) => c[0])).toEqual(["fromdisk1\n", "fromdisk2\n"]);
     });
 
-    it("falls back to the embedded script when the sourcePath read fails", async () => {
+    // #4310 (FEC2-001): a sourcePath the user never picked or confirmed on this
+    // machine is never read — an imported file must not be able to make a step
+    // type ~/.ssh/id_ed25519 into a remote shell.
+    it("refuses to read a sourcePath the user never confirmed", async () => {
+      const send = vi.fn(async (_data: string) => true);
+      const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "PRIVATE KEY");
+      const step: WorkflowStep = {
+        kind: "run-script",
+        script: "echo harmless",
+        sourcePath: "/home/u/.ssh/id_ed25519",
+      };
+      const outcome = await executeStep(
+        step,
+        deps({ send, readScriptFile, isScriptSourceTrusted: () => false })
+      );
+
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toMatch(/not confirmed on this machine/);
+      expect(outcome.error).toContain("/home/u/.ssh/id_ed25519");
+      expect(readScriptFile).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("refuses to read a sourcePath when no trust seam is wired (fail-closed)", async () => {
+      const send = vi.fn(async (_data: string) => true);
+      const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "secret");
+      const step: WorkflowStep = { kind: "run-script", script: "x", sourcePath: "/etc/shadow" };
+      const outcome = await executeStep(step, deps({ send, readScriptFile }));
+
+      expect(outcome.ok).toBe(false);
+      expect(readScriptFile).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("fails with a clear error instead of silently running the embedded script when the read fails", async () => {
       const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => {
         throw new Error("no such file");
@@ -129,9 +169,29 @@ describe("executeStep", () => {
         script: "embedded",
         sourcePath: "/tmp/missing.sh",
       };
-      await executeStep(step, deps({ send, readScriptFile }));
+      const outcome = await executeStep(
+        step,
+        deps({ send, readScriptFile, isScriptSourceTrusted: () => true })
+      );
 
-      expect(send.mock.calls.map((c) => c[0])).toEqual(["embedded\n"]);
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toMatch(/could not read script file "\/tmp\/missing.sh"/);
+      expect(outcome.error).toContain("no such file");
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("runs a locally created step without a sourcePath from its visible script", async () => {
+      const send = vi.fn(async (_data: string) => true);
+      const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "never");
+      const step: WorkflowStep = { kind: "run-script", script: "uptime" };
+      const outcome = await executeStep(
+        step,
+        deps({ send, readScriptFile, isScriptSourceTrusted: () => false })
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(readScriptFile).not.toHaveBeenCalled();
+      expect(send.mock.calls.map((c) => c[0])).toEqual(["uptime\n"]);
     });
 
     it("aborts remaining lines when the signal reports cancellation", async () => {
