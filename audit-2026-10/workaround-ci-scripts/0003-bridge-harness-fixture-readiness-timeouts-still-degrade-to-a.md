@@ -17,8 +17,8 @@ evidence:
   - tests/system/termihub_harness/fixtures.py:366-372
   - tests/system/conftest.py:287-306
   - .github/workflows/system-integration.yml:411
-status: open
-resolution: ""
+status: fixed
+resolution: "#4315 — compose, readiness-probe and exec timeouts raise ComposeFixtureFailed under CI; TERMIHUB_REQUIRE_FIXTURES backstop"
 ---
 
 ## What

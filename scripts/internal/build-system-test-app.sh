@@ -28,9 +28,10 @@
 #       decodes RDP in this separately built, workspace-excluded binary. Only
 #       the Linux lane has the Docker fixtures, so only Linux builds it (debug);
 #       the suite's rdp_fixtures points the app at it via $TERMIHUB_RDP_HELPER.
-#       It links ALSA, so it is built only where libasound2-dev is installed,
-#       and a failed sidecar build only warns: the RDP suite then skips, while
-#       the rest of the lane still runs. TERMIHUB_SKIP_RDP_HELPER=1 skips it.
+#       It links ALSA, so it is built only where libasound2-dev is installed
+#       (without it the build only warns and the RDP suite skips). With ALSA
+#       present a failed sidecar build fails this script, so the RDP suite
+#       cannot skip to a false green (#4315). TERMIHUB_SKIP_RDP_HELPER=1 skips it.
 #   The sideloaded ConPTY host (Windows only, #4121): the inbox ConPTY strips
 #       SIXEL/inline-image sequences, so the app bundles Microsoft's
 #       conpty.dll + OpenConsole.exe (tauri.conpty.conf.json). tauri-build
@@ -66,7 +67,12 @@ if [ "$(uname -s)" = "Linux" ] && [ "${TERMIHUB_SKIP_RDP_HELPER:-}" != "1" ]; th
     if ! pkg-config --exists alsa 2>/dev/null; then
         echo "::warning::libasound2-dev missing: RDP sidecar not built, the RDP suite will skip"
     elif ! ./scripts/build-rdp-sidecar.sh; then
-        echo "::warning::RDP sidecar build failed: the RDP suite will skip"
+        # With libasound present the build can succeed, so a failure is a real
+        # regression, not a missing dependency: fail instead of letting the
+        # RDP suite skip to a false green (#4315). TERMIHUB_SKIP_RDP_HELPER=1
+        # opts out on a host that does not need the RDP suite.
+        echo "::error::RDP sidecar build failed (libasound2-dev is present); set TERMIHUB_SKIP_RDP_HELPER=1 to skip it"
+        exit 1
     fi
 fi
 CONFIG_FLAGS=()
