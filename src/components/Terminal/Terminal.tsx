@@ -39,12 +39,6 @@ import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { currentEffectiveSettings, useEffectiveSettings } from "@/services/workspaceSettings";
 import { getXtermTheme } from "@/themes";
-import {
-  processKeyEvent,
-  isAppShortcut,
-  isChordPending,
-  isShellReservedKey,
-} from "@/services/keybindings";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { createSessionOutputFlow } from "@/utils/terminalFlowControl";
 import { parseBackendError } from "@/utils/backendErrorCode";
@@ -63,13 +57,13 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
+import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { createWebglRenderer, type WebglRendererController } from "./webglRenderer";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
   type CommandMarksSnapshot,
-  COMMAND_MARK_ACTIONS,
   OSC_133,
   registerCommandMarkTracker,
 } from "@/services/commandMarks";
@@ -1622,95 +1616,36 @@ export function Terminal({
     const scrollbar = createTerminalScrollbar({ xterm, gutter, thumb });
     scrollbarRef.current = scrollbar;
 
-    // Intercept application shortcuts before xterm processes them
-    xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      if (e.type !== "keydown") return true;
+    // Intercept application shortcuts before xterm processes them. The routing
+    // decision lives in terminalInputRouting.ts so it is unit-testable (#4350).
+    xterm.attachCustomKeyEventHandler((e: KeyboardEvent) =>
+      routeTerminalKeyEvent(e, {
+        hasSession: !!sessionIdRef.current,
+        isViewMode: isViewModeRef.current,
+        passthroughEnabled: currentSettingsView().terminalKeyPassthrough !== false,
+        hasCommandMarks: () => commandMarks.hasMarks(),
+        showReconnectPrompt: () => useAppStore.getState().showTerminalReconnectPrompt(tabId),
+        copySelection: () => copySelectionToClipboard(tabId),
+        paste: () => pasteToTerminal(tabId),
+        selectAll: () => xterm.selectAll(),
+      })
+    );
 
-      // In view mode the session is dead. Enter shows the reconnect prompt.
-      if (e.key === "Enter" && !sessionIdRef.current && isViewModeRef.current) {
-        useAppStore.getState().showTerminalReconnectPrompt(tabId);
-        return false;
-      }
-
-      // Pass-through: keys reserved by the shell/tmux/vim/SSH-to-remote bypass
-      // shortcut matching entirely so they reach the PTY untouched. Users can
-      // turn this off in Settings → Keyboard Shortcuts.
-      const passthroughEnabled = currentSettingsView().terminalKeyPassthrough !== false;
-      if (passthroughEnabled && isShellReservedKey(e)) {
-        return true;
-      }
-
-      // If a chord is pending, block the key from xterm
-      if (isChordPending()) {
-        return false;
-      }
-
-      const action = processKeyEvent(e);
-      if (action === "chord-pending") {
-        return false;
-      }
-      if (action === "copy") {
-        copySelectionToClipboard(tabId);
-        return false;
-      }
-      if (action === "paste") {
-        // Prevent the browser's default Cmd+V / Ctrl+Shift+V action so
-        // that no native paste event fires on xterm's internal textarea.
-        // Without this, the clipboard text is sent twice: once by our
-        // pasteToTerminal() and once by xterm's internal paste handler.
-        e.preventDefault();
-        pasteToTerminal(tabId);
-        return false;
-      }
-      if (action === "select-all") {
-        xterm.selectAll();
-        return false;
-      }
-
-      // Prompt-navigation / command-output shortcuts only mean something when
-      // the shell emits OSC 133 marks. Without them, let the key reach the
-      // shell exactly as before (#3415) — the global handler's run is a no-op.
-      if (action && COMMAND_MARK_ACTIONS.has(action) && !commandMarks.hasMarks()) {
-        return true;
-      }
-
-      // Block any other app shortcut from reaching xterm
-      if (isAppShortcut(e)) {
-        return false;
-      }
-
-      return true;
-    });
-
-    // Track CWD via OSC 7 (POSIX shells: zsh, bash, WSL, SSH).
-    // Data is a file:// URI, e.g. "file:///home/user/foo" or "file:///C:/foo".
+    // Track CWD via OSC 7 (POSIX shells: zsh, bash, WSL, SSH) — a file:// URI.
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
-      try {
-        const url = new URL(data);
-        if (url.protocol === "file:") {
-          let pathname = decodeURIComponent(url.pathname);
-          // On Windows (e.g. WSL forwarding), paths arrive as /C:/foo —
-          // strip the leading slash to get a valid Windows path.
-          if (/^\/[A-Za-z]:\//.test(pathname)) {
-            pathname = pathname.slice(1);
-          }
-          useAppStore.getState().setTabCwd(tabId, pathname);
-        }
-      } catch {
-        // Ignore malformed OSC 7 data
+      const cwd = parseOsc7Cwd(data);
+      if (cwd !== null) {
+        useAppStore.getState().setTabCwd(tabId, cwd);
       }
       return true;
     });
 
-    // Track CWD via OSC 9;9 (Windows Terminal native: PowerShell, cmd.exe).
-    // Data format after ident strip: "9;<raw-windows-path>", e.g. "9;C:\Users\foo".
-    // No URL encoding or slash conversion — the path is used directly.
+    // Track CWD via OSC 9;9 (Windows Terminal native: PowerShell, cmd.exe) — a
+    // raw Windows path, used verbatim.
     const osc9Disposable = xterm.parser.registerOscHandler(9, (data: string) => {
-      if (data.startsWith("9;")) {
-        const path = data.slice(2);
-        if (path) {
-          useAppStore.getState().setTabCwd(tabId, path);
-        }
+      const cwd = parseOsc9Cwd(data);
+      if (cwd !== null) {
+        useAppStore.getState().setTabCwd(tabId, cwd);
       }
       return true;
     });

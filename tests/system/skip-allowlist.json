@@ -27,16 +27,6 @@
       "why": "guided-manual tests need an operator at a TTY; CI never passes --manual"
     },
     {
-      "reason": "^agent auth is not a selectable authMethod option \\(SSH-AGENT-ERROR\\)$",
-      "nodeid": "test_ssh_agent_error\\.py",
-      "lanes": [
-        "bulk-linux",
-        "bulk-macos",
-        "bulk-windows"
-      ],
-      "why": "parked test: the UI offers no agent auth method to drive yet"
-    },
-    {
       "reason": "^needs an X server on the host \\(SSH-07\\)",
       "nodeid": "test_ssh\\.py",
       "lanes": [

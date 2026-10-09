@@ -15,8 +15,8 @@ evidence:
   - core/src/plugin/sandbox/proxy.rs:71
   - core/src/plugin/sandbox/client.rs:100
   - core/src/plugin/sandbox/client.rs:106
-status: open
-resolution: ""
+status: fixed
+resolution: "#4335 — a failed watchdog start ends the runner and fails the start; proxy relays close with StreamClosed; reaper/recovery failures log at error"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

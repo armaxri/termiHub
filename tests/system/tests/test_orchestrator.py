@@ -431,3 +431,16 @@ def test_webview2_unlock_wait_gives_up_on_a_held_lock(tmp_path, monkeypatch):
 def test_webview2_unlock_wait_passes_a_folder_never_used(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrator.platform, "system", lambda: "Windows")
     assert orchestrator._wait_webview2_unlocked(tmp_path, timeout=0.01) is True
+
+
+def test_unset_env_keeps_a_variable_out_of_the_app_and_cli(tmp_path, monkeypatch):
+    """A suite can stop the app inheriting e.g. ``SSH_AUTH_SOCK`` (#4339)."""
+    binary = tmp_path / "termihub"
+    binary.write_text("")
+    monkeypatch.setattr(orchestrator, "app_binary_path", lambda: binary)
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+    plain = orchestrator.AppInstance(config_dir=tmp_path / "plain")
+    assert plain.launch_env()["SSH_AUTH_SOCK"] == "/tmp/agent.sock"
+    isolated = orchestrator.AppInstance(config_dir=tmp_path / "cfg", unset_env=("SSH_AUTH_SOCK",))
+    assert "SSH_AUTH_SOCK" not in isolated.launch_env()
+    assert "SSH_AUTH_SOCK" not in isolated.cli_env()

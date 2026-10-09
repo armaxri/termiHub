@@ -13,8 +13,8 @@ evidence:
   - .github/workflows/system-integration.yml:511
   - tests/system/conftest.py:632
   - tests/system/termihub_harness/systemtest.py:86
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — both failure-artifact names include matrix.branch; a workflow test checks every branch-matrix upload"
 audit: 2026-10
 commit: 663465d52
 relation: new

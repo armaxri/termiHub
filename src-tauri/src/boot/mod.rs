@@ -53,6 +53,10 @@ pub(crate) fn init_platform_and_capture(
     // during a guided-manual grade (#2504).
     #[cfg(feature = "test-bridge")]
     if utils::test_bridge::is_test_bridge_enabled() {
+        // Read the harness's per-run known_hosts instead of the user's real
+        // ~/.ssh/known_hosts (#4339). Set before any SSH connect can start.
+        utils::test_bridge::install_known_hosts_override();
+
         if utils::test_bridge::always_on_top_opt_out() {
             info!(
                 "Test window always-on-top skipped by request (TERMIHUB_TEST_NO_ALWAYS_ON_TOP, #2504)"

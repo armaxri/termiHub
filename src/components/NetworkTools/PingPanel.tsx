@@ -295,7 +295,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
 
       {tcpFallback && (
         <div className="network-panel__info">
-          Using TCP ping — ICMP requires elevated privileges
+          Using TCP ping — ICMP requires elevated privileges. TTL is not available over TCP.
         </div>
       )}
       {error && <div className="network-panel__error">{error}</div>}

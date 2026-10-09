@@ -708,7 +708,7 @@ pnpm tauri build
 
 ```bash
 cd examples
-./scripts/start-test-environment.sh   # Start SSH (port 2214) + Telnet (port 2323) servers
+./scripts/start-test-environment.sh   # Start SSH (port 2230) + Telnet (port 2323) servers
 ./scripts/stop-test-environment.sh    # Stop servers
 ```
 

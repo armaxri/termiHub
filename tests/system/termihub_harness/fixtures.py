@@ -1025,12 +1025,24 @@ def _require_linux_container_runtime() -> None:
         )
 
 
+#: The cargo target dir ``build-system-test-agent.sh`` builds into (#4339). The
+#: test-hooks agent trusts the TEST-ONLY signing key, so it gets its own dir and
+#: never shares ``target/<triple>/release/`` with the real agents that
+#: ``scripts/build.sh`` and ``scripts/build-agents.sh`` produce for upload.
+SYSTEM_TEST_AGENT_TARGET_DIR = Path("target") / "system-test-agent"
+
+
+def system_test_agent_binary(target: str) -> Path:
+    """Where ``build-system-test-agent.sh`` leaves the test-hooks agent for ``target``."""
+    return REPO_ROOT / SYSTEM_TEST_AGENT_TARGET_DIR / target / "release" / "termihub-agent"
+
+
 def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
     """Build (if needed) and stage the agent binary into the remote-agent context.
 
     Produces a static-musl ``termihub-agent`` for the container architecture via
     ``scripts/internal/build-system-test-agent.sh`` (the one recipe, shared with
-    the nightly workflow) and copies it to
+    the nightly workflow) in :data:`SYSTEM_TEST_AGENT_TARGET_DIR`, and copies it to
     ``tests/docker/remote-agent/termihub-agent`` so the image ``COPY`` picks it
     up. The copy into the context is always refreshed so a stale image is rebuilt.
 
@@ -1058,7 +1070,7 @@ def stage_remote_agent_binary(*, build_timeout: float = 1500.0) -> Path:
     """
     _require_linux_container_runtime()
     target = _container_musl_target()
-    built = REPO_ROOT / "target" / target / "release" / "termihub-agent"
+    built = system_test_agent_binary(target)
     strict = _strict_fixtures()
     if strict:
         needs_build = target not in _agent_build_verified

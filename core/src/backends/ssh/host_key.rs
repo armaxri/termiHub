@@ -31,6 +31,7 @@
 //! security-critical desktop client registers a trust-on-first-use verifier
 //! that additionally prompts the user, so it can accept new hosts interactively.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
@@ -72,16 +73,52 @@ pub enum KnownHostsStatus {
 /// A key already recorded there is trusted by every path; a *changed* key is
 /// flagged (never silently accepted); anything else — unknown host, missing
 /// file, or a read/parse error — is [`KnownHostsStatus::Unknown`]. An empty host
-/// (never expected from a real connect) is treated as `Unknown`.
+/// (never expected from a real connect) is treated as `Unknown`. A test-bridge
+/// build may redirect the file with [`set_known_hosts_file_override`].
 pub fn check_system_known_hosts(
     host: &str,
     port: u16,
     key: &russh::keys::PublicKey,
 ) -> KnownHostsStatus {
+    check_known_hosts_in(
+        host,
+        port,
+        key,
+        KNOWN_HOSTS_FILE_OVERRIDE.get().map(PathBuf::as_path),
+    )
+}
+
+/// A replacement for `~/.ssh/known_hosts`, set at most once per process.
+static KNOWN_HOSTS_FILE_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Make [`check_system_known_hosts`] read `path` instead of `~/.ssh/known_hosts`
+/// for the rest of the process (#4339).
+///
+/// This is a **test seam**, not a feature: the desktop app calls it only in a
+/// `test-bridge` build launched by the system-test harness, so the harness can
+/// pre-trust its throwaway sshd in a per-run file and never edit the user's real
+/// trust file. Production builds never call it. Returns `false` (and keeps the
+/// first path) when an override is already set.
+pub fn set_known_hosts_file_override(path: PathBuf) -> bool {
+    KNOWN_HOSTS_FILE_OVERRIDE.set(path).is_ok()
+}
+
+/// [`check_system_known_hosts`] against an explicit `file`, or the default
+/// `~/.ssh/known_hosts` when `file` is `None`.
+fn check_known_hosts_in(
+    host: &str,
+    port: u16,
+    key: &russh::keys::PublicKey,
+    file: Option<&Path>,
+) -> KnownHostsStatus {
     if host.is_empty() {
         return KnownHostsStatus::Unknown;
     }
-    map_known_hosts_result(russh::keys::check_known_hosts(host, port, key), host)
+    let result = match file {
+        Some(path) => russh::keys::check_known_hosts_path(host, port, key, path),
+        None => russh::keys::check_known_hosts(host, port, key),
+    };
+    map_known_hosts_result(result, host)
 }
 
 /// Map a `russh` `check_known_hosts*` result to a [`KnownHostsStatus`], logging a
@@ -331,6 +368,26 @@ mod tests {
         assert_eq!(
             check_system_known_hosts("", 22, &public_key(RECORDED_KEY)),
             KnownHostsStatus::Unknown
+        );
+    }
+
+    /// An explicit file is what gets consulted: a key recorded only there is a
+    /// `Match`, and a different key for the same host is `Changed` (#4339).
+    #[test]
+    fn explicit_known_hosts_file_is_consulted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("[127.0.0.1]:40022 {RECORDED_KEY}\n")).unwrap();
+
+        let check = |key: &str| {
+            check_known_hosts_in("127.0.0.1", 40022, &public_key(key), Some(path.as_path()))
+        };
+        assert_eq!(check(RECORDED_KEY), KnownHostsStatus::Match);
+        assert_eq!(check(IMPOSTOR_KEY), KnownHostsStatus::Changed);
+        assert_eq!(
+            check_known_hosts_in("", 40022, &public_key(RECORDED_KEY), Some(path.as_path())),
+            KnownHostsStatus::Unknown,
+            "an empty host never matches, even with an explicit file"
         );
     }
 
