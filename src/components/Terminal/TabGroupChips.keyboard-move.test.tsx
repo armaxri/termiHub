@@ -31,18 +31,22 @@ async function render() {
   await flushAsync();
 }
 
-function openMenu(groupId: string) {
+async function openMenu(groupId: string) {
   const chip = container.querySelector(`[data-tab-group-id="${groupId}"]`) as HTMLElement;
-  act(() => {
+  await act(async () => {
     chip.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
   });
+  await flushAsync();
 }
 
 const q = (testId: string) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
 
-function select(testId: string) {
+async function select(testId: string) {
   const item = q(testId) as HTMLElement;
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await flushAsync();
 }
 
 beforeEach(() => {
@@ -68,12 +72,12 @@ describe("TabGroupChips — reorder groups without a pointer (#4329)", () => {
     useAppStore.setState({ reorderTabGroups });
     await render();
 
-    openMenu(ids[1]);
-    select("tab-group-ctx-move-right");
+    await openMenu(ids[1]);
+    await select("tab-group-ctx-move-right");
     expect(reorderTabGroups).toHaveBeenCalledWith(1, 2);
 
-    openMenu(ids[1]);
-    select("tab-group-ctx-move-left");
+    await openMenu(ids[1]);
+    await select("tab-group-ctx-move-left");
     expect(reorderTabGroups).toHaveBeenCalledWith(1, 0);
   });
 
@@ -82,7 +86,7 @@ describe("TabGroupChips — reorder groups without a pointer (#4329)", () => {
     const ids = getLayoutTabGroups().map((g) => g.id);
     await render();
 
-    openMenu(ids[0]);
+    await openMenu(ids[0]);
     expect(q("tab-group-ctx-move-left")?.hasAttribute("data-disabled")).toBe(true);
     expect(q("tab-group-ctx-move-right")?.hasAttribute("data-disabled")).toBe(false);
   });

@@ -12,6 +12,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TabBar } from "./TabBar";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { flushAsync } from "@/test/flushAsync";
 import { TerminalTab } from "@/types/terminal";
 
 vi.mock("@dnd-kit/sortable", () => ({
@@ -83,19 +84,23 @@ function keydown(el: HTMLElement, init: KeyboardEventInit) {
   });
 }
 
-function openMenu(tabId: string) {
-  act(() => {
+async function openMenu(tabId: string) {
+  await act(async () => {
     tabEl(tabId).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
   });
+  await flushAsync();
 }
 
 function menuItem(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
 }
 
-function select(testId: string) {
+async function select(testId: string) {
   const item = menuItem(testId) as HTMLElement;
-  act(() => item.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await act(async () => {
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await flushAsync();
 }
 
 const THREE = () => [makeTab("t1", true), makeTab("t2", false), makeTab("t3", false)];
@@ -150,40 +155,40 @@ describe("TabBar — move a tab with the keyboard (#4329)", () => {
     expect(document.activeElement).toBe(tabEl("t2"));
   });
 
-  it("context menu offers Move Left / Move Right that reorder the tab", () => {
+  it("context menu offers Move Left / Move Right that reorder the tab", async () => {
     render(THREE());
-    openMenu("t2");
-    select("tab-context-move-right");
+    await openMenu("t2");
+    await select("tab-context-move-right");
     expect(reorderTabs).toHaveBeenCalledWith(PANEL_ID, 1, 2);
-    openMenu("t2");
-    select("tab-context-move-left");
+    await openMenu("t2");
+    await select("tab-context-move-left");
     expect(reorderTabs).toHaveBeenCalledWith(PANEL_ID, 1, 0);
   });
 
-  it("disables Move Left on the first tab and Move Right on the last", () => {
+  it("disables Move Left on the first tab and Move Right on the last", async () => {
     render(THREE());
-    openMenu("t1");
+    await openMenu("t1");
     expect(menuItem("tab-context-move-left")?.hasAttribute("data-disabled")).toBe(true);
     expect(menuItem("tab-context-move-right")?.hasAttribute("data-disabled")).toBe(false);
   });
 
-  it("Move to New Panel splits the tab out to the right", () => {
+  it("Move to New Panel splits the tab out to the right", async () => {
     render(THREE());
-    openMenu("t3");
-    select("tab-context-move-new-panel");
+    await openMenu("t3");
+    await select("tab-context-move-new-panel");
     expect(splitPanelWithTab).toHaveBeenCalledWith("t3", PANEL_ID, PANEL_ID, "right");
   });
 
-  it("hides Move to New Panel when the tab is alone in its panel", () => {
+  it("hides Move to New Panel when the tab is alone in its panel", async () => {
     render([makeTab("t1", true)]);
-    openMenu("t1");
+    await openMenu("t1");
     expect(menuItem("tab-context-move-new-panel")).toBeNull();
   });
 
-  it("offers the move commands on non-terminal tabs too", () => {
+  it("offers the move commands on non-terminal tabs too", async () => {
     render([makeTab("t1", true), makeTab("s1", false, "settings")]);
-    openMenu("s1");
-    select("tab-context-move-left");
+    await openMenu("s1");
+    await select("tab-context-move-left");
     expect(reorderTabs).toHaveBeenCalledWith(PANEL_ID, 1, 0);
   });
 });

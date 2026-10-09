@@ -29,6 +29,9 @@ import {
   Unplug,
   MonitorX,
   ListVideo,
+  ArrowLeft,
+  ArrowRight,
+  SquareSplitHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
@@ -129,6 +132,52 @@ interface TabProps {
   onMoveToNewWindow?: () => void;
   /** Move this tab into an existing window addressed by `label` (#1901). */
   onMoveToWindow?: (label: string) => void;
+  /**
+   * Move the tab one place left in its strip — the keyboard/menu alternative to
+   * dragging it (#4329). Omitted on the first tab, which disables the item.
+   */
+  onMoveLeft?: () => void;
+  /** Move the tab one place right (#4329). Omitted on the last tab. */
+  onMoveRight?: () => void;
+  /** Split the tab out into a new panel (#4329). Omitted when it is alone in its panel. */
+  onMoveToNewPanel?: () => void;
+}
+
+/** Context-menu items that reorder or split out a tab without dragging it (#4329). */
+function TabMoveItems({
+  onMoveLeft,
+  onMoveRight,
+  onMoveToNewPanel,
+}: Pick<TabProps, "onMoveLeft" | "onMoveRight" | "onMoveToNewPanel">) {
+  return (
+    <>
+      <ContextMenu.Item
+        className="context-menu__item"
+        disabled={!onMoveLeft}
+        onSelect={() => onMoveLeft?.()}
+        data-testid="tab-context-move-left"
+      >
+        <ArrowLeft size={14} /> Move Left
+      </ContextMenu.Item>
+      <ContextMenu.Item
+        className="context-menu__item"
+        disabled={!onMoveRight}
+        onSelect={() => onMoveRight?.()}
+        data-testid="tab-context-move-right"
+      >
+        <ArrowRight size={14} /> Move Right
+      </ContextMenu.Item>
+      {onMoveToNewPanel && (
+        <ContextMenu.Item
+          className="context-menu__item"
+          onSelect={() => onMoveToNewPanel()}
+          data-testid="tab-context-move-new-panel"
+        >
+          <SquareSplitHorizontal size={14} /> Move to New Panel
+        </ContextMenu.Item>
+      )}
+    </>
+  );
 }
 
 export function Tab({
@@ -157,7 +206,17 @@ export function Tab({
   onContextMenuOpenChange,
   onMoveToNewWindow,
   onMoveToWindow,
+  onMoveLeft,
+  onMoveRight,
+  onMoveToNewPanel,
 }: TabProps) {
+  const moveItems = (
+    <TabMoveItems
+      onMoveLeft={onMoveLeft}
+      onMoveRight={onMoveRight}
+      onMoveToNewPanel={onMoveToNewPanel}
+    />
+  );
   const shownTitle = displayTitle ?? tab.title;
   // Under reduced motion the connecting glyph is static (#4039), so a steady
   // text label beside it carries the "still connecting" signal instead.
@@ -350,6 +409,8 @@ export function Tab({
             >
               <Palette size={14} /> Set Color...
             </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            {moveItems}
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
@@ -381,6 +442,7 @@ export function Tab({
             </>
           )}
           <ContextMenu.Separator className="context-menu__separator" />
+          {moveItems}
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onMoveToNewWindow?.()}
