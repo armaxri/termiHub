@@ -3,5 +3,6 @@
 pub mod backoff;
 pub mod entry_extra;
 pub mod no_window;
+pub mod persist;
 #[cfg(test)]
 pub(crate) mod test_net;
