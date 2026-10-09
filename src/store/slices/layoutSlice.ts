@@ -25,7 +25,12 @@ import {
   TabGroup,
   SessionCloseConfirmRequest,
 } from "@/types/terminal";
-import { sessionGetCapabilities, claimSession, releaseSession } from "@/services/api";
+import { sessionGetCapabilities, claimSession, releaseSession, sendInput } from "@/services/api";
+import {
+  importedCommandKey,
+  importedConnectionKey,
+  withImportConfirmed,
+} from "@/services/workspaceImportTrust";
 import { dispatchOnConnectTriggers } from "@/services/workflowTriggers";
 import { notifyWorkflowSessionStarted, notifyWorkflowTabClosing } from "../workflowSessionTriggers";
 import { fireAndForget } from "@/utils/frontendLog";
@@ -210,6 +215,20 @@ export interface LayoutSlice {
   /** Clear a tab's one-shot scrollback-replay flag after a re-parent (#1900). */
   clearPendingScrollbackReplay: (tabId: string) => void;
 
+  /**
+   * Confirm a tab's held imported command on this machine and run it (#4434):
+   * adds its exact text to `workspaceImportAllowlist`, types it into the tab's
+   * session, and clears the hold. A no-op without a held command or a session.
+   */
+  confirmImportedTabCommand: (tabId: string) => Promise<void>;
+  /** Drop a tab's held imported command without running it (#4434). */
+  dismissImportedTabCommand: (tabId: string) => void;
+  /**
+   * Confirm the imported inline connection config a tab is held on (#4434):
+   * adds it to `workspaceImportAllowlist` and releases the tab so it connects.
+   */
+  confirmImportedTabConnection: (tabId: string) => Promise<void>;
+
   // Rename tab
   renameTab: (tabId: string, newTitle: string) => void;
 }
@@ -263,6 +282,55 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           }),
         };
       }),
+
+    confirmImportedTabCommand: async (tabId) => {
+      const tab = get().tabContent[tabId];
+      const command = tab?.pendingImportedCommand;
+      if (!tab || !command || !tab.sessionId) return;
+      const sessionId = tab.sessionId;
+      const settings = currentSettingsView();
+      await get().updateSettings({
+        ...settings,
+        workspaceImportAllowlist: withImportConfirmed(
+          settings.workspaceImportAllowlist,
+          await importedCommandKey(command)
+        ),
+      });
+      // Promote it to the tab's `initialCommand` so a saved layout or last
+      // session keeps it as a confirmed command.
+      set((raw) => ({
+        tabContent: patchTabContentEntry(raw.tabContent, tabId, {
+          pendingImportedCommand: undefined,
+          initialCommand: command,
+        }),
+      }));
+      await sendInput(sessionId, command + "\n");
+    },
+
+    dismissImportedTabCommand: (tabId) =>
+      set((raw) => ({
+        tabContent: patchTabContentEntry(raw.tabContent, tabId, {
+          pendingImportedCommand: undefined,
+        }),
+      })),
+
+    confirmImportedTabConnection: async (tabId) => {
+      const tab = get().tabContent[tabId];
+      if (!tab?.pendingImportedConnection) return;
+      const settings = currentSettingsView();
+      await get().updateSettings({
+        ...settings,
+        workspaceImportAllowlist: withImportConfirmed(
+          settings.workspaceImportAllowlist,
+          await importedConnectionKey(tab.config)
+        ),
+      });
+      set((raw) => ({
+        tabContent: patchTabContentEntry(raw.tabContent, tabId, {
+          pendingImportedConnection: undefined,
+        }),
+      }));
+    },
 
     setTabSessionId: (tabId, sessionId) => {
       // The tab as it stands *before* this update — used both to skip work for an

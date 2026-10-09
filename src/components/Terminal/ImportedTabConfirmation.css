@@ -1,0 +1,103 @@
+/* Held imported workspace tabs (#4434): the in-place connection prompt and the
+   "imported command not yet confirmed" banner. */
+
+.imported-tab-confirm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--overlay-content-bg);
+  backdrop-filter: var(--overlay-blur-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  overflow: auto;
+}
+
+.imported-tab-confirm--hidden {
+  display: none;
+}
+
+.imported-tab-confirm__icon {
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.imported-tab-confirm__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-width: 520px;
+  width: 100%;
+  margin: 0;
+}
+
+.imported-tab-confirm__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+}
+
+.imported-tab-confirm__row dt {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.imported-tab-confirm__row dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-all;
+  font-family: var(--font-mono);
+}
+
+.imported-tab-confirm__hint {
+  display: block;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.imported-command-banner {
+  position: absolute;
+  left: var(--spacing-sm);
+  right: var(--spacing-sm);
+  bottom: var(--spacing-sm);
+  z-index: var(--z-float-top);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.imported-command-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.imported-command-banner__title {
+  color: var(--color-warning);
+}
+
+.imported-command-banner__command {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 6em;
+  overflow: auto;
+}
+
+.imported-command-banner__actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}

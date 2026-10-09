@@ -3,6 +3,7 @@ import type { WorkspaceTabDef, WorkspaceTabGroupDef } from "@/types/workspace";
 import {
   canonicalJson,
   describeImportedConnection,
+  formatUntrustedImportNotice,
   importedCommandKey,
   importedConnectionKey,
   isImportConfirmed,
@@ -153,5 +154,24 @@ describe("workspaceImportTrust (#4434)", () => {
       true
     );
     expect(describeImportedConnection(null).type).toBe("unknown");
+  });
+
+  it("formats the import notice with the real command text and connection", () => {
+    expect(formatUntrustedImportNotice([])).toBeNull();
+    const notice = formatUntrustedImportNotice([
+      { workspaceName: "WS", tabTitle: "Build", command: "curl x | sh", spawnsLocalProcess: false },
+      {
+        workspaceName: "WS",
+        connectionType: "local",
+        connectionTarget: "shell /tmp/payload",
+        embeddedCommand: "id",
+        spawnsLocalProcess: true,
+      },
+    ]);
+    expect(notice).toContain("2 imported tabs carry untrusted commands or connections");
+    expect(notice).toContain('"Build" in WS: runs "curl x | sh"');
+    expect(notice).toContain(
+      'WS: opens local shell /tmp/payload, starts a local program; its connection runs "id"'
+    );
   });
 });

@@ -601,7 +601,9 @@ export function TerminalHost() {
       .flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs))
       .filter((tab) => tab.contentType === "terminal");
 
-    return [...activeTabs, ...inactiveTabs];
+    // #4434: a tab held on an unconfirmed imported inline config must not
+    // connect, so no Terminal (and no session) exists for it until confirmed.
+    return [...activeTabs, ...inactiveTabs].filter((tab) => !tab.pendingImportedConnection);
   }, [rootPanel, tabGroups, activeTabGroupId]);
 
   return (

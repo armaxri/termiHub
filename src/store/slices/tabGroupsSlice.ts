@@ -500,6 +500,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           panelId: targetLeaf.id,
           isActive: true,
           ...(h.initialCommand ? { initialCommand: h.initialCommand } : {}),
+          ...(h.pendingImportedCommand ? { pendingImportedCommand: h.pendingImportedCommand } : {}),
+          ...(h.pendingImportedConnection ? { pendingImportedConnection: true } : {}),
           ...(h.persistentConnectionId ? { persistentConnectionId: h.persistentConnectionId } : {}),
           ...(h.connectionId ? { connectionId: h.connectionId } : {}),
           ...(h.spawned ? { spawned: true } : {}),

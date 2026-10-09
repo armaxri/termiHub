@@ -33,6 +33,7 @@ import {
   type RestorePrompt,
 } from "@/utils/restoreMode";
 import { newId } from "@/services/transport/ids";
+import { resolveImportTrust } from "@/services/workspaceImportTrust";
 import {
   saveLastSession as apiSaveLastSession,
   loadLastSession as apiLoadLastSession,
@@ -357,7 +358,14 @@ export const createLayoutPersistenceSlice: StateCreator<
         // Window dimension (#1925): spawn + hydrate the workspace's saved
         // secondary windows and build only the main window's groups here. A
         // legacy single-window workspace spawns nothing and builds every group.
-        const plan = planWindowRestore(definition.tabGroups, definition.windows);
+        // #4434: apply this machine's confirmations of imported commands and
+        // inline configs; whatever is still unconfirmed stays held, in every
+        // window the layout spans.
+        const trustedGroups = await resolveImportTrust(
+          definition.tabGroups,
+          currentSettingsView().workspaceImportAllowlist
+        );
+        const plan = planWindowRestore(trustedGroups, definition.windows);
         const mainGroups = await restoreWindowedLayout(plan);
         const builtGroups = buildTabGroupsFromWorkspace(
           mainGroups,
@@ -571,7 +579,13 @@ export const createLayoutPersistenceSlice: StateCreator<
         // hydrate the saved secondary windows, and build only the main window's
         // groups into THIS window. A legacy session has a single main entry, so
         // this spawns nothing and restores every group here (back-compat path).
-        const plan = planWindowRestore(session.tabGroups, session.windows);
+        // #4434: a held imported command or inline config stays held across a
+        // restart unless it was confirmed in the meantime.
+        const trustedGroups = await resolveImportTrust(
+          session.tabGroups,
+          currentSettingsView().workspaceImportAllowlist
+        );
+        const plan = planWindowRestore(trustedGroups, session.windows);
         if (hasWindowDimension(session.tabGroups, session.windows)) {
           frontendLog("multi_window", `restoreLastSession: restoring ${plan.length} saved windows`);
         }
