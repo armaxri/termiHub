@@ -6,7 +6,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearOverrides,
+  formatBindingForDisplay,
+  formatComboForDisplay,
+  getActionAccelerator,
+  getOverrides,
   modKeyAccelerator,
+  setOverrides,
   setOverride,
   unbindAction,
   withActionAccelerator,
@@ -35,7 +40,7 @@ describe("withActionAccelerator", () => {
   it("shows the macOS default with Cmd", () => {
     setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     expect(withActionAccelerator("New Tab Group", "new-tab-group")).toBe(
-      "New Tab Group (Shift+Cmd+t)"
+      "New Tab Group (Cmd+Shift+T)"
     );
   });
 
@@ -57,5 +62,75 @@ describe("modKeyAccelerator", () => {
     expect(modKeyAccelerator("S")).toBe("Cmd+S");
     setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     expect(modKeyAccelerator("S")).toBe("Ctrl+S");
+  });
+});
+
+describe("display formatting (#4598)", () => {
+  const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)";
+  const WIN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+  const LINUX_UA = "Mozilla/5.0 (X11; Linux x86_64)";
+
+  it("getActionAccelerator('toggle-sidebar') is Cmd+B on macOS", () => {
+    setUserAgent(MAC_UA);
+    expect(getActionAccelerator("toggle-sidebar")).toBe("Cmd+B");
+  });
+
+  it("getActionAccelerator('toggle-sidebar') is Ctrl+Shift+B on Windows and Linux", () => {
+    // The Win/Linux default avoids the tmux prefix Ctrl+B (see DEFAULT_BINDINGS).
+    setUserAgent(WIN_UA);
+    expect(getActionAccelerator("toggle-sidebar")).toBe("Ctrl+Shift+B");
+    setUserAgent(LINUX_UA);
+    expect(getActionAccelerator("toggle-sidebar")).toBe("Ctrl+Shift+B");
+  });
+
+  it("New Tab Group renders primary modifier first per platform", () => {
+    setUserAgent(MAC_UA);
+    expect(getActionAccelerator("new-tab-group")).toBe("Cmd+Shift+T");
+    setUserAgent(WIN_UA);
+    expect(getActionAccelerator("new-tab-group")).toBe("Ctrl+Shift+T");
+  });
+
+  it("upper-cases a lower-case override letter on display", () => {
+    setUserAgent(LINUX_UA);
+    setOverrides([{ action: "toggle-sidebar", key: "Ctrl+Alt+b" }]);
+    expect(getActionAccelerator("toggle-sidebar")).toBe("Ctrl+Alt+B");
+  });
+
+  it("orders modifiers in the platform convention", () => {
+    const combo = { key: "x", ctrl: true, shift: true, alt: true, meta: true };
+    expect(formatComboForDisplay(combo, true)).toBe("Cmd+Ctrl+Shift+Alt+X");
+    expect(formatComboForDisplay(combo, false)).toBe("Ctrl+Shift+Alt+Cmd+X");
+  });
+
+  it("leaves named keys and symbols alone", () => {
+    expect(formatComboForDisplay({ key: "F1" }, false)).toBe("F1");
+    expect(formatComboForDisplay({ key: "ArrowUp", ctrl: true }, false)).toBe("Ctrl+Up");
+    expect(formatComboForDisplay({ key: " ", ctrl: true }, false)).toBe("Ctrl+Space");
+    expect(formatComboForDisplay({ key: ",", meta: true }, true)).toBe("Cmd+,");
+  });
+
+  it("formats chords space-separated", () => {
+    expect(
+      formatBindingForDisplay(
+        [
+          { key: "k", meta: true },
+          { key: "s", meta: true },
+        ],
+        true
+      )
+    ).toBe("Cmd+K Cmd+S");
+  });
+
+  it("does not change the stored override string (byte-identical round-trip)", () => {
+    setUserAgent(MAC_UA);
+    const stored = [
+      { action: "toggle-sidebar", key: "Shift+Cmd+b" },
+      { action: "new-terminal", key: "Ctrl+k Ctrl+j" },
+    ];
+    setOverrides(stored);
+    // Rendering must not leak into persistence.
+    expect(getActionAccelerator("toggle-sidebar")).toBe("Cmd+Shift+B");
+    expect(getOverrides()).toEqual(stored);
+    expect(JSON.stringify(getOverrides())).toBe(JSON.stringify(stored));
   });
 });

@@ -268,7 +268,7 @@ describe("KeyboardSettings", () => {
         new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true })
       );
     });
-    expect(bindingCell.textContent).toContain("Ctrl+k");
+    expect(bindingCell.textContent).toContain("Ctrl+K");
 
     // Second combo completes the chord and finalizes immediately.
     await act(async () => {
@@ -396,7 +396,7 @@ describe("KeyboardSettings", () => {
         (o) => o.action === "new-terminal"
       );
       expect(entry?.key).toBe("Ctrl+k Ctrl+j");
-      expect(announcement()).toBe("New Terminal shortcut set to Ctrl+k Ctrl+j.");
+      expect(announcement()).toBe("New Terminal shortcut set to Ctrl+K Ctrl+J.");
       // Focus stays on (returns to) the binding button so the user can carry on.
       expect(document.activeElement).toBe(bindingButton("new-terminal"));
     });
