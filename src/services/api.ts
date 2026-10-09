@@ -65,7 +65,6 @@ import type { AgentDockerContainersResult } from "@/types/generated/AgentDockerC
 import type { AgentFolderInfo } from "@/types/generated/AgentFolderInfo";
 import type { AgentHostSessionInfo } from "@/types/generated/AgentHostSessionInfo";
 import type { AgentHostSessionsResult } from "@/types/generated/AgentHostSessionsResult";
-import type { AgentProbeResult } from "@/types/generated/AgentProbeResult";
 import type { AgentSessionInfo } from "@/types/generated/AgentSessionInfo";
 import type { AgentSetupConfig } from "@/types/generated/AgentSetupConfig";
 import type { AgentSetupResult } from "@/types/generated/AgentSetupResult";
@@ -153,7 +152,6 @@ export type {
   AgentFolderInfo,
   AgentHostSessionInfo,
   AgentHostSessionsResult,
-  AgentProbeResult,
   AgentSessionInfo,
   AgentSetupConfig,
   AgentSetupResult,
@@ -2540,17 +2538,6 @@ export async function cancelAgentSetup(agentId: string): Promise<boolean> {
 }
 
 // --- Agent deployment commands ---
-
-/** Probe a remote host for an existing agent binary. */
-export async function probeRemoteAgent(
-  config: RemoteAgentConfig,
-  expectedVersion?: string
-): Promise<AgentProbeResult> {
-  return await invoke<AgentProbeResult>("probe_remote_agent", {
-    config,
-    expectedVersion: expectedVersion ?? null,
-  });
-}
 
 /**
  * Update the agent: shut down the running instance, then deploy a new binary.

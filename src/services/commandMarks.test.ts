@@ -10,6 +10,7 @@ import {
   type CommandMarkTerminal,
   CommandMarkTracker,
   COMMAND_MARK_ACTIONS,
+  DEFAULT_MAX_COMMAND_RECORDS,
   OSC_133,
   PROMPT_FLASH_MS,
   getCommandMarkTracker,
@@ -443,6 +444,61 @@ describe("CommandMarkTracker (real xterm)", () => {
       const spy = vi.spyOn(term, "registerDecoration");
       await write(term, cycle("ok", "x\r\n", 0));
       expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bounded bookkeeping (#4354, FEC2-003)", () => {
+    /** Spies a registration method and reports how many results are still live. */
+    function liveCounter(method: "registerMarker" | "registerDecoration"): () => number {
+      const spy = vi.spyOn(term, method);
+      return () =>
+        spy.mock.results.filter((r) => {
+          const value = r.value as { isDisposed: boolean } | undefined;
+          return value !== undefined && !value.isDisposed;
+        }).length;
+    }
+
+    it("merges repeated A/C/D marks on one line into a single record", async () => {
+      const liveMarkers = liveCounter("registerMarker");
+      const liveDecorations = liveCounter("registerDecoration");
+      await write(term, "$ ");
+      await write(term, `${A}${C}${D(1)}`.repeat(200));
+      expect(tracker.getCommands()).toHaveLength(1);
+      expect(liveDecorations()).toBeLessThanOrEqual(1);
+      // prompt + output + end at most, never one set per repetition.
+      expect(liveMarkers()).toBeLessThanOrEqual(3);
+    });
+
+    it("does not create extra records for repeated A/B/C on one line", async () => {
+      await write(term, "$ ");
+      await write(term, `${A}${B}${C}`.repeat(100));
+      await write(term, `${A}${B}`.repeat(100));
+      expect(tracker.getCommands()).toHaveLength(1);
+    });
+
+    it("still tracks a new command that starts on its own line", async () => {
+      await write(term, `${A}${C}${D(1)}`.repeat(5));
+      await write(term, `\r\n${cycle("ok", "x\r\n", 0)}`);
+      const commands = tracker.getCommands();
+      expect(commands).toHaveLength(2);
+      expect(commands[1]).toMatchObject({ state: "finished", exitCode: 0 });
+    });
+
+    it("caps the record count, disposing the oldest records", async () => {
+      tracker.dispose();
+      tracker = new CommandMarkTracker(term, { maxRecords: 50 });
+      term.parser.registerOscHandler(OSC_133, tracker.handleOsc);
+      const liveDecorations = liveCounter("registerDecoration");
+      for (let i = 0; i < 200; i++) await write(term, cycle(`c${i}`, "o\r\n", i % 2));
+      const commands = tracker.getCommands();
+      expect(commands).toHaveLength(50);
+      // The newest 50 survive: each cycle spans 2 lines, so 150 * 2 = line 300.
+      expect(commands[0].promptLine).toBe(300);
+      expect(liveDecorations()).toBe(50);
+    });
+
+    it("defaults to a bound of 10,000 records", () => {
+      expect(DEFAULT_MAX_COMMAND_RECORDS).toBe(10_000);
     });
   });
 

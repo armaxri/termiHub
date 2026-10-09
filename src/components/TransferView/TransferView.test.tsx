@@ -235,6 +235,26 @@ describe("TransferView", () => {
     );
   });
 
+  it("selects all by the physical A key on a non-QWERTY layout (#4374, I18N2-005)", async () => {
+    await render({ remoteTabId: "tab-ssh" });
+    const list = q("transfer-pane-local-list") as HTMLElement;
+    list.focus();
+    // Russian layout: the physical A key produces "ф", but code stays KeyA.
+    key(list, "ф", { code: "KeyA", ctrlKey: true });
+    for (const name of ["docs", "a.txt", "b.txt"]) {
+      expect(q(`transfer-pane-local-row-${name}`)?.getAttribute("aria-selected")).toBe("true");
+    }
+  });
+
+  it("does not select all when a layout maps 'a' onto another physical key", async () => {
+    await render({ remoteTabId: "tab-ssh" });
+    const list = q("transfer-pane-local-list") as HTMLElement;
+    list.focus();
+    // AZERTY: the physical Q key produces "a" — not the Select All position.
+    key(list, "a", { code: "KeyQ", ctrlKey: true });
+    expect(q("transfer-pane-local-row-b.txt")?.getAttribute("aria-selected")).not.toBe("true");
+  });
+
   it("copies rows dropped onto the other pane", async () => {
     await render({ remoteTabId: "tab-ssh" });
     const dragged = [REMOTE["/srv/app"][1]];

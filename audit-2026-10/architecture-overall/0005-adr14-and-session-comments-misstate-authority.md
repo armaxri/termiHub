@@ -15,8 +15,8 @@ evidence:
   - src-tauri/src/session_projection/redrive.rs:22
   - src-tauri/src/boot/mod.rs:755
   - src-tauri/src/plugin_sandbox_projection/mod.rs:1
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — ADR-14 status updated (layout inverted, boot::seed_projection_regions, plugin-sandbox); create_connection comments name the backend redrive"
 audit: 2026-10
 commit: 663465d52
 relation: new

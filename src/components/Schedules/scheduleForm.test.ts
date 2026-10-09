@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { ScheduleInput } from "@/types/schedule";
 
@@ -161,6 +161,33 @@ describe("formatNextRun", () => {
     expect(formatNextRun(new Date(2026, 5, 2, 7, 0).toISOString(), now)).toBe("tomorrow 07:00");
     expect(formatNextRun(new Date(2026, 5, 5, 9, 30).toISOString(), now)).toMatch(/09:30$/);
     expect(formatNextRun("garbage", now)).toBe("");
+  });
+});
+
+describe("formatNextRun follows the UI locale (#4374, I18N2-004)", () => {
+  const now = new Date(2026, 5, 1, 10, 0);
+  const originalLanguage = Object.getOwnPropertyDescriptor(navigator, "language");
+  const originalLanguages = Object.getOwnPropertyDescriptor(navigator, "languages");
+  afterEach(() => {
+    if (originalLanguage) Object.defineProperty(navigator, "language", originalLanguage);
+    if (originalLanguages) Object.defineProperty(navigator, "languages", originalLanguages);
+  });
+  function setLocale(tag: string): void {
+    Object.defineProperty(navigator, "language", { configurable: true, get: () => tag });
+    Object.defineProperty(navigator, "languages", { configurable: true, get: () => [tag] });
+  }
+
+  it("renders the relative day and the date in one locale (de-DE)", () => {
+    setLocale("de-DE");
+    expect(formatNextRun(new Date(2026, 5, 1, 18, 5).toISOString(), now)).toBe("heute 18:05");
+    expect(formatNextRun(new Date(2026, 5, 2, 7, 0).toISOString(), now)).toBe("morgen 07:00");
+    const later = new Date(2026, 5, 5, 9, 30);
+    const date = new Intl.DateTimeFormat("de-DE", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    }).format(later);
+    expect(formatNextRun(later.toISOString(), now)).toBe(`${date} 09:30`);
   });
 });
 

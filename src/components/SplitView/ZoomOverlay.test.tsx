@@ -15,6 +15,7 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import { clearOverrides, setOverride, unbindAction } from "@/services/keybindings";
 import { ZoomOverlay } from "./ZoomOverlay";
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -193,6 +194,20 @@ describe("ZoomOverlay — modal dialog semantics (#4329)", () => {
   it("states how to close it in the header hint", () => {
     openOverlay();
     expect(q("zoom-overlay-hint")?.textContent).toContain("Shift+Esc");
+  });
+
+  it("shows the effective zoom-panel binding in the hint (#4374)", () => {
+    setOverride("zoom-panel", { key: "F7", alt: true });
+    openOverlay();
+    expect(q("zoom-overlay-hint")?.textContent).toBe("Shift+Esc or Alt+F7 to close");
+    clearOverrides();
+  });
+
+  it("drops the binding from the hint when zoom-panel is unbound (#4374)", () => {
+    unbindAction("zoom-panel");
+    openOverlay();
+    expect(q("zoom-overlay-hint")?.textContent).toBe("Shift+Esc to close");
+    clearOverrides();
   });
 });
 

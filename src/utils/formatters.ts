@@ -180,6 +180,49 @@ export function formatAbsoluteTime(dateString: string | null | undefined): strin
   return date.toLocaleString(resolveUiLocale());
 }
 
+/** A date-like input: a `Date`, an ISO/parseable string, or epoch milliseconds. */
+export type DateInput = Date | string | number;
+
+function toValidDate(value: DateInput): Date | null {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Format the time-of-day of `value` in the UI locale ({@link resolveUiLocale}),
+ * e.g. `6:05:07 PM` in `en-US` or `18:05:07` in `de-DE` (#4374). Returns an empty
+ * string for an unparseable input so callers can choose their own fallback.
+ */
+export function formatClockTime(value: DateInput): string {
+  const date = toValidDate(value);
+  return date ? date.toLocaleTimeString(resolveUiLocale()) : "";
+}
+
+/**
+ * Format a compact date (short weekday, day, short month) in the UI locale,
+ * e.g. `Fri, Jun 5` in `en-US` or `Fr., 5. Juni` in `de-DE` (#4374). Returns an
+ * empty string for an unparseable input.
+ */
+export function formatShortDate(value: DateInput): string {
+  const date = toValidDate(value);
+  if (!date) return "";
+  return date.toLocaleDateString(resolveUiLocale(), {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
+
+/**
+ * Name a day offset from today in the UI locale — `0` → "today", `1` →
+ * "tomorrow", `-1` → "yesterday" (`heute`/`morgen`/`gestern` in `de-DE`), and
+ * "in N days" beyond that (#4374). Uses `Intl.RelativeTimeFormat` so the word
+ * always matches the locale of any date it is shown next to.
+ */
+export function formatRelativeDay(days: number): string {
+  return new Intl.RelativeTimeFormat(resolveUiLocale(), { numeric: "auto" }).format(days, "day");
+}
+
 /** Truncate string with ellipsis (default max length 60). */
 export function truncate(str: string, maxLength = 60): string {
   if (str.length <= maxLength) return str;

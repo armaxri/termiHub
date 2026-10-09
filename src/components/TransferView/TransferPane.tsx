@@ -5,6 +5,7 @@ import { Button, EmptyState, Input, Spinner, Tooltip } from "@/components/ui";
 import { FileBookmarksMenu } from "@/components/Sidebar/FileBookmarksMenu";
 import type { PaneSide } from "@/services/paneTransfer";
 import type { FileEntry } from "@/types/connection";
+import { eventKeyMatches } from "@/services/keybindings";
 import { formatBytes } from "@/utils/formatters";
 import { isRootPath, type PaneListing } from "./usePaneListing";
 import { nextPaneCursor, rangeSelection } from "./paneSelection";
@@ -180,7 +181,7 @@ export function TransferPane({
       else toggled.add(entry.path);
       setAnchor(active);
       onSelectedChange(toggled);
-    } else if (mod && e.key.toLowerCase() === "a") {
+    } else if (mod && eventKeyMatches(e, "a")) {
       e.preventDefault();
       onSelectedChange(new Set(entries.map((x) => x.path)));
     } else if (e.key === "Enter") {

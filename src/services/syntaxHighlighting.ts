@@ -18,7 +18,7 @@
  * See `docs/concepts/partial/terminal-syntax-highlighting.html`.
  */
 
-import type { IBufferCell, IBufferLine, IDisposable, Terminal } from "@xterm/xterm";
+import type { IBufferCell, IBufferLine, IDisposable, IMarker, Terminal } from "@xterm/xterm";
 import type { HighlightRule, HighlightStyle } from "../types/syntaxHighlighting";
 import { frontendLog } from "../utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -366,14 +366,30 @@ export class SyntaxHighlightingEngine {
   private compiled: CompiledRule[] = [];
   private enabled = false;
 
-  /** Per-logical-line (keyed by absolute start row) disposables: markers + decorations. */
+  /**
+   * Per-logical-line disposables (markers + decorations), keyed by the line's
+   * *virtual* start row. Every row this engine stores (here, in `dirtyQueue` and
+   * in `scannedThrough`) is virtual: the buffer row plus {@link trimOffset}, the
+   * number of rows xterm has trimmed off the top of the scrollback so far. Once
+   * the circular buffer is full, xterm recycles its top line on every newline
+   * and absolute buffer rows stop identifying lines (#4354); virtual rows keep
+   * naming the same line for as long as it lives.
+   */
   private readonly lineDisposables = new Map<number, IDisposable[]>();
+  /** Rows trimmed off the top of the scrollback since tracking (re)started. */
+  private trimOffset = 0;
+  /**
+   * Marker at the cursor line of the last processed write, and the buffer row
+   * it sat on then. xterm keeps a marker's `line` current as the buffer trims,
+   * so the difference is exactly how many rows were trimmed in between.
+   */
+  private trimAnchor: { marker: IMarker; line: number } | null = null;
   /** onWriteParsed subscription. */
   private writeParsedSub: IDisposable | null = null;
 
-  /** Highest absolute row we consider fully scanned (the cursor line is re-scannable). */
+  /** Highest (virtual) row we consider fully scanned (the cursor line is re-scannable). */
   private scannedThrough = -1;
-  /** Logical-line start rows awaiting a scan. */
+  /** Logical-line (virtual) start rows awaiting a scan. */
   private readonly dirtyQueue: number[] = [];
   private readonly dirtySet = new Set<number>();
   /** Timestamps of recent onWriteParsed events, for throughput estimation. */
@@ -433,7 +449,7 @@ export class SyntaxHighlightingEngine {
     this.dirtyQueue.length = 0;
     this.dirtySet.clear();
     this.writeTimes = [];
-    this.scannedThrough = -1;
+    this.resetRowTracking();
     this.drainScheduled = false;
   }
 
@@ -453,7 +469,7 @@ export class SyntaxHighlightingEngine {
     this.clearAllDecorations();
     this.dirtyQueue.length = 0;
     this.dirtySet.clear();
-    this.scannedThrough = -1;
+    this.resetRowTracking();
     if (this.enabled) this.lastBufferLength = this.xterm.buffer.active.length;
   }
 
@@ -483,26 +499,68 @@ export class SyntaxHighlightingEngine {
     this.lastBufferLength = buffer.length;
 
     this.recordWrite(now());
+    this.trackTrim(buffer);
     this.enqueueDirtyLines(buffer);
     this.processQueue();
+  }
+
+  /**
+   * Folds the rows xterm trimmed off the top of the scrollback since the last
+   * write into {@link trimOffset}, then re-anchors at the cursor line. When the
+   * anchor itself was trimmed (more output than the whole buffer holds arrived
+   * in one go) the exact count is unknown, but then every tracked line is gone
+   * too: drop all state and treat the whole buffer as fresh output.
+   */
+  private trackTrim(buffer: Terminal["buffer"]["active"]): void {
+    const cursorAbs = buffer.baseY + buffer.cursorY;
+    const anchor = this.trimAnchor;
+    if (anchor) {
+      if (anchor.marker.isDisposed) {
+        this.clearAllDecorations();
+        this.dirtyQueue.length = 0;
+        this.dirtySet.clear();
+        // Any new virtual base works: stale marker callbacks are identity-guarded.
+        this.trimOffset += anchor.line + 1;
+        this.scannedThrough = this.trimOffset - 1;
+      } else {
+        const trimmed = anchor.line - anchor.marker.line;
+        if (trimmed > 0) this.trimOffset += trimmed;
+      }
+    }
+    if (anchor && !anchor.marker.isDisposed && anchor.marker.line === cursorAbs) {
+      anchor.line = cursorAbs;
+      return;
+    }
+    anchor?.marker.dispose();
+    this.trimAnchor = null;
+    const marker = this.xterm.registerMarker(0);
+    if (marker) this.trimAnchor = { marker, line: marker.line };
+  }
+
+  /** Forgets trim bookkeeping; the next write re-anchors. */
+  private resetRowTracking(): void {
+    this.trimAnchor?.marker.dispose();
+    this.trimAnchor = null;
+    this.trimOffset = 0;
+    this.scannedThrough = -1;
   }
 
   /** Enqueues logical-line starts for rows written since the last scan. */
   private enqueueDirtyLines(buffer: Terminal["buffer"]["active"]): void {
     const cursorAbs = buffer.baseY + buffer.cursorY;
-    const from = Math.max(0, this.scannedThrough + 1);
+    const from = Math.max(0, this.scannedThrough - this.trimOffset + 1);
 
     for (let row = from; row <= cursorAbs && row < buffer.length; row++) {
       const line = buffer.getLine(row);
-      if (line && !line.isWrapped) this.markDirty(row);
+      if (line && !line.isWrapped) this.markDirty(row + this.trimOffset);
     }
 
     // The cursor's own logical line is still being written; keep re-scanning it
     // (its start may be above `from` if it soft-wrapped).
-    this.markDirty(logicalLineStart(buffer, cursorAbs));
+    this.markDirty(logicalLineStart(buffer, cursorAbs) + this.trimOffset);
 
     // Everything strictly above the cursor line is complete.
-    this.scannedThrough = cursorAbs - 1;
+    this.scannedThrough = cursorAbs - 1 + this.trimOffset;
   }
 
   private markDirty(startRow: number): void {
@@ -561,10 +619,17 @@ export class SyntaxHighlightingEngine {
     return this.writeTimes.length >= THROTTLE_WRITES_PER_SEC;
   }
 
-  /** Scans a single logical line and (re)applies its decorations. */
-  private scanLine(startRow: number): void {
+  /**
+   * Scans a single logical line and (re)applies its decorations. `lineKey` is
+   * the line's virtual start row (see {@link lineDisposables}).
+   */
+  private scanLine(lineKey: number): void {
     const buffer = this.xterm.buffer.active;
-    this.disposeLine(startRow);
+    this.disposeLine(lineKey);
+
+    // Trimmed off the top of the scrollback while queued: nothing to scan.
+    const startRow = lineKey - this.trimOffset;
+    if (startRow < 0) return;
 
     const logical = readLogicalLine(buffer, startRow);
     if (!logical) return;
@@ -593,7 +658,7 @@ export class SyntaxHighlightingEngine {
 
     for (const match of matches) {
       this.applyMatch(
-        startRow,
+        lineKey,
         match,
         logical.rows,
         cols,
@@ -604,7 +669,7 @@ export class SyntaxHighlightingEngine {
       );
     }
 
-    if (disposables.length > 0) this.lineDisposables.set(startRow, disposables);
+    if (disposables.length > 0) this.lineDisposables.set(lineKey, disposables);
   }
 
   /**
@@ -613,7 +678,7 @@ export class SyntaxHighlightingEngine {
    * server's colors always win.
    */
   private applyMatch(
-    startRow: number,
+    lineKey: number,
     match: RuleMatch,
     rows: number[],
     cols: number,
@@ -629,7 +694,7 @@ export class SyntaxHighlightingEngine {
 
     const flush = (): void => {
       if (runWidth <= 0) return;
-      this.decorate(startRow, runRow, runStartX, runWidth, cursorAbs, match, runText, out);
+      this.decorate(lineKey, runRow, runStartX, runWidth, cursorAbs, match, runText, out);
       runWidth = 0;
       runText = "";
     };
@@ -674,7 +739,7 @@ export class SyntaxHighlightingEngine {
    * with the run's styled text on render (see {@link styleDecorationElement}).
    */
   private decorate(
-    startRow: number,
+    lineKey: number,
     physRow: number,
     x: number,
     width: number,
@@ -688,14 +753,14 @@ export class SyntaxHighlightingEngine {
 
     // When xterm trims this line off the top of the scrollback the marker
     // disposes; drop the logical line's Map entry so `lineDisposables` cannot
-    // grow without bound over a long session (#2073). Guarded by identity: only
-    // remove the entry while it still tracks *this* marker, so a later re-scan
-    // that reused the same absolute-row key (indices shift as the scrollback
-    // trims) is never clobbered. xterm disposes the attached decoration itself
-    // when the marker goes, so this only frees our tracking Map.
+    // grow without bound over a long session (#2073). Keys are virtual rows
+    // that stay stable while the scrollback trims (#4354); the identity guard
+    // still protects a later re-scan of the same line from being clobbered.
+    // xterm disposes the attached decoration itself when the marker goes, so
+    // this only frees our tracking Map.
     marker.onDispose(() => {
-      const current = this.lineDisposables.get(startRow);
-      if (current && current.includes(marker)) this.lineDisposables.delete(startRow);
+      const current = this.lineDisposables.get(lineKey);
+      if (current && current.includes(marker)) this.lineDisposables.delete(lineKey);
     });
 
     const style = match.rule.style;
@@ -754,11 +819,11 @@ export class SyntaxHighlightingEngine {
   }
 
   /** Disposes and forgets a single logical line's decorations. */
-  private disposeLine(startRow: number): void {
-    const disposables = this.lineDisposables.get(startRow);
+  private disposeLine(lineKey: number): void {
+    const disposables = this.lineDisposables.get(lineKey);
     if (!disposables) return;
     for (const d of disposables) d.dispose();
-    this.lineDisposables.delete(startRow);
+    this.lineDisposables.delete(lineKey);
   }
 
   private clearAllDecorations(): void {
@@ -773,17 +838,18 @@ export class SyntaxHighlightingEngine {
     this.clearAllDecorations();
     this.dirtyQueue.length = 0;
     this.dirtySet.clear();
-    this.scannedThrough = -1;
+    this.resetRowTracking();
 
     const buffer = this.xterm.buffer.active;
     if (buffer.type === "alternate") return;
 
+    this.trackTrim(buffer);
     const cursorAbs = buffer.baseY + buffer.cursorY;
     for (let row = 0; row < buffer.length; row++) {
       const line = buffer.getLine(row);
-      if (line && !line.isWrapped) this.markDirty(row);
+      if (line && !line.isWrapped) this.markDirty(row + this.trimOffset);
     }
-    this.scannedThrough = cursorAbs - 1;
+    this.scannedThrough = cursorAbs - 1 + this.trimOffset;
     this.processQueue();
   }
 }

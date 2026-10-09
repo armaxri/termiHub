@@ -10,6 +10,7 @@ import { TabGroup } from "@/types/terminal";
 import { closeTabGroupGuarded } from "@/utils/tabGroupCloseGuard";
 import { RenameDialog } from "./RenameDialog";
 import { Tooltip } from "@/components/ui";
+import { withActionAccelerator } from "@/services/keybindings";
 import "./TabGroupChips.css";
 
 /**
@@ -27,6 +28,7 @@ export function TabGroupChips() {
   const draggingTabId = useAppStore((s) => s.draggingTabId);
 
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
+  const newTabGroupLabel = withActionAccelerator("New Tab Group", "new-tab-group");
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -77,11 +79,11 @@ export function TabGroupChips() {
           ))}
         </SortableContext>
       </DndContext>
-      <Tooltip content="New Tab Group (Ctrl+Shift+T)" side="bottom">
+      <Tooltip content={newTabGroupLabel} side="bottom">
         <button
           className={`tab-group-chips__add${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
           onClick={() => addTabGroup()}
-          aria-label="New Tab Group (Ctrl+Shift+T)"
+          aria-label={newTabGroupLabel}
           data-testid="tab-group-add"
           data-new-group-btn="true"
         >

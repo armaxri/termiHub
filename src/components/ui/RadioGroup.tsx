@@ -8,11 +8,28 @@ export interface RadioGroupOption {
   value: string;
   /** The human-readable label shown next to the radio. */
   label: React.ReactNode;
+  /**
+   * Secondary text under the label. Only rendered by the `cards` variant, where
+   * it is wired to the radio as its accessible description.
+   */
+  description?: React.ReactNode;
   /** Disable this individual option. */
   disabled?: boolean;
+  /** Native tooltip for the option (e.g. why it is disabled). */
+  title?: string;
   /** Test hook forwarded to the option's radio control. */
   "data-testid"?: string;
 }
+
+/**
+ * Visual skin of a {@link RadioGroup}:
+ * - `default` — a small radio circle beside each label.
+ * - `cards` — each option is a bordered card (label + optional description);
+ *   the whole card is the radio, and the selected card gets the accent border
+ *   plus an accent tint. This is the one shared "pick one of N described
+ *   options" selector (UISF2-002 / UI2-006).
+ */
+export type RadioGroupVariant = "default" | "cards";
 
 /**
  * Props for the shared {@link RadioGroup} primitive — a token-styled skin over
@@ -35,6 +52,8 @@ export interface RadioGroupProps {
   onValueChange: (value: string) => void;
   /** Declarative option list. Ignored when `children` is provided. */
   options?: RadioGroupOption[];
+  /** Visual skin; `cards` renders `options` as selectable cards. */
+  variant?: RadioGroupVariant;
   /** Custom item tree; overrides `options` for full control. */
   children?: React.ReactNode;
   /** Disable the whole group. */
@@ -94,6 +113,45 @@ export const RadioGroupItem = React.forwardRef<
   );
 });
 
+/** Props for the internal card-option renderer. */
+interface RadioCardProps {
+  option: RadioGroupOption;
+  /** Stable id prefix used to wire the label/description to the radio. */
+  idPrefix: string;
+}
+
+/**
+ * One option of the `cards` variant: the Radix radio itself is the card, so the
+ * whole card is clickable, sits in the group's roving tab order, and exposes
+ * `role="radio"` + `aria-checked`. The label names the radio and the
+ * description describes it, so screen readers announce them separately.
+ */
+function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
+  const labelId = `${idPrefix}-label`;
+  const descId = `${idPrefix}-desc`;
+  const hasDescription = option.description !== undefined && option.description !== null;
+  return (
+    <RadioGroupPrimitive.Item
+      className="ui-radio-card"
+      value={option.value}
+      disabled={option.disabled}
+      title={option.title}
+      aria-labelledby={labelId}
+      aria-describedby={hasDescription ? descId : undefined}
+      data-testid={option["data-testid"]}
+    >
+      <span className="ui-radio-card__label" id={labelId}>
+        {option.label}
+      </span>
+      {hasDescription && (
+        <span className="ui-radio-card__desc" id={descId}>
+          {option.description}
+        </span>
+      )}
+    </RadioGroupPrimitive.Item>
+  );
+}
+
 /**
  * The single shared radio-group primitive. Compose from this instead of a set of
  * native `<input type="radio">` so keyboard roving, focus ring, group labeling,
@@ -106,11 +164,35 @@ export function RadioGroup({
   children,
   disabled,
   orientation = "vertical",
+  variant = "default",
   name,
   className,
   ...rest
 }: RadioGroupProps): React.ReactElement {
-  const rootClass = className ? `ui-radio-group ${className}` : "ui-radio-group";
+  const idBase = React.useId();
+  const classes = ["ui-radio-group"];
+  if (variant === "cards") classes.push("ui-radio-group--cards");
+  if (className) classes.push(className);
+  const rootClass = classes.join(" ");
+
+  const renderOptions = (): React.ReactNode => {
+    if (variant === "cards") {
+      return options?.map((opt, i) => (
+        <RadioCard key={opt.value} option={opt} idPrefix={`${idBase}-opt${i}`} />
+      ));
+    }
+    return options?.map((opt) => (
+      <label key={opt.value} className="ui-radio" title={opt.title}>
+        <RadioGroupItem
+          value={opt.value}
+          disabled={opt.disabled}
+          aria-label={typeof opt.label === "string" ? opt.label : undefined}
+          data-testid={opt["data-testid"]}
+        />
+        <span className="ui-radio__label">{opt.label}</span>
+      </label>
+    ));
+  };
 
   return (
     <RadioGroupPrimitive.Root
@@ -124,18 +206,7 @@ export function RadioGroup({
       aria-labelledby={rest["aria-labelledby"]}
       data-testid={rest["data-testid"]}
     >
-      {children ??
-        options?.map((opt) => (
-          <label key={opt.value} className="ui-radio">
-            <RadioGroupItem
-              value={opt.value}
-              disabled={opt.disabled}
-              aria-label={typeof opt.label === "string" ? opt.label : undefined}
-              data-testid={opt["data-testid"]}
-            />
-            <span className="ui-radio__label">{opt.label}</span>
-          </label>
-        ))}
+      {children ?? renderOptions()}
     </RadioGroupPrimitive.Root>
   );
 }

@@ -13,8 +13,8 @@ evidence:
   - src/testbridge/dispatcher.ts:1233
   - src/testbridge/dispatcher.ts:1285
   - tests/system/termihub_harness/bridge.py:722
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — added the six projection* rows + subsection, Python Driver example, contract test checks the doc table"
 audit: 2026-10
 commit: 663465d52
 relation: new

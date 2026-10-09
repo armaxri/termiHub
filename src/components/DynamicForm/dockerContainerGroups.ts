@@ -1,4 +1,14 @@
 import type { DockerContainerInfo } from "@/services/api";
+import { compareNames } from "@/utils/locale";
+
+/**
+ * Natural, locale-aware name order via the shared collator (#4374), with an
+ * exact code-unit tie-break so names differing only in case/accents still sort
+ * deterministically.
+ */
+function byName(a: string, b: string): number {
+  return compareNames(a, b) || (a < b ? -1 : a > b ? 1 : 0);
+}
 
 /** One section of the Docker container picker (#3425). */
 export interface DockerContainerGroup {
@@ -33,10 +43,7 @@ export function groupContainersByComposeProject(
     }
   }
   const groups: DockerContainerGroup[] = [...byProject.entries()]
-    .sort(([a], [b]) => {
-      const byLower = a.toLowerCase().localeCompare(b.toLowerCase());
-      return byLower !== 0 ? byLower : a.localeCompare(b);
-    })
+    .sort(([a], [b]) => byName(a, b))
     .map(([project, list]) => ({ project, containers: list }));
   if (plain.length > 0 || groups.length === 0) {
     groups.push({ project: null, containers: plain });
@@ -63,11 +70,6 @@ export interface DockerComposeServiceGroup {
   project: string;
   services: DockerComposeService[];
 }
-
-const byName = (a: string, b: string) => {
-  const byLower = a.toLowerCase().localeCompare(b.toLowerCase());
-  return byLower !== 0 ? byLower : a.localeCompare(b);
-};
 
 /**
  * Collapse the listed containers into their Docker Compose services (#3784).
