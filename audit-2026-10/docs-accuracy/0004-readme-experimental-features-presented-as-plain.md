@@ -6,8 +6,8 @@ severity: low
 category: missing-caveat
 is_workaround: false
 subsystem: "README"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4317 — README marks the SSH Tunnels, Services and Network Tools views experimental and lists every Activity Bar view"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

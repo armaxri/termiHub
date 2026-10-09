@@ -12,8 +12,8 @@ evidence:
   - docs/architecture.md:3456
   - src/components/Plugins/PluginInstallDialog.tsx:252
   - core/src/plugin/native_trust.rs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4317 — README trust warning rewritten for the sandbox, linking SECURITY.md and plugin-authoring.md"
 audit: 2026-10
 commit: 663465d52
 relation: new

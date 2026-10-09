@@ -16,8 +16,8 @@ use tracing::{debug, info, warn};
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install::{
-    self, detect_windows_shell, posix_install_plan, windows_install_plan, windows_resolve_command,
-    InstallPlan,
+    self, detect_windows_shell, posix_install_plan, prepare_posix_upload_dir, windows_install_plan,
+    windows_resolve_command, InstallPlan,
 };
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
@@ -415,14 +415,16 @@ pub fn install_agent_bytes(
 ) -> Result<AgentDeployResult, TerminalError> {
     // Determine the platform-specific install plan. Windows hosts need
     // PowerShell/cmd commands and a different upload/install location; no
-    // POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are issued.
+    // POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`) are issued. POSIX hosts
+    // upload into a fresh private dir, never a shared `/tmp` name (AGT2-002).
     let (plan, windows_shell): (InstallPlan, Option<agent_install::WindowsShell>) =
         if agent_binary::is_windows_os(remote_os) {
             let shell = detect_windows_shell(session);
             info!("Remote host is Windows; using {shell:?} install commands");
             (windows_install_plan(shell), Some(shell))
         } else {
-            (posix_install_plan(remote_path), None)
+            let upload_dir = prepare_posix_upload_dir(session)?;
+            (posix_install_plan(remote_path, &upload_dir), None)
         };
 
     // Upload via SFTP.
@@ -701,10 +703,15 @@ pub fn stage_agent_binary(
         }
     }
 
-    // 5. Upload to the temp path WITHOUT installing — the agent's self-apply
-    //    swaps the running binary from this path (never run the install command
-    //    or shut the agent down; that is the agent's job for coordinated).
-    let plan = posix_install_plan(remote_path);
+    // 5. Upload WITHOUT installing — the agent's self-apply swaps the running
+    //    binary from this path (never run the install command or shut the agent
+    //    down; that is the agent's job for coordinated). The upload goes into a
+    //    fresh private dir inside the agent's `<config>/updates` staging root,
+    //    which the agent trusts and which no other local user can write
+    //    (AGT2-002, #4287); the agent removes it once the update is applied.
+    bail_if_cancelled(cancel)?;
+    let upload_dir = prepare_posix_upload_dir(&session)?;
+    let plan = posix_install_plan(remote_path, &upload_dir);
     bail_if_cancelled(cancel)?;
     emit_progress(
         app_handle,
@@ -779,8 +786,8 @@ fn upload_binary_or_rollback(
 
 /// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
 ///
-/// The upload target lives at a temp path (`plan.upload_path`, e.g. `/tmp/…` on
-/// POSIX) that has not yet been moved into place, so removing it fully rolls back
+/// The upload target lives at a temp path (`plan.upload_path`, a private upload
+/// dir on POSIX) that has not yet been moved into place, so removing it fully rolls back
 /// the SFTP upload. Failures are logged but not surfaced — the deploy already
 /// failed with `Cancelled` and the temp file is harmless if it lingers.
 fn rollback_partial_upload(
