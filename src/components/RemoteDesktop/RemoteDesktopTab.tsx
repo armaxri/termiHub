@@ -29,12 +29,46 @@ import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import { monitorLabel, viewportsFor } from "./monitorLayout";
 import "./RemoteDesktopTab.css";
 
+/**
+ * Whether the connection type has no side-channel file transfer at all
+ * (#4348, e.g. RDP): the tab then shows no Files button, no drop overlay and
+ * no drop toast, instead of pointing to a setting the type does not have.
+ */
+function notOffered(files: RemoteDesktopFilesStatus): boolean {
+  return files.status === "unavailable" && files.reason === "notOffered";
+}
+
+/**
+ * Why a drop cannot upload on a route that is not ready, as a toast heading
+ * and hint — or `null` when the type has no file transfer to explain (#4348).
+ */
+function dropRefusal(files: RemoteDesktopFilesStatus): { title: string; hint: string } | null {
+  switch (files.status) {
+    case "unavailable":
+      return notOffered(files) ? null : unavailableCopy(files.reason);
+    case "resolving":
+      return {
+        title: "File transfer isn't ready yet",
+        hint: "Checking the file route — try again.",
+      };
+    case "degraded":
+    case "error":
+      return { title: "File transfer isn't available right now", hint: files.message };
+    default:
+      return null;
+  }
+}
+
 /** The toolbar Files button's state and tooltip for a channel state (#4192). */
 function filesButtonFor(
   files: RemoteDesktopFilesStatus,
   viewOnly: boolean
 ): { state: FilesButtonState; title: string } {
-  if (viewOnly || (files.status === "unavailable" && files.reason === "viewOnly")) {
+  if (
+    viewOnly ||
+    notOffered(files) ||
+    (files.status === "unavailable" && files.reason === "viewOnly")
+  ) {
     return { state: "hidden", title: "Files" };
   }
   switch (files.status) {
@@ -121,22 +155,29 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
       }
       // A linked SSH route waiting for its password (#4265): the drop is the
       // user's action — ask, then upload once the route is ready.
+      // Every outcome is visible (#4348): a cancel or a failure says why the
+      // dropped files were not uploaded.
       if (files.status === "degraded" && files.needsSecret) {
         void remoteFiles.refresh().then((next) => {
-          if (next?.status === "ready") void remoteFiles.uploadPaths(paths);
+          // The tab closed or the session changed meanwhile: nothing to say.
+          if (!next) return;
+          if (next.files.status === "ready") {
+            void remoteFiles.uploadPaths(paths);
+            return;
+          }
+          if (next.canceled) {
+            toast.info("Upload canceled", {
+              description: "The linked SSH password is needed to upload files.",
+            });
+            return;
+          }
+          const why = dropRefusal(next.files);
+          if (why) toast.info(why.title, { description: why.hint });
         });
         return;
       }
-      const why =
-        files.status === "unavailable"
-          ? unavailableCopy(files.reason)
-          : files.status === "resolving"
-            ? {
-                title: "File transfer isn't ready yet",
-                hint: "Checking the file route — try again.",
-              }
-            : { title: "File transfer isn't available right now", hint: files.message };
-      toast.info(why.title, { description: why.hint });
+      const why = dropRefusal(files);
+      if (why) toast.info(why.title, { description: why.hint });
     },
     [sessionLive, evicted, session.viewOnly, remoteFiles]
   );
@@ -352,7 +393,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         />
       )}
 
-      {!evicted && sessionLive && isDragOver && (
+      {!evicted && sessionLive && isDragOver && !notOffered(remoteFiles.files) && (
         <RemoteDesktopDropOverlay
           files={
             session.viewOnly ? { status: "unavailable", reason: "viewOnly" } : remoteFiles.files

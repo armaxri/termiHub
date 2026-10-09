@@ -335,6 +335,7 @@ fn tunnel_file_channel(cfg: &VncConfig, has_tunnel: bool) -> Option<FileSideChan
     let policy = FileChannelPolicy {
         file_transfer: cfg.file_transfer,
         view_only: cfg.view_only,
+        not_offered: false,
     };
     if !has_tunnel || policy.refusal().is_some() {
         return None;

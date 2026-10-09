@@ -31,10 +31,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    auto_reconnect_enabled, fixed_resolution_requested, multi_monitor_requested, CertPrompt,
-    CertPromptReceiver, ClipboardImage, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
-    FrameUpdate, GraphicalState, InputEvent, MonitorLayout, MonitorRect, RemoteClipboardFile,
-    SessionStateMachine, CONNECT_TIMEOUT_KEY,
+    auto_reconnect_enabled, fixed_resolution_requested, multi_monitor_requested,
+    schema_offers_file_side_channel, CertPrompt, CertPromptReceiver, ClipboardImage,
+    ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
+    MonitorLayout, MonitorRect, RemoteClipboardFile, SessionStateMachine, CONNECT_TIMEOUT_KEY,
 };
 use termihub_core::errors::SessionError;
 
@@ -638,8 +638,13 @@ impl GraphicalSessionManager {
                 .to_string(),
         };
         let forward_error = routed.as_ref().map(|r| r.forward.error_slot());
-        let file_channel =
-            FileChannelContext::new(&settings, routed.as_ref().map(|r| r.file_route.clone()));
+        // Only a type whose schema has the `fileTransfer` opt-in (VNC) offers
+        // the side channel; any other (RDP) reports `notOffered` (#4348).
+        let file_channel = FileChannelContext::for_type(
+            schema_offers_file_side_channel(&connection.settings_schema()),
+            &settings,
+            routed.as_ref().map(|r| r.file_route.clone()),
+        );
 
         // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
         // so a session that never re-dials does not retain its credentials.

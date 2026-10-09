@@ -480,6 +480,7 @@ pub(crate) fn unavailable_message(
         Reason::Disabled => "File transfer is turned off for this connection",
         Reason::ViewOnly => "File transfer is not available in a view-only session",
         Reason::NoRoute => "File transfer needs an SSH tunnel, an agent or a linked SSH connection",
+        Reason::NotOffered => "This connection type has no side-channel file transfer",
     }
     .to_string()
 }

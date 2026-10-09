@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { Plus, X } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Pencil, Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { WorkspaceEditorMeta } from "@/types/terminal";
@@ -26,6 +26,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { errorMessage } from "@/utils/errorMessage";
 import { draftKey } from "@/utils/draftKey";
 import { findLeafByTab } from "@/utils/panelTree";
+import { rovingTabIndexFromKey, focusRovingTab } from "@/utils/rovingTablist";
 
 interface WorkspaceEditorProps {
   tabId: string;
@@ -143,15 +144,31 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     setRenameValue(currentName);
   }, []);
 
+  // Group tab buttons, so focus can return to a tab after its inline rename
+  // input unmounts (the input replaces the tab while editing) or after a
+  // keyboard Delete removes the focused tab (#4349).
+  const groupTabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const refocusGroupIndexRef = useRef<number | null>(null);
+  const endRename = useCallback((index: number) => {
+    refocusGroupIndexRef.current = index;
+    setRenamingGroupIndex(null);
+  }, []);
+  const groupCount = tabGroupDefs.length;
+  useEffect(() => {
+    if (renamingGroupIndex !== null || refocusGroupIndexRef.current === null) return;
+    groupTabRefs.current[refocusGroupIndexRef.current]?.focus();
+    refocusGroupIndexRef.current = null;
+  }, [renamingGroupIndex, groupCount]);
+
   const commitRename = useCallback(
     (index: number) => {
       const trimmed = renameValue.trim();
       if (trimmed) {
         setTabGroupDefs((prev) => prev.map((g, i) => (i === index ? { ...g, name: trimmed } : g)));
       }
-      setRenamingGroupIndex(null);
+      endRename(index);
     },
-    [renameValue]
+    [renameValue, endRename]
   );
 
   const handleSave = useCallback(async () => {
@@ -296,59 +313,122 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
           {showGroupStrip && (
             <div className="workspace-group-strip" data-testid="workspace-group-strip">
-              {tabGroupDefs.map((group, index) => (
-                <div
-                  key={index}
-                  className={`workspace-group-chip${index === activeGroupIndex ? " workspace-group-chip--active" : ""}`}
-                  onClick={() => setActiveGroupIndex(index)}
-                  data-testid={`workspace-group-chip-${index}`}
+              {/* A roving tablist of group tabs (the TabBar pattern, #4349): only
+                  the active group is a Tab stop, Arrow/Home/End move focus,
+                  Enter/Space/click activate, F2 (or Enter on the active tab)
+                  renames and Delete removes. */}
+              <div
+                className="workspace-group-strip__tabs"
+                role="tablist"
+                aria-label="Tab groups"
+                aria-orientation="horizontal"
+                onKeyDown={(e) => {
+                  const current = rovingTabIndexFromKey(e);
+                  if (current !== -1) focusRovingTab(e, current);
+                }}
+              >
+                {tabGroupDefs.map((group, index) => (
+                  <div
+                    key={index}
+                    className={`workspace-group-chip${index === activeGroupIndex ? " workspace-group-chip--active" : ""}`}
+                    onClick={() => setActiveGroupIndex(index)}
+                    data-testid={`workspace-group-chip-${index}`}
+                  >
+                    {renamingGroupIndex === index ? (
+                      <Input
+                        inline
+                        autoFocus
+                        className="workspace-group-chip__rename-input"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={() => commitRename(index)}
+                        onKeyDown={(e) => {
+                          if (isImeComposing(e)) return;
+                          if (e.key === "Enter") commitRename(index);
+                          if (e.key === "Escape") endRename(index);
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Rename group ${group.name}`}
+                        data-testid={`workspace-group-rename-input-${index}`}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        ref={(el) => {
+                          groupTabRefs.current[index] = el;
+                        }}
+                        className="workspace-group-chip__name"
+                        role="tab"
+                        aria-selected={index === activeGroupIndex}
+                        aria-keyshortcuts="F2 Delete"
+                        tabIndex={index === activeGroupIndex ? 0 : -1}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveGroupIndex(index);
+                        }}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setActiveGroupIndex(index);
+                          startRename(index, group.name);
+                        }}
+                        onKeyDown={(e) => {
+                          // Enter on an inactive tab falls through to the
+                          // native click (activate); on the active tab it renames.
+                          const renameKey =
+                            e.key === "F2" || (e.key === "Enter" && index === activeGroupIndex);
+                          if (renameKey) {
+                            e.preventDefault();
+                            setActiveGroupIndex(index);
+                            startRename(index, group.name);
+                          } else if (e.key === "Delete" && tabGroupDefs.length > 1) {
+                            e.preventDefault();
+                            // Keep focus in the tablist on the neighbouring tab.
+                            refocusGroupIndexRef.current = Math.max(0, index - 1);
+                            handleCloseGroup(index);
+                          }
+                        }}
+                        data-testid={`workspace-group-tab-${index}`}
+                      >
+                        {group.name}
+                      </button>
+                    )}
+                    {/* Mouse affordance only: keyboard users remove a group with
+                        Delete on its tab, and a button inside the tablist is not
+                        an allowed tablist child. */}
+                    <Tooltip content="Remove group" side="top">
+                      <button
+                        type="button"
+                        className="workspace-group-chip__close"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCloseGroup(index);
+                        }}
+                        data-testid={`workspace-group-close-${index}`}
+                      >
+                        <X size={10} />
+                      </button>
+                    </Tooltip>
+                  </div>
+                ))}
+              </div>
+              <Tooltip content="Rename group" side="top">
+                <button
+                  type="button"
+                  className="workspace-group-strip__add"
+                  onClick={() => startRename(activeGroupIndex, activeGroup.name)}
+                  aria-label="Rename group"
+                  aria-keyshortcuts="F2"
+                  data-testid="workspace-group-rename"
                 >
-                  {renamingGroupIndex === index ? (
-                    <Input
-                      inline
-                      autoFocus
-                      className="workspace-group-chip__rename-input"
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={() => commitRename(index)}
-                      onKeyDown={(e) => {
-                        if (isImeComposing(e)) return;
-                        if (e.key === "Enter") commitRename(index);
-                        if (e.key === "Escape") setRenamingGroupIndex(null);
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      data-testid={`workspace-group-rename-input-${index}`}
-                    />
-                  ) : (
-                    <span
-                      className="workspace-group-chip__name"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        setActiveGroupIndex(index);
-                        startRename(index, group.name);
-                      }}
-                    >
-                      {group.name}
-                    </span>
-                  )}
-                  <Tooltip content="Remove group" side="top">
-                    <button
-                      className="workspace-group-chip__close"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCloseGroup(index);
-                      }}
-                      aria-label="Remove group"
-                      data-testid={`workspace-group-close-${index}`}
-                    >
-                      <X size={10} />
-                    </button>
-                  </Tooltip>
-                </div>
-              ))}
+                  <Pencil size={12} />
+                </button>
+              </Tooltip>
               <Tooltip content="Add group" side="top">
                 <button
+                  type="button"
                   className="workspace-group-strip__add"
                   onClick={handleAddGroup}
                   aria-label="Add group"

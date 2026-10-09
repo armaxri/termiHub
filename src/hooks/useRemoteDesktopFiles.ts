@@ -19,6 +19,15 @@ export type RemoteDesktopFilesStatus =
   | RemoteDesktopFileChannel
   | { status: "error"; message: string };
 
+/**
+ * How an attended re-resolution ended: the new state, and whether the user
+ * canceled the password prompt it raised (#4348).
+ */
+export interface RemoteDesktopFilesRefresh {
+  files: RemoteDesktopFilesStatus;
+  canceled: boolean;
+}
+
 /** What the drop overlay, toolbar and Files popover need. */
 export interface RemoteDesktopFiles {
   files: RemoteDesktopFilesStatus;
@@ -28,9 +37,10 @@ export interface RemoteDesktopFiles {
    * Re-resolve the route on a user action (popover open, Retry, a drop on a
    * route that is not ready). A linked SSH route without a saved secret
    * (#4265) asks for it here with the usual password prompt. Settles with
-   * the new state, or `null` when the session went away meanwhile.
+   * the new state (and whether the prompt was canceled), or `null` when the
+   * session went away meanwhile.
    */
-  refresh: () => Promise<RemoteDesktopFilesStatus | null>;
+  refresh: () => Promise<RemoteDesktopFilesRefresh | null>;
   /** Upload local paths (a drop) into `dest` or the current folder. */
   uploadPaths: (paths: string[], dest?: string) => Promise<void>;
   /** Pick local files with the native dialog and upload them. */
@@ -105,17 +115,18 @@ export function useRemoteDesktopFiles(
 
   // One attended resolution at a time, so a popover open racing a drop never
   // opens a second prompt.
-  const inflight = useRef<Promise<RemoteDesktopFilesStatus | null> | null>(null);
-  const refresh = useCallback((): Promise<RemoteDesktopFilesStatus | null> => {
+  const inflight = useRef<Promise<RemoteDesktopFilesRefresh | null> | null>(null);
+  const refresh = useCallback((): Promise<RemoteDesktopFilesRefresh | null> => {
     if (inflight.current) return inflight.current;
     const id = sessionRef.current;
     if (!id) return Promise.resolve(null);
-    const settle = (next: RemoteDesktopFilesStatus): RemoteDesktopFilesStatus | null => {
+    let canceled = false;
+    const settle = (next: RemoteDesktopFilesStatus): RemoteDesktopFilesRefresh | null => {
       if (sessionRef.current !== id) return null;
       setFiles(next);
-      return next;
+      return { files: next, canceled };
     };
-    const run = (async (): Promise<RemoteDesktopFilesStatus | null> => {
+    const run = (async (): Promise<RemoteDesktopFilesRefresh | null> => {
       try {
         let answer = await remoteDesktopFileChannel(id);
         for (let round = 0; round < MAX_SECRET_ROUNDS; round++) {
@@ -128,7 +139,10 @@ export function useRemoteDesktopFiles(
             useAppStore.getState().requestPassword,
             promptAbort.current?.signal
           );
-          if (outcome.status === "canceled") break;
+          if (outcome.status === "canceled") {
+            canceled = true;
+            break;
+          }
           answer = await remoteDesktopFileChannel(
             id,
             outcome.status === "entered" ? outcome.secret : undefined
@@ -156,11 +170,13 @@ export function useRemoteDesktopFiles(
       const id = sessionRef.current;
       if (!id || paths.length === 0) return;
       const reveal = revealRef.current;
+      // Closing the tab or switching the session ends the summary's wait.
       const started = await uploadToRemoteDesktop(
         id,
         paths,
         dest ?? chosenDir ?? undefined,
-        reveal ? (dir) => reveal(dir) : undefined
+        reveal ? (dir) => reveal(dir) : undefined,
+        promptAbort.current?.signal
       );
       // Remember an explicitly chosen folder once the backend accepted it.
       if (started && dest !== undefined) setChosenDir(started.destDir);
