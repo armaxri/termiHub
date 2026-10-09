@@ -19,8 +19,8 @@ evidence:
   - agent/src/handler/dispatch.rs:2011
   - agent/src/handler/dispatch.rs:2036
   - src-tauri/src/session/file_ops.rs:182
-status: open
-resolution: ""
+status: fixed
+resolution: "#4353 — chmod/chown/symlink gated on a per-session session_file_capabilities probe; agent-hosted ssh/local offer them"
 audit: 2026-10
 commit: 663465d52
 relation: new
