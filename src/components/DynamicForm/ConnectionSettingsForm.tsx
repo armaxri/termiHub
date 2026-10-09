@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { useForm, useWatch, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller } from "react-hook-form";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { ChevronRight } from "lucide-react";
 import type { SettingsSchema, SettingsGroup } from "@/types/schema";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
@@ -97,11 +97,14 @@ export function ConnectionSettingsForm({
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
-  const { control, watch, reset, setValue, getValues } = useForm<Record<string, unknown>>({
-    defaultValues: settings,
-    resolver: zodResolver(zodSchema),
-    mode: "onChange",
-  });
+  // The shared RHF + zod scaffold (UISF2-003): `watchedValues` is a complete,
+  // stable snapshot of the form, and `schemaErrors` holds every zod issue. Only
+  // the visible fields' errors count towards validity (see `validity` below).
+  const {
+    form: { control, watch, reset, setValue, getValues },
+    draft: watchedValues,
+    errors: schemaErrors,
+  } = useZodEditorForm<Record<string, unknown>>({ schema: zodSchema, defaultValues: settings });
 
   // Whether this schema has a sibling `port` field — gates the host:port split.
   const hasPortField = useMemo(
@@ -237,11 +240,10 @@ export function ConnectionSettingsForm({
     return () => subscription.unsubscribe();
   }, [watch, onChange]);
 
-  // Live form values; `visibilityValues` overlays them on the schema defaults so
-  // a key the saved config omits evaluates `visibleWhen` as its default (the
-  // value the field itself renders), plus the values derived from picked saved
+  // `visibilityValues` overlays the live form values on the schema defaults so a
+  // key the saved config omits evaluates `visibleWhen` as its default (the value
+  // the field itself renders), plus the values derived from picked saved
   // connections (`<key>.host`, #4194).
-  const watchedValues = useWatch({ control });
   const visibilityValues = useMemo(
     () => ({
       ...withSchemaDefaults(schema, watchedValues),
@@ -275,21 +277,16 @@ export function ConnectionSettingsForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tlsMode, hasTlsAndPort, setValue]);
 
-  // Overall validity + per-field error map for currently-visible fields. We run
-  // the zod schema directly against the watched values (rather than reading
-  // react-hook-form's async error proxy) so the signal is deterministic and
-  // recomputes on every value change. A required field hidden by `visibleWhen`
-  // is excluded, so it never blocks the parent's Save.
+  // Overall validity + per-field error map for currently-visible fields, from
+  // the hook's synchronous schema check (not react-hook-form's async error
+  // proxy), so the signal is deterministic and recomputes on every value change.
+  // Issues are folded onto their top-level field key. A required field hidden by
+  // `visibleWhen` is excluded, so it never blocks the parent's Save.
   const validity = useMemo(() => {
     const errorMap: Record<string, string> = {};
-    const result = zodSchema.safeParse(watchedValues);
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const key = issue.path[0];
-        if (typeof key === "string" && !(key in errorMap)) {
-          errorMap[key] = issue.message;
-        }
-      }
+    for (const [path, message] of Object.entries(schemaErrors)) {
+      const key = path.split(".")[0];
+      if (!(key in errorMap)) errorMap[key] = message;
     }
     const visibleErrors: Record<string, string> = {};
     for (const group of schema.groups) {
@@ -300,7 +297,7 @@ export function ConnectionSettingsForm({
       }
     }
     return { valid: Object.keys(visibleErrors).length === 0, errors: visibleErrors };
-  }, [zodSchema, watchedValues, isShown, schema]);
+  }, [schemaErrors, isShown, schema]);
 
   // Only propagate when the reported validity actually changes, so typing more
   // characters into an already-valid (or already-invalid, same-errors) field
