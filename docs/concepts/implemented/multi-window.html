@@ -1395,6 +1395,16 @@ flowchart TB
             <em>Discard &amp; close</em>. Closing a split panel or a tab group confirms the same
             way.
           </li>
+          <li>
+            <strong>Quitting asks the same question (#4296).</strong> Cmd+Q or the app menu's Quit
+            holds the exit and asks every window. A window with nothing to lose agrees at once; one
+            that would lose a non-persistent session or an unsaved editor shows this dialog as
+            <em>Quit termiHub?</em>, without the move option. The app quits once every window
+            agreed, and Cancel in any window keeps it running. A second Cmd+Q while the dialog is
+            open is ignored. A window that does not answer within 5 seconds stops blocking the quit.
+            Logout, shutdown and the Dock's Quit end the app at once, so the OS never waits on the
+            dialog.
+          </li>
         </ul>
 
         <!-- Mockup 5: close-with-live-tabs decision dialog -->
