@@ -38,6 +38,7 @@ import { TAURI_EVENT } from "@/services/eventNames";
 import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
+import { withActionAccelerator } from "@/services/keybindings";
 import "./TerminalView.css";
 
 /**
@@ -121,8 +122,9 @@ export function TerminalView() {
     const tab = getActiveTab(s);
     return tab && tab.contentType === "terminal" ? (tab.sessionId ?? null) : null;
   });
-  const isMac = navigator.platform.toUpperCase().includes("MAC");
-  const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
+  // From the keybinding service so the hint shows the platform default and any
+  // user override (#4374) — never a hand-built, platform-sniffed string.
+  const sidebarToggleTitle = withActionAccelerator("Toggle Sidebar", "toggle-sidebar");
 
   const allLeaves = getAllLeaves(rootPanel);
 

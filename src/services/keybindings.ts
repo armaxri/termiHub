@@ -468,8 +468,15 @@ function comboKeyToCode(key: string): string | null {
  * produced character (`event.key`, case-insensitive) for punctuation and named
  * keys — which are intentionally matched by character — and for environments
  * that supply no `event.code` (e.g. some synthetic test events).
+ *
+ * Exported so ad-hoc handlers (e.g. a list's Ctrl/Cmd+A select-all) share the
+ * same layout-independent matching as the keybinding service (#4374). Accepts a
+ * React synthetic event as well, since only `key`/`code` are read.
  */
-function eventKeyMatches(event: KeyboardEvent, comboKey: string): boolean {
+export function eventKeyMatches(
+  event: Pick<KeyboardEvent, "key" | "code">,
+  comboKey: string
+): boolean {
   const code = comboKeyToCode(comboKey);
   if (code && event.code) {
     return event.code === code;
@@ -660,6 +667,27 @@ export function getDefaultBindings(): KeyBinding[] {
 export function getActionAccelerator(action: string): string | null {
   const combo = getEffectiveCombo(action);
   return combo ? serializeBinding(combo) : null;
+}
+
+/**
+ * Append an action's effective accelerator to a tooltip/label, e.g.
+ * `"Toggle Sidebar (Ctrl+Shift+B)"` (#4374). The hint follows the platform
+ * default and any user override via {@link getActionAccelerator}; when the
+ * action is unbound or unknown the bare label is returned, without a
+ * parenthetical. Use this instead of hand-building a shortcut string.
+ */
+export function withActionAccelerator(label: string, action: string): string {
+  const accelerator = getActionAccelerator(action);
+  return accelerator ? `${label} (${accelerator})` : label;
+}
+
+/**
+ * Render a primary-modifier shortcut that is not a configurable app action —
+ * e.g. Monaco's built-in `CtrlCmd+S` save — as `Cmd+S` on macOS and `Ctrl+S`
+ * elsewhere, in the same format as {@link getActionAccelerator} (#4374).
+ */
+export function modKeyAccelerator(key: string): string {
+  return serializeCombo(isMac() ? { key, meta: true } : { key, ctrl: true });
 }
 
 /**

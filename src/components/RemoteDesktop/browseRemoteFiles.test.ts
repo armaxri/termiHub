@@ -92,4 +92,13 @@ describe("browseRemoteFiles (#4193)", () => {
     expect(hoisted.list).toHaveBeenCalledWith("rd-1", "~");
     expect(listing.folders.map((f) => f.name)).toEqual(["Alpha", "zeta"]);
   });
+
+  it("orders the folder picker naturally via the shared collator (#4374)", async () => {
+    hoisted.list.mockResolvedValue([
+      { name: "dir10", path: "/home/pi/dir10", isDirectory: true },
+      { name: "dir2", path: "/home/pi/dir2", isDirectory: true },
+    ]);
+    const listing = await listRemoteFolders("rd-1", "~");
+    expect(listing.folders.map((f) => f.name)).toEqual(["dir2", "dir10"]);
+  });
 });

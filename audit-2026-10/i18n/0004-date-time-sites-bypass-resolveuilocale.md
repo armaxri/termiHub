@@ -11,8 +11,8 @@ evidence:
   - src/components/Schedules/scheduleForm.ts:232
   - src/components/EmbeddedServerSidebar/EmbeddedServerActivityPanel.tsx:73
   - src/components/Settings/BackupRestoreDialog.tsx:234
-status: open
-resolution: ""
+status: fixed
+resolution: "#4374 — schedule/activity/backup dates go through UI-locale formatters (formatClockTime/formatShortDate/formatRelativeDay); lint bans bare toLocale*String()"
 audit: 2026-10
 commit: 663465d52
 relation: regression
