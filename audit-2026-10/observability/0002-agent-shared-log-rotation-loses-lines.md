@@ -17,8 +17,8 @@ evidence:
   - agent/src/file_log.rs:254
   - agent/src/session/manager.rs:518
   - agent/src/registry_daemon/client.rs:340
-status: open
-resolution: ""
+status: fixed
+resolution: "#4319 — each agent process logs to its own termihub-agent-<role>-<pid>.log; writer follows its live path; directory budget"
 audit: 2026-10
 commit: "663465d52"
 relation: new

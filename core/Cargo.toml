@@ -51,6 +51,10 @@ portable-pty = { version = "0.9", optional = true }
 # used before the collector moved into core.
 sysinfo = { version = "0.38", optional = true }
 tracing = { version = "0.1", optional = true }
+# The shared rotating log-file writer (`diagnostics::file_log`, #4319) is a
+# `tracing_subscriber::fmt::MakeWriter` and builds the file sink's `EnvFilter`.
+# Already in the workspace tree via the desktop and the agent.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"], optional = true }
 # Plugin install/update version comparison (PLG-012): detect downgrades by
 # semantic-version precedence. Already in the workspace lockfile via src-tauri.
 semver = { version = "1", optional = true }
@@ -333,6 +337,9 @@ default = []
 # (the desktop) can opt in, while `cargo test -p termihub-core` (default) compiles
 # them out and stays tracing-free.
 tracing = ["dep:tracing"]
+# The shared rotating log-file writer and russh clamp (`diagnostics::file_log`,
+# #4319, audit DUP2-006), used by both the desktop and the agent.
+file-log = ["dep:tracing-subscriber", "dep:tracing"]
 # Ed25519 verification of agent update binaries (AGT-005, #3213 / #3330): the
 # trusted release key(s) compiled in from `agent/keys/update-signing.pub.pem`,
 # the domain-separated signed message, and the release/dev signature policy.
