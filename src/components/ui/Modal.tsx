@@ -185,16 +185,20 @@ export function Modal({
             {footer ? <div className="ui-modal__foot">{footer}</div> : null}
           </ModalPortalContainerContext.Provider>
           {/* Nested inside the content so Radix stacks it as a child layer:
-              Escape or a click outside the prompt dismisses only the prompt. */}
-          <UnsavedChangesDialog
-            open={confirmDiscard}
-            subject="form"
-            onCancel={() => setConfirmDiscard(false)}
-            onJustClose={() => {
-              setConfirmDiscard(false);
-              onOpenChange(false);
-            }}
-          />
+              Escape or a click outside the prompt dismisses only the prompt.
+              Mounted only while raised, so a clean modal carries no extra
+              dialog tree. */}
+          {confirmDiscard ? (
+            <UnsavedChangesDialog
+              open
+              subject="form"
+              onCancel={() => setConfirmDiscard(false)}
+              onJustClose={() => {
+                setConfirmDiscard(false);
+                onOpenChange(false);
+              }}
+            />
+          ) : null}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
