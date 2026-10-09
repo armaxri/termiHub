@@ -1,0 +1,97 @@
+name: Scheduled Lanes (dispatch + heartbeat)
+
+# The one cron owner for the lanes that grade develop (#4277).
+#
+# GitHub fires `schedule:` (and `workflow_run:`) only from the workflow file on
+# the DEFAULT branch, `main`. main trails develop between releases, so a lane
+# whose file exists only on develop never runs on its own cron. This workflow
+# starts those lanes on develop with `gh workflow run <file> --ref develop`.
+# The lane list and each lane's cron live in scripts/internal/scheduled-lanes.mjs;
+# the crons below must match it (scripts/internal/check-scheduled-lane-drift.mjs
+# fails otherwise).
+#
+# Triggers:
+#   * schedule — fires only once THIS file is on main. Each cron dispatches the
+#     lanes assigned to it, except a lane whose own `schedule:` is live on main
+#     (its file is there with a schedule trigger), so the dispatcher retires lane
+#     by lane as files reach main instead of doubling their runs.
+#   * push to develop — works without main. Dispatches any lane whose newest
+#     develop run is older than its catch-up window (28 h daily, 7 d + 4 h
+#     weekly), then runs the heartbeat. A failing lane is not re-dispatched on
+#     every push: a recent red run counts as fresh. A quiet day with no push
+#     dispatches nothing; that gap closes when this file reaches main.
+#   * workflow_dispatch — the same as a push (catch-up + heartbeat).
+#
+# The heartbeat FAILS this run when a lane has no successful develop run within
+# 36 h (daily) / 8 days (weekly). A red run here means a nightly gate is dark or
+# broken: open the lane named in the error.
+#
+# A GITHUB_TOKEN-created workflow_dispatch may start a new workflow run (it is one
+# of the exempt events), so no PAT is needed. A lane must be REGISTERED with
+# GitHub to be dispatched: it registers on its first run on any branch or when it
+# reaches main. The lanes with no other trigger get a self-path push trigger so
+# their first develop push registers them.
+on:
+  schedule:
+    - cron: "41 3 * * *" # wsl-live, integration-fixtures (instrumented)
+    - cron: "0 4 * * *" # cargo-update-lockfile, windows-ssh-host, security-audit
+    - cron: "35 5 * * *" # plugin-sandbox-nightly (after system-integration's 05:05)
+    - cron: "23 7 * * *" # coverage (after the fixtures + system-integration lcov)
+    - cron: "17 6 * * 1" # vendored-forks drift, branch-protection drift (Mondays)
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# A newer develop push supersedes an older catch-up check. Schedules and manual
+# runs are keyed separately and never cancelled.
+concurrency:
+  group: scheduled-dispatch-${{ github.event_name }}-${{ github.event.schedule || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+# Least privilege (CI-010): dispatching needs actions: write; the heartbeat only
+# reads runs. Checkout only for the scripts.
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch lanes + heartbeat
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Always develop's scripts and lane list: on main (schedule) the scripts may
+      # not exist yet, and develop's list is the one that matches develop's lanes.
+      - name: Checkout develop
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: develop
+
+      # The scripts read main's workflow files to decide whether a lane's own
+      # schedule is live (and the drift guard compares on: blocks).
+      - name: Fetch main
+        run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+
+      - name: Drift guard (scheduled workflows vs main)
+        # Annotates drift (main lags develop between releases by design); fails
+        # only on a registry problem, which the per-PR vitest suite also catches.
+        run: node scripts/internal/check-scheduled-lane-drift.mjs --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Dispatch due lanes, then check the heartbeat
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          CRON: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT" = "schedule" ]; then
+            mode=(--dispatch-cron "$CRON")
+          else
+            mode=(--dispatch-stale)
+          fi
+          node scripts/internal/scheduled-lanes-heartbeat.mjs "${mode[@]}" --check \
+            --repo "$GITHUB_REPOSITORY" --summary "$GITHUB_STEP_SUMMARY"

@@ -134,6 +134,8 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
     contentType: tab.contentType,
     config: tab.config,
     ...(tab.initialCommand ? { initialCommand: tab.initialCommand } : {}),
+    ...(tab.pendingImportedCommand ? { pendingImportedCommand: tab.pendingImportedCommand } : {}),
+    ...(tab.pendingImportedConnection ? { pendingImportedConnection: true } : {}),
     ...(tab.persistentConnectionId ? { persistentConnectionId: tab.persistentConnectionId } : {}),
     ...(tab.connectionId ? { connectionId: tab.connectionId } : {}),
     ...(tab.spawned ? { spawned: true } : {}),

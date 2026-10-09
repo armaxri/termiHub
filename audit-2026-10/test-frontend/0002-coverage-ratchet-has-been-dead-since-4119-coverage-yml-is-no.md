@@ -10,8 +10,8 @@ evidence:
   - .github/workflows/coverage.yml:17-36
   - .github/workflows/coverage.yml:56-75
   - scripts/coverage-baseline.json:4-9
-status: open
-resolution: ""
+status: fixed
+resolution: "#4277 — develop pushes dispatch coverage.yml when its newest develop run is older than 28 h; the heartbeat fails past 36 h"
 audit: 2026-10
 commit: 663465d52
 relation: new

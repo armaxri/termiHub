@@ -431,7 +431,11 @@ export function TerminalHost() {
     // Only the active group's panel-active tabs are on screen; saved panels of
     // other groups keep `isActive` but must not hold a WebGL context (#4308).
     const onScreen = new Set(activeTabs.filter((tab) => tab.isActive).map((tab) => tab.id));
-    const tabs: TerminalTab[] = [...activeTabs, ...inactiveTabs];
+    // #4434: a tab held on an unconfirmed imported inline config must not
+    // connect, so no Terminal (and no session) exists for it until confirmed.
+    const tabs: TerminalTab[] = [...activeTabs, ...inactiveTabs].filter(
+      (tab) => !tab.pendingImportedConnection
+    );
     return { allTabs: tabs, onScreenTabIds: onScreen };
   }, [rootPanel, tabGroups, activeTabGroupId]);
 

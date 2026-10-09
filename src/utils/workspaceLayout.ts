@@ -418,6 +418,8 @@ type ResolvedTab =
       title: string;
       connectionType: string;
       workspaceAgentRef?: { agentId: string; definitionId: string };
+      /** The tab opens the def's inline config (not a saved connection). */
+      fromInlineConfig?: boolean;
     }
   | {
       kind: "agent-error";
@@ -455,6 +457,7 @@ export function buildPanelTreeFromWorkspace(
           agentErrorMeta: resolved.agentErrorMeta,
           workspaceAgentRef: resolved.workspaceAgentRef,
           initialCommand: resolved.agentErrorMeta.initialCommand,
+          ...importedTrustFields(tabDef, false),
         };
       }
       return {
@@ -468,6 +471,7 @@ export function buildPanelTreeFromWorkspace(
         isActive: false,
         workspaceAgentRef: resolved.workspaceAgentRef,
         initialCommand: tabDef.initialCommand,
+        ...importedTrustFields(tabDef, resolved.fromInlineConfig === true),
       };
     });
 
@@ -492,6 +496,37 @@ export function buildPanelTreeFromWorkspace(
       buildPanelTreeFromWorkspace(child, savedConnections, defaultShell, agentContext)
     ),
     ...(layout.sizes ? { sizes: [...layout.sizes] } : {}),
+  };
+}
+
+/**
+ * The live-tab side of an imported tab's pending confirmations (#4434): a
+ * pending command is carried as `pendingImportedCommand` (never as
+ * `initialCommand`), and a tab that opens an unconfirmed inline config is held
+ * with `pendingImportedConnection` so it does not connect.
+ */
+function importedTrustFields(
+  tabDef: WorkspaceTabDef,
+  opensInlineConfig: boolean
+): Pick<TerminalTab, "pendingImportedCommand" | "pendingImportedConnection"> {
+  return {
+    ...(tabDef.pendingInitialCommand
+      ? { pendingImportedCommand: tabDef.pendingInitialCommand }
+      : {}),
+    ...(opensInlineConfig && tabDef.inlineConfigUnconfirmed
+      ? { pendingImportedConnection: true }
+      : {}),
+  };
+}
+
+/** The def side of {@link importedTrustFields}: what a captured tab still waits on. */
+function capturedTrustFields(
+  tab: TerminalTab,
+  inline: boolean
+): Pick<WorkspaceTabDef, "pendingInitialCommand" | "inlineConfigUnconfirmed"> {
+  return {
+    ...(tab.pendingImportedCommand ? { pendingInitialCommand: tab.pendingImportedCommand } : {}),
+    ...(inline && tab.pendingImportedConnection ? { inlineConfigUnconfirmed: true } : {}),
   };
 }
 
@@ -585,6 +620,7 @@ function resolveTabConfig(
       config: tabDef.inlineConfig as ConnectionConfig,
       title: tabDef.title ?? "Terminal",
       connectionType: (tabDef.inlineConfig as ConnectionConfig).type ?? "local",
+      fromInlineConfig: true,
     };
   }
 
@@ -630,6 +666,7 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
       agentRef: tab.workspaceAgentRef,
       title: tab.title,
       initialCommand: tab.initialCommand ?? tab.agentErrorMeta?.initialCommand,
+      ...capturedTrustFields(tab, false),
     };
   }
 
@@ -645,6 +682,7 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
       connectionRef: matchedConnection.id,
       title: tab.title !== matchedConnection.name ? tab.title : undefined,
       initialCommand: tab.initialCommand,
+      ...capturedTrustFields(tab, false),
     };
   }
 
@@ -652,6 +690,7 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
     inlineConfig: tab.config as { type: string; config: Record<string, unknown> },
     title: tab.title,
     initialCommand: tab.initialCommand,
+    ...capturedTrustFields(tab, true),
   };
 }
 

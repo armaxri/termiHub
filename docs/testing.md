@@ -967,7 +967,9 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   demand (`gh workflow run coverage.yml --ref <ref>`), and uploads the merged lcov +
   summary as an artifact. It is not per PR (#3325) and, since #4119, not per merge to
   `develop` either: GitHub fires a `schedule` only on the default branch (`main`), so
-  the 07:23 UTC scheduled run dispatches the workflow on `develop`. The job is
+  [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) dispatches it
+  on `develop` at 07:23 UTC once that file is on `main`, and until then a `develop` push
+  dispatches it when its newest `develop` run is older than 28 h (#4277). The job is
   **blocking**: a ratchet failure reds the nightly `develop` (or `main`) run, which
   covers every merge since the previous night — bisect the day's merges, not just the
   newest PR.
@@ -1028,10 +1030,10 @@ in the unit suite, so without this they would read as uncovered (TOOL-005, see
 
 ```mermaid
 flowchart LR
-    N["integration-coverage-nightly.yml<br/>(daily 03:47 UTC)"] -- "dispatch on develop" --> F
+    N["scheduled-dispatch.yml<br/>(daily 03:41 UTC / develop-push catch-up)"] -- "dispatch on develop" --> F
     S["manual dispatch"] --> F
     F["integration-fixtures.yml<br/>cargo llvm-cov core/tests"] -- "artifact: integration-coverage" --> C
-    P["push to develop / main"] --> C
+    P["push to main / nightly dispatch on develop"] --> C
     C["coverage.yml<br/>unit coverage + merge"] --> R["coverage-unified artifact<br/>+ job summary"]
 ```
 
@@ -1039,8 +1041,8 @@ flowchart LR
   [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml) run
   the `core/tests` suite under `cargo llvm-cov` and upload
   `integration-coverage/integration.lcov` (14-day retention);
-  [`integration-coverage-nightly.yml`](../.github/workflows/integration-coverage-nightly.yml)
-  dispatches it on `develop` daily. The lane's own cron is not instrumented: it
+  [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml)
+  dispatches it on `develop` daily (#4277). The lane's own cron is not instrumented: it
   fires from the default branch (`main`) but checks out `develop` (#3664), so
   its run's branch and commit would not match the code it measured. PR-triggered fixture runs stay a plain
   `cargo test`, so PR runtime is unchanged.
@@ -1049,9 +1051,11 @@ flowchart LR
   [release coverage summary](#release-coverage-summary-advisory). That artifact
   sits on the candidate run, which the nightly merge step never reads.
 - **Activation:** scheduled runs execute the workflow files of the default
-  branch (`main`), so `integration-coverage-nightly.yml`'s cron starts firing
-  only once develop's workflows have reached `main`. Until then, dispatch
-  `integration-fixtures.yml` on `develop` by hand to produce an instrumented run.
+  branch (`main`), so `scheduled-dispatch.yml`'s cron fires only once that file
+  is on `main`. Until then every `develop` push dispatches this lane when its
+  newest instrumented `develop` run is older than 28 h, and the lane heartbeat
+  fails when none succeeded within 36 h (see
+  [Scheduled lanes](contributing.md#scheduled-lanes-stay-dark-until-they-reach-main)).
 - **Merged:** each `coverage.yml` run fetches the newest instrumented run's
   artifact for its own branch
   (`scripts/internal/fetch-integration-coverage.mjs`) and hands it to

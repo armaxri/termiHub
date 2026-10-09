@@ -70,6 +70,8 @@ import {
 import { useWindowEviction } from "@/hooks/useWindowEviction";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
+import { ImportedCommandBanner } from "@/components/Terminal/ImportedCommandBanner";
+import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
 import { toast, Spinner } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
@@ -1235,6 +1237,11 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // Agentless resilient reconnect (#1962): the backoff countdown overlay must
   // show even after the first attempt cleared the exited flag mid-loop.
   const isAutoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
+  // #4434: an imported inline config not yet confirmed here — no terminal is
+  // mounted for it (TerminalHost skips it), so show the confirmation instead.
+  const isImportedConnectionHeld = useAppStore(
+    (s) => s.tabContent[tabId]?.pendingImportedConnection === true
+  );
 
   useEffect(() => {
     const slotEl = slotRef.current;
@@ -1312,6 +1319,8 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       )}
       {/* #4078: the host refused the shell but SFTP works — no terminal to show. */}
       {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} />}
+      {isImportedConnectionHeld && <ImportedConnectionPrompt tabId={tabId} isVisible />}
+      {!isEvicted && !isImportedConnectionHeld && <ImportedCommandBanner tabId={tabId} />}
       {isExited && isViewMode && (
         <>
           <TerminalViewModeBanner tabId={tabId} />

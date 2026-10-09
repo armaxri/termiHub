@@ -37,6 +37,10 @@ export interface HandoffTab {
   contentType: TabContentType;
   config: ConnectionConfig;
   initialCommand?: string;
+  /** A held imported command (#4434); stays held in the destination window. */
+  pendingImportedCommand?: string;
+  /** Held on an unconfirmed imported inline config (#4434); stays held. */
+  pendingImportedConnection?: boolean;
   persistentConnectionId?: string;
   connectionId?: string;
   spawned?: boolean;

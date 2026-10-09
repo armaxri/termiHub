@@ -5,6 +5,7 @@ import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors
 import { Button, toast, Tooltip, ConfirmDialog } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
+import { formatUntrustedImportNotice } from "@/services/workspaceImportTrust";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -171,11 +172,22 @@ export function WorkspaceSidebar() {
   // the user must learn it will not connect until the connection is restored.
   // Surface each such warning as a persistent error toast alongside the success
   // count so the partial breakage is never silent (#3013).
+  //
+  // Security surfacing (#4434): tabs that carry a command or an inline
+  // connection config are held until confirmed on this machine. Name each one
+  // with its real command and connection in a persistent notice so nothing an
+  // imported file wants to run is ever silently trusted.
   const handleImport = useCallback(() => {
     void importWorkspacesFromFile(async (json) => {
-      const { importedCount, warnings } = await importWorkspaces(json);
+      const { importedCount, warnings, untrustedTabs } = await importWorkspaces(json);
       await loadWorkspaces();
-      toast.success(`Imported ${importedCount} workspace${importedCount === 1 ? "" : "s"}`);
+      const summary = `Imported ${importedCount} workspace${importedCount === 1 ? "" : "s"}`;
+      const untrusted = formatUntrustedImportNotice(untrustedTabs);
+      if (untrusted) {
+        toast.success(summary, { description: untrusted, duration: Infinity });
+      } else {
+        toast.success(summary);
+      }
       for (const warning of warnings) {
         toast.error(warning);
       }

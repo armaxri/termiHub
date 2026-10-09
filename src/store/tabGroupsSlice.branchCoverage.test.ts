@@ -335,6 +335,27 @@ describe("tabGroupsSlice — branch coverage (#2979)", () => {
       expect(useAppStore.getState().releasedTransferSessions).toEqual(["sess-other"]);
     });
 
+    it("keeps a held imported command and connection held across the move (#4434)", () => {
+      const record: TabHandoffRecord = {
+        tab: {
+          sessionId: null,
+          title: "held",
+          connectionType: "local",
+          contentType: "terminal",
+          config: { type: "local", config: {} },
+          pendingImportedCommand: "curl x | sh",
+          pendingImportedConnection: true,
+        },
+      };
+      useAppStore.getState().hydrateHandoffTab(record);
+      const [tab] = allTabs();
+      expect(tab).toMatchObject({
+        pendingImportedCommand: "curl x | sh",
+        pendingImportedConnection: true,
+      });
+      expect(tab).not.toHaveProperty("initialCommand");
+    });
+
     it("omits the optional fields and replay flag for a session-less hand-off", () => {
       useAppStore.setState({ releasedTransferSessions: ["sess-keep"] });
       const record: TabHandoffRecord = {

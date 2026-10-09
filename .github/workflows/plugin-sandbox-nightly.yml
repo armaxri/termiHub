@@ -16,10 +16,11 @@ name: Plugin Sandbox Hardening (nightly)
 # perf run on a shared hosted runner is evidence, not a release blocker.
 #
 # NOTE: GitHub runs scheduled workflows from the DEFAULT branch's copy of this
-# file (main). Until this file reaches main, the schedule below does nothing;
-# use "Run workflow" (workflow_dispatch) to run it on develop meanwhile. The
-# recipes live in the checked-out tree (scripts/internal/plugin-ipc-fuzz.sh and
-# the test itself), so a scheduled run still grades develop's code.
+# file (main). Until this file reaches main, the schedule below does nothing, and
+# scheduled-dispatch.yml dispatches this lane on develop with `-f branch=develop`
+# instead (#4277; scripts/internal/scheduled-lanes.mjs). The recipes live in the
+# checked-out tree (scripts/internal/plugin-ipc-fuzz.sh and the test itself), so
+# a scheduled run still grades develop's code.
 
 on:
   schedule:
