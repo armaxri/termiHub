@@ -121,7 +121,14 @@ fn origin_reads_the_agent_definition_only_for_an_agent_session() {
         SessionOrigin::new(None, Some("agent-1"), &nested).agent_definition_id,
         Some("def-b".to_string())
     );
-    assert_eq!(SessionOrigin::new(None, None, &top).agent_definition_id, None);
+    assert_eq!(
+        SessionOrigin::new(None, Some("agent-1"), &serde_json::json!({})).agent_definition_id,
+        None
+    );
+    assert_eq!(
+        SessionOrigin::new(None, None, &top).agent_definition_id,
+        None
+    );
     assert_eq!(
         SessionOrigin::new(Some(""), None, &top).saved_connection_id,
         None,

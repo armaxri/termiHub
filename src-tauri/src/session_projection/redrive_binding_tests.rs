@@ -25,6 +25,7 @@ use crate::files::transfer::persist::{PersistedTransfer, PersistedTransferStatus
 use crate::files::transfer::relaunch_auto::{due, note_blocked, CredentialWaits, WaitTrigger};
 use crate::files::transfer::relaunch_credentials::RelaunchBlocked;
 use crate::files::transfer::{TransferDirection, TransferRegistry};
+use crate::network::test_support::FakeAgent;
 use crate::session::manager::{SessionManager, SessionOrigin};
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::redrive::AppReconnectRedrive;
@@ -32,7 +33,6 @@ use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::session_projection::timer::{
     ReconnectRedrive, ReconnectScheduler, ReconnectTimerDriver,
 };
-use crate::network::test_support::FakeAgent;
 
 const SAVED: &str = "Work/build-box";
 const FIELD_SECRET: &str = "gateway-secret";
@@ -265,8 +265,7 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
             || {
                 let life = store.get("tab-1");
                 life.as_ref().map(|l| l.status) == Some(SessionStatus::Connected)
-                    && life.and_then(|l| l.backend_session_id).as_deref()
-                        != Some(previous.as_str())
+                    && life.and_then(|l| l.backend_session_id).as_deref() != Some(previous.as_str())
             },
             "the redrive reconnects the tab on a new session",
         );
@@ -295,7 +294,11 @@ fn a_redriven_session_keeps_its_binding_resumes_transfers_and_keeps_field_secret
             "round {round}: the transfer paused by the drop resumes"
         );
         assert_eq!(
-            connects.lock().unwrap().last().map(|s| s["sshPassword"].clone()),
+            connects
+                .lock()
+                .unwrap()
+                .last()
+                .map(|s| s["sshPassword"].clone()),
             Some(Value::from(FIELD_SECRET)),
             "round {round}: the stored field secret still reaches the connect"
         );
