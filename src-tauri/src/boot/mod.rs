@@ -449,6 +449,13 @@ pub(crate) fn init_session_managers(
         std::sync::Arc::clone(&connection_registry),
         agent_manager.clone(),
     );
+    // A newly opened session — from the connect command, the backend
+    // reconnect redrive or a persistent session — resumes the transfers
+    // waiting for its saved connection or agent (#3883, #4114, #4301).
+    let opened_app = app.handle().clone();
+    session_manager.set_session_opened_hook(std::sync::Arc::new(move |trigger| {
+        crate::files::transfer::relaunch_auto::spawn_resume_waiting(&opened_app, trigger);
+    }));
     app.manage(session_manager);
     app.manage(agent_manager);
 

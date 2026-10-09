@@ -73,6 +73,13 @@ pub(crate) struct RetainedConnectionRequest {
     /// explicit session-lost state rather than a silent new shell. Not a secret,
     /// but zeroized on drop alongside the other fields for uniformity.
     pub(crate) agent_session_id: Option<String>,
+    /// The saved connection this tab was opened for, if any (#4301). Stamped by
+    /// [`SessionManager::on_session_opened`](super::manager::SessionManager::on_session_opened)
+    /// after the connect, so the backend redrive can bind the re-created session
+    /// to the same saved connection and fire the same transfer-resume triggers a
+    /// user-initiated connect does. `None` for an ad-hoc connection. Not a secret,
+    /// but zeroized on drop alongside the other fields for uniformity.
+    pub(crate) saved_connection_id: Option<String>,
     /// The tab's resilient-reconnect determination at connect time. A request is
     /// only ever retained for a resilient tab, so this is the gate the backend
     /// reconnect redrive (#2454) reads to decide it owns the transport
@@ -88,6 +95,9 @@ impl Drop for RetainedConnectionRequest {
         }
         if let Some(agent_session_id) = self.agent_session_id.as_mut() {
             agent_session_id.zeroize();
+        }
+        if let Some(saved_connection_id) = self.saved_connection_id.as_mut() {
+            saved_connection_id.zeroize();
         }
         zeroize_json(&mut self.settings);
     }
@@ -156,6 +166,18 @@ impl RetainedRequestStore {
         self.lock().get(tab_id).cloned()
     }
 
+    /// Record the saved connection `tab_id`'s retained request was opened for
+    /// (#4301). A no-op when no request is retained for the tab (a non-resilient
+    /// tab never reconnects, so it has nothing for the redrive to carry).
+    pub(crate) fn set_saved_connection(&self, tab_id: &str, saved_connection_id: Option<&str>) {
+        if let Some(request) = self.lock().get_mut(tab_id) {
+            if let Some(old) = request.saved_connection_id.as_mut() {
+                old.zeroize();
+            }
+            request.saved_connection_id = saved_connection_id.map(String::from);
+        }
+    }
+
     /// The `agent_id` a tab's retained request routes through, if any. Reads only
     /// the (non-secret) agent id, so it does **not** clone the secret-bearing
     /// `settings` the way [`Self::get`] does — the per-agent transport-config
@@ -215,6 +237,7 @@ mod tests {
                 settings: json!({ "host": "h", "password": "p" }),
                 agent_id: None,
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -250,6 +273,7 @@ mod tests {
                 settings: json!({ "host": "h", "password": "p" }),
                 agent_id: Some("agent-1".to_string()),
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -289,6 +313,7 @@ mod tests {
                 settings: json!({ "password": "old" }),
                 agent_id: None,
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -299,6 +324,7 @@ mod tests {
                 settings: json!({ "password": "new" }),
                 agent_id: None,
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -320,6 +346,7 @@ mod tests {
                 settings: json!({ "password": "p" }),
                 agent_id: None,
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -330,6 +357,7 @@ mod tests {
                 settings: json!({ "password": "p" }),
                 agent_id: Some("agent-1".to_string()),
                 agent_session_id: None,
+                saved_connection_id: None,
                 resilient: true,
             },
         );
@@ -350,6 +378,7 @@ mod tests {
             settings: json!({ "password": "p" }),
             agent_id: Some(agent.to_string()),
             agent_session_id: None,
+            saved_connection_id: None,
             resilient: true,
         };
         store.retain("tab-a", agent_req("agent-1"));
