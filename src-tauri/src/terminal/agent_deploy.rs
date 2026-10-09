@@ -42,6 +42,9 @@ const DEFAULT_REMOTE_PATH: &str = agent_install::POSIX_DEFAULT_INSTALL_PATH;
 
 /// Result of probing a remote host for the agent binary.
 #[cfg(test)]
+// The Windows suite reads `found`/`version`; the rest shows in its `{probe:?}`
+// failure messages, which dead-code analysis ignores.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AgentProbeResult {
     /// Whether the agent binary was found on the remote host.
