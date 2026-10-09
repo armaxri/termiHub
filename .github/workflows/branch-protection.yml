@@ -17,8 +17,19 @@ name: Branch Protection Drift
 on:
   schedule:
     # Mondays 06:17 UTC (off the hour to dodge scheduler congestion).
+    # GitHub fires this only from main (the default branch). Until this file
+    # is on main, scheduled-dispatch.yml dispatches it on develop at the same
+    # time (#4277); see scripts/internal/scheduled-lanes.mjs.
     - cron: '17 6 * * 1'
   workflow_dispatch:
+  # Re-check when the expectation or the checker changes. The first such run
+  # also registers the workflow with GitHub, which a dispatch needs (#4277).
+  push:
+    branches: [develop]
+    paths:
+      - '.github/branch-protection.json'
+      - 'scripts/internal/check-branch-protection.mjs'
+      - '.github/workflows/branch-protection.yml'
 
 concurrency:
   group: branch-protection-drift

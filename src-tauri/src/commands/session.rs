@@ -20,7 +20,7 @@ use crate::files::transfer::{
 };
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
-    PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
+    PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager, SessionOrigin,
 };
 use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
 use crate::session_projection::projection::fold_session_transition;
@@ -131,11 +131,14 @@ pub async fn create_connection(
     if let Some(tab_id) = &initial_tab_id {
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
     }
-    // The saved agent definition an agent-hosted session is opened from: once
-    // it connects, transfers waiting for that session resume (#4114).
-    let agent_definition_id = agent_id
-        .as_ref()
-        .and_then(|_| agent_definition_id(&settings));
+    // Where this session comes from — its saved connection (#3876) and, for an
+    // agent-hosted session, its agent and saved definition (#4114) — for the
+    // session-opened side effects below.
+    let origin = SessionOrigin::new(
+        saved_connection_id.as_deref(),
+        agent_id.as_deref(),
+        &settings,
+    );
 
     let connect = manager.create_connection(
         &type_id,
@@ -165,50 +168,14 @@ pub async fn create_connection(
             store.set_backend_session_id(tab_id, Some(session_id.clone()));
         });
     }
-    // Remember which saved connection this session was opened for (#3876): a
-    // transfer on it records the connection, so a relaunch after the session
-    // is gone can find a reopened session or re-source the secret.
-    if let (Some(connection_id), Ok(session_id)) = (&saved_connection_id, &result) {
-        manager
-            .bind_saved_connection(session_id, connection_id)
-            .await;
-        // Its file browser is ready now: resume the transfers that were paused
-        // waiting for this connection (#3883).
-        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
-            &app_handle,
-            crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(
-                connection_id.clone(),
-            ),
-        );
-    }
-    // An agent-hosted session's file browser is ready now: resume the
-    // agent-hosted transfers that were waiting for it after a restart (#4114).
-    if let (Some(agent_id), Ok(_)) = (&agent_id, &result) {
-        crate::files::transfer::relaunch_auto::spawn_resume_waiting(
-            &app_handle,
-            crate::files::transfer::relaunch_auto::WaitTrigger::AgentSessionOpened {
-                agent_id: agent_id.clone(),
-                definition_id: agent_definition_id,
-            },
-        );
+    // Remember which saved connection this session was opened for (#3876) and
+    // resume the transfers waiting for it or its agent (#3883, #4114). The
+    // session layer does both, so the backend reconnect redrive re-creating
+    // this tab's session does the same (#4301).
+    if let Ok(session_id) = &result {
+        manager.on_session_opened(session_id, &origin).await;
     }
     result
-}
-
-/// The saved agent definition id the frontend placed in an agent-hosted
-/// session's settings (top level or under `config`), as the agent proxy reads
-/// it.
-fn agent_definition_id(settings: &Value) -> Option<String> {
-    let config = settings.get("config");
-    ["definitionId", "definition_id"]
-        .iter()
-        .find_map(|key| {
-            config
-                .and_then(|c| c.get(*key))
-                .or_else(|| settings.get(*key))
-        })
-        .and_then(Value::as_str)
-        .map(String::from)
 }
 
 /// The frontend `tab_id` to fold an *initial*-connect lifecycle edge for, parsed
@@ -1736,23 +1703,11 @@ pub async fn get_agent_session_buffer(
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_definition_id, container_list_error, decode_file_bytes, encode_file_bytes,
-        initial_connect_tab_id, killed_disconnect_tab_id, parse_container_runtime,
+        container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
+        killed_disconnect_tab_id, parse_container_runtime,
     };
     use termihub_core::config::ContainerRuntime;
     use termihub_core::errors::SessionError;
-
-    /// The saved agent definition an agent session is opened from is read
-    /// where the frontend places it — at the top level or under `config` —
-    /// so the transfers waiting for that session resume (#4114).
-    #[test]
-    fn agent_definition_id_is_read_from_the_settings() {
-        let top = serde_json::json!({ "definitionId": "def-a", "shell": "bash" });
-        assert_eq!(agent_definition_id(&top).as_deref(), Some("def-a"));
-        let nested = serde_json::json!({ "config": { "definition_id": "def-b" } });
-        assert_eq!(agent_definition_id(&nested).as_deref(), Some("def-b"));
-        assert_eq!(agent_definition_id(&serde_json::json!({})), None);
-    }
 
     #[test]
     fn container_runtime_parses_like_the_backend() {

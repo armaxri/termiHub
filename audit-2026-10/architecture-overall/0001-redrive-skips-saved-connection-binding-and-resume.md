@@ -17,8 +17,8 @@ evidence:
   - src-tauri/src/files/transfer/relaunch_session.rs:161
   - src-tauri/src/commands/transfer.rs:283
   - src-tauri/src/session/persistent_controller.rs:91
-status: open
-resolution: ""
+status: fixed
+resolution: "#4301 — session-opened binding + resume triggers moved into SessionManager; redrive, re-attach and persistent sessions use it"
 audit: 2026-10
 commit: 663465d52
 relation: new

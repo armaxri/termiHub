@@ -368,7 +368,8 @@ echo "=== Coverage Ratchet ==="
 # Whole-app coverage — frontend + Rust (TOOL-001) — graded against the committed
 # per-platform baseline in scripts/coverage-baseline.json (TOOL-011, #3740): a
 # per-component line-coverage drop beyond the tolerance FAILS the release gate,
-# the same ratchet coverage.yml enforces on develop/main. cargo-llvm-cov is
+# the same ratchet coverage.yml enforces on main pushes and on the nightly develop
+# dispatch (scheduled-dispatch.yml, #4277). cargo-llvm-cov is
 # required: a release gate that silently skips its coverage check is not a gate.
 if ! cargo llvm-cov --version >/dev/null 2>&1; then
     fail "cargo-llvm-cov not installed — cannot grade coverage (install: cargo install cargo-llvm-cov)"
