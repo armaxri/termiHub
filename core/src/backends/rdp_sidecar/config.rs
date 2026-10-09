@@ -156,6 +156,42 @@ pub struct RdpConfig {
     /// local display geometry (#3696). Not part of the editor schema.
     #[serde(deserialize_with = "deserialize_monitor_rects")]
     pub monitor_layout: Vec<MonitorRect>,
+    /// The unified connect timeout (`connectTimeoutSecs`, #2901) in seconds.
+    /// The sidecar bounds its TCP connect and the X.224 / TLS / CredSSP
+    /// negotiation by it (#4320, #4401). `None` (absent, `null` or not a
+    /// whole number) means [`DEFAULT_CONNECT_TIMEOUT_SECS`]; see
+    /// [`connect_timeout`](Self::connect_timeout).
+    #[serde(deserialize_with = "deserialize_connect_timeout_secs")]
+    pub connect_timeout_secs: Option<u64>,
+}
+
+/// Default bound on the sidecar's TCP connect and RDP negotiation when the
+/// settings carry no usable `connectTimeoutSecs` — the same 30 s every other
+/// graphical connect uses (#4298).
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Upper cap on a configured connect timeout, so a typo can never make the
+/// connect effectively unbounded.
+pub const MAX_CONNECT_TIMEOUT_SECS: u64 = 600;
+
+/// Read `connectTimeoutSecs` leniently: a whole number is kept, anything else
+/// (`null`, a string, a fraction) is treated as unset rather than failing the
+/// whole settings parse — the same tolerance the desktop's own graphical
+/// connect timeout applies.
+fn deserialize_connect_timeout_secs<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Lenient {
+        Secs(u64),
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match Option::<Lenient>::deserialize(deserializer)? {
+        Some(Lenient::Secs(secs)) => Some(secs),
+        Some(Lenient::Other(_)) | None => None,
+    })
 }
 
 impl Default for RdpConfig {
@@ -183,6 +219,7 @@ impl Default for RdpConfig {
             monitors: MONITORS_SINGLE.to_string(),
             monitor_count: None,
             monitor_layout: Vec::new(),
+            connect_timeout_secs: None,
         }
     }
 }
@@ -213,6 +250,19 @@ impl RdpConfig {
     /// forward (#4284), so both resolve the same target.
     pub fn from_settings(settings: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(crate::backends::without_null_fields(settings))
+    }
+
+    /// The bound on the sidecar's TCP connect and RDP negotiation (#4320,
+    /// #4401): a positive `connectTimeoutSecs` capped at
+    /// [`MAX_CONNECT_TIMEOUT_SECS`], otherwise [`DEFAULT_CONNECT_TIMEOUT_SECS`].
+    pub fn connect_timeout(&self) -> std::time::Duration {
+        let secs = self
+            .connect_timeout_secs
+            .filter(|secs| *secs > 0)
+            .map_or(DEFAULT_CONNECT_TIMEOUT_SECS, |secs| {
+                secs.min(MAX_CONNECT_TIMEOUT_SECS)
+            });
+        std::time::Duration::from_secs(secs)
     }
 
     /// The effective TCP port to reach the RDP server on.
@@ -874,6 +924,7 @@ mod tests {
                 },
                 MonitorRect::new(-1280, 0, 1280, 1024),
             ],
+            connect_timeout_secs: Some(12),
         };
         // The sidecar IPC is MessagePack with named fields (#3696 layout included).
         let packed = rmp_serde::to_vec_named(&cfg).unwrap();
@@ -1192,5 +1243,65 @@ mod tests {
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
         assert_eq!(back.groups.len(), 4);
+    }
+
+    /// The connect timeout reaches the sidecar from the unified
+    /// `connectTimeoutSecs` key (#4320, #4401), with the graphical default and
+    /// cap, and a malformed value is treated as unset rather than failing the
+    /// whole settings parse.
+    #[test]
+    fn connect_timeout_reads_the_unified_key_with_default_and_cap() {
+        let cfg = RdpConfig::from_settings(serde_json::json!({ "host": "h" })).unwrap();
+        assert_eq!(cfg.connect_timeout_secs, None);
+        assert_eq!(
+            cfg.connect_timeout().as_secs(),
+            DEFAULT_CONNECT_TIMEOUT_SECS
+        );
+
+        let cfg = RdpConfig::from_settings(serde_json::json!({ "connectTimeoutSecs": 7 })).unwrap();
+        assert_eq!(cfg.connect_timeout().as_secs(), 7);
+
+        let cfg =
+            RdpConfig::from_settings(serde_json::json!({ "connectTimeoutSecs": 100_000 })).unwrap();
+        assert_eq!(cfg.connect_timeout().as_secs(), MAX_CONNECT_TIMEOUT_SECS);
+
+        for bad in [
+            serde_json::json!(0),
+            serde_json::json!(null),
+            serde_json::json!("12"),
+            serde_json::json!(2.5),
+        ] {
+            let cfg =
+                RdpConfig::from_settings(serde_json::json!({ "connectTimeoutSecs": bad })).unwrap();
+            assert_eq!(
+                cfg.connect_timeout().as_secs(),
+                DEFAULT_CONNECT_TIMEOUT_SECS,
+                "{bad} must fall back to the default"
+            );
+        }
+    }
+
+    /// The connect timeout survives the MessagePack connect payload to the
+    /// sidecar (#4401).
+    #[tokio::test]
+    async fn connect_timeout_round_trips_over_the_sidecar_wire() {
+        use crate::backends::rdp_sidecar::protocol::{read_message, write_message, HostMessage};
+        for secs in [None, Some(9)] {
+            let cfg = RdpConfig {
+                connect_timeout_secs: secs,
+                ..RdpConfig::default()
+            };
+            let mut buf = Vec::new();
+            write_message(&mut buf, &HostMessage::Connect(Box::new(cfg.clone())))
+                .await
+                .unwrap();
+            match read_message::<_, HostMessage>(&mut buf.as_slice())
+                .await
+                .unwrap()
+            {
+                HostMessage::Connect(back) => assert_eq!(back.connect_timeout_secs, secs),
+                other => panic!("expected Connect, got {other:?}"),
+            }
+        }
     }
 }
