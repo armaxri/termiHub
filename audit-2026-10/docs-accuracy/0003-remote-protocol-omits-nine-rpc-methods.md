@@ -6,8 +6,8 @@ severity: medium
 category: incomplete-spec
 is_workaround: false
 subsystem: "docs/remote-protocol.md"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4325 — documented connection.types, session.getBuffer, agent.settingsUpdate, connection.files.mkdir/set_permissions/set_owner/create_symlink/copy, tool.list and tool.run (plus the agent.update_available notification) in docs/remote-protocol.md; protocol_doc_tests checks every dispatcher method and notification has a heading"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
