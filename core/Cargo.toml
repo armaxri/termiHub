@@ -15,8 +15,13 @@ build = "build.rs"
 # imports it as `vnc::VncConnector` / `vnc::VncClient` (core/src/backends/vnc/),
 # which machete's `vnc_rs` name-scan never matches. It is genuinely used behind
 # the `vnc` feature, so ignore-list it rather than remove it.
+#
+# primefield, aead, aes-gcm, argon2 and blake2 are lockfile pins, not code
+# dependencies (#4465): exact `=…-rc.N` requirements that hold the russh -rc
+# crypto stack in the root Cargo.lock (see the `[dependencies]` comment). No
+# code imports them by design, so machete must not flag them.
 [package.metadata.cargo-machete]
-ignored = ["vnc-rs"]
+ignored = ["vnc-rs", "primefield", "aead", "aes-gcm", "argon2", "blake2"]
 
 # Hashing the staged `termihub-rdp-helper` externalBin to embed its SHA-256 at
 # build time for the adapter's pre-spawn integrity check (#1762). Always compiled
