@@ -69,6 +69,9 @@ export type { StatusDotProps, StatusTone, StatusDotSize } from "./StatusDot";
 export { ContentOverlay } from "./ContentOverlay";
 export type { ContentOverlayProps } from "./ContentOverlay";
 
+export { LiveRegion } from "./LiveRegion";
+export type { LiveRegionProps, LiveRegionPoliteness } from "./LiveRegion";
+
 export { ToastProvider, toast } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
 

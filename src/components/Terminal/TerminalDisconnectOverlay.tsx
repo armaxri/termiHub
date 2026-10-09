@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   WifiOff,
   RefreshCw,
@@ -20,6 +20,12 @@ import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
   tabId: string;
+  /**
+   * Whether this tab is the visible one in its panel. Only the active tab's
+   * overlay moves focus to its primary action (#4331); background tabs never
+   * steal it.
+   */
+  isActive?: boolean;
 }
 
 /** Heading + subheading shown in the default (disconnected) overlay variant. */
@@ -99,6 +105,9 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
         className="terminal-disconnect-overlay__body"
         icon={<WifiOff size={32} className="terminal-disconnect-overlay__icon" />}
         heading={RECONNECTING_HEADING}
+        // Announce the state once; the ticking countdown below stays silent.
+        announce="polite"
+        announcement={RECONNECTING_HEADING}
         actions={
           <Button
             variant="secondary"
@@ -152,7 +161,10 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
  *
  * The scrollback buffer is always preserved below the overlay.
  */
-export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayProps) {
+export function TerminalDisconnectOverlay({
+  tabId,
+  isActive = false,
+}: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
@@ -181,6 +193,8 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   // are derived purely from the region's `exit` metadata (the per-client
   // `appStore.terminalExitInfo` slice was deleted).
   const exitInfo = lifecycle.exitInfo;
+  // The error text is part of each failure overlay's accessible description.
+  const errorTextId = useId();
 
   const handleReconnect = useCallback(() => {
     reconnectTerminal(tabId);
@@ -232,6 +246,11 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           }
           heading="Session lost"
           subheading="The connection was restored, but the live session could not be recovered. Its process has ended. Scrollback is preserved below."
+          announce="assertive"
+          // Without a backend cause, the heading + subheading are announced.
+          announcement={sessionLostError ? `Session lost. ${sessionLostError}` : undefined}
+          describedBy={sessionLostError ? errorTextId : undefined}
+          autoFocusPrimaryAction={isActive}
           actions={
             <>
               <Button
@@ -259,7 +278,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               className="terminal-disconnect-overlay__error-box"
               data-testid="terminal-session-lost-error-box"
             >
-              <span className="terminal-disconnect-overlay__error-text">{sessionLostError}</span>
+              <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+                {sessionLostError}
+              </span>
             </div>
           )}
         </ContentOverlay>
@@ -325,6 +346,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   }
 
   if (disconnectError) {
+    const errorHeading = isAuthFailed ? "Authentication failed" : "Reconnect failed";
     return (
       <div
         className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
@@ -349,7 +371,11 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
             />
           }
-          heading={isAuthFailed ? "Authentication failed" : "Reconnect failed"}
+          heading={errorHeading}
+          announce="assertive"
+          announcement={`${errorHeading}. ${disconnectError}`}
+          describedBy={errorTextId}
+          autoFocusPrimaryAction={isActive}
           subheading={
             isAuthFailed
               ? "Check your credentials, then reconnect. Scrollback is preserved below."
@@ -381,7 +407,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
             className="terminal-disconnect-overlay__error-box"
             data-testid="terminal-disconnect-error-box"
           >
-            <span className="terminal-disconnect-overlay__error-text">{disconnectError}</span>
+            <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+              {disconnectError}
+            </span>
           </div>
           {/* A rejected credential (SM-005): offer to enter a new one inline
               rather than only re-sending the rejected one (#3089). */}
@@ -417,6 +445,8 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         }
         heading={copy.heading}
         subheading={copy.subheading}
+        announce="polite"
+        autoFocusPrimaryAction={isActive}
         actions={
           <>
             <Button

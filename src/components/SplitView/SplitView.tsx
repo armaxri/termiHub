@@ -579,7 +579,9 @@ export function SplitView() {
                 </ContextMenu.Content>
               </ContextMenu.Portal>
             </ContextMenu.Root>
-            <div className="zoom-overlay__content">
+            {/* Overlay host (#4331): a connection-state overlay may take focus from
+                inside the zoomed surface, never from elsewhere in the app. */}
+            <div className="zoom-overlay__content" data-overlay-host>
               <PanelErrorBoundary label={`zoom ${zoomedTabId}`}>
                 {/* The zoom overlay shows exactly one tab, so a single Suspense
                     boundary covers whichever lazy surface (settings, editors, network
@@ -932,6 +934,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   return (
     <div
       className={`split-view__panel-content${panelBroadcastClass ? ` ${panelBroadcastClass}` : ""}`}
+      // Overlay host (#4331): a tab's connection-state overlay may move focus to
+      // its primary action from within this panel (tab bar, terminal), never
+      // from another panel, the sidebar or a dialog.
+      data-overlay-host
       data-testid={`panel-content-${panel.id}`}
       onClick={() => setActivePanel(panel.id)}
     >
@@ -1289,9 +1295,18 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
     return teardown;
   }, [tabId, getElement, fitTerminal, parkingRef]);
 
-  // Focus the terminal when it becomes visible (tab activation or initial creation)
+  const showDisconnectOverlay =
+    !isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode));
+  // Read through a ref so the focus effect below keeps firing only on activation.
+  const showDisconnectOverlayRef = useRef(showDisconnectOverlay);
+  showDisconnectOverlayRef.current = showDisconnectOverlay;
+
+  // Focus the terminal when it becomes visible (tab activation or initial
+  // creation) — unless the disconnect overlay is up: it moves focus to its own
+  // primary action (#4331), and this parent effect would otherwise run after it
+  // and pull focus back into the dead terminal.
   useEffect(() => {
-    if (isVisible) {
+    if (isVisible && !showDisconnectOverlayRef.current) {
       focusTerminal(tabId);
     }
   }, [isVisible, tabId, focusTerminal]);
@@ -1314,9 +1329,7 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
           controllingWindowName={windowEviction.name}
         />
       )}
-      {!isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
-        <TerminalDisconnectOverlay tabId={tabId} />
-      )}
+      {showDisconnectOverlay && <TerminalDisconnectOverlay tabId={tabId} isActive={isVisible} />}
       {/* #4078: the host refused the shell but SFTP works — no terminal to show. */}
       {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} />}
       {isImportedConnectionHeld && <ImportedConnectionPrompt tabId={tabId} isVisible />}

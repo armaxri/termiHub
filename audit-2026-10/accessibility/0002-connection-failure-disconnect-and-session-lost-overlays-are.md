@@ -12,8 +12,8 @@ evidence:
   - src/components/Terminal/TerminalDisconnectOverlay.tsx:98-102
   - src/components/Terminal/TerminalDisconnectOverlay.tsx:225-233
   - src/components/Terminal/TerminalDisconnectOverlay.tsx:345-352
-status: open
-resolution: ""
+status: fixed
+resolution: "#4331 — failure, session-lost and disconnect overlays announce via an always-mounted live region (alert/status) and focus their primary action in the active tab"
 audit: 2026-10
 commit: 663465d52
 relation: new
