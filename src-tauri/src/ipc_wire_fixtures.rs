@@ -25,6 +25,8 @@
 //! cargo test -p termihub --lib ipc_wire_fixtures
 //! ```
 
+mod event_names;
+
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -34,7 +36,9 @@ use crate::commands::connection::{ConnectionData, ExternalFileError};
 use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAgent};
 use crate::connection::settings::AppSettings;
 use crate::projection::{compute_ops, DiffFrame, DiffKind, ProjectionFrame, SnapshotFrame};
-use crate::terminal::agent_manager::{AgentCapabilities, AgentConnectResult, AgentDefinitionInfo};
+use crate::terminal::agent_manager::{
+    AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+};
 use crate::workspace::config::WorkspaceDefinition;
 use termihub_core::files::transfer::progress::TransferDirection;
 use termihub_core::files::transfer::registry::TransferSnapshot;
@@ -237,7 +241,15 @@ fn agent_fixture() -> Value {
     json!({
         "connectAgent": wire("AgentConnectResult", &connect),
         "connectAgentLegacy": wire("AgentConnectResult (legacy)", &legacy_connect),
-        "listAgentDefinitions": wire("AgentDefinitionInfo[]", &definitions),
+        // Saved definitions reach the frontend through `list_agent_connections`
+        // (the standalone `list_agent_definitions` command was removed, #4344).
+        "listAgentConnections": wire(
+            "AgentConnectionsData",
+            &AgentConnectionsData {
+                connections: definitions,
+                folders: Vec::new(),
+            },
+        ),
     })
 }
 
@@ -429,6 +441,17 @@ fn projection_fixture() -> Value {
     })
 }
 
+// ── Tauri event names (TFE2-006, #4344) ───────────────────────────────────────
+
+/// Every event name the production backend emits, for the frontend event
+/// contract suite (`src/services/eventContract.test.ts`): each `listen()` name
+/// must be in this list, and each listed name must have a listener (or an
+/// allowlisted reason not to).
+fn events_fixture() -> Value {
+    let inventory = event_names::scan_backend_events();
+    json!({ "emitted": inventory.names })
+}
+
 #[test]
 fn write_ipc_wire_fixtures() {
     write_fixture("connections.json", connections_fixture());
@@ -440,5 +463,6 @@ fn write_ipc_wire_fixtures() {
     write_fixture("transfers.json", transfer_fixture(&mut drift));
     write_fixture("open_ports.json", open_ports_fixture());
     write_fixture("projection.json", projection_fixture());
+    write_fixture("events.json", events_fixture());
     assert!(drift.is_empty(), "wire drift: {drift:#?}");
 }
