@@ -3,4 +3,10 @@
 /**
  * A single captured log entry.
  */
-export type LogEntry = { timestamp: string, level: string, target: string, message: string, };
+export type LogEntry = { timestamp: string, level: string, target: string, message: string, 
+/**
+ * Label of the window a frontend-forwarded entry ([`FRONTEND_LOG_TARGET`])
+ * came from, so a Log Viewer can tell its own echo from another window's
+ * warning (#4535). Absent for every other entry.
+ */
+window?: string, };

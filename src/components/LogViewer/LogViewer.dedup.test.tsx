@@ -32,13 +32,23 @@ import { getLogs } from "@/services/api";
 import { frontendError, frontendWarn } from "@/utils/frontendLog";
 import { LogViewer } from "./LogViewer";
 
-/** The backend echo `record_frontend_log` produces for a forwarded entry. */
-function backendEcho(target: string, message: string, level = "WARN"): LogEntry {
+/**
+ * The backend echo `record_frontend_log` produces for a forwarded entry. It is
+ * tagged with the label of the window that forwarded it (#4535); the test
+ * environment's current window is `main`.
+ */
+function backendEcho(
+  target: string,
+  message: string,
+  level = "WARN",
+  window: string | undefined = "main"
+): LogEntry {
   return {
     timestamp: "12:00:00.000",
     level,
     target: "frontend",
     message: `[${target}] ${message}`,
+    window,
   };
 }
 
@@ -170,5 +180,64 @@ describe("LogViewer frontend entry de-duplication (#4327)", () => {
 
     expect(rowsMatching("connected")).toHaveLength(1);
     expect(rowsMatching("live backend warning")).toHaveLength(1);
+  });
+
+  it("shows a warning forwarded from another window exactly once (#4535)", async () => {
+    vi.mocked(getLogs).mockResolvedValue([
+      backendEcho("probe", "other window backlog", "ERROR", "win-2"),
+    ]);
+    await act(async () => root.render(<LogViewer isVisible={true} />));
+    await flush();
+    act(() => {
+      backendListener?.(backendEcho("probe", "other window live", "WARN", "win-2"));
+    });
+
+    expect(rowsMatching("other window backlog")).toHaveLength(1);
+    expect(rowsMatching("other window live")).toHaveLength(1);
+    // The row says which window raised it.
+    expect(rowsMatching("other window live")[0]).toContain("win-2");
+  });
+
+  it("shows this window's own forwarded warning once, not twice (#4535)", async () => {
+    vi.mocked(getLogs).mockResolvedValue([]);
+    await act(async () => root.render(<LogViewer isVisible={true} />));
+    await flush();
+
+    act(() => {
+      frontendWarn("probe", "own window warn");
+      backendListener?.(backendEcho("probe", "own window warn", "WARN", "main"));
+    });
+
+    expect(rowsMatching("own window warn")).toHaveLength(1);
+    expect(rowsMatching("own window warn")[0]).toContain("frontend::probe");
+  });
+
+  it("drops an unattributed echo rather than risk a duplicate", async () => {
+    vi.mocked(getLogs).mockResolvedValue([]);
+    await act(async () => root.render(<LogViewer isVisible={true} />));
+    await flush();
+
+    act(() => {
+      frontendWarn("probe", "unattributed warn");
+      backendListener?.(backendEcho("probe", "unattributed warn", "WARN", undefined));
+    });
+
+    expect(rowsMatching("unattributed warn")).toHaveLength(1);
+  });
+
+  it("shows another window's echo once under StrictMode (#4535)", async () => {
+    vi.mocked(getLogs).mockResolvedValue([
+      backendEcho("probe", "strict other window", "WARN", "win-3"),
+    ]);
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <LogViewer isVisible={true} />
+        </StrictMode>
+      )
+    );
+    await flush();
+
+    expect(rowsMatching("strict other window")).toHaveLength(1);
   });
 });

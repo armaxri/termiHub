@@ -26,6 +26,12 @@ const DEFAULT_LOG_DIRECTIVE: &str = "info,termihub=debug,termihub_lib=debug,term
 /// default directive's `termihub_agent=debug` governs it.
 pub const AGENT_REEMIT_TARGET: &str = "termihub_agent::remote";
 
+/// Static `tracing` target the desktop re-emits frontend-forwarded log lines
+/// under (`record_frontend_log`, OBS-001). Such events carry the forwarding
+/// window's label in a `window` field, which [`LogCaptureLayer`] surfaces as
+/// [`LogEntry::window`] (#4535).
+pub const FRONTEND_LOG_TARGET: &str = "frontend";
+
 /// Build the tracing [`EnvFilter`] used by the application.
 ///
 /// Honors the `RUST_LOG` environment variable when set; otherwise falls back to
@@ -43,6 +49,12 @@ pub struct LogEntry {
     pub level: String,
     pub target: String,
     pub message: String,
+    /// Label of the window a frontend-forwarded entry ([`FRONTEND_LOG_TARGET`])
+    /// came from, so a Log Viewer can tell its own echo from another window's
+    /// warning (#4535). Absent for every other entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub window: Option<String>,
 }
 
 /// Ring buffer holding recent log entries.
@@ -111,12 +123,17 @@ impl LogCaptureLayer {
 /// Visitor that extracts the `message` field from a tracing event.
 struct MessageVisitor {
     message: String,
+    /// The `window` field, recorded for frontend-forwarded events only.
+    window: Option<String>,
+    capture_window: bool,
 }
 
 impl MessageVisitor {
-    fn new() -> Self {
+    fn new(capture_window: bool) -> Self {
         Self {
             message: String::new(),
+            window: None,
+            capture_window,
         }
     }
 }
@@ -125,6 +142,8 @@ impl Visit for MessageVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
             self.message = format!("{:?}", value);
+        } else if self.capture_window && field.name() == "window" {
+            self.window = Some(format!("{:?}", value));
         } else if self.message.is_empty() {
             // Fall back to first field if no "message" field
             self.message = format!("{} = {:?}", field.name(), value);
@@ -134,6 +153,8 @@ impl Visit for MessageVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "message" {
             self.message = value.to_string();
+        } else if self.capture_window && field.name() == "window" {
+            self.window = Some(value.to_string());
         }
     }
 }
@@ -203,14 +224,19 @@ where
         let metadata = event.metadata();
         let level = *metadata.level();
 
-        let (target, message) = if metadata.target() == AGENT_REEMIT_TARGET {
+        let (target, message, window) = if metadata.target() == AGENT_REEMIT_TARGET {
             let mut visitor = AgentRecordVisitor::default();
             event.record(&mut visitor);
-            visitor.into_target_and_message(metadata.target())
+            let (target, message) = visitor.into_target_and_message(metadata.target());
+            (target, message, None)
         } else {
-            let mut visitor = MessageVisitor::new();
+            let mut visitor = MessageVisitor::new(metadata.target() == FRONTEND_LOG_TARGET);
             event.record(&mut visitor);
-            (metadata.target().to_string(), visitor.message)
+            (
+                metadata.target().to_string(),
+                visitor.message,
+                visitor.window,
+            )
         };
 
         let entry = LogEntry {
@@ -218,6 +244,7 @@ where
             level: level_to_string(level),
             target,
             message,
+            window,
         };
 
         // Buffer the entry
@@ -323,6 +350,7 @@ mod tests {
                 level: "INFO".to_string(),
                 target: "test".to_string(),
                 message: format!("msg {}", i),
+                window: None,
             });
         }
         // Only the last 3 should remain
@@ -343,6 +371,7 @@ mod tests {
                 level: "INFO".to_string(),
                 target: "test".to_string(),
                 message: format!("msg {}", i),
+                window: None,
             });
         }
         let recent = buffer.get_recent(2);
@@ -360,6 +389,7 @@ mod tests {
                 level: "INFO".to_string(),
                 target: "test".to_string(),
                 message: format!("msg {}", i),
+                window: None,
             });
         }
         let recent = buffer.get_recent(100);
@@ -375,6 +405,7 @@ mod tests {
                 level: "INFO".to_string(),
                 target: "test".to_string(),
                 message: format!("msg {}", i),
+                window: None,
             });
         }
         assert_eq!(buffer.entries.len(), 5);
@@ -427,5 +458,24 @@ mod tests {
             "only the frontend debug entry should survive the filter, got: {entries:?}"
         );
         assert_eq!(entries[0].target, "frontend::terminal");
+    }
+
+    #[test]
+    fn window_field_is_only_surfaced_for_frontend_events() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let buffer = create_log_buffer();
+        let layer = LogCaptureLayer::new(buffer.clone());
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = test_support::set_scoped_subscriber(subscriber);
+
+        tracing::warn!(target: FRONTEND_LOG_TARGET, window = "main", "forwarded");
+        tracing::info!(target: "termihub::window", window = "main", "unrelated");
+
+        let entries = buffer.lock().unwrap().get_recent(10);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].window.as_deref(), Some("main"));
+        assert_eq!(entries[0].message, "forwarded");
+        assert_eq!(entries[1].window, None);
     }
 }
