@@ -63,7 +63,11 @@ fn ensure_private_dir_tightens_an_existing_open_dir() {
 
     ensure_private_dir(&dir).unwrap();
 
-    assert_eq!(mode_of(&dir), 0o700, "an existing open dir must be tightened");
+    assert_eq!(
+        mode_of(&dir),
+        0o700,
+        "an existing open dir must be tightened"
+    );
 }
 
 #[test]
@@ -180,7 +184,11 @@ fn copy_into_private_temp_copies_and_hashes_the_handle_bytes() {
     assert_eq!(digest, sha256_hex(b"VERIFIED-AGENT-BYTES"));
     assert_eq!(read_all(copy.as_file()), b"VERIFIED-AGENT-BYTES");
     assert_eq!(copy.path().parent().unwrap(), dest);
-    assert_eq!(mode_of(copy.path()) & 0o077, 0, "the copy must be owner-only");
+    assert_eq!(
+        mode_of(copy.path()) & 0o077,
+        0,
+        "the copy must be owner-only"
+    );
 }
 
 #[test]
@@ -244,5 +252,8 @@ fn discard_applied_upload_never_touches_a_path_outside_the_roots() {
 
     discard_applied_upload(&[root], &outside);
 
-    assert!(outside.exists(), "a path outside the staging roots must be kept");
+    assert!(
+        outside.exists(),
+        "a path outside the staging roots must be kept"
+    );
 }
