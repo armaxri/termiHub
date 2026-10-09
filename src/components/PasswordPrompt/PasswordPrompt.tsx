@@ -13,6 +13,10 @@ import { isImeComposing } from "@/utils/imeComposition";
  * for future connections without having to re-enter it. A caller that never
  * persists the secret (Test Connection, #3316) opts out via
  * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
+ *
+ * Concurrent requests queue (#4312): the dialog shows the oldest one, titled
+ * with the connection it is for, says how many more are waiting, and resets its
+ * fields when it advances to the next request.
  */
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
@@ -25,6 +29,9 @@ export function PasswordPrompt() {
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
 
   const allowSave = useAppStore((s) => s.passwordPromptAllowSave);
+  const label = useAppStore((s) => s.passwordPromptLabel);
+  const requestId = useAppStore((s) => s.passwordPromptQueue[0]?.id ?? null);
+  const waiting = useAppStore((s) => Math.max(0, s.passwordPromptQueue.length - 1));
 
   const storeActive = credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
   const showSave = storeActive && allowSave;
@@ -32,7 +39,9 @@ export function PasswordPrompt() {
   // A key passphrase unlocks a private key file — it is not the remote account
   // password, so label the prompt accordingly (UX-010).
   const isPassphrase = kind === "key_passphrase";
-  const title = isPassphrase ? "SSH Key Passphrase" : "SSH Password";
+  const baseTitle = isPassphrase ? "SSH Key Passphrase" : "SSH Password";
+  const title = label ? `${baseTitle} — ${label}` : baseTitle;
+  const waitingText = `${waiting} more password ${waiting === 1 ? "prompt" : "prompts"} waiting`;
   const description = isPassphrase
     ? `Enter the passphrase for the SSH key used by ${username}@${host}`
     : `Enter password for ${username}@${host}`;
@@ -43,13 +52,15 @@ export function PasswordPrompt() {
   const [password, setPassword] = useState("");
   const [savePassword, setSavePassword] = useState(false);
 
-  // Reset fields when the dialog opens; default "save" to on when a store is active
+  // Reset fields whenever a new request is shown (the dialog opening, or the
+  // queue advancing to the next request, #4312); default "save" to on when a
+  // store is active.
   useEffect(() => {
-    if (open) {
+    if (requestId !== null) {
       setPassword("");
       setSavePassword(showSave);
     }
-  }, [open, showSave]);
+  }, [requestId, showSave]);
 
   const handleSubmit = useCallback(() => {
     submitPassword(password, showSave && savePassword);
@@ -93,6 +104,11 @@ export function PasswordPrompt() {
       <p className="password-prompt__description" data-testid="password-prompt-description">
         {description}
       </p>
+      {waiting > 0 && (
+        <p className="password-prompt__queue" data-testid="password-prompt-queue">
+          {waitingText}
+        </p>
+      )}
       <PasswordInput
         className="ui-input"
         value={password}

@@ -18,8 +18,8 @@ evidence:
   - src/hooks/useRemoteDesktopFiles.ts:116
   - src/utils/connectSavedConnection.ts:476
   - src/utils/graphicalSecret.ts:89
-status: open
-resolution: ""
+status: fixed
+resolution: "#4312 — requestPassword queues requests FIFO, each settles exactly once, abortable per request"
 audit: 2026-10
 commit: 663465d52
 relation: new

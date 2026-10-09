@@ -215,6 +215,20 @@ describe("resolveConnectSecret", () => {
     });
     expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password");
   });
+
+  it("names the connection in the prompt when given a label (#4312)", async () => {
+    requestPassword.mockResolvedValue("pw");
+    await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: null,
+      requestPassword,
+      label: "Prod DB",
+    });
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password", {
+      label: "Prod DB",
+    });
+  });
 });
 
 /**

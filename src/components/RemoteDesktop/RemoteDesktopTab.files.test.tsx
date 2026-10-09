@@ -344,6 +344,31 @@ describe("RemoteDesktopTab — linked SSH route without a saved password (#4265)
     await flushAsync();
   }
 
+  it("drops its queued prompt when the tab closes, leaving other prompts alone (#4312)", async () => {
+    linkedBackend();
+    // Another connect's prompt is already on screen; the tab's queues behind it.
+    const other = useAppStore.getState().requestPassword("other.example", "bob");
+    await render("active");
+    act(() => q("remote-desktop-files-btn")?.click());
+    await flushAsync();
+    expect(useAppStore.getState().passwordPromptQueue.map((r) => r.host)).toEqual([
+      "other.example",
+      "tiger-box",
+    ]);
+
+    act(() => root.unmount());
+    await flushAsync();
+
+    expect(useAppStore.getState().passwordPromptQueue.map((r) => r.host)).toEqual([
+      "other.example",
+    ]);
+    useAppStore.getState().submitPassword("bob-pw");
+    await expect(other).resolves.toBe("bob-pw");
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    // Remount so the shared afterEach unmount has a live root.
+    root = createRoot(container);
+  });
+
   it("never asks when the session starts — the route just waits", async () => {
     linkedBackend();
     await render("active");
