@@ -2770,3 +2770,155 @@ fn only_an_agent_file_not_found_maps_to_a_missing_file() {
         );
     }
 }
+
+// ── agent-state-change carries why the agent ended (#4447) ───────────
+
+/// Every `reason` the `agent-state-change` events emitted while `act` runs
+/// carried, in order (`None` when the field is absent).
+fn emitted_reasons(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    act: impl FnOnce(),
+) -> Vec<(String, Option<String>)> {
+    use tauri::Listener;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let id = app.handle().listen_any("agent-state-change", move |event| {
+        let payload: Value = serde_json::from_str(event.payload()).unwrap();
+        sink.lock().unwrap().push((
+            payload["state"].as_str().unwrap().to_string(),
+            payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        ));
+    });
+    act();
+    app.handle().unlisten(id);
+    let out = seen.lock().unwrap().clone();
+    out
+}
+
+/// A user Disconnect, a user Shutdown and a suspend-style disconnect (agent
+/// update, Force reconnect) each tell every window why the agent ended, so a
+/// window that did not click anything still knows whether to end its hosted
+/// tabs or keep them resumable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disconnect_event_carries_the_end_reason() {
+    use crate::terminal::backend::AgentEndReason;
+    for (reason, wire) in [
+        (AgentEndReason::User, "user"),
+        (AgentEndReason::Shutdown, "shutdown"),
+        (AgentEndReason::Suspend, "suspend"),
+    ] {
+        let app = tauri::test::mock_app();
+        let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+        let (conn, _join) = make_wedged_agent_connection();
+        manager
+            .agents
+            .lock()
+            .unwrap()
+            .insert("agent-1".to_string(), conn);
+
+        let events = emitted_reasons(&app, || {
+            manager
+                .disconnect_agent_with_reason("agent-1", reason)
+                .expect("connected agent disconnects");
+        });
+        assert_eq!(
+            events,
+            vec![("disconnected".to_string(), Some(wire.to_string()))]
+        );
+    }
+}
+
+/// The plain `disconnect_agent` entry point is a user Disconnect.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plain_disconnect_is_a_user_end() {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (conn, _join) = make_wedged_agent_connection();
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), conn);
+
+    let events = emitted_reasons(&app, || {
+        manager.disconnect_agent("agent-1").unwrap();
+    });
+    assert_eq!(
+        events,
+        vec![("disconnected".to_string(), Some("user".to_string()))]
+    );
+}
+
+/// `shutdown_agent` asks the agent to stop, then disconnects with the
+/// `shutdown` reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_event_carries_the_shutdown_reason() {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (mut conn, _wedged) = make_wedged_agent_connection();
+    // Replace the wedged task with one that answers `agent.shutdown`.
+    let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    let responder = tokio::spawn(async move {
+        while let Some(cmd) = command_rx.recv().await {
+            match cmd {
+                AgentIoCommand::Request { response_tx, .. } => {
+                    let _ = response_tx.send(Ok(json!({ "detached_sessions": 2 })));
+                }
+                AgentIoCommand::Disconnect => break,
+                _ => {}
+            }
+        }
+    });
+    conn.command_tx = command_tx;
+    conn.io_task = responder.abort_handle();
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), conn);
+
+    let m = manager.clone();
+    let events = emitted_reasons(&app, move || {
+        let detached = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _guard = rt.enter();
+            m.shutdown_agent("agent-1", None)
+        })
+        .join()
+        .unwrap()
+        .expect("shutdown succeeds");
+        assert_eq!(detached, 2);
+    });
+    assert_eq!(
+        events,
+        vec![("disconnected".to_string(), Some("shutdown".to_string()))]
+    );
+}
+
+/// Every other `disconnected` emission (the I/O task giving up, a connect
+/// failure, a reaped transport) is an unexpected loss; non-terminal states
+/// carry no reason.
+#[test]
+fn other_disconnects_are_an_unexpected_loss() {
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+    let events = emitted_reasons(&app, || {
+        emit_agent_state(&handle, "agent-1", "connected");
+        emit_agent_state(&handle, "agent-1", "disconnected");
+        emit_agent_state_with_error(&handle, "agent-1", "disconnected", Some("gave up"));
+    });
+    assert_eq!(
+        events,
+        vec![
+            ("connected".to_string(), None),
+            ("disconnected".to_string(), Some("lost".to_string())),
+            ("disconnected".to_string(), Some("lost".to_string())),
+        ]
+    );
+}

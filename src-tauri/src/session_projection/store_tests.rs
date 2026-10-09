@@ -1303,3 +1303,88 @@ fn a_plugin_exit_for_an_unknown_session_is_a_noop() {
     store.plugin_exited("ghost", crashed_plugin());
     assert!(store.get("ghost").is_none());
 }
+
+// ── SM2-002 (#4305): agent-recovery folds respect the current status ────────
+
+/// Every status a recovery fold may find a tab in, built from a fresh entry.
+fn store_with_status(id: &str, status: SessionStatus) -> SessionLifecycleStore {
+    let store = deterministic_store();
+    store.connect(id);
+    match status {
+        SessionStatus::Connecting => {}
+        SessionStatus::Connected => store.connected(id),
+        SessionStatus::Disconnected => store.disconnect(id),
+        SessionStatus::Reconnecting => store.agent_transport_reconnecting(id, None),
+        SessionStatus::Failed => store.connect_failed(id, Some("refused".into())),
+        SessionStatus::AuthFailed => store.connect_auth_failed(id, Some("denied".into())),
+        SessionStatus::SessionLost => store.session_lost(id, Some("gone".into())),
+        SessionStatus::Evicted => store.evicted(id, Some("taken".into())),
+    }
+    assert_eq!(store.status(id), Some(status));
+    store
+}
+
+const ALL_STATUSES: [SessionStatus; 8] = [
+    SessionStatus::Connecting,
+    SessionStatus::Connected,
+    SessionStatus::Disconnected,
+    SessionStatus::Reconnecting,
+    SessionStatus::Failed,
+    SessionStatus::AuthFailed,
+    SessionStatus::SessionLost,
+    SessionStatus::Evicted,
+];
+
+#[test]
+fn session_lost_if_reconnecting_only_settles_a_tab_awaiting_recovery() {
+    for status in ALL_STATUSES {
+        let store = store_with_status("s1", status);
+        let before = store.get("s1").unwrap();
+        let applied = store.session_lost_if_reconnecting("s1", Some("lost".into()));
+        if status == SessionStatus::Reconnecting {
+            assert!(applied);
+            assert_eq!(store.status("s1"), Some(SessionStatus::SessionLost));
+        } else {
+            assert!(!applied, "{status:?} must not be relabelled lost");
+            assert_eq!(store.get("s1").unwrap(), before, "{status:?} untouched");
+        }
+    }
+    assert!(!deterministic_store().session_lost_if_reconnecting("nope", None));
+}
+
+#[test]
+fn connect_failed_if_reconnecting_only_settles_a_tab_awaiting_recovery() {
+    for status in ALL_STATUSES {
+        let store = store_with_status("s1", status);
+        let before = store.get("s1").unwrap();
+        let applied = store.connect_failed_if_reconnecting("s1", Some("gave up".into()));
+        if status == SessionStatus::Reconnecting {
+            assert!(applied);
+            let after = store.get("s1").unwrap();
+            assert_eq!(after.status, SessionStatus::Failed);
+            assert_eq!(after.error.as_deref(), Some("gave up"));
+        } else {
+            assert!(!applied, "{status:?} must not be relabelled failed");
+            assert_eq!(store.get("s1").unwrap(), before, "{status:?} untouched");
+        }
+    }
+    assert!(!deterministic_store().connect_failed_if_reconnecting("nope", None));
+}
+
+#[test]
+fn agent_transport_reconnecting_never_refolds_an_ended_tab() {
+    for status in ALL_STATUSES {
+        let store = store_with_status("s1", status);
+        let before = store.get("s1").unwrap();
+        store.agent_transport_reconnecting("s1", Some("reset".into()));
+        let live = matches!(
+            status,
+            SessionStatus::Connecting | SessionStatus::Connected | SessionStatus::Reconnecting
+        );
+        if live {
+            assert_eq!(store.status("s1"), Some(SessionStatus::Reconnecting));
+        } else {
+            assert_eq!(store.get("s1").unwrap(), before, "{status:?} untouched");
+        }
+    }
+}

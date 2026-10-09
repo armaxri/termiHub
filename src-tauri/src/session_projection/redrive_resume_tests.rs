@@ -1739,3 +1739,7 @@ fn io_task_reconnect_fold_order_evicts_before_resolving() {
         assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 0);
     }
 }
+
+/// SM2-002 (#4305): the agent-recovery folds respect the tab's current status.
+#[path = "agent_recovery_status_tests.rs"]
+mod agent_recovery_status;
