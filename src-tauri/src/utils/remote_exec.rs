@@ -1173,27 +1173,17 @@ mod tests {
     /// Base host port of the shared `ssh-password` container (`tests/docker`).
     const DEFAULT_SSH_PASSWORD_PORT: u16 = 2201;
 
-    /// Resolve the `ssh-password` container port (per-checkout offset aware),
-    /// matching `core/tests/common`'s `resolve_port` / `port_ssh_password` and
-    /// `src-tauri/tests/sftp_transfer.rs`'s `sftp_stress_port`. An explicit
-    /// `TERMIHUB_TEST_SSH_PASSWORD_PORT` wins; otherwise the base plus
-    /// `TERMIHUB_TEST_PORT_OFFSET` (default offset `0`, i.e. historical 2201).
-    /// Both env vars are exported from this checkout's `dev.local.json` by
-    /// `scripts/internal/dev-local-env.sh` — see `docs/testing.md` → "Parallel
-    /// test isolation". Without them (a lone checkout / bare `cargo test`) the
-    /// port falls back to 2201, so single-checkout behaviour is unchanged.
+    /// Resolve the `ssh-password` container port (per-checkout offset aware)
+    /// through the resolver every integration test shares
+    /// (`termihub_core::test_fixtures`, #4338): an explicit
+    /// `TERMIHUB_TEST_SSH_PASSWORD_PORT` wins; otherwise the base plus this
+    /// checkout's offset (`TERMIHUB_TEST_PORT_OFFSET`, else `dev.local.json`,
+    /// else `0`) — see `docs/testing.md` → "Parallel test isolation".
     fn ssh_password_port() -> u16 {
-        if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-        {
-            return p;
-        }
-        let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        DEFAULT_SSH_PASSWORD_PORT + offset
+        termihub_core::test_fixtures::fixture_port(
+            "TERMIHUB_TEST_SSH_PASSWORD_PORT",
+            DEFAULT_SSH_PASSWORD_PORT,
+        )
     }
 
     /// Register a process-wide host-key verifier that trusts the local Docker

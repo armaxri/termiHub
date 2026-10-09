@@ -16,7 +16,7 @@
 //!
 //! Skips gracefully when the fixture is absent (hard-fails under
 //! `TERMIHUB_REQUIRE_DOCKER=1`). The drop tests additionally need `docker exec`
-//! into the fixture container (`$TERMIHUB_TEST_PROJECT-sftp-stress`); without it
+//! into this checkout's `<compose_project>-sftp-stress` container; without it
 //! they print `SKIPPED:` unless Docker is required.
 
 #![cfg(unix)]
@@ -56,8 +56,7 @@ struct ContainerShell {
 impl ContainerShell {
     /// Open the shell, or `None` when Docker / the container is unavailable.
     fn open() -> Option<Self> {
-        let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
-        let container = format!("{project}-sftp-stress");
+        let container = sftp_stress_container();
         let running = Command::new("docker")
             .args(["inspect", "-f", "{{.State.Running}}", &container])
             .output()

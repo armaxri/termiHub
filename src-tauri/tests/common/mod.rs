@@ -22,17 +22,13 @@ use tokio::io::AsyncWriteExt;
 /// Resolve the sftp-stress container port (per-checkout offset aware), matching
 /// `core/tests/common`'s `port_sftp_stress`.
 pub fn sftp_stress_port() -> u16 {
-    if let Some(p) = std::env::var("TERMIHUB_TEST_SFTP_STRESS_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    2210 + offset
+    termihub_core::test_fixtures::fixture_port("TERMIHUB_TEST_SFTP_STRESS_PORT", 2210)
+}
+
+/// Name of this checkout's `sftp-stress` container, from the same source as
+/// the port (`termihub_core::test_fixtures`, #4338).
+pub fn sftp_stress_container() -> String {
+    termihub_core::test_fixtures::fixture_container("sftp-stress")
 }
 
 pub fn is_port_reachable(port: u16) -> bool {
@@ -52,10 +48,7 @@ pub const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
 /// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey, so
 /// local and per-PR runs never hard-fail).
 pub fn parse_required(val: Option<&str>) -> bool {
-    matches!(
-        val.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
+    termihub_core::test_fixtures::parse_flag(val)
 }
 
 /// Whether this process requires the Docker fixture to be present.

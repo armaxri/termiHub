@@ -719,11 +719,10 @@ mod live {
     use super::*;
     use crate::utils::docker_fixture_gate::fixture_ready;
 
-    fn env_port(var: &str, default: u16) -> u16 {
-        std::env::var(var)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(default)
+    /// A fixture's host port: `var` when set, else `base` shifted by this
+    /// checkout's test-port offset (env or `dev.local.json`, #4338).
+    fn env_port(var: &str, base: u16) -> u16 {
+        termihub_core::test_fixtures::fixture_port(var, base)
     }
 
     /// Trust the loopback fixtures' host keys (first registration wins).

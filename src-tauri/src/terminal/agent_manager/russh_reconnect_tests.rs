@@ -4,6 +4,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+use termihub_core::test_fixtures;
 
 /// Overall ceiling for the fresh-create + echo round-trip after reconnect.
 /// Generous so a slow CI shell cold-start never flakes it.
@@ -65,6 +66,41 @@ fn find_agent_binary() -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|cand| cand.is_file())
+}
+
+/// How to provide what the local-sshd tests need.
+const SSHD_HINT: &str = "install an OpenSSH server and client (e.g. openssh-server)";
+
+/// The local `sshd` to stand up, or `None` to skip. Panics instead of skipping
+/// under `TERMIHUB_REQUIRE_LOCAL_SSHD`, which the CI lanes that run these tests
+/// set, so the reconnect regression guard cannot pass without running (#4338).
+fn require_sshd() -> Option<PathBuf> {
+    let sshd = find_sshd();
+    test_fixtures::require(
+        sshd.is_some(),
+        test_fixtures::REQUIRE_LOCAL_SSHD_ENV,
+        "no sshd binary found — cannot stand up a local agent endpoint",
+        SSHD_HINT,
+    )
+    .then_some(sshd)
+    .flatten()
+}
+
+/// The local `sshd` and the prebuilt agent binary, or `None` to skip. Like
+/// [`require_sshd`], panics instead of skipping under
+/// `TERMIHUB_REQUIRE_LOCAL_SSHD`.
+fn require_sshd_and_agent() -> Option<(PathBuf, PathBuf)> {
+    let sshd = require_sshd()?;
+    let agent_bin = find_agent_binary();
+    test_fixtures::require(
+        agent_bin.is_some(),
+        test_fixtures::REQUIRE_LOCAL_SSHD_ENV,
+        "termihub-agent binary not found",
+        "run `cargo build -p termihub-agent`, or set TERMIHUB_TEST_AGENT_BIN",
+    )
+    .then_some(agent_bin)
+    .flatten()
+    .map(|agent_bin| (sshd, agent_bin))
 }
 
 /// Lowest port of the kernel's ephemeral (auto-assigned) range: every port-0
@@ -1141,15 +1177,7 @@ async fn create_and_verify_usable(
 /// gracefully otherwise (mirrors the Docker sftp integration test).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -1273,15 +1301,7 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
 /// otherwise (mirrors the fresh-create test and the Docker sftp integration test).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -1492,15 +1512,7 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_running() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -1684,15 +1696,7 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -2003,15 +2007,7 @@ struct SeverObservations {
 /// `Reconnecting` states are read from ordered transition logs, not polled.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -2325,15 +2321,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
 /// can never beat the teardown and turn the permanent drop into a reconnect.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -2502,8 +2490,7 @@ fn is_live_sshd(pid: u32) -> bool {
 fn killed_test_process_takes_its_sshd_down() {
     use std::io::BufRead;
 
-    if find_sshd().is_none() {
-        eprintln!("SKIP: no sshd binary found");
+    if require_sshd().is_none() {
         return;
     }
     let exe = std::env::current_exe().expect("current test binary");
@@ -2591,15 +2578,7 @@ fn killed_test_process_takes_its_sshd_down() {
 // expands them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn resilient_agent_tab_retains_config_and_redrive_reestablishes_after_reap() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
-        return;
-    };
-    let Some(agent_bin) = find_agent_binary() else {
-        eprintln!(
-            "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
-                 (or set TERMIHUB_TEST_AGENT_BIN)"
-        );
+    let Some((sshd, agent_bin)) = require_sshd_and_agent() else {
         return;
     };
 
@@ -2765,8 +2744,7 @@ fn sshd_setenv_token_quotes_only_when_sshd_would_split() {
 /// `ssh` client to print the session environment; skips without sshd/ssh.
 #[test]
 fn sshd_session_env_carries_the_absolute_profile_path() {
-    let Some(sshd) = find_sshd() else {
-        eprintln!("SKIP: no sshd binary found");
+    let Some(sshd) = require_sshd() else {
         return;
     };
     let mut harness =
@@ -2795,7 +2773,11 @@ fn sshd_session_env_carries_the_absolute_profile_path() {
     {
         Ok(output) => output,
         Err(e) => {
-            eprintln!("SKIP: no ssh client ({e})");
+            test_fixtures::missing(
+                test_fixtures::REQUIRE_LOCAL_SSHD_ENV,
+                &format!("no ssh client ({e})"),
+                SSHD_HINT,
+            );
             return;
         }
     };
