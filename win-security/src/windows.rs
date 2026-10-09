@@ -518,7 +518,15 @@ mod tests {
             )
         })
         .unwrap();
-        let summary = dacl_of_handle(pipe.as_raw_handle()).unwrap();
+        // Read the stored descriptor back through a client handle, as the
+        // core and agent tests do.
+        let client = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&name)
+            .unwrap();
+        let summary = dacl_of_handle(client.as_raw_handle()).unwrap();
+        drop(pipe);
         assert!(
             summary.grants_full_control_to_exactly(&[&user, LOCAL_SYSTEM_SID]),
             "{summary:?}"
