@@ -1188,7 +1188,7 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
 
     let config = sshd.agent_config();
     let settings = AgentSettings::default();
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = AgentAlive::new();
     let mut request_id = 0u64;
 
     // ── Initial establish: connect over russh, exec the agent, initialize.
@@ -1312,7 +1312,7 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
 
     let config = sshd.agent_config();
     let settings = AgentSettings::default();
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = AgentAlive::new();
     let mut request_id = 0u64;
 
     // ── Establish, create a DAEMON-BACKED session ("local" is persistent, so the
@@ -1523,7 +1523,7 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
 
     let config = sshd.agent_config();
     let settings = AgentSettings::default();
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = AgentAlive::new();
     let mut request_id = 0u64;
 
     // Establish + a daemon-backed persistent session running a counter.
@@ -1707,7 +1707,7 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
 
     let config = sshd.agent_config();
     let settings = AgentSettings::default();
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = AgentAlive::new();
     let mut request_id = 0u64;
 
     let (session, channel, _buffered, _token_path) =
@@ -1748,7 +1748,7 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
 
     // User-cancel is the DISTINCT settle: with alive=false the next attempt
     // returns promptly with the stop signal — never a spurious Ok.
-    alive.store(false, Ordering::SeqCst);
+    alive.stop();
     match reconnect_agent(&config, &settings, &mut request_id, &alive).await {
         Err(e) => assert!(
             e.contains("stopped by user"),

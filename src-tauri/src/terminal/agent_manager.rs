@@ -102,6 +102,7 @@ use notifications::{
 /// Carved verbatim into sibling modules; the manager below spawns
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
 mod agent_stderr;
+mod alive;
 pub(crate) mod files_only;
 mod io_lanes;
 mod io_task;
@@ -110,6 +111,7 @@ mod reconnect;
 mod recovery;
 mod state_events;
 mod stdout_reader;
+use alive::AgentAlive;
 pub(crate) use io_lanes::AgentIoSender;
 use io_lanes::{GateError, IoBudget, AGENT_IO_DATA_BUDGET, AGENT_IO_MAX_CHUNK};
 use io_task::agent_io_task;
@@ -124,8 +126,6 @@ use reattach::reattach_after_reconnect;
 use reconnect::reconnect_agent;
 #[cfg(test)]
 use reconnect::AGENT_RECONNECT_POLICY;
-#[cfg(test)]
-use reconnect::{cancel_connect_when_disconnected, RECONNECT_CANCEL_POLL_INTERVAL};
 #[cfg(test)]
 pub(crate) use recovery::resolve_agent_hosted_sessions;
 use recovery::{
@@ -396,7 +396,9 @@ pub(crate) enum AgentIoCommand {
 /// State for a single connected agent.
 struct AgentConnection {
     command_tx: UnboundedSender<AgentIoCommand>,
-    alive: Arc<AtomicBool>,
+    /// The I/O task's single stop signal (#4366): live until a Disconnect,
+    /// shutdown or exhausted reconnect stops it.
+    alive: Arc<AgentAlive>,
     /// True while the I/O task is inside its reconnect path (transport down).
     /// Shared with the task so the send-side (`send_session_input`) can drop
     /// terminal input at the source during an outage instead of queuing it for a
@@ -1035,7 +1037,7 @@ struct AgentReaper {
 /// `agents` lock (lock order `agents` → `io_budgets`). A dropped manager (dead
 /// `Weak`) or poisoned lock is treated as a no-op — there is nothing left to
 /// clean up.
-fn reap_agent(reaper: &AgentReaper, agent_id: &str, own_alive: &Arc<AtomicBool>) {
+fn reap_agent(reaper: &AgentReaper, agent_id: &str, own_alive: &Arc<AgentAlive>) {
     // `upgrade()` must be bound so the strong `Arc` outlives the guard it lends.
     let Some(agents) = reaper.agents.upgrade() else {
         return;
@@ -1067,7 +1069,7 @@ fn prune_dead_agents_from_map(agents: &Mutex<HashMap<String, AgentConnection>>) 
     let mut removed = Vec::new();
     if let Ok(mut guard) = agents.lock() {
         guard.retain(|id, conn| {
-            let alive = conn.alive.load(Ordering::SeqCst);
+            let alive = conn.alive.is_alive();
             if !alive {
                 // CONC-009: force-stop as a fallback. A dead entry's task has
                 // usually already returned (abort is a no-op), but a wedged task
@@ -1196,7 +1198,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // Evict a dead entry left behind when the I/O task exits without
             // removing itself (e.g. reconnection failed after a dropped connection).
             if let Some(existing) = agents.get(agent_id) {
-                if existing.alive.load(Ordering::SeqCst) {
+                if existing.alive.is_alive() {
                     return Err(TerminalError::already_connected(format!(
                         "Agent {} is already connected",
                         agent_id
@@ -1478,7 +1480,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             };
 
             // 4. Spawn the async I/O task
-            let alive = Arc::new(AtomicBool::new(true));
+            let alive = AgentAlive::new();
             let reconnecting = Arc::new(AtomicBool::new(false));
             // #3018: the command ingress is bounded by a per-agent data-credit
             // budget rather than by channel slots. Producers of terminal input and
@@ -1588,7 +1590,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             if cancel_token.is_cancelled() {
                 drop(agents);
                 let _ = command_tx.send(AgentIoCommand::Disconnect);
-                alive.store(false, Ordering::SeqCst);
+                alive.stop();
                 io_task.abort();
                 io_budget.close();
                 emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User);
@@ -1685,7 +1687,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // Cooperative shutdown first: a live task processes `Disconnect` and
             // returns, dropping its russh session/channel.
             let _ = conn.command_tx.send(AgentIoCommand::Disconnect);
-            conn.alive.store(false, Ordering::SeqCst);
+            conn.alive.stop();
             // CONC-009: guaranteed force-stop fallback. A task parked in a blocking
             // reconnect can never observe `Disconnect` (it holds its own
             // `command_tx` clone, so the channel never closes either); the abort is
@@ -1711,7 +1713,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         agents
             .get(agent_id)
-            .map(|c| c.alive.load(Ordering::SeqCst))
+            .map(|c| c.alive.is_alive())
             .unwrap_or(false)
     }
 
@@ -1742,7 +1744,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             Err(_) => return false,
         };
         match agents.get(agent_id) {
-            Some(conn) if conn.alive.load(Ordering::SeqCst) => conn
+            Some(conn) if conn.alive.is_alive() => conn
                 .command_tx
                 .send(AgentIoCommand::TestSeverTransport)
                 .is_ok(),
@@ -1776,7 +1778,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
             agents
                 .get(agent_id)
-                .filter(|c| c.alive.load(Ordering::SeqCst))
+                .filter(|c| c.alive.is_alive())
                 .map(|c| c.reattach_config.clone())
         };
         // The agents lock is released before the config-store lock is taken, so
@@ -2944,7 +2946,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         let mut ids: Vec<String> = agents
             .iter()
-            .filter(|(_, c)| c.alive.load(Ordering::SeqCst))
+            .filter(|(_, c)| c.alive.is_alive())
             .map(|(id, _)| id.clone())
             .collect();
         ids.sort();
@@ -2983,7 +2985,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         agents
             .get(agent_id)
-            .filter(|c| c.alive.load(Ordering::SeqCst))
+            .filter(|c| c.alive.is_alive())
             .map(|c| {
                 let config = &c.reattach_config.config;
                 (config.host.clone(), config.username.clone())

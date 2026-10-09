@@ -12,7 +12,8 @@ use tokio::sync::mpsc;
 
 use super::*;
 use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnection, AgentConnectionManager, AgentIoCommand, AgentRpcFailure,
+    AgentAlive, AgentCapabilities, AgentConnection, AgentConnectionManager, AgentIoCommand,
+    AgentRpcFailure,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -618,7 +619,7 @@ fn connection(
 ) -> AgentConnection {
     AgentConnection {
         command_tx,
-        alive: Arc::new(AtomicBool::new(true)),
+        alive: AgentAlive::new(),
         reconnecting,
         io_task: dummy_abort_handle(),
         capabilities: AgentCapabilities {

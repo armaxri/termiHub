@@ -36,7 +36,6 @@ use super::jump_host::{connect_target, GatewayHold};
 /// (#1233); this is only the starting value.
 const MONITORING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MONITORING_INTERVAL_MS);
 
-
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
 
@@ -415,10 +414,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
         });
 
         if let Ok(mut guard) = self.task.lock() {
-            *guard = Some(MonitoringTask {
-                cancel,
-                controls,
-            });
+            *guard = Some(MonitoringTask { cancel, controls });
         }
 
         Ok(MonitoringSubscription {

@@ -791,7 +791,7 @@ async fn reconnect_agent_stops_when_alive_is_false() {
     };
     let settings = AgentSettings::default();
     let mut request_id = 0u64;
-    let alive = Arc::new(AtomicBool::new(false));
+    let alive = AgentAlive::stopped();
 
     let result = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
 
@@ -884,7 +884,7 @@ fn test_reattach_config(password: Option<&str>) -> RetainedAgentConfig {
 fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) -> AgentConnection {
     AgentConnection {
         command_tx,
-        alive: Arc::new(AtomicBool::new(true)),
+        alive: AgentAlive::new(),
         reconnecting: Arc::new(AtomicBool::new(false)),
         io_task: dummy_abort_handle(),
         capabilities: AgentCapabilities {
@@ -918,7 +918,11 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
 pub(super) fn make_agent_connection(alive: bool) -> AgentConnection {
     let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
     let mut conn = make_agent_connection_with_tx(command_tx);
-    conn.alive = Arc::new(AtomicBool::new(alive));
+    conn.alive = if alive {
+        AgentAlive::new()
+    } else {
+        AgentAlive::stopped()
+    };
     conn
 }
 
@@ -976,7 +980,7 @@ fn reap_agent_spares_a_newer_entry_with_the_same_id() {
     let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
     let budgets: IoBudgetMap = Arc::new(Mutex::new(HashMap::new()));
     // The old task's own `alive` flag: its entry has since been replaced.
-    let stale_alive = Arc::new(AtomicBool::new(false));
+    let stale_alive = AgentAlive::stopped();
     let newer_budget = IoBudget::new(AGENT_IO_DATA_BUDGET);
     agents
         .lock()
@@ -1010,7 +1014,7 @@ fn reap_agent_tolerates_dropped_manager() {
         reaper_for(&agents, &budgets)
     };
     // Should be a no-op, not a panic.
-    reap_agent(&reaper, "agent-1", &Arc::new(AtomicBool::new(false)));
+    reap_agent(&reaper, "agent-1", &AgentAlive::stopped());
 }
 
 /// Prune sweeps every `alive == false` entry and returns the removed ids,
@@ -1082,7 +1086,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
     });
     let conn = AgentConnection {
         command_tx: command_tx_conn,
-        alive: Arc::new(AtomicBool::new(true)),
+        alive: AgentAlive::new(),
         reconnecting: Arc::new(AtomicBool::new(false)),
         io_task: join.abort_handle(),
         capabilities: AgentCapabilities {
@@ -1148,7 +1152,7 @@ async fn disconnect_agent_aborts_wedged_io_task() {
 async fn prune_dead_agents_aborts_wedged_task() {
     let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
     let (conn, join) = make_wedged_agent_connection();
-    conn.alive.store(false, Ordering::SeqCst); // mark dead so prune sweeps it
+    conn.alive.stop(); // mark dead so prune sweeps it
     {
         let mut guard = agents.lock().unwrap();
         guard.insert("dead-1".to_string(), conn);
@@ -1301,35 +1305,42 @@ fn cancel_connect_fires_registered_token() {
     assert!(!cancel_connect_token(&registry, "agent-2"));
 }
 
-/// CONC-002: the reconnect connect-cancellation watcher fires its token as
-/// soon as `alive` flips false, so a hung reconnect connect (which selects
-/// on that token) aborts promptly on a user Disconnect / shutdown instead of
-/// parking the I/O task for the full connect timeout. This unit-tests the
-/// `alive`→token bridge; the core proves the token actually aborts a real
-/// hung connect (`connect_aborts_when_token_cancelled`).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cancel_connect_watcher_fires_token_when_alive_flips() {
-    let alive = Arc::new(AtomicBool::new(true));
-    let token = CancellationToken::new();
-    let watcher = tokio::spawn(cancel_connect_when_disconnected(
-        alive.clone(),
-        token.clone(),
-    ));
+/// CONC-002 / #4366: a Disconnect during the reconnect backoff ends
+/// `reconnect_agent` at the stop instant — the backoff awaits the stop signal
+/// instead of sleeping in 100 ms slices that re-check a flag. Paused time makes
+/// this exact and deterministic: the first backoff is ~1 s, the stop lands at
+/// 300 ms, and no connect is ever attempted.
+#[tokio::test(start_paused = true)]
+async fn reconnect_agent_stops_at_the_disconnect_instant_mid_backoff() {
+    let config = RemoteAgentConfig {
+        host: "unreachable.example.com".to_string(),
+        port: 22,
+        username: "user".to_string(),
+        auth_method: "password".to_string(),
+        ..Default::default()
+    };
+    let settings = AgentSettings::default();
+    let mut request_id = 0u64;
+    let alive = AgentAlive::new();
+    let stopper = alive.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        stopper.stop();
+    });
 
-    // While alive, the token stays live well past one poll interval.
-    tokio::time::sleep(RECONNECT_CANCEL_POLL_INTERVAL * 3).await;
-    assert!(
-        !token.is_cancelled(),
-        "the token must not fire while alive is still true"
+    let start = tokio::time::Instant::now();
+    let result = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
+
+    assert_eq!(
+        result.err().as_deref(),
+        Some("Reconnect stopped by user"),
+        "a stop mid-backoff must end the reconnect as stopped"
     );
-
-    // A Disconnect flips alive; the watcher must fire the token promptly.
-    alive.store(false, Ordering::SeqCst);
-    tokio::time::timeout(std::time::Duration::from_secs(2), token.cancelled())
-        .await
-        .expect("watcher must fire the token promptly once alive is false");
-    assert!(token.is_cancelled());
-    let _ = watcher.await;
+    assert_eq!(
+        start.elapsed(),
+        std::time::Duration::from_millis(300),
+        "the reconnect must end exactly at the stop, not on a later poll slice"
+    );
 }
 
 /// CONC-003: `send_request` must return a real timeout error within the
@@ -2250,7 +2261,7 @@ fn prune_scrubs_the_retained_config_of_a_dead_agent() {
         .get("agent-1")
         .unwrap()
         .alive
-        .store(false, Ordering::SeqCst);
+        .stop();
 
     assert_eq!(manager.prune_dead_agents(), vec!["agent-1".to_string()]);
     assert!(!manager.has_retained_agent_config("agent-1"));

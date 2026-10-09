@@ -31,6 +31,7 @@ use termihub_core::protocol::methods::{
 };
 
 use super::agent_stderr::AgentStderr;
+use super::alive::AgentAlive;
 use super::files_only::FilesOnlyRoutes;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
 use super::stdout_reader::{frame, Frame};
@@ -149,7 +150,7 @@ pub(super) fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
 
 /// Settle an agent whose in-task reconnect budget is exhausted.
 ///
-/// Order matters (CONC2-005, #4304): `alive` goes `false` **first**, so no
+/// Order matters (CONC2-005, #4304): `alive` is stopped **first**, so no
 /// observer of the hosted tabs' `Failed` fold or of the `disconnected` event can
 /// still read the agent as connected, nor route new work to it. Then:
 ///
@@ -166,11 +167,11 @@ pub(super) fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
 pub(super) async fn give_up_after_exhausted_reconnect<R: Runtime>(
     app_handle: &AppHandle<R>,
     agent_id: &str,
-    alive: &Arc<AtomicBool>,
+    alive: &Arc<AgentAlive>,
     reaper: &AgentReaper,
     error: &str,
 ) {
-    alive.store(false, Ordering::SeqCst);
+    alive.stop();
     fold_agent_hosted_reconnect_failed(app_handle, agent_id, error).await;
     emit_agent_state_with_error(app_handle, agent_id, "disconnected", Some(error));
     reap_agent(reaper, agent_id, alive);
@@ -195,7 +196,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
     command_rx: UnboundedReceiver<AgentIoCommand>,
     command_tx: UnboundedSender<AgentIoCommand>,
     io_budget: Arc<IoBudget>,
-    alive: Arc<AtomicBool>,
+    alive: Arc<AgentAlive>,
     reconnecting: Arc<AtomicBool>,
     app_handle: AppHandle<R>,
     agent_id: String,
@@ -298,7 +299,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         Next::Data(c, credit) => (c, Some(credit)),
                         Next::Closed => {
                             // Sender dropped — clean shutdown
-                            alive.store(false, Ordering::SeqCst);
+                            alive.stop();
                             return;
                         }
                     };
@@ -466,7 +467,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             tool_runs.remove(&run_id);
                         }
                         AgentIoCommand::Disconnect => {
-                            alive.store(false, Ordering::SeqCst);
+                            alive.stop();
                             return;
                         }
                         AgentIoCommand::TestSeverTransport => {
