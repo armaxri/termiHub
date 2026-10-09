@@ -30,16 +30,27 @@ on:
     - cron: "41 3 * * *"
   workflow_dispatch:
   pull_request:
+    # Every source the live suite exercises (#4618); kept in sync by the drift
+    # test in scripts/internal/ci-changes.test.mjs ("live lane path filters").
     paths:
       - "core/src/backends/wsl.rs"
       - "core/src/backends/wsl_*.rs"
       - "core/src/backends/conpty_cursor.rs"
       - "core/src/session/shell.rs"
+      - "core/src/files/browser.rs"
       - "core/src/files/copy.rs"
       - "core/src/files/local.rs"
+      - "core/src/files/ranged.rs"
+      - "core/src/files/utils.rs"
       - "core/src/files/transfer/attempt.rs"
       - "core/src/files/transfer/local.rs"
       - "core/src/files/transfer/local_folder.rs"
+      - "core/src/files/transfer/mod.rs"
+      - "core/src/files/transfer/progress.rs"
+      - "core/src/files/transfer/registry.rs"
+      - "core/src/files/transfer/retry.rs"
+      - "core/src/files/transfer/scheduler.rs"
+      - "core/src/files/transfer/state.rs"
       - ".github/workflows/wsl-live.yml"
 
 concurrency:

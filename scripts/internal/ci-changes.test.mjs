@@ -329,6 +329,130 @@ describe("agent.yml path filter (#4358, CI2-008)", () => {
   });
 });
 
+describe("live lane path filters (#4618)", () => {
+  // Per-platform live lanes (Windows SSH host, WSL) run only on PRs whose
+  // files match a hand-written `pull_request.paths` list, not ci-changes.mjs.
+  // A source file the suite exercises but the list omits means a PR changing
+  // it skips the lane (#4609 changed core/src/backends/ssh/remote_shell.rs and
+  // the Windows SSH host lane never ran). Each lane declares here the sources
+  // its suite exercises; the workflow must list every one of them verbatim.
+  // When a suite starts exercising a new area, add it here and to the
+  // workflow.
+  const LANES = {
+    "windows-ssh-host.yml": [
+      // Desktop -> Windows host (windows_ssh_host_tests.rs).
+      "src-tauri/src/terminal/agent_deploy.rs",
+      "src-tauri/src/terminal/agent_install.rs",
+      "src-tauri/src/terminal/agent_binary.rs",
+      "src-tauri/src/terminal/backend.rs",
+      "src-tauri/src/terminal/jsonrpc.rs",
+      "src-tauri/src/terminal/agent_manager/**",
+      "src-tauri/src/utils/remote_exec.rs",
+      "src-tauri/src/utils/ssh_auth.rs",
+      // The core SSH backend, incl. the shell-integration setup (#4143) and
+      // the initial-command / OSC 7 setup it takes from session/shell.rs.
+      "core/src/backends/ssh/**",
+      "core/src/session/shell.rs",
+      // Windows agent -> targets (native_sshd_agent_backends.rs).
+      "core/src/backends/docker/list.rs",
+      "core/src/backends/docker/runtime.rs",
+      "agent/src/daemon/**",
+      "agent/src/session/**",
+      "agent/tests/native_sshd_agent_backends.rs",
+      "agent/tests/common/**",
+      // The recipe and fixture.
+      "scripts/internal/run-windows-ssh-host-suite.sh",
+      "scripts/internal/native-sshd-fixture.*",
+      ".github/workflows/windows-ssh-host.yml",
+    ],
+    "wsl-live.yml": [
+      "core/src/backends/wsl.rs",
+      "core/src/backends/wsl_*.rs",
+      "core/src/backends/conpty_cursor.rs",
+      "core/src/session/shell.rs",
+      "core/src/files/browser.rs",
+      "core/src/files/copy.rs",
+      "core/src/files/local.rs",
+      "core/src/files/ranged.rs",
+      "core/src/files/utils.rs",
+      "core/src/files/transfer/attempt.rs",
+      "core/src/files/transfer/local.rs",
+      "core/src/files/transfer/local_folder.rs",
+      "core/src/files/transfer/mod.rs",
+      "core/src/files/transfer/progress.rs",
+      "core/src/files/transfer/registry.rs",
+      "core/src/files/transfer/retry.rs",
+      "core/src/files/transfer/scheduler.rs",
+      "core/src/files/transfer/state.rs",
+      ".github/workflows/wsl-live.yml",
+    ],
+  };
+
+  // Read `pull_request:` -> `paths:` line-wise (no YAML parser dependency),
+  // accepting single- or double-quoted items and skipping comment lines.
+  const pullRequestPaths = (workflow) => {
+    const lines = readFileSync(path.join(REPO_ROOT, ".github/workflows", workflow), "utf8").split(
+      "\n"
+    );
+    let at = lines.indexOf("  pull_request:");
+    if (at < 0) throw new Error(`${workflow} has no pull_request trigger`);
+    for (at += 1; at < lines.length && !/^ {4}paths:\s*$/.test(lines[at]); at += 1) {
+      if (/^ {0,2}\S/.test(lines[at])) throw new Error(`${workflow} pull_request has no paths`);
+    }
+    const found = [];
+    for (at += 1; at < lines.length; at += 1) {
+      if (/^\s*#/.test(lines[at])) continue;
+      const item = /^ {6}- (["'])([^"']+)\1\s*$/.exec(lines[at]);
+      if (!item) break;
+      found.push(item[2]);
+    }
+    return found;
+  };
+
+  // Minimal glob -> RegExp for the patterns these filters use: `**` spans
+  // directories, `*` stays within one path segment.
+  const globRegExp = (glob) =>
+    new RegExp(
+      "^" +
+        glob
+          .split("**")
+          .map((part) =>
+            part
+              .split("*")
+              .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+              .join("[^/]*")
+          )
+          .join(".*") +
+        "$"
+    );
+  const tracked = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" })
+    .split("\n")
+    .filter(Boolean);
+
+  describe.each(Object.entries(LANES))("%s", (workflow, required) => {
+    const paths = pullRequestPaths(workflow);
+
+    it("lists every source area its suite exercises", () => {
+      const missing = required.filter((glob) => !paths.includes(glob));
+      expect(missing, `add these to ${workflow} pull_request.paths`).toEqual([]);
+    });
+
+    it("lists no path that matches nothing (a renamed or deleted file)", () => {
+      const stale = paths.filter((glob) => !tracked.some((f) => globRegExp(glob).test(f)));
+      expect(stale, `${workflow} pull_request.paths entries matching no file`).toEqual([]);
+    });
+  });
+
+  it("matches globs the way the path filters do", () => {
+    expect(globRegExp("core/src/backends/ssh/**").test("core/src/backends/ssh/a/b.rs")).toBe(true);
+    expect(globRegExp("core/src/backends/wsl_*.rs").test("core/src/backends/wsl_exec.rs")).toBe(
+      true
+    );
+    expect(globRegExp("core/src/backends/wsl_*.rs").test("core/src/backends/wsl/x.rs")).toBe(false);
+    expect(globRegExp("core/src/files/local.rs").test("core/src/files/localXrs")).toBe(false);
+  });
+});
+
 describe("comment-only Rust changes (#3903)", () => {
   const commentOnly = new Set(["core/src/backends/ssh/unattended.rs"]);
 
