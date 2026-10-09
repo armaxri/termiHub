@@ -255,18 +255,196 @@ fn an_unprovoked_exit_is_classified_from_its_status() {
     );
 }
 
-#[test]
-fn a_reported_allocation_failure_makes_the_exit_out_of_memory() {
+/// A runner whose memory the host measures as `under_pressure`.
+fn measured(under_pressure: bool) -> Arc<Shared> {
     let shared = shared();
+    shared.set_memory_probe(Box::new(move || under_pressure));
+    shared
+}
+
+const ALLOCATION_FAILURE: &[u8] = b"plugin says hi\nmemory allocation of 1048576 bytes failed\n";
+
+/// An exit status: killed by `signal` (Unix), or exit `code` (Windows).
+fn status(signal: i32, code: u32) -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        let _ = code;
+        std::os::unix::process::ExitStatusExt::from_raw(signal)
+    }
+    #[cfg(windows)]
+    {
+        let _ = signal;
+        std::os::windows::process::ExitStatusExt::from_raw(code)
+    }
+}
+
+/// How Rust's allocation-failure handler ends a process.
+fn aborted() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    let signal = libc::SIGABRT;
+    #[cfg(not(unix))]
+    let signal = 6;
+    status(signal, 0xC000_0409)
+}
+
+/// How the host's kill ends a process.
+fn killed() -> std::process::ExitStatus {
+    #[cfg(unix)]
+    let signal = libc::SIGKILL;
+    #[cfg(not(unix))]
+    let signal = 9;
+    status(signal, 1)
+}
+
+#[test]
+fn a_reported_allocation_failure_under_measured_pressure_is_out_of_memory() {
+    let shared = measured(true);
     shared.expect_stderr();
-    Arc::clone(&shared)
-        .forward_stderr(&b"plugin says hi\nmemory allocation of 1048576 bytes failed\n"[..]);
+    Arc::clone(&shared).forward_stderr(ALLOCATION_FAILURE);
     shared.finish(None);
     assert_eq!(shared.exit_cause(), Some(RunnerExitCause::OutOfMemory));
     assert!(!is_allocation_failure(b"memory allocation of lots"));
     assert!(is_allocation_failure(
         b"memory allocation of 8 bytes failed\r\n"
     ));
+}
+
+#[test]
+fn a_reported_allocation_failure_followed_by_an_abort_is_out_of_memory() {
+    // The runner died before the host could measure it (the usual race
+    // under `RLIMIT_AS`), but it ended the way an allocation failure ends.
+    let shared = measured(false);
+    shared.expect_stderr();
+    Arc::clone(&shared).forward_stderr(ALLOCATION_FAILURE);
+    shared.finish(Some(aborted()));
+    assert_eq!(shared.exit_cause(), Some(RunnerExitCause::OutOfMemory));
+}
+
+#[test]
+fn a_plugin_written_allocation_failure_alone_does_not_change_the_exit() {
+    // #4335 (PLG2-006): the text is the plugin's; without host-side evidence
+    // the exit keeps the classification its status gives it.
+    let shared = measured(false);
+    shared.expect_stderr();
+    Arc::clone(&shared).forward_stderr(ALLOCATION_FAILURE);
+    shared.finish(Some(killed()));
+    assert!(
+        matches!(shared.exit_cause(), Some(RunnerExitCause::Crashed { .. })),
+        "{:?}",
+        shared.exit_cause()
+    );
+
+    // No probe at all (nothing measurable) and no status: still a crash.
+    let unmeasured = self::shared();
+    unmeasured.expect_stderr();
+    Arc::clone(&unmeasured).forward_stderr(ALLOCATION_FAILURE);
+    unmeasured.finish(None);
+    assert!(matches!(
+        unmeasured.exit_cause(),
+        Some(RunnerExitCause::Crashed { .. })
+    ));
+}
+
+#[test]
+fn a_hung_plugin_cannot_disguise_its_hang_as_out_of_memory() {
+    let shared = measured(false);
+    shared.expect_stderr();
+    shared.set_pending_cause(RunnerExitCause::NotResponding);
+    Arc::clone(&shared).forward_stderr(ALLOCATION_FAILURE);
+    // The host's kill ended it, not an abort.
+    shared.finish(Some(killed()));
+    assert_eq!(shared.exit_cause(), Some(RunnerExitCause::NotResponding));
+}
+
+#[test]
+fn ended_by_abort_recognises_only_an_abort() {
+    assert!(ended_by_abort(aborted()));
+    assert!(!ended_by_abort(killed()));
+}
+
+/// One captured `tracing` event: its level and message.
+#[derive(Clone, Default)]
+struct Capture(Arc<Mutex<Vec<(tracing::Level, String)>>>);
+
+struct MessageVisitor(String);
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl tracing::Subscriber for Capture {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut visitor = MessageVisitor(String::new());
+        event.record(&mut visitor);
+        self.0
+            .lock()
+            .unwrap()
+            .push((*event.metadata().level(), visitor.0));
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[test]
+fn stderr_lines_go_through_the_log_limiter_tagged_and_sanitised() {
+    use crate::plugin::log_rate_limit::LogRateLimitConfig;
+
+    let limiter = Arc::new(PluginLogLimiter::new(LogRateLimitConfig {
+        burst: 2,
+        lines_per_sec: 1,
+        summary_interval: std::time::Duration::from_secs(3600),
+    }));
+    let shared = Shared::new("probe".to_owned(), None, Arc::clone(&limiter));
+    shared.expect_stderr();
+    let capture = Capture::default();
+    let stderr = b"\x1b]0;owned\x07evil\r\x1b[2Jline\nsecond\nthird\nfourth\n";
+    tracing::subscriber::with_default(capture.clone(), || {
+        Arc::clone(&shared).forward_stderr(&stderr[..]);
+    });
+    let events = capture.0.lock().unwrap().clone();
+    // The burst of two lines is emitted at warn level, tagged with the
+    // host-trusted id, every control character turned into a space.
+    assert_eq!(
+        events,
+        [
+            (
+                tracing::Level::WARN,
+                "[probe]  ]0;owned evil  [2Jline".to_owned()
+            ),
+            (tracing::Level::WARN, "[probe] second".to_owned()),
+        ]
+    );
+    // The rest was dropped by the limiter, not written anywhere.
+    assert_eq!(limiter.pending_suppressed(), 2);
+}
+
+#[test]
+fn an_overlong_stderr_line_is_bounded_and_marked_truncated() {
+    let shared = shared();
+    shared.expect_stderr();
+    let capture = Capture::default();
+    let mut long = vec![b'x'; MAX_LOG_MESSAGE_BYTES + 100];
+    long.push(b'\n');
+    tracing::subscriber::with_default(capture.clone(), || {
+        Arc::clone(&shared).forward_stderr(&long[..]);
+    });
+    let events = capture.0.lock().unwrap().clone();
+    assert_eq!(events.len(), 1, "one bounded line");
+    let (_, line) = &events[0];
+    assert!(line.ends_with("…[truncated]"), "{line}");
+    assert!(line.len() < MAX_LOG_MESSAGE_BYTES + 64, "{}", line.len());
 }
 
 #[test]
@@ -301,11 +479,11 @@ fn a_vanished_runner_is_an_exit_not_invalid_data() {
 fn out_of_memory_evidence_beats_a_racing_hang_verdict() {
     // #4239: the watchdog declared a hang, but the runner reported a failed
     // allocation before it went: the overlay must say out of memory.
-    let shared = shared();
+    let shared = measured(true);
     shared.expect_stderr();
     shared.set_pending_cause(RunnerExitCause::NotResponding);
     Arc::clone(&shared).forward_stderr(&b"memory allocation of 1048576 bytes failed\n"[..]);
-    shared.finish(None);
+    shared.finish(Some(killed()));
     assert_eq!(shared.exit_cause(), Some(RunnerExitCause::OutOfMemory));
 
     // Without the evidence the hang stands.

@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/sandbox/spawn.rs:258
   - plugin-runner/src/sandbox/linux.rs:478
   - plugin-runner/src/sandbox/linux.rs:801
-status: open
-resolution: ""
+status: fixed
+resolution: "#4335 — the runner's stdout is the null device on every platform; no host descriptor but its channel reaches it"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -37,6 +37,8 @@ pub(super) struct ProxyHost {
     writes: Mutex<WriteQueue>,
     queued: Condvar,
     closed: std::sync::atomic::AtomicBool,
+    /// `StreamClosed` was sent to the runner.
+    closed_reported: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -57,20 +59,49 @@ impl ProxyHost {
             writes: Mutex::new(WriteQueue::default()),
             queued: Condvar::new(),
             closed: std::sync::atomic::AtomicBool::new(false),
+            closed_reported: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
     /// Start the pump and writer threads (after the runner has the reply).
+    ///
+    /// If either cannot start, the connection would never move data: it is
+    /// closed instead and the runner is told so (`StreamClosed`, #4335).
     pub(super) fn start(self: &Arc<Self>, sink: FrameSink) {
         let pump = Arc::clone(self);
         let pump_sink = Arc::clone(&sink);
-        let _ = std::thread::Builder::new()
-            .name(format!("plugin-bridge-pump-{}", self.conn_id))
-            .spawn(move || pump.pump(&pump_sink));
-        let writer = Arc::clone(self);
-        let _ = std::thread::Builder::new()
-            .name(format!("plugin-bridge-write-{}", self.conn_id))
-            .spawn(move || writer.drain(&sink));
+        let started =
+            super::threads::spawn(format!("plugin-bridge-pump-{}", self.conn_id), move || {
+                pump.pump(&pump_sink)
+            })
+            .and_then(|()| {
+                let writer = Arc::clone(self);
+                let writer_sink = Arc::clone(&sink);
+                super::threads::spawn(format!("plugin-bridge-write-{}", self.conn_id), move || {
+                    writer.drain(&writer_sink)
+                })
+            });
+        if let Err(e) = started {
+            tracing::error!(
+                target: crate::plugin::PLUGIN_LOG_TARGET,
+                "bridge connection {}: starting its relay thread failed ({e}); closing it",
+                self.conn_id
+            );
+            self.close();
+            self.report_closed(&sink);
+        }
+    }
+
+    /// Tell the runner the connection ended (`StreamClosed`), at most once.
+    fn report_closed(&self, sink: &FrameSink) {
+        if !self
+            .closed_reported
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let _ = sink(&Message::StreamClosed(ConnRef {
+                conn_id: self.conn_id,
+            }));
+        }
     }
 
     /// The runner consumed `bytes` of `StreamData`. `Err` if it acknowledges
@@ -150,9 +181,7 @@ impl ProxyHost {
             }
         }
         if !self.is_closed() {
-            let _ = sink(&Message::StreamClosed(ConnRef {
-                conn_id: self.conn_id,
-            }));
+            self.report_closed(sink);
         }
     }
 
@@ -245,6 +274,30 @@ mod tests {
             other => panic!("expected StreamClosed, got {other:?}"),
         }
         proxy.close();
+    }
+
+    #[test]
+    fn a_relay_thread_that_cannot_start_closes_the_connection() {
+        for thread in ["plugin-bridge-pump", "plugin-bridge-write"] {
+            let (host_side, mut peer) = pair();
+            let proxy = ProxyHost::new(9, host_side);
+            let (sink, frames) = recording_sink();
+            {
+                let _fail = crate::plugin::sandbox::threads::fail_spawns_named(thread);
+                proxy.start(sink);
+            }
+            match frames.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Message::StreamClosed(c) => assert_eq!(c.conn_id, 9, "{thread}"),
+                other => panic!("{thread}: expected StreamClosed, got {other:?}"),
+            }
+            assert!(proxy.is_closed(), "{thread}");
+            // The socket was shut down: the far end sees end of stream.
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut buf = [0u8; 8];
+            assert_eq!(peer.read(&mut buf).unwrap(), 0, "{thread}");
+            // Exactly one StreamClosed.
+            assert!(frames.recv_timeout(Duration::from_millis(200)).is_err());
+        }
     }
 
     #[test]

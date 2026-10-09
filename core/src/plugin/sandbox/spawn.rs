@@ -17,6 +17,9 @@
 //!   its plugin's Less-Privileged AppContainer (`super::appcontainer`), and the
 //!   pipe's DACL also admits that AppContainer's SID. On Unix the runner
 //!   confines itself after the handshake.
+//! * **Standard handles:** stdin and stdout are the null device; stderr is a
+//!   pipe the host forwards into the plugin's rate-limited log (#4335). No
+//!   descriptor of the host's (its terminal, its journal stream) is inherited.
 //! * **Environment:** scrubbed to [`PASSED_ENV`] — no `SSH_AUTH_SOCK`, no
 //!   `TERMIHUB_*`, nothing else of the host's.
 //! * **Integrity (#4202):** the bundled runner is hashed through a retained
@@ -195,11 +198,13 @@ fn start(
         .arg(PROTOCOL_VERSION.to_string())
         .env_clear()
         .envs(scrubbed_env())
+        // No descriptor of the host's reaches the runner but its channel and
+        // the null device (#4335): an inherited stdout is often the terminal
+        // the host was started from, open read/write. Stderr is piped into
+        // the host's plugin log (#4184), which also watches it for a
+        // plugin's allocation failure under the memory limit.
         .stdin(Stdio::null())
-        // Plugin stdout goes to the host's stdout. Stderr is
-        // forwarded there line by line by the host (#4184), which watches it
-        // for a plugin's allocation failure under the memory limit.
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped());
     // SAFETY: the closure runs in the forked child before `exec` and only makes
     // async-signal-safe system calls (`dup2`, `fcntl`, `getrlimit`,
@@ -254,8 +259,8 @@ fn start(
         .arg(PROTOCOL_ARG)
         .arg(PROTOCOL_VERSION.to_string())
         .envs(scrubbed_env())
-        // As on Unix: plugin stdout goes to the host's, stderr is forwarded.
-        .stdout(ChildStdio::Inherit)
+        // As on Unix: no host handle as stdout (#4335), stderr is forwarded.
+        .stdout(ChildStdio::Null)
         .stderr(ChildStdio::Piped)
         .limits(*limits);
     if let Some(container) = container {

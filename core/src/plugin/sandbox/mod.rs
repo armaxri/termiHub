@@ -68,6 +68,7 @@ mod rate;
 mod session;
 mod spawn;
 mod status;
+mod threads;
 mod watchdog;
 mod writer;
 
