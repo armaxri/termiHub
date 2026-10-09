@@ -3,6 +3,7 @@ import { Trash2, Pause, Play, Save, ClipboardCopy, FileDown } from "lucide-react
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { LogEntry } from "@/types/terminal";
 import { Button, SearchInput, toast } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
@@ -151,8 +152,11 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
   const handleCopyEntry = useCallback(async (entry: LogEntry) => {
     try {
-      // Redact secrets before copying to the clipboard (OBS-008).
-      await navigator.clipboard.writeText(redactLogText(formatEntry(entry)));
+      // Redact secrets before copying to the clipboard (OBS-008). The Tauri
+      // clipboard plugin, not navigator.clipboard, which rejects on
+      // macOS/WKWebView when the window is not focused (#4327).
+      await writeText(redactLogText(formatEntry(entry)));
+      toast.success("Log entry copied");
     } catch (err) {
       toast.error("Could not copy log entry", { description: errorMessage(err) });
     }
@@ -162,7 +166,11 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     try {
       // Redact secrets before copying to the clipboard (OBS-008).
       const content = redactLogText(entriesToCopy.map(formatEntry).join("\n"));
-      await navigator.clipboard.writeText(content);
+      await writeText(content);
+      const count = entriesToCopy.length;
+      toast.success("Logs copied", {
+        description: `${count} ${count === 1 ? "entry" : "entries"}`,
+      });
     } catch (err) {
       toast.error("Could not copy logs", { description: errorMessage(err) });
     }
