@@ -2,7 +2,8 @@
 //! (#2185, #2198).
 //!
 //! Binds a TCP listener on the tunnel host as a SOCKS5 proxy. For each accepted
-//! connection it performs the SOCKS5 handshake (CONNECT only, no auth), then
+//! connection it performs the SOCKS5 handshake (CONNECT only, no auth; IPv4,
+//! IPv6 and domain targets), then
 //! opens an SSH `direct-tcpip` channel to the client-chosen target and relays
 //! bytes bidirectionally. Lifted from the desktop `tunnel` module into core so
 //! the identical engine runs on the desktop **or** on a remote agent — only the
@@ -51,9 +52,17 @@ const SOCKS5_NO_AUTH: u8 = 0x00;
 const SOCKS5_CMD_CONNECT: u8 = 0x01;
 const SOCKS5_ATYP_IPV4: u8 = 0x01;
 const SOCKS5_ATYP_DOMAIN: u8 = 0x03;
+const SOCKS5_ATYP_IPV6: u8 = 0x04;
+
+// RFC 1928 §6 reply codes.
 const SOCKS5_REP_SUCCESS: u8 = 0x00;
 const SOCKS5_REP_GENERAL_FAILURE: u8 = 0x01;
+const SOCKS5_REP_NOT_ALLOWED: u8 = 0x02;
+const SOCKS5_REP_NETWORK_UNREACHABLE: u8 = 0x03;
+const SOCKS5_REP_HOST_UNREACHABLE: u8 = 0x04;
+const SOCKS5_REP_CONNECTION_REFUSED: u8 = 0x05;
 const SOCKS5_REP_CMD_NOT_SUPPORTED: u8 = 0x07;
+const SOCKS5_REP_ATYP_NOT_SUPPORTED: u8 = 0x08;
 
 impl DynamicForwarder {
     /// Start a dynamic SOCKS5 forwarding tunnel.
@@ -256,34 +265,39 @@ impl DynamicForwarder {
             return Ok(None);
         }
 
-        let (dest_host, dest_port) = match req[3] {
+        let dest_host = match req[3] {
             SOCKS5_ATYP_IPV4 => {
                 let mut addr = [0u8; 4];
                 stream.read_exact(&mut addr).await?;
-                let host = format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]);
-                let mut port_buf = [0u8; 2];
-                stream.read_exact(&mut port_buf).await?;
-                let port = u16::from_be_bytes(port_buf);
-                (host, port)
+                std::net::Ipv4Addr::from(addr).to_string()
             }
             SOCKS5_ATYP_DOMAIN => {
                 let mut len = [0u8; 1];
                 stream.read_exact(&mut len).await?;
                 let mut domain = vec![0u8; len[0] as usize];
                 stream.read_exact(&mut domain).await?;
-                let host = String::from_utf8(domain).map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid domain")
-                })?;
-                let mut port_buf = [0u8; 2];
-                stream.read_exact(&mut port_buf).await?;
-                let port = u16::from_be_bytes(port_buf);
-                (host, port)
+                match String::from_utf8(domain) {
+                    Ok(host) => host,
+                    Err(_) => {
+                        Self::send_reply(stream, SOCKS5_REP_GENERAL_FAILURE).await?;
+                        return Ok(None);
+                    }
+                }
+            }
+            SOCKS5_ATYP_IPV6 => {
+                let mut addr = [0u8; 16];
+                stream.read_exact(&mut addr).await?;
+                // `direct-tcpip` takes the bare address — no `[...]` brackets.
+                std::net::Ipv6Addr::from(addr).to_string()
             }
             _ => {
-                Self::send_reply(stream, SOCKS5_REP_CMD_NOT_SUPPORTED).await?;
+                Self::send_reply(stream, SOCKS5_REP_ATYP_NOT_SUPPORTED).await?;
                 return Ok(None);
             }
         };
+        let mut port_buf = [0u8; 2];
+        stream.read_exact(&mut port_buf).await?;
+        let dest_port = u16::from_be_bytes(port_buf);
 
         let channel_stream = match opener.open_direct_tcpip(dest_host.clone(), dest_port).await {
             Ok(ch) => ch,
@@ -294,7 +308,7 @@ impl DynamicForwarder {
                     dest_port,
                     e
                 );
-                Self::send_reply(stream, SOCKS5_REP_GENERAL_FAILURE).await?;
+                Self::send_reply(stream, Self::reply_for_open_error(&e)).await?;
                 return Ok(None);
             }
         };
@@ -302,6 +316,23 @@ impl DynamicForwarder {
         Self::send_reply(stream, SOCKS5_REP_SUCCESS).await?;
 
         Ok(Some(channel_stream))
+    }
+
+    /// Map a failed channel open to the RFC 1928 reply code sent to the client.
+    ///
+    /// [`SshChannelOpener`] encodes the SSH channel-open failure reason in the
+    /// error's kind (see `channel::open_failure_kind`); anything unclassified is
+    /// a general failure (#4337).
+    fn reply_for_open_error(err: &std::io::Error) -> u8 {
+        use std::io::ErrorKind;
+        match err.kind() {
+            ErrorKind::PermissionDenied => SOCKS5_REP_NOT_ALLOWED,
+            ErrorKind::NetworkUnreachable => SOCKS5_REP_NETWORK_UNREACHABLE,
+            ErrorKind::HostUnreachable | ErrorKind::TimedOut => SOCKS5_REP_HOST_UNREACHABLE,
+            ErrorKind::ConnectionRefused => SOCKS5_REP_CONNECTION_REFUSED,
+            ErrorKind::Unsupported => SOCKS5_REP_CMD_NOT_SUPPORTED,
+            _ => SOCKS5_REP_GENERAL_FAILURE,
+        }
     }
 
     async fn send_reply(stream: &mut tokio::net::TcpStream, rep: u8) -> std::io::Result<()> {
@@ -499,18 +530,149 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_address_type_is_rejected() {
+    async fn ipv6_connect_parses_target_and_relays() {
+        // Regression for #4337 (LIBBE2-001): ATYP 0x04 used to be rejected.
         let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
         greet_no_auth(&mut client).await;
-        // ATYP 0x04 (IPv6) is not handled.
+
+        let ip: std::net::Ipv6Addr = "2001:db8::1".parse().expect("ipv6 literal");
+        let mut req = vec![SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, SOCKS5_ATYP_IPV6];
+        req.extend_from_slice(&ip.octets());
+        req.extend_from_slice(&443u16.to_be_bytes());
+        client.write_all(&req).await.expect("write request");
+
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS, "IPv6 connect should succeed");
+
+        client.write_all(b"v6").await.expect("write payload");
+        client.shutdown().await.expect("half-close");
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.expect("read echo");
+        assert_eq!(&echoed, b"v6");
+
+        assert_eq!(
+            targets.lock().unwrap().clone(),
+            vec![("2001:db8::1".to_string(), 443)],
+            "IPv6 host is passed to direct-tcpip without brackets"
+        );
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn ipv6_loopback_target_is_formatted_compactly() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+
+        let mut req = vec![SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, SOCKS5_ATYP_IPV6];
+        req.extend_from_slice(&std::net::Ipv6Addr::LOCALHOST.octets());
+        req.extend_from_slice(&22u16.to_be_bytes());
+        client.write_all(&req).await.expect("write request");
+
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS);
+        assert_eq!(
+            targets.lock().unwrap().clone(),
+            vec![("::1".to_string(), 22)]
+        );
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn unknown_address_type_gets_address_type_not_supported() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+        // ATYP 0x05 is not defined by RFC 1928.
         client
-            .write_all(&[SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, 0x04])
+            .write_all(&[SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, 0x05])
             .await
             .expect("write request");
         let reply = read_reply(&mut client).await;
-        assert_eq!(reply[1], SOCKS5_REP_CMD_NOT_SUPPORTED);
+        assert_eq!(
+            reply[1], SOCKS5_REP_ATYP_NOT_SUPPORTED,
+            "RFC 1928 reply 0x08, not 0x07 (command not supported)"
+        );
         assert!(targets.lock().unwrap().is_empty());
         drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn non_utf8_domain_gets_general_failure_reply() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+        let mut req = vec![
+            SOCKS5_VERSION,
+            SOCKS5_CMD_CONNECT,
+            0x00,
+            SOCKS5_ATYP_DOMAIN,
+            2,
+            0xFF,
+            0xFE,
+        ];
+        req.extend_from_slice(&80u16.to_be_bytes());
+        client.write_all(&req).await.expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_GENERAL_FAILURE);
+        assert!(targets.lock().unwrap().is_empty());
+        drop(forwarder);
+    }
+
+    #[test]
+    fn open_errors_map_to_rfc1928_reply_codes() {
+        use std::io::{Error, ErrorKind};
+        let cases = [
+            (ErrorKind::PermissionDenied, SOCKS5_REP_NOT_ALLOWED),
+            (
+                ErrorKind::NetworkUnreachable,
+                SOCKS5_REP_NETWORK_UNREACHABLE,
+            ),
+            (ErrorKind::HostUnreachable, SOCKS5_REP_HOST_UNREACHABLE),
+            (ErrorKind::TimedOut, SOCKS5_REP_HOST_UNREACHABLE),
+            (ErrorKind::ConnectionRefused, SOCKS5_REP_CONNECTION_REFUSED),
+            (ErrorKind::Unsupported, SOCKS5_REP_CMD_NOT_SUPPORTED),
+            (ErrorKind::Other, SOCKS5_REP_GENERAL_FAILURE),
+            (ErrorKind::BrokenPipe, SOCKS5_REP_GENERAL_FAILURE),
+        ];
+        for (kind, rep) in cases {
+            assert_eq!(
+                DynamicForwarder::reply_for_open_error(&Error::new(kind, "x")),
+                rep,
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_open_failure_reasons_reach_the_client() {
+        use std::io::ErrorKind;
+        let cases = [
+            (ErrorKind::PermissionDenied, SOCKS5_REP_NOT_ALLOWED),
+            (ErrorKind::HostUnreachable, SOCKS5_REP_HOST_UNREACHABLE),
+            (ErrorKind::ConnectionRefused, SOCKS5_REP_CONNECTION_REFUSED),
+            (ErrorKind::Unsupported, SOCKS5_REP_CMD_NOT_SUPPORTED),
+        ];
+        for (kind, rep) in cases {
+            let (forwarder, mut client, _targets) =
+                start_and_connect(EchoChannelOpener::failing_with(kind)).await;
+            greet_no_auth(&mut client).await;
+            client
+                .write_all(&[
+                    SOCKS5_VERSION,
+                    SOCKS5_CMD_CONNECT,
+                    0x00,
+                    SOCKS5_ATYP_IPV4,
+                    10,
+                    0,
+                    0,
+                    1,
+                    0x00,
+                    0x50,
+                ])
+                .await
+                .expect("write request");
+            let reply = read_reply(&mut client).await;
+            assert_eq!(reply[1], rep, "{kind:?}");
+            drop(forwarder);
+        }
     }
 
     #[tokio::test]
