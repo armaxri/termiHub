@@ -16,23 +16,60 @@ export interface ChipProps {
   denied?: boolean;
   /** Hover/focus help (e.g. the exact rule behind an access chip). */
   tooltip?: React.ReactNode;
+  /**
+   * Makes the chip a toggle button (`aria-pressed`) for multi-select choices
+   * such as workflow triggers. Called with the next pressed state on click.
+   * Without it the chip is a read-only label.
+   */
+  onPressedChange?: (pressed: boolean) => void;
+  /** Pressed state of a toggle chip (only used with `onPressedChange`). */
+  pressed?: boolean;
   /** Test hook forwarded to the chip element. */
   "data-testid"?: string;
 }
 
 /**
- * A small, read-only label pill: an icon plus a short text, optionally struck
+ * A small label pill: an icon plus a short text, optionally struck
  * through for something that is not allowed. Used for summaries such as a
  * native plugin's access chips (#4188). Focusable only when it carries a
  * tooltip, so keyboard users can reach the help text.
+ *
+ * With `onPressedChange` it becomes a toggle chip: a real `<button>` with
+ * `aria-pressed`, styled like the shared radio-card selection (accent border +
+ * tint) when pressed (UI2-006).
  */
 export function Chip({
   label,
   icon,
   denied = false,
   tooltip,
+  onPressedChange,
+  pressed = false,
   "data-testid": testId,
 }: ChipProps): React.ReactElement {
+  const content = (
+    <>
+      {icon && (
+        <span className="ui-chip__icon" aria-hidden="true">
+          {icon}
+        </span>
+      )}
+      <span className="ui-chip__label">{label}</span>
+    </>
+  );
+  if (onPressedChange) {
+    return (
+      <button
+        type="button"
+        className={`ui-chip ui-chip--toggle${pressed ? " ui-chip--pressed" : ""}`}
+        aria-pressed={pressed}
+        onClick={() => onPressedChange(!pressed)}
+        data-testid={testId}
+      >
+        {content}
+      </button>
+    );
+  }
   const chip = (
     <span
       className={`ui-chip${denied ? " ui-chip--denied" : ""}`}
@@ -40,12 +77,7 @@ export function Chip({
       tabIndex={tooltip ? 0 : undefined}
       data-testid={testId}
     >
-      {icon && (
-        <span className="ui-chip__icon" aria-hidden="true">
-          {icon}
-        </span>
-      )}
-      <span className="ui-chip__label">{label}</span>
+      {content}
     </span>
   );
   return tooltip ? (

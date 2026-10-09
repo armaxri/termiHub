@@ -68,47 +68,6 @@
   cursor: pointer;
 }
 
-.tunnel-editor__type-selector {
-  display: flex;
-  gap: var(--spacing-sm);
-}
-
-.tunnel-editor__type-option {
-  flex: 1;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  text-align: center;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-
-.tunnel-editor__type-option:hover {
-  background: var(--bg-hover);
-}
-
-.tunnel-editor__type-option--active {
-  border-color: var(--accent-color);
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary));
-}
-
-.tunnel-editor__type-option-title {
-  font-weight: 600;
-  display: block;
-}
-
-.tunnel-editor__type-option-desc {
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  margin-top: var(--spacing-xxs);
-}
-
 .tunnel-editor__actions {
   display: flex;
   gap: var(--spacing-sm);
