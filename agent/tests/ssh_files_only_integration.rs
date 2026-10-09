@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use termihub_core::protocol::methods as pm;
+use termihub_core::test_fixtures;
 
 mod common;
 
@@ -49,17 +50,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// The `ssh-sftp-only` fixture's port, honouring this checkout's test-port
 /// offset (see `docs/testing.md` → "Parallel test isolation").
 fn port_ssh_sftp_only() -> u16 {
-    if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    2215 + offset
+    test_fixtures::fixture_port("TERMIHUB_TEST_SSH_SFTP_ONLY_PORT", 2215)
 }
 
 /// Whether the fixture is up; panics instead of skipping when it is required.
@@ -69,17 +60,12 @@ fn fixture_available(port: u16) -> bool {
         .ok()
         .and_then(|mut a| a.next())
         .is_some_and(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok());
-    if reachable {
-        return true;
-    }
-    if std::env::var("TERMIHUB_REQUIRE_DOCKER").as_deref() == Ok("1") {
-        panic!("ssh-sftp-only fixture required but not reachable on 127.0.0.1:{port}");
-    }
-    eprintln!(
-        "SKIPPED: ssh-sftp-only fixture not reachable on 127.0.0.1:{port} \
-         (start with: cd tests/docker && docker compose up -d ssh-sftp-only)"
-    );
-    false
+    test_fixtures::require(
+        reachable,
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        &format!("ssh-sftp-only fixture not reachable on 127.0.0.1:{port}"),
+        "start with: cd tests/docker && docker compose up -d ssh-sftp-only",
+    )
 }
 
 /// The fixture's host keys as `known_hosts` lines.

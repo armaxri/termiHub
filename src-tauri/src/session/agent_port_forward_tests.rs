@@ -362,8 +362,10 @@ impl ForwardTransport for FakeAgent {
         }
     }
 
+    /// Frees the stream's state, then records the close. The record comes
+    /// last so that a test which sees `closed` grow (from another worker
+    /// thread) also sees the stream's window, sink and writer gone (#4540).
     fn close(&self, stream_id: &str) {
-        self.log.lock().unwrap().closed.push(stream_id.to_string());
         self.writers.lock().unwrap().remove(stream_id);
         self.sinks.lock().unwrap().remove(stream_id);
         if let Some(w) = self.windows.lock().unwrap().remove(stream_id) {
@@ -372,6 +374,7 @@ impl ForwardTransport for FakeAgent {
         if let Some(r) = self.readers.lock().unwrap().remove(stream_id) {
             r.abort();
         }
+        self.log.lock().unwrap().closed.push(stream_id.to_string());
     }
 }
 

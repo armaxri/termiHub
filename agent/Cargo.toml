@@ -128,6 +128,7 @@ serde_json = { workspace = true }
 termihub-core = { path = "../core", features = [
     "agent-update-signing-test-support",
     "ssh-test-support",
+    "fixture-test-support",
 ] }
 # `start_paused` for the coordinated-update ack/timeout tests (#1351): the 10 s
 # window is asserted on virtual time, so the tests are instant and immune to

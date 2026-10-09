@@ -1194,7 +1194,9 @@ jobs:
             xvfb \
             xclip \
             sway \
-            wl-clipboard
+            wl-clipboard \
+            openssh-server \
+            openssh-client
 
       # Stage the sideloaded ConPTY host (#4121) for core/tests/sideloaded_conpty.rs
       # (#4130): the pinned conpty.dll + OpenConsole.exe, SHA-256-verified against
@@ -1239,11 +1241,18 @@ jobs:
           TERMIHUB_REQUIRE_WAYLAND_CLIPBOARD_TEST: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh bulk --workspace
 
+      # The headless agent-reconnect tests (`russh_reconnect_tests`, Unix only)
+      # stand up a throwaway local sshd and run the prebuilt termihub-agent
+      # through it. TERMIHUB_REQUIRE_LOCAL_SSHD makes a missing sshd, ssh client
+      # or agent binary a failure instead of a skip on Linux (openssh-server is
+      # installed above) and macOS (ships sshd), so the #2476/#2491 regression
+      # guard cannot pass without running (#4338, TBE2-006).
       - name: Run Rust tests (contention-sensitive suites, capped threads)
         if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
         shell: bash
         env:
           CI_RUST_TESTS_SPLIT_SERIAL: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+          TERMIHUB_REQUIRE_LOCAL_SSHD: ${{ matrix.os != 'windows-latest' && '1' || '' }}
         run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
 
       # Windows shell-integration CLI smoke (#4010, #1368): build the desktop

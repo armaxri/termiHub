@@ -15,6 +15,14 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+// The fixture resolver and skip-or-fail gate shared by every crate's
+// integration tests (#4338). Other crates reach it as
+// `termihub_core::test_fixtures` (the `fixture-test-support` feature); this
+// crate's integration tests include the same file, so there is one copy of the
+// logic.
+#[path = "../../src/test_fixtures.rs"]
+pub mod fixture_env;
+
 // SSH-only imports: the SSH helpers below need the `ssh` feature (and its
 // optional `russh` dependency). Gating them keeps this shared module compilable
 // for feature-scoped integration binaries — e.g. `--features ftp` alone, which
@@ -60,10 +68,7 @@ pub enum FixtureGate {
 /// including `None` (unset), the empty string, and `0`/`false`/`no`/`off` — is
 /// falsey, so a local or per-PR run (where the var is unset) never hard-fails.
 pub fn parse_required(val: Option<&str>) -> bool {
-    matches!(
-        val.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
+    fixture_env::parse_flag(val)
 }
 
 /// Whether the current process requires Docker fixtures to be present (reads
@@ -434,12 +439,11 @@ pub async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, Str
 
 /// Name of the network-fault container for the active checkout.
 ///
-/// The container is namespaced by the Compose project (`TERMIHUB_TEST_PROJECT`,
-/// default `termihub`), so a `docker exec` must target this checkout's instance —
-/// `<project>-network-fault` — not a hardcoded name shared across checkouts.
+/// The container is namespaced by the Compose project, so a `docker exec` must
+/// target this checkout's instance — `<project>-network-fault` — not a
+/// hardcoded name shared across checkouts. See [`fixture_container`].
 fn network_fault_container() -> String {
-    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
-    format!("{project}-network-fault")
+    fixture_container("network-fault")
 }
 
 /// Guard that resets network faults on the network-fault container when dropped.
@@ -482,26 +486,18 @@ pub fn apply_fault(args: &[&str]) -> Result<(), String> {
 
 // --- Docker container ports (per-checkout offset aware) ---
 //
-// Each port is `base + offset`, where `offset` comes from
-// `TERMIHUB_TEST_PORT_OFFSET` (or an explicit per-service `TERMIHUB_TEST_*_PORT`
-// override) — the env the shell resolver `scripts/internal/dev-local-env.sh`
-// exports from `dev.local.json`. With no env (a lone checkout / bare `cargo
-// test`) every port falls back to its historical base, so behaviour is
-// unchanged. This keeps the integration tests pointed at *this* checkout's
-// containers so parallel checkouts never share one. See `docs/testing.md` →
-// "Parallel test isolation".
+// Each port is `base + offset`. An explicit per-service `TERMIHUB_TEST_*_PORT`
+// wins; otherwise the offset comes from `TERMIHUB_TEST_PORT_OFFSET`, else this
+// checkout's `dev.local.json` (`test_port_offset`), else `0` — the same
+// precedence as `scripts/internal/dev-local-env.sh` and the Python harness, so
+// a plain `cargo test` in any checkout targets that checkout's containers. In a
+// parallel `dev*/termiHub` tree without `dev.local.json` the resolver panics
+// rather than silently using checkout 0's ports (#4338, MOCK2-001). See
+// `docs/testing.md` → "Parallel test isolation".
 
-/// Resolve a container host port: an explicit `env_var` wins, else `base` plus
-/// `TERMIHUB_TEST_PORT_OFFSET` (default offset `0`).
+/// Resolve a container host port (see [`fixture_env::fixture_port`]).
 fn resolve_port(env_var: &str, base: u16) -> u16 {
-    if let Some(p) = std::env::var(env_var).ok().and_then(|v| v.parse().ok()) {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    base + offset
+    fixture_env::fixture_port(env_var, base)
 }
 
 /// ssh-password container (password auth, OpenSSH latest).
@@ -588,11 +584,12 @@ pub fn port_ftps_implicit() -> u16 {
 }
 
 /// Name of a Compose fixture container for the active checkout:
-/// `<project>-<service>` (`TERMIHUB_TEST_PROJECT`, default `termihub`), so a
-/// `docker` command targets this checkout's instance, never another's.
+/// `<project>-<service>`, with the project resolved from the same source as
+/// the ports (`TERMIHUB_TEST_PROJECT`, else `dev.local.json`'s
+/// `compose_project`, else `termihub`), so a `docker` command targets this
+/// checkout's instance, never another's.
 pub fn fixture_container(service: &str) -> String {
-    let project = std::env::var("TERMIHUB_TEST_PROJECT").unwrap_or_else(|_| "termihub".into());
-    format!("{project}-{service}")
+    fixture_env::fixture_container(service)
 }
 
 /// Run `docker <args>` and return its stdout, or the failure as an error.

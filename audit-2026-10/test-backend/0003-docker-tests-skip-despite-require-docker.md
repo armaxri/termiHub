@@ -23,8 +23,8 @@ evidence:
   - agent/tests/docker_integration.rs:692
   - .github/workflows/system-integration.yml:748
   - .github/workflows/system-integration.yml:790
-status: open
-resolution: ""
+status: fixed
+resolution: "#4338 — every core/agent Docker-daemon helper routes through one skip-or-fail gate that panics under TERMIHUB_REQUIRE_DOCKER; the agent-Docker nightly sets it and checks 9 tests ran unskipped"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

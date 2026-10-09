@@ -21,8 +21,8 @@ evidence:
   - scripts/internal/dev-local-env.sh:30
   - scripts/internal/dev-local-env.sh:38
   - .claude/CLAUDE.md:415
-status: open
-resolution: ""
+status: fixed
+resolution: "#4338 — termihub_core::test_fixtures resolves ports and container names from env, then dev.local.json, refusing offset 0 in a parallel dev*/termiHub tree; all Rust suites use it"
 audit: 2026-10
 commit: 663465d52
 relation: new

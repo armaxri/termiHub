@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
-use support::container::{runtime_client, CleanupGuard};
+use support::container::{docker_missing, runtime_client, CleanupGuard};
 use termihub_core::backends::docker::Docker;
 use termihub_core::connection::ConnectionType;
 use termihub_core::files::FileEntry;
@@ -53,7 +53,7 @@ async fn sh(client: &bollard::Docker, container: &str, cmd: &str) -> String {
 #[tokio::test]
 async fn docker_list_dir_reports_symlink_metadata() {
     let Some(client) = runtime_client().await else {
-        eprintln!("SKIPPED: no reachable container daemon (Docker symlink listing, #4006)");
+        docker_missing("no reachable container daemon (Docker symlink listing, #4006)");
         return;
     };
     let mut cleanup = CleanupGuard::default();
@@ -65,7 +65,7 @@ async fn docker_list_dir_reports_symlink_metadata() {
     });
     let mut docker = Docker::new();
     if let Err(e) = docker.connect(settings).await {
-        eprintln!("SKIPPED: docker connect/pull failed ({e}); treating daemon as unavailable");
+        docker_missing(&format!("docker connect/pull failed ({e})"));
         return;
     }
     let container = docker

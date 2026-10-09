@@ -47,13 +47,19 @@ pub async fn runtime_client_for(runtime: &ContainerRuntime) -> Option<bollard::D
 /// its variable (`TERMIHUB_REQUIRE_DOCKER`, `TERMIHUB_REQUIRE_PODMAN`) so an
 /// unreachable runtime hard-fails instead of skipping to a false green.
 pub fn runtime_required(name: &str) -> bool {
-    matches!(
-        std::env::var(name)
-            .ok()
-            .map(|v| v.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
+    super::fixture_env::flag_set(name)
+}
+
+/// Report a container dependency found missing (no daemon, an image that cannot
+/// be pulled, a container that will not start): skip with a visible `SKIPPED:`
+/// line, or panic under `TERMIHUB_REQUIRE_DOCKER` (#4338, TBE2-003). The caller
+/// returns after it.
+pub fn docker_missing(what: &str) {
+    super::fixture_env::missing(
+        super::fixture_env::REQUIRE_DOCKER_ENV,
+        what,
+        "needs a reachable Docker daemon that runs Linux containers",
+    );
 }
 
 /// Force-removes the registered containers and deletes the registered

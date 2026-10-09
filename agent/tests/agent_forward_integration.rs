@@ -54,6 +54,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use termihub_core::protocol::methods as pm;
+use termihub_core::test_fixtures;
 
 mod common;
 
@@ -81,20 +82,10 @@ fn ssh_keys_dir() -> PathBuf {
         .join("ssh-keys")
 }
 
-/// The bastion's host port: `TERMIHUB_TEST_SSH_BASTION_PORT`, else 2204 plus
-/// this checkout's `TERMIHUB_TEST_PORT_OFFSET` (same scheme as core/tests).
+/// The bastion's host port: `TERMIHUB_TEST_SSH_BASTION_PORT`, else 2204 shifted
+/// by this checkout's test-port offset (env or `dev.local.json`, #4338).
 fn bastion_port() -> u16 {
-    if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_BASTION_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    2204 + offset
+    test_fixtures::fixture_port("TERMIHUB_TEST_SSH_BASTION_PORT", 2204)
 }
 
 /// Skip (or, under `TERMIHUB_REQUIRE_DOCKER=1`, fail) without the fixture.
@@ -105,19 +96,12 @@ fn fixture_available() -> bool {
         Duration::from_secs(2),
     )
     .is_ok();
-    if reachable {
-        return true;
-    }
-    let required = std::env::var("TERMIHUB_REQUIRE_DOCKER")
-        .map(|v| matches!(v.trim(), "1" | "true" | "yes"))
-        .unwrap_or(false);
-    assert!(
-        !required,
-        "REQUIRED fixture unavailable: ssh-jumphost-bastion not reachable on port {port} \
-         but TERMIHUB_REQUIRE_DOCKER is set"
-    );
-    eprintln!("SKIPPED: ssh-jumphost-bastion not reachable on port {port}");
-    false
+    test_fixtures::require(
+        reachable,
+        test_fixtures::REQUIRE_DOCKER_ENV,
+        &format!("ssh-jumphost-bastion not reachable on port {port}"),
+        "start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-jumphost-bastion",
+    )
 }
 
 /// `SHA256:…` fingerprint of [`AGENT_KEY`], as `ssh-add -l` prints it.
