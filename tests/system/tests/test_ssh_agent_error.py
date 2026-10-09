@@ -13,8 +13,8 @@ The SSH ConnectionType schema offers ``agent`` as an ``authMethod``
 wrong premise that the option did not exist (#4339).
 
 The suite's app is launched without ``SSH_AUTH_SOCK``, so on macOS/Linux no
-agent is reachable whatever the runner has running. The ``ssh_fixtures``
-containers are Linux-only, so the suite skips where no container runtime is
+agent is reachable whatever the runner has running. The ``ssh-password``
+container is Linux-only, so the suite skips where no container runtime is
 available.
 """
 
@@ -39,7 +39,7 @@ HOST = "127.0.0.1"
 OVERLAY = "terminal-connection-overlay"
 
 
-@pytest.mark.usefixtures("ssh_fixtures")
+@pytest.mark.usefixtures("ssh_password_fixtures")
 class TestSshAgentAuthError(TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-AGENT-ERROR: agent auth with no agent fails gracefully."""
 
