@@ -260,6 +260,15 @@ mod tests {
     }
 
     #[test]
+    fn credential_key_field_secrets_round_trip() {
+        // Schema-classified secrets other than `password` (#4289).
+        let key = CredentialKey::new("conn-vnc", CredentialType::FieldSecrets);
+        assert_eq!(key.to_string(), "conn-vnc:field_secrets");
+        assert_eq!(CredentialKey::from_map_key(&key.to_string()), Some(key));
+        assert!(CredentialType::ALL.contains(&CredentialType::FieldSecrets));
+    }
+
+    #[test]
     fn credential_key_from_map_key_invalid_type() {
         assert!(CredentialKey::from_map_key("conn:unknown_type").is_none());
     }
