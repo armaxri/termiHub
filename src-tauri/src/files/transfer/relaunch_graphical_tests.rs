@@ -178,8 +178,15 @@ fn the_identity_keeps_the_agent_only_for_the_agent_route() {
 struct NoAgent;
 
 impl AgentRequests for NoAgent {
-    fn request(&self, _: &str, _: &str, _: Value) -> Result<Value, String> {
-        Err("unused".to_string())
+    fn request(
+        &self,
+        _: &str,
+        _: &str,
+        _: Value,
+    ) -> Result<Value, termihub_core::errors::FileError> {
+        Err(termihub_core::errors::FileError::OperationFailed(
+            "unused".to_string(),
+        ))
     }
 }
 

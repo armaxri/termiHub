@@ -2729,3 +2729,41 @@ fn agent_state_emits_fold_the_store_before_the_event_in_reconnect_order() {
     );
     assert_eq!(parse_agent_connection_state("bogus"), None);
 }
+
+// ── File requests keep "not found" typed (#4299) ────────────────────
+
+/// Only the agent's own `FILE_NOT_FOUND` answer is a missing file; a
+/// permission error, any other agent error, a timeout or a dropped transport
+/// stays an operation failure, so a caller picking a free name never takes an
+/// existing file for a free one.
+#[test]
+fn only_an_agent_file_not_found_maps_to_a_missing_file() {
+    use termihub_core::errors::FileError;
+    use termihub_core::protocol::errors;
+    let agent = |code: i64| {
+        AgentRequestFailure::Agent(AgentRpcFailure::from_error_response(
+            Some(code),
+            "/d/a.txt".to_string(),
+            None,
+        ))
+    };
+
+    assert!(matches!(
+        agent(errors::FILE_NOT_FOUND).into_file_error(),
+        FileError::NotFound(p) if p == "/d/a.txt"
+    ));
+    for failure in [
+        agent(errors::PERMISSION_DENIED),
+        agent(errors::FILE_OPERATION_FAILED),
+        AgentRequestFailure::Agent(AgentRpcFailure::transport_closed("link down")),
+        AgentRequestFailure::Local(TerminalError::agent_timeout(
+            std::time::Duration::from_secs(60),
+        )),
+    ] {
+        let mapped = failure.into_file_error();
+        assert!(
+            matches!(mapped, FileError::OperationFailed(_)),
+            "must not read as not found: {mapped:?}"
+        );
+    }
+}

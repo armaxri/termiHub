@@ -260,6 +260,16 @@ workflowLocalProcessEnabled?: boolean,
  */
 workflowLocalProcessAllowlist?: Array<string>, 
 /**
+ * Local script files the user picked or confirmed on this machine for a
+ * `run-script` workflow step's `sourcePath` (#4310, FEC2-001). The runner
+ * reads a `sourcePath` only when it is on this list. Owned by the frontend
+ * `AppSettings.workflowScriptSourceAllowlist`; persisted here so the
+ * confirmation survives a restart. Independent of workflow data, so an
+ * imported workflow can never add an entry. Omitted when empty so older
+ * settings files round-trip byte-identically.
+ */
+workflowScriptSourceAllowlist?: Array<string>, 
+/**
  * Imported workspace commands and inline connection configs the user has
  * confirmed on this machine (#4434). Each entry is `cmd:<sha256>` of a
  * command's exact text or `conn:<sha256>` of an inline config's canonical

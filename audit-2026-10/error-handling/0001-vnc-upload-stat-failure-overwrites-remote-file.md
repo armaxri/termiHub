@@ -20,8 +20,8 @@ evidence:
   - core/src/files/ranged.rs:110
   - core/src/protocol/errors.rs:48
   - src/hooks/useFileMoveTransfer.ts:162
-status: open
-resolution: ""
+status: fixed
+resolution: "#4299 — only a definite not-found frees a name; other stat errors skip the item; SFTP claims names with O_EXCL"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

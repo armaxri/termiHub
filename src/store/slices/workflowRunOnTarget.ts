@@ -8,6 +8,7 @@
  */
 import { toast } from "@/components/ui";
 import { localReadFile } from "@/services/api";
+import { isScriptSourceConfirmed } from "@/services/workflowScriptSources";
 import {
   invokeRunLocalProcess,
   cancelLocalProcess,
@@ -503,6 +504,12 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       send,
       runMacro,
       readScriptFile: localReadFile,
+      // #4310 (FEC2-001): a run-script sourcePath is read only when the user
+      // picked or confirmed it on this machine. The allowlist lives in the
+      // machine-local settings, never in workflow data, so an imported file
+      // cannot vouch for its own path.
+      isScriptSourceTrusted: (path) =>
+        isScriptSourceConfirmed(currentSettingsView().workflowScriptSourceAllowlist, path),
       authorizeLocalProcess,
       runLocalProcess,
       // A sessionless run has no output to wait for: the step fails loudly.
