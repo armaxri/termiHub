@@ -728,3 +728,107 @@ async fn close_all_with_a_stuck_in_process_write_meets_its_deadline() {
     state.released.store(true, Ordering::SeqCst);
     let _ = promptly("the released write", writing).await;
 }
+
+// ── Closing an in-process session with a stalled write (#4492) ─────
+
+/// Generous upper bound that only turns a hang into a failure; nothing below
+/// asserts how fast anything ran.
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
+/// Releases the stalled writes when dropped, so a failing assertion ends the
+/// test instead of leaving the runtime waiting on a blocked backend thread.
+struct ReleaseOnDrop(Arc<StallState>);
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        self.0.released.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Start a stalled write on a fresh in-process session and wait until it is
+/// blocked in the backend.
+async fn stalled_session(
+    state: &Arc<StallState>,
+) -> (
+    Arc<SessionManager>,
+    String,
+    tokio::task::JoinHandle<Result<(), String>>,
+) {
+    let mgr = manager_with(&[], stall_registry(state));
+    let id = create_stall(&mgr).await;
+    let writing = spawn_write(&mgr, &id, STALL);
+    until("the write to block in the backend", || {
+        state.blocked.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    (mgr, id, writing)
+}
+
+/// Closing an in-process session whose backend write is stuck returns while the
+/// write is still blocked: it does not wait behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_an_in_process_session_does_not_wait_for_a_stalled_write() {
+    let state = Arc::new(StallState::default());
+    let _release = ReleaseOnDrop(state.clone());
+    let (mgr, id, writing) = stalled_session(&state).await;
+
+    let closed = tokio::time::timeout(HANG_GUARD, mgr.close(&id))
+        .await
+        .expect("close waited behind the stalled write");
+    assert!(closed, "closed");
+
+    // The write can only return once released, so it is provably still in
+    // flight: close did not wait for it, and the disconnect is still deferred.
+    assert_eq!(state.blocked.load(Ordering::SeqCst), 1);
+    assert!(!writing.is_finished(), "the stalled write is still blocked");
+    assert_eq!(state.disconnects.load(Ordering::SeqCst), 0);
+    assert!(mgr.list().await.iter().all(|s| s.id != id), "gone");
+    assert_eq!(
+        SessionManagerApi::write_input(&*mgr, &id, b"late").await,
+        Err(not_found()),
+        "nothing reaches the backend after the close"
+    );
+
+    state.released.store(true, Ordering::SeqCst);
+    let _ = tokio::time::timeout(HANG_GUARD, writing).await;
+}
+
+/// The disconnect deferred by such a close runs once the stalled write returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_deferred_disconnect_runs_once_the_stalled_write_returns() {
+    let state = Arc::new(StallState::default());
+    let _release = ReleaseOnDrop(state.clone());
+    let (mgr, id, writing) = stalled_session(&state).await;
+
+    assert!(
+        tokio::time::timeout(HANG_GUARD, mgr.close(&id))
+            .await
+            .expect("close waited behind the stalled write"),
+        "closed"
+    );
+    assert_eq!(state.disconnects.load(Ordering::SeqCst), 0, "deferred");
+
+    state.released.store(true, Ordering::SeqCst);
+    tokio::time::timeout(HANG_GUARD, writing)
+        .await
+        .expect("the released write returns")
+        .unwrap()
+        .expect("the stalled write completes once the backend drains");
+    until("the deferred disconnect", || {
+        state.disconnects.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    assert_eq!(state.ops(), vec!["stall"], "only the stalled write ran");
+}
+
+/// With no I/O in flight, an in-process session is disconnected before close
+/// returns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_an_idle_in_process_session_disconnects_at_once() {
+    let state = Arc::new(StallState::default());
+    let mgr = manager_with(&[], stall_registry(&state));
+    let id = create_stall(&mgr).await;
+
+    assert!(mgr.close(&id).await, "closed");
+    assert_eq!(state.disconnects.load(Ordering::SeqCst), 1);
+}

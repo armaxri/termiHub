@@ -1693,24 +1693,39 @@ impl SessionManager {
         if !held && self.adopt_persisted(session_id, false).await.is_err() {
             return false;
         }
-        // In the session's turn, so a close never cuts into a re-attach or a
-        // buffer query in flight (#4286); the kill and disconnect run after the
-        // entry left the map, outside the sessions lock.
-        let Some(turn) = self.take_turn(session_id).await else {
-            return false;
-        };
-        let removed = {
+        // An in-process session leaves the map at once, without waiting
+        // behind a write or resize still in flight in the backend (#4492): a
+        // PTY whose program stopped reading its input must not keep its tab
+        // from closing. Its disconnect runs once that I/O returned.
+        let in_process = {
             let mut sessions = self.sessions.lock().await;
-            match turn_entry(&mut sessions, session_id, &turn) {
-                Some(_) => sessions.remove(session_id),
-                None => None,
+            match sessions.get(session_id).map(|info| &info.backend) {
+                Some(SessionBackend::InProcess { .. }) => sessions.remove(session_id),
+                _ => None,
             }
         };
-        let Some(mut info) = removed else {
-            return false;
-        };
-        close_backend(&mut info.backend).await;
-        drop(turn);
+        if let Some(info) = in_process {
+            close_in_process_removed(session_id, info).await;
+        } else {
+            // A daemon session is closed in its turn, so a close never cuts
+            // into a re-attach or a buffer query in flight (#4286); the kill
+            // runs after the entry left the map, outside the sessions lock.
+            let Some(turn) = self.take_turn(session_id).await else {
+                return false;
+            };
+            let removed = {
+                let mut sessions = self.sessions.lock().await;
+                match turn_entry(&mut sessions, session_id, &turn) {
+                    Some(_) => sessions.remove(session_id),
+                    None => None,
+                }
+            };
+            let Some(mut info) = removed else {
+                return false;
+            };
+            close_backend(&mut info.backend).await;
+            drop(turn);
+        }
 
         // Tear down any ssh-agent relay this session held (#1727).
         self.agent_forward.stop_listener(session_id).await;
@@ -2648,6 +2663,44 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
         }
         #[cfg(test)]
         SessionBackend::Stub { .. } => {}
+    }
+}
+
+/// Disconnect an in-process session that already left the map (#4492).
+///
+/// Its output stops being forwarded at once. The disconnect needs the
+/// connection to itself: it runs before this returns when no write or resize is
+/// in flight, and otherwise in a background task that takes the session's turn once that I/O
+/// returned — mirroring the desktop's `session_io::disconnect_removed` (#4300).
+/// Operations still queued for the turn find the session gone and fail as not
+/// found, so nothing reaches the backend after the close.
+async fn close_in_process_removed(session_id: &str, mut info: SessionInfo) {
+    if let SessionBackend::InProcess { output_task, .. } = &mut info.backend {
+        if let Some(task) = output_task.take() {
+            task.abort();
+        }
+    }
+    let turn = info.turn.clone();
+    let session_id = session_id.to_string();
+    let disconnect = async move {
+        if let SessionBackend::InProcess { connection, .. } = &mut info.backend {
+            disconnect_in_process(connection).await;
+        }
+        debug!("In-process session {session_id} disconnected after close");
+    };
+    match turn.clone().try_lock_owned() {
+        Ok(guard) => {
+            disconnect.await;
+            drop(guard);
+        }
+        Err(_) => {
+            info!("Backend I/O still in flight; disconnect deferred until it returns");
+            tokio::spawn(async move {
+                let guard = turn.lock_owned().await;
+                disconnect.await;
+                drop(guard);
+            });
+        }
     }
 }
 
