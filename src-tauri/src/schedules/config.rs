@@ -302,8 +302,8 @@ impl crate::utils::migrate::VersionedStore for ScheduleStore {
     }
 
     /// Per-entry salvage (PER-004): drop only the corrupt schedules.
-    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
-        crate::utils::migrate::salvage_list_store::<Self, Schedule>(raw, file_name, "schedules")
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, Schedule>(value, file_name, "schedules")
     }
 }
 

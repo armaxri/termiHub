@@ -35,7 +35,9 @@
 //! makes the change forward-migrating and downgrade-safe automatically.
 
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -110,12 +112,16 @@ pub trait VersionedStore: DeserializeOwned {
     /// dropping only the corrupt entries instead of resetting the whole store
     /// (PER-004).
     ///
+    /// `value` is the file's JSON **after** [`VersionedStore::migrate`] ran
+    /// on it (when it was readable at an older version — PER2-007), so entries
+    /// are judged against the current shape exactly as a clean load would.
+    ///
     /// The default treats the store as **atomic** — no per-entry salvage — so
     /// [`load_store_with_recovery`] falls back to a whole reset, preserving the
     /// pre-existing behavior. A list-shaped store overrides this to delegate to
     /// [`salvage_list_store`] with its collection field and entry type.
-    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
-        let _ = (raw, file_name);
+    fn salvage(value: Value, file_name: &str) -> Salvage<Self> {
+        let _ = (value, file_name);
         Salvage::Unsalvageable
     }
 }
@@ -185,6 +191,12 @@ pub fn load_versioned<T: VersionedStore>(raw: &str) -> LoadOutcome<T> {
 /// re-reads the file), it protects a save even across a fresh storage instance
 /// or after the in-memory data was reset to defaults on a newer-version load.
 pub fn guard_not_newer(path: &Path, store: &'static str, current: u32) -> Result<()> {
+    if is_unbacked_corrupt(path) {
+        anyhow::bail!(
+            "{store} is corrupt and could not be backed up; refusing to overwrite the only copy \
+             (free disk space or fix the file, then restart termiHub)"
+        );
+    }
     let Ok(raw) = fs::read_to_string(path) else {
         return Ok(());
     };
@@ -245,28 +257,25 @@ pub enum Salvage<T> {
 /// recovery (PER-004).
 ///
 /// When a store shaped `{ "version": …, "<field>": [ <entries> ], … }` fails a
-/// whole-file parse, this re-reads it as untyped JSON and validates each element
-/// of the `<field>` array against `Entry` individually, keeping the ones that
-/// parse and dropping only the corrupt ones (each recorded as a
+/// whole-file parse, this validates each element of the `<field>` array of the
+/// (already migrated) `value` against `Entry` individually, keeping the ones
+/// that parse and dropping only the corrupt ones (each recorded as a
 /// [`RecoveryWarning`]). The store is then rebuilt from the survivors **plus
 /// every other top-level field** (so unknown/`extra` fields are preserved) and
 /// returned as [`Salvage::Recovered`].
 ///
 /// Returns [`Salvage::Unsalvageable`] — leaving the caller to whole-reset — when
-/// the raw JSON is unparseable, is not an object, has no `<field>` array, every
-/// entry already parses (so the breakage is in another field), or the rebuilt
-/// store still fails to deserialize. `Entry` is validated against the *current*
-/// on-disk entry shape; all wired stores are schema v1 with identity migration,
-/// so the on-disk shape and the current shape are the same.
-pub fn salvage_list_store<T, Entry>(raw: &str, file_name: &str, field: &str) -> Salvage<T>
+/// `value` is not an object, has no `<field>` array, every entry already parses
+/// (so the breakage is in another field), or the rebuilt store still fails to
+/// deserialize. `Entry` is the *current* entry shape: the caller
+/// ([`load_store_with_recovery`]) runs the store's forward migration first, so
+/// an older file's entries are judged after they were brought up to date
+/// (PER2-007).
+pub fn salvage_list_store<T, Entry>(mut value: Value, file_name: &str, field: &str) -> Salvage<T>
 where
     T: DeserializeOwned,
     Entry: DeserializeOwned,
 {
-    let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
-        return Salvage::Unsalvageable;
-    };
-
     let Some(entries) = value.get(field).and_then(Value::as_array) else {
         return Salvage::Unsalvageable;
     };
@@ -326,8 +335,9 @@ where
 ///   file is left *completely intact* (never backed up, never overwritten) — the
 ///   PER-004 downgrade-safety guarantee. The store's own `save` guards too, so an
 ///   in-version change made afterwards cannot clobber the newer file either.
-/// * genuinely unparseable → back up to `<name>.bak` + reset to `T::default()`
-///   (the pre-existing corruption behavior, unchanged)
+/// * genuinely unparseable → [`recover_corrupt_store`]: back up to a fresh
+///   `<name>.bak[.N]`, salvage what parses, and rewrite the file only once the
+///   backup is safely on disk
 pub fn load_store_with_recovery<T>(path: &Path, file_name: &str) -> Result<RecoveryResult<T>>
 where
     T: VersionedStore + Default + Serialize,
@@ -346,6 +356,9 @@ where
             data,
             migrated_from,
         } => {
+            // The file parses again, so a guard armed by an earlier failed
+            // backup has nothing left to protect.
+            release_unbacked_corrupt(path);
             if let Some(from) = migrated_from {
                 tracing::info!(
                     "Migrated {file_name} from schema v{from} to v{}",
@@ -372,64 +385,237 @@ where
             tracing::error!("{err}");
             Ok(RecoveryResult {
                 data: T::default(),
-                warnings: vec![RecoveryWarning {
-                    file_name: file_name.to_string(),
-                    message: format!(
-                        "This file was written by a newer version of termiHub (schema v{}). \
-                         It was left unchanged to avoid data loss; changes made now will not be \
-                         saved over it. Update termiHub to use this data.",
-                        err.found
-                    ),
-                    details: Some(err.to_string()),
-                }],
+                warnings: vec![newer_version_warning(file_name, &err)],
             })
         }
         LoadOutcome::Corrupt(detail) => {
-            // Genuine corruption. Back up the bad file first (unchanged).
-            let backup = path.with_extension("json.bak");
-            let _ = fs::copy(path, &backup);
-
-            // Granular recovery first (PER-004): for a list-shaped store, drop
-            // only the individually-corrupt entries and keep the rest, resetting
-            // the whole store only when even the container is unparseable. Atomic
-            // stores fall straight through to the reset below (default `salvage`).
-            if let Salvage::Recovered { data, warnings } = T::salvage(&raw, file_name) {
-                tracing::warn!(
-                    "{file_name} had {} corrupt entrie(s); salvaged the rest, backed up to {}",
-                    warnings.len(),
-                    backup.display()
-                );
-                // Persist the salvaged store so the drop is durable and the file
-                // parses cleanly next launch. Best-effort: the in-memory data is
-                // already correct, so a failed rewrite must not fail the load.
-                if let Ok(pretty) = serde_json::to_string_pretty(&data) {
-                    if let Err(e) = write_atomic(path, &pretty) {
-                        tracing::warn!("Could not persist salvaged {file_name}: {e}");
-                    }
-                }
-                return Ok(RecoveryResult { data, warnings });
-            }
-
-            // Unsalvageable — reset to defaults (pre-existing behavior).
-            tracing::error!(
-                "{file_name} is corrupt, backed up to {} and reset to defaults",
-                backup.display()
-            );
-            let defaults = T::default();
-            let pretty = serde_json::to_string_pretty(&defaults)
-                .with_context(|| format!("Failed to serialize default {file_name}"))?;
-            write_atomic(path, &pretty)
-                .with_context(|| format!("Failed to write default {file_name} after recovery"))?;
-            Ok(RecoveryResult {
-                data: defaults,
-                warnings: vec![RecoveryWarning {
-                    file_name: file_name.to_string(),
-                    message: format!("{file_name} was corrupt and has been reset to defaults."),
-                    details: Some(detail),
-                }],
+            recover_corrupt_store::<T>(path, file_name, &raw, detail, |data| {
+                let pretty = serde_json::to_string_pretty(data)
+                    .with_context(|| format!("Failed to serialize recovered {file_name}"))?;
+                write_atomic(path, &pretty)
             })
         }
     }
+}
+
+/// The user-facing warning for a store file written by a newer schema version.
+pub fn newer_version_warning(file_name: &str, err: &NewerVersionError) -> RecoveryWarning {
+    RecoveryWarning {
+        file_name: file_name.to_string(),
+        message: format!(
+            "This file was written by a newer version of termiHub (schema v{}). \
+             It was left unchanged to avoid data loss; changes made now will not be \
+             saved over it. Update termiHub to use this data.",
+            err.found
+        ),
+        details: Some(err.to_string()),
+    }
+}
+
+/// How many corrupt-store backups (`<name>.bak`, `<name>.bak.1`, …) are kept
+/// per file before a new corruption can no longer be backed up — in which case
+/// recovery leaves the live file untouched rather than overwrite an earlier
+/// backup that may hold the only copy of salvage-dropped entries (ERR2-002).
+pub const MAX_CORRUPT_BACKUPS: usize = 20;
+
+/// Copy a corrupt store to the first free `<file>.bak`, `<file>.bak.1`, …, so
+/// an earlier backup is never clobbered (ERR2-002). Fails — copying nothing —
+/// when the copy cannot be completed or every slot is taken.
+pub fn backup_corrupt_file(path: &Path) -> std::io::Result<PathBuf> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    for n in 0..MAX_CORRUPT_BACKUPS {
+        let candidate = if n == 0 {
+            path.with_file_name(format!("{name}.bak"))
+        } else {
+            path.with_file_name(format!("{name}.bak.{n}"))
+        };
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(_) => {
+                if let Err(e) = fs::copy(path, &candidate) {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(e);
+                }
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "{MAX_CORRUPT_BACKUPS} backups of {name} already exist"
+    )))
+}
+
+/// Files whose corrupt original could not be backed up this session. While a
+/// path is listed, [`guard_not_newer`] refuses every save to it, so the only
+/// copy of the user's data is never overwritten (ERR2-002).
+static UNBACKED_CORRUPT: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn unbacked_corrupt() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    UNBACKED_CORRUPT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Arm the save guard for `path`: its corrupt original could not be backed
+/// up, so no save may overwrite it until it loads cleanly again (or termiHub
+/// restarts and the backup succeeds).
+pub fn protect_unbacked_corrupt(path: &Path) {
+    let mut paths = unbacked_corrupt();
+    if !paths.iter().any(|p| p == path) {
+        paths.push(path.to_path_buf());
+    }
+}
+
+fn release_unbacked_corrupt(path: &Path) {
+    unbacked_corrupt().retain(|p| p != path);
+}
+
+fn is_unbacked_corrupt(path: &Path) -> bool {
+    unbacked_corrupt().iter().any(|p| p == path)
+}
+
+/// The JSON a corrupt file's salvage should see: the raw document brought up
+/// to the current schema by [`VersionedStore::migrate`] when it is readable at
+/// an older version (PER2-007). `None` when the text is not JSON at all.
+pub fn salvage_input<T: VersionedStore>(raw: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let version = read_version(&value).unwrap_or(ASSUMED_VERSION);
+    if version < T::CURRENT_VERSION {
+        if let Ok(migrated) = T::migrate(value.clone(), version) {
+            return Some(migrated);
+        }
+    }
+    Some(value)
+}
+
+/// Recover a store whose file is genuinely corrupt (readable bytes that are
+/// not a valid store at/below the current version) — the one shared rule for
+/// every store (ERR2-002):
+///
+/// 1. **Back up first, checked.** The original is copied to a fresh
+///    `<name>.bak[.N]` ([`backup_corrupt_file`]); an earlier backup is never
+///    overwritten.
+/// 2. **Salvage** what parses via [`VersionedStore::salvage`] on the migrated
+///    document, else fall back to `T::default()`.
+/// 3. **Persist only if the backup succeeded.** `persist` writes the recovered
+///    store (the store's own writer). If the backup failed, nothing is written:
+///    the recovered data is returned in memory only, the save guard is armed
+///    ([`protect_unbacked_corrupt`]) and the warning says so honestly.
+pub fn recover_corrupt_store<T>(
+    path: &Path,
+    file_name: &str,
+    raw: &str,
+    detail: String,
+    persist: impl FnOnce(&T) -> Result<()>,
+) -> Result<RecoveryResult<T>>
+where
+    T: VersionedStore + Default,
+{
+    recover_corrupt_store_with(path, file_name, raw, detail, backup_corrupt_file, persist)
+}
+
+/// [`recover_corrupt_store`] with an injectable backup step (tests force it to
+/// fail).
+fn recover_corrupt_store_with<T>(
+    path: &Path,
+    file_name: &str,
+    raw: &str,
+    detail: String,
+    backup: impl FnOnce(&Path) -> std::io::Result<PathBuf>,
+    persist: impl FnOnce(&T) -> Result<()>,
+) -> Result<RecoveryResult<T>>
+where
+    T: VersionedStore + Default,
+{
+    let backup = backup(path);
+
+    // Granular recovery first (PER-004): for a list-shaped store, drop only the
+    // individually-corrupt entries and keep the rest, resetting the whole store
+    // only when even the container is unparseable. Atomic stores fall straight
+    // through to the reset (default `salvage`).
+    let salvaged = match salvage_input::<T>(raw) {
+        Some(value) => T::salvage(value, file_name),
+        None => Salvage::Unsalvageable,
+    };
+    let (data, mut warnings, salvaged) = match salvaged {
+        Salvage::Recovered { data, warnings } => (data, warnings, true),
+        Salvage::Unsalvageable => (T::default(), Vec::new(), false),
+    };
+
+    match backup {
+        Ok(backup_path) => {
+            let backup_name = backup_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if salvaged {
+                tracing::warn!(
+                    "{file_name} had {} corrupt entrie(s); salvaged the rest, backed up to {}",
+                    warnings.len(),
+                    backup_path.display()
+                );
+                // Persist so the drop is durable and the file parses cleanly next
+                // launch. Best-effort: the in-memory data is already correct.
+                if let Err(e) = persist(&data) {
+                    tracing::warn!("Could not persist salvaged {file_name}: {e:#}");
+                }
+                for warning in &mut warnings {
+                    warning.message = format!(
+                        "{} The original was backed up as {backup_name}.",
+                        warning.message
+                    );
+                }
+            } else {
+                tracing::error!(
+                    "{file_name} is corrupt, backed up to {} and reset to defaults",
+                    backup_path.display()
+                );
+                persist(&data).with_context(|| {
+                    format!("Failed to write default {file_name} after recovery")
+                })?;
+                warnings.push(RecoveryWarning {
+                    file_name: file_name.to_string(),
+                    message: format!(
+                        "{file_name} was corrupt and has been reset to defaults. \
+                         The original was backed up as {backup_name}."
+                    ),
+                    details: Some(detail),
+                });
+            }
+        }
+        Err(e) => {
+            // ERR2-002: without a backup the live file is the only copy — never
+            // overwrite it. Run on the recovered data in memory and block saves.
+            tracing::error!(
+                "{file_name} is corrupt and could not be backed up ({e}); \
+                 leaving it untouched and running on recovered data in memory only"
+            );
+            protect_unbacked_corrupt(path);
+            let state = if salvaged {
+                "the entries that could be read are loaded"
+            } else {
+                "termiHub is running on defaults"
+            };
+            warnings.insert(
+                0,
+                RecoveryWarning {
+                    file_name: file_name.to_string(),
+                    message: format!(
+                        "{file_name} is corrupt and could not be backed up, so the original \
+                         was left untouched; {state} in memory only. Changes will not be saved \
+                         until the file is repaired or disk space is freed and termiHub restarted."
+                    ),
+                    details: Some(format!("{detail}; backup failed: {e}")),
+                },
+            );
+        }
+    }
+
+    Ok(RecoveryResult { data, warnings })
 }
 
 #[cfg(test)]

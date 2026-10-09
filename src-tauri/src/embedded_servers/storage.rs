@@ -10,7 +10,8 @@ use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_app_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
-    guard_not_newer, load_versioned, salvage_list_store, LoadOutcome, Salvage, VersionedStore,
+    guard_not_newer, load_versioned, recover_corrupt_store, salvage_list_store, LoadOutcome,
+    Salvage, VersionedStore,
 };
 
 const FILE_NAME: &str = "embedded_servers.json";
@@ -24,8 +25,8 @@ impl VersionedStore for EmbeddedServerStore {
     // default identity `migrate` is correct and the version is left to it.
     const CURRENT_VERSION: u32 = EmbeddedServerStore::CURRENT_VERSION;
 
-    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
-        salvage_list_store::<Self, EmbeddedServerConfig>(raw, file_name, "servers")
+    fn salvage(value: serde_json::Value, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, EmbeddedServerConfig>(value, file_name, "servers")
     }
 }
 
@@ -59,8 +60,9 @@ impl EmbeddedServerStorage {
     /// * written by a **newer** schema → defaults in memory plus a warning, and
     ///   the file is left untouched (no backup, no rewrite); both save paths
     ///   refuse to overwrite it afterwards;
-    /// * corrupt → backed up to `.bak`, then salvaged per server, or reset only
-    ///   when even the container is unparseable.
+    /// * corrupt → backed up to a fresh `.bak[.N]`, then salvaged per server, or
+    ///   reset only when even the container is unparseable; never rewritten when
+    ///   the backup failed (ERR2-002).
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<EmbeddedServerStore>> {
         if !self.file_path.exists() {
             return Ok(RecoveryResult {
@@ -100,47 +102,18 @@ impl EmbeddedServerStorage {
             LoadOutcome::Corrupt(detail) => detail,
         };
 
-        // Parse failed — back up the corrupt file first.
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Embedded servers file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        // Granular recovery (PER-004): drop only the individually-corrupt server
-        // entries and keep the rest (and the unknown top-level fields); reset the
-        // whole store only when even the container is unparseable.
-        if let Salvage::Recovered {
-            data: store,
-            warnings,
-        } = EmbeddedServerStore::salvage(&data, FILE_NAME)
-        {
-            // Verbatim: the salvaged entries may still carry legacy plaintext
-            // passwords the manager has yet to migrate into the credential store
-            // (#3514); stripping them here would lose the only copy.
-            self.save_verbatim(&store)
-                .context("Failed to save salvaged embedded servers")?;
-            return Ok(RecoveryResult {
-                data: store,
-                warnings,
-            });
-        }
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Embedded servers file was corrupt and has been reset.".to_string(),
-            details: Some(parse_error),
-        };
-
-        let defaults = EmbeddedServerStore::default();
-        self.save(&defaults)
-            .context("Failed to save defaults after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        // Corrupt: the shared rule (ERR2-002) backs the file up to a fresh
+        // `.bak`, salvages per server (PER-004), and rewrites only once the
+        // backup is on disk. Verbatim: the salvaged entries may still carry
+        // legacy plaintext passwords the manager has yet to migrate into the
+        // credential store (#3514); stripping them here would lose the only copy.
+        recover_corrupt_store::<EmbeddedServerStore>(
+            &self.file_path,
+            FILE_NAME,
+            &data,
+            parse_error,
+            |store| self.save_verbatim(store),
+        )
     }
 
     /// Refuse to overwrite a file written by a newer schema. Re-reads the

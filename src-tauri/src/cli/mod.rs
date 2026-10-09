@@ -13,7 +13,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::utils::migrate::{load_versioned, LoadOutcome, Salvage, VersionedStore};
+use crate::utils::migrate::{load_versioned, salvage_input, LoadOutcome, Salvage, VersionedStore};
 use crate::workspace::config::{WorkspaceStore, WorkspaceSummary};
 
 #[cfg(test)]
@@ -109,12 +109,16 @@ pub fn load_workspace_summaries(config_dir: &Path) -> Result<Vec<WorkspaceSummar
             Ok(data.workspaces.iter().map(|ws| ws.to_summary()).collect())
         }
         LoadOutcome::Newer(err) => bail!("{err}"),
-        LoadOutcome::Corrupt(err) => match WorkspaceStore::salvage(&raw, "workspaces.json") {
-            Salvage::Recovered { data, .. } => {
-                Ok(data.workspaces.iter().map(|ws| ws.to_summary()).collect())
+        LoadOutcome::Corrupt(err) => {
+            let salvaged = salvage_input::<WorkspaceStore>(&raw)
+                .map(|value| WorkspaceStore::salvage(value, "workspaces.json"));
+            match salvaged {
+                Some(Salvage::Recovered { data, .. }) => {
+                    Ok(data.workspaces.iter().map(|ws| ws.to_summary()).collect())
+                }
+                _ => bail!("{} is unreadable: {err}", path.display()),
             }
-            Salvage::Unsalvageable => bail!("{} is unreadable: {err}", path.display()),
-        },
+        }
     }
 }
 
