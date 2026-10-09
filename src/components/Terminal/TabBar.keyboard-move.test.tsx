@@ -13,7 +13,7 @@ import { TabBar } from "./TabBar";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { flushAsync } from "@/test/flushAsync";
-import { TerminalTab } from "@/types/terminal";
+import type { DropEdge, TerminalTab } from "@/types/terminal";
 
 vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -61,8 +61,10 @@ function makeTab(
 
 let container: HTMLDivElement;
 let root: Root;
-let reorderTabs: ReturnType<typeof vi.fn>;
-let splitPanelWithTab: ReturnType<typeof vi.fn>;
+let reorderTabs: ReturnType<typeof vi.fn<(panelId: string, from: number, to: number) => void>>;
+let splitPanelWithTab: ReturnType<
+  typeof vi.fn<(tabId: string, from: string, to: string, edge: DropEdge) => void>
+>;
 
 function render(tabs: TerminalTab[]) {
   act(() => {
@@ -109,8 +111,8 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  reorderTabs = vi.fn();
-  splitPanelWithTab = vi.fn();
+  reorderTabs = vi.fn<(panelId: string, from: number, to: number) => void>();
+  splitPanelWithTab = vi.fn<(tabId: string, from: string, to: string, edge: DropEdge) => void>();
   useAppStore.setState({ terminalSpawnErrors: {}, reorderTabs, splitPanelWithTab });
 });
 

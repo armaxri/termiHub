@@ -6,7 +6,7 @@
  * section's share (in percent), adjustable with ArrowUp/ArrowDown.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useSectionResize, SECTION_KEYBOARD_STEP_PERCENT } from "./useSectionResize";
 

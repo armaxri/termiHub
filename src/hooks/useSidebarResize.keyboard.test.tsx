@@ -7,7 +7,7 @@
  * spread on it and drive it with keyboard events.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
