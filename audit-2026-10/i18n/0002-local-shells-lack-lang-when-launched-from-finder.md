@@ -12,8 +12,8 @@ evidence:
   - core/src/session/shell.rs:320
   - core/src/backends/local_shell.rs:124
   - core/src/backends/local_shell.rs:128
-status: open
-resolution: ""
+status: fixed
+resolution: "#4336 — local shells get a UTF-8 LANG (or LC_CTYPE over C/POSIX) from the system locale unless one is set"
 audit: 2026-10
 commit: 663465d52
 relation: new
