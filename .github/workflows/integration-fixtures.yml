@@ -84,6 +84,9 @@ on:
       # The headless X detection probe (#4005).
       - "src-tauri/src/terminal/xserver/linux_gap.rs"
       - ".github/workflows/integration-fixtures.yml"
+      # Docker Hub mirror + retried pulls every fixture job runs first (#4614).
+      - ".github/actions/docker-hub-mirror/**"
+      - "scripts/internal/registry-mirror.sh"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
 # lands on the same ref. `github.workflow` is the CALLER's name when this lane is
@@ -182,6 +185,20 @@ jobs:
           # checkout's default ref: a PR's merge ref, the dispatching branch, or
           # the release-candidate caller's sha.
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Docker Hub resilience (mirror + pre-pulled images)
+        # #4614: unauthenticated Docker Hub pulls hit the shared runners' per-IP
+        # rate limit and Docker Hub outages, which redded unrelated PRs. This
+        # points Docker and Podman at the mirror.gcr.io mirror (restarting the
+        # daemon, so it runs before any container exists) and pre-pulls, with
+        # retry + backoff, every fixture base image, the alpine:3 the core/tests
+        # docker_* suites start (also into Podman for the podman variant below)
+        # and the GCR distroless image docker_monitoring_fallback.rs uses.
+        uses: ./.github/actions/docker-hub-mirror
+        with:
+          fixture-images: "true"
+          images: alpine:3 gcr.io/distroless/python3-debian12:latest
+          podman-images: alpine:3
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -576,6 +593,11 @@ jobs:
         with:
           # Nightly grades develop; see core-integration's checkout (#3664).
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Docker Hub resilience (mirror)
+        # #4614: pull the rust builder and debian base through mirror.gcr.io;
+        # run.sh pre-pulls both with retry + backoff itself.
+        uses: ./.github/actions/docker-hub-mirror
 
       - name: Run the polkit D-Bus integration test
         run: tests/docker/polkit/run.sh --clean

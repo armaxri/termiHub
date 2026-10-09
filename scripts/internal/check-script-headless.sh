@@ -94,6 +94,7 @@ SCRIPTS=(
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/plugin-ipc-fuzz.sh"
+  "scripts/internal/registry-mirror.sh"
   "scripts/internal/release-smoke-app-lifecycle.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
@@ -681,6 +682,67 @@ else
   echo "skip  Windows bundle check exit codes (pwsh not installed)"
 fi
 
+# --- Docker Hub resilience helper (#4614) ---
+# registry-mirror.sh runs for real against temp files and a stub container CLI:
+# `configure --no-restart` must merge the mirror into an existing daemon.json
+# (keeping its keys, never duplicating the mirror) and write the Podman drop-in;
+# `pull` must retry a failing pull until it succeeds and give up (exit 1) after
+# PULL_ATTEMPTS, with short names qualified to docker.io/library/, and use a
+# locally present image at once when its pull fails.
+RM_HELPER="scripts/internal/registry-mirror.sh"
+RM="$(mktemp -d)"
+rm_check() { # <label> <condition command...>
+  local label="$1"
+  shift
+  if "$@"; then
+    echo "ok    registry mirror: ${label}"
+  else
+    echo "::error file=${RM_HELPER}::registry mirror: ${label}"
+    failures=$((failures + 1))
+  fi
+}
+printf '{"exec-opts":["native.cgroupdriver=cgroupfs"],"registry-mirrors":["https://mirror.gcr.io"]}\n' \
+  >"$RM/daemon.json"
+rm_rc=0
+bash "$RM_HELPER" configure --daemon-json "$RM/daemon.json" \
+  --podman-conf "$RM/registries.conf.d/99-mirror.conf" --no-restart >/dev/null 2>&1 || rm_rc=$?
+rm_check "configure --no-restart exits 0" [ "$rm_rc" -eq 0 ]
+rm_check "daemon.json keeps its keys and lists the mirror once" \
+  jq -e '.["exec-opts"] == ["native.cgroupdriver=cgroupfs"]
+    and .["registry-mirrors"] == ["https://mirror.gcr.io"]' "$RM/daemon.json"
+rm_check "Podman drop-in mirrors docker.io through mirror.gcr.io" \
+  grep -q '^location = "mirror.gcr.io"$' "$RM/registries.conf.d/99-mirror.conf"
+cat >"$RM/stub-cli" <<'STUB'
+#!/usr/bin/env bash
+# `image inspect` succeeds only with STUB_LOCAL=1 (a locally present image).
+if [ "$1" = image ]; then [ "${STUB_LOCAL:-0}" = 1 ]; exit; fi
+n=$(($(cat "$STUB_COUNT" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$STUB_COUNT"
+echo "$*" >>"$STUB_COUNT.args"
+[ "$n" -ge "$STUB_OK_AT" ]
+STUB
+chmod +x "$RM/stub-cli"
+rm_rc=0
+STUB_COUNT="$RM/ok" STUB_OK_AT=3 CONTAINER_CMD="$RM/stub-cli" PULL_BACKOFF_SECONDS=0 \
+  bash "$RM_HELPER" pull alpine:3 >/dev/null 2>&1 || rm_rc=$?
+rm_check "pull retries a failing pull until it succeeds (3rd attempt)" \
+  [ "${rm_rc}/$(cat "$RM/ok")" = "0/3" ]
+rm_check "pull qualifies a short name to docker.io/library/" \
+  grep -qx 'pull docker.io/library/alpine:3' "$RM/ok.args"
+rm_rc=0
+STUB_COUNT="$RM/never" STUB_OK_AT=99 CONTAINER_CMD="$RM/stub-cli" PULL_BACKOFF_SECONDS=0 \
+  PULL_ATTEMPTS=2 bash "$RM_HELPER" pull ghcr.io/x/y:1 >/dev/null 2>&1 || rm_rc=$?
+rm_check "pull gives up with exit 1 after PULL_ATTEMPTS" \
+  [ "${rm_rc}/$(cat "$RM/never")" = "1/2" ]
+rm_rc=0
+STUB_COUNT="$RM/local" STUB_OK_AT=99 STUB_LOCAL=1 CONTAINER_CMD="$RM/stub-cli" \
+  PULL_BACKOFF_SECONDS=0 bash "$RM_HELPER" pull alpine:3 >/dev/null 2>&1 || rm_rc=$?
+rm_check "pull falls back to a local copy without retrying" \
+  [ "${rm_rc}/$(cat "$RM/local")" = "0/1" ]
+rm_check "fixture-images lists the fixtures' tagged Docker Hub bases" \
+  grep -qx 'ubuntu:24.04' <(bash "$RM_HELPER" fixture-images)
+rm -rf "$RM"
+
 echo ""
 if [ "$failures" -gt 0 ]; then
   echo "Headless script smoke FAILED: ${help_failures} --help path(s) errored," \
@@ -697,4 +759,4 @@ fi
 echo "Headless script smoke OK: ${#SCRIPTS[@]} script(s) executed their --help path cleanly;" \
   "the signing-key dry-run lifecycle, the checksum sidecar writer, the app lifecycle" \
   "smoke (on a stub app), the release test-bridge guard, the plugin runner and RDP helper" \
-  "bundle checks and the Windows bundle check exit codes passed."
+  "bundle checks, the Windows bundle check exit codes and the registry-mirror helper passed."
