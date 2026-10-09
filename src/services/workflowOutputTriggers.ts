@@ -27,6 +27,7 @@
  *   limit, both clamped to the ranges in {@link OUTPUT_TRIGGER_LIMITS}.
  */
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
+import { AnsiStreamStripper } from "@/utils/stripAnsi";
 
 /** Safety limits of the on-output-match trigger. */
 export const OUTPUT_TRIGGER_LIMITS = {
@@ -102,21 +103,6 @@ export function clampMaxFires(value: number | undefined): number {
   const { defaultMaxFiresPerSession, maxMaxFiresPerSession } = OUTPUT_TRIGGER_LIMITS;
   if (value === undefined || !Number.isFinite(value)) return defaultMaxFiresPerSession;
   return Math.min(maxMaxFiresPerSession, Math.max(1, Math.round(value)));
-}
-
-/**
- * Strips the common ANSI/VT escape sequences (CSI/SGR and friends) so a
- * pattern matches the visible text, not the control codes. Mirrors the
- * `wait-for-output` step's stripper; `no-control-regex` is disabled because
- * matching the escape introducer is exactly the intent.
- */
-const ANSI_ESCAPE_RE =
-  // eslint-disable-next-line no-control-regex
-  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
-
-/** Remove ANSI escape sequences from terminal text. */
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE_RE, "");
 }
 
 /** One compiled, valid on-output-match trigger. */
@@ -200,6 +186,8 @@ interface FireRecord {
 /** Per-session matching state. */
 interface SessionState {
   decoder: TextDecoder;
+  /** Strips ANSI, holding a sequence split across batches until it completes. */
+  stripper: AnsiStreamStripper;
   tail: string;
   records: Map<string, FireRecord>;
 }
@@ -297,7 +285,12 @@ export class OutputTriggerEngine {
 
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { decoder: new TextDecoder(), tail: "", records: new Map() };
+      state = {
+        decoder: new TextDecoder(),
+        stripper: new AnsiStreamStripper(),
+        tail: "",
+        records: new Map(),
+      };
       this.sessions.set(sessionId, state);
     }
     let fresh = "";
@@ -311,7 +304,7 @@ export class OutputTriggerEngine {
         fresh = fresh.slice(fresh.length - OUTPUT_TRIGGER_LIMITS.scanChars);
       }
     }
-    let text = state.tail + stripAnsi(fresh);
+    let text = state.tail + state.stripper.push(fresh);
     if (text.length > OUTPUT_TRIGGER_LIMITS.scanChars) {
       text = text.slice(text.length - OUTPUT_TRIGGER_LIMITS.scanChars);
     }
