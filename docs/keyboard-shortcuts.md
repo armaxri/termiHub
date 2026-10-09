@@ -142,6 +142,20 @@ Pass-through is symmetric across host platforms: a Linux desktop SSH-ing to a
 Windows host, a macOS desktop SSH-ing to a Linux host, etc. all behave the
 same way.
 
+## Remote desktop (VNC / RDP): keyboard capture
+
+While a remote-desktop canvas has focus, it sends **every** key to the remote
+machine — including <kbd>Tab</kbd> and termiHub's own shortcuts — so you can use
+the remote desktop as if you were sitting at it. A highlighted border and a
+"Keyboard captured" hint show when the canvas holds the keyboard, and screen
+readers announce the capture.
+
+To give the keyboard back to termiHub, press
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd> (macOS:
+<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>Shift</kbd>). The chord is never sent to
+the remote machine; any keys still held there are released. The chord is also
+shown in the remote-desktop toolbar.
+
 ## Customizing shortcuts: the overlay and the recorder
 
 The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>

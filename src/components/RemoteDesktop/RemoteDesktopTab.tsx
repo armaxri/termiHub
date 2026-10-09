@@ -294,6 +294,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           }}
           onFirstFrame={session.noteFirstFrame}
           viewport={viewport}
+          label={title || host}
         />
       )}
 
