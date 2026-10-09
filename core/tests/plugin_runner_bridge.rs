@@ -27,7 +27,7 @@ use plugin_runner_support::{host_for, install_plugin, new_connection, runner_bin
 
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::plugin::sandbox::{DenialReason, PluginRunnerConfig, SandboxedPlugin};
-use termihub_core::plugin::PluginHost;
+use termihub_core::plugin::{HostError, PermissionError, PluginHost};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -229,10 +229,13 @@ async fn the_manifest_connection_ceiling_is_enforced_out_of_process() {
 #[tokio::test(flavor = "multi_thread")]
 async fn filesystem_access_is_confined_to_the_declared_paths() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    // Outside `work`, which holds the plugins root and so counts as termiHub's
+    // config folder: a declared root may not overlap it (#4293).
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     std::fs::write(scoped.join("data.txt"), b"in-scope contents").unwrap();
-    let secret = work.path().join("secret.txt");
+    let secret = outside.path().join("secret.txt");
     std::fs::write(&secret, b"top secret").unwrap();
     let plugin = load(
         work.path(),
@@ -263,7 +266,7 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
     let write = |p: &Path| serde_json::json!({ "probe": "writefile", "probePath": path(p), "probeData": "hello" });
     assert_eq!(plugin.probe(write(&written)).await, "WRITE_OK");
     assert_eq!(std::fs::read(&written).unwrap(), b"hello");
-    let escape = work.path().join("escape.txt");
+    let escape = outside.path().join("escape.txt");
     assert_eq!(plugin.probe(write(&escape)).await, "WRITE_DENIED");
     assert!(!escape.exists(), "nothing was written outside the scope");
 
@@ -282,7 +285,7 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
         "LIST_OK:data.txt,out.txt"
     );
     assert_eq!(
-        plugin.probe(probe("listdir", work.path())).await,
+        plugin.probe(probe("listdir", outside.path())).await,
         "LIST_DENIED"
     );
 
@@ -304,7 +307,8 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_file_larger_than_one_frame_round_trips_through_the_bridge() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     let plugin = load(
         work.path(),
@@ -338,7 +342,8 @@ async fn a_file_larger_than_one_frame_round_trips_through_the_bridge() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_directory_larger_than_one_frame_lists_every_entry() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     // 50k names of 24 bytes: ~1.5 MiB charged, several `list_dir` pages
     // (#4220).
@@ -410,7 +415,14 @@ async fn an_empty_dot_or_relative_root_never_opens_the_disk() {
         tampered.manifest.filesystem_paths = vec![root.to_owned()];
         let (host, registry) = host_for(&installed);
         let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
-        if host.load(&tampered).is_err() {
+        if let Err(err) = host.load(&tampered) {
+            assert!(
+                matches!(
+                    err,
+                    HostError::Permission(PermissionError::InvalidFilesystemPath { .. })
+                ),
+                "root {root:?}: {err:?}"
+            );
             assert!(!host.is_loaded(&tampered.manifest.id));
             continue;
         }

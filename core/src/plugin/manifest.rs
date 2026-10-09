@@ -307,7 +307,8 @@ pub struct PluginManifest {
     /// the [`Filesystem`](PluginPermission::Filesystem) permission: the host
     /// confines the plugin's filesystem access to these roots (concept §13, "must
     /// declare which paths they need"). Absent/empty for plugins that request no
-    /// filesystem access.
+    /// filesystem access. Each entry must be an absolute, normalised path below
+    /// a filesystem root ([`validate`](Self::validate), #4293).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub filesystem_paths: Vec<String>,
@@ -355,6 +356,14 @@ impl PluginManifest {
         if let Some(backend) = &self.extensions.terminal_backend {
             validate_connection_type(&backend.connection_type)?;
             validate_libraries(&backend.libraries)?;
+        }
+        for path in &self.filesystem_paths {
+            super::security::check_declared_filesystem_path(path).map_err(|reason| {
+                ManifestValidationError::InvalidFilesystemPath {
+                    path: path.clone(),
+                    reason,
+                }
+            })?;
         }
         if let Some(url) = &self.update_url {
             super::update_check::validate_https_url(url)
@@ -460,6 +469,17 @@ pub enum ManifestValidationError {
         triple: String,
         /// The offending path.
         path: String,
+    },
+    /// A `filesystemPaths` entry is not an absolute, normalised path below a
+    /// filesystem root (#4293): empty, relative, `.`/`..`-carrying, a root, a
+    /// network share root, or a Windows verbatim/device path. See
+    /// [`check_declared_filesystem_path`](super::check_declared_filesystem_path).
+    #[error("plugin manifest `filesystemPaths` entry `{path}` is invalid: it {reason}")]
+    InvalidFilesystemPath {
+        /// The offending entry, verbatim.
+        path: String,
+        /// What is wrong with it.
+        reason: &'static str,
     },
     /// Two `terminalBackend.libraries` entries point at the same file (PLG-011):
     /// each platform must carry its own library.
@@ -989,7 +1009,10 @@ mod tests {
             "\\Windows",
         ] {
             assert!(
-                with_filesystem_path(bad).validate().is_err(),
+                matches!(
+                    with_filesystem_path(bad).validate(),
+                    Err(ManifestValidationError::InvalidFilesystemPath { .. })
+                ),
                 "filesystemPaths entry {bad:?} should be rejected"
             );
         }

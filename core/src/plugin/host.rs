@@ -875,6 +875,15 @@ impl PluginHost {
         // `PluginState::Error` — graceful degradation, not a crash.
         let permissions = PermissionSet::from_manifest(&plugin.manifest);
         permissions.check_consistency(&plugin.manifest.extensions)?;
+        // A declared filesystem root may not reach the user's home folder as a
+        // whole, nor termiHub's own folders: the plugins root and the config
+        // folder it lives in (`<config>/plugins`), which hold settings,
+        // credentials, and every plugin's files and data (#4293).
+        let app_dirs: Vec<&Path> = std::iter::once(self.root.as_path())
+            .chain(self.root.parent().filter(|p| p.parent().is_some()))
+            .collect();
+        permissions
+            .check_protected_folders(crate::config::home_directory().as_deref(), &app_dirs)?;
 
         let Some(backend) = plugin.manifest.extensions.terminal_backend.as_ref() else {
             // Frontend-only plugin (theme / JS parser / widget): there is no
@@ -1412,16 +1421,18 @@ mod tests {
 
     /// The load is refused with a permission error for the single declared
     /// `root`, before any trust gate or library is consulted.
-    fn assert_root_refused(host: &PluginHost, root: &Path) {
+    fn assert_root_refused(host: &PluginHost, root: &Path) -> PermissionError {
         let paths = serde_json::to_string(&[root.to_string_lossy()]).unwrap();
         let plugin = installed(&manifest_json(r#"["terminal", "filesystem"]"#, &paths));
         let err = host.load(&plugin).unwrap_err();
-        assert!(
-            matches!(err, HostError::Permission(_)),
-            "root {} must be refused as a permission error, got {err:?}",
-            root.display()
-        );
         assert!(!host.is_loaded("host-sec"));
+        match err {
+            HostError::Permission(e) => e,
+            other => panic!(
+                "root {} must be refused as a permission error, got {other:?}",
+                root.display()
+            ),
+        }
     }
 
     /// Defence in depth for PLG2-001 / SEC2-001: a manifest that reaches the
@@ -1431,7 +1442,10 @@ mod tests {
     fn load_refuses_empty_dot_and_relative_filesystem_roots() {
         let (host, _t) = test_host();
         for root in ["", ".", "./", "relative"] {
-            assert_root_refused(&host, Path::new(root));
+            assert!(matches!(
+                assert_root_refused(&host, Path::new(root)),
+                PermissionError::InvalidFilesystemPath { .. }
+            ));
         }
     }
 
@@ -1444,16 +1458,26 @@ mod tests {
         let (host, tmp) = test_host();
         let plugins = tmp.path();
         let config = plugins.parent().expect("the temp root has a parent");
-        assert_root_refused(&host, plugins);
-        assert_root_refused(&host, &plugins.join("other-plugin"));
-        assert_root_refused(&host, &plugins.join(".data").join("other-plugin"));
-        assert_root_refused(&host, config);
-        assert_root_refused(&host, &config.join("credentials"));
+        let mut refused = vec![
+            plugins.to_path_buf(),
+            plugins.join("other-plugin"),
+            plugins.join(".data").join("other-plugin"),
+            config.to_path_buf(),
+            config.join("credentials"),
+        ];
         if let Some(home) = crate::config::home_directory() {
-            assert_root_refused(&host, &home);
             if let Some(parent) = home.parent().filter(|p| p.parent().is_some()) {
-                assert_root_refused(&host, parent);
+                refused.push(parent.to_path_buf());
             }
+            refused.push(home);
+        }
+        for root in refused {
+            let err = assert_root_refused(&host, &root);
+            assert!(
+                matches!(err, PermissionError::OverBroadFilesystemPath { .. }),
+                "{}: {err:?}",
+                root.display()
+            );
         }
     }
 

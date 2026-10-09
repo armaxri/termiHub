@@ -85,6 +85,29 @@ pub enum PermissionError {
     /// permission it needs to create sessions.
     #[error("plugin provides a terminal backend but did not request the `terminal` permission")]
     TerminalWithoutPermission,
+
+    /// A declared `filesystemPaths` entry is not an absolute, normalised path
+    /// below a filesystem root (see [`check_declared_filesystem_path`]). Such an
+    /// entry could resolve against the host's working directory or, once
+    /// normalised to the empty path, match every path on the disk (#4293).
+    #[error("plugin `filesystemPaths` entry `{path}` is invalid: it {reason}")]
+    InvalidFilesystemPath {
+        /// The offending entry, verbatim.
+        path: String,
+        /// What is wrong with it.
+        reason: &'static str,
+    },
+
+    /// A declared `filesystemPaths` entry is too broad: it is or contains the
+    /// user's home folder, or it overlaps termiHub's own config or plugins
+    /// folder (settings, credentials, other plugins and their data) (#4293).
+    #[error("plugin `filesystemPaths` entry `{path}` is not allowed: it {reason}")]
+    OverBroadFilesystemPath {
+        /// The offending entry, as declared.
+        path: String,
+        /// Why it is too broad.
+        reason: &'static str,
+    },
 }
 
 /// The set of permissions a plugin holds, plus its filesystem scope.
@@ -167,8 +190,14 @@ impl PermissionSet {
         if extensions.terminal_backend.is_some() && !self.grants(PluginPermission::Terminal) {
             return Err(PermissionError::TerminalWithoutPermission);
         }
+        if let Some((path, reason)) = self.filesystem.rejected.first() {
+            return Err(PermissionError::InvalidFilesystemPath {
+                path: path.clone(),
+                reason,
+            });
+        }
         let has_fs_perm = self.grants(PluginPermission::Filesystem);
-        let has_paths = !self.filesystem.roots.is_empty();
+        let has_paths = self.filesystem.declared > 0;
         if has_fs_perm && !has_paths {
             return Err(PermissionError::FilesystemWithoutPaths);
         }
@@ -177,6 +206,113 @@ impl PermissionSet {
         }
         Ok(())
     }
+
+    /// Refuse a declared filesystem root that is too broad for this host:
+    /// the user's `home` folder or any folder containing it, and anything that
+    /// is, contains or lies inside one of termiHub's own folders (`app_dirs`:
+    /// the config folder and the plugins folder, which hold settings,
+    /// credentials, and every plugin's files and data).
+    ///
+    /// Compared both lexically and with symlinks resolved, so `/var` and
+    /// `/private/var` (macOS) or a differently-cased existing Windows path
+    /// cannot slip past.
+    pub fn check_protected_folders(
+        &self,
+        home: Option<&Path>,
+        app_dirs: &[&Path],
+    ) -> Result<(), PermissionError> {
+        let forms = |p: &Path| -> Vec<PathBuf> {
+            let lexical = normalize_lexical(p);
+            let mut out = vec![lexical.clone()];
+            if let Some(canonical) = resolve_existing_prefix(&lexical) {
+                out.push(canonical);
+            }
+            out
+        };
+        let home_forms = home.map(forms).unwrap_or_default();
+        let app_forms: Vec<PathBuf> = app_dirs.iter().flat_map(|d| forms(d)).collect();
+        for (declared, root) in self.filesystem.declared_roots() {
+            let root_forms = forms(root);
+            let over_broad = |reason| PermissionError::OverBroadFilesystemPath {
+                path: declared.to_owned(),
+                reason,
+            };
+            let contains = |outer: &[PathBuf], inner: &[PathBuf]| {
+                outer.iter().any(|o| inner.iter().any(|i| i.starts_with(o)))
+            };
+            if contains(&root_forms, &home_forms) {
+                return Err(over_broad("is or contains your home folder"));
+            }
+            if contains(&root_forms, &app_forms) || contains(&app_forms, &root_forms) {
+                return Err(over_broad(
+                    "overlaps termiHub's own config or plugins folder",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Why a declared `filesystemPaths` entry cannot be a filesystem scope root,
+/// or `Ok` if it can (#4293).
+///
+/// The check is textual and host-independent, so a manifest validates the same
+/// on every OS: an entry must be absolute in either the POSIX form (`/var/log/app`)
+/// or a Windows form (`C:\Logs\app`, `D:/captures`, `\\server\share\folder`), and
+/// must not be
+///
+/// * empty, or contain a NUL byte;
+/// * relative (`docs`, `~/captures`, `C:docs`, `\Windows`) — it would resolve
+///   against the host process's working directory, which differs between a
+///   desktop and a terminal launch;
+/// * a Windows verbatim or device path (`\\?\…`, `\\.\…`), which skips
+///   normalisation;
+/// * carrying a `.` or `..` segment — a declared path must already be in its
+///   final, normalised form, so what the user approved is what is granted;
+/// * a filesystem root (`/`, `C:\`) or a bare network share (`\\server\share`),
+///   which would grant everything on that volume.
+///
+/// An entry in another OS's form passes validation but grants nothing on this
+/// host (see [`FilesystemScope`]). Host-specific breadth limits (the home
+/// folder, termiHub's own folders) are applied at load by
+/// [`PermissionSet::check_protected_folders`].
+pub fn check_declared_filesystem_path(raw: &str) -> Result<(), &'static str> {
+    if raw.is_empty() {
+        return Err("is empty");
+    }
+    if raw.contains('\0') {
+        return Err("contains a NUL byte");
+    }
+    const WINDOWS_SEPARATORS: &[char] = &['\\', '/'];
+    let bytes = raw.as_bytes();
+    let (body, separators, min_segments, root_reason): (&str, &[char], usize, &'static str) =
+        if raw.starts_with("\\\\") || raw.starts_with("//") {
+            let rest = &raw[2..];
+            let first = rest.split(WINDOWS_SEPARATORS).next().unwrap_or_default();
+            if first == "?" || first == "." {
+                return Err("uses a Windows verbatim or device prefix");
+            }
+            // `\\server\share` itself is the root of a network share.
+            (rest, WINDOWS_SEPARATORS, 3, "is a network share root")
+        } else if raw.starts_with('/') {
+            (raw, &['/'], 1, "is the filesystem root")
+        } else if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/')
+        {
+            (&raw[3..], WINDOWS_SEPARATORS, 1, "is the filesystem root")
+        } else {
+            return Err("is not an absolute path");
+        };
+    let segments: Vec<&str> = body.split(separators).filter(|s| !s.is_empty()).collect();
+    if segments.iter().any(|s| *s == "." || *s == "..") {
+        return Err("contains a `.` or `..` segment");
+    }
+    if segments.len() < min_segments {
+        return Err(root_reason);
+    }
+    Ok(())
 }
 
 /// The filesystem paths a plugin is confined to (concept §13: "Plugins
@@ -187,19 +323,61 @@ pub struct FilesystemScope {
     /// Whether the plugin holds the `filesystem` permission at all.
     granted: bool,
     /// Normalized, allowed root paths. Access is confined to these subtrees.
+    /// Every root is absolute and below a filesystem root; never empty.
     roots: Vec<PathBuf>,
+    /// The declared entry each of [`roots`](Self::roots) came from, in order.
+    declared_for_root: Vec<String>,
+    /// How many paths were declared (valid or not, for this OS or another).
+    declared: usize,
+    /// Declared entries refused by [`check_declared_filesystem_path`], with
+    /// the reason. They never become roots; a non-empty list fails the load.
+    rejected: Vec<(String, &'static str)>,
 }
 
 impl FilesystemScope {
     /// Build a scope from the `filesystem` permission flag and declared paths.
-    /// Paths are lexically normalized so scope checks do not depend on the
-    /// filesystem's current state.
+    ///
+    /// Each entry is re-validated here, independently of manifest validation
+    /// (defence in depth, #4293): an invalid entry is recorded as rejected and
+    /// never becomes a root. A valid entry in another OS's form (`C:\…` on
+    /// Unix, `/…` on Windows) grants nothing on this host. Roots are lexically
+    /// normalized so scope checks do not depend on the filesystem's state.
     fn new(granted: bool, declared: &[String]) -> Self {
-        let roots = declared
+        let mut roots = Vec::new();
+        let mut declared_for_root = Vec::new();
+        let mut rejected = Vec::new();
+        for raw in declared {
+            if let Err(reason) = check_declared_filesystem_path(raw) {
+                rejected.push((raw.clone(), reason));
+                continue;
+            }
+            let path = Path::new(raw);
+            if !path.is_absolute() {
+                continue;
+            }
+            let root = normalize_lexical(path);
+            if root.as_os_str().is_empty() || root.parent().is_none() {
+                rejected.push((raw.clone(), "is the filesystem root"));
+                continue;
+            }
+            roots.push(root);
+            declared_for_root.push(raw.clone());
+        }
+        Self {
+            granted,
+            roots,
+            declared_for_root,
+            declared: declared.len(),
+            rejected,
+        }
+    }
+
+    /// Each root paired with the entry it was declared as.
+    fn declared_roots(&self) -> impl Iterator<Item = (&str, &Path)> {
+        self.declared_for_root
             .iter()
-            .map(|p| normalize_lexical(Path::new(p)))
-            .collect();
-        Self { granted, roots }
+            .map(String::as_str)
+            .zip(self.roots.iter().map(PathBuf::as_path))
     }
 
     /// Whether the plugin holds the `filesystem` permission.
@@ -235,20 +413,34 @@ impl FilesystemScope {
         if !self.granted {
             return Err(PermissionError::Denied(PluginPermission::Filesystem));
         }
-        // Collapse `.`/`..` first: this is sound on its own and also removes
-        // traversal before any filesystem lookup.
-        let lexical = normalize_lexical(requested);
         let outside = || PermissionError::PathOutsideScope {
             path: requested.to_path_buf(),
         };
+        // A relative request would resolve against the host process's working
+        // directory, which the plugin neither controls nor was granted.
+        if !requested.is_absolute() {
+            return Err(outside());
+        }
+        // Collapse `.`/`..` first: this is sound on its own and also removes
+        // traversal before any filesystem lookup.
+        let lexical = normalize_lexical(requested);
         let resolved = resolve_existing_prefix(&lexical).ok_or_else(outside)?;
         for root in &self.roots {
+            // `Path::starts_with` holds for every path when the base is empty,
+            // so an empty or relative root must never take part (#4293).
+            // `new` admits neither; this keeps `check` sound on its own.
+            if root.as_os_str().is_empty() || !root.is_absolute() {
+                continue;
+            }
             // Canonicalize the declared root the same way, so a symlinked root
             // component (e.g. macOS `/var` → `/private/var`) matches the equally
             // resolved requested path. A root that cannot be resolved (does not
             // exist on disk) falls back to its lexical form — nothing can be read
             // or written under a missing root anyway.
             let canonical_root = resolve_existing_prefix(root).unwrap_or_else(|| root.clone());
+            if canonical_root.parent().is_none() {
+                continue;
+            }
             if resolved == canonical_root || resolved.starts_with(&canonical_root) {
                 return Ok(resolved);
             }
@@ -885,9 +1077,13 @@ mod tests {
                 secret.display()
             );
             assert!(
-                perms.check_consistency(&m.extensions).is_err(),
+                matches!(
+                    perms.check_consistency(&m.extensions),
+                    Err(PermissionError::InvalidFilesystemPath { .. })
+                ),
                 "root {root:?} must fail the load"
             );
+            assert!(perms.filesystem().roots().is_empty());
         }
     }
 
@@ -910,9 +1106,10 @@ mod tests {
                 secret.display()
             );
             assert!(
-                perms
-                    .check_consistency(&crate::plugin::PluginExtensions::default())
-                    .is_err(),
+                matches!(
+                    perms.check_consistency(&crate::plugin::PluginExtensions::default()),
+                    Err(PermissionError::InvalidFilesystemPath { .. })
+                ),
                 "root {root:?} must fail the load"
             );
         }
@@ -933,6 +1130,90 @@ mod tests {
                 perms.check_path(Path::new(relative)).is_err(),
                 "relative {relative:?} must be refused"
             );
+        }
+    }
+
+    /// An entry in another OS's absolute form is valid in the manifest (one
+    /// manifest serves every platform) but grants nothing on this host.
+    #[test]
+    fn another_platforms_absolute_path_grants_nothing_here() {
+        let (_tmp, secret) = outside_file();
+        let foreign = if cfg!(windows) {
+            "/var/log/app"
+        } else {
+            "C:\\Logs\\app"
+        };
+        let perms =
+            PermissionSet::from_parts([PluginPermission::Filesystem], &[foreign.to_owned()]);
+        assert!(perms
+            .check_consistency(&crate::plugin::PluginExtensions::default())
+            .is_ok());
+        assert!(perms.filesystem().roots().is_empty());
+        assert!(perms.check_path(&secret).is_err());
+    }
+
+    #[test]
+    fn protected_folders_refuse_home_and_termihub_folders() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home").join("someone");
+        let config = tmp.path().join("config");
+        let plugins = config.join("plugins");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&plugins).unwrap();
+        let check = |root: &Path| {
+            PermissionSet::from_parts(
+                [PluginPermission::Filesystem],
+                &[root.to_string_lossy().into_owned()],
+            )
+            .check_protected_folders(Some(&home), &[&plugins, &config])
+        };
+        for refused in [
+            home.clone(),
+            home.parent().unwrap().to_path_buf(),
+            tmp.path().to_path_buf(),
+            config.clone(),
+            config.join("credentials"),
+            plugins.clone(),
+            plugins.join(".data").join("other"),
+        ] {
+            assert!(
+                matches!(
+                    check(&refused),
+                    Err(PermissionError::OverBroadFilesystemPath { .. })
+                ),
+                "{} must be refused",
+                refused.display()
+            );
+        }
+        for allowed in [home.join("captures"), tmp.path().join("shared")] {
+            assert!(check(&allowed).is_ok(), "{} is allowed", allowed.display());
+        }
+    }
+
+    #[test]
+    fn declared_path_rules() {
+        for (path, reason) in [
+            ("", "is empty"),
+            ("relative", "is not an absolute path"),
+            ("~/x", "is not an absolute path"),
+            ("C:x", "is not an absolute path"),
+            ("/", "is the filesystem root"),
+            ("C:\\", "is the filesystem root"),
+            ("\\\\server\\share", "is a network share root"),
+            ("//server/share/", "is a network share root"),
+            ("\\\\?\\C:\\x", "uses a Windows verbatim or device prefix"),
+            ("\\\\.\\pipe\\x", "uses a Windows verbatim or device prefix"),
+            ("/a/../b", "contains a `.` or `..` segment"),
+            ("C:\\a\\.\\b", "contains a `.` or `..` segment"),
+        ] {
+            assert_eq!(
+                check_declared_filesystem_path(path),
+                Err(reason),
+                "{path:?}"
+            );
+        }
+        for ok in ["/a", "/a/b/", "C:\\a", "c:/a", "\\\\srv\\share\\a"] {
+            assert_eq!(check_declared_filesystem_path(ok), Ok(()), "{ok:?}");
         }
     }
 
