@@ -285,3 +285,22 @@ async function saveEntered(
     frontendLog("field_secrets", `Failed to store field secrets: ${errorMessage(err)}`)
   );
 }
+
+/**
+ * `schema` without its secret fields other than `password`, for the
+ * `password` / key-passphrase resolution ({@link import("@/utils/resolveConnectSecret").resolveConnectSecret}),
+ * which would otherwise prompt for a field secret and store it as the
+ * connection's password. Field secrets are resolved by {@link resolveFieldSecrets}.
+ */
+export function withoutFieldSecretFields(
+  schema: SettingsSchema | undefined
+): SettingsSchema | undefined {
+  if (!schema) return schema;
+  return {
+    ...schema,
+    groups: schema.groups.map((group) => ({
+      ...group,
+      fields: group.fields.filter((f) => f.fieldType.type !== "password" || f.key === PASSWORD_KEY),
+    })),
+  };
+}

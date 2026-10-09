@@ -40,6 +40,12 @@ import {
 } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
+import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import {
+  hasFieldSecretsToSave,
+  resolveFieldSecrets,
+  withoutFieldSecretFields,
+} from "@/utils/fieldSecrets";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { normalizeAgentTypeId } from "@/utils/agentSessionType";
 import { newId } from "@/services/transport/ids";
@@ -1027,6 +1033,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
 
+    // A typed schema secret other than `password` is written to the credential
+    // store on save (#4289), so a locked store is unlocked first (#4429).
+    if (
+      hasFieldSecretsToSave(currentTypeInfo?.schema, connSettings) &&
+      !(await ensureCredentialStoreUnlocked({ authMethod: "", fieldSecrets: true }))
+    ) {
+      toast.info("Save canceled — unlock the credential store to keep this connection's secrets.");
+      return null;
+    }
+
     const connectionConfig: ConnectionConfig = { type: selectedType, config: connSettings };
     const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
@@ -1063,6 +1079,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return saved;
     }
   }, [
+    currentTypeInfo?.schema,
     name,
     nameError,
     jumpHostValidation,
@@ -1231,12 +1248,29 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     let config: ConnectionConfig = saved.config;
     const savedSourceFile = "sourceFile" in saved ? (saved.sourceFile ?? null) : null;
 
+    // Schema secrets other than `password` live in the credential store
+    // (#4289): take the stored ones, prompt for missing ones (#4429).
+    const fieldSecrets = await resolveFieldSecrets({
+      schema: currentTypeInfo?.schema,
+      settings: connSettings,
+      connectionId: saved.id,
+      sourceFile: savedSourceFile,
+      requestPassword,
+    });
+    if (fieldSecrets.status !== "resolved") {
+      toast.info(`${fieldSecrets.reason} Your changes were saved.`);
+      throw new PromptCanceledError();
+    }
+    config = { ...config, config: fieldSecrets.settings };
+
     // Resolve a password / key passphrase the form does not carry: stored
     // credential first (behind the unlock gate, #1144), else prompt (#879/#885).
     // Shared with Test via resolveConnectSecret (#3284).
     const secret = await resolveConnectSecret({
-      schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
-      settings: connSettings,
+      schema: isAgentTransportMode
+        ? AGENT_SCHEMA
+        : withoutFieldSecretFields(currentTypeInfo?.schema),
+      settings: fieldSecrets.settings,
       connectionId: saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
@@ -1344,9 +1378,27 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // has no persisted id to key the vault, so no stored credential can exist
     // (names are unique per folder) and the user is prompted directly.
     if (!isAgentDefinitionMode) {
-      const secret = await resolveConnectSecret({
-        schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
+      // The saved connection's stored schema secrets other than `password`
+      // (#4289) — Test uses them and prompts for missing ones, saving nothing
+      // (#4429).
+      const fieldSecrets = await resolveFieldSecrets({
+        schema: isAgentTransportMode ? undefined : currentTypeInfo?.schema,
         settings: connSettings,
+        connectionId: existingConnection?.id ?? null,
+        sourceFile: existingConnection?.sourceFile ?? null,
+        requestPassword,
+        allowSave: false,
+      });
+      if (fieldSecrets.status !== "resolved") {
+        toast.info(fieldSecrets.reason);
+        throw new PromptCanceledError();
+      }
+      config = { ...config, config: fieldSecrets.settings };
+      const secret = await resolveConnectSecret({
+        schema: isAgentTransportMode
+          ? AGENT_SCHEMA
+          : withoutFieldSecretFields(currentTypeInfo?.schema),
+        settings: fieldSecrets.settings,
         connectionId: existingConnection?.id ?? existingAgent?.id ?? null,
         sourceFile: existingConnection?.sourceFile ?? null,
         requestPassword,
