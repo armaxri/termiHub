@@ -3,8 +3,10 @@
 //! Protocol-blind on purpose: these five commands drive *any* graphical backend
 //! (the mock, VNC #1681, RDP #1682) through the
 //! [`GraphicalSessionManager`](crate::session::graphical_manager::GraphicalSessionManager).
-//! They emit `remote-desktop-frame` / `-cursor` / `-clipboard` / `-state`
-//! events via the manager's event sink (`tauri::AppHandle`).
+//! They emit `remote-desktop-clipboard` / `-state` events via the manager's
+//! event sink (`tauri::AppHandle`); frames and cursor updates stream as binary
+//! messages over the channel a tab opens with
+//! [`remote_desktop_subscribe_frames`] (#4291).
 
 //!
 //! # Window ownership (#3388, SM-003 single-attach for windows)
@@ -23,11 +25,12 @@
 //!
 //! An unclaimed session accepts every window (single-window / pre-claim). The
 //! evicted window shows "Taken over by another window" + Reclaim; nothing
-//! reclaims automatically. Frame / cursor / clipboard events are emitted only to
+//! reclaims automatically. Frame / cursor messages and clipboard events reach only
 //! the owner (see `graphical_manager`'s `emit_owner_scoped`), so an evicted
 //! canvas freezes on its last frame until Reclaim requests a full frame.
 
 use serde_json::Value;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Manager, State};
 use tracing::debug;
 
@@ -43,6 +46,7 @@ use crate::session::graphical_upload::{
     place, plan_local, resolve_dest_dir, start_uploads, AgentHostFiles, AgentRequests,
     RemoteDesktopUploadStarted, UploadCarrier,
 };
+use crate::session::remote_desktop_frames::{FrameSink, RemoteDesktopFrameChannels};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::window::WindowManager;
@@ -496,11 +500,6 @@ pub async fn remote_desktop_resize(
     .map(|_| ())
 }
 
-/// Ask the backend to re-emit a full framebuffer frame.
-///
-/// Invoked when a graphical tab is moved into another window (#1904): the
-/// destination canvas is blank until the next full frame, so this forces a
-/// prompt repaint. The frame flows out on `remote-desktop-frame` as usual.
 /// The certificate prompt a session is waiting on, if any (#4004).
 ///
 /// The `remote-desktop-cert-prompt` event can fire before a freshly connected
@@ -514,12 +513,46 @@ pub async fn remote_desktop_pending_cert_prompt(
     manager.pending_cert_prompt(&session_id).await
 }
 
+/// Ask the backend to re-emit a full framebuffer frame.
+///
+/// Invoked when a graphical tab is moved into another window (#1904): the
+/// destination canvas is blank until the next full frame, so this forces a
+/// prompt repaint. The frame flows out on the session's binary frame channel.
 #[tauri::command]
 pub async fn remote_desktop_request_full_frame(
     session_id: String,
     manager: State<'_, GraphicalSessionManager>,
 ) -> Result<(), TerminalError> {
     manager.request_full_frame(&session_id).await
+}
+
+/// Open the binary frame channel for a session in the calling window (#4291).
+///
+/// Frame updates and cursor updates arrive on `channel` as `ArrayBuffer`s in
+/// the wire format of
+/// [`remote_desktop_frames`](crate::session::remote_desktop_frames). Delivery is
+/// owner-scoped like every other content event (#3388). Returns the
+/// subscription id for [`remote_desktop_unsubscribe_frames`].
+#[tauri::command]
+pub fn remote_desktop_subscribe_frames(
+    session_id: String,
+    channel: Channel<InvokeResponseBody>,
+    window: tauri::WebviewWindow,
+    channels: State<'_, RemoteDesktopFrameChannels>,
+) -> u64 {
+    let sink: FrameSink =
+        Arc::new(move |bytes| channel.send(InvokeResponseBody::Raw(bytes)).is_ok());
+    channels.subscribe(&session_id, window.label(), sink)
+}
+
+/// Close a frame channel opened by [`remote_desktop_subscribe_frames`].
+#[tauri::command]
+pub fn remote_desktop_unsubscribe_frames(
+    session_id: String,
+    subscription_id: u64,
+    channels: State<'_, RemoteDesktopFrameChannels>,
+) {
+    channels.unsubscribe(&session_id, subscription_id);
 }
 
 /// Forward a protocol-agnostic input event (key / pointer / wheel).

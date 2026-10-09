@@ -69,19 +69,20 @@ export function effectiveScaleMode(mode: ScaleMode, fixedResolution: boolean): S
 
 // The core graphical DTOs are generated from their Rust source of truth
 // (core/src/connection/graphical.rs) via ts-rs (audit DUP-030 / MOCK-010, ts-rs
-// rollout #3088). `FrameUpdate`/`CursorUpdate`/`GraphicalSessionState` are also
-// referenced within this file (the `extends` payloads, the state helpers), so
-// they are imported locally and re-exported; `DirtyRect`/`CursorShape` are only
-// consumed externally and are re-exported directly.
+// rollout #3088). `GraphicalSessionState` is also referenced within this file
+// (the state helpers), so it is imported locally and re-exported. The frame and
+// cursor DTOs describe the backend's serde form; the webview receives frames and
+// cursor updates as binary channel messages instead and decodes them with
+// `src/services/remoteDesktopFrames.ts` (#4291).
 //
 // `GraphicalSessionState` is the frontend's historical name for the Rust
 // `GraphicalState` string union — the shared graphical-session lifecycle state
 // the frontend renders overlays and the tab state-dot from.
 import type { GraphicalState as GraphicalSessionState } from "./generated/GraphicalState";
-import type { FrameUpdate } from "./generated/FrameUpdate";
-import type { CursorUpdate } from "./generated/CursorUpdate";
 
-export type { GraphicalSessionState, FrameUpdate, CursorUpdate };
+export type { GraphicalSessionState };
+export type { FrameUpdate } from "./generated/FrameUpdate";
+export type { CursorUpdate } from "./generated/CursorUpdate";
 export type { DirtyRect } from "./generated/DirtyRect";
 /**
  * One remote monitor (#3696): its rect, primary flag and scale (percent).
@@ -99,16 +100,6 @@ export type RemoteDesktopInput =
   | { kind: "key"; code: string; pressed: boolean }
   | { kind: "pointer"; x: number; y: number; buttons: number }
   | { kind: "wheel"; x: number; y: number; deltaX: number; deltaY: number };
-
-/** `remote-desktop-frame` event payload (snake_case session id on the wire). */
-export interface RemoteDesktopFramePayload extends FrameUpdate {
-  session_id: string;
-}
-
-/** `remote-desktop-cursor` event payload. */
-export interface RemoteDesktopCursorPayload extends CursorUpdate {
-  session_id: string;
-}
 
 /**
  * `remote-desktop-clipboard` event payload (remote → local text).

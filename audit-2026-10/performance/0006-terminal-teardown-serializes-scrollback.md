@@ -6,8 +6,8 @@ severity: low
 category: perf
 is_workaround: false
 subsystem: src/components/Terminal/Terminal.tsx
-status: open
-resolution: ""
+status: fixed
+resolution: "#4308 — the xterm teardown serializes the scrollback only for an effect re-run (reconnect), never on a final unmount (tab, group or window close)"
 audit: 2026-10
 commit: 663465d52
 relation: new

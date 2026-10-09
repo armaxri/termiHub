@@ -12,8 +12,8 @@ evidence:
   - .github/workflows/release-windows-smoke.yml:44-48
   - .github/workflows/release-linux-smoke.yml:34-38
   - src-tauri/src/commands/update.rs:11
-status: open
-resolution: ""
+status: fixed
+resolution: "#4281 — release.yml calls the install smokes as reusable workflows; mark-latest needs every smoke"
 audit: 2026-10
 commit: 663465d52
 relation: new

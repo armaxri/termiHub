@@ -4,32 +4,46 @@ import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { installCanvas2DStub, type CanvasStubHandle } from "@/test/canvasMock";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
-import { onRemoteDesktopFrame } from "@/services/events";
+import { subscribeRemoteDesktopFrames } from "@/services/remoteDesktopFrames";
+import type {
+  BinaryCursorShape,
+  BinaryDirtyRect,
+  RemoteDesktopFrameHandlers,
+} from "@/services/remoteDesktopFrames";
 import { remoteDesktopRequestFullFrame } from "@/services/api";
 import { MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
-import type {
-  RemoteDesktopFramePayload,
-  RemoteDesktopCursorPayload,
-  RemoteDesktopInput,
-  ScaleMode,
-} from "@/types/remoteDesktop";
+import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 
-// The canvas subscribes to the frame + cursor event feeds on mount. Mock the
-// events module so each test can capture the registered callbacks and drive
-// synthetic frames/cursor updates through the component's real paint pipeline.
-let frameCb: ((payload: RemoteDesktopFramePayload) => void) | null = null;
-let cursorCb: ((payload: RemoteDesktopCursorPayload) => void) | null = null;
-const frameUnlisten = vi.fn();
-const cursorUnlisten = vi.fn();
+/** A decoded frame addressed to a session, as the tests drive it. */
+interface TestFrame {
+  session_id: string;
+  width: number;
+  height: number;
+  rects: BinaryDirtyRect[];
+}
 
-vi.mock("@/services/events", () => ({
-  onRemoteDesktopFrame: vi.fn((cb: (payload: RemoteDesktopFramePayload) => void) => {
-    frameCb = cb;
-    return Promise.resolve(frameUnlisten);
-  }),
-  onRemoteDesktopCursor: vi.fn((cb: (payload: RemoteDesktopCursorPayload) => void) => {
-    cursorCb = cb;
-    return Promise.resolve(cursorUnlisten);
+/** A decoded cursor update addressed to a session. */
+interface TestCursor {
+  session_id: string;
+  x: number;
+  y: number;
+  visible: boolean;
+  shape?: BinaryCursorShape;
+}
+
+// The canvas opens its session's binary frame channel on mount (#4291). Mock
+// the channel module so each test can capture the registered handlers (and the
+// session they were opened for) and drive decoded frames/cursor updates through
+// the component's real paint pipeline.
+let subscribedSession: string | null = null;
+let handlers: RemoteDesktopFrameHandlers | null = null;
+const frameUnsubscribe = vi.fn();
+
+vi.mock("@/services/remoteDesktopFrames", () => ({
+  subscribeRemoteDesktopFrames: vi.fn((sessionId: string, h: RemoteDesktopFrameHandlers) => {
+    subscribedSession = sessionId;
+    handlers = h;
+    return Promise.resolve(frameUnsubscribe);
   }),
 }));
 
@@ -101,7 +115,7 @@ function setContainerSize(width: number, height: number): void {
 }
 
 /** A single-rect full-frame update at (width × height). */
-function makeFrame(width: number, height: number, sessionId = SESSION): RemoteDesktopFramePayload {
+function makeFrame(width: number, height: number, sessionId = SESSION): TestFrame {
   return {
     session_id: sessionId,
     width,
@@ -112,24 +126,28 @@ function makeFrame(width: number, height: number, sessionId = SESSION): RemoteDe
         y: 0,
         width,
         height,
-        data: new Array<number>(width * height * 4).fill(0),
+        data: new Uint8ClampedArray(width * height * 4),
       },
     ],
   };
 }
 
-function emitFrame(payload: RemoteDesktopFramePayload): void {
-  act(() => frameCb?.(payload));
+/** Deliver a frame on `session_id`'s channel (only the subscribed one is open). */
+function emitFrame({ session_id, ...frame }: TestFrame): void {
+  if (session_id !== subscribedSession) return;
+  act(() => handlers?.onFrame({ kind: "frame", ...frame }));
 }
 
-function emitCursor(payload: RemoteDesktopCursorPayload): void {
-  act(() => cursorCb?.(payload));
+/** Deliver a cursor update on `session_id`'s channel. */
+function emitCursor({ session_id, ...cursor }: TestCursor): void {
+  if (session_id !== subscribedSession) return;
+  act(() => handlers?.onCursor({ kind: "cursor", ...cursor }));
 }
 
 describe("RemoteDesktopCanvas", () => {
   beforeEach(() => {
-    frameCb = null;
-    cursorCb = null;
+    subscribedSession = null;
+    handlers = null;
     canvasStub = installCanvas2DStub();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -164,19 +182,20 @@ describe("RemoteDesktopCanvas", () => {
     const second = render();
     await flushAsync();
     // A re-subscription would drop the frames sent in between.
-    expect(onRemoteDesktopFrame).toHaveBeenCalledOnce();
-    expect(frameUnlisten).not.toHaveBeenCalled();
+    expect(subscribeRemoteDesktopFrames).toHaveBeenCalledOnce();
+    expect(frameUnsubscribe).not.toHaveBeenCalled();
     expect(remoteDesktopRequestFullFrame).toHaveBeenCalledOnce();
     // The latest onDimensions is the one notified.
     emitFrame(makeFrame(100, 50));
     expect(second.onDimensions).toHaveBeenCalledWith(100, 50);
   });
 
-  it("subscribes to the frame and cursor feeds once on mount", () => {
+  it("opens its own session's frame channel once on mount", () => {
     render();
-    // The mock records callbacks synchronously as the mount effect runs.
-    expect(frameCb).toBeTypeOf("function");
-    expect(cursorCb).toBeTypeOf("function");
+    // The mock records the handlers synchronously as the mount effect runs.
+    expect(subscribedSession).toBe(SESSION);
+    expect(handlers?.onFrame).toBeTypeOf("function");
+    expect(handlers?.onCursor).toBeTypeOf("function");
   });
 
   it("paints the first frame: reports dimensions, blits the framebuffer, fires onFirstFrame", () => {
@@ -245,18 +264,18 @@ describe("RemoteDesktopCanvas", () => {
 
   it("skips dirty rects that fall outside the framebuffer or are malformed", () => {
     render({ scaleMode: "pixel" });
-    const inBounds = { x: 0, y: 0, width: 2, height: 2, data: new Array<number>(16).fill(0) };
+    const inBounds = { x: 0, y: 0, width: 2, height: 2, data: new Uint8ClampedArray(16) };
     emitFrame({
       session_id: SESSION,
       width: 10,
       height: 10,
       rects: [
         // Spills past the right/bottom edge.
-        { x: 9, y: 9, width: 2, height: 2, data: new Array<number>(16).fill(0) },
+        { x: 9, y: 9, width: 2, height: 2, data: new Uint8ClampedArray(16) },
         // Wrong byte length.
-        { x: 0, y: 0, width: 2, height: 2, data: new Array<number>(15).fill(0) },
+        { x: 0, y: 0, width: 2, height: 2, data: new Uint8ClampedArray(15) },
         // Zero-sized.
-        { x: 0, y: 0, width: 0, height: 2, data: [] },
+        { x: 0, y: 0, width: 0, height: 2, data: new Uint8ClampedArray(0) },
         inBounds,
       ],
     });
@@ -366,7 +385,13 @@ describe("RemoteDesktopCanvas", () => {
       x: 10,
       y: 20,
       visible: true,
-      shape: { width: 65_535, height: 65_535, hotspotX: 0, hotspotY: 0, data: [] },
+      shape: {
+        width: 65_535,
+        height: 65_535,
+        hotspotX: 0,
+        hotspotY: 0,
+        data: new Uint8ClampedArray(0),
+      },
     });
     emitFrame(makeFrame(100, 50));
     expect(canvasStub.contextFor(canvasEl()).arc).toHaveBeenCalledWith(10, 20, 4, 0, Math.PI * 2);
@@ -643,13 +668,22 @@ describe("RemoteDesktopCanvas", () => {
     }
   });
 
-  it("unsubscribes from the frame and cursor feeds on unmount", async () => {
+  it("closes a channel that opens only after the canvas unmounted", async () => {
     render();
-    // Let the subscription promises settle so the unlisteners are registered.
+    // Unmount before the subscribe promise settles.
+    act(() => root.unmount());
+    await flushAsync();
+    expect(frameUnsubscribe).toHaveBeenCalledOnce();
+    expect(remoteDesktopRequestFullFrame).not.toHaveBeenCalled();
+    root = createRoot(container);
+  });
+
+  it("closes the frame channel on unmount", async () => {
+    render();
+    // Let the subscription promise settle so the unsubscribe is registered.
     await flushAsync();
     act(() => root.unmount());
-    expect(frameUnlisten).toHaveBeenCalled();
-    expect(cursorUnlisten).toHaveBeenCalled();
+    expect(frameUnsubscribe).toHaveBeenCalledOnce();
     // Re-mount so afterEach's unmount call remains valid.
     root = createRoot(container);
   });

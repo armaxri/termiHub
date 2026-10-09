@@ -240,3 +240,26 @@ tests:
       - "The file uploads without another prompt; the SSH connection now has its password saved"
     verification: manual
     tags: [os-native]
+
+  - id: MT-RD-13
+    release_gate: true
+    manual_reason: "a real canvas repaint needs a display; the binary frame path is unit-tested but live painting cannot run headless"
+    name: "Binary frame path repaints VNC and RDP sessions correctly"
+    pr: 4425
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect a VNC session and an RDP session"
+      - "In each, drag a window around the remote desktop and play a short video or scroll a long page"
+      - "Set the scale mode to Match Window and resize the app window or split the tab"
+      - "Move each remote-desktop tab to a second app window"
+      - "Move the pointer across the remote desktop"
+    expected:
+      - "Both sessions show the remote desktop promptly with correct colours and no garbled or shifted regions"
+      - "Moving windows and video/scrolling repaint smoothly with no stale tiles or trails left behind"
+      - "After the Match Window resize the remote resolution follows the tab and the whole screen repaints"
+      - "In the second window the tab repaints the full desktop at once; the first window no longer updates it"
+      - "The cursor marker follows the pointer"
+    verification: manual
+    tags: [visual]
