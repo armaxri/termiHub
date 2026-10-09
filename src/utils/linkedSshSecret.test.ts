@@ -9,6 +9,7 @@ import { useAppStore } from "@/store/appStore";
 import { storeCredential } from "@/services/api";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import type { LinkedSecretRequest } from "@/types/generated/LinkedSecretRequest";
+import { isPasswordPromptAbort } from "@/store/slices/passwordPromptSlice";
 import { askLinkedSshSecret } from "./linkedSshSecret";
 
 vi.mock("@/services/api", () => ({
@@ -78,6 +79,29 @@ describe("askLinkedSshSecret", () => {
     expect(requestPassword).toHaveBeenCalledWith("tiger-box", "arne", "", "password", {
       allowSave: false,
     });
+    expect(mockedStore).not.toHaveBeenCalled();
+  });
+
+  it("forwards the caller's abort signal to the prompt (#4312)", async () => {
+    const requestPassword = prompt("typed");
+    const controller = new AbortController();
+    await askLinkedSshSecret({ ...REQUEST, canSave: false }, requestPassword, controller.signal);
+    expect(requestPassword).toHaveBeenCalledWith("tiger-box", "arne", "", "password", {
+      allowSave: false,
+      signal: controller.signal,
+    });
+  });
+
+  it("rejects, saving nothing, when the prompt is aborted (#4312)", async () => {
+    const controller = new AbortController();
+    const pending = askLinkedSshSecret(
+      REQUEST,
+      useAppStore.getState().requestPassword,
+      controller.signal
+    );
+    controller.abort();
+    await expect(pending).rejects.toSatisfy(isPasswordPromptAbort);
+    expect(useAppStore.getState().passwordPromptQueue).toHaveLength(0);
     expect(mockedStore).not.toHaveBeenCalled();
   });
 

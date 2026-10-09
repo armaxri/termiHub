@@ -180,6 +180,7 @@ describe("PasswordPrompt", () => {
   });
 
   it("resets passwordPromptShouldSave on dismiss", async () => {
+    void useAppStore.getState().requestPassword("example.com", "alice");
     useAppStore.setState({ passwordPromptShouldSave: true });
     act(() => {
       useAppStore.getState().dismissPasswordPrompt();
@@ -242,5 +243,92 @@ describe("PasswordPrompt", () => {
 
     await expect(resolved).resolves.toBe("");
     expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+  });
+
+  describe("concurrent prompts (#4312)", () => {
+    function typePassword(value: string) {
+      const input = query("password-prompt-input") as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+
+    function clickConnect() {
+      act(() => {
+        query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+
+    it("names the connection the prompt is for in its title", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("db.example", "alice", "", "password", { label: "Prod DB" });
+      });
+      render();
+
+      expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
+        "SSH Password — Prod DB"
+      );
+    });
+
+    it("says how many more prompts are waiting, and none for a single prompt", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("a.example", "alice");
+      });
+      render();
+      expect(query("password-prompt-queue")).toBeNull();
+
+      await act(async () => {
+        void useAppStore.getState().requestPassword("b.example", "bob");
+        void useAppStore.getState().requestPassword("c.example", "carol");
+      });
+      expect(query("password-prompt-queue")?.textContent).toBe("2 more password prompts waiting");
+    });
+
+    it("answers the first prompt, then shows the next with a fresh input", async () => {
+      let first: Promise<string | null> = Promise.resolve(null);
+      let second: Promise<string | null> = Promise.resolve(null);
+      await act(async () => {
+        first = useAppStore.getState().requestPassword("a.example", "alice");
+        second = useAppStore
+          .getState()
+          .requestPassword("b.example", "bob", "", "password", { label: "Jump host" });
+      });
+      render();
+
+      typePassword("pw-a");
+      clickConnect();
+      await expect(first).resolves.toBe("pw-a");
+
+      expect(query("password-prompt-description")?.textContent).toContain("bob@b.example");
+      expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
+        "SSH Password — Jump host"
+      );
+      expect((query("password-prompt-input") as HTMLInputElement).value).toBe("");
+      expect(query("password-prompt-queue")).toBeNull();
+
+      typePassword("pw-b");
+      clickConnect();
+      await expect(second).resolves.toBe("pw-b");
+      expect(query("password-prompt-input")).toBeNull();
+    });
+
+    it("cancel dismisses only the prompt on screen", async () => {
+      let first: Promise<string | null> = Promise.resolve(null);
+      await act(async () => {
+        first = useAppStore.getState().requestPassword("a.example", "alice");
+        void useAppStore.getState().requestPassword("b.example", "bob");
+      });
+      render();
+
+      act(() => {
+        query("password-prompt-cancel")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await expect(first).resolves.toBeNull();
+      expect(query("password-prompt-description")?.textContent).toContain("bob@b.example");
+    });
   });
 });
