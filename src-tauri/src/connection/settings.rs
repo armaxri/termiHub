@@ -617,6 +617,16 @@ pub struct AppSettings {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_local_process_allowlist: Vec<String>,
+    /// Local script files the user picked or confirmed on this machine for a
+    /// `run-script` workflow step's `sourcePath` (#4310, FEC2-001). The runner
+    /// reads a `sourcePath` only when it is on this list. Owned by the frontend
+    /// `AppSettings.workflowScriptSourceAllowlist`; persisted here so the
+    /// confirmation survives a restart. Independent of workflow data, so an
+    /// imported workflow can never add an entry. Omitted when empty so older
+    /// settings files round-trip byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
+    pub workflow_script_source_allowlist: Vec<String>,
     /// Durable log file verbosity chosen in Settings (OBS-009).
     ///
     /// One of `"off"`/`"error"`/`"warn"`/`"info"`/`"debug"`/`"trace"` (see
@@ -747,6 +757,7 @@ impl Default for AppSettings {
             syntax_highlighting: None,
             workflow_local_process_enabled: false,
             workflow_local_process_allowlist: Vec::new(),
+            workflow_script_source_allowlist: Vec::new(),
             file_log_level: None,
             show_crash_report_notice: None,
             broadcast_groups: None,
@@ -1550,6 +1561,28 @@ mod tests {
         let deserialized: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!deserialized.workflow_local_process_enabled);
         assert!(deserialized.workflow_local_process_allowlist.is_empty());
+    }
+
+    #[test]
+    fn workflow_script_source_allowlist_defaults_empty_omitted_and_round_trips() {
+        // #4310: empty by default and omitted from JSON so legacy files stay
+        // byte-identical; a confirmed path round-trips.
+        let defaults = AppSettings::default();
+        assert!(defaults.workflow_script_source_allowlist.is_empty());
+        let default_json = serde_json::to_string(&defaults).unwrap();
+        assert!(!default_json.contains("workflowScriptSourceAllowlist"));
+
+        let settings = AppSettings {
+            workflow_script_source_allowlist: vec!["/home/u/deploy.sh".to_string()],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"workflowScriptSourceAllowlist\":[\"/home/u/deploy.sh\"]"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.workflow_script_source_allowlist,
+            vec!["/home/u/deploy.sh".to_string()]
+        );
     }
 
     #[test]

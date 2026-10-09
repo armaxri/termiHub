@@ -36,6 +36,7 @@
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
 import type { WorkflowCondition, WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
 import { frontendWarn } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Maximum nesting depth of `conditional` steps the runner will descend into
@@ -259,9 +260,19 @@ export type WorkflowWaitSeam = (ms: number) => Promise<void> | void;
 /**
  * Reads a script body from an on-disk path (the `run-script` `sourcePath`
  * affordance). Resolves the file's UTF-8 contents; rejects when it cannot be
- * read, in which case the runner falls back to the step's embedded `script`.
+ * read, in which case the step fails with that error (#4310 — never a silent
+ * fallback to the embedded `script`, which may not be what the file says).
  */
 export type WorkflowReadFileSeam = (path: string) => Promise<string>;
+
+/**
+ * Reports whether the user picked or confirmed a `run-script` `sourcePath` on
+ * this machine (#4310, FEC2-001). Backed by a machine-local allowlist that lives
+ * outside the workflow data, so an imported workflow file can never mark its own
+ * path as trusted. Absent → no path is trusted and a step with a `sourcePath`
+ * fails rather than reading the file.
+ */
+export type WorkflowScriptSourceTrustSeam = (path: string) => boolean;
 
 /** Terminal outcome of a `wait-for-output` step, surfaced to the runner. Exactly
  * one of `matched` / `timedOut` / `cancelled` is `true`. */
@@ -347,6 +358,11 @@ export interface WorkflowRunnerDeps {
   wait?: WorkflowWaitSeam;
   /** Reads a script body from disk (the `run-script` `sourcePath` seam). */
   readScriptFile?: WorkflowReadFileSeam;
+  /**
+   * Whether a `run-script` `sourcePath` was picked or confirmed by the user on
+   * this machine (#4310). Absent → every `sourcePath` is refused (fail-closed).
+   */
+  isScriptSourceTrusted?: WorkflowScriptSourceTrustSeam;
   /**
    * Authorizes a `run-local-process` step before it runs (#1857). Absent → the
    * step is never authorized and never spawns.
@@ -511,19 +527,33 @@ function splitScriptLines(script: string): string[] {
 }
 
 /**
- * Resolve a `run-script` step's body: read it fresh from `sourcePath` when both
- * the path and a read seam are present, falling back to the step's embedded
- * `script` when there is no path/seam or the read fails.
+ * Resolve a `run-script` step's body. Without a `sourcePath` the step's visible
+ * embedded `script` is the body. With one, the file is read fresh — but only
+ * when the user picked or confirmed that exact path on this machine (#4310,
+ * FEC2-001): an imported workflow must never be able to make a step type an
+ * arbitrary local file (an SSH key, cloud credentials) into a remote shell. An
+ * unconfirmed path, a missing read seam, or a failed read all fail the step
+ * with a clear error instead of silently running the embedded copy.
  */
 async function resolveScriptBody(
   step: Extract<WorkflowStep, { kind: "run-script" }>,
   deps: WorkflowRunnerDeps
-): Promise<string> {
-  if (!step.sourcePath || !deps.readScriptFile) return step.script;
+): Promise<{ ok: true; body: string } | { ok: false; error: string }> {
+  const path = step.sourcePath;
+  if (!path) return { ok: true, body: step.script };
+  if (!deps.isScriptSourceTrusted?.(path)) {
+    return {
+      ok: false,
+      error: `script file "${path}" was not confirmed on this machine; confirm or re-pick it in the step editor before running`,
+    };
+  }
+  if (!deps.readScriptFile) {
+    return { ok: false, error: `script file "${path}" cannot be read in this context` };
+  }
   try {
-    return await deps.readScriptFile(step.sourcePath);
-  } catch {
-    return step.script;
+    return { ok: true, body: await deps.readScriptFile(path) };
+  } catch (err) {
+    return { ok: false, error: `could not read script file "${path}": ${errorMessage(err)}` };
   }
 }
 
@@ -667,7 +697,9 @@ export async function executeStep(
       return delivered ? { ok: true } : { ok: false, error: SESSION_GONE };
     }
     case "run-script": {
-      const lines = splitScriptLines(await resolveScriptBody(resolved, deps));
+      const body = await resolveScriptBody(resolved, deps);
+      if (!body.ok) return { ok: false, error: body.error };
+      const lines = splitScriptLines(body.body);
       const perLineDelay = clampDelay(resolved.perLineDelayMs);
       for (let i = 0; i < lines.length; i++) {
         if (cancelled()) return { ok: true, cancelled: true };
