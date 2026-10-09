@@ -59,6 +59,7 @@ const toastMock = vi.hoisted(() => ({
   loading: vi.fn(() => "toast-1"),
   success: vi.fn(),
   error: vi.fn(),
+  dismiss: vi.fn(),
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => ({
@@ -168,6 +169,8 @@ describe("AgentSetupDialog — unmount during deploy (#4576)", () => {
     expect(unlisten).toHaveBeenCalledTimes(1);
     // The deploy is abandoned rather than started for a gone dialog.
     expect(setupRemoteAgent).not.toHaveBeenCalled();
+    // Its loading toast does not hang around.
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-1");
   });
 
   it("unlistens a registered progress listener on unmount", async () => {

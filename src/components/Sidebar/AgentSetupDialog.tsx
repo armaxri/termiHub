@@ -9,7 +9,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { open } from "@/services/nativeDialog";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";
 import {
@@ -19,6 +18,7 @@ import {
   RemoteArchInfo,
 } from "@/services/api";
 import { onAgentSetupProgress } from "@/services/events";
+import { useListenerGroup } from "@/hooks/useTauriListener";
 import { useAppStore } from "@/store/appStore";
 import {
   Modal,
@@ -106,7 +106,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const configRef = useRef<RemoteAgentConfig | null>(null);
-  const progressUnlistenRef = useRef<UnlistenFn | null>(null);
+  // The progress listener is registered from the Start Setup click; the group
+  // unlistens it on unmount, including one still registering (#4576).
+  const progressListener = useListenerGroup();
   const progressToastIdRef = useRef<string | number | null>(null);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
@@ -115,14 +117,8 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
   /** Tear down the progress subscription (idempotent). */
   const stopProgressListener = useCallback(() => {
-    if (progressUnlistenRef.current) {
-      progressUnlistenRef.current();
-      progressUnlistenRef.current = null;
-    }
-  }, []);
-
-  // Never leak the progress listener across unmount.
-  useEffect(() => stopProgressListener, [stopProgressListener]);
+    progressListener.release();
+  }, [progressListener]);
 
   const runDetection = useCallback(async () => {
     setPhase({ kind: "detecting" });
@@ -224,34 +220,42 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       // Subscribe before initiating so no early progress event is missed. The
       // upload + script injection run in the background and stream steps here.
       stopProgressListener();
-      const unlisten = await onAgentSetupProgress((agentId, step, message) => {
-        if (agentId !== agent.id) return;
+      const held = await progressListener.attach(() =>
+        onAgentSetupProgress((agentId, step, message) => {
+          if (agentId !== agent.id) return;
 
-        if (step === "done") {
-          toast.success(`Agent deployed to ${agent.name}`, {
-            id: progressToastIdRef.current ?? undefined,
-          });
-          stopProgressListener();
-          onOpenChange(false);
-          return;
-        }
+          if (step === "done") {
+            toast.success(`Agent deployed to ${agent.name}`, {
+              id: progressToastIdRef.current ?? undefined,
+            });
+            stopProgressListener();
+            onOpenChange(false);
+            return;
+          }
 
-        if (step === "error" || step === "cancelled") {
-          const label = step === "cancelled" ? "cancelled" : "failed";
-          toast.error(`Agent deploy to ${agent.name} ${label}: ${message}`, {
-            id: progressToastIdRef.current ?? undefined,
-          });
-          stopProgressListener();
-          setSubmitError(message);
-          setPhase({ kind: "ready", archInfo: phase.archInfo });
-          setLoading(false);
-          return;
-        }
+          if (step === "error" || step === "cancelled") {
+            const label = step === "cancelled" ? "cancelled" : "failed";
+            toast.error(`Agent deploy to ${agent.name} ${label}: ${message}`, {
+              id: progressToastIdRef.current ?? undefined,
+            });
+            stopProgressListener();
+            setSubmitError(message);
+            setPhase({ kind: "ready", archInfo: phase.archInfo });
+            setLoading(false);
+            return;
+          }
 
-        // In-flight step: reflect the live status in the running row.
-        setPhase({ kind: "running", step, message });
-      });
-      progressUnlistenRef.current = unlisten;
+          // In-flight step: reflect the live status in the running row.
+          setPhase({ kind: "running", step, message });
+        })
+      );
+      if (!held) {
+        // The dialog closed or unmounted while subscribing: the late listener is
+        // already unlistened, so abandon the deploy instead of starting it blind.
+        toast.dismiss(toastId);
+        setLoading(false);
+        return;
+      }
 
       const result = await setupRemoteAgent(agent.id, configRef.current, {
         binarySource: binarySourcePayload,
