@@ -14,7 +14,6 @@ import {
   getCliWorkspace,
   exportWorkspaces,
   importWorkspaces,
-  previewImportWorkspaces,
 } from "./workspaceApi";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -95,14 +94,5 @@ describe("workspaceApi", () => {
     const result = await importWorkspaces(json);
     expect(mockedInvoke).toHaveBeenCalledWith("import_workspaces", { json });
     expect(result).toEqual(importResult);
-  });
-
-  it("previewImportWorkspaces invokes correct command", async () => {
-    const preview = { workspaceCount: 3, totalTabCount: 7 };
-    mockedInvoke.mockResolvedValue(preview);
-    const json = '{"version":"1","workspaces":[]}';
-    const result = await previewImportWorkspaces(json);
-    expect(mockedInvoke).toHaveBeenCalledWith("preview_import_workspaces", { json });
-    expect(result).toEqual(preview);
   });
 });

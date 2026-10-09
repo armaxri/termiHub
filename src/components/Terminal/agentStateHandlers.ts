@@ -1,6 +1,5 @@
 /**
- * The `agent-state-change` / `remote-state-change` handlers {@link TerminalView}
- * registers, their helpers, and the agent-session connect-failure catch in
+ * The `agent-state-change` handler {@link TerminalView} registers, their helpers, and the agent-session connect-failure catch in
  * {@link Terminal}.
  *
  * Extracted so the branch logic can be unit-tested directly against the store
@@ -248,7 +247,7 @@ export function applyAgentSpawnFailure(input: AgentSpawnFailureInput): AgentSpaw
   return action;
 }
 
-// ── agent-state-change / remote-state-change handlers (TFE2-001, #4309) ──────
+// ── agent-state-change handler (TFE2-001, #4309) ─────────────────────────────
 
 /**
  * Why the agent ended, carried on every backend "disconnected" event (#4447):
@@ -264,12 +263,6 @@ export interface AgentStateChangePayload {
   error?: string;
   /** Set on "disconnected" only. */
   reason?: AgentEndReason;
-}
-
-/** Payload of the backend `remote-state-change` event. */
-export interface RemoteStateChangePayload {
-  session_id: string;
-  state: string;
 }
 
 /** Injectable collaborators of the state-change handlers (defaults: the real ones). */
@@ -431,24 +424,4 @@ export async function handleAgentStateChange(
   } else if (state === "disconnected") {
     applyAgentDisconnected(agentId, agentTerminalTabs, error, reason);
   }
-}
-
-/**
- * Handle one backend `remote-state-change` event: a "disconnected" state marks
- * the owning tab dropped, unless the user already stopped it.
- *
- * Direct sessions do not emit this today (#1123) — their drops surface via
- * `terminal-exit`; this is the forward-compatible hook for backends that do.
- */
-export function handleRemoteStateChange(
-  payload: RemoteStateChangePayload,
-  deps: Partial<Pick<StateChangeDeps, "getAllTabs">> = {}
-): void {
-  const { getAllTabs } = { ...DEFAULT_DEPS, ...deps };
-  const { session_id: sessionId, state } = payload;
-  frontendLog("disconnect", `remote-state-change session=${sessionId} state=${state}`);
-  if (state !== "disconnected") return;
-  const tab = getAllTabs().find((t) => t.sessionId === sessionId);
-  if (!tab || !tabStillLive(tab)) return;
-  useAppStore.getState().setTerminalExited(tab.id, { code: null, reason: "dropped" });
 }

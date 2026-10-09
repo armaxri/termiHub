@@ -90,7 +90,6 @@ import type { ImportPreview } from "@/types/generated/ImportPreview";
 import type { InterruptedFolderPaste } from "@/types/generated/InterruptedFolderPaste";
 import type { LocalCopyStarted } from "@/types/generated/LocalCopyStarted";
 import type { LocalSessionInfo } from "@/types/generated/LocalSessionInfo";
-import type { PersistentSessionSummary } from "@/types/generated/PersistentSessionSummary";
 import type { RdpTrustedHost } from "@/types/generated/RdpTrustedHost";
 import type { RemoteArchInfo } from "@/types/generated/RemoteArchInfo";
 import type { SavedRemoteAgent } from "@/types/generated/SavedRemoteAgent";
@@ -115,7 +114,6 @@ import type {
   InstallPluginResult,
   JsonValue,
   NativePluginTrust,
-  PluginManifest,
   PluginPackagePreview,
   PluginTrustInfo,
   PluginIndexResult,
@@ -134,14 +132,12 @@ import {
   AppSettings,
   ShellIntegrationStatus,
   ShellIntegrationSettings,
-  AgentCapabilities,
   AgentSettings,
   RecoveryWarning,
   AppModeInfo,
   ConfigFileStatus,
   ConfigMigrationResult,
   UpdateInfo,
-  UpdateSettings,
 } from "@/types/connection";
 
 export type { ConnectionTypeInfo };
@@ -174,7 +170,6 @@ export type {
   ImportError,
   InterruptedFolderPaste,
   LocalSessionInfo,
-  PersistentSessionSummary,
   RdpTrustedHost,
   RemoteArchInfo,
   SavedRemoteAgent,
@@ -530,11 +525,6 @@ export async function claimSession(sessionId: string): Promise<string | null> {
 /** Release a session from the *calling* window. No-op unless it is the owner. */
 export async function releaseSession(sessionId: string): Promise<boolean> {
   return await invoke<boolean>("release_session", { sessionId });
-}
-
-/** The window label currently rendering a session, if any. */
-export async function getSessionOwner(sessionId: string): Promise<string | null> {
-  return await invoke<string | null>("get_session_owner", { sessionId });
 }
 
 /**
@@ -1172,11 +1162,6 @@ export async function detachPersistentTab(sessionId: SessionId, tabId: string): 
   return await invoke<number>("detach_persistent_tab", { sessionId, tabId });
 }
 
-/** Return all currently registered persistent sessions. */
-export async function listPersistentSessions(): Promise<PersistentSessionSummary[]> {
-  return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
-}
-
 /**
  * Fetch the scrollback buffer for a persistent session from the agent daemon.
  *
@@ -1209,11 +1194,6 @@ export async function listAvailableShells(): Promise<string[]> {
 /** Detect the user's default shell on this platform */
 export async function getDefaultShell(): Promise<string | null> {
   return await invoke<string | null>("get_default_shell");
-}
-
-/** Check if a local X server is available for X11 forwarding */
-export async function checkX11Available(): Promise<boolean> {
-  return await invoke<boolean>("check_x11_available");
 }
 
 /** Get the status of the shared X server that termiHub manages or has adopted. */
@@ -1258,11 +1238,6 @@ export async function xServerConnectConsentReply(
   return await invoke<boolean>("x_server_connect_consent_reply", { id, decision });
 }
 
-/** Check whether the SSH agent is running, stopped, or not installed. */
-export async function checkSshAgentStatus(): Promise<string> {
-  return await invoke<string>("check_ssh_agent_status");
-}
-
 /** Validate an SSH key file path and return a user-facing hint. */
 export async function validateSshKey(path: string): Promise<SshKeyValidation> {
   return await invoke<SshKeyValidation>("validate_ssh_key", { path });
@@ -1283,11 +1258,6 @@ export async function isSshKeyEncrypted(path: string): Promise<boolean> {
 /** Check if Docker is available on the local system. */
 export async function checkDockerAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_docker_available");
-}
-
-/** List locally available Docker images. */
-export async function listDockerImages(): Promise<string[]> {
-  return await invoke<string[]>("list_docker_images");
 }
 
 /**
@@ -1329,11 +1299,6 @@ export async function listAgentDockerContainers(
 /** Check if Podman is available on the local system. */
 export async function checkPodmanAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_podman_available");
-}
-
-/** List locally available Podman images. */
-export async function listPodmanImages(): Promise<string[]> {
-  return await invoke<string[]>("list_podman_images");
 }
 
 // --- Connection persistence commands ---
@@ -1392,16 +1357,6 @@ export async function saveFolder(folder: ConnectionFolder): Promise<void> {
 /** Delete a folder by ID */
 export async function deleteFolderFromBackend(id: string): Promise<void> {
   await invoke("delete_folder", { id });
-}
-
-/** Export all connections as a JSON string */
-export async function exportConnections(): Promise<string> {
-  return await invoke<string>("export_connections");
-}
-
-/** Import connections from a JSON string. Returns count imported. */
-export async function importConnections(json: string): Promise<number> {
-  return await invoke<number>("import_connections", { json });
 }
 
 // `ImportPreview` (import-file summary) and `ConnectionImportResult` (the
@@ -1604,16 +1559,6 @@ export async function uninstallShellIntegration(): Promise<ShellIntegrationStatu
   return await invoke<ShellIntegrationStatus>("uninstall_shell_integration");
 }
 
-/** Save an external connection file to disk */
-export async function saveExternalFile(
-  filePath: string,
-  name: string,
-  folders: ConnectionFolder[],
-  connections: SavedConnection[]
-): Promise<void> {
-  await invoke("save_external_file", { filePath, name, folders, connections });
-}
-
 /** Reload external connection files */
 export async function reloadExternalConnections(): Promise<SavedConnection[]> {
   return await invoke<SavedConnection[]>("reload_external_connections");
@@ -1770,42 +1715,6 @@ export async function folderPasteTakeInterrupted(): Promise<InterruptedFolderPas
 /** List queued transfers, optionally filtered by session. */
 export async function transferList(sessionId?: string): Promise<TransferSnapshot[]> {
   return await invoke<TransferSnapshot[]>("transfer_list", { sessionId });
-}
-
-/**
- * Register an FTP download (remote → local). Returns the `transferId`; progress
- * is reported via `transfer-progress` events (#1336).
- */
-export async function ftpDownload(
-  sessionId: string,
-  config: unknown,
-  remotePath: string,
-  localPath: string
-): Promise<string> {
-  return await invoke<string>("ftp_download", {
-    sessionId,
-    config,
-    remotePath,
-    localPath,
-  });
-}
-
-/**
- * Register an FTP upload (local → remote). Returns the `transferId`; progress is
- * reported via `transfer-progress` events (#1336).
- */
-export async function ftpUpload(
-  sessionId: string,
-  config: unknown,
-  localPath: string,
-  remotePath: string
-): Promise<string> {
-  return await invoke<string>("ftp_upload", {
-    sessionId,
-    config,
-    localPath,
-    remotePath,
-  });
 }
 
 // --- Local filesystem commands ---
@@ -2519,11 +2428,6 @@ export async function shutdownAgent(agentId: string, reason?: string): Promise<n
   return await invoke<number>("shutdown_agent", { agentId, reason: reason ?? null });
 }
 
-/** Get capabilities of a connected agent. */
-export async function getAgentCapabilities(agentId: string): Promise<AgentCapabilities> {
-  return await invoke<AgentCapabilities>("get_agent_capabilities", { agentId });
-}
-
 /** List active sessions on an agent. */
 export async function listAgentSessions(agentId: string): Promise<AgentSessionInfo[]> {
   return await invoke<AgentSessionInfo[]>("list_agent_sessions", { agentId });
@@ -2549,11 +2453,6 @@ export async function takeOverAgentSession(agentId: string, sessionId: string): 
 /** Close a specific session on a remote agent (frees serial port, SSH channel, etc.). */
 export async function closeAgentSession(agentId: string, sessionId: string): Promise<void> {
   await invoke("close_agent_session", { agentId, sessionId });
-}
-
-/** List saved session definitions on an agent. */
-export async function listAgentDefinitions(agentId: string): Promise<AgentDefinitionInfo[]> {
-  return await invoke<AgentDefinitionInfo[]>("list_agent_definitions", { agentId });
 }
 
 /** Save a session definition on an agent. */
@@ -2651,15 +2550,6 @@ export async function probeRemoteAgent(
     config,
     expectedVersion: expectedVersion ?? null,
   });
-}
-
-/** Deploy the agent binary to a remote host via SFTP. */
-export async function deployAgent(
-  agentId: string,
-  config: RemoteAgentConfig,
-  deployConfig: AgentDeployConfig
-): Promise<AgentDeployResult> {
-  return await invoke<AgentDeployResult>("deploy_agent", { agentId, config, deployConfig });
 }
 
 /**
@@ -2847,11 +2737,6 @@ export async function resetCredentialStore(): Promise<void> {
 /** Lock the master password credential store. */
 export async function lockCredentialStore(): Promise<void> {
   await invoke("lock_credential_store");
-}
-
-/** Set up a new master password for the credential store. */
-export async function setupMasterPassword(password: string): Promise<void> {
-  await invoke("setup_master_password", { password });
 }
 
 /** Change the master password for the credential store. */
@@ -3162,11 +3047,6 @@ export async function listConfigFiles(dir: string): Promise<ConfigFileStatus[]> 
   return await invoke<ConfigFileStatus[]>("list_config_files", { dir });
 }
 
-/** Resolve a `{PORTABLE_DIR}` placeholder in a path string. */
-export async function resolvePortablePath(path: string): Promise<string> {
-  return await invoke<string>("resolve_portable_path_cmd", { path });
-}
-
 /**
  * Export the currently active config files to a portable data directory.
  *
@@ -3230,11 +3110,6 @@ export async function setUpdateAutoCheck(enabled: boolean): Promise<void> {
   await invoke("set_update_auto_check", { enabled });
 }
 
-/** Return current update settings (auto-check flag, last check time, skipped version). */
-export async function getUpdateSettings(): Promise<UpdateSettings> {
-  return await invoke<UpdateSettings>("get_update_settings");
-}
-
 // ─── Plugin manager ────────────────────────────────────────────────────────
 //
 // Typed wrappers over the `PluginManager` Tauri commands (plugin-system
@@ -3245,14 +3120,6 @@ export async function getUpdateSettings(): Promise<UpdateSettings> {
 /** List all installed plugins with their current install/runtime state. */
 export async function listPlugins(): Promise<InstalledPlugin[]> {
   return await invoke<InstalledPlugin[]>("list_plugins");
-}
-
-/**
- * Validate a `.termihub-plugin` package at `filePath` without installing it,
- * returning its parsed manifest (e.g. to drive the install permission prompt).
- */
-export async function validatePlugin(filePath: string): Promise<PluginManifest> {
-  return await invoke<PluginManifest>("validate_plugin", { path: filePath });
 }
 
 /**

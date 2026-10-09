@@ -3,12 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { TunnelConfig, TunnelState } from "@/types/tunnel";
-
-/** Get all saved tunnel configurations. */
-export async function getTunnels(): Promise<TunnelConfig[]> {
-  return await invoke<TunnelConfig[]>("get_tunnels");
-}
+import { TunnelConfig } from "@/types/tunnel";
 
 /** Save (add or update) a tunnel configuration. */
 export async function saveTunnel(config: TunnelConfig): Promise<void> {
@@ -18,11 +13,6 @@ export async function saveTunnel(config: TunnelConfig): Promise<void> {
 /** Delete a tunnel configuration by ID. */
 export async function deleteTunnel(tunnelId: string): Promise<void> {
   await invoke("delete_tunnel", { tunnelId });
-}
-
-/** Get the current status of all tunnels. */
-export async function getTunnelStatuses(): Promise<TunnelState[]> {
-  return await invoke<TunnelState[]>("get_tunnel_statuses");
 }
 
 /** Start a tunnel by ID. */

@@ -428,7 +428,8 @@ jobs:
 
       # Tauri matches invoke() args to #[tauri::command] params BY NAME; a wrong
       # key is invisible to tsc and to mocked-invoke unit tests (#3488). Fails on
-      # unknown commands, missing required args and unknown extra args.
+      # unknown commands, missing required args and unknown extra args, and on
+      # orphan commands: registered ones no production code reaches (#4344).
       - name: Check IPC invoke argument contract
         run: node scripts/internal/check-invoke-contract.mjs
 

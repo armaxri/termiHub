@@ -64,7 +64,6 @@ vi.mock("@/services/api", () => ({
   storeCredential: vi.fn(() => Promise.resolve()),
   resolveCredential: vi.fn(() => Promise.resolve(null)),
   isSshKeyEncrypted: vi.fn(() => Promise.resolve(false)),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
   saveAgentDefinition: vi.fn(),
   updateAgentDefinition: vi.fn(),

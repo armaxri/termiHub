@@ -3,7 +3,7 @@
 /**
  * One imported tab that carries something the import file decides on its own
  * (#4434): a command typed into the session after it connects, or an inline
- * connection config. Listed in the import preview and result so the import
+ * connection config. Listed in the import result so the import
  * notice can show the user exactly what the file wants to run.
  */
 export type UntrustedImportedTab = { 

@@ -52,7 +52,6 @@ vi.mock("@/services/api", () => ({
   connectAgent: vi.fn(),
   disconnectAgent: vi.fn(),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
   saveAgentDefinition: vi.fn(),
   updateAgentDefinition: vi.fn(),
@@ -65,12 +64,10 @@ vi.mock("@/services/api", () => ({
 }));
 
 vi.mock("@/services/tunnelApi", () => ({
-  getTunnels: vi.fn(() => Promise.resolve([])),
   saveTunnel: vi.fn(),
   deleteTunnel: vi.fn(),
   startTunnel: vi.fn(),
   stopTunnel: vi.fn(),
-  getTunnelStatuses: vi.fn(() => Promise.resolve([])),
 }));
 
 import type { ConnectionConfig } from "@/types/terminal";

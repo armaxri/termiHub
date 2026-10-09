@@ -73,25 +73,6 @@ fn detect_mode_at(base_dir: &Path) -> AppMode {
     }
 }
 
-/// Resolve `{PORTABLE_DIR}` placeholders in a path string.
-///
-/// Replaces `{PORTABLE_DIR}` with the directory containing the executable
-/// (or the directory containing the `.app` bundle on macOS). Returns the
-/// path unchanged if not in portable mode or if no placeholder is present.
-pub fn resolve_portable_path(path: &str, app_mode: &AppMode) -> PathBuf {
-    match app_mode {
-        AppMode::Portable { data_dir } => {
-            if let Some(base_dir) = data_dir.parent() {
-                let resolved = path.replace("{PORTABLE_DIR}", &base_dir.to_string_lossy());
-                PathBuf::from(resolved)
-            } else {
-                PathBuf::from(path)
-            }
-        }
-        AppMode::Installed => PathBuf::from(path),
-    }
-}
-
 /// On macOS the executable lives deep inside the `.app` bundle
 /// (`termiHub.app/Contents/MacOS/termiHub`). The portable marker and data
 /// directory should sit next to the `.app` bundle, not inside it.
@@ -145,30 +126,6 @@ mod tests {
     #[test]
     fn app_mode_data_dir_returns_none_for_installed() {
         assert!(AppMode::Installed.data_dir().is_none());
-    }
-
-    #[test]
-    fn resolve_portable_path_replaces_placeholder() {
-        let mode = AppMode::Portable {
-            data_dir: PathBuf::from("/usb/termiHub/data"),
-        };
-        let result = resolve_portable_path("{PORTABLE_DIR}/data/keys/id_rsa", &mode);
-        assert_eq!(result, PathBuf::from("/usb/termiHub/data/keys/id_rsa"));
-    }
-
-    #[test]
-    fn resolve_portable_path_no_placeholder_returns_unchanged() {
-        let mode = AppMode::Portable {
-            data_dir: PathBuf::from("/usb/termiHub/data"),
-        };
-        let result = resolve_portable_path("/home/user/.ssh/id_rsa", &mode);
-        assert_eq!(result, PathBuf::from("/home/user/.ssh/id_rsa"));
-    }
-
-    #[test]
-    fn resolve_portable_path_installed_mode_returns_unchanged() {
-        let result = resolve_portable_path("{PORTABLE_DIR}/data/keys/id_rsa", &AppMode::Installed);
-        assert_eq!(result, PathBuf::from("{PORTABLE_DIR}/data/keys/id_rsa"));
     }
 
     #[test]

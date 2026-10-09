@@ -7,7 +7,6 @@ import {
   ActiveWorkspaceInfo,
   WorkspaceDefinition,
   WorkspaceExportResult,
-  WorkspaceImportPreview,
   WorkspaceImportResult,
   WorkspaceSummary,
 } from "@/types/workspace";
@@ -70,9 +69,4 @@ export async function exportWorkspaces(): Promise<WorkspaceExportResult> {
  */
 export async function importWorkspaces(json: string): Promise<WorkspaceImportResult> {
   return await invoke<WorkspaceImportResult>("import_workspaces", { json });
-}
-
-/** Preview a workspace import file without importing. */
-export async function previewImportWorkspaces(json: string): Promise<WorkspaceImportPreview> {
-  return await invoke<WorkspaceImportPreview>("preview_import_workspaces", { json });
 }

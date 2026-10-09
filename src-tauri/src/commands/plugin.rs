@@ -42,20 +42,6 @@ pub fn list_plugins(manager: State<'_, PluginManager>) -> Result<Vec<InstalledPl
     manager.list().map_err(|e| e.to_string())
 }
 
-/// Validate a `.termihub-plugin` package at `path` without installing it,
-/// returning its trusted manifest (which carries the declared permissions the
-/// UI shows in the install prompt). An incompatible or malformed package is an
-/// error.
-#[tauri::command]
-pub fn validate_plugin(
-    path: String,
-    manager: State<'_, PluginManager>,
-) -> Result<PluginManifest, String> {
-    manager
-        .validate(std::path::Path::new(&path))
-        .map_err(|e| e.to_string())
-}
-
 /// A package's install preview (#3507): its trusted manifest plus whether it
 /// ships a native library for this computer's platform (PLG-011).
 ///

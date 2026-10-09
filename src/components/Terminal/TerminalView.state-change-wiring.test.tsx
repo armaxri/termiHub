@@ -1,13 +1,14 @@
 /**
- * Pins the wiring between TerminalView and the backend state-change events
- * (TFE2-001, #4309): the `listen` callbacks hand each payload to the real,
- * separately tested handlers in `agentStateHandlers`, and unmount unlistens.
+ * Pins the wiring between TerminalView and the backend `agent-state-change`
+ * event (TFE2-001, #4309): the `listen` callback hands each payload to the
+ * real, separately tested handler in `agentStateHandlers`, and unmount
+ * unlistens. The emitter-less `remote-state-change` listener is gone (#4344).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { handleAgentStateChange, handleRemoteStateChange } from "./agentStateHandlers";
+import { handleAgentStateChange } from "./agentStateHandlers";
 
 vi.mock("sonner", () => ({
   toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
@@ -27,7 +28,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("./agentStateHandlers", () => ({
   handleAgentStateChange: vi.fn(() => Promise.resolve()),
-  handleRemoteStateChange: vi.fn(),
 }));
 
 vi.mock("./TerminalRegistry", () => ({
@@ -111,18 +111,15 @@ describe("TerminalView — state-change event wiring (#4309)", () => {
     expect(handleAgentStateChange).toHaveBeenCalledWith(payload);
   });
 
-  it("passes remote-state-change payloads to handleRemoteStateChange", () => {
-    const payload = { session_id: "session-1", state: "disconnected" };
-    listeners.get("remote-state-change")?.handler({ payload });
-    expect(handleRemoteStateChange).toHaveBeenCalledWith(payload);
+  it("does not listen for the emitter-less remote-state-change event (#4344)", () => {
+    expect(listeners.has("remote-state-change")).toBe(false);
+    expect([...listeners.keys()]).toEqual(["agent-state-change"]);
   });
 
-  it("unlistens both events on unmount", () => {
+  it("unlistens on unmount", () => {
     const agent = listeners.get("agent-state-change");
-    const remote = listeners.get("remote-state-change");
     act(() => root.unmount());
     root = createRoot(container);
     expect(agent?.unlisten).toHaveBeenCalledTimes(1);
-    expect(remote?.unlisten).toHaveBeenCalledTimes(1);
   });
 });

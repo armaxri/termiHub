@@ -33,7 +33,6 @@ vi.mock("@/themes", () => ({
 const savedWorkflows: Workflow[] = [];
 vi.mock("@/services/workflowApi", () => ({
   listWorkflows: vi.fn(() => Promise.resolve([...savedWorkflows])),
-  getWorkflow: vi.fn(),
   saveWorkflow: vi.fn((w: Workflow) => Promise.resolve(w)),
   deleteWorkflow: vi.fn(() => Promise.resolve()),
   listWorkflowRuns: vi.fn(() => Promise.resolve([])),

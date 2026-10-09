@@ -2,17 +2,9 @@ use std::sync::Arc;
 
 use tauri::State;
 
-use crate::tunnel::config::{TunnelConfig, TunnelState};
+use crate::tunnel::config::TunnelConfig;
 use crate::tunnel::tunnel_manager::TunnelManager;
 use crate::utils::errors::TerminalError;
-
-/// Get all saved tunnel configurations.
-#[tauri::command]
-pub fn get_tunnels(
-    manager: State<'_, Arc<TunnelManager>>,
-) -> Result<Vec<TunnelConfig>, TerminalError> {
-    manager.get_tunnels()
-}
 
 /// Save (add or update) a tunnel configuration.
 #[tauri::command]
@@ -30,14 +22,6 @@ pub fn delete_tunnel(
     manager: State<'_, Arc<TunnelManager>>,
 ) -> Result<(), TerminalError> {
     manager.delete_tunnel(&tunnel_id)
-}
-
-/// Get the current status of all tunnels.
-#[tauri::command]
-pub fn get_tunnel_statuses(
-    manager: State<'_, Arc<TunnelManager>>,
-) -> Result<Vec<TunnelState>, TerminalError> {
-    manager.get_statuses()
 }
 
 /// Start a tunnel by ID.

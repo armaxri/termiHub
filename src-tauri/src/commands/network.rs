@@ -396,20 +396,6 @@ fn http_monitor_start_config(
     config
 }
 
-/// Set (or clear) a monitor's run-location preference (#2592).
-///
-/// [`RunLocation::ThisComputer`] clears the preference (back to the desktop
-/// default); a [`RunLocation::Agent`] records which agent hosts the monitor on
-/// its next start. Mirrors `set_embedded_server_run_location`.
-#[tauri::command]
-pub fn set_http_monitor_run_location(
-    monitor_id: String,
-    run_location: RunLocation,
-    manager: State<'_, Arc<NetworkManager>>,
-) -> Result<(), TerminalError> {
-    manager.set_http_monitor_run_location(&monitor_id, run_location)
-}
-
 /// Stop a running HTTP monitor, keeping it listed (as not running) so it can be
 /// resumed. Use [`network_http_monitor_remove`] to delete it.
 #[tauri::command]

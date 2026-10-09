@@ -235,24 +235,8 @@ fn mutating_commands() -> Vec<(&'static str, Vec<Fold>, Invoke)> {
         ("delete_folder", vec![Fold::Connections], |h| {
             delete_folder("Work".to_string(), h.handle(), h.manager()).is_ok()
         }),
-        ("import_connections", vec![Fold::Connections], |h| {
-            let json = h.manager().export_json().unwrap();
-            import_connections(json, h.handle(), h.manager()).is_ok()
-        }),
         ("save_settings", vec![Fold::Settings], |h| {
             save_settings(AppSettings::default(), h.handle(), h.manager()).is_ok()
-        }),
-        ("save_external_file", vec![Fold::Connections], |h| {
-            let path = h.dir.path().join("saved-external.json");
-            save_external_file(
-                path.to_string_lossy().into_owned(),
-                "External".to_string(),
-                Vec::new(),
-                vec![connection("Ext", None)],
-                h.handle(),
-                h.manager(),
-            )
-            .is_ok()
         }),
         (
             "reload_external_connections",
@@ -300,7 +284,6 @@ fn mutating_commands() -> Vec<(&'static str, Vec<Fold>, Invoke)> {
 /// Commands in `connection.rs` that read but never mutate the manager, so they
 /// fold nothing.
 const READ_ONLY_COMMANDS: &[&str] = &[
-    "export_connections",
     "get_settings",
     "export_connections_encrypted",
     "preview_import",
@@ -484,7 +467,16 @@ fn partially_applied_failed_mutation_republishes_exactly_disk() {
 fn failed_mutation_refolds_its_regions_from_disk() {
     let h = harness();
     h.poison();
-    assert!(import_connections("not json".to_string(), h.handle(), h.manager()).is_err());
+    // The persist fails inside the commit: the delete targets an external file
+    // that does not exist.
+    let missing = h.dir.path().join("missing.json");
+    let result = delete_connection(
+        connection_id(&h),
+        Some(missing.to_string_lossy().into_owned()),
+        h.handle(),
+        h.manager(),
+    );
+    assert!(result.is_err(), "the persist fails");
     assert_eq!(h.folded(), vec![Fold::Connections], "only its own region");
     assert_eq!(region_view(&h), disk_view(&h), "region == disk");
 }

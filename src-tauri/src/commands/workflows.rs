@@ -12,15 +12,6 @@ pub fn list_workflows(manager: State<'_, WorkflowManager>) -> Result<Vec<Workflo
     manager.list_workflows()
 }
 
-/// Get a single workflow by ID.
-#[tauri::command]
-pub fn get_workflow(
-    workflow_id: String,
-    manager: State<'_, WorkflowManager>,
-) -> Result<Workflow, TerminalError> {
-    manager.get_workflow(&workflow_id)
-}
-
 /// Save (add or update) a workflow. Returns the stored workflow with
 /// authoritative timestamps.
 #[tauri::command]

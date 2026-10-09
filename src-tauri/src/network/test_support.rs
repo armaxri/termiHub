@@ -188,9 +188,6 @@ impl AgentRpcClient for FakeAgent {
     ) -> Result<AgentConnectionsData, TerminalError> {
         unimplemented!()
     }
-    fn list_definitions(&self, agent_id: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        unimplemented!()
-    }
     fn save_definition(
         &self,
         agent_id: &str,

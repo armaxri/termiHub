@@ -53,7 +53,8 @@ if errorlevel 1 set FAILED=1
 
 echo.
 echo === IPC invoke argument contract ===
-REM invoke() arg keys vs #[tauri::command] param names (#3488).
+REM invoke() arg keys vs #[tauri::command] param names (#3488), and no orphan
+REM registered commands without a production caller (#4344).
 node scripts\internal\check-invoke-contract.mjs
 if errorlevel 1 set FAILED=1
 

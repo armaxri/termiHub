@@ -3,6 +3,9 @@
  */
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { TAURI_EVENT } from "./eventNames";
+
+export { TAURI_EVENT, type TauriEventName } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
@@ -82,7 +85,7 @@ export function bytesToBase64(bytes: Uint8Array | number[]): string {
 export async function onTerminalOutput(
   callback: (sessionId: string, data: Uint8Array) => void
 ): Promise<UnlistenFn> {
-  return await listen<TerminalOutputEvent>("terminal-output", (event) => {
+  return await listen<TerminalOutputEvent>(TAURI_EVENT.terminalOutput, (event) => {
     const { session_id, data } = event.payload;
     callback(session_id, base64ToBytes(data));
   });
@@ -92,16 +95,19 @@ export async function onTerminalOutput(
 export async function onRemoteDesktopClipboard(
   callback: (payload: RemoteDesktopClipboardPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteDesktopClipboardPayload>("remote-desktop-clipboard", (event) => {
-    callback(event.payload);
-  });
+  return await listen<RemoteDesktopClipboardPayload>(
+    TAURI_EVENT.remoteDesktopClipboard,
+    (event) => {
+      callback(event.payload);
+    }
+  );
 }
 
 /** Subscribe to remote-desktop lifecycle state events. */
 export async function onRemoteDesktopState(
   callback: (payload: RemoteDesktopStatePayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteDesktopStatePayload>("remote-desktop-state", (event) => {
+  return await listen<RemoteDesktopStatePayload>(TAURI_EVENT.remoteDesktopState, (event) => {
     callback(event.payload);
   });
 }
@@ -114,9 +120,12 @@ export async function onRemoteDesktopState(
 export async function onRemoteDesktopCertPrompt(
   callback: (payload: RemoteDesktopCertPromptPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteDesktopCertPromptPayload>("remote-desktop-cert-prompt", (event) => {
-    callback(event.payload);
-  });
+  return await listen<RemoteDesktopCertPromptPayload>(
+    TAURI_EVENT.remoteDesktopCertPrompt,
+    (event) => {
+      callback(event.payload);
+    }
+  );
 }
 
 /**
@@ -128,7 +137,7 @@ export async function onRemoteDesktopCertPrompt(
 export async function onSshHostKeyPrompt(
   callback: (payload: SshHostKeyPromptPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<SshHostKeyPromptPayload>("ssh-host-key-prompt", (event) => {
+  return await listen<SshHostKeyPromptPayload>(TAURI_EVENT.sshHostKeyPrompt, (event) => {
     callback(event.payload);
   });
 }
@@ -142,7 +151,7 @@ export async function onSshKeyboardInteractivePrompt(
   callback: (payload: SshKeyboardInteractivePromptPayload) => void
 ): Promise<UnlistenFn> {
   return await listen<SshKeyboardInteractivePromptPayload>(
-    "ssh-keyboard-interactive-prompt",
+    TAURI_EVENT.sshKeyboardInteractivePrompt,
     (event) => {
       callback(event.payload);
     }
@@ -158,7 +167,7 @@ export async function onSshKeyboardInteractivePromptClosed(
   callback: (payload: SshKeyboardInteractivePromptClosedPayload) => void
 ): Promise<UnlistenFn> {
   return await listen<SshKeyboardInteractivePromptClosedPayload>(
-    "ssh-keyboard-interactive-prompt-closed",
+    TAURI_EVENT.sshKeyboardInteractivePromptClosed,
     (event) => {
       callback(event.payload);
     }
@@ -172,7 +181,7 @@ export async function onSshKeyboardInteractivePromptClosed(
 export async function onAgentCrashNoticesChanged(
   callback: (notices: AgentCrashNotice[]) => void
 ): Promise<UnlistenFn> {
-  return await listen<AgentCrashNotice[]>("agent-crash-notices-changed", (event) => {
+  return await listen<AgentCrashNotice[]>(TAURI_EVENT.agentCrashNoticesChanged, (event) => {
     callback(event.payload);
   });
 }
@@ -181,7 +190,7 @@ export async function onAgentCrashNoticesChanged(
 export async function onTerminalExit(
   callback: (sessionId: string, exitCode: number | null) => void
 ): Promise<UnlistenFn> {
-  return await listen<TerminalExitEvent>("terminal-exit", (event) => {
+  return await listen<TerminalExitEvent>(TAURI_EVENT.terminalExit, (event) => {
     const { session_id, exit_code } = event.payload;
     callback(session_id, exit_code);
   });
@@ -195,7 +204,7 @@ export async function onTerminalExit(
  * than only once a `transfer-progress` event happens to flow.
  */
 export async function onSessionOwnershipChanged(callback: () => void): Promise<UnlistenFn> {
-  return await listen("session-ownership-changed", () => callback());
+  return await listen(TAURI_EVENT.sessionOwnershipChanged, () => callback());
 }
 
 /**
@@ -206,7 +215,7 @@ export async function onSessionOwnershipChanged(callback: () => void): Promise<U
  * #3344) updates live.
  */
 export async function onPluginsChanged(callback: () => void): Promise<UnlistenFn> {
-  return await listen("plugin-changed", () => callback());
+  return await listen(TAURI_EVENT.pluginChanged, () => callback());
 }
 
 /** Payload for {@link onSessionOwnershipSuperseded} (SM-026). */
@@ -224,8 +233,9 @@ export type SessionOwnershipSupersededPayload = OwnershipSupersededPayload;
 export async function onSessionOwnershipSuperseded(
   callback: (payload: SessionOwnershipSupersededPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<SessionOwnershipSupersededPayload>("session-ownership-superseded", (event) =>
-    callback(event.payload)
+  return await listen<SessionOwnershipSupersededPayload>(
+    TAURI_EVENT.sessionOwnershipSuperseded,
+    (event) => callback(event.payload)
   );
 }
 
@@ -283,25 +293,28 @@ export class TerminalOutputDispatcher {
   private async doInit(): Promise<void> {
     const gen = this.initGeneration;
 
-    const unlistenOutput = await listen<TerminalOutputEvent>("terminal-output", (event) => {
-      const { session_id, data } = event.payload;
-      this.outputTap?.(session_id, data);
-      const cbs = this.outputCallbacks.get(session_id);
-      const chunk = base64ToBytes(data);
-      if (cbs && cbs.size > 0) {
-        for (const cb of cbs) cb(chunk);
-      } else {
-        // Buffer output for sessions whose subscriber hasn't registered yet
-        // (e.g. pre-existing sessions created by agent setup).
-        let buf = this.pendingOutput.get(session_id);
-        if (!buf) {
-          buf = [];
-          this.pendingOutput.set(session_id, buf);
+    const unlistenOutput = await listen<TerminalOutputEvent>(
+      TAURI_EVENT.terminalOutput,
+      (event) => {
+        const { session_id, data } = event.payload;
+        this.outputTap?.(session_id, data);
+        const cbs = this.outputCallbacks.get(session_id);
+        const chunk = base64ToBytes(data);
+        if (cbs && cbs.size > 0) {
+          for (const cb of cbs) cb(chunk);
+        } else {
+          // Buffer output for sessions whose subscriber hasn't registered yet
+          // (e.g. pre-existing sessions created by agent setup).
+          let buf = this.pendingOutput.get(session_id);
+          if (!buf) {
+            buf = [];
+            this.pendingOutput.set(session_id, buf);
+          }
+          buf.push(chunk);
+          this.trimPendingOutput(buf);
         }
-        buf.push(chunk);
-        this.trimPendingOutput(buf);
       }
-    });
+    );
 
     if (gen !== this.initGeneration) {
       unlistenOutput();
@@ -309,7 +322,7 @@ export class TerminalOutputDispatcher {
     }
     this.unlistenOutput = unlistenOutput;
 
-    const unlistenExit = await listen<TerminalExitEvent>("terminal-exit", (event) => {
+    const unlistenExit = await listen<TerminalExitEvent>(TAURI_EVENT.terminalExit, (event) => {
       const { session_id, exit_code } = event.payload;
       // The session is gone: drop any pre-subscribe output still buffered for it.
       // A session that exits before (or without) a subscriber ever attaching would
@@ -448,7 +461,7 @@ export const terminalDispatcher = new TerminalOutputDispatcher();
 export async function onAgentSetupProgress(
   callback: (agentId: string, step: string, message: string) => void
 ): Promise<UnlistenFn> {
-  return await listen<AgentSetupProgress>("agent-setup-progress", (event) => {
+  return await listen<AgentSetupProgress>(TAURI_EVENT.agentSetupProgress, (event) => {
     callback(event.payload.agentId, event.payload.step, event.payload.message);
   });
 }
@@ -468,7 +481,7 @@ export interface AgentUpdateAvailable {
 export async function onAgentUpdateAvailable(
   callback: (update: AgentUpdateAvailable) => void
 ): Promise<UnlistenFn> {
-  return await listen<AgentUpdateAvailableEvent>("agent-update-available", (event) => {
+  return await listen<AgentUpdateAvailableEvent>(TAURI_EVENT.agentUpdateAvailable, (event) => {
     callback({
       agentId: event.payload.agent_id,
       currentVersion: event.payload.currentVersion,
@@ -499,20 +512,23 @@ export interface RemoteAgentUpdatePending {
 export async function onRemoteAgentUpdatePending(
   callback: (pending: RemoteAgentUpdatePending) => void
 ): Promise<UnlistenFn> {
-  return await listen<RemoteAgentUpdatePendingEvent>("remote-agent-update-pending", (event) => {
-    callback({
-      agentId: event.payload.agent_id,
-      requestedByVersion: event.payload.requestedByVersion,
-      estimatedRestartSecs: event.payload.estimatedRestartSecs,
-    });
-  });
+  return await listen<RemoteAgentUpdatePendingEvent>(
+    TAURI_EVENT.remoteAgentUpdatePending,
+    (event) => {
+      callback({
+        agentId: event.payload.agent_id,
+        requestedByVersion: event.payload.requestedByVersion,
+        estimatedRestartSecs: event.payload.estimatedRestartSecs,
+      });
+    }
+  );
 }
 
 /** Subscribe to VS Code edit-complete events (remote file re-upload). */
 export async function onVscodeEditComplete(
   callback: (remotePath: string, success: boolean, error: string | null) => void
 ): Promise<UnlistenFn> {
-  return await listen<VscodeEditCompleteEvent>("vscode-edit-complete", (event) => {
+  return await listen<VscodeEditCompleteEvent>(TAURI_EVENT.vscodeEditComplete, (event) => {
     callback(event.payload.remotePath, event.payload.success, event.payload.error);
   });
 }
@@ -525,7 +541,7 @@ export async function onVscodeEditComplete(
 export async function onLocalFileChanged(
   callback: (watchId: string, path: string) => void
 ): Promise<UnlistenFn> {
-  return await listen<LocalFileChangedPayload>("local-file-changed", (event) => {
+  return await listen<LocalFileChangedPayload>(TAURI_EVENT.localFileChanged, (event) => {
     callback(event.payload.watchId, event.payload.path);
   });
 }
@@ -539,14 +555,14 @@ export async function onLocalFileChanged(
 export async function onLocalDirChanged(
   callback: (watchId: string, path: string) => void
 ): Promise<UnlistenFn> {
-  return await listen<LocalDirChangedPayload>("local-dir-changed", (event) => {
+  return await listen<LocalDirChangedPayload>(TAURI_EVENT.localDirChanged, (event) => {
     callback(event.payload.watchId, event.payload.path);
   });
 }
 
 /** Subscribe to real-time log entry events from the backend. */
 export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<UnlistenFn> {
-  return await listen<LogEntry>("log-entry", (event) => {
+  return await listen<LogEntry>(TAURI_EVENT.logEntry, (event) => {
     callback(event.payload);
   });
 }
@@ -563,14 +579,14 @@ export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<U
 export async function onCredentialStoreLocked(
   callback: (auto: boolean) => void
 ): Promise<UnlistenFn> {
-  return await listen<{ auto?: boolean } | null>("credential-store-locked", (event) => {
+  return await listen<{ auto?: boolean } | null>(TAURI_EVENT.credentialStoreLocked, (event) => {
     callback(event.payload?.auto ?? false);
   });
 }
 
 /** Subscribe to credential store unlocked events. */
 export async function onCredentialStoreUnlocked(callback: () => void): Promise<UnlistenFn> {
-  return await listen("credential-store-unlocked", () => {
+  return await listen(TAURI_EVENT.credentialStoreUnlocked, () => {
     callback();
   });
 }
@@ -579,14 +595,17 @@ export async function onCredentialStoreUnlocked(callback: () => void): Promise<U
 export async function onCredentialStoreStatusChanged(
   callback: (status: CredentialStoreStatusInfo) => void
 ): Promise<UnlistenFn> {
-  return await listen<CredentialStoreStatusInfo>("credential-store-status-changed", (event) => {
-    callback(event.payload);
-  });
+  return await listen<CredentialStoreStatusInfo>(
+    TAURI_EVENT.credentialStoreStatusChanged,
+    (event) => {
+      callback(event.payload);
+    }
+  );
 }
 
 /** Subscribe to credential store unlock-needed events (fired when a credential is requested while locked). */
 export async function onCredentialStoreUnlockNeeded(callback: () => void): Promise<UnlistenFn> {
-  return await listen("credential-store-unlock-needed", () => {
+  return await listen(TAURI_EVENT.credentialStoreUnlockNeeded, () => {
     callback();
   });
 }
@@ -595,7 +614,7 @@ export async function onCredentialStoreUnlockNeeded(callback: () => void): Promi
 export async function onEmbeddedServerStatusChanged(
   callback: (state: ServerState) => void
 ): Promise<UnlistenFn> {
-  return await listen<ServerState>("embedded-server-status-changed", (event) => {
+  return await listen<ServerState>(TAURI_EVENT.embeddedServerStatusChanged, (event) => {
     callback(event.payload);
   });
 }
@@ -615,21 +634,24 @@ export interface PersistentSessionStateChange {
 export async function onPersistentSessionStateChanged(
   callback: (change: PersistentSessionStateChange) => void
 ): Promise<UnlistenFn> {
-  return await listen<PersistentSessionStateEvent>("persistent-session-state-changed", (event) => {
-    callback({
-      connectionId: event.payload.connection_id,
-      sessionId: event.payload.session_id,
-      state: event.payload.state,
-      attachedTabCount: event.payload.attached_tab_count,
-      errorMessage: event.payload.error_message,
-    });
-  });
+  return await listen<PersistentSessionStateEvent>(
+    TAURI_EVENT.persistentSessionStateChanged,
+    (event) => {
+      callback({
+        connectionId: event.payload.connection_id,
+        sessionId: event.payload.session_id,
+        state: event.payload.state,
+        attachedTabCount: event.payload.attached_tab_count,
+        errorMessage: event.payload.error_message,
+      });
+    }
+  );
 }
 
 // --- Saved-connection id changes ---
 
 /** Emitted by the backend after saved connections' ids changed (#3579). */
-export const CONNECTION_IDS_CHANGED_EVENT = "connection-ids-changed";
+export const CONNECTION_IDS_CHANGED_EVENT = TAURI_EVENT.connectionIdsChanged;
 
 /**
  * Subscribe to saved-connection id changes — a rename or move of a connection
@@ -659,7 +681,7 @@ export type HopProbeStatus = HopStatusPayload["status"];
 export async function onJumpHostHopStatus(
   callback: (payload: HopStatusPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<HopStatusPayload>("jump-host-hop-status", (event) => {
+  return await listen<HopStatusPayload>(TAURI_EVENT.jumpHostHopStatus, (event) => {
     callback(event.payload);
   });
 }
@@ -668,7 +690,7 @@ export async function onJumpHostHopStatus(
 export async function onJumpHostProbeComplete(
   callback: (payload: ProbeCompletePayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<ProbeCompletePayload>("jump-host-probe-complete", (event) => {
+  return await listen<ProbeCompletePayload>(TAURI_EVENT.jumpHostProbeComplete, (event) => {
     callback(event.payload);
   });
 }
@@ -683,7 +705,7 @@ export async function onJumpHostProbeComplete(
 export async function onTransferProgress(
   callback: (progress: TransferProgress) => void
 ): Promise<UnlistenFn> {
-  return await listen<TransferProgress>("transfer-progress", (event) => {
+  return await listen<TransferProgress>(TAURI_EVENT.transferProgress, (event) => {
     callback(event.payload);
   });
 }
@@ -696,7 +718,7 @@ export async function onTransferProgress(
 export async function onXServerProgress(
   callback: (progress: XServerProgress) => void
 ): Promise<UnlistenFn> {
-  return await listen<XServerProgress>("x-server-progress", (event) => {
+  return await listen<XServerProgress>(TAURI_EVENT.xServerProgress, (event) => {
     callback(event.payload);
   });
 }
@@ -722,7 +744,7 @@ export type SpawnRequestPayload = SpawnRequest;
 export async function onSpawnRequest(
   callback: (payload: SpawnRequestPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<SpawnRequestPayload>("spawn-request", (event) => {
+  return await listen<SpawnRequestPayload>(TAURI_EVENT.spawnRequest, (event) => {
     callback(event.payload);
   });
 }
@@ -738,7 +760,7 @@ export async function onSpawnRequest(
 export async function onSpawnPickerRequested(
   callback: (payload: SpawnRequestPayload) => void
 ): Promise<UnlistenFn> {
-  return await listen<SpawnRequestPayload>("spawn-picker-requested", (event) => {
+  return await listen<SpawnRequestPayload>(TAURI_EVENT.spawnPickerRequested, (event) => {
     callback(event.payload);
   });
 }
@@ -753,7 +775,7 @@ export async function onSpawnPickerRequested(
 export async function onXServerConsentNeeded(
   callback: (request: XServerConsentRequest) => void
 ): Promise<UnlistenFn> {
-  return await listen<XServerConsentRequest>("x-server-consent-needed", (event) => {
+  return await listen<XServerConsentRequest>(TAURI_EVENT.xServerConsentNeeded, (event) => {
     callback(event.payload);
   });
 }

@@ -19,8 +19,8 @@ use crate::terminal::agent_deploy::{
 };
 use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-    AgentFolderInfo, AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
+    AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo, AgentFolderInfo,
+    AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{AgentEndReason, RemoteAgentConfig, UpdateStrategy};
@@ -50,14 +50,6 @@ use termihub_core::protocol::methods::{
 /// `Internal error:` prefix and the machine-classifiable `internal_error` code.
 fn blocking_join_error(e: impl std::fmt::Display) -> TerminalError {
     TerminalError::InternalError(e.to_string())
-}
-
-/// The "agent not connected" lookup miss surfaced by [`get_agent_capabilities`].
-/// Kept as a helper so the exact wire text is asserted by a regression test; it
-/// maps to [`TerminalError::RemoteError`] (the general remote-agent-state bucket),
-/// preserving the "Agent … not connected" message.
-fn agent_not_connected(agent_id: &str) -> TerminalError {
-    TerminalError::RemoteError(format!("Agent {agent_id} not connected"))
 }
 
 // ── Typed connections.* params (AGT-028) ─────────────────────────────────────
@@ -302,16 +294,6 @@ pub async fn shutdown_agent(
     })
     .await
     .unwrap_or_else(|e| Err(blocking_join_error(e)))
-}
-
-#[tauri::command]
-pub fn get_agent_capabilities(
-    agent_id: String,
-    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentCapabilities, TerminalError> {
-    agent_manager
-        .get_capabilities(&agent_id)
-        .ok_or_else(|| agent_not_connected(&agent_id))
 }
 
 /// Push updated AgentSettings to a running agent (live reload) and persist locally.
@@ -580,43 +562,6 @@ pub async fn take_over_agent_session(
     tauri::async_runtime::spawn_blocking(move || manager.reclaim_session(&agent_id, &session_id))
         .await
         .unwrap_or_else(|e| Err(blocking_join_error(e)))
-}
-
-/// List saved session definitions on a remote agent.
-///
-/// Async because it sends a JSON-RPC request over SSH.
-#[tauri::command]
-pub async fn list_agent_definitions(
-    agent_id: String,
-    app_handle: tauri::AppHandle,
-    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-    credentials: State<'_, Arc<CredentialManager>>,
-) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-    debug!(agent_id, "Listing agent definitions");
-    let manager = agent_manager.inner().clone();
-    let store = credentials.inner().clone();
-    let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let definitions = manager.list_definitions(&aid)?;
-        // Move legacy VNC/RDP passwords off the agent host (#3803).
-        Ok(agent_graphical_secrets::migrate_definitions(
-            store.as_ref(),
-            &aid,
-            definitions,
-            |params| manager.update_definition(&aid, params),
-        ))
-    })
-    .await
-    .unwrap_or_else(|e| Err(blocking_join_error(e)));
-    // Server-authority fold (#2388): mirror the saved-definition snapshot into the
-    // shared store at the source.
-    if let Ok(definitions) = &result {
-        let stored = definitions.iter().map(to_store_definition).collect();
-        fold_agent_transition(&app_handle, |store| {
-            store.set_definitions(&agent_id, stored)
-        });
-    }
-    result
 }
 
 /// Save a session definition on a remote agent.
@@ -927,38 +872,6 @@ pub async fn probe_remote_agent(
     let version = expected_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     tauri::async_runtime::spawn_blocking(move || {
         crate::terminal::agent_deploy::probe_remote_agent(&config, &version)
-    })
-    .await
-    .unwrap_or_else(|e| Err(blocking_join_error(e)))
-}
-
-/// Deploy the agent binary to a remote host via SFTP.
-///
-/// Resolves the binary (cache → bundled → download), uploads it,
-/// and verifies the installation.
-#[tauri::command]
-pub async fn deploy_agent(
-    agent_id: String,
-    config: RemoteAgentConfig,
-    deploy_config: AgentDeployConfig,
-    app_handle: tauri::AppHandle,
-    cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, TerminalError> {
-    info!(agent_id, host = %config.host, "Deploying agent to remote host");
-    let token = cancellation.register(&agent_id);
-    let registry = cancellation.inner().clone();
-    let complete_id = agent_id.clone();
-    let complete_token = token.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = crate::terminal::agent_deploy::deploy_agent(
-            &agent_id,
-            &config,
-            &deploy_config,
-            &app_handle,
-            Some(&token),
-        );
-        registry.complete(&complete_id, &complete_token);
-        result
     })
     .await
     .unwrap_or_else(|e| Err(blocking_join_error(e)))
@@ -1621,24 +1534,5 @@ mod tests {
         assert_eq!(value["code"], "internal_error");
         assert_eq!(value["message"], "Internal error: task panicked: boom");
         assert!(value["details"].is_null());
-    }
-
-    /// `get_agent_capabilities` on an unknown/disconnected agent maps to
-    /// `TerminalError::RemoteError`, keeping the "Agent … not connected" wording
-    /// while now carrying the stable `remote_error` code.
-    #[test]
-    fn agent_not_connected_maps_to_remote_error_keeping_text() {
-        let err = agent_not_connected("agent-42");
-        assert!(matches!(err, TerminalError::RemoteError(_)));
-        assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
-
-        let value: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
-                .expect("valid JSON envelope");
-        assert_eq!(value["code"], "remote_error");
-        assert_eq!(
-            value["message"],
-            "Remote agent error: Agent agent-42 not connected"
-        );
     }
 }

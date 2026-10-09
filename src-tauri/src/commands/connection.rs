@@ -286,25 +286,6 @@ pub fn delete_folder<R: Runtime>(
     })
 }
 
-/// Export all connections as a JSON string.
-#[tauri::command]
-pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<String, TerminalError> {
-    manager.export_json().map_err(config_error)
-}
-
-/// Import connections from a JSON string. Returns the number actually added
-/// (connections the store already holds are skipped and not counted).
-#[tauri::command]
-pub fn import_connections<R: Runtime>(
-    json: String,
-    app: AppHandle<R>,
-    manager: State<'_, ConnectionManager>,
-) -> Result<usize, TerminalError> {
-    commit(&app, &[Fold::Connections], || {
-        manager.import_json(&json).map_err(config_error)
-    })
-}
-
 /// Get the current application settings.
 ///
 /// If `serial_port_scan_prefixes` has never been saved the field is `None` in
@@ -333,26 +314,6 @@ pub fn save_settings<R: Runtime>(
     // "Stop X Server When Idle" takes effect immediately (#4326).
     crate::terminal::xserver::apply_settings(&app, &applied);
     Ok(())
-}
-
-/// Save an external connection file to disk.
-#[tauri::command]
-pub fn save_external_file<R: Runtime>(
-    file_path: String,
-    name: String,
-    folders: Vec<ConnectionFolder>,
-    connections: Vec<SavedConnection>,
-    app: AppHandle<R>,
-    manager: State<'_, ConnectionManager>,
-) -> Result<(), TerminalError> {
-    // The fold reflects the external-file overlay (as it is now on disk) into
-    // the `connections` region when the saved file is a currently-enabled
-    // external source (#2394).
-    commit(&app, &[Fold::Connections], || {
-        manager
-            .save_external_file(&file_path, &name, folders, connections)
-            .map_err(config_error)
-    })
 }
 
 /// Reload external connection files and return flattened connections.

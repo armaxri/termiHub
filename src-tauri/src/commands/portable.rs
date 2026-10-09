@@ -78,17 +78,6 @@ pub fn list_config_files(dir: String) -> Vec<ConfigFileStatus> {
         .collect()
 }
 
-/// Resolve a `{PORTABLE_DIR}` placeholder in a path string.
-///
-/// Returns the path with the placeholder replaced by the actual portable
-/// base directory, or the original string if not in portable mode.
-#[tauri::command]
-pub fn resolve_portable_path_cmd(path: String, app_mode: tauri::State<'_, AppMode>) -> String {
-    crate::utils::portable::resolve_portable_path(&path, app_mode.inner())
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// Copy config files from `src_dir` to `dest_dir`.
 ///
 /// Only copies files that exist in `src_dir`. Returns the list of copied

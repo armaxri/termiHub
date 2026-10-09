@@ -389,8 +389,8 @@ impl XServerError {
 
 /// Progress event emitted during X server provisioning / dependency install.
 ///
-/// Deliberately mirrors [`AgentDeployProgress`](crate::terminal::agent_deploy::AgentDeployProgress)
-/// so the frontend can reuse the same progress-rendering shape.
+/// A step / message / progress-fraction shape, so the frontend can render it
+/// with the same progress UI as the other long-running setup flows.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]

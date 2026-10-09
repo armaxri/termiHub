@@ -27,18 +27,14 @@ import { Button, Tooltip, toast } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
-import {
-  handleAgentStateChange,
-  handleRemoteStateChange,
-  type AgentStateChangePayload,
-  type RemoteStateChangePayload,
-} from "./agentStateHandlers";
+import { handleAgentStateChange, type AgentStateChangePayload } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
 import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
+import { TAURI_EVENT } from "@/services/eventNames";
 import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
@@ -73,27 +69,24 @@ export function TerminalView() {
     terminalDispatcher.init();
   }, []);
 
-  // Backend state-change events. The handlers live in `agentStateHandlers` so
-  // tests drive the real code (TFE2-001): `remote-state-change` marks a dropped
-  // remote session's tab exited; `agent-state-change` updates the agent's state
-  // (sidebar dots) and moves its hosted tabs — resume, session-lost, reconnect,
-  // or a clean end after a user Disconnect/Shutdown (#4309).
+  // Backend `agent-state-change` events. The handler lives in
+  // `agentStateHandlers` so tests drive the real code (TFE2-001): it updates
+  // the agent's state (sidebar dots) and moves its hosted tabs — resume,
+  // session-lost, reconnect, or a clean end after a user Disconnect/Shutdown
+  // (#4309). (The `remote-state-change` listener was removed: no backend code
+  // emits it — direct-session drops surface via `terminal-exit`, #4344.)
   useEffect(() => {
-    const unlisteners: (() => void)[] = [];
+    let unlisten: (() => void) | null = null;
     let disposed = false;
-    const keep = (fn: () => void) => {
-      if (disposed) fn();
-      else unlisteners.push(fn);
-    };
-    void listen<RemoteStateChangePayload>("remote-state-change", (event) =>
-      handleRemoteStateChange(event.payload)
-    ).then(keep);
-    void listen<AgentStateChangePayload>("agent-state-change", (event) =>
+    void listen<AgentStateChangePayload>(TAURI_EVENT.agentStateChange, (event) =>
       handleAgentStateChange(event.payload)
-    ).then(keep);
+    ).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
     return () => {
       disposed = true;
-      unlisteners.forEach((fn) => fn());
+      unlisten?.();
     };
   }, []);
 

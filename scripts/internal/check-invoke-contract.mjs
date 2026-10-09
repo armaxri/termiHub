@@ -25,6 +25,16 @@
 // elements (`{ ...rest }`) make the key set open-ended: extra-key checking
 // still applies to the literal keys, but missing-key checking is skipped.
 //
+// It also fails on ORPHAN commands (#4344): a registered command with no
+// production caller. A command counts as reached when some production invoke()
+// of it either sits outside any named function, or sits in a named function
+// (typically the api.ts wrapper) whose identifier is referenced at least once
+// more anywhere in production src/ — i.e. the wrapper is actually called,
+// imported or passed on, not merely exercised by its own unit test. This is a
+// name-based heuristic (a same-named identifier elsewhere hides an orphan), so
+// it is a drift guard, not a proof. Commands driven only from outside src/
+// (test bridge, system harness) belong in ORPHAN_ALLOWLIST with a reason.
+//
 // Usage: node scripts/internal/check-invoke-contract.mjs [--root <repo-dir>]
 // The pure helpers are exported for unit testing (check-invoke-contract.test.mjs).
 
@@ -51,6 +61,20 @@ export const INJECTED_TYPES = new Set([
   "InvokeMessage",
   "CommandScope",
   "GlobalScope",
+]);
+
+/**
+ * Registered commands with no production caller in src/ that are kept on
+ * purpose, each with the reason. Keep this list short: a command that nothing
+ * calls is attack surface and maintenance cost (#4344).
+ *
+ * @type {Map<string, string>}
+ */
+export const ORPHAN_ALLOWLIST = new Map([
+  [
+    "probe_remote_agent",
+    "removal deferred until #4363 (PR #4568) has rewritten probe_remote_agent — see #4570",
+  ],
 ]);
 
 /**
@@ -296,13 +320,115 @@ export function buildContract(rustFiles, libSource) {
   return { contract, problems };
 }
 
+/** The identifier text of a declaration name, or null for computed / pattern names. */
+function declName(name) {
+  return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : null;
+}
+
+/**
+ * Name of the named function an `invoke(...)` call lives in: the nearest
+ * function declaration / method, or the variable / property a function-valued
+ * expression is bound to (`const f = async () => invoke(...)`,
+ * `const h = useCallback(() => invoke(...))`). A plain `const r = await
+ * invoke(...)` inside a function is NOT the caller — only a binding with a
+ * function between it and the call counts. Null at module top level.
+ *
+ * @param {ts.Node} node - the invoke call expression.
+ * @returns {string | null}
+ */
+export function enclosingFunctionName(node) {
+  let crossedFunction = false;
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p)) {
+      const name = declName(p.name);
+      if (name) return name;
+      crossedFunction = true;
+    } else if (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) {
+      if (ts.isFunctionExpression(p) && p.name) return p.name.text;
+      crossedFunction = true;
+    } else if (
+      crossedFunction &&
+      (ts.isVariableDeclaration(p) || ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))
+    ) {
+      const name = declName(p.name);
+      if (name) return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Count every identifier occurrence in one TS file (declarations included).
+ *
+ * @param {string} source - TS/TSX source text.
+ * @param {string} fileName - used for TSX detection.
+ * @param {Map<string, number>} [counts] - accumulator, updated in place.
+ * @returns {Map<string, number>}
+ */
+export function countIdentifiers(source, fileName, counts = new Map()) {
+  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+  const visit = (node) => {
+    if (ts.isIdentifier(node)) counts.set(node.text, (counts.get(node.text) ?? 0) + 1);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return counts;
+}
+
+/**
+ * Find registered commands that production code never reaches (#4344).
+ *
+ * A command is reached when one of its production invoke calls is at module
+ * top level, or its enclosing named function is referenced again somewhere in
+ * production code (its declaration accounts for one occurrence).
+ *
+ * @param {Map<string, unknown>} contract - registered command name → command.
+ * @param {ReturnType<typeof collectInvokeCalls>} calls - production invoke calls.
+ * @param {Map<string, number>} identifierCounts - production identifier counts.
+ * @param {Map<string, string>} [allowlist] - commands exempt from the check.
+ * @returns {string[]} human-readable problems (empty = no orphans).
+ */
+export function findOrphans(contract, calls, identifierCounts, allowlist = ORPHAN_ALLOWLIST) {
+  const byCommand = new Map();
+  for (const call of calls) {
+    if (call.command === null) continue;
+    if (!byCommand.has(call.command)) byCommand.set(call.command, []);
+    byCommand.get(call.command).push(call);
+  }
+  const problems = [];
+  for (const name of [...contract.keys()].sort()) {
+    if (allowlist.has(name)) continue;
+    const sites = byCommand.get(name) ?? [];
+    if (sites.length === 0) {
+      problems.push(`orphan command '${name}': registered but never invoked from production src/`);
+      continue;
+    }
+    const reached = sites.some(
+      (c) => c.caller === null || (identifierCounts.get(c.caller) ?? 0) >= 2
+    );
+    if (!reached) {
+      const where = sites.map((c) => `${c.caller} (${c.file}:${c.line})`).join(", ");
+      problems.push(
+        `orphan command '${name}': its only invoke wrapper(s) ${where} have no production caller`
+      );
+    }
+  }
+  for (const name of allowlist.keys()) {
+    if (!contract.has(name)) {
+      problems.push(`ORPHAN_ALLOWLIST entry '${name}' is not a registered command — remove it`);
+    }
+  }
+  return problems;
+}
+
 /**
  * Collect every `invoke(...)` call (from `@tauri-apps/api/core`) in one TS file.
  *
  * @param {string} source - TS/TSX source text.
  * @param {string} fileName - used for locations and TSX detection.
  * @returns {{file: string, line: number, command: string | null,
- *   keys: string[] | null, open: boolean, reason?: string}[]}
+ *   keys: string[] | null, open: boolean, caller: string | null, reason?: string}[]}
  */
 export function collectInvokeCalls(source, fileName) {
   const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -348,7 +474,14 @@ export function collectInvokeCalls(source, fileName) {
     ) {
       const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
       const [cmdArg, argsArg] = node.arguments;
-      const call = { file: fileName, line, command: null, keys: [], open: false };
+      const call = {
+        file: fileName,
+        line,
+        command: null,
+        keys: [],
+        open: false,
+        caller: enclosingFunctionName(node),
+      };
       if (cmdArg && (ts.isStringLiteral(cmdArg) || ts.isNoSubstitutionTemplateLiteral(cmdArg))) {
         call.command = cmdArg.text;
       } else {
@@ -463,12 +596,23 @@ export function checkRepo(root) {
   const libSource = readFileSync(path.join(rustRoot, "lib.rs"), "utf8");
   const { contract, problems } = buildContract(rustFiles, libSource);
   const calls = [];
+  const identifierCounts = new Map();
   for (const f of walk(path.join(root, "src"), () => true)) {
     const rel = path.relative(root, f).replace(/\\/g, "/");
     if (!isProductionTsFile(rel)) continue;
-    calls.push(...collectInvokeCalls(readFileSync(f, "utf8"), rel));
+    const text = readFileSync(f, "utf8");
+    calls.push(...collectInvokeCalls(text, rel));
+    countIdentifiers(text, rel, identifierCounts);
   }
-  return { contract, calls, problems: [...problems, ...findMismatches(contract, calls)] };
+  return {
+    contract,
+    calls,
+    problems: [
+      ...problems,
+      ...findMismatches(contract, calls),
+      ...findOrphans(contract, calls, identifierCounts),
+    ],
+  };
 }
 
 if (isMainModule(import.meta.url)) {
@@ -480,7 +624,9 @@ if (isMainModule(import.meta.url)) {
     for (const p of problems) console.error(`  - ${p}`);
     console.error(
       "Tauri matches invoke args by name: the key must be the lowerCamelCase of the Rust " +
-        "#[tauri::command] parameter. See scripts/internal/check-invoke-contract.mjs."
+        "#[tauri::command] parameter. Every registered command needs a production caller " +
+        "(remove orphans, or justify them in ORPHAN_ALLOWLIST). " +
+        "See scripts/internal/check-invoke-contract.mjs."
     );
     process.exit(1);
   }
