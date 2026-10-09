@@ -7,6 +7,7 @@ import {
 } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
+import { requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { getCommandMarkTracker } from "@/services/commandMarks";
 
@@ -157,11 +158,17 @@ function hasMultipleTabGroups(): boolean {
   return getLayoutTabGroups().length >= 2;
 }
 
-/** Close the active tab group, honouring the confirm-on-shortcut setting. */
+/**
+ * Close the active tab group, confirming first when it would end live sessions
+ * or lose unsaved edits, and otherwise honouring the confirm-on-shortcut setting.
+ */
 function closeActiveTabGroup(): void {
   const groups = getLayoutTabGroups();
   if (groups.length <= 1) return;
   const activeTabGroupId = getActiveTabGroupId();
+  // A group holding live sessions or unsaved editors gets the count-aware group
+  // confirm (UX2-001), the same one the chip X raises.
+  if (requestTabGroupCloseConfirm(activeTabGroupId)) return;
   const state = useAppStore.getState();
   const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
   if (confirmEnabled) {

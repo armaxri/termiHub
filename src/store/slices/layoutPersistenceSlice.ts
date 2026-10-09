@@ -9,7 +9,7 @@ import {
   teardownAllSessions,
 } from "../restoreHelpers";
 import { captureAllWindows, currentWindowLabel, restoreWindowedLayout } from "../windowHelpers";
-import { tabContentFromGroups } from "../layoutHelpers";
+import { getComposedLayout, tabContentFromGroups } from "../layoutHelpers";
 import {
   stampWindowId,
   buildWindowsMeta,
@@ -76,6 +76,25 @@ export interface LayoutPersistenceSlice {
   launchingWorkspaceId: string | null;
 
   launchWorkspace: (workspaceId: string) => Promise<void>;
+
+  /**
+   * A workspace launch waiting on the user's confirmation because it would tear
+   * down live sessions (UX-026 / UX2-002). Rendered by the app-level
+   * `ConfirmWorkspaceLaunchDialog`; `count` is the number of open sessions that
+   * would end. Null when no confirmation is pending.
+   */
+  pendingWorkspaceLaunch: { id: string; name: string; count: number } | null;
+
+  setPendingWorkspaceLaunch: (req: { id: string; name: string; count: number } | null) => void;
+
+  /**
+   * The single guarded entry point for a user-initiated workspace launch
+   * (sidebar, command palette, forwarded `--workspace`). When any tab across any
+   * group holds a session it raises {@link pendingWorkspaceLaunch} instead of
+   * launching; otherwise it launches directly. Only the startup CLI path calls
+   * {@link launchWorkspace} directly, since nothing is live at boot.
+   */
+  requestLaunchWorkspace: (workspaceId: string) => void;
 
   /**
    * scope "all" captures all tab groups; "active" captures only the active group.
@@ -163,6 +182,29 @@ export const createLayoutPersistenceSlice: StateCreator<
     // createWorkspacesSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
     // This slice holds the layout-entangled launch / save actions.
     launchingWorkspaceId: null,
+
+    pendingWorkspaceLaunch: null,
+
+    setPendingWorkspaceLaunch: (req) => set({ pendingWorkspaceLaunch: req }),
+
+    requestLaunchWorkspace: (workspaceId) => {
+      const layout = getComposedLayout(get());
+      const liveCount = layout.tabGroups
+        .flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs))
+        .filter((t) => t.sessionId).length;
+      if (liveCount > 0) {
+        const workspace = get().workspaces.find((ws) => ws.id === workspaceId);
+        set({
+          pendingWorkspaceLaunch: {
+            id: workspaceId,
+            name: workspace?.name ?? "this workspace",
+            count: liveCount,
+          },
+        });
+        return;
+      }
+      void get().launchWorkspace(workspaceId);
+    },
 
     launchWorkspace: async (workspaceId) => {
       // In-flight guard (GAP G6, #1146): launching a workspace awaits several

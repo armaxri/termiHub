@@ -7,6 +7,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useAppStore } from "@/store/appStore";
 import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { TabGroup } from "@/types/terminal";
+import { closeTabGroupGuarded } from "@/utils/tabGroupCloseGuard";
 import { RenameDialog } from "./RenameDialog";
 import { Tooltip } from "@/components/ui";
 import "./TabGroupChips.css";
@@ -21,7 +22,6 @@ export function TabGroupChips() {
   const activeTabGroupId = useActiveTabGroupId();
   const setActiveTabGroup = useAppStore((s) => s.setActiveTabGroup);
   const addTabGroup = useAppStore((s) => s.addTabGroup);
-  const closeTabGroup = useAppStore((s) => s.closeTabGroup);
   const renameTabGroup = useAppStore((s) => s.renameTabGroup);
   const reorderTabGroups = useAppStore((s) => s.reorderTabGroups);
   const draggingTabId = useAppStore((s) => s.draggingTabId);
@@ -43,13 +43,12 @@ export function TabGroupChips() {
     [tabGroups, reorderTabGroups]
   );
 
-  const handleClose = useCallback(
-    (groupId: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      closeTabGroup(groupId);
-    },
-    [closeTabGroup]
-  );
+  // Both the chip X and the "Close Group" item go through the shared guard, which
+  // confirms before ending the group's live sessions or unsaved editors (UX2-001).
+  const handleClose = useCallback((groupId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    closeTabGroupGuarded(groupId);
+  }, []);
 
   const renameGroup = tabGroups.find((g) => g.id === renameGroupId);
 
