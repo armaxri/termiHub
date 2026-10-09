@@ -34,7 +34,11 @@ import {
   resetAgentDisconnectIntentsForTest,
 } from "@/store/agentDisconnectIntent";
 import { disconnectAgent, shutdownAgent } from "@/services/api";
-import { handleAgentStateChange, handleRemoteStateChange } from "./agentStateHandlers";
+import {
+  handleAgentStateChange,
+  handleRemoteStateChange,
+  type AgentEndReason,
+} from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -565,14 +569,14 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
 
   describe("'disconnected' with a backend end reason (any window)", () => {
     /** Deliver a "disconnected" event carrying the backend's end reason. */
-    function disconnectedWith(reason: string): Promise<void> {
+    function disconnectedWith(reason: AgentEndReason): Promise<void> {
       return handleAgentStateChange(
         { session_id: AGENT, state: "disconnected", reason },
         { listAgentSessions, getAllTabs: allTabs }
       );
     }
 
-    it.each(["user", "shutdown"])(
+    it.each<AgentEndReason>(["user", "shutdown"])(
       "reason '%s' ends the tabs of a window with no local intent",
       async (reason) => {
         const tab = openAgentTab("session-123");
@@ -597,16 +601,19 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       expect(currentSessionView()[tab.id]?.status).toBe("sessionLost");
     });
 
-    it.each(["lost", "suspend"])("reason '%s' still reconnects the tab", async (reason) => {
-      const tab = openAgentTab("session-123");
-      harness.transport.setSession(tab.id, connected());
+    it.each<AgentEndReason>(["lost", "suspend"])(
+      "reason '%s' still reconnects the tab",
+      async (reason) => {
+        const tab = openAgentTab("session-123");
+        harness.transport.setSession(tab.id, connected());
 
-      await disconnectedWith(reason);
+        await disconnectedWith(reason);
 
-      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
-      expect(intents("session.disconnect", tab.id)).toHaveLength(0);
-      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
-    });
+        expect(intents("session.reconnect", tab.id)).toHaveLength(1);
+        expect(intents("session.disconnect", tab.id)).toHaveLength(0);
+        expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
+      }
+    );
 
     it("a user end consumes this window's own intent too", async () => {
       const tab = openAgentTab("session-123");

@@ -2453,9 +2453,22 @@ export async function requestAgentUpdate(
   });
 }
 
-/** Disconnect from a remote agent. */
-export async function disconnectAgent(agentId: string): Promise<void> {
-  await invoke("disconnect_agent", { agentId });
+/**
+ * Disconnect from a remote agent. By default this is a user Disconnect, which
+ * the backend reports to every window as such so all of them end the agent's
+ * hosted tabs (#4447). `{ endHostedSessions: false }` marks a suspend that is
+ * followed by a reconnect (agent update, Force reconnect): the tabs stay
+ * resumable.
+ */
+export async function disconnectAgent(
+  agentId: string,
+  options?: { endHostedSessions?: boolean }
+): Promise<void> {
+  if (options?.endHostedSessions === false) {
+    await invoke("disconnect_agent", { agentId, endHostedSessions: false });
+  } else {
+    await invoke("disconnect_agent", { agentId });
+  }
 }
 
 /**
