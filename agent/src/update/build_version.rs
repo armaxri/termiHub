@@ -134,7 +134,30 @@ impl VersionPolicy {
         path: &Path,
         pinned: Option<&str>,
     ) -> Result<(), VersionPolicyError> {
-        match read_binary_version(path) {
+        self.check_read_version(read_binary_version(path), pinned)
+    }
+
+    /// Check the binary held open as `file` against the policy, reading its
+    /// embedded build version through the handle from the start (AGT2-002:
+    /// the apply path never re-opens a verified binary by path). `path` only
+    /// labels error messages. Unix-only, like the apply path that uses it.
+    #[cfg(unix)]
+    pub fn check_file(
+        &self,
+        file: &std::fs::File,
+        path: &Path,
+        pinned: Option<&str>,
+    ) -> Result<(), VersionPolicyError> {
+        self.check_read_version(read_file_version(file, path), pinned)
+    }
+
+    /// Apply the policy to the outcome of reading a candidate's version.
+    fn check_read_version(
+        &self,
+        read: Result<Version, VersionPolicyError>,
+        pinned: Option<&str>,
+    ) -> Result<(), VersionPolicyError> {
+        match read {
             Ok(candidate) => self.check(&candidate, pinned),
             Err(e) if self.allow_unknown => {
                 warn!(
@@ -207,7 +230,19 @@ pub fn read_binary_version(path: &Path) -> Result<Version, VersionPolicyError> {
     let file = std::fs::File::open(path).map_err(|e| {
         VersionPolicyError::UnknownVersion(format!("cannot open {}: {e}", path.display()))
     })?;
-    let versions = scan_versions(file).map_err(|e| {
+    read_file_version(&file, path)
+}
+
+/// [`read_binary_version`] over an already-open `file`, read from its start.
+/// `path` only labels error messages.
+fn read_file_version(file: &std::fs::File, path: &Path) -> Result<Version, VersionPolicyError> {
+    use std::io::{Seek, SeekFrom};
+
+    let mut handle = file;
+    handle.seek(SeekFrom::Start(0)).map_err(|e| {
+        VersionPolicyError::UnknownVersion(format!("cannot rewind {}: {e}", path.display()))
+    })?;
+    let versions = scan_versions(handle).map_err(|e| {
         VersionPolicyError::UnknownVersion(format!("cannot read {}: {e}", path.display()))
     })?;
     let mut distinct: Vec<Version> = Vec::new();
@@ -408,6 +443,28 @@ mod tests {
 
     fn v(s: &str) -> Version {
         Version::parse(s).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_file_reads_the_version_through_the_open_handle() {
+        // AGT2-002: the apply path checks the version of the verified copy it
+        // holds open, never by re-opening a path.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut body = b"AGENT".to_vec();
+        body.extend_from_slice(&record("2.0.0"));
+        let path = write_binary(tmp.path(), "agent", &body);
+        let file = std::fs::File::open(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        VersionPolicy::strict("1.0.0")
+            .check_file(&file, &path, None)
+            .expect("an upgrade read from the handle is allowed");
+        // A second check reads from the start again, not from where the first stopped.
+        assert!(matches!(
+            VersionPolicy::strict("3.0.0").check_file(&file, &path, None),
+            Err(VersionPolicyError::Downgrade { .. })
+        ));
     }
 
     #[test]

@@ -1483,15 +1483,15 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 }
 ```
 
-| Param            | Type      | Required | Description                                                                                                                                               |
-| ---------------- | --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `binaryPath`     | `string`  | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself.                              |
-| `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                                                   |
-| `expectedSha256` | `string`  | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`.                       |
-| `signature`      | `string`  | No       | Base64 Ed25519 signature (the published `<binary>.sig`) over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents. |
-| `authToken`      | `string`  | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy). Missing or wrong → `-32026`.  |
-| `pinnedVersion`  | `string`  | No       | Matched-downgrade pin (0.13.0+): must equal the desktop's own `clientVersion` and the binary's embedded version. Honoured only with `binaryPath`.         |
-| `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                                                 |
+| Param            | Type      | Required | Description                                                                                                                                                                                                        |
+| ---------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `binaryPath`     | `string`  | No       | Absolute path (on the agent host) to the new agent binary to stage, inside the agent's private staging dir (see [Update signatures](#update-signatures)). Omit to apply an update the agent already staged itself. |
+| `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                                                                                                            |
+| `expectedSha256` | `string`  | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`.                                                                                |
+| `signature`      | `string`  | No       | Base64 Ed25519 signature (the published `<binary>.sig`) over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents.                                                          |
+| `authToken`      | `string`  | Yes      | This agent instance's update auth token (0.13.0+) — see [Update authorization](#update-authorization-and-downgrade-policy). Missing or wrong → `-32026`.                                                           |
+| `pinnedVersion`  | `string`  | No       | Matched-downgrade pin (0.13.0+): must equal the desktop's own `clientVersion` and the binary's embedded version. Honoured only with `binaryPath`.                                                                  |
+| `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                                                                                                          |
 
 **Response:**
 
@@ -1532,7 +1532,20 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 Both update methods, and the agent's own GitHub self-update, apply a binary only after three
 guards pass immediately before the swap: the path is confined to the agent's staging
 locations (AGT-003), its bytes match `expectedSha256` (AGT-004), and — AGT-005, #3213 — a
-detached Ed25519 signature verifies against a public key compiled into the agent:
+detached Ed25519 signature verifies against a public key compiled into the agent.
+
+**Private staging (AGT2-002, #4287).** The only staging location is the agent's own
+`<config>/updates` directory (`$XDG_CONFIG_HOME/termihub-agent/updates`, else
+`~/Library/Application Support/termihub-agent/updates` on macOS, else
+`~/.config/termihub-agent/updates`). The desktop uploads a coordinated push into a fresh
+`mktemp -d` dir inside it (`upload.XXXXXX`, mode `0700`), never a shared `/tmp` name. At apply
+time the agent opens the staged file once with `O_NOFOLLOW` and refuses it unless it and every
+directory below the staging root are owned by the agent's user and not writable by group or
+others, no symlink sits below the root, and the file has a single link. It copies the bytes
+from that one handle into a private temp file next to its executable while hashing them; the
+digest, signature and version checks and the final rename all use that copy, so the bytes
+installed are exactly the bytes verified. The re-execed agent removes the applied upload. The
+signature is computed as:
 
 ```text
 message   = "termihub-agent-update-v1" || 0x00 || SHA-256(binary)   (raw 32-byte digest)

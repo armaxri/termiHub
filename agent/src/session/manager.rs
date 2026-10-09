@@ -46,9 +46,9 @@ use crate::daemon::transport::{endpoint_alive, remove_session_files, session_end
 use crate::session::orphan_sweep::{self, OrphanSweepConfig, OrphanSweepReport};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
-    cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
-    should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
-    UpdateSignatureError, VersionPolicyError,
+    cleanup_stale_update_backup, confine_to_staging, discard_applied_upload,
+    prune_applied_pending_update, should_apply_deferred_update, StagingConfinementError,
+    SystemUpdateApplier, UpdateApplier, UpdateSignatureError, VersionPolicyError,
 };
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -439,6 +439,9 @@ fn map_confinement_error(e: StagingConfinementError) -> DeferredUpdateError {
         StagingConfinementError::OutsideStaging { path } => DeferredUpdateError::ApplyFailed(
             anyhow::anyhow!("update binary path {path} is outside the trusted staging directory"),
         ),
+        e @ StagingConfinementError::SymlinkInPath { .. } => {
+            DeferredUpdateError::ApplyFailed(anyhow::anyhow!("{e}"))
+        }
     }
 }
 
@@ -934,6 +937,11 @@ impl SessionManager {
         // here, at startup, or it re-fires on the next last-session disconnect
         // and re-execs the agent for nothing.
         let current_exe = std::env::current_exe().ok();
+        let applied_binary = state
+            .update
+            .pending_update
+            .as_ref()
+            .map(|p| PathBuf::from(&p.binary_path));
         if prune_applied_pending_update(
             &mut state,
             env!("CARGO_PKG_VERSION"),
@@ -954,6 +962,14 @@ impl SessionManager {
             state = AgentState::mutate_locked(&state_path, |s| {
                 prune_applied_pending_update(s, env!("CARGO_PKG_VERSION"), current_exe.as_deref());
             });
+            // The applied upload has served its purpose: remove it (and its
+            // private upload dir) so binaries do not pile up in the staging
+            // root (AGT2-002, #4287). Done only after both prunes, which may
+            // need it as binary evidence; only a path confined to the staging
+            // root is ever removed.
+            if let (Some(binary), Some(config)) = (applied_binary, state_path.parent()) {
+                discard_applied_upload(&[config.join("updates")], &binary);
+            }
         }
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
@@ -2350,17 +2366,14 @@ impl SessionManager {
     ///
     /// Derived from the agent state dir so it is `<config>/updates` in production
     /// — matching the self-update download dir — and the per-test temp dir under
-    /// test. On Unix the fixed desktop coordinated-push upload path is trusted
-    /// alongside it (the desktop uploads a staged binary there over its
-    /// authenticated SFTP channel before calling `agent.request_update`).
+    /// test. The desktop's coordinated push uploads into a fresh private
+    /// `upload.XXXXXX` dir inside it; no world-shared path such as `/tmp` is
+    /// trusted (AGT2-002, #4287).
     fn trusted_staging_roots(&self) -> Vec<PathBuf> {
-        let mut roots = Vec::new();
-        if let Some(parent) = self.state_path.parent() {
-            roots.push(parent.join("updates"));
-        }
-        #[cfg(unix)]
-        roots.push(PathBuf::from(crate::update::POSIX_COORDINATED_UPLOAD_PATH));
-        roots
+        self.state_path
+            .parent()
+            .map(|parent| vec![parent.join("updates")])
+            .unwrap_or_default()
     }
 
     /// Record a deferred agent update and apply it immediately if the agent is

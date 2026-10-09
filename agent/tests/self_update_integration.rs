@@ -739,14 +739,12 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
         agent.stderr()
     );
 
-    // The staged, verified binary landed under the isolated staging dir.
+    // The staged, verified binary landed under the isolated staging dir (the
+    // re-execed agent removes it once it has confirmed the apply — asserted
+    // below — so it is identified here and checked at the end).
     let staged = agent
         .staging_dir()
         .join(format!("termihub-agent-{AGENT_SUFFIX}"));
-    assert!(
-        staged.is_file(),
-        "verified update was not staged at {staged:?}"
-    );
 
     // It re-execed with the same args → its second incarnation announces a fresh
     // listener (the args say port 0) → reconnect succeeds and the agent is
@@ -780,6 +778,12 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
         "a successful self-apply must leave no pending_update; state was {}\n{}",
         agent.state(),
         agent.stderr()
+    );
+
+    // The applied upload does not linger in the staging dir (AGT2-002, #4287).
+    assert!(
+        wait_until(Duration::from_secs(15), || !staged.exists()),
+        "the applied staged binary {staged:?} must be removed after the apply"
     );
 }
 
