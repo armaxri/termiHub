@@ -62,4 +62,14 @@ httpAuth?: HttpBasicAuth,
  * design) to bound the memory/disk an anonymous client can consume in one
  * transfer (CORE-021). `None` falls back to the server's built-in default.
  */
-maxTransferBytes?: number, };
+maxTransferBytes?: number, 
+/**
+ * Maximum number of concurrent sessions (FTP only, CORE2-002 / #4292).
+ *
+ * Each FTP control connection runs its own libunftp server behind the
+ * relay, so the cap bounds the sockets and tasks an unauthenticated client
+ * can make the server hold. A connection beyond the cap is answered with
+ * `421` and closed. `None` falls back to the server's built-in default of
+ * 32; `0` is treated as 1.
+ */
+maxConcurrentSessions?: number, };

@@ -15,8 +15,8 @@ evidence:
   - core/src/embedded_servers/ftp_server.rs:288
   - core/src/embedded_servers/ftp_relay.rs:367
   - core/src/embedded_servers/ftp_relay.rs:443
-status: open
-resolution: ""
+status: fixed
+resolution: "#4292 — accept-side semaphore caps concurrent FTP sessions (default 32, configurable); extra connections get 421"
 audit: 2026-10
 commit: 663465d52
 relation: new
