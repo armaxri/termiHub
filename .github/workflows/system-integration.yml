@@ -120,8 +120,11 @@ jobs:
     # 180 (was 120, #4017): the serial Linux leg took 116 of 120 min on
     # 2026-10-06 while ~150 Docker suites were still failing fast on a
     # compose-name conflict; with those running for real it no longer fits.
-    # A hang is bounded per test by the harness' hang guard on the xdist legs
-    # (tests/system/termihub_harness/hang_guard.py), not by this ceiling.
+    # A hang is bounded per test phase by the harness' hang guard
+    # (tests/system/termihub_harness/hang_guard.py), not by this ceiling. It
+    # arms on xdist workers, so every lane runs under xdist — the Linux leg
+    # with a single worker (`-n 1`, #4315) — and a hung test crashes its worker
+    # with a stack/process/app-state dump while a replacement runs the rest.
     timeout-minutes: 180
 
     strategy:
@@ -348,8 +351,11 @@ jobs:
         # image builds happen once here (visible as their own step) rather than
         # inside a per-suite fixture under its bring-up timeout. The harness'
         # ComposeFixture then finds them already up; profile-gated fixtures
-        # (agent/stress/fault/ftp) are brought up on demand by the suites that
-        # need them — the agent image must be staged by the harness first. The
+        # (agent/stress/fault/ftp/vnc/rdp) are brought up on demand by the suites
+        # that need them — the agent image must be staged by the harness first.
+        # The vnc/rdp/ftp images are pre-BUILT here too (not started, #4315):
+        # built cold inside a test they raced the harness' 300 s compose
+        # timeout, which in CI strict mode now fails the suite. The
         # macOS/Windows runners have no usable Linux Docker daemon, so their
         # fixture-backed suites self-skip instead (see the header note).
         # Bounded retry (#2768): a transient apt-mirror outage during the image
@@ -367,7 +373,8 @@ jobs:
           COMPOSE_PROJECT_NAME: termihub
         run: |
           for attempt in 1 2 3; do
-            docker compose -f tests/docker/docker-compose.yml build && break
+            docker compose -f tests/docker/docker-compose.yml \
+              --profile vnc --profile rdp --profile ftp build && break
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             echo "::warning::fixture image build failed (attempt $attempt/3)"
             sleep $((attempt * 15))
@@ -377,8 +384,18 @@ jobs:
       - name: Run the integration lane (Linux, headless via Xvfb)
         # Fail loudly: a real test failure fails the job (that is the whole point
         # — surface rot). Xvfb gives the app a display; the harness owns launching
-        # the app and driving the fixtures. Suites whose fixtures are unavailable
-        # skip cleanly rather than error.
+        # the app and driving the fixtures.
+        #
+        # Skip guard (#4315): a skip is green, so this lane fails on any skip
+        # whose reason tests/system/skip-allowlist.json does not expect for
+        # `bulk-linux`, on more skips than its baseline, and when it ran nothing;
+        # TERMIHUB_REQUIRE_FIXTURES=1 also fails any "fixture unavailable" skip
+        # and a missing RDP sidecar. The run summary lists every skip and reason.
+        #
+        # -n 1 --dist loadscope (#4315, TIN2-002): ONE xdist worker — no extra
+        # parallelism, so the fixed fixture host ports are uncontended — purely
+        # so the harness' per-phase hang guard arms: a hung test crashes the
+        # worker with a dump and a replacement worker runs the rest of the lane.
         #
         # dbus-run-session (#2646): the app inherits this process's environment,
         # and on startup WebKitGTK/GTK asks the xdg-desktop-portal for an inhibit
@@ -408,7 +425,10 @@ jobs:
         # visible for tracking.
         # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
+        env:
+          TERMIHUB_SKIP_GUARD_LANE: bulk-linux
+          TERMIHUB_REQUIRE_FIXTURES: "1"
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n 1 --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -425,7 +445,7 @@ jobs:
         # workers. `--dist loadscope` groups by test class so each class-scoped app
         # fixture stays on a single worker — one app launch per class, exactly as
         # serial, just fanned across workers. The Docker-fixture suites still
-        # self-skip per worker. Linux keeps running serially (above): its fixtures
+        # self-skip per worker. Linux keeps a single worker (above): its fixtures
         # publish fixed host ports (2201/2203/…) that parallel workers would
         # contend for.
         #
@@ -461,10 +481,16 @@ jobs:
         # which the harness detects itself (OS + PYTEST_XDIST_WORKER_COUNT > 1).
         # Every run prints `[termihub-test-timing]` lines; resize the deadlines
         # from them with scripts/system-test-timing.py.
+        #
+        # Skip guard (#4315): fails on a skip reason the allowlist does not
+        # expect for `bulk-macos` / `bulk-windows` (the Docker-less runners'
+        # fixture skips ARE expected there), on more skips than the baseline,
+        # and when the lane ran nothing — see the Linux step.
         if: runner.os != 'Linux'
         shell: bash
         env:
           TERMIHUB_XDIST_WORKERS: '2'
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'bulk-macos' || 'bulk-windows' }}
         #
         # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
         # bounded auto-retries as the Linux step. rerunfailures composes with xdist
@@ -688,24 +714,36 @@ jobs:
         # masked by a rerun. `-r aR` keeps the failure summary visible. If a grade
         # proves genuinely flaky, quarantine that specific test + file a
         # deterministic-fix tracker — never re-add a blanket rerun.
+        #
+        # -n 1 --dist loadscope (#4315, TIN2-002): one xdist worker so the
+        # harness' per-phase hang guard arms (it does not in a plain run); still
+        # serial, so no contended-worker deadlines apply. The skip guard fails
+        # on ANY skip here: both grades are opted in and must run.
         if: runner.os == 'Linux'
+        env:
+          TERMIHUB_SKIP_GUARD_LANE: display-linux
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 0 -r aR
+          -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
-        # No fixtures needed, so no xdist — the two suites run quickly serially.
+        # No fixtures needed, so a single xdist worker — the two suites run serially.
         # Serial, so the harness applies no contended-worker slow category and no
         # multiplier (#3660): the macOS/Windows display-grade failures seen at 1x
         # were real scrollback losses (#2561/#2583), not contention timeouts — see
         # the evidence in tests/system/termihub_harness/deadlines.py.
+        # `-n 1` arms the hang guard and keeps the run serial (one worker, so
+        # PYTEST_XDIST_WORKER_COUNT=1 and no slow category), and the skip guard
+        # fails on any skip — see the Linux step (#4315).
         if: runner.os != 'Linux'
         shell: bash
+        env:
+          TERMIHUB_SKIP_GUARD_LANE: ${{ matrix.os == 'macos-latest' && 'display-macos' || 'display-windows' }}
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 0 -r aR
+          -n 1 --dist loadscope --reruns 0 -r aR
 
       - name: Tear down the native sshd fixture (Windows)
         # Prints the fixture's sshd log first when the job failed.

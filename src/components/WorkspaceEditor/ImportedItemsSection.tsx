@@ -77,13 +77,20 @@ export function ImportedItemsSection({ tabGroupDefs }: ImportedItemsSectionProps
   const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const items = useMemo(() => collectItems(tabGroupDefs), [tabGroupDefs]);
-  const [keys, setKeys] = useState<Record<string, string>>({});
+  // The resolved keys, tagged with the item list they were hashed for. Row ids
+  // are positional, so keys hashed for a previous list (e.g. before the command
+  // text was edited) must not be read for the current one (#4483).
+  const [resolved, setResolved] = useState<{
+    items: ImportedItem[];
+    keys: Record<string, string>;
+  } | null>(null);
+  const keys = resolved?.items === items ? resolved.keys : {};
 
   useEffect(() => {
     let cancelled = false;
     void Promise.all(items.map(async (item) => [item.id, await item.key()] as const)).then(
       (pairs) => {
-        if (!cancelled) setKeys(Object.fromEntries(pairs));
+        if (!cancelled) setResolved({ items, keys: Object.fromEntries(pairs) });
       }
     );
     return () => {
@@ -94,7 +101,8 @@ export function ImportedItemsSection({ tabGroupDefs }: ImportedItemsSectionProps
   if (items.length === 0) return null;
 
   const confirm = async (item: ImportedItem) => {
-    const key = keys[item.id] ?? (await item.key());
+    // Hash the clicked item itself: it carries the exact text the row showed.
+    const key = await item.key();
     await updateSettings({
       ...settings,
       workspaceImportAllowlist: withImportConfirmed(settings.workspaceImportAllowlist, key),

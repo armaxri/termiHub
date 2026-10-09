@@ -61,19 +61,25 @@ Operational notes for that PR:
   still succeeds) and the PR waits for a human. **Maintainer:** enabling repo
   auto-merge makes this chore fully hands-off.
 - **A lockfile that fails the gate opens as a draft, and the run fails.** Before
-  opening the PR the job runs the same cargo-deny gate as Security Audit
-  (`cargo deny check advisories bans licenses sources`). If the refreshed
-  lockfile fails it (a crate yanked or flagged after the update, a new license,
-  …), the PR is opened, or an
-  open one converted, as a **draft** with the cargo-deny output at the top of its
+  opening the PR, the job itself runs the lockfile gate on the refreshed lock:
+  `cargo check --workspace --all-targets --all-features --locked` (it compiles),
+  the pre-release tripwire (`scripts/internal/check-prerelease-crates.mjs`) and
+  the same cargo-deny gate as Security Audit
+  (`cargo deny check advisories bans licenses sources`). If any of them fails (a
+  bump that does not compile, a pre-release bump off the allowlist, a crate
+  yanked or flagged after the update, a new license, …), the PR is opened, or an
+  open one converted, as a **draft** with the failing output at the top of its
   body, auto-merge is disabled, and the workflow run fails so the red scheduled
-  run is noticed (#3755). Fix it with the manual path below on that branch or a
-  fresh one; the next passing run marks the PR ready again.
+  run is noticed (#3755, #4465). Fix it with the manual path below on that branch
+  or a fresh one; the next passing run marks the PR ready again.
 - **The PR carries the `automation` label** so the coordinator/maintainer can
   spot and merge it fast when auto-merge is unavailable.
-- **CI may not start automatically.** A PR opened by the built-in `GITHUB_TOKEN`
-  does not trigger other workflows (a GitHub safeguard). If the checks are
-  missing, close and reopen the PR (or push an empty commit) to kick CI. The
+- **CI does not start automatically, so the in-job gate is the merge guard.** A
+  PR opened by the built-in `GITHUB_TOKEN` does not trigger other workflows (a
+  GitHub safeguard), so it has no check runs and auto-merge does not wait for
+  anything: that is how #4460 merged a lockfile that broke every Rust build
+  (#4465). The gate above is what stops that now. To run the full CI on the PR
+  anyway, close and reopen it (or push an empty commit). The
   repo setting **Settings → Actions → General → "Allow GitHub Actions to create
   and approve pull requests"** must also be enabled for the job to open the PR
   at all.
@@ -83,10 +89,18 @@ Operational notes for that PR:
   never a human branch, `develop`, or `main`.
 
 - **A pre-release bump reds the tripwire.** If `cargo update` moves a pre-release
-  crate (e.g. `rsa 0.10.0-rc.18` → `rc.19`), Rust Code Quality fails at "Check
-  pre-release crates are reviewed" (`scripts/internal/check-prerelease-crates.mjs`,
-  SUP-002). That is intended: review the bump, then update the exact version in
+  crate (e.g. `rsa 0.10.0-rc.18` → `rc.19`), the chore's gate (and Rust Code
+  Quality, at "Check pre-release crates are reviewed") fails on
+  `scripts/internal/check-prerelease-crates.mjs` (SUP-002). That is intended:
+  review the bump, then update the exact version in
   `.github/prerelease-allowlist.json` on the same PR.
+- **The russh -rc crypto stack is pinned.** `^0.14.0-rc.9` also matches
+  `0.14.0`, so `cargo update` moves an -rc crate to its first stable release on
+  its own. For `primefield` that broke the build (the -rc `p256`/`p384`/`p521`
+  do not compile against 0.14.0), so `core/Cargo.toml` pins `primefield`,
+  `aead`, `aes-gcm`, `argon2` and `blake2` with exact `=…-rc.N` requirements
+  (#4465). Lift those pins, with their allowlist entries, in a reviewed PR when
+  russh moves to a stable RustCrypto line.
 
 ## Fast manual fix (when a yank or advisory slips through between runs)
 

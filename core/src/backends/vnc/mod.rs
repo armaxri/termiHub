@@ -25,7 +25,7 @@ mod keymap;
 mod pixel;
 mod tunnel;
 
-pub use config::vnc_settings_schema;
+pub use config::{vnc_settings_schema, VncConfig, VNC_BASE_PORT};
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -54,7 +54,6 @@ use crate::monitoring::MonitoringProvider;
 
 use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
 use clipboard::VncClipboard;
-use config::VncConfig;
 use desktop_size::{DesktopSize, ResizeOutcome};
 use frame::FrameShadow;
 use pixel::PixelConverter;

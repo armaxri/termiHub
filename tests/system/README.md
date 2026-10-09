@@ -432,8 +432,12 @@ available the suite **skips cleanly** rather than failing, so a plain `pytest`
 still works on a machine without one. Only a missing runtime skips, though: when
 `compose` runs against a working daemon and fails (a container-name conflict, a
 bad compose file, a build error) the harness raises `ComposeFixtureFailed` with
-`CI` set, so the test errors instead of silently skipping (#4103). Off CI the
-same failure still degrades to a skip.
+`CI` set, so the test errors instead of silently skipping (#4103). So does a
+fixture timeout on a working runtime: a `compose` timeout, a port that never
+opens, a server that never greets or answers (#4315). Off CI the same failures
+still degrade to a skip. The nightly lanes additionally fail on any skip their
+committed allowlist ([`skip-allowlist.json`](skip-allowlist.json)) does not
+expect — see `termihub_harness/skip_guard.py`.
 
 **Docker or Podman** — the runtime is detected like `scripts/test-system-linux.sh`:
 a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is

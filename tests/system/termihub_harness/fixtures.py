@@ -214,7 +214,8 @@ def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
     RDP clients speak first, so :func:`wait_for_banner` cannot be used, and a bare
     TCP connect only proves Docker's forwarder is up. Sending the first PDU of a
     real connect and reading a TPKT reply proves the server itself is listening.
-    Raises :class:`ContainerRuntimeUnavailable` on timeout.
+    Raises :class:`ContainerRuntimeUnavailable` on timeout, or
+    :class:`ComposeFixtureFailed` in strict mode (see :func:`_fixture_timeout`).
     """
     deadline = time.monotonic() + timeout
     last: object = None
@@ -230,7 +231,7 @@ def wait_for_rdp(host: str, port: int, *, timeout: float) -> None:
         except OSError as exc:
             last = exc
         time.sleep(0.25)
-    raise ContainerRuntimeUnavailable(
+    raise _fixture_timeout(
         f"{host}:{port} did not answer an RDP connection request within {timeout}s "
         f"(last: {last!r})"
     )
@@ -370,6 +371,25 @@ def _strict_fixtures() -> bool:
     ``CI=true``), so a misconfigured fixture can never silently skip a lane.
     """
     return os.environ.get("CI", "").strip().lower() not in ("", "0", "false", "no")
+
+
+def _fixture_timeout(detail: str) -> RuntimeError:
+    """The error for a fixture that timed out on a host with a usable runtime.
+
+    A ``compose`` timeout, a port that never opens, or a server that never
+    greets (VNC/FTP banner, RDP reply) all happen *after* the runtime was found
+    reachable and Linux, so they mean a broken or wedged fixture, not a missing
+    runtime. In strict mode (``CI`` set) that is a :class:`ComposeFixtureFailed`,
+    which the suites' skip handlers let through, so the test errors instead of
+    silently skipping (#4315, WA-CI2-003). Off CI it still degrades to a
+    :class:`ContainerRuntimeUnavailable` skip.
+    """
+    if _strict_fixtures():
+        return ComposeFixtureFailed(
+            f"{detail}\n(a fixture timed out on a host with a working container "
+            "runtime; failing instead of skipping because CI is set, see #4315)"
+        )
+    return ContainerRuntimeUnavailable(detail)
 
 
 def container_runtime() -> Optional[str]:
@@ -850,7 +870,7 @@ class ComposeFixture:
                 "of skipping because CI is set, see #4103)"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise ContainerRuntimeUnavailable(
+            raise _fixture_timeout(
                 f"`compose {action}` timed out after {timeout}s for {services}:"
                 f"\n{_tail(exc.stderr)}"
             ) from exc
@@ -870,7 +890,11 @@ def _tail(output: Optional[str], lines: int = 15) -> str:
 
 
 def wait_for_port(host: str, port: int, *, timeout: float) -> None:
-    """Block until ``host:port`` accepts a TCP connection, or raise on timeout."""
+    """Block until ``host:port`` accepts a TCP connection, or raise on timeout.
+
+    The timeout raises :class:`ContainerRuntimeUnavailable`, or
+    :class:`ComposeFixtureFailed` in strict mode (see :func:`_fixture_timeout`).
+    """
     deadline = time.monotonic() + timeout
     last_error: Optional[OSError] = None
     while time.monotonic() < deadline:
@@ -880,7 +904,7 @@ def wait_for_port(host: str, port: int, *, timeout: float) -> None:
         except OSError as exc:
             last_error = exc
             time.sleep(0.25)
-    raise ContainerRuntimeUnavailable(
+    raise _fixture_timeout(
         f"container port {host}:{port} did not become reachable within {timeout}s: {last_error}"
     )
 
@@ -893,7 +917,8 @@ def wait_for_banner(host: str, port: int, prefix: bytes, *, timeout: float) -> N
     runs, then drops the connection until the server inside listens. Servers that
     speak first (an RFB server sends ``RFB 003.008\\n``) can be probed for their
     greeting instead, which proves the service itself is up. Raises
-    :class:`ContainerRuntimeUnavailable` on timeout.
+    :class:`ContainerRuntimeUnavailable` on timeout, or
+    :class:`ComposeFixtureFailed` in strict mode (see :func:`_fixture_timeout`).
     """
     deadline = time.monotonic() + timeout
     last: object = None
@@ -908,7 +933,7 @@ def wait_for_banner(host: str, port: int, prefix: bytes, *, timeout: float) -> N
         except OSError as exc:
             last = exc
         time.sleep(0.25)
-    raise ContainerRuntimeUnavailable(
+    raise _fixture_timeout(
         f"{host}:{port} did not greet with {prefix!r} within {timeout}s (last: {last!r})"
     )
 
@@ -1255,7 +1280,7 @@ class SshServerControl:
             output = exc.stderr
             if isinstance(output, bytes):
                 output = output.decode("utf-8", "replace")
-            raise ContainerRuntimeUnavailable(
+            raise _fixture_timeout(
                 f"`exec` into {self._container} timed out after {timeout}s:\n"
                 f"{_tail(output)}"
             ) from exc
@@ -1332,7 +1357,7 @@ class ContainerControl:
                 f"{_tail(exc.stderr or exc.stdout)}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise ContainerRuntimeUnavailable(
+            raise _fixture_timeout(
                 f"`{args[0]}` of {self.container} timed out after {timeout}s:\n"
                 f"{_tail(exc.stderr)}"
             ) from exc

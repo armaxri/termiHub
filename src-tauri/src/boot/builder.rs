@@ -59,6 +59,8 @@ pub(crate) fn build(
         .manage(x_server_consent_registry.clone())
         .manage(spawn::handler::PendingSpawn::default())
         .manage(window::WindowManager::new())
+        // Explicit-quit handshake: Cmd+Q / menu Quit asks the windows first (#4296).
+        .manage(window::quit::QuitCoordinator::new())
         // Binary remote-desktop frame channels per session (#4291).
         .manage(crate::session::remote_desktop_frames::RemoteDesktopFrameChannels::new())
         .manage(commands::connection_path::ProbeRegistry::default())
@@ -122,5 +124,7 @@ pub(crate) fn build(
         builder = builder.plugin(plugin);
     }
 
-    builder
+    // macOS: swap the stock Quit (which exits without a preventable
+    // `ExitRequested`) for one that goes through the quit decision (#4296).
+    window::quit::install_quit_menu(builder)
 }

@@ -15,8 +15,13 @@ build = "build.rs"
 # imports it as `vnc::VncConnector` / `vnc::VncClient` (core/src/backends/vnc/),
 # which machete's `vnc_rs` name-scan never matches. It is genuinely used behind
 # the `vnc` feature, so ignore-list it rather than remove it.
+#
+# primefield, aead, aes-gcm, argon2 and blake2 are lockfile pins, not code
+# dependencies (#4465): exact `=…-rc.N` requirements that hold the russh -rc
+# crypto stack in the root Cargo.lock (see the `[dependencies]` comment). No
+# code imports them by design, so machete must not flag them.
 [package.metadata.cargo-machete]
-ignored = ["vnc-rs"]
+ignored = ["vnc-rs", "primefield", "aead", "aes-gcm", "argon2", "blake2"]
 
 # Hashing the staged `termihub-rdp-helper` externalBin to embed its SHA-256 at
 # build time for the adapter's pre-spawn integrity check (#1762). Always compiled
@@ -70,6 +75,22 @@ data-encoding = { version = "2", optional = true }
 p256 = { version = "=0.14.0-rc.9", optional = true }
 p384 = { version = "=0.14.0-rc.9", optional = true }
 p521 = { version = "=0.14.0-rc.9", optional = true }
+# Lockfile pins, not used in code (#4465). The daily `cargo update` chore moved
+# these -rc crates to their first stable release: `^0.14.0-rc.9` matches 0.14.0,
+# but the -rc p256/p384/p521 stack russh 0.61 needs does not compile against
+# primefield 0.14.0, and the bumps went past the reviewed pre-release allowlist
+# (.github/prerelease-allowlist.json). An exact `=` requirement on a workspace
+# member holds the whole root Cargo.lock (it resolves for all features), so
+# neither the chore nor a local `cargo update` can cross the rc -> stable line.
+# `default-features = false`: pin the version only, never change what russh
+# enables.
+# Lift these together with the allowlist entries when russh moves to a stable
+# RustCrypto line.
+primefield = { version = "=0.14.0-rc.9", default-features = false, optional = true }
+aead = { version = "=0.6.0-rc.10", default-features = false, optional = true }
+aes-gcm = { version = "=0.11.0-rc.4", default-features = false, optional = true }
+argon2 = { version = "=0.6.0-rc.8", default-features = false, optional = true }
+blake2 = { version = "=0.11.0-rc.6", default-features = false, optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
 # Hashing the Docker CLI context name to locate its `contexts/meta/<id>` entry
@@ -399,6 +420,12 @@ ssh = [
     "dep:p256",
     "dep:p384",
     "dep:p521",
+    # Lockfile-only pins of the russh -rc crypto stack (#4465), see above.
+    "dep:primefield",
+    "dep:aead",
+    "dep:aes-gcm",
+    "dep:argon2",
+    "dep:blake2",
     # Local-file streaming for the SFTP transfer path (files/transfer/sftp.rs:
     # local read/append/create/metadata/remove). Without it a `--features ssh`
     # isolation build fails with `cannot find fs in tokio` (mirrors the `ftp`

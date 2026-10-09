@@ -17,8 +17,8 @@ evidence:
   - .github/workflows/system-integration.yml:690
   - .github/workflows/system-integration.yml:702
   - tests/system/pyproject.toml:8
-status: open
-resolution: ""
+status: fixed
+resolution: "#4315 — serial lanes run under one xdist worker so the hang guard arms; a hang dumps stacks, processes and app state"
 audit: 2026-10
 commit: 663465d52
 relation: new

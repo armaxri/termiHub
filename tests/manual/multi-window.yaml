@@ -38,9 +38,33 @@ tests:
       - app: true
     instructions:
       - "Open a second window (Cmd+Shift+N) and a local shell in each window"
-      - "Press Cmd+Q"
+      - 'Press Cmd+Q; in the "Quit termiHub?" dialog each window shows, choose "Quit & end sessions"'
     expected:
       - "The app quits entirely: every window closes and the Dock icon loses its running dot"
       - "Relaunching the app starts cleanly (no leftover windows or orphaned sessions)"
+    verification: manual
+    tags: [os-native]
+
+  - id: MT-WIN-03
+    release_gate: true
+    manual_reason: "macOS app-menu Quit (Cmd+Q) is OS-native; the bridge cannot drive it"
+    name: "macOS — Cmd+Q with a live local shell asks before quitting"
+    pr: 4458
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open one local shell tab and an editor tab with an unsaved change"
+      - "Press Cmd+Q"
+      - "While the dialog is open, press Cmd+Q again"
+      - "Click Cancel"
+      - 'Choose termiHub > Quit termiHub from the menu bar, then click "Quit & end sessions"'
+      - "Relaunch, close every window (app stays in the Dock), then press Cmd+Q"
+    expected:
+      - 'Cmd+Q opens the "Quit termiHub?" dialog listing the shell (would be terminated) and the unsaved editor; the app keeps running'
+      - "The second Cmd+Q neither opens another dialog nor quits the app"
+      - "Cancel closes the dialog and the shell keeps running"
+      - "The menu Quit opens the same dialog, and confirming it quits the app"
+      - "With no windows open, Cmd+Q quits at once without a dialog"
     verification: manual
     tags: [os-native]

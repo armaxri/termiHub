@@ -87,7 +87,12 @@ def test_an_overrunning_phase_dumps_stacks_kills_children_and_exits(tmp_path):
         from termihub_harness import hang_guard
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
         Path({str(pid_file)!r}).write_text(str(child.pid))
-        hang_guard.arm("call", Path({str(tmp_path)!r}))
+        hang_guard.arm(
+            "call",
+            Path({str(tmp_path)!r}),
+            nodeid="tests/test_x.py::TestX::test_hangs",
+            on_hang=lambda: "APP-LOG-TAIL-MARKER",
+        )
         threading.Event().wait()  # a blocking call with no timeout
         """
     )
@@ -104,8 +109,13 @@ def test_an_overrunning_phase_dumps_stacks_kills_children_and_exits(tmp_path):
     dumps = list((tmp_path / "hang-tracebacks").glob("gw7-*.txt"))
     assert len(dumps) == 1
     text = dumps[0].read_text(encoding="utf-8")
-    assert "the call phase exceeded 1s" in text
+    assert "the call phase of tests/test_x.py::TestX::test_hangs exceeded 1s" in text
     assert "in wait" in text  # the blocked frame is in the dump
+    # #4315: the running processes and the on_hang diagnostics precede the kill.
+    assert "descendants of this worker:" in text
+    assert "time.sleep(120)" in text  # the launched child, with its cmdline
+    assert "processes on the host by CPU time" in text
+    assert "APP-LOG-TAIL-MARKER" in text
     child_pid = int(pid_file.read_text())
     deadline = time.monotonic() + 10
     while psutil.pid_exists(child_pid) and time.monotonic() < deadline:
@@ -119,3 +129,79 @@ def test_an_overrunning_phase_dumps_stacks_kills_children_and_exits(tmp_path):
         if psutil.pid_exists(child_pid):
             psutil.Process(child_pid).kill()
             pytest.fail("the guard left the launched child process running")
+
+
+def test_run_on_hang_returns_the_callback_text():
+    assert "bundle at /x" in hang_guard.run_on_hang(lambda: "bundle at /x", budget=5)
+
+
+def test_run_on_hang_reports_a_failing_callback():
+    def boom():
+        raise RuntimeError("bridge gone")
+
+    assert "diagnostics failed" in hang_guard.run_on_hang(boom, budget=5)
+
+
+def test_run_on_hang_gives_up_on_a_wedged_callback():
+    """A bridge probe that never returns must not stop the guard's kill."""
+    import threading
+
+    release = threading.Event()
+    started = time.monotonic()
+    try:
+        text = hang_guard.run_on_hang(lambda: release.wait(30) and "late", budget=0.3)
+    finally:
+        release.set()
+    assert "giving up" in text
+    assert time.monotonic() - started < 5
+
+
+def test_run_on_hang_without_a_callback_is_empty():
+    assert hang_guard.run_on_hang(None) == ""
+
+
+def test_describe_processes_lists_children_and_the_host():
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        text = hang_guard.describe_processes(top=5)
+    finally:
+        child.kill()
+        child.wait()
+    assert f"pid={child.pid}" in text
+    assert "processes on the host by CPU time" in text
+
+
+def test_backstop_outlasts_the_diagnostics_budget():
+    assert hang_guard.BACKSTOP_GRACE > hang_guard.ON_HANG_BUDGET
+
+
+def test_conftest_hang_diagnostics_capture_the_bundle_and_log_tail(tmp_path, monkeypatch):
+    """The on_hang callback the conftest arms writes the app's failure bundle
+    and returns the app-log tail for the dump (#4315)."""
+    import conftest
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(conftest, "ARTIFACT_ROOT", tmp_path)
+    app = SimpleNamespace(read_log=lambda: "\n".join(f"line {i}" for i in range(200)))
+    driver = SimpleNamespace(
+        get_state=lambda timeout=None: {"tabs": []},
+        read_terminal=lambda timeout=None: "$ ",
+    )
+    item = SimpleNamespace(
+        nodeid="tests/test_x.py::TestX::test_hangs",
+        instance=SimpleNamespace(driver=driver, app=app),
+        funcargs={},
+    )
+    text = conftest._hang_diagnostics(item)
+    assert "line 199" in text and "line 100" not in text  # only the tail
+    bundles = list(tmp_path.rglob("hang/app.log"))
+    assert len(bundles) == 1
+    assert (bundles[0].parent / "state.json").is_file()
+
+
+def test_conftest_hang_diagnostics_without_an_app():
+    import conftest
+    from types import SimpleNamespace
+
+    item = SimpleNamespace(nodeid="tests/test_x.py::test_plain", instance=None, funcargs={})
+    assert "no app or driver" in conftest._hang_diagnostics(item)

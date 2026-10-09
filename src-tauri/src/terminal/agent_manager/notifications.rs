@@ -206,7 +206,8 @@ pub(super) fn handle_agent_forward_notification(
     b64: &base64::engine::GeneralPurpose,
 ) -> bool {
     use termihub_core::protocol::methods::{
-        AGENT_FORWARD_CLOSE, AGENT_FORWARD_DATA, AGENT_FORWARD_OPEN,
+        AgentForwardAckParams, AGENT_FORWARD_ACK, AGENT_FORWARD_CLOSE, AGENT_FORWARD_DATA,
+        AGENT_FORWARD_OPEN,
     };
     match method {
         m if m == AGENT_FORWARD_OPEN => {
@@ -226,6 +227,13 @@ pub(super) fn handle_agent_forward_notification(
         m if m == AGENT_FORWARD_CLOSE => {
             if let Ok(p) = serde_json::from_value::<AgentForwardCloseParams>(params.clone()) {
                 agent_forward.on_close(&p.stream_id);
+            }
+            true
+        }
+        // Window credit for a flow-controlled port-forward stream (#4284).
+        m if m == AGENT_FORWARD_ACK => {
+            if let Ok(p) = serde_json::from_value::<AgentForwardAckParams>(params.clone()) {
+                agent_forward.on_ack(&p.stream_id, p.bytes);
             }
             true
         }
