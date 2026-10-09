@@ -636,9 +636,8 @@ impl SidecarRdp {
     /// Map a settings JSON value to a validated [`RdpConfig`].
     fn parse_config(settings: serde_json::Value) -> Result<RdpConfig, SessionError> {
         // An editor-cleared field arrives as `null` (#4017); treat it as unset.
-        let mut cfg: RdpConfig =
-            serde_json::from_value(crate::backends::without_null_fields(settings))
-                .map_err(|e| SessionError::InvalidConfig(format!("Invalid RDP settings: {e}")))?;
+        let mut cfg = RdpConfig::from_settings(settings)
+            .map_err(|e| SessionError::InvalidConfig(format!("Invalid RDP settings: {e}")))?;
         if cfg.host.is_empty() {
             return Err(SessionError::InvalidConfig(
                 "RDP host is required".to_string(),

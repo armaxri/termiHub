@@ -345,12 +345,16 @@ pub(crate) enum AgentIoCommand {
     /// Tell the agent a forwarded ssh-agent stream has closed
     /// (`agent.forward.close`, #1727).
     AgentForwardClose { stream_id: String },
-    /// Route the agent's `agent.forward.data` / `close` for a desktop
+    /// Return window credit for a flow-controlled port-forward stream: the
+    /// desktop wrote `bytes` more of it to its graphical backend
+    /// (`agent.forward.ack`, #4284).
+    AgentForwardAck { stream_id: String, bytes: u64 },
+    /// Route the agent's `agent.forward.data` / `ack` / `close` for a desktop
     /// port-forward stream (#3241) into `sink`. Registered *before*
     /// `agent.forward.connect` is sent so no early byte is missed.
     RegisterForwardStream {
         stream_id: String,
-        sink: UnboundedSender<Vec<u8>>,
+        sink: crate::terminal::agent_forward::ForwardSink,
     },
     /// Stop routing a desktop port-forward stream (#3241).
     UnregisterForwardStream { stream_id: String },
@@ -607,8 +611,10 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     fn unregister_tool_run(&self, _agent_id: &str, _run_id: &str) {}
 
     /// Open a desktop port-forward stream through the agent (#3241): route the
-    /// agent's bytes for `stream_id` into `sink`, then ask the agent to connect
-    /// to `host:port` from its host (`agent.forward.connect`). On failure nothing
+    /// agent's events for `stream_id` into `sink`, then ask the agent to connect
+    /// to `host:port` from its host (`agent.forward.connect`), requesting a
+    /// flow-control `window` (#4284). Returns the window the agent granted —
+    /// `None` from an agent that predates flow control. On failure nothing
     /// stays registered. Call from a blocking context. Default errors so mock
     /// clients need not model forwarding.
     fn open_forward_stream(
@@ -617,8 +623,9 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         _stream_id: &str,
         _host: &str,
         _port: u16,
-        _sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), TerminalError> {
+        _window: Option<u64>,
+        _sink: crate::terminal::agent_forward::ForwardSink,
+    ) -> Result<Option<u64>, TerminalError> {
         Err(TerminalError::AgentUnsupported(format!(
             "Agent {agent_id} does not support port forwarding"
         )))
@@ -635,6 +642,11 @@ pub trait AgentRpcClient: Send + Sync + 'static {
             "Agent {agent_id} not connected"
         )))
     }
+
+    /// Return window credit on a flow-controlled port-forward stream
+    /// (`agent.forward.ack`, #4284). Non-blocking, never waits behind queued
+    /// data. Default no-op.
+    fn ack_forward_data(&self, _agent_id: &str, _stream_id: &str, _bytes: u64) {}
 
     /// Close a port-forward stream from the desktop end (#3241). Best effort,
     /// non-blocking. Default no-op.
@@ -2635,8 +2647,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
         stream_id: &str,
         host: &str,
         port: u16,
-        sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), TerminalError> {
+        window: Option<u64>,
+        sink: crate::terminal::agent_forward::ForwardSink,
+    ) -> Result<Option<u64>, TerminalError> {
         {
             let agents = self
                 .agents
@@ -2664,6 +2677,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 stream_id: stream_id.to_string(),
                 host: host.to_string(),
                 port,
+                window,
             },
         )
         .map_err(|e| TerminalError::InternalError(e.to_string()))?;
@@ -2681,7 +2695,26 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 },
             );
         }
-        result.map(|_| ())
+        // An agent from before #4284 answers `{}`: no window, no flow control.
+        result.map(|value| {
+            serde_json::from_value::<termihub_core::protocol::methods::AgentForwardConnectResult>(
+                value,
+            )
+            .unwrap_or_default()
+            .window
+        })
+    }
+
+    /// Return window credit on a flow-controlled port-forward stream (#4284).
+    /// Best effort: a gone agent has already dropped the stream.
+    pub fn ack_forward_data(&self, agent_id: &str, stream_id: &str, bytes: u64) {
+        let _ = self.send_io_command(
+            agent_id,
+            AgentIoCommand::AgentForwardAck {
+                stream_id: stream_id.to_string(),
+                bytes,
+            },
+        );
     }
 
     /// Send desktop→target bytes on a port-forward stream (#3241).
@@ -3211,9 +3244,16 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         stream_id: &str,
         host: &str,
         port: u16,
-        sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), TerminalError> {
-        AgentConnectionManager::open_forward_stream(self, agent_id, stream_id, host, port, sink)
+        window: Option<u64>,
+        sink: crate::terminal::agent_forward::ForwardSink,
+    ) -> Result<Option<u64>, TerminalError> {
+        AgentConnectionManager::open_forward_stream(
+            self, agent_id, stream_id, host, port, window, sink,
+        )
+    }
+
+    fn ack_forward_data(&self, agent_id: &str, stream_id: &str, bytes: u64) {
+        AgentConnectionManager::ack_forward_data(self, agent_id, stream_id, bytes)
     }
 
     fn send_forward_data(
