@@ -32,8 +32,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use termihub_core::diagnostics::file_log::{self as shared, RUSSH_CLAMP};
 pub use termihub_core::diagnostics::file_log::RotatingLogFile;
+use termihub_core::diagnostics::file_log::{self as shared, RUSSH_CLAMP};
 use tracing_subscriber::{reload, EnvFilter, Registry};
 
 use super::portable::detect_app_mode;
