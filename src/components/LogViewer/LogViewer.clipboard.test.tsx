@@ -10,6 +10,8 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "@/components/ui";
+import { onFrontendLog } from "@/utils/frontendLog";
+import type { LogEntry } from "@/types/terminal";
 import { LogViewer } from "./LogViewer";
 
 vi.mock("@/services/api", () => ({
@@ -110,5 +112,23 @@ describe("LogViewer copy via the Tauri clipboard (#4327)", () => {
     expect(errorSpy).toHaveBeenCalledWith("Could not copy logs", {
       description: "clipboard denied",
     });
+  });
+
+  it("records a failed copy as an ERROR entry in the log (OBS2-006)", async () => {
+    vi.mocked(writeText).mockRejectedValue(new Error("clipboard denied"));
+    const logged: LogEntry[] = [];
+    const unsub = onFrontendLog((entry) => logged.push(entry));
+
+    await copyVia("Copy Entry");
+    unsub();
+
+    expect(
+      logged.some(
+        (e) =>
+          e.level === "ERROR" &&
+          e.target === "frontend::log_viewer" &&
+          e.message.includes("clipboard denied")
+      )
+    ).toBe(true);
   });
 });
