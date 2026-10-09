@@ -39,7 +39,7 @@ use crate::utils::errors::TerminalError;
 use super::line_ending::LineEnding;
 use super::manager::{
     EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent,
-    PersistentSessionSummary, SessionEntry, SessionInfo, SessionManager, TabBinding,
+    PersistentSessionSummary, SessionEntry, SessionInfo, SessionManager, SessionOrigin, TabBinding,
 };
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 
@@ -86,6 +86,7 @@ impl<'a> PersistentController<'a> {
             }
         }
 
+        let origin = SessionOrigin::new(Some(connection_id), agent_id, &settings);
         let session_id = self
             .manager
             .create_connection(
@@ -98,6 +99,10 @@ impl<'a> PersistentController<'a> {
                 emitter.clone(),
             )
             .await?;
+        // A persistent session is opened for its saved connection: bind it and
+        // resume the transfers waiting for it, like any other create (#4301).
+        // The agent definition is read from the settings it was opened with.
+        self.manager.on_session_opened(&session_id, &origin).await;
 
         // Capture the agent-side remote session ID so that attach_persistent_tab
         // can re-create the RemoteProxy if the desktop session is cleaned up after
