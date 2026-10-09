@@ -407,6 +407,22 @@ describe("appStore", () => {
   });
 
   describe("openEditorTab", () => {
+    it.each([
+      ["C:\\Users\\me\\terminal.txt", "terminal.txt"],
+      ["C:/Users/me/terminal.txt", "terminal.txt"],
+      ["/home/me/terminal.txt", "terminal.txt"],
+    ])("titles the tab with the basename of %s (#4372)", (filePath, title) => {
+      // The "save terminal output" flow opens the native path the OS save
+      // dialog returned, which uses backslashes on Windows.
+      useAppStore.getState().openEditorTab(filePath, false);
+
+      const tab = getAllLeaves(layoutState().rootPanel)
+        .flatMap((l) => l.tabs)
+        .find((t) => t.contentType === "editor");
+      expect(tab?.title).toBe(title);
+      expect(tab?.editorMeta?.filePath).toBe(filePath);
+    });
+
     it("creates a new editor tab backed by a session browser", () => {
       useAppStore.getState().openEditorTab("/remote/file.txt", true, undefined, {
         sessionId: "session-abc",
