@@ -19,6 +19,7 @@ use base64::Engine;
 use russh::ChannelMsg;
 use serde_json::Value;
 use tauri::{AppHandle, Runtime};
+use termihub_core::ipc::ndjson::LineSplitter;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
@@ -31,6 +32,7 @@ use termihub_core::protocol::methods::{
 use super::agent_stderr::AgentStderr;
 use super::files_only::FilesOnlyRoutes;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
+use super::stdout_reader::{frame, Frame};
 use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
     evicted_session_ids, fold_agent_hosted_reconnect_failed, fold_agent_hosted_reconnecting,
@@ -213,7 +215,8 @@ pub(super) async fn agent_io_task<R: Runtime>(
     // AGT-003 (#3213): refreshed from every (re)connect's `initialize`, since a
     // re-launched agent is a new instance with a new token file.
     let mut update_auth_token_path = update_auth_token_path;
-    let mut line_buf = String::new();
+    // Agent stdout framing (#4303): capped, UTF-8-safe, linear.
+    let mut line_buf = LineSplitter::new();
     // The agent's stderr side-band: framed log records re-emitted at their
     // real level/target, anything else passed through as `WARN` (#2854).
     let mut agent_stderr = AgentStderr::new(agent_id.clone());
@@ -450,16 +453,17 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             break true;
                         }
                         Some(ChannelMsg::Data { ref data }) => {
-                            line_buf.push_str(&String::from_utf8_lossy(data));
-
                             // Process all complete newline-delimited JSON lines
-                            while let Some(pos) = line_buf.find('\n') {
-                                let line = line_buf[..pos].trim().to_string();
-                                line_buf = line_buf[pos + 1..].to_string();
-
-                                if line.is_empty() {
-                                    continue;
-                                }
+                            let mut frame_error = None;
+                            for item in line_buf.push(data) {
+                                let line = match frame(&agent_id, item) {
+                                    Frame::Line(line) => line,
+                                    Frame::Skip => continue,
+                                    Frame::Fatal(e) => {
+                                        frame_error = Some(e);
+                                        break;
+                                    }
+                                };
 
                                 match jsonrpc::parse_message(&line) {
                                     Ok(jsonrpc::JsonRpcMessage::Response { id, result }) => {
@@ -513,6 +517,14 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                         warn!(error = %e, "failed to parse agent message");
                                     }
                                 }
+                            }
+                            if let Some(e) = frame_error {
+                                // An over-cap stdout line (#4303): the agent is
+                                // broken or hostile. Drop this transport the
+                                // way a lost one is dropped (already logged by
+                                // `frame`).
+                                connection_error = Some(e.to_string());
+                                break true;
                             }
                         }
                         Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {

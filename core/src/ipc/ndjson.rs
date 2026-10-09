@@ -229,6 +229,203 @@ where
     }
 }
 
+/// Why [`LineSplitter`] rejected a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LineError {
+    /// The line's content exceeded the splitter's byte cap. Its bytes were
+    /// dropped (never buffered past the cap); the splitter discards the rest of
+    /// the line up to its terminating newline and then resumes. A peer that
+    /// sends this is either broken or hostile, so connection-oriented callers
+    /// treat it as a protocol error and tear the connection down.
+    #[error("ndjson line exceeds {max_len} byte limit")]
+    TooLong {
+        /// The cap that was exceeded, in bytes of line content.
+        max_len: usize,
+    },
+    /// A complete line was not valid UTF-8. Only that line is lost; the
+    /// splitter carries on with the next one.
+    #[error("ndjson line is not valid UTF-8: {0}")]
+    InvalidUtf8(std::str::Utf8Error),
+}
+
+/// Push-based NDJSON line splitter for transports that deliver raw byte chunks
+/// rather than an [`AsyncBufRead`] — e.g. an SSH channel's `Data` messages
+/// (#4303, DUP2-002).
+///
+/// It is the chunk-driven sibling of [`read_line_resumable`] and shares its
+/// semantics: the cap bounds line *content* (the trailing `\n` is not
+/// counted), and an over-cap line is reported once as [`LineError::TooLong`]
+/// while the rest of it is discarded up to its newline.
+///
+/// Properties:
+///
+/// - **UTF-8-safe across chunk boundaries (AGT2-001).** Bytes are buffered raw
+///   and only a *complete* line is decoded, so a multi-byte character split
+///   across two chunks is reassembled before decoding instead of turning into
+///   two U+FFFD replacement characters.
+/// - **Bounded (AGT2-003).** An unterminated line never grows the buffer past
+///   the cap: a newline-free chunk that would cross it is rejected before it is
+///   copied in, so resident memory stays at about `max_len` plus one chunk.
+/// - **Linear.** A scan offset means each byte is searched for `\n` once, and
+///   consumed lines are compacted away once per [`push`](Self::push) rather
+///   than by re-copying the tail after every line.
+#[derive(Debug)]
+pub struct LineSplitter {
+    buf: Vec<u8>,
+    /// First unconsumed byte of `buf`.
+    start: usize,
+    /// `buf[start..scanned]` is known to hold no `\n`.
+    scanned: usize,
+    max_len: usize,
+    /// Dropping the remainder of an over-cap line until its newline.
+    discarding: bool,
+    /// An over-cap rejection detected in [`push`](Self::push), reported by the
+    /// next [`next_line`](Self::next_line).
+    pending_error: Option<LineError>,
+}
+
+impl Default for LineSplitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LineSplitter {
+    /// A splitter capped at [`MAX_LINE_LEN`].
+    pub fn new() -> Self {
+        Self::with_max_len(MAX_LINE_LEN)
+    }
+
+    /// A splitter whose lines may hold at most `max_len` bytes of content.
+    pub fn with_max_len(max_len: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            start: 0,
+            scanned: 0,
+            max_len,
+            discarding: false,
+            pending_error: None,
+        }
+    }
+
+    /// The byte cap on one line's content.
+    pub fn max_len(&self) -> usize {
+        self.max_len
+    }
+
+    /// Bytes buffered but not yet returned as a line (an unterminated tail plus
+    /// any complete lines not yet taken).
+    pub fn buffered_len(&self) -> usize {
+        self.buf.len() - self.start
+    }
+
+    /// Drop everything buffered, e.g. when the transport is replaced and a
+    /// partial line belongs to the old peer.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.start = 0;
+        self.scanned = 0;
+        self.discarding = false;
+        self.pending_error = None;
+    }
+
+    /// Feed one chunk and iterate the lines it completes, newline stripped.
+    ///
+    /// Lines the iterator does not get to stay buffered and are returned by
+    /// the next [`next_line`](Self::next_line) or `push`.
+    pub fn push(&mut self, chunk: &[u8]) -> Lines<'_> {
+        self.compact();
+        let mut chunk = chunk;
+        if self.discarding {
+            // `buf` is empty while discarding (it was cleared on entry).
+            match chunk.iter().position(|&b| b == b'\n') {
+                None => return Lines(self),
+                Some(idx) => {
+                    self.discarding = false;
+                    chunk = &chunk[idx + 1..];
+                }
+            }
+        }
+        // Everything buffered is one unterminated partial line, and this chunk
+        // does not end it: reject before copying in rather than growing past
+        // the cap.
+        if self.scanned == self.buf.len()
+            && self.buf.len().saturating_add(chunk.len()) > self.max_len
+            && !chunk.contains(&b'\n')
+        {
+            self.buf.clear();
+            self.start = 0;
+            self.scanned = 0;
+            self.discarding = true;
+            self.pending_error = Some(LineError::TooLong {
+                max_len: self.max_len,
+            });
+            return Lines(self);
+        }
+        self.buf.extend_from_slice(chunk);
+        Lines(self)
+    }
+
+    /// Take the next complete buffered line, if any.
+    pub fn next_line(&mut self) -> Option<Result<String, LineError>> {
+        if let Some(err) = self.pending_error.take() {
+            return Some(Err(err));
+        }
+        if let Some(rel) = self.buf[self.scanned..].iter().position(|&b| b == b'\n') {
+            let end = self.scanned + rel;
+            let line_start = self.start;
+            self.start = end + 1;
+            self.scanned = self.start;
+            let line = &self.buf[line_start..end];
+            if line.len() > self.max_len {
+                return Some(Err(LineError::TooLong {
+                    max_len: self.max_len,
+                }));
+            }
+            return Some(
+                std::str::from_utf8(line)
+                    .map(str::to_owned)
+                    .map_err(LineError::InvalidUtf8),
+            );
+        }
+        self.scanned = self.buf.len();
+        if self.buffered_len() > self.max_len {
+            // The unterminated tail crossed the cap (a chunk that also carried
+            // complete lines): drop it and discard until its newline.
+            self.buf.clear();
+            self.start = 0;
+            self.scanned = 0;
+            self.discarding = true;
+            return Some(Err(LineError::TooLong {
+                max_len: self.max_len,
+            }));
+        }
+        None
+    }
+
+    /// Release consumed bytes. Each byte is moved at most once: after a
+    /// compaction it belongs to the first, still-unterminated line.
+    fn compact(&mut self) {
+        if self.start > 0 {
+            self.buf.drain(..self.start);
+            self.scanned -= self.start;
+            self.start = 0;
+        }
+    }
+}
+
+/// Iterator over the lines completed by one [`LineSplitter::push`].
+#[derive(Debug)]
+pub struct Lines<'a>(&'a mut LineSplitter);
+
+impl Iterator for Lines<'_> {
+    type Item = Result<String, LineError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next_line()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +772,190 @@ mod tests {
         assert_eq!(
             line,
             r#"{"jsonrpc":"2.0","id":7,"method":"connection.close","params":{}}"#
+        );
+    }
+
+    // ── LineSplitter (push-based, bounded, UTF-8-safe; #4303) ──────────────
+
+    fn collect(splitter: &mut LineSplitter, chunk: &[u8]) -> Vec<Result<String, LineError>> {
+        splitter.push(chunk).collect()
+    }
+
+    #[test]
+    fn splitter_decodes_multibyte_char_split_across_chunks() {
+        // "Ü" is 0xC3 0x9C; split the line inside it (AGT2-001).
+        let line = "{\"name\":\"Übersicht\"}\n".as_bytes();
+        let split = line.iter().position(|&b| b == 0xC3).expect("Ü lead byte") + 1;
+        let mut splitter = LineSplitter::new();
+        assert!(collect(&mut splitter, &line[..split]).is_empty());
+        let lines = collect(&mut splitter, &line[split..]);
+        assert_eq!(lines, vec![Ok("{\"name\":\"Übersicht\"}".to_string())]);
+    }
+
+    #[test]
+    fn splitter_decodes_every_byte_split_of_multibyte_text() {
+        // Every split point of a line mixing 2-, 3- and 4-byte characters must
+        // reassemble to the exact original text.
+        let text = "Ü€😀 ok";
+        let wire = format!("{text}\n");
+        let bytes = wire.as_bytes();
+        for split in 0..=bytes.len() {
+            let mut splitter = LineSplitter::new();
+            let mut lines = collect(&mut splitter, &bytes[..split]);
+            lines.extend(collect(&mut splitter, &bytes[split..]));
+            assert_eq!(lines, vec![Ok(text.to_string())], "split at {split}");
+        }
+    }
+
+    #[test]
+    fn splitter_yields_every_line_of_one_chunk_and_keeps_partial_tail() {
+        let mut splitter = LineSplitter::new();
+        let lines = collect(&mut splitter, b"a\n\nbc\npart");
+        assert_eq!(
+            lines,
+            vec![Ok("a".to_string()), Ok(String::new()), Ok("bc".to_string())]
+        );
+        assert_eq!(splitter.buffered_len(), 4, "partial tail retained");
+        assert_eq!(
+            collect(&mut splitter, b"ial\n"),
+            vec![Ok("partial".to_string())]
+        );
+        assert_eq!(splitter.buffered_len(), 0);
+    }
+
+    #[test]
+    fn splitter_keeps_unread_lines_for_the_next_push() {
+        // Dropping the iterator early must not lose lines.
+        let mut splitter = LineSplitter::new();
+        let first = splitter.push(b"one\ntwo\n").next();
+        assert_eq!(first, Some(Ok("one".to_string())));
+        assert_eq!(splitter.next_line(), Some(Ok("two".to_string())));
+        assert_eq!(splitter.next_line(), None);
+    }
+
+    #[test]
+    fn splitter_rejects_oversize_unterminated_stream_with_bounded_memory() {
+        // A peer that streams bytes and never sends a newline: the splitter must
+        // report TooLong and never hold more than the cap.
+        const CAP: usize = 64;
+        let mut splitter = LineSplitter::with_max_len(CAP);
+        let mut errors = 0;
+        for _ in 0..10_000 {
+            for item in splitter.push(&[b'x'; 16]) {
+                assert_eq!(item, Err(LineError::TooLong { max_len: CAP }));
+                errors += 1;
+            }
+            assert!(
+                splitter.buffered_len() <= CAP,
+                "buffer grew to {}",
+                splitter.buffered_len()
+            );
+        }
+        assert_eq!(errors, 1, "an over-cap line is reported exactly once");
+    }
+
+    #[test]
+    fn splitter_rejects_oversize_line_inside_one_chunk() {
+        const CAP: usize = 8;
+        let mut splitter = LineSplitter::with_max_len(CAP);
+        let lines = collect(&mut splitter, b"0123456789\nok\n");
+        assert_eq!(
+            lines,
+            vec![
+                Err(LineError::TooLong { max_len: CAP }),
+                Ok("ok".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn splitter_accepts_line_at_cap_boundary() {
+        // Same semantics as `read_line_resumable`: the cap bounds content, the
+        // newline is not counted.
+        let mut splitter = LineSplitter::with_max_len(7);
+        assert_eq!(
+            collect(&mut splitter, b"abcdefg\n"),
+            vec![Ok("abcdefg".into())]
+        );
+        let mut splitter = LineSplitter::with_max_len(6);
+        assert_eq!(
+            collect(&mut splitter, b"abcdefg\n"),
+            vec![Err(LineError::TooLong { max_len: 6 })]
+        );
+    }
+
+    #[test]
+    fn splitter_discards_rest_of_oversize_line_then_recovers() {
+        const CAP: usize = 4;
+        let mut splitter = LineSplitter::with_max_len(CAP);
+        assert_eq!(
+            collect(&mut splitter, b"xxxxxx"),
+            vec![Err(LineError::TooLong { max_len: CAP })]
+        );
+        assert!(
+            collect(&mut splitter, b"yyyyyyyy").is_empty(),
+            "still discarding"
+        );
+        assert_eq!(
+            collect(&mut splitter, b"zz\nok\n"),
+            vec![Ok("ok".to_string())]
+        );
+    }
+
+    #[test]
+    fn splitter_reports_invalid_utf8_per_line_and_continues() {
+        let mut splitter = LineSplitter::new();
+        let lines = collect(&mut splitter, b"\xff\xfe\nok\n");
+        assert!(matches!(lines[0], Err(LineError::InvalidUtf8(_))));
+        assert_eq!(lines[1], Ok("ok".to_string()));
+    }
+
+    #[test]
+    fn splitter_clear_drops_partial_line() {
+        let mut splitter = LineSplitter::new();
+        assert!(collect(&mut splitter, b"stale partial").is_empty());
+        splitter.clear();
+        assert_eq!(
+            collect(&mut splitter, b"fresh\n"),
+            vec![Ok("fresh".to_string())]
+        );
+    }
+
+    #[test]
+    fn splitter_processes_many_small_chunks_of_one_long_line_linearly() {
+        // AGT2-003: a long line in small chunks must not rescan the buffer per
+        // chunk. 4 MiB in 1-byte-ish chunks would take minutes if quadratic.
+        let len = 4 * 1024 * 1024;
+        let mut splitter = LineSplitter::new();
+        let chunk = [b'a'; 64];
+        let start = std::time::Instant::now();
+        for _ in 0..len / chunk.len() {
+            assert!(splitter.push(&chunk).next().is_none());
+        }
+        let lines = collect(&mut splitter, b"\n");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].as_ref().map(String::len), Ok(len));
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn splitter_processes_many_lines_in_one_chunk_linearly() {
+        // AGT2-003: many short lines in one large chunk must not copy the tail
+        // once per line.
+        let count = 200_000;
+        let chunk: Vec<u8> = b"{\"m\":1}\n".repeat(count);
+        let mut splitter = LineSplitter::new();
+        let start = std::time::Instant::now();
+        let n = splitter.push(&chunk).filter(|l| l.is_ok()).count();
+        assert_eq!(n, count);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "took {:?}",
+            start.elapsed()
         );
     }
 }

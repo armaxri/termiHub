@@ -12,8 +12,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager/reattach.rs:228-236
   - core/src/ipc/ndjson.rs:169
   - audit/code-duplication/0009-ndjson-framing-reimplemented-three-ways.md:20-53
-status: open
-resolution: ""
+status: fixed
+resolution: "#4303 — all three desktop accumulators replaced by one shared core::ipc::ndjson::LineSplitter"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

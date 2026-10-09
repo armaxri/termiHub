@@ -132,6 +132,9 @@ Messages are **newline-delimited JSON** (NDJSON). Each message is a single line 
 - Messages MUST be valid UTF-8
 - Binary data (terminal output) MUST be base64-encoded
 - The maximum message size is 1 MiB (1,048,576 bytes)
+- Receivers enforce a line cap while reading: the agent rejects a request line over 1 MiB, and
+  the desktop treats an agent line over 16 MiB as a protocol error and drops the connection
+  (#4303). A line is decoded only once complete, so a multi-byte character may span chunks
 
 ### Stderr Log Side-Band
 
