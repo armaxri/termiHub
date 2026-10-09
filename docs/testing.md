@@ -1582,7 +1582,9 @@ Notes worth knowing before you use it:
   there is no skip-signature path. Shipped agents never embed that key:
   `scripts/internal/assert-no-test-signing-key.sh` fails any `agent.yml` /
   `release.yml` build that does. Once the staged binary is the running one, the
-  hook stands down instead of re-staging it.
+  hook stands down instead of re-staging it. It recognises that by the running
+  binary matching the staged file or hashing to `…_SHA256`; the digest is what
+  still holds after the re-execed agent removed the applied upload (#4526).
 - **It survives an agent restart.** The #1551 startup sweep drops a
   `pending_update` the running agent has already applied. The default version is
   newer than any real release and the staged path cannot match the running
