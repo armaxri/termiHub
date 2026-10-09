@@ -145,9 +145,16 @@ def test_dev_agent_port_does_not_collide_with_e2e_ssh_port():
     (``TERMIHUB_TEST_E2E_SSH_PORT``). Both bind a host port, so their committed
     defaults must differ — otherwise the second to start fails with "address
     already in use". Historically both defaulted to 2222; the E2E port now sits
-    at 2214, just past the SSH cluster (2201-2213).
+    at 2230, clear of the SSH fixture cluster (2201-2218, #4339).
     """
     assert _committed_dev_agent_port() != _committed_e2e_ssh_base()
+
+
+#: ``dev_agent_port`` of slot N in the documented per-checkout scheme
+#: (docs/testing.md "Parallel test isolation": 2222, step 10). It is NOT offset
+#: by ``test_port_offset``, so it must avoid every slot's fixture ports.
+def _dev_agent_port(slot: int) -> int:
+    return _committed_dev_agent_port() + 10 * slot
 
 
 def _compose_port_defaults() -> dict[str, int]:
@@ -218,6 +225,30 @@ def test_compose_fixture_ports_do_not_share_a_host_port():
     (``ssh-sftp-only`` and ``remote-agent`` both used 2211 until #4007). Passive
     port ranges count as every port they span (#4094)."""
     _host_ports(_compose_port_defaults(), 0)
+
+
+def test_shell_resolver_ports_do_not_share_a_host_port():
+    """Every ``_thdl_port`` base of ``dev-local-env.sh``, including the shell-only
+    examples/ quick-start ports, claims its own host port.
+
+    Regression for #4339: the quick-start SSH target and the
+    ``remote-agent-pending-update`` fixture both used 2214. Both get the same
+    per-slot offset, so they collided in every checkout, and the compose-only
+    check above could not see it.
+    """
+    _host_ports(_shell_port_bases(), 0)
+
+
+def test_shell_resolver_slots_never_share_a_host_port():
+    """Every shell-resolved port of every slot, plus every slot's dev agent port,
+    is unique across ``dev0`` … ``dev9`` (#4339)."""
+    owners: dict[int, str] = {}
+    for slot in _SLOTS:
+        ports = _host_ports(_shell_port_bases(), slot * dev_local.OFFSET_PER_SLOT)
+        ports[_dev_agent_port(slot)] = "dev_agent_port"
+        for port, owner in ports.items():
+            assert port not in owners, f"dev{slot} {owner} reuses {owners[port]}'s port {port}"
+            owners[port] = f"dev{slot} {owner}"
 
 
 def test_compose_env_offsets_ftp_passive_ranges(tmp_path):

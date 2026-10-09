@@ -85,10 +85,10 @@ _thdl_port TERMIHUB_TEST_FTP_PASV_MAX              30009
 _thdl_port TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MIN    30010
 _thdl_port TERMIHUB_TEST_FTPS_IMPLICIT_PASV_MAX    30019
 # examples/docker quick-start dev target (examples/docker/docker-compose.yml).
-# SSH sits at 2214 — just past the SSH cluster (2201-2213) — so it never
-# collides with the dev agent's conventional 2222 (`dev_agent_port`), which at
-# test_port_offset 0 would otherwise want the same host port (#1536).
-_thdl_port TERMIHUB_TEST_E2E_SSH_PORT        2214
+# SSH sits at 2230: clear of the SSH fixture cluster (2201-2218, where 2214 is
+# the remote-agent-pending-update fixture, #4339) and of every dev agent port
+# (`dev_agent_port`, 2222 + 10 per checkout, #1536).
+_thdl_port TERMIHUB_TEST_E2E_SSH_PORT        2230
 _thdl_port TERMIHUB_TEST_E2E_TELNET_PORT     2323
 
 # Virtual serial device paths — suffixed with the project so two checkouts'

@@ -1835,11 +1835,11 @@ fresh clone, or CI — behaves exactly as it always did.
 | Resource                         | Base (offset 0)                                                  | Derivation                                                                    |
 | -------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | Docker container / network names | `termihub-*` / `termihub-*-net`                                  | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                     |
-| SSH / telnet / HTTP host ports   | `2201–2213`, `2215–2218`, `2301`, `8080`                         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| SSH / telnet / HTTP host ports   | `2201–2218`, `2301`, `8080`                                      | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | VNC host ports                   | `2501` (VncAuth), `2502` (VeNCrypt), `2503` (VeNCrypt X509Plain) | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | RDP host ports                   | `2601` (xrdp), `2602` (NLA)                                      | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | FTP / FTPS host ports            | `2401`, `2402`, PASV `30000–30019`                               | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
-| Quick-start (E2E) host ports     | `2214` (SSH), `2323` (telnet)                                    | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
+| Quick-start (E2E) host ports     | `2230` (SSH), `2323` (telnet)                                    | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
 | SSH-tunnel test ports            | `18081–18088`                                                    | `base + test_port_offset`.                                                    |
 | Virtual serial device paths      | `/tmp/termihub-serial-{a,b}`                                     | Suffixed with `compose_project`.                                              |
 | `tauri-driver` (E2E) port        | `4444`                                                           | `4444 + test_port_offset`.                                                    |
