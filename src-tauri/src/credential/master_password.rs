@@ -10,6 +10,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use rand::rngs::OsRng;
 use rand::RngCore;
+use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 use super::crypto::{
@@ -424,7 +425,7 @@ impl MasterPasswordStore {
         let matches = {
             let key_guard = self.derived_key.read().unwrap_or_else(|e| e.into_inner());
             let stored_key = key_guard.as_ref().context("Store is locked")?;
-            constant_time_eq(candidate.as_slice(), stored_key.as_slice())
+            bool::from(candidate.as_slice().ct_eq(stored_key.as_slice()))
         };
         candidate.zeroize();
         Ok(matches)
@@ -583,14 +584,6 @@ impl Drop for ZeroizingMap {
             value.zeroize();
         }
     }
-}
-
-/// Compare two byte slices in time independent of where they first differ.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 impl CredentialStore for MasterPasswordStore {
@@ -1316,6 +1309,8 @@ mod tests {
 
         assert!(store.verify_password("correct-pw").unwrap());
         assert!(!store.verify_password("wrong-pw").unwrap());
+        assert!(!store.verify_password("correct-pW").unwrap());
+        assert!(!store.verify_password("").unwrap());
         // Verification must not disturb the unlocked state.
         assert!(store.is_unlocked());
     }

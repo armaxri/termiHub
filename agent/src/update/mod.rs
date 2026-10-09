@@ -58,7 +58,7 @@ mod staged;
 use signature::SignaturePolicy;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 mod test_hook;
-mod version;
+use termihub_core::util::version;
 
 use std::path::PathBuf;
 use std::sync::Arc;

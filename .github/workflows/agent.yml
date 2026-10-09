@@ -20,6 +20,7 @@ on:
       # exercised on their own PR instead of shipping unvalidated.
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
+      - 'scripts/internal/assert-no-agent-test-hooks.sh'
       # Release crash-report symbol check (#4316).
       - 'tests/release-crash-probe/**'
       - 'scripts/internal/check-release-crash-symbols.sh'
@@ -31,6 +32,7 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
+      - 'scripts/internal/assert-no-agent-test-hooks.sh'
       # Release crash-report symbol check (#4316).
       - 'tests/release-crash-probe/**'
       - 'scripts/internal/check-release-crash-symbols.sh'
@@ -151,6 +153,12 @@ jobs:
       # key (#4083): it is compiled in only with the test-hooks feature.
       - name: Assert no test-only signing key
         run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent
+
+      # Nor any env-var-armed test scaffolding (WA-RS2-003, #4362): the
+      # parent-death watchdog and the other agent test hooks are compiled in
+      # only under debug assertions or the test-hooks feature.
+      - name: Assert no agent test hooks (#4362)
+        run: scripts/internal/assert-no-agent-test-hooks.sh target/${{ matrix.target }}/release/termihub-agent
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -297,6 +305,10 @@ jobs:
         shell: bash
         run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent.exe
 
+      - name: Assert no agent test hooks (#4362)
+        shell: bash
+        run: scripts/internal/assert-no-agent-test-hooks.sh target/${{ matrix.target }}/release/termihub-agent.exe
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -345,6 +357,12 @@ jobs:
 
       - name: Assert no test-only signing key (#4083)
         run: scripts/internal/assert-no-test-signing-key.sh target/${{ matrix.target }}/release/termihub-agent
+
+      # Nor any env-var-armed test scaffolding (WA-RS2-003, #4362): the
+      # parent-death watchdog and the other agent test hooks are compiled in
+      # only under debug assertions or the test-hooks feature.
+      - name: Assert no agent test hooks (#4362)
+        run: scripts/internal/assert-no-agent-test-hooks.sh target/${{ matrix.target }}/release/termihub-agent
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

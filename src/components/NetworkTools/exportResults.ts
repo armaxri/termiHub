@@ -32,9 +32,25 @@ export interface ResultTable {
   rows: (string | number | boolean | null)[][];
 }
 
-/** Escape a single CSV cell per RFC 4180 (quote when it holds `,`, `"`, or newline). */
+/**
+ * Leading characters a spreadsheet (Excel, LibreOffice, Sheets) may interpret
+ * as the start of a formula or DDE payload.
+ */
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+
+/**
+ * Escape a single CSV cell.
+ *
+ * String cells that start with a formula trigger (`=`, `+`, `-`, `@`, TAB, CR)
+ * get a leading `'` so a spreadsheet shows them as text instead of evaluating
+ * them (OWASP CSV injection; LIBFE2-002). Exported tables carry strings that
+ * remote parties control — DNS TXT values, PTR hostnames, process names, HTTP
+ * error strings. Only strings are touched, so negative numbers stay numeric.
+ * RFC 4180 quoting (when the cell holds `,`, `"`, CR or LF) is applied after.
+ */
 function csvCell(value: CsvValue): string {
-  const text = value == null ? "" : String(value);
+  let text = value == null ? "" : String(value);
+  if (typeof value === "string" && FORMULA_TRIGGER.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
