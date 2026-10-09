@@ -1,547 +1,220 @@
-//! Durable, bounded, rotating on-disk log for the remote agent (audit OBS-003).
+//! Durable, bounded, per-process on-disk logs for the remote agent (audit
+//! OBS-003, #4319).
 //!
-//! The agent historically logged only to **stderr** ([`crate::init_tracing`]).
-//! Where that stderr goes depends on the run mode:
+//! The agent's stderr is not a durable record: for `--stdio` the desktop
+//! captures and re-logs it, but the `--daemon` / `--listen` /
+//! `--registry-daemon` roles — session persistence, reconnect, the cross-desktop
+//! registry, remote tunnels and services — have no capture path back to the
+//! desktop. So every role also writes a rotating, hard-capped log file in the
+//! agent's own config directory (next to `state.json`).
 //!
-//! - `--stdio` (interactive over SSH exec): the desktop captures the agent's
-//!   stderr and re-logs it into `termihub.log`, so it is lossy but present.
-//! - `--daemon` / `--listen` / `--registry-daemon` (the persistent daemon,
-//!   registry-daemon, and TCP-listener roles): stderr goes to the *remote* host
-//!   with **no capture path back to the desktop and no file sink** — the logs
-//!   are simply lost. Those are exactly the roles behind session persistence,
-//!   reconnect, the cross-desktop registry, and remote tunnels/services, so when
-//!   something fails there the durable record that would explain it is gone.
+//! # One file per process
 //!
-//! This module adds the missing durable sink for **all** roles: a rotating,
-//! hard-capped log file in the agent's own config directory (next to
-//! `state.json`), mirroring the desktop's [`file_log`] design so the two behave
-//! identically.
+//! Several agent processes run at once on one host: a `--stdio` worker per
+//! desktop connection, one `--daemon` per persistent session and the
+//! `--registry-daemon`. They used to share one `termihub-agent.log`, and each
+//! process rotated it on its own byte counter, so rotation in one process sent
+//! the others' lines into renamed or deleted archives (audit OBS2-002). Each
+//! process now writes its own `termihub-agent-<role>-<pid>.log` (plus its
+//! archives), and a [`FamilyBudget`] bounds the whole `logs/` directory across
+//! all of them: every open and every rotation prunes the oldest archives, then
+//! the oldest files of other processes, until the family fits.
 //!
-//! [`file_log`]: ../../../src-tauri/src/utils/file_log.rs
+//! # Detached daemons' stderr
 //!
-//! # Design notes
+//! A detached daemon's stderr cannot inherit the worker's (it is the SSH exec
+//! channel), so it goes to a capture file. That file used to sit next to the
+//! session socket, grow without bound, duplicate the file sink line for line,
+//! and be deleted together with the session's sockets (audit OBS2-007). Now:
 //!
-//! This mirrors `src-tauri/src/utils/file_log.rs` deliberately, reusing the same
-//! proven approach rather than inventing a second one:
+//! - detached roles mirror tracing to stderr only when their log file could not
+//!   be opened, so stderr catches just pre-tracing and stdlib output;
+//! - the capture file lives here, in the log directory, as
+//!   `termihub-agent-stderr-<role>….log`, so it outlives the session and counts
+//!   against the same family budget;
+//! - it is opened in append mode, truncated when it is already over
+//!   [`STDERR_CAP_BYTES`], and the daemon re-checks the cap periodically
+//!   ([`spawn_stderr_cap_watchdog`]).
 //!
-//! **Why synchronous writes, not `tracing_appender::non_blocking`?** The
-//! non-blocking writer hands events to a background thread over a channel; when
-//! the process dies abruptly — SIGKILL, OOM, panic — whatever is still in that
-//! channel is lost, and the lost tail is exactly what a post-mortem needs. At
-//! INFO volume the cost of writing straight through is irrelevant.
-//!
-//! **Why a custom size-based rotator, not `tracing-appender`'s?**
-//! `tracing-appender`'s rotation is *time*-based (`max_log_files` bounds the file
-//! *count*, not their size), so a single runaway day — a reconnect loop on a
-//! long-lived daemon, say — could still write an unbounded file on the remote
-//! host. Size-based rotation gives a hard ceiling that does not depend on how the
-//! agent behaves: at most [`MAX_FILE_BYTES`] × [`MAX_FILES`] on disk, always.
-//! This is the same reasoning (and the same code shape) the desktop settled on.
+//! The writer, the rotation and the `russh` clamp are shared with the desktop
+//! ([`termihub_core::diagnostics::file_log`], audit DUP2-006).
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
-use tracing_subscriber::fmt::MakeWriter;
+use termihub_core::diagnostics::file_log::{self as shared, FamilyBudget, RotatingLogFile};
 use tracing_subscriber::EnvFilter;
 
-/// Base name of the current log file (`termihub-agent.log`).
-const LOG_STEM: &str = "termihub-agent";
+/// Stem prefix shared by every agent log file (the log "family").
+const LOG_FAMILY: &str = "termihub-agent";
 
-/// Extension of the log files.
-const LOG_EXT: &str = "log";
+/// Size at which a process's live log file is rotated away.
+const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
-/// Size at which the current log file is rotated away.
-const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
-
-/// Total number of log files kept: the current one plus `MAX_FILES - 1`
-/// archives. Together with [`MAX_FILE_BYTES`] this bounds on-disk usage at
-/// 15 MiB on the remote host.
+/// Generations kept per process: the live file plus `MAX_FILES - 1` archives.
 const MAX_FILES: usize = 3;
 
-/// Filter directive for the *file* sink.
-///
-/// Keeps INFO and above so a durable log a support case is expected to read does
-/// not drown in per-event debug spam. `TERMIHUB_AGENT_FILE_LOG` overrides this
-/// when a case needs more detail — mirroring the desktop's `TERMIHUB_FILE_LOG`.
-///
-/// `russh` is clamped to WARN for the same reason the desktop clamps it: it
-/// emits per-packet cipher logs below WARN, and this file is written to disk on
-/// the remote host, so packet-level SSH internals must not reach it. See
-/// [`RUSSH_CLAMP`], which keeps that true even when the override lowers the level.
-const FILE_LOG_DIRECTIVE: &str = "info,russh=warn";
+/// Most bytes all agent log files may use together on the host.
+const FAMILY_MAX_BYTES: u64 = 20 * 1024 * 1024;
 
-/// Floor applied to `russh` on top of *any* file directive, including a
-/// `TERMIHUB_AGENT_FILE_LOG` override.
-///
-/// Without this, `TERMIHUB_AGENT_FILE_LOG=debug` would silently unclamp russh's
-/// per-packet cipher logging into a durable file. A case that genuinely needs
-/// russh internals can still ask for them explicitly
-/// (`TERMIHUB_AGENT_FILE_LOG="debug,russh=debug"`) — later directives win — the
-/// point is that it cannot happen by accident while only raising the agent's own
-/// detail.
-const RUSSH_CLAMP: &str = "russh=warn";
+/// Most agent log files kept on the host.
+const FAMILY_MAX_FILES: usize = 40;
 
-/// Environment variable overriding the file sink's filter directive.
+/// Cap on a detached daemon's stderr capture file.
+pub const STDERR_CAP_BYTES: u64 = 1024 * 1024;
+
+/// How often a detached daemon re-checks its stderr capture against the cap.
+const STDERR_CAP_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Environment variable overriding the file sink's filter directive (mirrors
+/// the desktop's `TERMIHUB_FILE_LOG`). Overrides keep the shared russh clamp.
 const FILE_LOG_ENV: &str = "TERMIHUB_AGENT_FILE_LOG";
 
-/// Build the [`EnvFilter`] for the file sink.
-///
-/// Honors [`FILE_LOG_ENV`] when set, else [`FILE_LOG_DIRECTIVE`]. An override
-/// gets [`RUSSH_CLAMP`] prepended, so a directive that names `russh` explicitly
-/// still wins (later directives take precedence in an `EnvFilter`) while one that
-/// does not stays clamped.
-pub fn file_env_filter() -> EnvFilter {
-    match std::env::var(FILE_LOG_ENV) {
-        Ok(directive) if !directive.trim().is_empty() => {
-            EnvFilter::try_new(format!("{RUSSH_CLAMP},{directive}"))
-                .unwrap_or_else(|_| EnvFilter::new(FILE_LOG_DIRECTIVE))
+/// The agent process roles, each with its own log file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRole {
+    /// `--stdio`: one worker per desktop connection over SSH exec.
+    Stdio,
+    /// `--listen`: the TCP listener.
+    Listen,
+    /// `--daemon <id>`: one detached daemon per persistent session.
+    Daemon,
+    /// `--registry-daemon`: the host-wide registry.
+    Registry,
+}
+
+impl AgentRole {
+    /// The role's name in log file names.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::Listen => "listen",
+            Self::Daemon => "daemon",
+            Self::Registry => "registry",
         }
-        _ => EnvFilter::new(FILE_LOG_DIRECTIVE),
+    }
+
+    /// Whether the role runs detached, with its stderr in a capture file.
+    pub fn is_detached(self) -> bool {
+        matches!(self, Self::Daemon | Self::Registry)
     }
 }
 
-/// Resolve the directory the agent log is written to.
+/// Build the [`EnvFilter`] for the file sink: [`FILE_LOG_ENV`] (russh-clamped)
+/// when set, else INFO with russh at WARN.
+pub fn file_env_filter() -> EnvFilter {
+    shared::file_env_filter(std::env::var(FILE_LOG_ENV).ok().as_deref())
+}
+
+/// Resolve the directory the agent logs are written to.
 ///
-/// A `logs/` subdirectory of the agent's config directory, so the rotated
-/// archives sit next to `state.json` without cluttering it. Because it is
-/// derived from [`crate::state::persistence::AgentState::config_dir`], it honors
+/// A `logs/` subdirectory of the agent's config directory, so the files sit
+/// next to `state.json`. Derived from
+/// [`crate::state::persistence::AgentState::config_dir`], it honors
 /// `XDG_CONFIG_HOME` exactly as `state.json` does — so an integration test (or a
-/// portable setup) that redirects the agent's state to a sandbox redirects its
-/// log there too, rather than writing into the real user config dir.
+/// portable setup) that redirects the agent's state redirects its logs too.
 pub fn log_dir() -> PathBuf {
     log_dir_in(crate::state::persistence::AgentState::config_dir())
 }
 
-/// The log directory given an agent config directory. Split out so the mapping
-/// (`<config>/logs`) is testable without touching the process environment.
+/// The log directory given an agent config directory (`<config>/logs`).
 fn log_dir_in(config_dir: PathBuf) -> PathBuf {
     config_dir.join("logs")
 }
 
-/// Full path of the current (un-rotated) log file, for reporting.
-pub fn log_file_path() -> PathBuf {
-    log_dir().join(format!("{LOG_STEM}.{LOG_EXT}"))
+/// This process's log stem for `role`: `termihub-agent-<role>-<pid>`.
+fn process_stem(role: AgentRole) -> String {
+    shared::per_process_stem(LOG_FAMILY, role.as_str(), std::process::id())
 }
 
-/// A size-rotating, count-capped log file.
-///
-/// Cloneable and cheap to clone: clones share one file handle and one lock, so
-/// interleaved writes from many threads stay whole.
-#[derive(Clone)]
-pub struct RotatingLogFile {
-    inner: Arc<Mutex<Rotator>>,
+/// Full path of this process's live log file for `role`, for reporting.
+pub fn log_file_path(role: AgentRole) -> PathBuf {
+    shared::generation_path(&log_dir(), &process_stem(role), 0)
 }
 
-impl RotatingLogFile {
-    /// Open (or create) the log file in `dir`, rotating at `max_bytes` and
-    /// keeping at most `max_files` files in total.
-    ///
-    /// Appends to an existing file so a restart does not discard the previous
-    /// run — the run boundary is marked by the startup banner each role logs.
-    pub fn new(dir: impl AsRef<Path>, max_bytes: u64, max_files: usize) -> io::Result<Self> {
-        let rotator = Rotator::open(dir.as_ref().to_path_buf(), max_bytes, max_files.max(1))?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(rotator)),
-        })
-    }
-
-    /// Open the log file at the agent's conventional location ([`log_dir`]) with
-    /// the default size and count caps ([`MAX_FILE_BYTES`] × [`MAX_FILES`]).
-    pub fn with_defaults() -> io::Result<Self> {
-        Self::new(log_dir(), MAX_FILE_BYTES, MAX_FILES)
+fn family_budget() -> FamilyBudget {
+    FamilyBudget {
+        prefix: LOG_FAMILY.to_string(),
+        max_total_bytes: FAMILY_MAX_BYTES,
+        max_files: FAMILY_MAX_FILES,
     }
 }
 
-impl<'a> MakeWriter<'a> for RotatingLogFile {
-    type Writer = LockedRotator<'a>;
+/// Open this process's own log file for `role` in `dir`, bounded per process
+/// and, across all agent processes, by the family budget.
+fn open_in(dir: &Path, role: AgentRole) -> io::Result<RotatingLogFile> {
+    Ok(
+        RotatingLogFile::new(dir, &process_stem(role), MAX_FILE_BYTES, MAX_FILES)?
+            .with_family_budget(family_budget()),
+    )
+}
 
-    fn make_writer(&'a self) -> Self::Writer {
-        // A poisoned lock means some other thread panicked mid-write. Losing the
-        // log at exactly that moment is the opposite of what this module is for,
-        // so recover the guard and keep writing.
-        LockedRotator(self.inner.lock().unwrap_or_else(|e| e.into_inner()))
+/// Open this process's own log file for `role` at the agent's conventional
+/// location ([`log_dir`]).
+pub fn open(role: AgentRole) -> io::Result<RotatingLogFile> {
+    open_in(&log_dir(), role)
+}
+
+/// Name of the stderr capture file for a session daemon.
+fn daemon_stderr_name(session_id: &str) -> String {
+    format!("{LOG_FAMILY}-stderr-daemon-{session_id}.log")
+}
+
+/// Name of the registry daemon's stderr capture file.
+fn registry_stderr_name() -> String {
+    format!("{LOG_FAMILY}-stderr-registry.log")
+}
+
+fn open_stderr_capture_in(dir: &Path, name: &str) -> Option<File> {
+    shared::open_capped(&dir.join(name), STDERR_CAP_BYTES).ok()
+}
+
+/// Open the stderr capture file for the session daemon `session_id` (see the
+/// module docs). `None` when it cannot be opened; the launcher then discards
+/// the daemon's stderr.
+pub fn open_daemon_stderr(session_id: &str) -> Option<File> {
+    open_stderr_capture_in(&log_dir(), &daemon_stderr_name(session_id))
+}
+
+/// Open the registry daemon's stderr capture file (see [`open_daemon_stderr`]).
+pub fn open_registry_stderr() -> Option<File> {
+    open_stderr_capture_in(&log_dir(), &registry_stderr_name())
+}
+
+/// A handle to this process's own stderr, as a [`File`].
+fn own_stderr() -> io::Result<File> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        Ok(File::from(io::stderr().as_fd().try_clone_to_owned()?))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsHandle;
+        Ok(File::from(io::stderr().as_handle().try_clone_to_owned()?))
     }
 }
 
-/// Write guard handed to the `fmt` layer for the duration of one event.
-pub struct LockedRotator<'a>(MutexGuard<'a, Rotator>);
-
-impl Write for LockedRotator<'_> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
+/// Keep a detached daemon's stderr capture under [`STDERR_CAP_BYTES`] for its
+/// whole lifetime: a background thread truncates it whenever it outgrows the
+/// cap. A no-op when stderr is not a regular file (null, a pipe, a terminal).
+pub fn spawn_stderr_cap_watchdog() {
+    let Ok(stderr) = own_stderr() else {
+        return;
+    };
+    if !stderr.metadata().is_ok_and(|m| m.is_file()) {
+        return;
     }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
-
-/// The rotation state machine. Not public: all access goes through the lock.
-struct Rotator {
-    dir: PathBuf,
-    file: File,
-    /// Bytes in the *current* file, tracked rather than `stat`-ed per write.
-    written: u64,
-    max_bytes: u64,
-    max_files: usize,
-}
-
-impl Rotator {
-    fn open(dir: PathBuf, max_bytes: u64, max_files: usize) -> io::Result<Self> {
-        fs::create_dir_all(&dir)?;
-        let path = Self::path_in(&dir, 0);
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Ok(Self {
-            dir,
-            file,
-            written,
-            max_bytes,
-            max_files,
-        })
-    }
-
-    /// Path of log generation `generation`: 0 is the live file, 1..n the archives.
-    fn path_in(dir: &Path, generation: usize) -> PathBuf {
-        if generation == 0 {
-            dir.join(format!("{LOG_STEM}.{LOG_EXT}"))
-        } else {
-            dir.join(format!("{LOG_STEM}.{generation}.{LOG_EXT}"))
-        }
-    }
-
-    fn path(&self, generation: usize) -> PathBuf {
-        Self::path_in(&self.dir, generation)
-    }
-
-    /// Shift every generation one older, dropping the oldest, and start a fresh
-    /// live file.
-    fn rotate(&mut self) -> io::Result<()> {
-        let archives = self.max_files - 1;
-        if archives == 0 {
-            // Degenerate cap of one file: truncate in place.
-            self.file = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(self.path(0))?;
-            self.written = 0;
-            return Ok(());
-        }
-
-        // Drop the oldest, then walk backwards so nothing overwrites a file we
-        // still need.
-        let _ = fs::remove_file(self.path(archives));
-        for generation in (1..archives).rev() {
-            let _ = fs::rename(self.path(generation), self.path(generation + 1));
-        }
-        let _ = fs::rename(self.path(0), self.path(1));
-
-        self.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.path(0))?;
-        self.written = 0;
-        Ok(())
-    }
-}
-
-impl Write for Rotator {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Rotate *before* writing so a single event is never split across two
-        // files. `written > 0` keeps an event larger than the cap from spinning
-        // the rotation on an already-empty file.
-        if self.written > 0 && self.written + buf.len() as u64 > self.max_bytes {
-            self.rotate()?;
-        }
-        let n = self.file.write(buf)?;
-        self.written += n as u64;
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.file.flush()
-    }
+    let _ = std::thread::Builder::new()
+        .name("stderr-cap".into())
+        .spawn(move || loop {
+            std::thread::sleep(STDERR_CAP_INTERVAL);
+            let _ = shared::enforce_cap(&stderr, STDERR_CAP_BYTES);
+        });
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn read(path: &Path) -> String {
-        fs::read_to_string(path).unwrap_or_default()
-    }
-
-    /// Run `f` under a thread-scoped `subscriber`, deterministically.
-    ///
-    /// `tracing-core` caches callsite interest globally and, while at most one
-    /// dispatcher is registered, computes it lock-free from the registering
-    /// thread's default only — so a parallel test can cache a shared callsite
-    /// (e.g. the one in `russh_debug_reaches_file`) as `never` for another
-    /// test's subscriber. Two never-dropped no-op dispatchers keep the registry
-    /// off that fast path. Mirrors `termihub_lib`'s `log_capture::test_support`.
-    fn with_scoped_subscriber<S, T>(subscriber: S, f: impl FnOnce() -> T) -> T
-    where
-        S: tracing::Subscriber + Send + Sync + 'static,
-    {
-        use tracing::subscriber::NoSubscriber;
-        use tracing::Dispatch;
-        static PINNED: std::sync::OnceLock<[Dispatch; 2]> = std::sync::OnceLock::new();
-        PINNED.get_or_init(|| {
-            [
-                Dispatch::new(NoSubscriber::default()),
-                Dispatch::new(NoSubscriber::default()),
-            ]
-        });
-        tracing::subscriber::with_default(subscriber, f)
-    }
-
-    #[test]
-    fn writes_land_in_the_live_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 1024, 3).unwrap();
-
-        log.make_writer().write_all(b"hello\n").unwrap();
-
-        assert_eq!(read(&dir.path().join("termihub-agent.log")), "hello\n");
-    }
-
-    #[test]
-    fn creates_the_log_directory_if_absent() {
-        let dir = tempfile::tempdir().unwrap();
-        let nested = dir.path().join("deep").join("nested");
-
-        RotatingLogFile::new(&nested, 1024, 3).unwrap();
-
-        assert!(nested.join("termihub-agent.log").exists());
-    }
-
-    #[test]
-    fn reopening_appends_rather_than_truncating() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let first = RotatingLogFile::new(dir.path(), 1024, 3).unwrap();
-        first.make_writer().write_all(b"run one\n").unwrap();
-        drop(first);
-
-        let second = RotatingLogFile::new(dir.path(), 1024, 3).unwrap();
-        second.make_writer().write_all(b"run two\n").unwrap();
-
-        assert_eq!(
-            read(&dir.path().join("termihub-agent.log")),
-            "run one\nrun two\n"
-        );
-    }
-
-    #[test]
-    fn rotates_once_the_size_cap_is_exceeded() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 10, 3).unwrap();
-
-        log.make_writer().write_all(b"aaaaa\n").unwrap(); // 6 bytes, fits
-        log.make_writer().write_all(b"bbbbb\n").unwrap(); // would be 12 > 10
-
-        assert_eq!(
-            read(&dir.path().join("termihub-agent.log")),
-            "bbbbb\n",
-            "the live file should hold only the post-rotation write"
-        );
-        assert_eq!(
-            read(&dir.path().join("termihub-agent.1.log")),
-            "aaaaa\n",
-            "the pre-rotation content should have moved to generation 1"
-        );
-    }
-
-    #[test]
-    fn rotation_never_splits_a_single_event() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 10, 3).unwrap();
-
-        log.make_writer().write_all(b"aaaaa\n").unwrap();
-        // An event larger than the whole cap must still be written whole.
-        log.make_writer().write_all(b"a-very-long-event\n").unwrap();
-
-        assert_eq!(
-            read(&dir.path().join("termihub-agent.log")),
-            "a-very-long-event\n",
-            "an oversized event must land intact in the fresh file"
-        );
-    }
-
-    #[test]
-    fn generations_shift_and_the_oldest_is_dropped() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 10, 3).unwrap();
-
-        for line in ["one\n", "two\n", "three\n", "four\n"] {
-            // Each write is 4-6 bytes; pad past the cap to force a rotation per line.
-            log.make_writer().write_all(line.as_bytes()).unwrap();
-            log.make_writer().write_all(b"pad-to-force\n").unwrap();
-        }
-
-        // Only MAX_FILES generations may ever exist.
-        assert!(dir.path().join("termihub-agent.log").exists());
-        assert!(dir.path().join("termihub-agent.1.log").exists());
-        assert!(dir.path().join("termihub-agent.2.log").exists());
-        assert!(
-            !dir.path().join("termihub-agent.3.log").exists(),
-            "generation 3 exceeds the cap and must never be created"
-        );
-    }
-
-    #[test]
-    fn total_disk_usage_stays_bounded_under_sustained_writes() {
-        let dir = tempfile::tempdir().unwrap();
-        let max_bytes = 256;
-        let max_files = 3;
-        let log = RotatingLogFile::new(dir.path(), max_bytes, max_files).unwrap();
-
-        // Write far more than the cap: 2000 * ~32B ≈ 64 KB against a 768 B cap.
-        for i in 0..2000 {
-            log.make_writer()
-                .write_all(format!("event number {i} padding\n").as_bytes())
-                .unwrap();
-        }
-
-        let total: u64 = fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter_map(|e| e.metadata().ok())
-            .map(|m| m.len())
-            .sum();
-
-        // Each file may overshoot by at most one event, hence the slack.
-        let ceiling = max_bytes * max_files as u64 + 1024;
-        assert!(
-            total <= ceiling,
-            "log grew to {total} B, above the {ceiling} B ceiling — the cap is not holding"
-        );
-    }
-
-    #[test]
-    fn a_cap_of_one_file_truncates_in_place() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 10, 1).unwrap();
-
-        log.make_writer().write_all(b"aaaaa\n").unwrap();
-        log.make_writer().write_all(b"bbbbb\n").unwrap();
-
-        assert_eq!(read(&dir.path().join("termihub-agent.log")), "bbbbb\n");
-        assert!(!dir.path().join("termihub-agent.1.log").exists());
-    }
-
-    /// Render what `directive` admits for `russh` at DEBUG, without touching the
-    /// process environment (which is global and would race other tests).
-    fn russh_debug_reaches_file(directive: &str) -> bool {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::Layer as _;
-
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 1 << 20, 3).unwrap();
-        let filter = EnvFilter::try_new(directive).unwrap();
-
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(log.clone())
-                .with_filter(filter),
-        );
-        with_scoped_subscriber(subscriber, || {
-            tracing::debug!(target: "russh", "packet cipher internals");
-        });
-
-        read(&dir.path().join("termihub-agent.log")).contains("packet cipher internals")
-    }
-
-    #[test]
-    fn the_default_file_directive_clamps_russh() {
-        assert!(
-            !russh_debug_reaches_file(FILE_LOG_DIRECTIVE),
-            "russh DEBUG is per-packet cipher logging and must never reach a durable file"
-        );
-    }
-
-    #[test]
-    fn raising_file_detail_does_not_unclamp_russh() {
-        // The realistic support instruction: "set TERMIHUB_AGENT_FILE_LOG=debug".
-        // It must raise the agent's own detail without dragging SSH packet
-        // internals into a durable file on the remote host.
-        assert!(
-            !russh_debug_reaches_file(&format!("{RUSSH_CLAMP},debug")),
-            "TERMIHUB_AGENT_FILE_LOG=debug must not silently enable russh packet logging"
-        );
-    }
-
-    #[test]
-    fn an_explicit_russh_directive_still_wins() {
-        // Escape hatch: a case that truly needs russh internals can ask.
-        assert!(
-            russh_debug_reaches_file(&format!("{RUSSH_CLAMP},debug,russh=debug")),
-            "an explicit russh=debug must still be honored — the clamp is a default, \
-             not a prohibition"
-        );
-    }
-
-    #[test]
-    fn log_dir_is_a_logs_subdir_of_the_agent_config_dir() {
-        let cfg = PathBuf::from("/some/agent/config");
-        assert_eq!(log_dir_in(cfg.clone()), cfg.join("logs"));
-    }
-
-    #[test]
-    fn log_dir_sits_under_the_agent_config_dir() {
-        use crate::state::persistence::AgentState;
-        let dir = log_dir();
-        assert!(
-            dir.ends_with("logs"),
-            "log dir {dir:?} must be a logs/ subdir"
-        );
-        assert_eq!(
-            dir.parent().map(Path::to_path_buf),
-            Some(AgentState::config_dir()),
-            "the log dir must sit next to state.json under the agent config dir"
-        );
-    }
-
-    #[test]
-    fn log_file_path_sits_inside_the_log_dir() {
-        let path = log_file_path();
-        assert_eq!(path.file_name().unwrap(), "termihub-agent.log");
-        assert_eq!(path.parent().unwrap(), log_dir());
-    }
-
-    #[test]
-    fn file_filter_keeps_info_and_drops_debug() {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::Layer as _;
-
-        let dir = tempfile::tempdir().unwrap();
-        let log = RotatingLogFile::new(dir.path(), 1 << 20, 3).unwrap();
-
-        // Exercise the real default directive (env-free path).
-        let filter = EnvFilter::new(FILE_LOG_DIRECTIVE);
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(log.clone())
-                .with_filter(filter),
-        );
-        with_scoped_subscriber(subscriber, || {
-            tracing::info!(target: "termihub_agent::session", "session opened");
-            tracing::debug!(target: "termihub_agent::session", "per-event noise");
-        });
-
-        let contents = read(&dir.path().join("termihub-agent.log"));
-        assert!(
-            contents.contains("session opened"),
-            "INFO must reach the file, got: {contents:?}"
-        );
-        assert!(
-            !contents.contains("per-event noise"),
-            "DEBUG must not reach the file — it is what drowns a readable log; got: {contents:?}"
-        );
-    }
-}
+#[path = "file_log_tests.rs"]
+mod tests;

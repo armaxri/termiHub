@@ -29,6 +29,12 @@ mod transport;
 mod tunnel;
 mod update;
 
+// `RUSSH_CLAMP` is the floor applied to `russh` on the framed stderr sink,
+// whatever `RUST_LOG` says. The desktop re-emits framed records into its durable
+// `termihub.log`, so the same clamp the file sinks apply holds here: russh's
+// per-packet DEBUG/TRACE output never reaches a durable log unless a directive
+// names `russh` explicitly. Shared with the desktop (#4319).
+use termihub_core::diagnostics::file_log::RUSSH_CLAMP;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -162,7 +168,7 @@ async fn run() -> anyhow::Result<()> {
             // Tracing goes to stderr so it never interferes with the protocol on
             // stdout — as framed records the desktop re-emits at their real
             // level and target (#2854, OBS-004).
-            init_tracing(StderrLogFormat::Framed);
+            init_tracing(StderrLogFormat::Framed, file_log::AgentRole::Stdio);
 
             let shutdown = setup_shutdown_signal();
             let allow_self_update = self_update_enabled(&args);
@@ -171,7 +177,7 @@ async fn run() -> anyhow::Result<()> {
             io::stdio::run_stdio_loop(shutdown, allow_self_update, update_strategy).await
         }
         "--listen" => {
-            init_tracing(StderrLogFormat::Plain);
+            init_tracing(StderrLogFormat::Plain, file_log::AgentRole::Listen);
 
             // The listen address is optional; skip it (and any other flags) when
             // resolving the address so `--allow-self-update` is not mistaken for it.
@@ -190,7 +196,7 @@ async fn run() -> anyhow::Result<()> {
             io::tcp::run_tcp_listener(addr, shutdown, allow_self_update, update_strategy).await
         }
         "--daemon" => {
-            init_tracing(StderrLogFormat::Plain);
+            init_tracing(StderrLogFormat::Plain, file_log::AgentRole::Daemon);
 
             let session_id = args.get(2).unwrap_or_else(|| {
                 eprintln!("--daemon requires a session ID argument");
@@ -199,7 +205,7 @@ async fn run() -> anyhow::Result<()> {
             daemon::process::run_daemon(session_id).await
         }
         "--registry-daemon" => {
-            init_tracing(StderrLogFormat::Plain);
+            init_tracing(StderrLogFormat::Plain, file_log::AgentRole::Registry);
 
             // Spawned by a worker that could not find a registry (see
             // `registry_daemon::client`), never by a user. Exits on its own once
@@ -231,13 +237,6 @@ enum StderrLogFormat {
     Framed,
 }
 
-/// Floor applied to `russh` on the framed stderr sink, whatever `RUST_LOG`
-/// says. The desktop re-emits framed records into its durable `termihub.log`,
-/// so the same clamp the agent's own file sink applies ([`file_log`]) holds
-/// here: `russh`'s per-packet `DEBUG`/`TRACE` output never reaches a durable
-/// log unless a directive names `russh` explicitly.
-const RUSSH_CLAMP: &str = "russh=warn";
-
 /// The env-filter directive for the stderr sink, given `RUST_LOG`.
 ///
 /// `RUST_LOG` (default `info`) as before; the [`StderrLogFormat::Framed`] sink
@@ -261,32 +260,48 @@ fn stderr_env_filter(format: StderrLogFormat) -> EnvFilter {
         .unwrap_or_else(|_| EnvFilter::new(stderr_filter_directive(format, None)))
 }
 
-/// Initialize the tracing subscriber.
+/// Whether `role` mirrors tracing to stderr, given whether its log file opened.
 ///
-/// Installs two layers on one registry (audit OBS-003):
+/// A detached daemon's stderr is only a capped capture file; mirroring every
+/// record there would duplicate the log file line for line (audit OBS2-007), so
+/// it is used only as the fallback when the log file could not be opened.
+fn mirror_to_stderr(role: file_log::AgentRole, file_opened: bool) -> bool {
+    !(role.is_detached() && file_opened)
+}
+
+/// Initialize the tracing subscriber for `role`.
 ///
+/// Installs up to two layers on one registry (audit OBS-003):
+///
+/// - a **durable rotating file** layer ([`file_log`]) written for *every* role,
+///   into this process's own `termihub-agent-<role>-<pid>.log` (#4319), so the
+///   `--daemon` / `--listen` / `--registry-daemon` roles — whose stderr goes to
+///   the remote host with no capture path — leave a retrievable, size-bounded
+///   trace next to the agent's `state.json`;
 /// - a **stderr** layer (`RUST_LOG`, default `info`). For the interactive
 ///   `--stdio` role it writes framed records ([`StderrLogFormat::Framed`]) the
-///   desktop parses; for every other role it writes plain `fmt` lines;
-/// - a **durable rotating file** layer ([`file_log`]) written for *every* role,
-///   so the `--daemon` / `--listen` / `--registry-daemon` roles — whose stderr
-///   goes to the remote host with no capture path — leave a retrievable,
-///   size-bounded trace next to the agent's `state.json`.
+///   desktop parses; for `--listen` plain `fmt` lines. The detached daemon
+///   roles' stderr is only a capture file, so they get this layer only when
+///   the log file could not be opened — otherwise it would just duplicate the
+///   file line for line (audit OBS2-007).
 ///
 /// Opening the log file is best-effort: if it cannot be opened (read-only home,
 /// no config dir), the agent logs a warning to stderr and runs with the stderr
 /// layer alone rather than failing to start.
-fn init_tracing(format: StderrLogFormat) {
+fn init_tracing(format: StderrLogFormat, role: file_log::AgentRole) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::Layer;
 
-    let plain_layer = (format == StderrLogFormat::Plain).then(|| {
+    let file = file_log::open(role);
+    let want_stderr = mirror_to_stderr(role, file.is_ok());
+
+    let plain_layer = (want_stderr && format == StderrLogFormat::Plain).then(|| {
         tracing_subscriber::fmt::layer()
             .with_writer(std::io::stderr)
             .with_filter(stderr_env_filter(format))
     });
-    let framed_layer = (format == StderrLogFormat::Framed).then(|| {
+    let framed_layer = (want_stderr && format == StderrLogFormat::Framed).then(|| {
         termihub_agent::log_frame::FramedStderrLayer::new(std::io::stderr)
             .with_filter(stderr_env_filter(format))
     });
@@ -294,22 +309,28 @@ fn init_tracing(format: StderrLogFormat) {
         .with(plain_layer)
         .with(framed_layer);
 
-    match file_log::RotatingLogFile::with_defaults() {
+    match file {
         Ok(file) => {
+            let path = file.path();
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(file)
                 .with_filter(file_log::file_env_filter());
             registry.with(file_layer).init();
-            info!("agent log file at {}", file_log::log_file_path().display());
+            info!("agent log file at {}", path.display());
         }
         Err(e) => {
             registry.init();
             tracing::warn!(
                 "could not open the agent log file at {}: {e}; logging to stderr only",
-                file_log::log_file_path().display()
+                file_log::log_file_path(role).display()
             );
         }
+    }
+
+    // A detached daemon's stderr is a capture file; keep it bounded (OBS2-007).
+    if role.is_detached() {
+        file_log::spawn_stderr_cap_watchdog();
     }
 
     // Local, redacted crash reports next to the log (OBS-010).
@@ -453,6 +474,22 @@ mod tests {
             ])),
             UpdateStrategy::Immediate
         );
+    }
+
+    #[test]
+    fn detached_daemons_mirror_to_stderr_only_without_a_log_file() {
+        use file_log::AgentRole;
+        // OBS2-007: with the log file open, a daemon's stderr capture must not
+        // duplicate it.
+        assert!(!mirror_to_stderr(AgentRole::Daemon, true));
+        assert!(!mirror_to_stderr(AgentRole::Registry, true));
+        // Without a log file, stderr is the only record left.
+        assert!(mirror_to_stderr(AgentRole::Daemon, false));
+        assert!(mirror_to_stderr(AgentRole::Registry, false));
+        // Interactive roles keep their stderr: the desktop parses `--stdio`'s,
+        // and `--listen`'s is the operator's console or journal.
+        assert!(mirror_to_stderr(AgentRole::Stdio, true));
+        assert!(mirror_to_stderr(AgentRole::Listen, true));
     }
 
     #[test]

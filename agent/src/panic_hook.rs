@@ -1,12 +1,12 @@
 //! Durable panic reporting for the agent (OBS-010).
 //!
 //! Mirrors the desktop's `utils::panic_hook`: on a panic, the payload, location
-//! and a backtrace are logged through `tracing` (so they land in the rotating
-//! `termihub-agent.log`) and a small, redacted crash report is written into
-//! `<agent log dir>/crash-reports/`, bounded by count and age. The report stays
-//! on the host the agent runs on — nothing is sent anywhere. The hook then
-//! chains to the previous hook, so stderr output and abort behaviour are
-//! unchanged.
+//! and a backtrace are logged through `tracing` (so they land in the process's
+//! own rotating `termihub-agent-<role>-<pid>.log`) and a small, redacted crash
+//! report is written into `<agent log dir>/crash-reports/`, bounded by count
+//! and age. The report stays on the host the agent runs on — nothing is sent
+//! anywhere. The hook then chains to the previous hook, so stderr output and
+//! abort behaviour are unchanged.
 
 use std::backtrace::Backtrace;
 use std::path::PathBuf;
