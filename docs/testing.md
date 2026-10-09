@@ -2442,6 +2442,7 @@ This is the **single** manual gate for a release. Run it on each target OS (macO
 - [ ] MT-UI-13 — a single panel's border blends with the sidebar
 - [ ] MT-WIN-01 (macOS) — closing the last window keeps the app in the Dock; a Dock click reopens a window
 - [ ] MT-WIN-02 (macOS) — Cmd+Q quits the app with several windows open
+- [ ] MT-WIN-03 (macOS) — Cmd+Q / menu Quit with a live shell or unsaved editor asks first; a second Cmd+Q is ignored
 - [ ] MT-NIN-01 … MT-NIN-07 — native drag-and-drop: multi-file drop quoting, scaled and mixed-DPI pane hit-testing, file-browser drop, drag-out, off-window tab release; MT-NIN-04 (Linux) under Wayland and X11
 - [ ] MT-NIN-10 (macOS), MT-NIN-11 (Windows), MT-NIN-12 (Linux) — native IME preedit and candidate window in the terminal (commit-once automated, #3059)
 - [ ] MT-NIN-13 … MT-NIN-16 — native IME in the editor and in form fields, dead keys, the OS emoji picker

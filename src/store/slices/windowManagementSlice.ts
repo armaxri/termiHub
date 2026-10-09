@@ -162,6 +162,19 @@ export interface WindowManagementSlice {
    */
   prepareWindowClose: (otherWindows: WindowInfo[]) => Promise<"proceed" | "prompt">;
   /**
+   * Assess this window when the app is asked to quit (#4296), using the same
+   * classification as {@link prepareWindowClose}:
+   *
+   * - `"ready"` — nothing would be lost (no live session, or only persistent /
+   *   agent ones, which keep running), so this window agrees to the quit.
+   * - `"prompt"` — a non-persistent session or an unsaved editor would be lost,
+   *   so the decision dialog is raised in quit mode ({@link pendingWindowClose}).
+   *
+   * Unlike a window close, nothing is detached or ended here: another window
+   * may still cancel the quit, and the app exit itself ends the sessions.
+   */
+  prepareAppQuit: () => "ready" | "prompt";
+  /**
    * Destructive close outcome (#1903): detach every persistent/agent session
    * and terminate every non-persistent one owned by this window.
    */
@@ -332,6 +345,25 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     // At least one non-persistent session would be terminated — raise the
     // detach-vs-terminate decision surface.
     set({ pendingWindowClose: { sessions, otherWindows } });
+    return "prompt";
+  },
+
+  prepareAppQuit: () => {
+    const tabs = collectWindowTabs(get());
+    const sessions = classifyWindowCloseSessions(tabs);
+    const dirtyEditors = dirtyEditorTabs(tabs, get().editorDirtyTabs).map((tab) => ({
+      tabId: tab.id,
+      title: tab.title,
+    }));
+    if (dirtyEditors.length === 0 && !windowCloseWouldLoseData(sessions)) return "ready";
+    set({
+      pendingWindowClose: {
+        sessions,
+        otherWindows: [],
+        mode: "quit",
+        ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
+      },
+    });
     return "prompt";
   },
 
