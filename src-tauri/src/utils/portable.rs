@@ -29,6 +29,26 @@ impl AppMode {
             AppMode::Installed => None,
         }
     }
+
+    /// Returns the portable base directory — the folder holding the `data/`
+    /// directory (next to the executable, or next to the `.app` bundle on
+    /// macOS) — or `None` if in installed mode.
+    ///
+    /// This is what the `{PORTABLE_DIR}` path placeholder resolves to.
+    pub fn base_dir(&self) -> Option<&Path> {
+        self.data_dir().and_then(Path::parent)
+    }
+}
+
+/// Publish the portable base directory to core's shared path expansion, so
+/// every consumer of `termihub_core::config::expand_config_value` (SSH key
+/// paths, serial ports, file browser, workspace paths) resolves the
+/// `{PORTABLE_DIR}` placeholder. A no-op in installed mode, which leaves the
+/// placeholder verbatim (#4571).
+pub fn publish_portable_base_dir(app_mode: &AppMode) {
+    if let Some(base_dir) = app_mode.base_dir() {
+        termihub_core::config::set_portable_base_dir(base_dir.to_path_buf());
+    }
 }
 
 /// Detect whether the app is running in portable mode.
@@ -126,6 +146,19 @@ mod tests {
     #[test]
     fn app_mode_data_dir_returns_none_for_installed() {
         assert!(AppMode::Installed.data_dir().is_none());
+    }
+
+    #[test]
+    fn base_dir_is_parent_of_data_dir_in_portable_mode() {
+        let mode = AppMode::Portable {
+            data_dir: PathBuf::from("/usb/termiHub/data"),
+        };
+        assert_eq!(mode.base_dir(), Some(Path::new("/usb/termiHub")));
+    }
+
+    #[test]
+    fn base_dir_is_none_in_installed_mode() {
+        assert!(AppMode::Installed.base_dir().is_none());
     }
 
     #[test]
