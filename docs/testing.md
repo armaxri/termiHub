@@ -634,6 +634,55 @@ Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
 on macOS against the native loopback sshd instead, #4005) and ADR-5.
 
+### Docker Hub resilience in CI (#4614)
+
+The container-fixture jobs pull their base images (`ubuntu`, `debian`,
+`nginx`, `alpine`, `rust`; list the fixture bases with
+`scripts/internal/registry-mirror.sh fixture-images`) from Docker Hub. Pulled
+unauthenticated, a busy day hits Docker Hub's per-IP limit on the shared
+runners (`toomanyrequests`) and a Docker Hub hiccup (`Requesting bearer token:
+invalid status code from registry 500`) reds unrelated PRs. Two layers, no
+secret, keep that from happening:
+
+- **Registry mirror.** The composite action
+  [`.github/actions/docker-hub-mirror`](../.github/actions/docker-hub-mirror/action.yml)
+  runs right after checkout in every job that pulls a Docker Hub image: the
+  `core-integration` and `polkit-dbus` jobs of
+  [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml),
+  the `system-integration` and `agent-docker-integration` jobs of
+  [`system-integration.yml`](../.github/workflows/system-integration.yml) (the
+  nightly), and the `sandbox-docker` job of
+  [`plugin-packaging.yml`](../.github/workflows/plugin-packaging.yml).
+  [`release-candidate.yml`](../.github/workflows/release-candidate.yml) calls
+  the first two workflows, so the release gate is covered too. The action adds
+  `mirror.gcr.io` to the Docker daemon's `registry-mirrors` and restarts it,
+  and writes a `registries.conf.d` drop-in that mirrors `docker.io` for rootless
+  Podman (the `TERMIHUB_REQUIRE_PODMAN` spawn test pulls `alpine:3`). A miss on
+  the mirror falls back to Docker Hub inside the daemon, and a daemon that does
+  not come back with the new config gets its original `daemon.json` restored.
+  Linux only; the macOS/Windows legs skip it.
+- **Retried pulls.** The action then pre-pulls the job's images with
+  `scripts/internal/registry-mirror.sh pull`, which retries each pull with
+  exponential backoff (4 attempts; 10 s, 20 s, 40 s) before failing with a
+  clear "registry outage or pull limit?" error, instead of cascading into every
+  `require_docker!` test. A pull that fails while the image is already present
+  locally uses the local copy. `tests/docker/polkit/run.sh` pre-pulls its rust
+  builder and debian base the same way, so it also rides out a hiccup on a
+  workstation. The Docker fixture image builds keep their own bounded retry
+  (#2768).
+
+`scripts/internal/check-script-headless.sh` runs the helper for real in the
+_Shell Script Quality_ job: `configure` against temp files and `pull` against a
+stub CLI that fails, retries, gives up and falls back to a local copy.
+
+**Maintainer option: authenticated pulls.** If the mirror ever stops being
+enough, add a `docker/login-action` step (pinned by SHA) before the
+`docker-hub-mirror` step, logging in to Docker Hub with a read-only access
+token stored as repository secrets (for example `DOCKERHUB_USERNAME` /
+`DOCKERHUB_TOKEN`). Authenticated pulls get a higher per-account limit. It is
+not wired in: it needs a secret only a maintainer can create, and secrets are
+not available to pull requests from forks.
+
 ### Agent-crate Docker Rust tests — nightly `agent-docker-integration` job (TIN-008)
 
 Separate from the Python bridge lane above, the agent crate has **Rust**
