@@ -30,6 +30,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    ComposeFixtureFailed,
     ContainerRuntimeUnavailable,
     FilesUi,
     PasswordPromptUi,
@@ -97,7 +98,7 @@ class TestTransferViewLive(
             for path in self._remote_paths:
                 try:
                     self._host.remove_path(path)
-                except ContainerRuntimeUnavailable:
+                except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
                     pass
 
     # -- helpers -----------------------------------------------------------------

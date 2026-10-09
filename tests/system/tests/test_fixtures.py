@@ -45,14 +45,79 @@ def test_wait_for_port_returns_when_a_port_is_open():
         wait_for_port(host, port, timeout=2.0)  # must not raise
 
 
-def test_wait_for_port_times_out_on_a_closed_port():
-    """A closed port raises ContainerRuntimeUnavailable within the timeout."""
-    # Reserve a port, then close it so nothing is listening there.
+def _closed_port() -> int:
+    """A port nothing listens on (reserved, then released)."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
-        closed_port = probe.getsockname()[1]
+        return probe.getsockname()[1]
+
+
+def test_wait_for_port_times_out_on_a_closed_port(monkeypatch):
+    """Off CI a closed port raises ContainerRuntimeUnavailable (a skip)."""
+    monkeypatch.delenv("CI", raising=False)
     with pytest.raises(ContainerRuntimeUnavailable):
-        wait_for_port("127.0.0.1", closed_port, timeout=0.75)
+        wait_for_port("127.0.0.1", _closed_port(), timeout=0.75)
+
+
+# ── Strict-mode readiness timeouts (#4315, WA-CI2-003) ────────────────────────
+# A fixture that starts but never opens its port / greets / answers RDP, or a
+# compose call that times out, ran against a working runtime: under CI it must
+# error (ComposeFixtureFailed escapes the suites' skip handlers), not skip.
+def test_wait_for_port_timeout_on_ci_fails_instead_of_skipping(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(fx.ComposeFixtureFailed, match="did not become reachable"):
+        wait_for_port("127.0.0.1", _closed_port(), timeout=0.5)
+
+
+def test_wait_for_banner_timeout_on_ci_fails_instead_of_skipping(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(fx.ComposeFixtureFailed, match="did not greet"):
+        fx.wait_for_banner("127.0.0.1", _closed_port(), b"RFB ", timeout=0.5)
+
+
+def test_wait_for_banner_timeout_off_ci_still_skips(monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    with pytest.raises(ContainerRuntimeUnavailable, match="did not greet"):
+        fx.wait_for_banner("127.0.0.1", _closed_port(), b"RFB ", timeout=0.5)
+
+
+def test_wait_for_rdp_timeout_on_ci_fails_instead_of_skipping(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    with pytest.raises(fx.ComposeFixtureFailed, match="RDP connection request"):
+        fx.wait_for_rdp("127.0.0.1", _closed_port(), timeout=0.5)
+
+
+def test_wait_for_rdp_timeout_off_ci_still_skips(monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    with pytest.raises(ContainerRuntimeUnavailable, match="RDP connection request"):
+        fx.wait_for_rdp("127.0.0.1", _closed_port(), timeout=0.5)
+
+
+def _timing_out_run(cmd, **kwargs):
+    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 5.0), stderr="building...")
+
+
+def test_compose_timeout_on_ci_fails_instead_of_skipping(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(subprocess, "run", _timing_out_run)
+    with pytest.raises(fx.ComposeFixtureFailed, match="timed out after"):
+        _run_compose()
+
+
+def test_compose_timeout_off_ci_still_skips(monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr(subprocess, "run", _timing_out_run)
+    with pytest.raises(ContainerRuntimeUnavailable, match="timed out after"):
+        _run_compose()
+
+
+def test_container_control_timeout_on_ci_fails(monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(fx, "container_runtime", lambda: "docker")
+    control = fx.ContainerControl("vnc-server")
+    monkeypatch.setattr(subprocess, "run", _timing_out_run)
+    with pytest.raises(fx.ComposeFixtureFailed, match="timed out after"):
+        control.start()
 
 
 # ── Pre-run stale-fixture reaper (finding TIN-011) ────────────────────────────
