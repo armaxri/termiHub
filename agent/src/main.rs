@@ -24,6 +24,9 @@ mod service;
 mod session;
 mod state;
 mod store_version;
+// Test-harness scaffolding: compiled only into debug builds and `test-hooks`
+// system-test builds, never into a default `--release` agent (WA-RS2-003).
+#[cfg(any(debug_assertions, feature = "test-hooks"))]
 mod test_parent_watchdog;
 mod transport;
 mod update;
@@ -111,11 +114,25 @@ fn update_strategy_from_args(args: &[String]) -> update::UpdateStrategy {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Test-harness only: exit when the spawning test process dies (#3641).
-    // Inert unless `TERMIHUB_TEST_PARENT_PID` is set.
-    test_parent_watchdog::start_from_env();
+    start_test_parent_watchdog();
     build_runtime()?.block_on(run())
 }
+
+/// Test-harness only: exit when the spawning test process dies (#3641).
+///
+/// Present in debug builds (every `cargo test` agent) and in `test-hooks`
+/// builds (the release-profile system-test agent); inert there unless
+/// `TERMIHUB_TEST_PARENT_PID` is set.
+#[cfg(any(debug_assertions, feature = "test-hooks"))]
+fn start_test_parent_watchdog() {
+    test_parent_watchdog::start_from_env();
+}
+
+/// Default release build: a no-op. The parent-death watchdog — module, env
+/// lookup and hard `exit(1)` — is compiled out of shipped agents entirely, so
+/// no environment variable can arm it (WA-RS2-003, same gate as WA-RS-009).
+#[cfg(not(any(debug_assertions, feature = "test-hooks")))]
+fn start_test_parent_watchdog() {}
 
 /// Build the agent's Tokio runtime.
 ///
