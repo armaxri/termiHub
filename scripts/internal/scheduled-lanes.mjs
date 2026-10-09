@@ -208,7 +208,9 @@ export function normalizedOnBlock(text) {
 export function triggersOf(text) {
   const block = extractOnBlock(text);
   if (!block) return [];
-  const inline = stripComment(block[0]).replace(/^[^:]*:/, "").trim();
+  const inline = stripComment(block[0])
+    .replace(/^[^:]*:/, "")
+    .trim();
   if (inline) {
     return inline
       .replace(/^\[|\]$/g, "")

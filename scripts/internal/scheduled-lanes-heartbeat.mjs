@@ -151,7 +151,9 @@ export function planDispatch(how, rows) {
       plan.push({ lane, reason: `cron ${how.cron}` });
     } else if (how.mode === "stale" && status.catchUpDue) {
       const since =
-        status.newestAge === null ? "no develop run yet" : `newest run ${fmtAge(status.newestAge)} ago`;
+        status.newestAge === null
+          ? "no develop run yet"
+          : `newest run ${fmtAge(status.newestAge)} ago`;
       plan.push({ lane, reason: `catch-up: ${since}` });
     }
   }
@@ -196,7 +198,9 @@ export function renderTable(rows, dispatched) {
         ? "own schedule (main)"
         : `scheduled-dispatch \`${lane.cron}\``;
     const note = dispatched.has(lane.file) ? " — dispatched now" : "";
-    out.push(`| \`${lane.file}\` | ${lane.cadence} | ${newest} | ${success} | ${beat}${note} | ${owner} |`);
+    out.push(
+      `| \`${lane.file}\` | ${lane.cadence} | ${newest} | ${success} | ${beat}${note} | ${owner} |`
+    );
   }
   return out.join("\n");
 }
@@ -316,7 +320,11 @@ function main() {
     }
   }
 
-  const out = [`## Scheduled-lane heartbeat (${now.toISOString()})`, "", renderTable(rows, dispatched)];
+  const out = [
+    `## Scheduled-lane heartbeat (${now.toISOString()})`,
+    "",
+    renderTable(rows, dispatched),
+  ];
   if (log.length) out.push("", ...log);
   const stale = rows.filter((r) => r.status.heartbeatStale);
   if (args.check && stale.length) {
