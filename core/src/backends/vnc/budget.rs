@@ -25,9 +25,11 @@ use tokio::sync::mpsc;
 
 use crate::connection::{CursorUpdate, FrameUpdate};
 
-/// Decoded frame bytes that may sit in the frame channel at once: one
-/// maximum-size (8192 x 8192 x 4) framebuffer update.
-pub(super) const MAX_QUEUED_FRAME_BYTES: usize = 256 * 1024 * 1024;
+/// Decoded frame bytes that may sit in the frame channel at once: four full
+/// 1080p frames (#4291). A larger single update (up to a maximum-size
+/// 8192 x 8192 x 4 framebuffer) is still delivered, alone, once the channel
+/// has drained, so this bounds what queues up without dropping anything.
+pub(super) const MAX_QUEUED_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
 /// Cursor-shape bytes that may sit in the cursor channel at once. Real cursors
 /// are a few KiB; a larger one is still delivered, alone.
@@ -187,6 +189,13 @@ mod tests {
         }
         let peak = producer.await.unwrap();
         assert!(peak <= 1000, "peak {peak}");
+    }
+
+    #[test]
+    fn frame_budget_is_a_few_full_hd_frames_not_a_max_size_framebuffer() {
+        let full_hd = 1920 * 1080 * 4;
+        assert!(MAX_QUEUED_FRAME_BYTES >= 2 * full_hd);
+        assert!(MAX_QUEUED_FRAME_BYTES <= 64 * 1024 * 1024);
     }
 
     #[tokio::test]

@@ -59,6 +59,8 @@ pub(crate) fn build(
         .manage(x_server_consent_registry.clone())
         .manage(spawn::handler::PendingSpawn::default())
         .manage(window::WindowManager::new())
+        // Binary remote-desktop frame channels per session (#4291).
+        .manage(crate::session::remote_desktop_frames::RemoteDesktopFrameChannels::new())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
         // Stateless-UI projection substrate (#2149) + tunnel pilot (#2150): the

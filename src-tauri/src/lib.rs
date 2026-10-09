@@ -589,6 +589,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::remote_desktop::remote_desktop_cancel_connect,
             commands::remote_desktop::remote_desktop_resize,
             commands::remote_desktop::remote_desktop_request_full_frame,
+            commands::remote_desktop::remote_desktop_subscribe_frames,
+            commands::remote_desktop::remote_desktop_unsubscribe_frames,
             commands::remote_desktop::remote_desktop_pending_cert_prompt,
             commands::remote_desktop::remote_desktop_file_channel,
             commands::remote_desktop::remote_desktop_upload,
@@ -1148,6 +1150,12 @@ pub fn run() -> anyhow::Result<()> {
                 // window can never inherit them and dead sinks do not linger.
                 if let Some(ps) = app_handle.try_state::<commands::projection::ProjectionState>() {
                     ps.release_principal(label);
+                }
+                // Drop the window's binary remote-desktop frame channels (#4291).
+                if let Some(frames) = app_handle
+                    .try_state::<session::remote_desktop_frames::RemoteDesktopFrameChannels>()
+                {
+                    frames.remove_window(label);
                 }
 
                 // App-wide teardown (tunnels, embedded/X servers, transfers, SFTP)

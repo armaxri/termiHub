@@ -27,8 +27,8 @@ height: number,
 /**
  * Tightly-packed RGBA pixel data (`width * height * 4` bytes).
  *
- * Serialized as a JSON array of bytes; the frontend reconstructs a
- * `Uint8ClampedArray` / `ImageData` from it. Backends should keep rects
+ * The desktop app sends it to the webview as raw bytes in a binary frame
+ * message (#4291), not through this serde form. Backends should keep rects
  * small (dirty regions only) so the payload stays bounded.
  */
 data: Array<number>, };
