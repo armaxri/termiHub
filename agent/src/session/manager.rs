@@ -30,7 +30,8 @@ use crate::session::types::{
 };
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
-use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::errors::SessionError;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
 use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpEnd, PumpOptions};
@@ -52,6 +53,14 @@ use crate::update::{
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
+
+/// How long agent shutdown waits for its sessions to detach or disconnect
+/// (#4476). Above one daemon detach's own bound (about 17 s), so a slow but
+/// working daemon still detaches cleanly.
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(20);
+
+/// How many sessions agent shutdown detaches or disconnects at once (#4476).
+const SHUTDOWN_CONCURRENCY: usize = 16;
 
 /// Whether an orphan-sweep candidate's daemon is provably dead (#2807).
 ///
@@ -1380,7 +1389,7 @@ impl SessionManager {
 
         info!("In-process connection for session {session_id} (type={type_id})");
         Ok(SessionBackend::InProcess {
-            connection,
+            connection: Arc::from(connection),
             output_task: Some(output_task),
             alive,
             flow,
@@ -1789,11 +1798,54 @@ impl SessionManager {
     /// Daemon-backed sessions are detached (not killed) so they survive
     /// the agent process exit and can be recovered on the next run.
     /// In-process sessions are disconnected normally.
+    ///
+    /// Bounded by [`SHUTDOWN_DEADLINE`]; see
+    /// [`close_all_within`](Self::close_all_within).
     pub async fn close_all(&self) {
-        let mut sessions = self.sessions.lock().await;
-        for (id, mut info) in sessions.drain() {
-            self.agent_forward.stop_listener(&id).await;
-            shutdown_backend(&mut info.backend).await;
+        self.close_all_within(SHUTDOWN_DEADLINE).await;
+    }
+
+    /// [`close_all`](Self::close_all) with an explicit overall `deadline`.
+    ///
+    /// The map is drained under the sessions lock; the backends are then shut
+    /// down outside it, concurrently (at most [`SHUTDOWN_CONCURRENCY`] at a
+    /// time), so one wedged daemon neither holds up the others nor delays the
+    /// agent's exit past `deadline` (#4476). A session not shut down by then is
+    /// left as is: a daemon keeps running and is recovered on the next run.
+    ///
+    /// Daemon sessions are detached without waiting for their turn: an
+    /// operation still in flight finds its session gone and releases what it
+    /// holds (#4286). An in-process session is disconnected in its turn, once a
+    /// write still in flight returned.
+    pub async fn close_all_within(&self, deadline: Duration) {
+        let drained: Vec<(String, SessionInfo)> = self.sessions.lock().await.drain().collect();
+        if drained.is_empty() {
+            return;
+        }
+        for (id, _) in &drained {
+            self.agent_forward.stop_listener(id).await;
+        }
+
+        let limit = Arc::new(tokio::sync::Semaphore::new(SHUTDOWN_CONCURRENCY));
+        let mut shutdowns = tokio::task::JoinSet::new();
+        for (_, mut info) in drained {
+            let limit = limit.clone();
+            shutdowns.spawn(async move {
+                let _permit = limit.acquire_owned().await;
+                let _turn = match info.backend {
+                    SessionBackend::InProcess { .. } => Some(info.turn.clone().lock_owned().await),
+                    _ => None,
+                };
+                shutdown_backend(&mut info.backend).await;
+            });
+        }
+        let all_done = async { while shutdowns.join_next().await.is_some() {} };
+        if tokio::time::timeout(deadline, all_done).await.is_err() {
+            warn!(
+                "{} session(s) not shut down within {deadline:?}; leaving them as they are",
+                shutdowns.len()
+            );
+            shutdowns.abort_all();
         }
     }
 
@@ -2525,9 +2577,7 @@ async fn close_backend(backend: &mut SessionBackend) {
             output_task,
             ..
         } => {
-            if let Err(e) = connection.disconnect().await {
-                warn!("Disconnect error: {e}");
-            }
+            disconnect_in_process(connection).await;
             if let Some(task) = output_task.take() {
                 task.abort();
             }
@@ -2576,9 +2626,7 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
             output_task,
             ..
         } => {
-            if let Err(e) = connection.disconnect().await {
-                warn!("Disconnect error: {e}");
-            }
+            disconnect_in_process(connection).await;
             if let Some(task) = output_task.take() {
                 task.abort();
             }
@@ -2586,6 +2634,43 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
         #[cfg(test)]
         SessionBackend::Stub { .. } => {}
     }
+}
+
+/// Disconnect an in-process connection.
+///
+/// The caller holds the session's turn (or the session left the map with no
+/// I/O in flight), so no write or resize still shares the connection (#4476).
+async fn disconnect_in_process(connection: &mut Arc<dyn ConnectionType>) {
+    match Arc::get_mut(connection) {
+        Some(connection) => {
+            if let Err(e) = connection.disconnect().await {
+                warn!("Disconnect error: {e}");
+            }
+        }
+        None => warn!("Backend I/O still in flight; skipping disconnect"),
+    }
+}
+
+/// Run an in-process backend call (`write` / `resize`) on the blocking pool,
+/// outside the sessions lock (#4476).
+///
+/// The session's `turn` moves into a detached task and is released only once
+/// the backend call returned, so the session's operations stay in order even
+/// when the caller gives up waiting, and whoever takes the turn next has the
+/// connection to itself again.
+async fn run_in_process_io(
+    turn: OwnedMutexGuard<()>,
+    io: impl FnOnce() -> Result<(), SessionError> + Send + 'static,
+) -> Result<(), String> {
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(io).await;
+        drop(turn);
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// The "Session not found" error of the session operations.
@@ -2843,15 +2928,18 @@ impl SessionManagerApi for SessionManager {
         SessionManager::detach(self, session_id).await
     }
 
-    /// The sessions lock is released before any async operation so the future
-    /// is `Send` regardless of the `ConnectionType` in-process implementations.
+    /// The sessions lock is released before the backend I/O: an in-process
+    /// write runs on the blocking pool, so a backend that stopped draining its
+    /// input holds up only this session (#4476).
     async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
+        let mut in_process: Option<Arc<dyn ConnectionType>> = None;
         let sync_result: Option<Result<(), String>>;
 
         // In the session's turn, so input and resizes keep their order and
         // wait for a re-attach in flight instead of failing (#4286). The turn
-        // is held across the daemon write below.
+        // is held across the daemon or in-process backend I/O below, which runs
+        // after the sessions lock is released (#4476).
         let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         {
             let mut sessions = self.sessions.lock().await;
@@ -2868,7 +2956,8 @@ impl SessionManagerApi for SessionManager {
                     sync_result = None;
                 }
                 SessionBackend::InProcess { connection, .. } => {
-                    sync_result = Some(connection.write(data).map_err(|e| e.to_string()));
+                    in_process = Some(connection.clone());
+                    sync_result = None;
                 }
                 #[cfg(test)]
                 SessionBackend::Stub { .. } => {
@@ -2879,6 +2968,10 @@ impl SessionManagerApi for SessionManager {
 
         if let Some(result) = sync_result {
             return result;
+        }
+        if let Some(connection) = in_process {
+            let data = data.to_vec();
+            return run_in_process_io(turn, move || connection.write(&data)).await;
         }
         if let Some(handle) = daemon_handle {
             return DaemonClient::write_via_handle(&handle, data)
@@ -2892,15 +2985,17 @@ impl SessionManagerApi for SessionManager {
         SessionManager::set_output_paused(self, session_id, paused).await
     }
 
-    /// The sessions lock is released before any async operation so the future
-    /// is `Send` regardless of the `ConnectionType` in-process implementations.
+    /// The sessions lock is released before the backend I/O, as for
+    /// [`write_input`](SessionManagerApi::write_input) (#4476).
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
+        let mut in_process: Option<Arc<dyn ConnectionType>> = None;
         let sync_result: Option<Result<(), String>>;
 
         // In the session's turn, so input and resizes keep their order and
         // wait for a re-attach in flight instead of failing (#4286). The turn
-        // is held across the daemon write below.
+        // is held across the daemon or in-process backend I/O below, which runs
+        // after the sessions lock is released (#4476).
         let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         {
             let mut sessions = self.sessions.lock().await;
@@ -2917,7 +3012,8 @@ impl SessionManagerApi for SessionManager {
                     sync_result = None;
                 }
                 SessionBackend::InProcess { connection, .. } => {
-                    sync_result = Some(connection.resize(cols, rows).map_err(|e| e.to_string()));
+                    in_process = Some(connection.clone());
+                    sync_result = None;
                 }
                 #[cfg(test)]
                 SessionBackend::Stub { .. } => {
@@ -2928,6 +3024,9 @@ impl SessionManagerApi for SessionManager {
 
         if let Some(result) = sync_result {
             return result;
+        }
+        if let Some(connection) = in_process {
+            return run_in_process_io(turn, move || connection.resize(cols, rows)).await;
         }
         if let Some(handle) = daemon_handle {
             return DaemonClient::resize_via_handle(&handle, cols, rows)
