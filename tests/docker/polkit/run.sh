@@ -2,6 +2,7 @@
 # Headless integration test for the real polkit D-Bus path of the Linux OS
 # re-auth verifier (#3553).
 #
+# 0. Pre-pulls the two Docker Hub images with retry + backoff (#4614).
 # 1. Builds `termihub-polkit-probe` (termiHub's shipped polkit transport,
 #    compiled by path) for Linux inside a rust:<pinned>-slim-trixie container,
 #    so it runs the same way from macOS, Windows or Linux.
@@ -49,6 +50,13 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+
+# Pre-pull both Docker Hub images with retry + backoff (#4614), so a transient
+# registry error or pull-limit hit retries instead of failing the run; the
+# build below then finds the debian base locally.
+fixture_base="$(awk 'toupper($1) == "FROM" { print $2; exit }' tests/docker/polkit/Dockerfile)"
+echo "== pulling ${builder_image} and ${fixture_base}"
+CONTAINER_CMD="$docker" scripts/internal/registry-mirror.sh pull "$builder_image" "$fixture_base"
 
 echo "== building polkit-probe for Linux in ${builder_image}"
 "$docker" run --rm \

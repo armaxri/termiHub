@@ -5,6 +5,7 @@ import { exportNetworkResults, pingResultsTable, pingResultsToCsv } from "./expo
 import { NetworkToolHistory } from "./NetworkToolHistory";
 import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useListenerGroup } from "@/hooks/useTauriListener";
 import {
   networkPingStart,
   networkPingStop,
@@ -49,24 +50,19 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const hostRef = useAutofocusSelect<HTMLInputElement>();
 
   const taskIdRef = useRef<string | null>(null);
-  const unlistenResultRef = useRef<(() => void) | null>(null);
-  const unlistenCompleteRef = useRef<(() => void) | null>(null);
-  const unlistenErrorRef = useRef<(() => void) | null>(null);
-
-  const cleanup = useCallback(() => {
-    unlistenResultRef.current?.();
-    unlistenCompleteRef.current?.();
-    unlistenErrorRef.current?.();
-    unlistenResultRef.current = null;
-    unlistenCompleteRef.current = null;
-    unlistenErrorRef.current = null;
-  }, []);
+  // The listeners are registered from the Start click, not an effect; the group
+  // unlistens them on unmount, including one whose registration is still pending
+  // (#4576).
+  const listeners = useListenerGroup();
+  // Bumped by every Start, so a start that resolves after a newer one began (or
+  // after unmount) can tell it is stale and stop its own task (#4576, FES2-006).
+  const runRef = useRef(0);
 
   // Tear down listeners and forget the active task; the session is over.
   const endSession = useCallback(() => {
-    cleanup();
+    listeners.release();
     taskIdRef.current = null;
-  }, [cleanup]);
+  }, [listeners]);
 
   // Inline validation of the numeric fields. Blocks Start while invalid.
   const intervalError = validateIntRange(intervalMs, {
@@ -92,6 +88,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     setTcpFallback(false);
     setError(null);
     endSession();
+    const run = ++runRef.current;
+    const isStale = () => listeners.isDisposed() || runRef.current !== run;
 
     // Events are filtered by the active task id. Until networkPingStart returns
     // it is null; accept those events so a result/error the backend emits before
@@ -102,43 +100,62 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       // Register listeners BEFORE starting so a fast failure (e.g. a cached DNS
       // miss that errors instantly) can't fire network-ping-error before we are
       // listening — which previously left the panel stuck on "running".
-      unlistenResultRef.current = await onPingResult((payload) => {
-        if (!matchesTask(payload.taskId)) return;
-        const result = payload.result;
-        if (result.tcpFallback) setTcpFallback(true);
-        setResults((prev) =>
-          prev.length >= MAX_CHART_POINTS ? [...prev.slice(1), result] : [...prev, result]
-        );
-      });
+      const resultHeld = await listeners.attach(() =>
+        onPingResult((payload) => {
+          if (!matchesTask(payload.taskId)) return;
+          const result = payload.result;
+          if (result.tcpFallback) setTcpFallback(true);
+          setResults((prev) =>
+            prev.length >= MAX_CHART_POINTS ? [...prev.slice(1), result] : [...prev, result]
+          );
+        })
+      );
+      if (!resultHeld) return;
 
-      unlistenCompleteRef.current = await onPingComplete((payload) => {
-        if (!matchesTask(payload.taskId)) return;
-        setStats(payload.stats);
-        setStatus(payload.canceled ? "canceled" : "completed");
-        endSession();
-      });
+      const completeHeld = await listeners.attach(() =>
+        onPingComplete((payload) => {
+          if (!matchesTask(payload.taskId)) return;
+          setStats(payload.stats);
+          setStatus(payload.canceled ? "canceled" : "completed");
+          endSession();
+        })
+      );
+      if (!completeHeld) return;
 
       // A fatal error (e.g. DNS failure) ends the session backend-side without
       // a complete event; reflect it so the panel doesn't stay stuck "running".
-      unlistenErrorRef.current = await onPingError((payload) => {
-        if (!matchesTask(payload.taskId)) return;
-        setError(payload.error);
-        setStatus("error");
-        endSession();
-      });
+      const errorHeld = await listeners.attach(() =>
+        onPingError((payload) => {
+          if (!matchesTask(payload.taskId)) return;
+          setError(payload.error);
+          setStatus("error");
+          endSession();
+        })
+      );
+      if (!errorHeld) return;
 
-      taskIdRef.current = await networkPingStart(
+      const taskId = await networkPingStart(
         host,
         Number(intervalMs),
         count !== "" ? Number(count) : undefined
       );
+      if (isStale()) {
+        // The panel unmounted or a newer run started while this one was
+        // starting; nothing will ever stop this task, so stop it now.
+        void networkPingStop(taskId).catch((err: unknown) =>
+          frontendLog("ping_panel", `stop stale ping ${taskId} failed: ${errorMessage(err)}`)
+        );
+        return;
+      }
+      taskIdRef.current = taskId;
     } catch (err) {
+      if (isStale()) return;
       setError(errorMessage(err));
       setStatus("error");
       endSession();
       frontendLog("ping_panel", `Ping failed: ${errorMessage(err)}`);
     }
-  }, [host, intervalMs, count, canStart, endSession]);
+  }, [host, intervalMs, count, canStart, endSession, listeners]);
 
   const handleStop = useCallback(async () => {
     if (!taskIdRef.current) return;
@@ -189,9 +206,9 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           frontendLog("ping", `stop ping ${taskId} on unmount failed: ${errorMessage(err)}`)
         );
       }
-      cleanup();
+      // The listener group releases itself on unmount.
     };
-  }, [cleanup]);
+  }, []);
 
   const latencyPoints = results.map((r) => r.latencyMs ?? null);
 

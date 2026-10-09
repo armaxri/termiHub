@@ -46,12 +46,7 @@
   flex: 1;
   min-width: 0;
   overflow-x: auto;
-  scrollbar-width: none;
   white-space: nowrap;
-}
-
-.file-browser__breadcrumbs::-webkit-scrollbar {
-  display: none;
 }
 
 .file-browser__crumb-group {

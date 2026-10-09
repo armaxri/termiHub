@@ -6,8 +6,7 @@ import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
 import {
   getDefaultBindings,
   getEffectiveCombo,
-  serializeCombo,
-  serializeBinding,
+  formatBindingForDisplay,
   setOverride,
   setOverrides,
   clearOverrides,
@@ -31,7 +30,11 @@ import "./KeyboardSettings.css";
 const keybindingFields: ListFilterFields<KeyBinding> = (binding) => {
   const effective = getEffectiveCombo(binding.action);
   const combo = effective ?? binding.winLinuxDefault;
-  const comboStr = isUnboundCombo(effective) ? "unbound" : combo ? serializeBinding(combo) : "";
+  const comboStr = isUnboundCombo(effective)
+    ? "unbound"
+    : combo
+      ? formatBindingForDisplay(combo)
+      : "";
   return [binding.label, binding.action, binding.category, comboStr];
 };
 
@@ -63,7 +66,7 @@ const RECORDING_INSTRUCTIONS =
 /** Human-readable effective binding of `action` ("unbound" when it has none). */
 function describeEffective(action: string): string {
   const combo = getEffectiveCombo(action);
-  return combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "unbound";
+  return combo && !isUnboundCombo(combo) ? formatBindingForDisplay(combo) : "unbound";
 }
 
 interface KeyboardSettingsProps {
@@ -195,7 +198,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         // polite region so the two do not talk over each other.
         setAnnouncement("");
         setConflictWarning(
-          `"${serializeBinding(combo)}" is already used by "${conflictBinding?.label ?? conflict}". ` +
+          `"${formatBindingForDisplay(combo)}" is already used by "${conflictBinding?.label ?? conflict}". ` +
             `${binding.label} shortcut unchanged.`
         );
         return;
@@ -203,7 +206,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
       setOverride(action, combo);
       persistOverrides();
-      setAnnouncement(`${binding.label} shortcut set to ${serializeBinding(combo)}.`);
+      setAnnouncement(`${binding.label} shortcut set to ${formatBindingForDisplay(combo)}.`);
     },
     [persistOverrides, bindings]
   );
@@ -395,7 +398,7 @@ function KeybindingRow({
 }: KeybindingRowProps) {
   const combo = getEffectiveCombo(binding.action);
   const isUnbound = !combo || isUnboundCombo(combo);
-  const displayStr = combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "(unbound)";
+  const displayStr = combo && !isUnboundCombo(combo) ? formatBindingForDisplay(combo) : "(unbound)";
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Live preview of the combos captured so far while recording (e.g. "Cmd+K"
@@ -470,7 +473,7 @@ function KeybindingRow({
         if (combos.length > 0) {
           // Undo the last captured combo instead of unbinding mid-chord.
           combos.pop();
-          setRecordingPreview(combos.map(serializeCombo).join(" "));
+          setRecordingPreview(formatBindingForDisplay(combos));
           return;
         }
         onRecordCompleteRef.current(null);
@@ -488,7 +491,7 @@ function KeybindingRow({
         alt: e.altKey || undefined,
         meta: e.metaKey || undefined,
       });
-      setRecordingPreview(combos.map(serializeCombo).join(" "));
+      setRecordingPreview(formatBindingForDisplay(combos));
 
       if (combos.length >= MAX_CHORD_LENGTH) {
         // A full chord — finalize immediately, no need to wait.

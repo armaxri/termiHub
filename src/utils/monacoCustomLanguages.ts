@@ -37,6 +37,7 @@ import type {
 import { shikiToMonaco } from "@shikijs/monaco";
 import type { CustomLanguageGrammar } from "@/types/connection";
 import { getCurrentTheme } from "@/themes";
+import type { ThemeDefinition } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
 import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
 import { frontendLog } from "./frontendLog";
@@ -48,12 +49,13 @@ export const MONACO_DARK_THEME = "dark-plus";
 export const MONACO_LIGHT_THEME = "light-plus";
 
 /**
- * Return the Monaco/Shiki theme name that corresponds to the given termiHub
- * theme ID (`"dark"` or `"light"`). Falls back to the dark theme for any
- * unknown value.
+ * Return the Monaco/Shiki theme name that matches the given termiHub theme.
+ * Keyed on the theme's `colorScheme` (not its id), so every light theme —
+ * built-in Light, Solarized Light, and light custom or plugin themes — gets the
+ * light editor, and everything else gets the dark one (UI2-002, #4356).
  */
-export function getMonacoTheme(appThemeId: string): string {
-  return appThemeId === "light" ? MONACO_LIGHT_THEME : MONACO_DARK_THEME;
+export function getMonacoTheme(theme: Pick<ThemeDefinition, "colorScheme">): string {
+  return theme.colorScheme === "light" ? MONACO_LIGHT_THEME : MONACO_DARK_THEME;
 }
 
 /**
@@ -192,7 +194,7 @@ async function doRegister(): Promise<void> {
 
   // Set the initial Monaco theme to match the current app theme so Shiki's
   // colour map is initialised correctly before any editor is created.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
 
   // Invalidate the language list cache so the new IDs appear in the picker.
   resetLanguageCache();
@@ -237,7 +239,7 @@ export async function registerAdditionalLanguagePackages(langIds: string[]): Pro
   shikiToMonaco(shikiHighlighter, monaco);
   // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
   // user's actual theme so the colorMap is correct and open models re-tokenize.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
 
   resetLanguageCache();
 }
@@ -327,7 +329,7 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
   shikiToMonaco(shikiHighlighter, monaco);
   // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
   // user's actual theme so the colorMap is correct and open models re-tokenize.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
   frontendLog("custom_grammars", `Token providers registered for ${toLoad.length} grammar(s)`);
   resetLanguageCache();
 }

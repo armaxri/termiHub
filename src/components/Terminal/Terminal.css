@@ -60,10 +60,14 @@
 
 .terminal-container .xterm-viewport {
   background-color: var(--terminal-bg);
-  /* Hide the native scrollbar. Since the .xterm padding insets the viewport
-     8 px from the container's right edge, a visible scrollbar would float in
-     the dark padding area and look like a stray bar. Scrollback is navigated
-     with the mouse wheel and Ctrl+F search; the bar adds nothing here. */
+  /* Named exception to the "one scrollbar" rule (ui-modernization concept,
+     #4585): the terminal's vertical scrollbar is the gutter scrollbar below
+     (.terminal-vscroll-*, terminalScrollbar.ts), not the native viewport bar.
+     The gutter is required because in horizontal-scroll mode the .xterm
+     element is widened and scrolled, so a bar attached to it would drift off
+     to the content's right edge. Showing the native bar as well would draw a
+     second vertical scrollbar, so it stays hidden here. The gutter thumb uses
+     the global scrollbar tokens and is persistently visible (#3144). */
   scrollbar-width: none;
 }
 
@@ -100,10 +104,11 @@
   overflow: hidden;
 }
 
-/* Theme the horizontal scrollbar to match the vertical gutter thumb, and pin its
-   height to --hscroll-bar so the bottom reserve above matches exactly. The thumb
-   is hidden until the terminal is hovered, matching the app-wide subtle,
-   auto-hide scrollbars (see global.css) and the vertical gutter thumb below. */
+/* Part of the terminal scrollbar exception (#4585): pin the horizontal bar's
+   height to --hscroll-bar so the bottom reserve above matches exactly, and keep
+   the track transparent so it blends with the terminal background. The thumb
+   colours come from the global scrollbar rules in global.css (persistently
+   visible, brightening on hover, #3144). */
 .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar {
   height: var(--hscroll-bar);
 }
@@ -112,26 +117,11 @@
   background: transparent;
 }
 
-.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: var(--radius-md);
-}
-
-.terminal-container:hover
-  .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-}
-
-.terminal-container:hover
-  .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: var(--scrollbar-thumb-hover);
-}
-
 /* Fixed gutter on the right that hosts the vertical scrollbar thumb in every
    mode. It is transparent: in normal mode it overlays the empty strip xterm's
    FitAddon already reserves for a scrollbar (so the content width is unchanged),
    and in horizontal mode it sits over the reserved viewport inset. Only the
-   thumb paints, so there is no artifact when there is no scrollback. */
+   thumb paints, and it is hidden (display: none) when there is no scrollback. */
 .terminal-vscroll-gutter {
   position: absolute;
   top: 0;
@@ -149,18 +139,13 @@
   border-radius: var(--radius-sm);
   background-color: var(--scrollbar-thumb);
   cursor: default;
-  /* Subtle, auto-hide: fade in only while the terminal is hovered or the thumb
-     is being dragged, matching the app-wide scrollbar behaviour (global.css). */
-  opacity: 0;
-  transition: opacity var(--transition-fast);
+  /* Persistently visible at rest, like every other scrollbar in the app
+     (global.css, #3144); brightens while hovered or dragged. */
+  transition: background-color var(--transition-fast);
 }
 
-.terminal-container:hover .terminal-vscroll-thumb,
+.terminal-vscroll-thumb:hover,
 .terminal-vscroll-thumb--dragging {
-  opacity: 1;
-}
-
-.terminal-vscroll-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
 }
 

@@ -134,3 +134,53 @@ fn data_listener_prefers_the_reserved_port_and_falls_back_in_range() {
         assert!(range.contains(&port), "{port} in {range:?}");
     });
 }
+
+/// Regression for #4563: the fallbacks must not be a run of adjacent ports.
+/// On Windows the passive range is the OS dynamic range, where Hyper-V/WinNAT
+/// exclude whole ~100-port blocks; probing the 64 ports after a reserved port
+/// inside such a block answered `425` to `PASV`.
+#[test]
+fn data_listener_fallbacks_are_distinct_in_range_and_spread_out() {
+    let range = 49152..=65534u16;
+    for preferred in [*range.start(), 50000, 57343, 65000, *range.end()] {
+        let ports: Vec<u16> = fallback_ports(preferred, &range).collect();
+        assert_eq!(ports.len(), DATA_BIND_ATTEMPTS as usize, "{preferred}");
+        let unique: std::collections::HashSet<u16> = ports.iter().copied().collect();
+        assert_eq!(unique.len(), ports.len(), "distinct for {preferred}");
+        assert!(
+            !unique.contains(&preferred),
+            "preferred is tried separately"
+        );
+        assert!(ports.iter().all(|p| range.contains(p)), "{ports:?}");
+        // At most two candidates fall in any 128-port block (an excluded
+        // block is ~100 ports), so a blocked neighbourhood costs two tries.
+        let mut per_block = std::collections::HashMap::new();
+        for p in &ports {
+            *per_block.entry(p / 128).or_insert(0u32) += 1;
+        }
+        assert!(
+            per_block.values().all(|&n| n <= 2),
+            "clustered fallbacks for {preferred}: {ports:?}"
+        );
+        // The first fallback already leaves the preferred port's block.
+        assert!(
+            ports[0].abs_diff(preferred) > 128,
+            "{preferred} -> {}",
+            ports[0]
+        );
+    }
+}
+
+#[test]
+fn data_listener_fallbacks_cover_small_ranges_without_repeats() {
+    for size in [1u16, 2, 3, 10, 64, 65, 100] {
+        let range = 50000..=50000 + size - 1;
+        let ports: Vec<u16> = fallback_ports(50000, &range).collect();
+        let expected = (DATA_BIND_ATTEMPTS as usize).min(usize::from(size) - 1);
+        assert_eq!(ports.len(), expected, "size {size}");
+        let unique: std::collections::HashSet<u16> = ports.iter().copied().collect();
+        assert_eq!(unique.len(), ports.len(), "size {size}: {ports:?}");
+        assert!(!unique.contains(&50000));
+        assert!(ports.iter().all(|p| range.contains(p)));
+    }
+}

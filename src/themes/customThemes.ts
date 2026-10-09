@@ -4,6 +4,7 @@ import { lightTheme } from "./light";
 import { solarizedDarkTheme } from "./solarized-dark";
 import { solarizedLightTheme } from "./solarized-light";
 import { COLOR_TOKEN_KEYS } from "./colorTokens";
+import { deriveTextOnAccent } from "./contrast";
 import { newId } from "@/services/transport/ids";
 
 /** Prefix used in `AppSettings.theme` to reference a custom theme by id. */
@@ -107,6 +108,9 @@ export function resolveCustomTheme(custom: ThemeDefinition): ThemeDefinition {
     const value = stored[key];
     colors[key] = typeof value === "string" && value.trim() !== "" ? value : base.colors[key];
   }
+  // Not user-editable: always derived from the (possibly edited) accent, so a
+  // stale white copied from the base can never sit on a light accent (UI2-003).
+  colors.textOnAccent = deriveTextOnAccent(colors.accentColor);
   return {
     id: custom.id,
     name: custom.name,
