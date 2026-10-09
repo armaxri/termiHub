@@ -11,7 +11,11 @@
 //!   ([`InitBehavior::Stall`]), answer at once ([`InitBehavior::Answer`]), or
 //!   answer only once the test opens a gate ([`InitBehavior::AnswerWhenReleased`]).
 //!
-//! Every other JSON-RPC line the desktop writes after `initialize` is ignored.
+//! It also serves two test-only methods for the stdout framing tests (#4303):
+//! `fake.echo` answers with its params — preceded by a `fake.note`
+//! notification — one byte per SSH data message, so every chunk boundary lands
+//! inside a line and inside each multi-byte character; `fake.flood` streams
+//! `params.bytes` bytes with no newline. Every other JSON-RPC line is ignored.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -19,6 +23,7 @@ use std::time::Duration;
 
 use russh::server::{Auth, Msg, Session};
 use russh::{Channel, ChannelId};
+use termihub_core::ipc::ndjson::LineSplitter;
 use tokio::sync::{watch, Notify};
 
 use crate::terminal::backend::RemoteAgentConfig;
@@ -35,7 +40,16 @@ pub(super) enum InitBehavior {
     Answer,
     /// Answer once [`FakeAgentSshd::release`] is called.
     AnswerWhenReleased,
+    /// Answer straight away, reporting [`SPLIT_AGENT_VERSION`] as the agent
+    /// version, one byte per SSH data message (#4303).
+    AnswerInOneByteChunks,
 }
+
+/// The non-ASCII agent version [`InitBehavior::AnswerInOneByteChunks`] reports.
+pub(super) const SPLIT_AGENT_VERSION: &str = "0.0.0-Übersicht-€-😀";
+
+/// Bytes per data message `fake.flood` writes.
+const FLOOD_CHUNK: usize = 32 * 1024;
 
 /// A running fake agent endpoint; stops accepting when dropped.
 pub(super) struct FakeAgentSshd {
@@ -82,7 +96,7 @@ impl FakeAgentSshd {
                     inits: task_inits.clone(),
                     init_seen: task_seen.clone(),
                     release: release_rx.clone(),
-                    line_buf: String::new(),
+                    lines: LineSplitter::new(),
                 };
                 let config = config.clone();
                 tokio::spawn(async move {
@@ -148,12 +162,17 @@ impl FakeAgentSshd {
 
 /// A minimal valid `initialize` answer for request `id`.
 fn initialize_answer(id: u64) -> String {
+    initialize_answer_with_version(id, "0.0.0-fake")
+}
+
+/// [`initialize_answer`] reporting `agent_version`.
+fn initialize_answer_with_version(id: u64, agent_version: &str) -> String {
     let mut line = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id,
         "result": {
             "protocol_version": "0.13.0",
-            "agent_version": "0.0.0-fake",
+            "agent_version": agent_version,
             "client_id": "fake-client",
             "capabilities": { "connectionTypes": [], "maxSessions": 20 },
         },
@@ -168,7 +187,21 @@ struct FakeAgentHandler {
     inits: Arc<AtomicUsize>,
     init_seen: Arc<Notify>,
     release: watch::Receiver<bool>,
-    line_buf: String,
+    lines: LineSplitter,
+}
+
+/// Queue `bytes` on `channel` one byte per SSH data message.
+fn send_one_byte_at_a_time(session: &mut Session, channel: ChannelId, bytes: &[u8]) {
+    for byte in bytes {
+        let _ = session.data(channel, vec![*byte]);
+    }
+}
+
+/// One NDJSON line for `value`.
+fn ndjson_line(value: &serde_json::Value) -> String {
+    let mut line = value.to_string();
+    line.push('\n');
+    line
 }
 
 impl FakeAgentHandler {
@@ -180,6 +213,10 @@ impl FakeAgentHandler {
             InitBehavior::Stall => {}
             InitBehavior::Answer => {
                 let _ = session.data(channel, initialize_answer(id).into_bytes());
+            }
+            InitBehavior::AnswerInOneByteChunks => {
+                let answer = initialize_answer_with_version(id, SPLIT_AGENT_VERSION);
+                send_one_byte_at_a_time(session, channel, answer.as_bytes());
             }
             InitBehavior::AnswerWhenReleased => {
                 let handle = session.handle();
@@ -234,16 +271,41 @@ impl russh::server::Handler for FakeAgentHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        self.line_buf.push_str(&String::from_utf8_lossy(data));
-        while let Some(pos) = self.line_buf.find('\n') {
-            let line: String = self.line_buf.drain(..=pos).collect();
-            let Ok(msg) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        let messages: Vec<serde_json::Value> = self
+            .lines
+            .push(data)
+            .filter_map(|line| serde_json::from_str(line.ok()?.trim()).ok())
+            .collect();
+        for msg in messages {
+            let Some(id) = msg.get("id").and_then(|i| i.as_u64()) else {
                 continue;
             };
-            if msg.get("method").and_then(|m| m.as_str()) == Some("initialize") {
-                if let Some(id) = msg.get("id").and_then(|i| i.as_u64()) {
-                    self.on_initialize(channel, id, session);
+            let params = msg.get("params").cloned().unwrap_or_default();
+            match msg.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => self.on_initialize(channel, id, session),
+                Some("fake.echo") => {
+                    let note = serde_json::json!({
+                        "jsonrpc": "2.0", "method": "fake.note", "params": params,
+                    });
+                    let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": params });
+                    let wire = ndjson_line(&note) + &ndjson_line(&reply);
+                    send_one_byte_at_a_time(session, channel, wire.as_bytes());
                 }
+                Some("fake.flood") => {
+                    let total = params.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0);
+                    let handle = session.handle();
+                    tokio::spawn(async move {
+                        let mut sent: u64 = 0;
+                        while sent < total {
+                            let n = FLOOD_CHUNK.min((total - sent) as usize);
+                            if handle.data(channel, vec![b'x'; n]).await.is_err() {
+                                break;
+                            }
+                            sent += n as u64;
+                        }
+                    });
+                }
+                _ => {}
             }
         }
         Ok(())
