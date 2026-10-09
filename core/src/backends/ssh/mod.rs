@@ -115,7 +115,10 @@ struct ConnectedState {
     close: IoFn,
     alive: Arc<AtomicBool>,
     /// Keeps opaque resources alive for the session lifetime (e.g. X11Forwarder).
-    _extensions: Vec<Box<dyn std::any::Any + Send>>,
+    ///
+    /// Behind a `Mutex` only so `Ssh` stays `Sync` (the extensions are `Send`
+    /// but not necessarily `Sync`); they are never accessed, just held (#4300).
+    _extensions: std::sync::Mutex<Vec<Box<dyn std::any::Any + Send>>>,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both close the channel.
@@ -825,7 +828,7 @@ impl ConnectionType for Ssh {
             _send_eof: handle.send_eof,
             close: handle.close,
             alive,
-            _extensions: handle.extensions,
+            _extensions: std::sync::Mutex::new(handle.extensions),
             disconnected: false,
         });
 
@@ -2329,7 +2332,7 @@ mod tests {
                 Ok(())
             }),
             alive,
-            _extensions: Vec::new(),
+            _extensions: std::sync::Mutex::new(Vec::new()),
             disconnected,
         }
     }

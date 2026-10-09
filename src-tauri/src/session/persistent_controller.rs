@@ -308,7 +308,7 @@ impl<'a> PersistentController<'a> {
                         sessions.insert(
                             session_id.clone(),
                             SessionEntry {
-                                connection: Box::new(proxy),
+                                connection: std::sync::Arc::new(proxy),
                                 info: SessionInfo {
                                     id: session_id.clone(),
                                     title: "Persistent Session".to_string(),
@@ -320,6 +320,7 @@ impl<'a> PersistentController<'a> {
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),
                                 reader_cancel: reader_cancel.clone(),
+                                io: super::manager::session_io::SessionIo::default(),
                             },
                         );
                     }
