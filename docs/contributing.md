@@ -151,7 +151,7 @@ The `scripts/` directory has cross-platform helpers (`.sh` + `.cmd`) for all com
 ./scripts/build.sh     # Build for production
 ./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
 ./scripts/check.sh     # Pre-push quality checks (mirrors CI)
-./scripts/ci-local.sh  # Reproduce the WHOLE per-PR CI gate in one command
+./scripts/ci-local.sh  # Reproduce the per-PR CI gate in one command
 ./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
 ./scripts/clean.sh     # Remove all build artifacts
 ```
@@ -166,14 +166,20 @@ run on the ConPTY built into Windows, which drops SIXEL images.
 
 ### Reproducing CI locally
 
-`./scripts/ci-local.sh` runs the same checks as the per-PR **Code Quality** workflow
-([`.github/workflows/code-quality.yml`](../.github/workflows/code-quality.yml)) in one
-command — formatting, ESLint, `tsc`, markdownlint, `cargo fmt`, Clippy (incl. the isolated
-`ftp` feature build), `cargo test`, the frontend coverage floors, `cargo audit`/`cargo deny`,
-the production `pnpm audit` gate, the Python machinery suite, plugin packaging, and commitlint.
-A clean run means a green PR gate. Use `./scripts/ci-local.sh --quick` for the quality-only
+`./scripts/ci-local.sh` reproduces the per-PR **Code Quality** workflow
+([`.github/workflows/code-quality.yml`](../.github/workflows/code-quality.yml)) job by job in
+one command — formatting, ESLint, `tsc`, markdownlint, `cargo fmt`, Clippy (incl. every core
+feature in isolation, read from `cargo metadata` like CI), the ts-rs and IPC wire-fixture
+staleness checks, cargo-machete, the rdp-sidecar and plugin fuzz-crate checks, bundle size,
+rustdoc, ShellCheck with the script parity and headless checks, actionlint, `cargo test`, the
+frontend coverage floors, the Python machinery suite, the testid drift guard,
+`cargo audit`/`cargo deny`, the production `pnpm audit` gate, plugin packaging, and commitlint.
+What it cannot run (the Windows-only jobs, the other OS test legs) is listed in the closing
+summary; `scripts/internal/ci-local.mjs` maps every workflow job to its local gates, and a
+unit test fails when the two drift. Use `./scripts/ci-local.sh --quick` for the quality-only
 subset (skips the slow test/audit/build gates); this is what the pre-push hook runs. Missing
-optional tools (`cargo-audit`, `cargo-deny`, `uv`) are skipped with a warning, not a failure.
+optional tools (`cargo-audit`, `cargo-deny`, `cargo-machete`, `uv`, `shellcheck`,
+`actionlint`) are skipped with a warning, not a failure.
 
 ### CI lanes: what a green PR proves (and what it does not)
 
