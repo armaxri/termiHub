@@ -24,14 +24,14 @@ function renderStatusBar(root: Root) {
 describe("StatusBar — services indicator experimental gating (#4498)", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let setSidebarView: ReturnType<typeof vi.fn>;
+  let setSidebarView: ReturnType<typeof vi.fn<(view: string) => void>>;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    setSidebarView = vi.fn();
+    setSidebarView = vi.fn<(view: string) => void>();
     useAppStore.setState({
       embeddedServerStates: { s1: { status: "running" } as never },
       setSidebarView,
