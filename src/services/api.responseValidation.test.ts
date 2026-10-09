@@ -37,10 +37,7 @@ import {
   importInventoryHosts,
   connectAgent,
   adoptPersistentSession,
-  listPersistentSessions,
-  deployAgent,
   updateAgent,
-  validatePlugin,
   previewPlugin,
   getPluginHostPlatform,
   assessPluginTrust,
@@ -607,41 +604,12 @@ describe("api response-validation (TFE-004)", () => {
       });
       expect(result).toBe("agent-sess-9");
     });
-
-    it("listPersistentSessions returns the summaries", async () => {
-      const sessions = [{ connectionId: "c1", sessionId: "s1", attachedTabCount: 2 }];
-      mockedInvoke.mockResolvedValue(sessions);
-
-      const result = await listPersistentSessions();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("list_persistent_sessions");
-      expect(result).toEqual(sessions);
-    });
   });
 
   // deploy/update return a discriminated union; the wrapper must return each
   // variant faithfully so the caller can branch on `kind` (deployed vs
   // otherHostsConnected vs coordinated).
   describe("agent deploy/update discriminated-union results", () => {
-    it("deployAgent returns a deployed result", async () => {
-      const deployed = {
-        kind: "deployed",
-        success: true,
-        installedVersion: "1.2.3",
-        installedPath: "/usr/local/bin/termihub-agent",
-      };
-      mockedInvoke.mockResolvedValue(deployed);
-
-      const result = await deployAgent("agent-1", agentConfig, { remotePath: "/x" });
-
-      expect(mockedInvoke).toHaveBeenCalledWith("deploy_agent", {
-        agentId: "agent-1",
-        config: agentConfig,
-        deployConfig: { remotePath: "/x" },
-      });
-      expect(result).toEqual(deployed);
-    });
-
     it("updateAgent returns an otherHostsConnected guard result", async () => {
       const guarded = {
         kind: "otherHostsConnected",
@@ -687,18 +655,6 @@ describe("api response-validation (TFE-004)", () => {
   // arg key (filePath → `path`, pluginId → `id`). A regression here would call
   // the command with the wrong key shape — assert the remapping explicitly.
   describe("plugin command arg-key remapping", () => {
-    it("validatePlugin sends filePath under the `path` key", async () => {
-      const manifest = { id: "p1", name: "Plugin", version: "1.0.0" };
-      mockedInvoke.mockResolvedValue(manifest);
-
-      const result = await validatePlugin("/tmp/p1.termihub-plugin");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("validate_plugin", {
-        path: "/tmp/p1.termihub-plugin",
-      });
-      expect(result).toEqual(manifest);
-    });
-
     it("previewPlugin sends filePath under the `path` key (#3507)", async () => {
       const preview = {
         manifest: { id: "p1" },

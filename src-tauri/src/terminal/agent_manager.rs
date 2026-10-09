@@ -746,9 +746,6 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         agent_id: &str,
     ) -> Result<AgentConnectionsData, TerminalError>;
 
-    /// List saved session definitions on the agent (backward compat).
-    fn list_definitions(&self, agent_id: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError>;
-
     /// Save a session definition on the agent.
     fn save_definition(
         &self,
@@ -2343,14 +2340,6 @@ impl<R: Runtime> AgentConnectionManager<R> {
         })
     }
 
-    /// List saved session definitions on the agent (backward compat).
-    pub fn list_definitions(
-        &self,
-        agent_id: &str,
-    ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        Ok(self.list_connections_and_folders(agent_id)?.connections)
-    }
-
     /// Save a session definition on the agent.
     pub fn save_definition(
         &self,
@@ -3108,10 +3097,6 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         agent_id: &str,
     ) -> Result<AgentConnectionsData, TerminalError> {
         AgentConnectionManager::list_connections_and_folders(self, agent_id)
-    }
-
-    fn list_definitions(&self, agent_id: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        AgentConnectionManager::list_definitions(self, agent_id)
     }
 
     fn save_definition(

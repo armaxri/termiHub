@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Default SSH connect/handshake timeout (seconds) when a connection does not
@@ -78,7 +79,65 @@ fn home_directory_from(lookup: &dyn Fn(&str) -> Option<String>) -> Option<PathBu
     }
 }
 
+/// The `{PORTABLE_DIR}` path placeholder.
+///
+/// In portable mode it resolves to the portable base directory (the folder
+/// holding the portable `data/` directory, which on macOS is the folder next to
+/// the `.app` bundle), so a path such as `{PORTABLE_DIR}/data/keys/id_rsa`
+/// stays valid when the drive letter or mount point changes. In installed mode
+/// it is left verbatim (#4571).
+pub const PORTABLE_DIR_PLACEHOLDER: &str = "{PORTABLE_DIR}";
+
+/// The portable base directory, published once at boot by the desktop app.
+static PORTABLE_BASE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Publish the portable base directory so [`expand_config_value`] and
+/// [`expand_tilde_only`] resolve the `{PORTABLE_DIR}` placeholder against it.
+///
+/// The desktop app calls this once at boot when it detects portable mode. It is
+/// never called in installed mode, so the placeholder then stays verbatim. The
+/// value is write-once for the life of the process: a second call is ignored
+/// and returns `false`.
+pub fn set_portable_base_dir(base_dir: PathBuf) -> bool {
+    PORTABLE_BASE_DIR.set(base_dir).is_ok()
+}
+
+/// The portable base directory published by [`set_portable_base_dir`], or
+/// `None` in installed mode.
+pub fn portable_base_dir() -> Option<&'static Path> {
+    PORTABLE_BASE_DIR.get().map(PathBuf::as_path)
+}
+
+/// Replace every `{PORTABLE_DIR}` placeholder in `value` with the portable
+/// base directory published at boot. Returns `value` unchanged in installed
+/// mode or when it contains no placeholder.
+pub fn resolve_portable_placeholder(value: &str) -> String {
+    resolve_portable_placeholder_with(value, portable_base_dir())
+}
+
+/// Pure core of [`resolve_portable_placeholder`], taking the base directory
+/// explicitly (`None` = installed mode) so tests need no process-global state.
+///
+/// Trailing path separators are trimmed from the base directory before
+/// substitution, so a base at a drive or filesystem root (`E:\`, `/`) does
+/// not yield a doubled separator. Either separator style after the placeholder
+/// is kept as written (`{PORTABLE_DIR}\data\keys` works on Windows).
+fn resolve_portable_placeholder_with(value: &str, base_dir: Option<&Path>) -> String {
+    let Some(base_dir) = base_dir else {
+        return value.to_owned();
+    };
+    if !value.contains(PORTABLE_DIR_PLACEHOLDER) {
+        return value.to_owned();
+    }
+    let base = base_dir.to_string_lossy();
+    let base = base.trim_end_matches(['/', '\\']);
+    value.replace(PORTABLE_DIR_PLACEHOLDER, base)
+}
+
 /// Expand a leading `~` or `~/` to the user's home directory.
+///
+/// A `{PORTABLE_DIR}` placeholder is resolved first (see
+/// [`resolve_portable_placeholder`]).
 ///
 /// Returns the input unchanged if it does not start with `~/` (or is not just
 /// `~`), or if the home directory cannot be resolved. `~user` paths are left
@@ -86,6 +145,8 @@ fn home_directory_from(lookup: &dyn Fn(&str) -> Option<String>) -> Option<PathBu
 /// environment variable substitution, so it is safe for user-supplied paths
 /// where a literal `$` should not be interpreted.
 pub fn expand_tilde_only(path: &str) -> String {
+    let resolved = resolve_portable_placeholder(path);
+    let path = resolved.as_str();
     if path != "~" && !path.starts_with("~/") && !path.starts_with(r"~\") {
         return path.to_string();
     }
@@ -100,13 +161,16 @@ pub fn expand_tilde_only(path: &str) -> String {
     }
 }
 
-/// Expand `${VAR}` / `$VAR` placeholders and a leading `~` in a config value.
+/// Expand `${VAR}` / `$VAR` placeholders, a leading `~`, and the
+/// `{PORTABLE_DIR}` placeholder in a config value.
 ///
 /// Backed by the `shellexpand` crate. Unknown environment variables expand to
 /// an empty string. Tilde expansion uses [`home_directory`]; `~user` paths
-/// are left unchanged.
+/// are left unchanged. `{PORTABLE_DIR}` is resolved after the shell-style
+/// expansion (see [`resolve_portable_placeholder`]), so a `$` or `~` inside the
+/// portable base directory itself is never re-expanded.
 pub fn expand_config_value(value: &str) -> String {
-    expand_config_value_with(value, &env_lookup)
+    resolve_portable_placeholder(&expand_config_value_with(value, &env_lookup))
 }
 
 /// Read the initial terminal size `(cols, rows)` from a connection's settings.
@@ -1113,6 +1177,113 @@ mod tests {
         assert!(
             expanded.ends_with(".ssh/id_rsa") || expanded.ends_with(r".ssh\id_rsa"),
             "got: {expanded}"
+        );
+    }
+
+    // --- {PORTABLE_DIR} placeholder (#4571) ---
+
+    /// The portable base directory every test that needs the process-wide
+    /// value publishes. The slot is write-once, so all such tests must agree.
+    fn test_portable_base_dir() -> &'static Path {
+        let base = if cfg!(windows) {
+            Path::new(r"E:\termiHub")
+        } else {
+            Path::new("/media/usb/termiHub")
+        };
+        set_portable_base_dir(base.to_path_buf());
+        portable_base_dir().expect("portable base dir was just published")
+    }
+
+    #[test]
+    fn portable_placeholder_replaced_in_portable_mode() {
+        let base = Path::new("/usb/termiHub");
+        assert_eq!(
+            resolve_portable_placeholder_with("{PORTABLE_DIR}/data/keys/id_rsa", Some(base)),
+            "/usb/termiHub/data/keys/id_rsa"
+        );
+    }
+
+    #[test]
+    fn portable_placeholder_without_placeholder_unchanged() {
+        let base = Path::new("/usb/termiHub");
+        assert_eq!(
+            resolve_portable_placeholder_with("/home/user/.ssh/id_rsa", Some(base)),
+            "/home/user/.ssh/id_rsa"
+        );
+    }
+
+    #[test]
+    fn portable_placeholder_unchanged_in_installed_mode() {
+        assert_eq!(
+            resolve_portable_placeholder_with("{PORTABLE_DIR}/data/keys/id_rsa", None),
+            "{PORTABLE_DIR}/data/keys/id_rsa"
+        );
+    }
+
+    #[test]
+    fn portable_placeholder_windows_separators() {
+        let base = Path::new(r"E:\termiHub");
+        assert_eq!(
+            resolve_portable_placeholder_with(r"{PORTABLE_DIR}\data\keys\id_rsa", Some(base)),
+            r"E:\termiHub\data\keys\id_rsa"
+        );
+    }
+
+    #[test]
+    fn portable_placeholder_root_base_dir_has_no_doubled_separator() {
+        assert_eq!(
+            resolve_portable_placeholder_with(r"{PORTABLE_DIR}\data\id", Some(Path::new(r"E:\"))),
+            r"E:\data\id"
+        );
+        assert_eq!(
+            resolve_portable_placeholder_with("{PORTABLE_DIR}/data/id", Some(Path::new("/"))),
+            "/data/id"
+        );
+    }
+
+    #[test]
+    fn expand_config_value_resolves_portable_placeholder() {
+        let base = test_portable_base_dir().to_string_lossy().into_owned();
+        assert_eq!(
+            expand_config_value("{PORTABLE_DIR}/data/keys/id_rsa"),
+            format!("{base}/data/keys/id_rsa")
+        );
+    }
+
+    #[test]
+    fn expand_tilde_only_resolves_portable_placeholder() {
+        let base = test_portable_base_dir().to_string_lossy().into_owned();
+        assert_eq!(
+            expand_tilde_only("{PORTABLE_DIR}/data/files"),
+            format!("{base}/data/files")
+        );
+    }
+
+    #[test]
+    fn ssh_key_path_receives_resolved_portable_path() {
+        let base = test_portable_base_dir().to_string_lossy().into_owned();
+        let config = SshConfig {
+            host: "example.com".into(),
+            username: "user".into(),
+            auth_method: "key".into(),
+            // Quoted, as users often paste it; expansion strips the quotes.
+            key_path: Some("\"{PORTABLE_DIR}/data/keys/id_rsa\"".into()),
+            proxy_jump: vec![JumpHostConfig {
+                host: "jump".into(),
+                auth_method: "key".into(),
+                key_path: Some(r"{PORTABLE_DIR}\data\keys\jump_key".into()),
+                ..JumpHostConfig::default()
+            }],
+            ..SshConfig::default()
+        }
+        .expand();
+        assert_eq!(
+            config.key_path.as_deref(),
+            Some(format!("{base}/data/keys/id_rsa").as_str())
+        );
+        assert_eq!(
+            config.proxy_jump[0].key_path.as_deref(),
+            Some(format!(r"{base}\data\keys\jump_key").as_str())
         );
     }
 

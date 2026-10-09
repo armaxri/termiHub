@@ -49,7 +49,6 @@ vi.mock("@/services/api", () => ({
   cancelConnectAgent: vi.fn(() => Promise.resolve()),
   disconnectAgent: vi.fn(() => Promise.resolve()),
   shutdownAgent: vi.fn(() => Promise.resolve(0)),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
   saveAgentDefinition: vi.fn(),
   updateAgentDefinition: vi.fn(),

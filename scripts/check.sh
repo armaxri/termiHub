@@ -82,7 +82,8 @@ fi
 
 echo ""
 echo "=== IPC invoke argument contract ==="
-# invoke() arg keys vs #[tauri::command] param names (#3488).
+# invoke() arg keys vs #[tauri::command] param names (#3488), and no orphan
+# registered commands without a production caller (#4344).
 if node scripts/internal/check-invoke-contract.mjs; then
     echo "PASS"
 else

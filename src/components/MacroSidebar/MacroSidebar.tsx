@@ -6,7 +6,7 @@ import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
-import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
+import { useListFilter, nameDescriptionTagsFields } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeMacros } from "@/services/macroIo";
@@ -53,7 +53,7 @@ export function MacroSidebar() {
   const handleShowAllHistory = useCallback(() => setHistoryMacroId(null), []);
   // Authoring a brand-new macro by hand (PROD-039): opens the editor blank.
   const [creating, setCreating] = useState(false);
-  const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsMatcher);
+  const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsFields);
   const exportMacrosToFile = useJsonFileExport("macros");
   const importMacrosFromFile = useJsonFileImport("macros");
   const macroDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {

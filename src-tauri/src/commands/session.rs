@@ -20,9 +20,7 @@ use crate::files::transfer::{
 };
 use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::line_ending::LineEnding;
-use crate::session::manager::{
-    PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager, SessionOrigin,
-};
+use crate::session::manager::{SessionInfo, SessionLogStatus, SessionManager, SessionOrigin};
 use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
 use crate::session_projection::projection::fold_session_transition;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
@@ -553,28 +551,10 @@ pub fn list_serial_ports(conn_manager: State<'_, ConnectionManager>) -> Vec<Stri
     }
 }
 
-/// Check if a local X server is available for X11 forwarding.
-#[tauri::command]
-pub fn check_x11_available() -> bool {
-    crate::utils::x11_detect::is_x_server_likely_running()
-}
-
-/// Check whether the SSH agent is running, stopped, or not installed.
-#[tauri::command]
-pub fn check_ssh_agent_status() -> String {
-    crate::utils::ssh_auth::check_ssh_agent_status()
-}
-
 /// Check if Docker is available on the local system.
 #[tauri::command]
 pub fn check_docker_available() -> bool {
     crate::utils::docker_detect::is_docker_available()
-}
-
-/// List locally available Docker images.
-#[tauri::command]
-pub fn list_docker_images() -> Vec<String> {
-    crate::utils::docker_detect::list_docker_images()
 }
 
 /// Parse the Docker connection's `runtime` setting (`auto` / `docker` /
@@ -613,12 +593,6 @@ pub async fn list_docker_containers(
 #[tauri::command]
 pub fn check_podman_available() -> bool {
     crate::utils::docker_detect::is_podman_available()
-}
-
-/// List locally available Podman images.
-#[tauri::command]
-pub fn list_podman_images() -> Vec<String> {
-    crate::utils::docker_detect::list_podman_images()
 }
 
 /// Validate an SSH key file path and return a user-facing hint.
@@ -1690,14 +1664,6 @@ pub async fn detach_persistent_tab(
     manager
         .detach_persistent_tab(&session_id, &tab_id, app_handle)
         .await
-}
-
-/// Return a snapshot of all registered persistent sessions.
-#[tauri::command]
-pub async fn list_persistent_sessions(
-    manager: State<'_, SessionManager>,
-) -> Result<Vec<PersistentSessionSummary>, TerminalError> {
-    Ok(manager.list_persistent_sessions().await)
 }
 
 /// Fetch the scrollback buffer from the agent for a persistent session.

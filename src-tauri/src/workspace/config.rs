@@ -311,22 +311,9 @@ pub struct WorkspaceExportEntry {
     pub settings: Option<WorkspaceSettings>,
 }
 
-/// Preview of a workspace import file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceImportPreview {
-    pub workspace_count: usize,
-    pub total_tab_count: usize,
-    /// Tabs that would import with a command or an inline connection config
-    /// the user has not confirmed on this machine (#4434).
-    pub untrusted_tabs: Vec<UntrustedImportedTab>,
-}
-
 /// One imported tab that carries something the import file decides on its own
 /// (#4434): a command typed into the session after it connects, or an inline
-/// connection config. Listed in the import preview and result so the import
+/// connection config. Listed in the import result so the import
 /// notice can show the user exactly what the file wants to run.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]

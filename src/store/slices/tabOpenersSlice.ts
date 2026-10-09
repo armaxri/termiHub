@@ -27,6 +27,7 @@ import { getAllLeaves, updateLeaf } from "@/utils/panelTree";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
+import { getBasename } from "@/utils/paths";
 
 /**
  * Tab-openers slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -406,7 +407,7 @@ export const createTabOpenersSlice: StateCreator<AppState, [], [], TabOpenersSli
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        const fileName = filePath.split("/").pop() ?? filePath;
+        const fileName = getBasename(filePath);
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const editorMeta: EditorTabMeta = {
           filePath,

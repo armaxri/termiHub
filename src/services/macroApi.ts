@@ -10,11 +10,6 @@ export async function listMacros(): Promise<Macro[]> {
   return await invoke<Macro[]>("list_macros");
 }
 
-/** Get a single macro by ID. */
-export async function getMacro(macroId: string): Promise<Macro> {
-  return await invoke<Macro>("get_macro", { macroId });
-}
-
 /** Save (add or update) a macro. Returns the stored macro with authoritative timestamps. */
 export async function saveMacro(macro: Macro): Promise<Macro> {
   return await invoke<Macro>("save_macro", { macroDef: macro });

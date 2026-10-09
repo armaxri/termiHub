@@ -14,8 +14,8 @@ evidence:
   - src-tauri/src/terminal/agent_deploy.rs:798
   - src/components/Terminal/TerminalView.tsx:85
   - src/components/Terminal/TerminalView.tsx:99
-status: open
-resolution: ""
+status: fixed
+resolution: "#4344 — legacy tunnel status/stats emits, agent-deploy-progress and the remote-state-change listener removed; drift fails the event contract test"
 audit: 2026-10
 commit: 663465d52
 relation: new

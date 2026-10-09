@@ -11,6 +11,8 @@ import {
   buildContract,
   collectInvokeCalls,
   findMismatches,
+  countIdentifiers,
+  findOrphans,
   isProductionTsFile,
   checkRepo,
 } from "./check-invoke-contract.mjs";
@@ -272,6 +274,66 @@ describe("isProductionTsFile", () => {
     expect(isProductionTsFile("src/test/setup.ts")).toBe(false);
     expect(isProductionTsFile("src/vite-env.d.ts")).toBe(false);
     expect(isProductionTsFile("src/styles.css")).toBe(false);
+  });
+});
+
+describe("enclosingFunctionName", () => {
+  const callers = (src, name = "a.ts") => collectInvokeCalls(src, name).map((c) => c.caller);
+
+  it("names the wrapper function, not a local the result is bound to", () => {
+    const src = `import { invoke } from "@tauri-apps/api/core";
+export async function getThing() {
+  const result = await invoke("get_thing");
+  return result;
+}
+export const viaArrow = async () => invoke("arrow_cmd");
+const api = { method: () => invoke("method_cmd") };
+function Comp() {
+  const onClick = useCallback(() => invoke("cb_cmd"), []);
+  useEffect(() => { void invoke("effect_cmd"); }, []);
+}
+void invoke("top_level");`;
+    expect(callers(src)).toEqual(["getThing", "viaArrow", "method", "onClick", "Comp", null]);
+  });
+});
+
+describe("findOrphans (#4344)", () => {
+  const contract = new Map([
+    ["used_cmd", {}],
+    ["orphan_cmd", {}],
+    ["never_invoked", {}],
+    ["top_level_cmd", {}],
+    ["allowed_cmd", {}],
+  ]);
+  const wrappers = `import { invoke } from "@tauri-apps/api/core";
+export async function usedCmd() { return invoke("used_cmd"); }
+export async function orphanCmd() { return invoke("orphan_cmd"); }
+export async function allowedCmd() { return invoke("allowed_cmd"); }
+void invoke("top_level_cmd");`;
+  const consumer = `import { usedCmd } from "./api";
+export function Widget() { void usedCmd(); }`;
+  const calls = collectInvokeCalls(wrappers, "src/services/api.ts");
+  const counts = countIdentifiers(wrappers, "api.ts");
+  countIdentifiers(consumer, "Widget.tsx", counts);
+
+  it("flags never-invoked commands and wrappers nothing calls", () => {
+    const problems = findOrphans(contract, calls, counts, new Map([["allowed_cmd", "why"]]));
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("'never_invoked': registered but never invoked");
+    expect(problems[1]).toContain("'orphan_cmd'");
+    expect(problems[1]).toContain("orphanCmd (src/services/api.ts:3)");
+  });
+
+  it("reports stale allowlist entries", () => {
+    const problems = findOrphans(
+      new Map([["used_cmd", {}]]),
+      calls,
+      counts,
+      new Map([["gone_cmd", "why"]])
+    );
+    expect(problems).toEqual([
+      "ORPHAN_ALLOWLIST entry 'gone_cmd' is not a registered command — remove it",
+    ]);
   });
 });
 

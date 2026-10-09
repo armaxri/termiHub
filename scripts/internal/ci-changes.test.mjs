@@ -49,7 +49,7 @@ describe("classify", () => {
 
   it("flags agent for anything the agent binary builds from (#3615)", () => {
     expect(on(classify(["agent/src/main.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
-    expect(on(classify(["core/src/lib.rs"]))).toEqual(["rust", "agent", "rustdoc"]);
+    expect(on(classify(["core/src/lib.rs"]))).toEqual(["rust", "sidecar", "agent", "rustdoc"]);
     expect(on(classify(["agent/tests/local_agent_integration.rs"]))).toEqual([
       "rust",
       "agent",
@@ -70,8 +70,21 @@ describe("classify", () => {
     expect(on(classify(["plugin-runner/fuzz/fuzz_targets/host_decode.rs"]))).toEqual(fuzz);
     expect(classify(["plugin-runner/Cargo.toml"])).toMatchObject({ deps: true, plugin_fuzz: true });
     expect(on(classify(["plugin-api/src/lib.rs"]))).toEqual(fuzz);
-    expect(on(classify(["win-security/src/windows.rs"]))).toEqual(fuzz);
-    expect(on(classify(["rust-toolchain.toml"]))).toEqual(fuzz);
+    // win-security also feeds the RDP sidecar through core (#4357).
+    expect(on(classify(["win-security/src/windows.rs"]))).toEqual([
+      "rust",
+      "sidecar",
+      "agent",
+      "rustdoc",
+      "plugin_fuzz",
+    ]);
+    expect(on(classify(["rust-toolchain.toml"]))).toEqual([
+      "rust",
+      "sidecar",
+      "agent",
+      "rustdoc",
+      "plugin_fuzz",
+    ]);
     expect(on(classify([".cargo/config.toml"]))).toEqual(fuzz);
     expect(classify(["Cargo.toml"])).toMatchObject({ rust: true, plugin_fuzz: true });
   });
@@ -138,6 +151,31 @@ describe("classify", () => {
     expect(on(classify(["rdp-sidecar/Cargo.lock", "rdp-sidecar/src/main.rs"]))).toEqual([
       "sidecar",
     ]);
+  });
+
+  // #4357 (SUP2-004): rdp-sidecar depends on termihub-core by path, core pulls
+  // win-security by path and inherits versions from the root Cargo.toml, so a
+  // change there alters the shipped sidecar graph and must run its cargo-deny gate.
+  it("runs the sidecar job for what the sidecar compiles from outside rdp-sidecar/", () => {
+    expect(classify(["core/src/lib.rs"]).sidecar).toBe(true);
+    expect(classify(["core/Cargo.toml"])).toMatchObject({ sidecar: true, deps: true });
+    expect(classify(["win-security/src/lib.rs"]).sidecar).toBe(true);
+    expect(classify(["Cargo.toml"])).toMatchObject({ rust: true, sidecar: true });
+    expect(classify(["rust-toolchain.toml"]).sidecar).toBe(true);
+  });
+
+  it("does not run the sidecar job for Rust the sidecar does not build from", () => {
+    // The sidecar resolves against its own lockfile, not the workspace one.
+    expect(classify(["Cargo.lock"]).sidecar).toBe(false);
+    expect(classify(["agent/src/main.rs"]).sidecar).toBe(false);
+    expect(classify(["src-tauri/src/lib.rs"]).sidecar).toBe(false);
+    expect(classify(["plugin-runner/src/lib.rs"]).sidecar).toBe(false);
+    expect(classify(["src/main.tsx"]).sidecar).toBe(false);
+  });
+
+  it("narrows a comment-only core change off the sidecar job", () => {
+    const path = "core/src/lib.rs";
+    expect(on(classify([path], { commentOnly: new Set([path]) }))).toEqual(["rustdoc"]);
   });
 
   it("maps ts-rs generated types to both rust and frontend", () => {

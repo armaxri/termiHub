@@ -45,8 +45,8 @@
 //!
 //! # Scope
 //!
-//! **SFTP and FTP session** transfers (`session_download` / `session_upload`,
-//! `ftp_download` / `ftp_upload`) relaunch through their session reference,
+//! **SFTP and FTP session** transfers (`session_download` / `session_upload`)
+//! relaunch through their session reference,
 //! which resolves to the live session's SFTP browser or FTP connection settings
 //! — the credentials come from the live session, never from the persisted queue
 //! (see [`super::relaunch_session`]). **Remote-to-remote copies** (PROD-0013)

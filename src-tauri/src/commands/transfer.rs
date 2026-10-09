@@ -2,9 +2,9 @@
 //!
 //! These control the shared [`TransferRegistry`] queue model and are named
 //! generically (`transfer_*`) so SFTP can migrate onto the same queue later.
-//! `ftp_download` / `ftp_upload` register FTP transfers; the FTP data plane is
-//! feature-gated behind `ftp` (the commands are always present so the IPC
-//! surface is stable, but return an error when the feature is off).
+//! FTP transfers register through the session path (`session_download` /
+//! `session_upload`), like SFTP; the standalone `ftp_download` / `ftp_upload`
+//! commands had no frontend caller and were removed (#4344).
 
 use tauri::{Manager, State};
 use tracing::debug;
@@ -16,8 +16,6 @@ use crate::files::transfer::remote_copy::RemoteCopyEndpoint;
 use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
-#[cfg(feature = "ftp")]
-use crate::utils::fs::file_name_of;
 
 /// Pause an in-flight transfer.
 ///
@@ -375,190 +373,4 @@ pub fn transfer_list(
     registry: State<'_, TransferRegistry>,
 ) -> Vec<TransferSnapshot> {
     registry.list(session_id.as_deref())
-}
-
-/// Record the saved connection behind an FTP transfer's session (#3876), so a
-/// relaunch after a restart can re-source its password from the store.
-#[cfg(feature = "ftp")]
-fn record_ftp_saved_connection(
-    pm: &TransferPersistenceManager,
-    app_handle: &tauri::AppHandle,
-    transfer_id: &str,
-    session_id: &str,
-) {
-    if let Some(manager) = app_handle.try_state::<SessionManager>() {
-        crate::files::transfer::relaunch_session::record_saved_connection(
-            pm,
-            &manager,
-            transfer_id,
-            session_id,
-        );
-    }
-}
-
-/// Parse the frontend FTP settings JSON into an expanded [`FtpConfig`].
-#[cfg(feature = "ftp")]
-fn parse_ftp_config(
-    config: serde_json::Value,
-) -> Result<termihub_core::config::FtpConfig, TerminalError> {
-    let parsed: termihub_core::config::FtpConfig = serde_json::from_value(config)
-        .map_err(|e| TerminalError::ConnectionFailed(format!("invalid FTP settings: {e}")))?;
-    Ok(parsed.expand())
-}
-
-/// Register an FTP download (remote → local) as a queued transfer, returning
-/// its `transfer_id`. Progress is reported via `transfer-progress` events.
-#[tauri::command]
-pub async fn ftp_download(
-    session_id: String,
-    config: serde_json::Value,
-    remote_path: String,
-    local_path: String,
-    registry: State<'_, TransferRegistry>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, TerminalError> {
-    #[cfg(feature = "ftp")]
-    {
-        use crate::files::transfer::{self, TransferDirection};
-        use termihub_core::backends::ftp::FtpDirection;
-
-        debug!(session_id, remote_path, local_path, "FTP download");
-        let config = parse_ftp_config(config)?;
-        let transfer_id = uuid::Uuid::new_v4().to_string();
-        let file_name = file_name_of(&remote_path);
-        let handle = registry.enqueue(
-            &transfer_id,
-            &session_id,
-            TransferDirection::Download,
-            &file_name,
-            &remote_path,
-            0,
-        );
-        // Durable queue (PROD-0011): persist metadata only — the FTP `config`
-        // (which carries credentials) is deliberately NOT persisted, only the
-        // session reference and paths.
-        if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
-            pm.record_registration(
-                &transfer_id,
-                &session_id,
-                TransferDirection::Download,
-                &file_name,
-                &remote_path,
-                Some(local_path.clone()),
-                0,
-            );
-            record_ftp_saved_connection(&pm, &app_handle, &transfer_id, &session_id);
-        }
-        let registry = (*registry).clone();
-        let sink = transfer::app_progress_sink(app_handle);
-        tauri::async_runtime::spawn(async move {
-            transfer::ftp::run_ftp_transfer(
-                config,
-                FtpDirection::Download,
-                remote_path,
-                local_path,
-                handle,
-                registry,
-                sink,
-                0,
-            )
-            .await;
-        });
-        Ok(transfer_id)
-    }
-    #[cfg(not(feature = "ftp"))]
-    {
-        let _ = (
-            session_id,
-            config,
-            remote_path,
-            local_path,
-            registry,
-            app_handle,
-        );
-        Err(TerminalError::ConnectionFailed(
-            "FTP support is not built into this binary".to_string(),
-        ))
-    }
-}
-
-/// Register an FTP upload (local → remote) as a queued transfer, returning its
-/// `transfer_id`. Mirrors [`ftp_download`].
-#[tauri::command]
-pub async fn ftp_upload(
-    session_id: String,
-    config: serde_json::Value,
-    local_path: String,
-    remote_path: String,
-    registry: State<'_, TransferRegistry>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, TerminalError> {
-    #[cfg(feature = "ftp")]
-    {
-        use crate::files::transfer::{self, TransferDirection};
-        use termihub_core::backends::ftp::FtpDirection;
-
-        debug!(session_id, local_path, remote_path, "FTP upload");
-        let config = parse_ftp_config(config)?;
-        let transfer_id = uuid::Uuid::new_v4().to_string();
-        // Named for the *remote* path, not the local one, so the name always
-        // agrees with the `path` this row displays (#1594, mirroring the SFTP
-        // fix in #1573). Every honest local→remote upload builds `remote_path`
-        // as `<dir>/<basename of local>`, so this is byte-for-byte unchanged
-        // for them; it only differs for a future caller that uploads from a
-        // scratch/temp path the user never named (as SFTP→SFTP paste does).
-        let file_name = file_name_of(&remote_path);
-        let handle = registry.enqueue(
-            &transfer_id,
-            &session_id,
-            TransferDirection::Upload,
-            &file_name,
-            &remote_path,
-            0,
-        );
-        // Durable queue (PROD-0011): persist metadata only — never the FTP
-        // `config` credentials, only the session reference and paths.
-        if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
-            pm.record_registration(
-                &transfer_id,
-                &session_id,
-                TransferDirection::Upload,
-                &file_name,
-                &remote_path,
-                Some(local_path.clone()),
-                0,
-            );
-            record_ftp_saved_connection(&pm, &app_handle, &transfer_id, &session_id);
-        }
-        let registry = (*registry).clone();
-        let sink = transfer::app_progress_sink(app_handle);
-        tauri::async_runtime::spawn(async move {
-            transfer::ftp::run_ftp_transfer(
-                config,
-                FtpDirection::Upload,
-                remote_path,
-                local_path,
-                handle,
-                registry,
-                sink,
-                0,
-            )
-            .await;
-        });
-        Ok(transfer_id)
-    }
-    #[cfg(not(feature = "ftp"))]
-    {
-        let _ = (
-            session_id,
-            config,
-            local_path,
-            remote_path,
-            registry,
-            app_handle,
-        );
-        Err(TerminalError::ConnectionFailed(
-            "FTP support is not built into this binary".to_string(),
-        ))
-    }
 }

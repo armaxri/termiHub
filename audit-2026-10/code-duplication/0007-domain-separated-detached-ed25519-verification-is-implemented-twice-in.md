@@ -10,8 +10,8 @@ evidence:
   - core/src/agent_update_signature.rs:193-260
   - core/src/plugin/index_signature.rs:157-216
   - core/src/plugin/index_signature.rs:9-12
-status: open
-resolution: ""
+status: fixed
+resolution: "#4365 — shared core::ed25519_detached (domain_message, parse_b64_signature, any_trusted_key_verifies); each policy keeps its errors"
 audit: 2026-10
 commit: 663465d52
 relation: new

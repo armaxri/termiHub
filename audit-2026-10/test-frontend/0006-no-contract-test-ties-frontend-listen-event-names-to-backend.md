@@ -12,8 +12,8 @@ evidence:
   - src/services/events.ts:776-781
   - src/services/wireContract.test.ts:1-23
   - src-tauri/src/terminal/xserver/types.rs:427
-status: open
-resolution: ""
+status: fixed
+resolution: "#4344 — ipc_wire_fixtures writes events.json from a backend emit scan; eventContract.test.ts checks every listen() name both ways"
 audit: 2026-10
 commit: 663465d52
 relation: new

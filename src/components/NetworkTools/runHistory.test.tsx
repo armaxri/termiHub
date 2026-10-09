@@ -56,7 +56,8 @@ describe("buildRunRecord", () => {
       },
       new Date("2026-09-26T10:00:05.000Z")
     );
-    expect(rec.id).toMatch(/[0-9a-f-]{36}/);
+    // A ULID from the shared newId() (#4372).
+    expect(rec.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(rec.endedAt).toBe("2026-09-26T10:00:05.000Z");
     expect(rec.params).toEqual({ host: "10.0.0.1", ports: "22" });
     expect(rec.result!.rows).toHaveLength(MAX_HISTORY_ROWS);

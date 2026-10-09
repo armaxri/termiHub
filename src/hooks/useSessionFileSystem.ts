@@ -19,14 +19,13 @@ import {
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import {
-  baseName,
   runBlockingTransfer,
   runMaybeTrackedTransfer,
   runTransfer,
   pickPathOrReport,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
-import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
+import { pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
 import {
   pasteFileLeg,
   pasteFolderRecorded,
@@ -36,6 +35,7 @@ import {
   type PasteTransport,
 } from "./sessionFolderPaste";
 import { downloadToLocal, uploadLocalFile } from "@/services/paneTransfer";
+import { getBasename, joinPath, normalizeDirPath, parentDir } from "@/utils/paths";
 
 /** Toast wording for one Upload / Download button leg. */
 const LEG_LABELS = {
@@ -195,8 +195,8 @@ export function useSessionFileSystem() {
   );
 
   const navigateUp = useCallback(() => {
-    if (sessionCurrentPath === "/") return;
-    const parentPath = sessionCurrentPath.split("/").slice(0, -1).join("/") || "/";
+    const parentPath = parentDir(sessionCurrentPath);
+    if (parentPath === normalizeDirPath(sessionCurrentPath)) return;
     navigateTo(parentPath);
   }, [sessionCurrentPath, navigateTo]);
 
@@ -231,7 +231,7 @@ export function useSessionFileSystem() {
       // Recorded in the interrupted-paste manifest like a session → local
       // paste (#3983), so a download cut short by a quit is listed and
       // resumable after a restart.
-      const destPath = joinDirPath(targetDir, folderName);
+      const destPath = joinPath(targetDir, folderName);
       await runMaybeTrackedTransfer(
         label,
         () => pasteRemoteFolderToLocal("copy", remote, remotePath, destPath),
@@ -268,7 +268,7 @@ export function useSessionFileSystem() {
   const uploadFileFromPath = useCallback(
     async (localPath: string) => {
       if (!sessionFileBrowserId) return;
-      const fileName = baseName(localPath) || "upload";
+      const fileName = getBasename(localPath) || "upload";
       const remote = { sessionId: sessionFileBrowserId, queueCapable: transferQueueCapable };
       let entry: FileEntry | null = null;
       try {
@@ -281,14 +281,14 @@ export function useSessionFileSystem() {
         // Recorded in the interrupted-paste manifest like a local → session
         // paste (#3983), so an upload cut short by a quit is listed and
         // resumable after a restart.
-        const destPath = joinDirPath(sessionCurrentPath, fileName);
+        const destPath = joinPath(sessionCurrentPath, fileName);
         ok = await runMaybeTrackedTransfer(
           `Upload "${fileName}"`,
           () => uploadLocalFolderToSession(remote, localPath, destPath),
           { loading: `Uploading ${fileName}…`, success: `Uploaded ${fileName}` }
         );
       } else {
-        const remotePath = joinDirPath(sessionCurrentPath, fileName);
+        const remotePath = joinPath(sessionCurrentPath, fileName);
         ok = await runButtonLeg(transferQueueCapable, "Upload", fileName, () =>
           uploadLocalFile(remote, localPath, remotePath)
         );
@@ -340,8 +340,7 @@ export function useSessionFileSystem() {
   const renameEntry = useCallback(
     async (oldPath: string, newName: string) => {
       if (!sessionFileBrowserId) return;
-      const parentDir = oldPath.split("/").slice(0, -1).join("/") || "/";
-      const newPath = parentDir === "/" ? `/${newName}` : `${parentDir}/${newName}`;
+      const newPath = joinPath(parentDir(oldPath), newName);
       await sessionRenameFile(sessionFileBrowserId, oldPath, newPath);
       refreshSession();
     },
@@ -456,7 +455,7 @@ export function useSessionFileSystem() {
 
       // Resolves to whether the leg drove the dedicated (event-emitting) channel.
       const pasteOne = async (clipEntry: FileEntry): Promise<boolean> => {
-        const destPath = joinDirPath(destDir, clipEntry.name);
+        const destPath = joinPath(destDir, clipEntry.name);
         // A folder copied file by file is recorded while it runs, so an
         // interrupted paste is reported after a restart (#3630).
         return clipEntry.isDirectory

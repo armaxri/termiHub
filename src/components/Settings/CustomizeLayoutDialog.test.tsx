@@ -43,19 +43,16 @@ vi.mock("@/services/api", () => ({
   connectAgent: vi.fn(),
   disconnectAgent: vi.fn(),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   saveAgentDefinition: vi.fn(),
   deleteAgentDefinition: vi.fn(),
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
 }));
 
 vi.mock("@/services/tunnelApi", () => ({
-  getTunnels: vi.fn(() => Promise.resolve([])),
   saveTunnel: vi.fn(),
   deleteTunnel: vi.fn(),
   startTunnel: vi.fn(),
   stopTunnel: vi.fn(),
-  getTunnelStatuses: vi.fn(() => Promise.resolve([])),
 }));
 
 import { useAppStore } from "@/store/appStore";

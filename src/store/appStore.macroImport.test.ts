@@ -37,7 +37,6 @@ vi.mock("@/themes", () => ({
 
 vi.mock("@/services/macroApi", () => ({
   listMacros: vi.fn(() => Promise.resolve([])),
-  getMacro: vi.fn(),
   saveMacro: vi.fn((macro) => Promise.resolve(macro)),
   deleteMacro: vi.fn(() => Promise.resolve()),
 }));

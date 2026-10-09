@@ -24,7 +24,7 @@ import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { resolveLanguage } from "@/utils/languageMapping";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
-import { getBasename, formatBytes } from "@/utils/formatters";
+import { formatBytes } from "@/utils/formatters";
 import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
@@ -60,6 +60,7 @@ import { fireAndForget, frontendLog, frontendError } from "@/utils/frontendLog";
 import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferRegistry";
 import "./FileEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { getBasename } from "@/utils/paths";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;

@@ -167,9 +167,6 @@ impl AgentRpcClient for FlowAgent {
     fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
         unimplemented!()
     }
-    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        unimplemented!()
-    }
     fn save_definition(
         &self,
         _: &str,
