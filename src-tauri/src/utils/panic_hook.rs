@@ -15,7 +15,6 @@
 //! The hook chains to the previously-installed hook, so the normal stderr
 //! behaviour (and any test harness hook) is preserved.
 
-use std::backtrace::Backtrace;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -76,41 +75,24 @@ pub fn install(crash_dir: Option<PathBuf>) {
     }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Extract a human-readable payload. Rust panics carry either `&str`
-        // (from `panic!("literal")`) or `String` (from `panic!("{}", x)`);
-        // anything else is opaque.
-        let payload = info.payload();
-        let message = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "Box<dyn Any>".to_string());
-
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
-
-        // `force_capture` always attempts a backtrace regardless of
-        // `RUST_BACKTRACE`. A crash is rare and high-value, so the cost is
-        // irrelevant; with `[profile.dev] debug = 0` this still yields function
-        // symbols (no source line), which is far better than nothing.
-        let backtrace = Backtrace::force_capture().to_string();
+        // Payload, location and a force-captured backtrace. Release builds keep
+        // their symbol table (`strip = "debuginfo"`, #4316), so the backtrace
+        // names functions in shipped builds too; no profile keeps DWARF, so it
+        // carries no source lines. See `CrashDetails::capture`.
+        let details =
+            CrashDetails::capture(info, APP_NAME, env!("CARGO_PKG_VERSION"), env!("GIT_HASH"));
 
         tracing::error!(
             target: PANIC_TARGET,
             "{}",
-            format_panic(&message, location.as_deref(), &backtrace)
+            format_panic(
+                &details.message,
+                details.location.as_deref(),
+                &details.backtrace
+            )
         );
 
         if let Some(dir) = &crash_dir {
-            let details = CrashDetails {
-                app: APP_NAME.to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                thread: std::thread::current().name().map(str::to_string),
-                location: location.clone(),
-                message: message.clone(),
-                backtrace: backtrace.clone(),
-            };
             match crash_report::write_report(dir, &details, SystemTime::now(), &redactor) {
                 Ok(path) => tracing::error!(
                     target: PANIC_TARGET,

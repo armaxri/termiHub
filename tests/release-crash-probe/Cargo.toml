@@ -1,0 +1,20 @@
+[package]
+name = "termihub-crash-probe"
+version = "0.0.0"
+description = "Forced-panic probe proving release builds write symbolized crash reports (#4316)"
+edition = "2021"
+rust-version.workspace = true
+publish = false
+
+# Built with the workspace's real `[profile.release]` by
+# scripts/internal/check-release-crash-symbols.sh, which runs it, reads the crash
+# report it leaves, and fails unless the backtrace names a `termihub_core` frame.
+# It goes through the same `CrashDetails::capture` + `write_report` path as the
+# desktop and agent panic hooks. Core with no default features keeps the release
+# build small enough to run on every PR that touches the profile (agent.yml).
+[[bin]]
+name = "termihub-crash-probe"
+path = "src/main.rs"
+
+[dependencies]
+termihub-core = { path = "../../core", default-features = false }

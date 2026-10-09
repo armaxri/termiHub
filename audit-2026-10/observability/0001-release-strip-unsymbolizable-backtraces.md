@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/utils/panic_hook.rs:97
   - agent/src/panic_hook.rs:56
   - core/src/diagnostics/crash_report.rs:95
-status: open
-resolution: ""
+status: fixed
+resolution: "#4316 — release profile uses strip = \"debuginfo\" (symbol table kept), crash reports carry the commit, and a CI probe proves a release panic names termihub frames"
 audit: 2026-10
 commit: "663465d52"
 relation: regression

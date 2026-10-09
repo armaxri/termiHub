@@ -7844,6 +7844,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "termihub-crash-probe"
+version = "0.0.0"
+dependencies = [
+ "termihub-core",
+]
+
+[[package]]
 name = "termihub-plugin-api"
 version = "0.1.0"
 dependencies = [

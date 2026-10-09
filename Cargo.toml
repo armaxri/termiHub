@@ -14,6 +14,10 @@ members = [
     # Headless probe for the real polkit D-Bus path (#3553): compiles the shipped
     # src-tauri polkit transport by path; driven by tests/docker/polkit/run.sh.
     "tests/docker/polkit/probe",
+    # Forced-panic probe (#4316): built with the real release profile by
+    # scripts/internal/check-release-crash-symbols.sh to prove a shipped build's
+    # crash report still names termiHub functions.
+    "tests/release-crash-probe",
 ]
 # The RDP sidecar (#1747) is a standalone build unit with its OWN Cargo.lock:
 # IronRDP's CredSSP crypto and russh pin incompatible RustCrypto pre-releases,
@@ -87,10 +91,25 @@ debug = 0
 # op — negligible for a terminal hub, and not on any measured hot loop.
 [profile.release]
 overflow-checks = true
-# Strip the symbol table + debug info from release binaries (PKG-010). Smaller
-# shipped binaries; symbols are not needed by users and are recoverable from a
-# debug build when profiling. Does not affect behaviour or optimization level.
-strip = true
+# Strip debug info but KEEP the symbol table (#4316). The panic hooks
+# (src-tauri/src/utils/panic_hook.rs, agent/src/panic_hook.rs) write a crash
+# report with a std backtrace, and that backtrace can only name functions from
+# the binary's own symbol table. `strip = true` (PKG-010) removed it, so every
+# frame of a shipped build's crash report read `<unknown>` at an ASLR-shifted
+# address. A different (debug) build cannot symbolize those addresses after the
+# fact, so the symbols have to ship in the binary. Release builds emit no DWARF
+# anyway (default `debug = 0`), so "debuginfo" strips only what std/dependency
+# rlibs bring in: frames get function names, not source lines.
+#
+# Cost, measured on macOS aarch64 against `strip -x` (what `strip = true` runs
+# there): desktop `termihub` 53.9 -> 72.3 MB (+34%, +2.4 MB / +12% gzipped),
+# `termihub-agent` 27.4 -> 35.4 MB (+29%).
+# Windows: MSVC keeps symbols in a separate .pdb that is not shipped, so Windows
+# field reports still show bare addresses; shipping split debug symbols
+# (.dSYM/.pdb) as release artifacts is #4504. Checked per PR by
+# scripts/internal/check-release-crash-symbols.sh (agent.yml). Does not affect
+# behaviour or optimization level.
+strip = "debuginfo"
 
 [workspace.dependencies]
 async-trait = "0.1"

@@ -12,6 +12,7 @@ fn details(message: &str) -> CrashDetails {
     CrashDetails {
         app: "termiHub desktop".into(),
         version: "0.1.0".into(),
+        git_hash: "663465d52".into(),
         thread: Some("main".into()),
         location: Some("src/lib.rs:42:9".into()),
         message: message.into(),
@@ -57,11 +58,62 @@ fn a_report_has_version_os_time_message_and_backtrace() {
         &redactor(),
     );
     assert!(text.contains("version:   0.1.0"));
+    // The commit pins the report to the exact build (#4316); a short hash must
+    // survive redaction.
+    assert!(text.contains("commit:    663465d52"), "{text}");
     assert!(text.contains(std::env::consts::OS));
     assert!(text.contains("2026-09-26T12:01:02Z"));
     assert!(text.contains("location:  src/lib.rs:42:9"));
     assert!(text.contains("index out of bounds"));
     assert!(text.contains("0: frame_one"));
+}
+
+#[test]
+fn a_report_without_a_commit_says_unknown() {
+    let mut d = details("boom");
+    d.git_hash = String::new();
+    let text = render_report(&d, at(0), &redactor());
+    assert!(text.contains("commit:    unknown"), "{text}");
+}
+
+#[test]
+fn capture_reads_payload_location_and_backtrace_inside_a_hook() {
+    use std::sync::{Arc, Mutex};
+
+    // The hook is process-global and tests run in parallel, so record only the
+    // panic of this test's own named thread, then restore the previous hook.
+    let seen: Arc<Mutex<Option<CrashDetails>>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() != Some("capture-probe") {
+            return;
+        }
+        let d = CrashDetails::capture(info, "probe", "9.9.9", "abc1234");
+        *sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(d);
+    }));
+    let result = std::thread::Builder::new()
+        .name("capture-probe".into())
+        .spawn(|| panic!("boom {}", 42))
+        .unwrap()
+        .join();
+    std::panic::set_hook(previous);
+    assert!(result.is_err());
+
+    let d = seen.lock().unwrap().take().expect("hook ran");
+    assert_eq!(d.app, "probe");
+    assert_eq!(d.version, "9.9.9");
+    assert_eq!(d.git_hash, "abc1234");
+    assert_eq!(d.message, "boom 42");
+    assert_eq!(d.thread.as_deref(), Some("capture-probe"));
+    assert!(
+        d.location
+            .as_deref()
+            .is_some_and(|l| l.contains("crash_report_tests.rs")),
+        "{:?}",
+        d.location
+    );
+    assert!(!d.backtrace.is_empty());
 }
 
 #[test]
