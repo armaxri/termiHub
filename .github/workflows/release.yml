@@ -1255,6 +1255,8 @@ jobs:
           done
           # Never sign an agent that trusts the committed TEST-ONLY key (#4083).
           "$GITHUB_WORKSPACE/scripts/internal/assert-no-test-signing-key.sh" "${agents[@]}"
+          # Nor one that carries env-var-armed test hooks (WA-RS2-003, #4362).
+          "$GITHUB_WORKSPACE/scripts/internal/assert-no-agent-test-hooks.sh" "${agents[@]}"
 
           # The private key exists on disk only for the signing call. select-key
           # picks the slot matching the FIRST trusted public key (rotation, #3329)
