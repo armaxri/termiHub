@@ -17,6 +17,12 @@
 //! the UI: a name clash keeps both (`name (1).ext`, never an overwrite),
 //! folders upload recursively, and symbolic links are never followed (a
 //! dropped link, or one inside a dropped folder, is skipped and reported).
+//!
+//! "Never an overwrite" holds when the file host misbehaves too (#4299): only
+//! a definite "not found" makes a name free — any other stat failure skips the
+//! item with the real reason — and where the host can, the chosen name is
+//! claimed with an exclusive create before the upload starts, so the upload
+//! only ever writes a file it created itself.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -191,10 +197,55 @@ pub(crate) fn plan_local(paths: &[String]) -> LocalPlan {
 pub(crate) trait UploadDestination: Send + Sync {
     /// The account's home directory (absolute).
     async fn home(&self) -> Result<String, String>;
-    /// `Some(is_directory)` when `path` exists, `None` when it does not.
+    /// `Some(is_directory)` when `path` exists, `None` only when the host
+    /// definitely reports it missing. Any other failure is an error — never
+    /// "missing" — so a name is never taken for free by mistake (#4299).
     async fn probe(&self, path: &str) -> Result<Option<bool>, String>;
     /// Create the folder `path` (its parent exists).
     async fn mkdir(&self, path: &str) -> Result<(), String>;
+    /// Claim `path` for an upload by creating it as a new, empty file that
+    /// must not exist yet (an exclusive create, #4299).
+    async fn claim_new_file(&self, path: &str) -> Result<Claim, String>;
+}
+
+/// The outcome of [`UploadDestination::claim_new_file`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Claim {
+    /// The empty file was created: the upload owns it.
+    Claimed,
+    /// Something already holds the name (it appeared after the probe).
+    Exists,
+    /// The host has no exclusive create; the probe's answer stands.
+    Unsupported,
+}
+
+/// `Ok(None)` for a definite "not found", `Ok(Some(is_directory))` for an
+/// entry, and the error text for every other failure (#4299).
+fn probe_result(stat: Result<FileEntry, FileError>) -> Result<Option<bool>, String> {
+    match stat {
+        Ok(entry) => Ok(Some(entry.is_directory)),
+        Err(FileError::NotFound(_)) => Ok(None),
+        Err(FileError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Settle an exclusive create of `path`: success claims it; a refusal is a
+/// clash only when `path` exists now (SFTP v3 reports a taken name as a
+/// generic failure), otherwise it is a real error — as is a failed re-check.
+pub(crate) async fn settle_exclusive_create(
+    dest: &dyn UploadDestination,
+    path: &str,
+    created: Result<(), String>,
+) -> Result<Claim, String> {
+    let Err(create_error) = created else {
+        return Ok(Claim::Claimed);
+    };
+    match dest.probe(path).await {
+        Ok(Some(_)) => Ok(Claim::Exists),
+        Ok(None) => Err(format!("cannot create {path}: {create_error}")),
+        Err(e) => Err(format!("cannot create {path}: {create_error} ({e})")),
+    }
 }
 
 /// One file of the upload, placed at its final remote path.
@@ -212,12 +263,26 @@ pub(crate) struct Placement {
     pub skipped: Vec<RemoteDesktopUploadSkip>,
 }
 
+/// What a free name is for: a file (claimed with an exclusive create where
+/// the host can) or a folder (created by the caller's `mkdir`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameFor {
+    File,
+    Folder,
+}
+
 /// The first free "keep both" name for `name` in `dest_dir`, skipping names
 /// this upload already claimed (two dropped files with the same name).
+///
+/// A probe that fails for any reason other than "not found" ends the search
+/// with that error: the item is skipped, never written (#4299). A file name
+/// is then claimed with an exclusive create; one that appeared since the
+/// probe moves on to the next number.
 async fn free_name(
     dest: &dyn UploadDestination,
     dest_dir: &str,
     name: &str,
+    kind: NameFor,
     claimed: &mut HashSet<String>,
 ) -> Result<String, String> {
     for n in 0..=MAX_KEEP_BOTH {
@@ -225,14 +290,15 @@ async fn free_name(
         if claimed.contains(&candidate) {
             continue;
         }
-        if dest
-            .probe(&join_remote(dest_dir, &candidate))
-            .await?
-            .is_none()
-        {
-            claimed.insert(candidate.clone());
-            return Ok(candidate);
+        let path = join_remote(dest_dir, &candidate);
+        if dest.probe(&path).await?.is_some() {
+            continue;
         }
+        if kind == NameFor::File && dest.claim_new_file(&path).await? == Claim::Exists {
+            continue;
+        }
+        claimed.insert(candidate.clone());
+        return Ok(candidate);
     }
     Err(format!(
         "no free name for {name} after {MAX_KEEP_BOTH} tries"
@@ -256,7 +322,11 @@ pub(crate) async fn resolve_dest_dir(
         Some(dir) => dir.to_string(),
         None => default_dir.to_string(),
     };
-    match dest.probe(&dir).await? {
+    let found = dest
+        .probe(&dir)
+        .await
+        .map_err(|e| format!("cannot check the folder {dir}: {e}"))?;
+    match found {
         Some(true) => Ok(dir),
         Some(false) => Err(format!("{dir} is not a folder")),
         None => Err(format!("the folder {dir} does not exist")),
@@ -279,7 +349,7 @@ pub(crate) async fn place(
     for item in plan.items {
         match item {
             LocalItem::File { local, name } => {
-                match free_name(dest, dest_dir, &name, &mut claimed).await {
+                match free_name(dest, dest_dir, &name, NameFor::File, &mut claimed).await {
                     Ok(free) => out.files.push(PlacedFile {
                         local,
                         remote: join_remote(dest_dir, &free),
@@ -288,13 +358,14 @@ pub(crate) async fn place(
                 }
             }
             LocalItem::Folder { name, dirs, files } => {
-                let root = match free_name(dest, dest_dir, &name, &mut claimed).await {
-                    Ok(free) => join_remote(dest_dir, &free),
-                    Err(e) => {
-                        out.skipped.push(skip(Path::new(&name), e));
-                        continue;
-                    }
-                };
+                let root =
+                    match free_name(dest, dest_dir, &name, NameFor::Folder, &mut claimed).await {
+                        Ok(free) => join_remote(dest_dir, &free),
+                        Err(e) => {
+                            out.skipped.push(skip(Path::new(&name), e));
+                            continue;
+                        }
+                    };
                 if let Err(e) = dest.mkdir(&root).await {
                     out.skipped
                         .push(skip(Path::new(&name), format!("cannot create {root}: {e}")));
@@ -342,14 +413,17 @@ pub(crate) async fn place(
 
 /// The agent requests the agent route needs — a seam so the carrier is
 /// testable without a live agent. Blocking (agent RPCs are synchronous).
+///
+/// A failure is a [`FileError`]: only the agent's own "file not found" answer
+/// is [`FileError::NotFound`], so a missing name is told apart from a
+/// permission error or a timeout (#4299).
 pub(crate) trait AgentRequests: Send + Sync {
-    fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, String>;
+    fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, FileError>;
 }
 
 impl AgentRequests for Arc<dyn AgentRpcClient> {
-    fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, String> {
-        self.send_request(agent_id, method, params)
-            .map_err(|e| e.to_string())
+    fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, FileError> {
+        self.send_file_request(agent_id, method, params)
     }
 }
 
@@ -387,7 +461,6 @@ impl AgentHostFiles {
         tokio::task::spawn_blocking(move || agents.request(&agent_id, method, params))
             .await
             .map_err(|e| FileError::OperationFailed(format!("agent request failed: {e}")))?
-            .map_err(FileError::OperationFailed)
     }
 
     pub(super) async fn stat_entry(&self, path: &str) -> Result<FileEntry, FileError> {
@@ -473,9 +546,7 @@ impl UploadDestination for AgentHostFiles {
     }
 
     async fn probe(&self, path: &str) -> Result<Option<bool>, String> {
-        // The agent reports a missing path as an error; treat any stat failure
-        // as "free" — a real permission problem surfaces on the write itself.
-        Ok(self.stat_entry(path).await.ok().map(|e| e.is_directory))
+        probe_result(self.stat_entry(path).await)
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), String> {
@@ -490,6 +561,13 @@ impl UploadDestination for AgentHostFiles {
         .map(|_| ())
         .map_err(|e| e.to_string())
     }
+
+    /// The agent's `connection.files.*` service has no exclusive create yet:
+    /// its first `write_range` slice creates or truncates the file, so the
+    /// strict probe above is what keeps an existing file safe.
+    async fn claim_new_file(&self, _path: &str) -> Result<Claim, String> {
+        Ok(Claim::Unsupported)
+    }
 }
 
 /// The SSH route's destination: the SFTP channel on the tunnel session.
@@ -503,16 +581,25 @@ impl UploadDestination for SftpDestination {
     }
 
     async fn probe(&self, path: &str) -> Result<Option<bool>, String> {
-        Ok(FileBrowser::stat(self.0.as_ref(), path)
-            .await
-            .ok()
-            .map(|e| e.is_directory))
+        probe_result(FileBrowser::stat(self.0.as_ref(), path).await)
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), String> {
         FileBrowser::mkdir(self.0.as_ref(), path)
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// `CREATE | EXCLUDE` on a dedicated SFTP channel: the upload then only
+    /// ever writes the empty file it created.
+    async fn claim_new_file(&self, path: &str) -> Result<Claim, String> {
+        let channel = self
+            .0
+            .open_dedicated_channel()
+            .await
+            .map_err(|e| format!("cannot create {path}: {e}"))?;
+        let created = channel.create_new(path).await.map_err(|e| e.to_string());
+        settle_exclusive_create(self, path, created).await
     }
 }
 
@@ -658,3 +745,7 @@ pub(crate) fn cancel_session_transfers(registry: &TransferRegistry, session_id: 
 #[cfg(test)]
 #[path = "graphical_upload_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "graphical_upload_naming_tests.rs"]
+mod naming_tests;

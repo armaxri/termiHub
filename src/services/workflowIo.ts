@@ -65,6 +65,13 @@ export interface WorkflowImportResult {
   workflowsWithLocalProcess: number;
   /** Total `run-local-process` steps across all imported workflows. */
   localProcessSteps: number;
+  /**
+   * Local file paths that imported `run-script` steps referenced through
+   * `sourcePath` and that were **removed** on import (#4310, FEC2-001). An
+   * imported file must not decide which local file a step reads, so the step
+   * keeps only its visible script; the user re-picks the file to load from disk.
+   */
+  removedScriptSourcePaths: string[];
 }
 
 /** All valid step-kind discriminants. */
@@ -578,6 +585,47 @@ function countLocalProcessSteps(steps: WorkflowStep[]): number {
     }
   }
   return count;
+}
+
+/**
+ * Remove every `run-script` `sourcePath` from imported workflows (#4310,
+ * FEC2-001), **descending into container steps** (a conditional's `then`/`else`,
+ * a loop's `body`) so a nested step cannot hide one. A `sourcePath` makes the
+ * runner read a local file and type it into the remote shell; an imported file
+ * must never choose that file, so the step keeps only its visible `script` and
+ * the user has to re-pick the file on this machine. Pure: returns new workflows
+ * plus the removed paths (in step order) so the import can tell the user.
+ */
+export function stripScriptSourcePaths(workflows: Workflow[]): {
+  workflows: Workflow[];
+  removedPaths: string[];
+} {
+  const removedPaths: string[] = [];
+  const stripSteps = (steps: WorkflowStep[]): WorkflowStep[] =>
+    steps.map((step) => {
+      switch (step.kind) {
+        case "run-script": {
+          if (step.sourcePath === undefined) return step;
+          const { sourcePath, ...rest } = step;
+          removedPaths.push(sourcePath);
+          return rest;
+        }
+        case "conditional": {
+          const next: WorkflowStep = { ...step, then: stripSteps(step.then) };
+          if (step.else) next.else = stripSteps(step.else);
+          return next;
+        }
+        case "loop":
+          return { ...step, body: stripSteps(step.body) };
+        default:
+          return step;
+      }
+    });
+  const stripped = workflows.map((workflow) => ({
+    ...workflow,
+    steps: stripSteps(workflow.steps),
+  }));
+  return { workflows: stripped, removedPaths };
 }
 
 /** Default fresh-id generator; mirrors the store's `generateWorkflowId`. */

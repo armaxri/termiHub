@@ -21,6 +21,27 @@ vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: () => "" } },
 }));
 
+// Machine-local settings + store seams for the run-script file source (#4310).
+const settingsState = vi.hoisted(() => ({
+  current: { workflowScriptSourceAllowlist: [] as string[] } as Record<string, unknown>,
+}));
+const updateSettings = vi.hoisted(() => vi.fn(async (_next: Record<string, unknown>) => {}));
+const localReadFile = vi.hoisted(() => vi.fn(async (_path: string) => "line1\nline2"));
+vi.mock("@/store/useProjectedSettings", () => ({
+  useProjectedSettings: () => settingsState.current,
+}));
+vi.mock("@/store/appStore", () => ({
+  useAppStore: (selector: (s: { updateSettings: typeof updateSettings }) => unknown) =>
+    selector({ updateSettings }),
+}));
+const openDialog = vi.hoisted(() => vi.fn(async (_opts?: unknown): Promise<string | null> => null));
+vi.mock("@/services/nativeDialog", () => ({
+  open: (opts?: unknown) => openDialog(opts),
+}));
+vi.mock("@/services/api", () => ({
+  localReadFile: (path: string) => localReadFile(path),
+}));
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -120,6 +141,90 @@ describe("WorkflowStepRow", () => {
     expect(query("workflow-editor-step-linedelay-0")).not.toBeNull();
     typeInto(textarea, "echo hi");
     expect(h.onChange).toHaveBeenLastCalledWith("u1", { kind: "run-script", script: "echo hi" });
+  });
+
+  describe("run-script file source (#4310, FEC2-001)", () => {
+    beforeEach(() => {
+      settingsState.current = { workflowScriptSourceAllowlist: [] };
+    });
+
+    const flush = async () => {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    };
+
+    it("shows the real path and flags an unconfirmed file as not runnable", () => {
+      render({
+        step: {
+          kind: "run-script",
+          script: "echo harmless",
+          sourcePath: "/home/u/.ssh/id_ed25519",
+        },
+      });
+      expect(query("workflow-editor-step-source-path-0")?.textContent).toBe(
+        "/home/u/.ssh/id_ed25519"
+      );
+      expect(query("workflow-editor-step-source-status-0")?.textContent).toMatch(
+        /not confirmed on this machine/i
+      );
+      expect(query("workflow-editor-step-source-confirm-0")).not.toBeNull();
+    });
+
+    it("confirming a shown path adds exactly that path to the machine-local allowlist", async () => {
+      render({ step: { kind: "run-script", script: "", sourcePath: "/home/u/deploy.sh" } });
+      act(() => query("workflow-editor-step-source-confirm-0")?.click());
+      await flush();
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowScriptSourceAllowlist: ["/home/u/deploy.sh"] })
+      );
+    });
+
+    it("shows a confirmed path as read on each run without a confirm button", () => {
+      settingsState.current = { workflowScriptSourceAllowlist: ["/home/u/deploy.sh"] };
+      render({ step: { kind: "run-script", script: "", sourcePath: "/home/u/deploy.sh" } });
+      expect(query("workflow-editor-step-source-status-0")?.textContent).toMatch(
+        /read from this file/i
+      );
+      expect(query("workflow-editor-step-source-confirm-0")).toBeNull();
+    });
+
+    it("picking a file sets the path, loads its contents and confirms it", async () => {
+      openDialog.mockResolvedValueOnce("/home/u/setup.sh");
+      const h = render({ step: { kind: "run-script", script: "" } });
+      act(() => query("workflow-editor-step-source-pick-0")?.click());
+      await flush();
+      expect(localReadFile).toHaveBeenCalledWith("/home/u/setup.sh");
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowScriptSourceAllowlist: ["/home/u/setup.sh"] })
+      );
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "run-script",
+        script: "line1\nline2",
+        sourcePath: "/home/u/setup.sh",
+      });
+    });
+
+    it("a cancelled pick changes nothing", async () => {
+      openDialog.mockResolvedValueOnce(null);
+      const h = render({ step: { kind: "run-script", script: "x" } });
+      act(() => query("workflow-editor-step-source-pick-0")?.click());
+      await flush();
+      expect(localReadFile).not.toHaveBeenCalled();
+      expect(h.onChange).not.toHaveBeenCalled();
+    });
+
+    it("detaching the file removes the sourcePath and keeps the visible script", () => {
+      const h = render({ step: { kind: "run-script", script: "keep", sourcePath: "/a.sh" } });
+      act(() => query("workflow-editor-step-source-detach-0")?.click());
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", { kind: "run-script", script: "keep" });
+    });
+
+    it("editing the script body detaches the file so the visible script is what runs", () => {
+      const h = render({ step: { kind: "run-script", script: "old", sourcePath: "/a.sh" } });
+      typeInto(query("workflow-editor-step-script-0"), "echo new");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", { kind: "run-script", script: "echo new" });
+    });
   });
 
   it("renders a macro picker listing the available macros for run-macro", () => {

@@ -1210,7 +1210,7 @@ sequenceDiagram
     API->>CMD: sftp_write_file_content_elevated
     CMD->>SFTP: write buffer to /tmp/termihub-&lt;uuid&gt;
     SFTP->>H: "SFTP create + write_all (temp)"
-    CMD->>SSH: "exec: sudo -S -p '' sh -c 'cat $TMP > $DEST && rm -f $TMP'"
+    CMD->>SSH: "exec: env LC_ALL=C LANG=C LANGUAGE= sudo -k -S -p TOKEN sh -c 'echo MARKER && cat $TMP > $DEST && rm -f $TMP'"
     CMD->>SSH: "stdin: &lt;password&gt;"
     SSH->>H: run as root
     alt exit 0
@@ -1420,7 +1420,7 @@ flowchart LR
             Open an exec channel on the same <code>SshSession</code> and run a single composed
             command that moves the temp file into place as root and cleans up, reading the password
             from stdin:
-            <pre><code>sudo -S -p '' /bin/sh -c 'cat "$TMP" &gt; "$DEST" &amp;&amp; rm -f "$TMP"'</code></pre>
+            <pre><code>env LC_ALL=C LANG=C LANGUAGE= sudo -k -S -p '&lt;unique token&gt;' /bin/sh -c 'echo termihub-sudo-authorized &amp;&amp; cat "$TMP" &gt; "$DEST" &amp;&amp; rm -f "$TMP"'</code></pre>
             The password is written to the channel's stdin (one line). <code>$DEST</code>/<code
               >$TMP</code
             >
@@ -1430,9 +1430,13 @@ flowchart LR
             file's existing owner, mode, and ACLs.
           </li>
           <li>
-            Inspect the exit status and stderr: success → ok; <code>incorrect password</code> →
-            typed error so the frontend can re-prompt; other → pass through to the #969 banner.
-            Always attempt <code>rm -f $TMP</code> on the remote even on failure.
+            Classify locale-independently (#4290): the authorization marker on stdout plus exit 0 →
+            ok; the unique prompt appearing twice or more (sudo re-prompted) → typed
+            <code>incorrectPassword</code> so the frontend can re-prompt; exactly once (password
+            accepted, command refused) → not in sudoers; <code>env</code> exit 127 → sudo missing;
+            <code>requiretty</code> → a clear message. Translated sudo text is never matched.
+            Non-password failures pass through to the #969 banner. Always attempt
+            <code>rm -f $TMP</code> on the remote even on failure.
           </li>
         </ol>
         <p>
@@ -1578,8 +1582,8 @@ flowchart LR
           <strong>Last synced:</strong> 2026-07-18 (status reconciliation) · previously
           <code>6e5d9586</code> at concept creation · <strong>Status:</strong> converged (no open
           functional gaps). The elevated-sudo epic
-          <a href="https://github.com/armaxri/termiHub/issues/1323">#1323</a> closed fully-delivered;
-          concept moved <code>backlog/</code> → <code>implemented/</code>.
+          <a href="https://github.com/armaxri/termiHub/issues/1323">#1323</a> closed
+          fully-delivered; concept moved <code>backlog/</code> → <code>implemented/</code>.
         </p>
 
         <h3>Open divergences</h3>
@@ -1637,8 +1641,9 @@ flowchart LR
                 <td>1</td>
                 <td>
                   Early read-only detection — the write-open probe (#1324/#1325) sets
-                  <code>writable</code> (<code>true</code>/<code>false</code>/<code>"unknown"</code>)
-                  in <code>src/components/FileEditor/FileEditor.tsx</code>; <code>false</code>
+                  <code>writable</code>
+                  (<code>true</code>/<code>false</code>/<code>"unknown"</code>) in
+                  <code>src/components/FileEditor/FileEditor.tsx</code>; <code>false</code>
                   surfaces the read-only badge and dismissible banner.
                 </td>
               </tr>

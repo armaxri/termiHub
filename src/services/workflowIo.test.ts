@@ -12,6 +12,7 @@ import {
   parseWorkflowEnvelope,
   resolveImportCollisions,
   summarizeLocalProcessSteps,
+  stripScriptSourcePaths,
   WORKFLOW_EXPORT_VERSION,
 } from "./workflowIo";
 import type { Workflow } from "@/types/workflow";
@@ -447,5 +448,223 @@ describe("parseWorkflowEnvelope step error handling (PROD-045)", () => {
     expect(() =>
       parseWorkflowEnvelope(envelopeWith({ kind: "send-command", command: "ls", retry }))
     ).toThrow(/invalid "retry" policy/);
+  });
+});
+
+/** Wrap raw (unvalidated) workflow objects in a current-version envelope. */
+function rawEnvelope(...workflows: unknown[]): string {
+  return JSON.stringify({ version: WORKFLOW_EXPORT_VERSION, workflows });
+}
+
+/** A single raw workflow carrying the given raw steps. */
+function rawStepsEnvelope(...steps: unknown[]): string {
+  return rawEnvelope({ name: "X", steps });
+}
+
+describe("stripScriptSourcePaths (#4310, FEC2-001)", () => {
+  it("removes sourcePath from imported run-script steps and reports each removed path", () => {
+    const parsed = parseWorkflowEnvelope(
+      rawStepsEnvelope(
+        { kind: "run-script", script: "echo harmless", sourcePath: "~/.ssh/id_ed25519" },
+        { kind: "run-script", script: "uptime" }
+      )
+    );
+    const { workflows, removedPaths } = stripScriptSourcePaths(parsed);
+
+    expect(workflows[0].steps).toEqual([
+      { kind: "run-script", script: "echo harmless" },
+      { kind: "run-script", script: "uptime" },
+    ]);
+    expect(removedPaths).toEqual(["~/.ssh/id_ed25519"]);
+  });
+
+  it("strips sourcePath nested inside conditional branches and loop bodies", () => {
+    const parsed = parseWorkflowEnvelope(
+      rawStepsEnvelope(
+        {
+          kind: "conditional",
+          condition: { left: "a", op: "eq", right: "a" },
+          then: [{ kind: "run-script", script: "t", sourcePath: "/then.sh" }],
+          else: [{ kind: "run-script", script: "e", sourcePath: "/else.sh" }],
+        },
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 2 },
+          body: [{ kind: "run-script", script: "b", sourcePath: "/body.sh" }],
+        }
+      )
+    );
+    const { workflows, removedPaths } = stripScriptSourcePaths(parsed);
+
+    expect(JSON.stringify(workflows)).not.toContain("sourcePath");
+    expect(removedPaths).toEqual(["/then.sh", "/else.sh", "/body.sh"]);
+  });
+
+  it("reports nothing and keeps steps intact when no step carries a sourcePath", () => {
+    const wf = sampleWorkflow();
+    const { workflows, removedPaths } = stripScriptSourcePaths([wf]);
+    expect(workflows).toEqual([wf]);
+    expect(removedPaths).toEqual([]);
+  });
+
+  it("does not mutate the input workflows", () => {
+    const parsed = parseWorkflowEnvelope(
+      rawStepsEnvelope({ kind: "run-script", script: "s", sourcePath: "/x.sh" })
+    );
+    stripScriptSourcePaths(parsed);
+    expect(parsed[0].steps[0]).toEqual({ kind: "run-script", script: "s", sourcePath: "/x.sh" });
+  });
+
+  it("ignores a forged 'user-chosen' marker in the imported JSON", () => {
+    const parsed = parseWorkflowEnvelope(
+      rawStepsEnvelope({
+        kind: "run-script",
+        script: "s",
+        sourcePath: "/home/u/.aws/credentials",
+        sourcePathConfirmed: true,
+        userChosen: true,
+        trusted: true,
+      })
+    );
+    // The validator only copies known fields, so a forged marker never survives…
+    expect(parsed[0].steps[0]).toEqual({
+      kind: "run-script",
+      script: "s",
+      sourcePath: "/home/u/.aws/credentials",
+    });
+    // …and the import strip removes the path itself regardless.
+    const { workflows } = stripScriptSourcePaths(parsed);
+    expect(workflows[0].steps[0]).toEqual({ kind: "run-script", script: "s" });
+  });
+});
+
+describe("parseWorkflowEnvelope run-script / wait / run-local-process rejections (TFE2-005)", () => {
+  it("rejects a run-script missing its script", () => {
+    expect(() => parseWorkflowEnvelope(rawStepsEnvelope({ kind: "run-script" }))).toThrow(
+      'Invalid workflow file: step 0 of workflow at index 0 ("X") (run-script) is missing "script".'
+    );
+  });
+
+  it.each([[-1], ["50"]])("rejects a run-script with an invalid per-line delay %j", (delay) => {
+    expect(() =>
+      parseWorkflowEnvelope(
+        rawStepsEnvelope({ kind: "run-script", script: "a", perLineDelayMs: delay })
+      )
+    ).toThrow(
+      'Invalid workflow file: step 0 of workflow at index 0 ("X") (run-script) has an invalid delay.'
+    );
+  });
+
+  it("rejects a run-script with a non-string sourcePath", () => {
+    expect(() =>
+      parseWorkflowEnvelope(rawStepsEnvelope({ kind: "run-script", script: "a", sourcePath: 7 }))
+    ).toThrow(
+      'Invalid workflow file: step 0 of workflow at index 0 ("X") (run-script) has an invalid sourcePath.'
+    );
+  });
+
+  it.each([[-5], ["100"], [Number.POSITIVE_INFINITY]])(
+    "rejects a wait with an invalid delayMs %j",
+    (delayMs) => {
+      // JSON.stringify turns Infinity into null, which is also not a number.
+      expect(() => parseWorkflowEnvelope(rawStepsEnvelope({ kind: "wait", delayMs }))).toThrow(
+        'Invalid workflow file: step 0 of workflow at index 0 ("X") (wait) has an invalid "delayMs".'
+      );
+    }
+  );
+
+  it("rejects a run-local-process missing its program", () => {
+    expect(() =>
+      parseWorkflowEnvelope(rawStepsEnvelope({ kind: "run-local-process", args: [] }))
+    ).toThrow(
+      'Invalid workflow file: step 0 of workflow at index 0 ("X") (run-local-process) is missing "program".'
+    );
+  });
+
+  it.each([
+    ["non-array args", "--flag"],
+    ["missing args", undefined],
+    ["non-string args", ["ok", 3]],
+  ])("rejects a run-local-process with %s", (_label, args) => {
+    expect(() =>
+      parseWorkflowEnvelope(rawStepsEnvelope({ kind: "run-local-process", program: "echo", args }))
+    ).toThrow(
+      'Invalid workflow file: step 0 of workflow at index 0 ("X") (run-local-process) has invalid "args".'
+    );
+  });
+});
+
+describe("parseWorkflowEnvelope parameters (PROD-0040, TFE2-005)", () => {
+  it("round-trips a parameter of each type, preserving label/default/required/options", () => {
+    const wf = sampleWorkflow({
+      parameters: [
+        { name: "host", type: "string", label: "Host", default: "web-1", required: true },
+        { name: "port", type: "number", default: 22 },
+        { name: "dryRun", type: "boolean", default: false, required: false },
+        { name: "env", type: "enum", options: ["dev", "prod"], default: "dev" },
+      ],
+    });
+    const [parsed] = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed).toEqual(wf);
+  });
+
+  it("does not add an empty parameters key for a parameter-free workflow", () => {
+    const [fromEmpty] = parseWorkflowEnvelope(
+      rawEnvelope({ name: "X", steps: [], parameters: [] })
+    );
+    const [fromAbsent] = parseWorkflowEnvelope(rawEnvelope({ name: "X", steps: [] }));
+    expect("parameters" in fromEmpty).toBe(false);
+    expect("parameters" in fromAbsent).toBe(false);
+  });
+
+  it("does not add absent optional keys to a minimal parameter", () => {
+    const [parsed] = parseWorkflowEnvelope(
+      rawEnvelope({ name: "X", steps: [], parameters: [{ name: "p", type: "string" }] })
+    );
+    expect(parsed.parameters).toEqual([{ name: "p", type: "string" }]);
+  });
+
+  it("rejects non-array parameters", () => {
+    expect(() =>
+      parseWorkflowEnvelope(rawEnvelope({ name: "X", steps: [], parameters: { name: "p" } }))
+    ).toThrow('Invalid workflow file: workflow at index 0 ("X") has malformed parameters.');
+  });
+
+  const at = 'Invalid workflow file: parameter 0 of workflow at index 0 ("X")';
+  it.each([
+    ["a non-object parameter", "p", `${at} is malformed.`],
+    ["a missing name", { type: "string" }, `${at} is missing a name.`],
+    ["a blank name", { name: "  ", type: "string" }, `${at} is missing a name.`],
+    ["an unknown type", { name: "p", type: "date" }, `${at} has unknown type "date".`],
+    ["a missing type", { name: "p" }, `${at} has unknown type "undefined".`],
+    [
+      "a non-string label",
+      { name: "p", type: "string", label: 1 },
+      `${at} has a non-string "label".`,
+    ],
+    [
+      "an object default",
+      { name: "p", type: "string", default: { x: 1 } },
+      `${at} has an invalid "default".`,
+    ],
+    [
+      "a non-boolean required",
+      { name: "p", type: "string", required: "yes" },
+      `${at} has a non-boolean "required".`,
+    ],
+    [
+      "non-array options",
+      { name: "p", type: "enum", options: "a,b" },
+      `${at} has invalid "options".`,
+    ],
+    [
+      "non-string options",
+      { name: "p", type: "enum", options: ["a", 2] },
+      `${at} has invalid "options".`,
+    ],
+  ])("rejects %s", (_label, param, message) => {
+    expect(() =>
+      parseWorkflowEnvelope(rawEnvelope({ name: "X", steps: [], parameters: [param] }))
+    ).toThrow(message);
   });
 });

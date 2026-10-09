@@ -13,6 +13,7 @@ import {
   parseWorkflowEnvelope,
   resolveImportCollisions as resolveWorkflowImportCollisions,
   summarizeLocalProcessSteps,
+  stripScriptSourcePaths,
   type WorkflowImportResult,
 } from "@/services/workflowIo";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
@@ -305,7 +306,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     // parseWorkflowEnvelope throws on a malformed/incompatible file; let the
     // error propagate so the caller can surface a recoverable toast.
     const parsed = parseWorkflowEnvelope(json);
-    const prepared = resolveWorkflowImportCollisions(parsed, get().workflows, generateWorkflowId);
+    // #4310 (FEC2-001): an imported file never chooses which local file a
+    // run-script step reads — drop every sourcePath before anything is saved.
+    const { workflows: untrusted, removedPaths } = stripScriptSourcePaths(parsed);
+    const prepared = resolveWorkflowImportCollisions(
+      untrusted,
+      get().workflows,
+      generateWorkflowId
+    );
     for (const workflow of prepared) {
       await apiSaveWorkflow(workflow);
     }
@@ -319,6 +327,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       imported: prepared.length,
       workflowsWithLocalProcess,
       localProcessSteps,
+      removedScriptSourcePaths: removedPaths,
     } satisfies WorkflowImportResult;
   },
 
