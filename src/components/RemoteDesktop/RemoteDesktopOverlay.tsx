@@ -25,7 +25,9 @@ interface RemoteDesktopOverlayProps {
  * "Attempt n of N") — and the
  * dropped / auth / connect / close resting states (with a Reconnect action).
  * `disconnected` means no retry is running — Auto-Reconnect is off, its budget
- * is spent, or the drop was non-retryable — so it gets the manual prompt. Returns
+ * is spent, or the drop was non-retryable — so it gets the manual prompt.
+ * `serverClosed` means the server ended the session on purpose (a remote logoff
+ * or an admin disconnect, #4321): never auto-reconnected, manual prompt. Returns
  * `null` while the session is active so the canvas shows through.
  */
 export function RemoteDesktopOverlay({
@@ -104,7 +106,7 @@ export function RemoteDesktopOverlay({
             : state === "connectFailed"
               ? "Could not connect"
               : state === "serverClosed"
-                ? "Session closed by server"
+                ? "Session ended by the server"
                 : state === "disconnected"
                   ? "Connection lost"
                   : "Disconnected"

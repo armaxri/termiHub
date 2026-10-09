@@ -115,11 +115,19 @@ describe("RemoteDesktopOverlay", () => {
     expect(query("remote-desktop-overlay-error")?.textContent).toContain("Could not connect");
   });
 
-  it("shows a server-closed heading for a server-closed session", () => {
-    render("serverClosed");
-    expect(query("remote-desktop-overlay-error")?.textContent).toContain(
-      "Session closed by server"
-    );
+  it("shows a server-ended session with its reason and a manual Reconnect", () => {
+    // A remote logoff / admin disconnect is never auto-reconnected (#4321):
+    // no retry spinner, the server's reason, and a Reconnect action.
+    const { onReconnect } = render("serverClosed", {
+      message: "The disconnection was initiated by the user logging off",
+    });
+    expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
+    const el = query("remote-desktop-overlay-error");
+    expect(el?.textContent).toContain("Session ended by the server");
+    expect(el?.textContent).toContain("initiated by the user logging off");
+    expect(el?.textContent).not.toContain("Connection lost");
+    act(() => query("remote-desktop-reconnect")?.click());
+    expect(onReconnect).toHaveBeenCalledOnce();
   });
 
   it("shows a Disconnected heading for a closed session", () => {
