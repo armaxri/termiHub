@@ -670,6 +670,27 @@ export function getActionAccelerator(action: string): string | null {
 }
 
 /**
+ * Append an action's effective accelerator to a tooltip/label, e.g.
+ * `"Toggle Sidebar (Ctrl+Shift+B)"` (#4374). The hint follows the platform
+ * default and any user override via {@link getActionAccelerator}; when the
+ * action is unbound or unknown the bare label is returned, without a
+ * parenthetical. Use this instead of hand-building a shortcut string.
+ */
+export function withActionAccelerator(label: string, action: string): string {
+  const accelerator = getActionAccelerator(action);
+  return accelerator ? `${label} (${accelerator})` : label;
+}
+
+/**
+ * Render a primary-modifier shortcut that is not a configurable app action —
+ * e.g. Monaco's built-in `CtrlCmd+S` save — as `Cmd+S` on macOS and `Ctrl+S`
+ * elsewhere, in the same format as {@link getActionAccelerator} (#4374).
+ */
+export function modKeyAccelerator(key: string): string {
+  return serializeCombo(isMac() ? { key, meta: true } : { key, ctrl: true });
+}
+
+/**
  * Get the scope of an action — where it is allowed to fire relative to the
  * active tab. Unknown or unannotated actions default to `"global"` so existing
  * behavior is preserved.
