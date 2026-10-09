@@ -83,30 +83,35 @@
 
 .keyboard-settings__binding-cell {
   width: 42%;
-  cursor: pointer;
+}
+
+/* The binding display is a real button (#4330) so it is reachable and
+   activatable by keyboard; these overrides keep it reading as a monospace
+   value rather than a labelled action. Doubled class for specificity over the
+   shared .ui-btn base. */
+.ui-btn.keyboard-settings__binding-btn {
+  justify-content: flex-start;
+  height: auto;
+  min-height: var(--control-height-sm);
   padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-family: monospace;
+  font-weight: var(--font-weight-normal);
   color: var(--text-primary);
+  white-space: normal;
+  text-align: left;
 }
 
-.keyboard-settings__binding-cell:hover {
-  background-color: var(--bg-hover);
-}
-
-.keyboard-settings__binding-cell--unbound {
+.ui-btn.keyboard-settings__binding-btn--unbound {
   color: var(--text-secondary);
   font-style: italic;
 }
 
-.keyboard-settings__binding-cell--recording {
+.ui-btn.keyboard-settings__binding-btn--recording,
+.ui-btn.keyboard-settings__binding-btn--recording:hover {
   background-color: var(--accent-color);
   color: var(--text-on-accent);
   cursor: default;
-}
-
-.keyboard-settings__binding-cell--recording:hover {
-  background-color: var(--accent-color);
 }
 
 .keyboard-settings__row-actions {

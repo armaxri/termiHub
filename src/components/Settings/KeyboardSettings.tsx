@@ -57,6 +57,21 @@ const CATEGORY_ORDER: ShortcutCategory[] = [
   "tab-groups",
 ];
 
+/**
+ * Spoken instructions while a binding is being recorded. Tab and Shift+Tab on
+ * their own are reserved for focus navigation (pressing them leaves recording,
+ * so record mode is never a keyboard trap); combined with Ctrl/Alt/Cmd they are
+ * recorded like any other key.
+ */
+const RECORDING_INSTRUCTIONS =
+  "Press the new key combination. Escape cancels, Backspace clears, Tab leaves.";
+
+/** Human-readable effective binding of `action` ("unbound" when it has none). */
+function describeEffective(action: string): string {
+  const combo = getEffectiveCombo(action);
+  return combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "unbound";
+}
+
 interface KeyboardSettingsProps {
   visibleFields?: Set<string>;
 }
@@ -64,6 +79,9 @@ interface KeyboardSettingsProps {
 export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  // Text of the polite live region that tells screen-reader users what a
+  // rebinding did: recording started, binding set/cleared/reset, or cancelled.
+  const [announcement, setAnnouncement] = useState("");
   const updateSettings = useAppStore((s) => s.updateSettings);
   const settings = useProjectedSettings();
 
@@ -135,23 +153,40 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   }, [settings, editorDelegationEnabled, updateSettings]);
 
   const handleResetOne = useCallback(
-    (action: string) => {
-      setOverride(action, null);
+    (binding: KeyBinding) => {
+      setOverride(binding.action, null);
       persistOverrides();
+      setConflictWarning(null);
+      setAnnouncement(`${binding.label} shortcut reset to ${describeEffective(binding.action)}.`);
     },
     [persistOverrides]
   );
 
   const handleUnbindOne = useCallback(
-    (action: string) => {
-      unbindAction(action);
+    (binding: KeyBinding) => {
+      unbindAction(binding.action);
       persistOverrides();
+      setConflictWarning(null);
+      setAnnouncement(`${binding.label} shortcut cleared.`);
     },
     [persistOverrides]
   );
 
+  const handleStartRecording = useCallback((binding: KeyBinding) => {
+    setRecordingAction(binding.action);
+    setConflictWarning(null);
+    setAnnouncement(`Recording shortcut for ${binding.label}. ${RECORDING_INSTRUCTIONS}`);
+  }, []);
+
+  const handleCancelRecording = useCallback((binding: KeyBinding) => {
+    setRecordingAction(null);
+    setConflictWarning(null);
+    setAnnouncement(`Recording cancelled. ${binding.label} shortcut unchanged.`);
+  }, []);
+
   const handleRecordComplete = useCallback(
-    (action: string, combo: KeyCombo | KeyCombo[] | null) => {
+    (binding: KeyBinding, combo: KeyCombo | KeyCombo[] | null) => {
+      const { action } = binding;
       setRecordingAction(null);
       setConflictWarning(null);
 
@@ -159,20 +194,26 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         // Backspace pressed — unbind
         unbindAction(action);
         persistOverrides();
+        setAnnouncement(`${binding.label} shortcut cleared.`);
         return;
       }
 
       const conflict = checkConflict(combo, action);
       if (conflict) {
         const conflictBinding = bindings.find((b) => b.action === conflict);
+        // Announced assertively by the role="alert" conflict banner; clear the
+        // polite region so the two do not talk over each other.
+        setAnnouncement("");
         setConflictWarning(
-          `"${serializeBinding(combo)}" is already used by "${conflictBinding?.label ?? conflict}"`
+          `"${serializeBinding(combo)}" is already used by "${conflictBinding?.label ?? conflict}". ` +
+            `${binding.label} shortcut unchanged.`
         );
         return;
       }
 
       setOverride(action, combo);
       persistOverrides();
+      setAnnouncement(`${binding.label} shortcut set to ${serializeBinding(combo)}.`);
     },
     [persistOverrides, bindings]
   );
@@ -238,8 +279,21 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         </span>
       </div>
 
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        data-testid="keyboard-settings-announcement"
+      >
+        {announcement}
+      </div>
+
       {conflictWarning && (
-        <div className="keyboard-settings__conflict" data-testid="keyboard-settings-conflict">
+        <div
+          className="keyboard-settings__conflict"
+          role="alert"
+          data-testid="keyboard-settings-conflict"
+        >
           {conflictWarning}
         </div>
       )}
@@ -261,17 +315,11 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
                   key={binding.action}
                   binding={binding}
                   isRecording={recordingAction === binding.action}
-                  onStartRecording={() => {
-                    setRecordingAction(binding.action);
-                    setConflictWarning(null);
-                  }}
-                  onRecordComplete={(combo) => handleRecordComplete(binding.action, combo)}
-                  onCancel={() => {
-                    setRecordingAction(null);
-                    setConflictWarning(null);
-                  }}
-                  onReset={() => handleResetOne(binding.action)}
-                  onUnbind={() => handleUnbindOne(binding.action)}
+                  onStartRecording={() => handleStartRecording(binding)}
+                  onRecordComplete={(combo) => handleRecordComplete(binding, combo)}
+                  onCancel={() => handleCancelRecording(binding)}
+                  onReset={() => handleResetOne(binding)}
+                  onUnbind={() => handleUnbindOne(binding)}
                 />
               ))}
             </tbody>
@@ -358,7 +406,7 @@ function KeybindingRow({
   const combo = getEffectiveCombo(binding.action);
   const isUnbound = !combo || isUnboundCombo(combo);
   const displayStr = combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "(unbound)";
-  const cellRef = useRef<HTMLTableCellElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
   // Live preview of the combos captured so far while recording (e.g. "Cmd+K"
   // after the first key of a chord). Empty until the first non-modifier keypress.
@@ -374,8 +422,17 @@ function KeybindingRow({
     onCancelRef.current = onCancel;
   });
 
+  // Keep focus on the binding button while recording: a mouse click does not
+  // focus a button in WebKit, and the result is announced relative to it.
+  useEffect(() => {
+    if (isRecording) buttonRef.current?.focus();
+  }, [isRecording]);
+
   useEffect(() => {
     if (!isRecording) return;
+
+    /** Return focus to the binding button once recording ends via the keyboard. */
+    const refocus = () => buttonRef.current?.focus();
 
     // Combos accumulated so far this recording session, and the pending "single
     // combo?" finalize timer.
@@ -395,15 +452,27 @@ function KeybindingRow({
       // A single combo persists as a bare KeyCombo (matching the default shape);
       // a chord persists as the KeyCombo[] the engine's chord matcher consumes.
       onRecordCompleteRef.current(combos.length === 1 ? combos[0] : [...combos]);
+      refocus();
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // A bare Tab / Shift+Tab is reserved for focus navigation: leave record
+      // mode without capturing it and let the browser move focus as usual, so
+      // recording can never trap keyboard focus. With Ctrl/Alt/Cmd it is a
+      // normal recordable key (e.g. Ctrl+Tab).
+      if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        clearFinishTimer();
+        onCancelRef.current();
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
 
       if (e.key === "Escape") {
         clearFinishTimer();
         onCancelRef.current();
+        refocus();
         return;
       }
       if (e.key === "Backspace") {
@@ -415,6 +484,7 @@ function KeybindingRow({
           return;
         }
         onRecordCompleteRef.current(null);
+        refocus();
         return;
       }
 
@@ -450,38 +520,68 @@ function KeybindingRow({
     };
   }, [isRecording]);
 
+  /**
+   * Enter / Space enter record mode explicitly. Handled on keydown (and the
+   * default prevented) so the activating key is never mistaken for the first
+   * key of the new binding, and Space's keyup-click cannot double-trigger.
+   */
+  const handleButtonKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (isRecording) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onStartRecording();
+    }
+  };
+
+  /** Clear the binding; its button then unmounts, so hand focus to the binding. */
+  const handleUnbind = () => {
+    onUnbind();
+    buttonRef.current?.focus();
+  };
+
+  const accessibleName = isRecording
+    ? `Recording shortcut for ${binding.label}`
+    : `Change shortcut for ${binding.label}, currently ${isUnbound ? "unbound" : displayStr}`;
+
   return (
     <tr data-testid={`keybinding-row-${binding.action}`}>
       <td className="keyboard-settings__action-cell">{binding.label}</td>
-      <td
-        ref={cellRef}
-        className={[
-          "keyboard-settings__binding-cell",
-          isRecording ? "keyboard-settings__binding-cell--recording" : "",
-          !isRecording && isUnbound ? "keyboard-settings__binding-cell--unbound" : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-        onClick={!isRecording ? onStartRecording : undefined}
-        data-testid={`keybinding-binding-${binding.action}`}
-        data-unbound={!isRecording && isUnbound ? "true" : undefined}
-      >
-        {isRecording
-          ? recordingPreview
-            ? `${recordingPreview} … (press another key to chord)`
-            : "Press a key combination... (Backspace to unbind)"
-          : displayStr}
+      <td className="keyboard-settings__binding-cell">
+        <Button
+          ref={buttonRef}
+          variant="ghost"
+          size="sm"
+          fullWidth
+          className={[
+            "keyboard-settings__binding-btn",
+            isRecording ? "keyboard-settings__binding-btn--recording" : "",
+            !isRecording && isUnbound ? "keyboard-settings__binding-btn--unbound" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          onClick={!isRecording ? onStartRecording : undefined}
+          onKeyDown={handleButtonKeyDown}
+          aria-label={accessibleName}
+          data-testid={`keybinding-binding-${binding.action}`}
+          data-unbound={!isRecording && isUnbound ? "true" : undefined}
+        >
+          {isRecording
+            ? recordingPreview
+              ? `${recordingPreview} … (press another key to chord)`
+              : "Press a key combination... (Esc cancels, Backspace clears)"
+            : displayStr}
+        </Button>
       </td>
       <td className="keyboard-settings__row-actions">
         {!isUnbound && (
-          <Tooltip content="Unbind (clear shortcut)">
+          <Tooltip content="Clear shortcut">
             <Button
               variant="ghost"
               size="sm"
               iconOnly
               icon={<X size={12} />}
-              onClick={onUnbind}
-              aria-label={`Unbind ${binding.label}`}
+              onClick={handleUnbind}
+              aria-label={`Clear shortcut for ${binding.label}`}
               data-testid={`keybinding-unbind-${binding.action}`}
             />
           </Tooltip>

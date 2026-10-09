@@ -10,8 +10,8 @@ evidence:
   - src/components/Settings/KeyboardSettings.tsx:455-468
   - src/components/Settings/KeyboardSettings.tsx:465
   - src/components/Settings/KeyboardSettings.tsx:475-499
-status: open
-resolution: ""
+status: fixed
+resolution: "#4330 — binding is a keyboard-activatable button with explicit record mode, Esc cancel, Clear, Tab escape and live-region announcements"
 audit: 2026-10
 commit: 663465d52
 relation: new
