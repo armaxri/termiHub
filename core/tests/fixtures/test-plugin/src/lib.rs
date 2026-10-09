@@ -472,6 +472,10 @@ struct ProbeConfig {
     probe_path: String,
     /// Bytes to write for the `writefile`/`appendfile`/`createfile` probes.
     probe_data: String,
+    /// Block inside `create_backend` for this many milliseconds before
+    /// answering, so the host-side tests can model a slow plugin connect
+    /// (#4323). `0` (the default) answers at once.
+    stall_create_ms: u64,
 }
 
 /// Run the requested capability probe through the host `bridge` and report the
@@ -636,6 +640,10 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
         let json = unsafe { (*config).config_json.as_str() };
         serde_json::from_str::<ProbeConfig>(json).unwrap_or_default()
     };
+    if cfg.stall_create_ms > 0 {
+        // A slow connect: the runner's plugin-call thread is held here.
+        std::thread::sleep(std::time::Duration::from_millis(cfg.stall_create_ms));
+    }
     if cfg.probe == "settings" {
         // Report the plugin-level settings the host delivered (PLG-008) as a
         // single line, so a test can assert they crossed the real ABI boundary.
