@@ -56,36 +56,51 @@ pub fn lock_path_for(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// A held exclusive **cross-process** advisory lock on a config file's sidecar
+/// A held **cross-process** advisory lock on a config file's sidecar
 /// lock-file.
 ///
 /// This is the concurrency control [`write_atomic`] alone cannot provide: it
 /// prevents a torn *file*, but two `--stdio` workers sharing a per-user
-/// `state.json` can still lost-update each other (worker A loads, B loads, A
-/// saves, B saves → A's session vanishes). Serialising a locked read → modify →
-/// write over the shared file closes that window (AGT-016).
+/// `state.json` or `connections.json` can still lost-update each other (worker
+/// A loads, B loads, A saves, B saves → A's entry vanishes). Serialising a
+/// locked read → modify → write over the shared file closes that window
+/// (AGT-016, PER2-001).
 ///
-/// The lock is advisory and process-wide: it is acquired with `flock` on unix
-/// and `LockFileEx` on windows, and released when this guard is dropped. It is
-/// **never** nested with another file lock in the same worker, and it guards the
-/// only resource shared across workers, so it cannot participate in a
-/// cross-worker deadlock (a peer waiting on the lock never also needs any
-/// in-process mutex this worker holds).
+/// Built on [`std::fs::File::lock`] / [`std::fs::File::lock_shared`]
+/// (`flock` on unix, `LockFileEx` on windows). These are OS locks, so a
+/// crashed holder never leaves a stale lock behind: the OS drops it with the
+/// process. The lock is released when this guard is dropped. It is **never**
+/// nested with another file lock in the same worker, and it guards the only
+/// resource shared across workers, so it cannot participate in a cross-worker
+/// deadlock (a peer waiting on the lock never also needs any in-process mutex
+/// this worker holds).
 #[must_use = "the lock is released as soon as the guard is dropped"]
 pub struct FileLock {
-    #[cfg(unix)]
-    _flock: nix::fcntl::Flock<std::fs::File>,
-    #[cfg(windows)]
     file: std::fs::File,
-    #[cfg(not(any(unix, windows)))]
-    _file: std::fs::File,
 }
 
 impl FileLock {
     /// Acquire an exclusive advisory lock on `path`'s sidecar lock-file,
     /// blocking until it is available. Creates the lock-file (and its parent
-    /// directory) if needed.
+    /// directory) if needed. Use this for every read-modify-write.
     pub fn acquire(path: &Path) -> Result<Self> {
+        let (file, lock_path) = Self::open(path)?;
+        file.lock()
+            .with_context(|| format!("failed to lock {}", lock_path.display()))?;
+        Ok(Self { file })
+    }
+
+    /// Acquire a shared advisory lock on `path`'s sidecar lock-file, blocking
+    /// while an exclusive holder is mid read-modify-write. Several readers may
+    /// hold it at once.
+    pub fn acquire_shared(path: &Path) -> Result<Self> {
+        let (file, lock_path) = Self::open(path)?;
+        file.lock_shared()
+            .with_context(|| format!("failed to lock {} (shared)", lock_path.display()))?;
+        Ok(Self { file })
+    }
+
+    fn open(path: &Path) -> Result<(std::fs::File, PathBuf)> {
         let lock_path = lock_path_for(path);
         if let Some(parent) = lock_path.parent() {
             // Best-effort: `open` below surfaces a real error if the dir is
@@ -99,68 +114,16 @@ impl FileLock {
             .truncate(false)
             .open(&lock_path)
             .with_context(|| format!("failed to open lock file {}", lock_path.display()))?;
-        Self::lock_file(file, &lock_path)
-    }
-
-    #[cfg(unix)]
-    fn lock_file(file: std::fs::File, lock_path: &Path) -> Result<Self> {
-        use nix::fcntl::{Flock, FlockArg};
-        let flock = Flock::lock(file, FlockArg::LockExclusive)
-            .map_err(|(_, errno)| errno)
-            .with_context(|| format!("failed to flock {}", lock_path.display()))?;
-        Ok(Self { _flock: flock })
-    }
-
-    #[cfg(windows)]
-    fn lock_file(file: std::fs::File, lock_path: &Path) -> Result<Self> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
-        use windows_sys::Win32::System::IO::OVERLAPPED;
-
-        let handle = file.as_raw_handle();
-        // Safety: `LockFileEx` on a valid handle with a zeroed OVERLAPPED takes a
-        // blocking exclusive lock on a 1-byte range at offset 0. We hold `file`
-        // for the guard's lifetime so the handle stays valid until Drop unlocks.
-        let ok = unsafe {
-            let mut overlapped: OVERLAPPED = std::mem::zeroed();
-            LockFileEx(
-                handle as _,
-                LOCKFILE_EXCLUSIVE_LOCK,
-                0,
-                1,
-                0,
-                &mut overlapped,
-            )
-        };
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error())
-                .with_context(|| format!("failed to LockFileEx {}", lock_path.display()));
-        }
-        Ok(Self { file })
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    fn lock_file(file: std::fs::File, _lock_path: &Path) -> Result<Self> {
-        // No advisory-lock primitive on this platform; degrade to a best-effort
-        // no-op guard (the agent only ships on unix and windows).
-        Ok(Self { _file: file })
+        Ok((file, lock_path))
     }
 }
 
-#[cfg(windows)]
 impl Drop for FileLock {
     fn drop(&mut self) {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
-        use windows_sys::Win32::System::IO::OVERLAPPED;
-
-        let handle = self.file.as_raw_handle();
-        // Safety: mirrors the 1-byte range locked in `lock_file`; the handle is
-        // still valid because `self.file` is alive until this Drop completes.
-        unsafe {
-            let mut overlapped: OVERLAPPED = std::mem::zeroed();
-            let _ = UnlockFileEx(handle as _, 0, 1, 0, &mut overlapped);
-        }
+        // Closing the handle would release the lock too, but windows only
+        // promises to do that "eventually"; unlock explicitly so the next
+        // waiter gets the lock immediately.
+        let _ = self.file.unlock();
     }
 }
 
@@ -301,6 +264,42 @@ mod tests {
             final_count,
             (threads * iters) as u64,
             "the lock must serialise every increment — a lost update means a broken lock"
+        );
+    }
+
+    /// A shared lock admits other readers but excludes a writer until it is
+    /// dropped; an exclusive lock excludes readers.
+    #[test]
+    fn shared_lock_excludes_writers_but_not_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let lock_file = || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(lock_path_for(&path))
+                .unwrap()
+        };
+
+        let reader = FileLock::acquire_shared(&path).expect("shared acquire");
+        let second_reader = FileLock::acquire_shared(&path).expect("second reader");
+        assert!(
+            matches!(
+                lock_file().try_lock(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ),
+            "a writer must wait for the readers"
+        );
+        drop(reader);
+        drop(second_reader);
+
+        let _writer = FileLock::acquire(&path).expect("exclusive acquire");
+        assert!(
+            matches!(
+                lock_file().try_lock_shared(),
+                Err(std::fs::TryLockError::WouldBlock)
+            ),
+            "a reader must wait for the writer"
         );
     }
 }
