@@ -3,8 +3,11 @@
 //! The framebuffer-oriented analogue of [`SessionManager`](super::manager::SessionManager):
 //! it owns live graphical sessions keyed by session id, drives the shared
 //! [`SessionStateMachine`], and fans the backend's frame / cursor / clipboard /
-//! state changes out as Tauri events (`remote-desktop-frame`,
-//! `remote-desktop-cursor`, `remote-desktop-clipboard`, `remote-desktop-state`).
+//! state changes out to the frontend: frames and cursor updates as binary
+//! messages on the session's frame channel
+//! ([`remote_desktop_frames`](super::remote_desktop_frames), #4291), clipboard
+//! and state as Tauri events (`remote-desktop-clipboard`,
+//! `remote-desktop-state`).
 //!
 //! It is protocol-blind: a session is created through the same
 //! [`ConnectionTypeRegistry`] as every other connection, and its framebuffer
@@ -49,6 +52,9 @@ use crate::session::graphical_supervisor::{
     Generation, LastSize, PumpEnd, Supervisor, RECONNECT_DIAL_TIMEOUT,
 };
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
+use crate::session::remote_desktop_frames::{
+    encode_cursor, encode_frame, RemoteDesktopFrameChannels,
+};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
@@ -111,8 +117,8 @@ enum ConnectAbort {
 
 // ── Event payloads ─────────────────────────────────────────────────
 
-/// `remote-desktop-frame` payload: a session id plus the flattened frame update
-/// (`width`, `height`, `rects`).
+/// A frame update for one session, handed to [`GraphicalEventSink::emit_frame`].
+/// The app sink encodes it as a binary channel message (#4291).
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteDesktopFrameEvent {
     pub session_id: String,
@@ -120,7 +126,8 @@ pub struct RemoteDesktopFrameEvent {
     pub frame: FrameUpdate,
 }
 
-/// `remote-desktop-cursor` payload.
+/// A cursor update for one session, handed to
+/// [`GraphicalEventSink::emit_cursor`] (sent binary, like frames).
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteDesktopCursorEvent {
     pub session_id: String,
@@ -201,8 +208,8 @@ pub trait GraphicalEventSink: Clone + Send + Sync + 'static {
 /// (#3388, SM-003 single-attach for windows), falling back to a broadcast for an
 /// **unclaimed** session — the same PERF-004 targeting `terminal-output` uses.
 ///
-/// Used for the session's *content* (frames, cursor, clipboard echo, cert
-/// prompts): a window another window has taken the session over from is
+/// Used for the session's *content* (clipboard echo, cert prompts; frames and
+/// cursor take the same scoping on their binary channel, #4291): a window another window has taken the session over from is
 /// evicted, so it must neither keep streaming the desktop nor see the remote
 /// clipboard. Its canvas simply freezes on the last frame under the "Taken over
 /// by another window" overlay; on Reclaim it re-sends its size and requests a
@@ -228,12 +235,37 @@ fn emit_owner_scoped<R: tauri::Runtime, P: Serialize + Clone>(
     };
 }
 
-impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
-    fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
-        emit_owner_scoped(self, "remote-desktop-frame", &event.session_id, event);
+/// Send an encoded frame / cursor message over the session's binary frame
+/// channels (#4291), with the same owner scoping as [`emit_owner_scoped`].
+fn send_binary_owner_scoped<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    session_id: &str,
+    encode: impl FnOnce() -> Vec<u8>,
+) {
+    use crate::window::{OutputEmitTarget, WindowManager};
+    use tauri::Manager;
+    let Some(channels) = app.try_state::<RemoteDesktopFrameChannels>() else {
+        return;
+    };
+    // Skip the encode (a full-frame copy) when no window is listening.
+    if channels.subscriber_count(session_id) == 0 {
+        return;
     }
+    let target = app
+        .try_state::<WindowManager>()
+        .map(|wm| wm.output_target(session_id))
+        .unwrap_or(OutputEmitTarget::Broadcast);
+    channels.send(session_id, &target, encode());
+}
+
+impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
+    /// Frames ride the session's binary channel, not a JSON event (#4291).
+    fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
+        send_binary_owner_scoped(self, &event.session_id, || encode_frame(&event.frame));
+    }
+    /// Cursor updates share the frame channel, so a shape is binary too.
     fn emit_cursor(&self, event: &RemoteDesktopCursorEvent) {
-        emit_owner_scoped(self, "remote-desktop-cursor", &event.session_id, event);
+        send_binary_owner_scoped(self, &event.session_id, || encode_cursor(&event.cursor));
     }
     fn emit_clipboard(&self, event: &RemoteDesktopClipboardEvent) {
         emit_owner_scoped(self, "remote-desktop-clipboard", &event.session_id, event);
@@ -974,7 +1006,7 @@ impl GraphicalSessionManager {
     /// cross-window tab move (#1904): the destination canvas is blank until the
     /// next full frame, so this forces a prompt repaint instead of waiting for
     /// the protocol's next natural keyframe. The re-emitted frame flows out on
-    /// `remote-desktop-frame` through the session's already-running frame pump.
+    /// the binary frame channel through the session's already-running frame pump.
     /// The certificate prompt the session is waiting on, if any (#4004).
     ///
     /// The cert pump emits `remote-desktop-cert-prompt` as soon as the sidecar
@@ -1335,7 +1367,7 @@ pub(crate) fn emit_state<S: GraphicalEventSink>(
     });
 }
 
-/// Pump frame updates from the backend to `remote-desktop-frame` events until
+/// Pump frame updates from the backend to the session's frame channel until
 /// the channel closes, reporting how the stream ended.
 ///
 /// Every frame passes the shared [`FrameGuard`] first (MOCK-011), so no backend
@@ -1392,7 +1424,7 @@ pub(crate) async fn frame_pump<S: GraphicalEventSink>(
     end
 }
 
-/// Pump cursor updates from the backend to `remote-desktop-cursor` events.
+/// Pump cursor updates from the backend to the session's frame channel.
 ///
 /// Every update passes the shared [`CursorGuard`] first (#3333): a cursor
 /// bitmap that is oversize, zero-sized, has its hotspot outside the image or a
@@ -1929,7 +1961,7 @@ mod tests {
     async fn request_full_frame_emits_a_frame_on_attach() {
         // The full-frame-on-attach hook (#1904): a moved graphical tab landing in
         // a new window asks the backend to re-paint, which flows out as extra
-        // `remote-desktop-frame` events through the running pump.
+        // frames through the running pump.
         let mgr = manager();
         let sink = RecordingSink::default();
         let sid = mgr

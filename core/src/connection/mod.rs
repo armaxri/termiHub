@@ -27,6 +27,7 @@ pub mod registry;
 pub mod save_password;
 pub mod schema;
 pub mod schema_defaults;
+pub mod secrets;
 pub mod validation;
 
 pub use auto_reconnect::{

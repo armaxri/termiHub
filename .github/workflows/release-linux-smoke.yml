@@ -13,12 +13,12 @@ name: Release Linux Smoke
 # close, append across relaunch, single-instance forwarding of --workspace /
 # --workspace-file, and no clean-exit line after kill -9.
 #
-# This is a SEPARATE workflow (not a job inside release.yml) on purpose: it is
-# fully decoupled from the release-build matrix and cannot collide with concurrent
-# edits to release.yml. It is triggered by the completion of the "Release" run
-# rather than the `release: published` event, because release.yml publishes the
-# (non-draft) release BEFORE its build matrix uploads the assets — a
-# `release: published` job would run too early and find no artifacts to test.
+# release.yml calls this as a reusable workflow (workflow_call) after
+# verify-release and before mark-latest (#4281), so a failing smoke keeps the
+# release from becoming GitHub's "Latest release". It is not triggered by the
+# `release: published` event, because release.yml publishes the (non-draft)
+# release BEFORE its build matrix uploads the assets — a `release: published`
+# job would run too early and find no artifacts to test.
 #
 # NOTE (#2646 fixed, #2669): the built desktop app now launches headless under
 # WebKitGTK on ubuntu-latest (the nightly integration Xvfb leg passes), so the two
@@ -30,12 +30,14 @@ name: Release Linux Smoke
 # the "Enforce smoke results" step fails on any non-success.)
 
 on:
-  # Fire after the Release workflow completes. workflow_run runs the copy of this
-  # file on the default branch, which is the correct behavior for release
-  # automation (releases are cut from the default branch's tags).
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
+  # Called by release.yml after verify-release and before mark-latest (#4281),
+  # so a failing smoke keeps the release from becoming GitHub's "Latest release".
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
   # Manual re-run against any already-published release, for verification without
   # cutting a new release.
   workflow_dispatch:
@@ -51,12 +53,6 @@ permissions:
 jobs:
   linux-x64-install-smoke:
     name: Linux x64 install + smoke (AppImage + .deb)
-    # Only run for a manual dispatch, or for a Release run that was triggered by a
-    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -82,32 +78,12 @@ jobs:
       - name: Resolve release tag
         id: tag
         env:
-          GH_EVENT: ${{ github.event_name }}
-          DISPATCH_TAG: ${{ github.event.inputs.tag }}
-          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
-            TAG="${DISPATCH_TAG:-}"
-          else
-            # For a tag-triggered upstream run, head_branch is the tag name.
-            TAG="${RUN_TAG:-}"
-            case "$TAG" in
-              v*.*.*) ;;
-              *)
-                # Fallback: resolve the version tag pointing at the release commit.
-                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
-                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
-                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
-                        | grep -E '^v[0-9]' | head -n1 || true)"
-                ;;
-            esac
-          fi
           case "$TAG" in
             v*.*.*) ;;
-            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+            *) echo "::error::not a version tag: '$TAG'"; exit 1 ;;
           esac
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

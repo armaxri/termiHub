@@ -38,6 +38,8 @@ fn masks_key_value_secrets_in_every_common_shape() {
         "refresh_token=hunter2secret",
         "Cookie: hunter2secret",
         "otp=hunter2secret",
+        r#"{"sshPassword":"hunter2secret"}"#,
+        "ssh_password=hunter2secret",
     ] {
         let out = assert_masked(&r, input, "hunter2secret");
         assert!(out.contains(REDACTED), "{input:?} -> {out:?}");

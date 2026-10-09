@@ -157,11 +157,13 @@ pub(crate) fn follow_id_changes(
     )
 }
 
-/// Whether a saved connection can own stored secrets.
+/// Whether a saved connection can own stored secrets — including schema
+/// secrets other than `password`, such as a VNC `sshPassword` (#4289).
 fn may_have_credentials(connection: &SavedConnection) -> bool {
     let settings = &connection.config.settings;
     settings.get("authMethod").is_some()
         || settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true)
+        || super::secret_fields::may_have_field_secrets(&connection.config.type_id, settings)
 }
 
 #[cfg(test)]

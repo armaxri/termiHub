@@ -85,6 +85,12 @@ pub async fn create_connection(
 ) -> Result<String, TerminalError> {
     let unattended = unattended.unwrap_or(false);
     info!(type_id, agent_id = ?agent_id, spawned = ?spawned, unattended, "Creating connection");
+    // A saved connection's schema secrets other than `password` (e.g. an inline
+    // jump-host hop's password) live in the credential store, not in the
+    // settings the frontend loaded (#4289).
+    if let Some(id) = saved_connection_id.as_deref().filter(|id| !id.is_empty()) {
+        conn_manager.restore_saved_secrets(&mut settings, id);
+    }
     // Expand any saved-connection jump-host references to inline hops before the
     // settings reach core (which only connects with inline hops) — #940.
     conn_manager

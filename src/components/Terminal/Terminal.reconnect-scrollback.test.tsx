@@ -62,9 +62,14 @@ vi.mock("@xterm/addon-search", () => {
 // been established (i.e. the instance has "content"). We approximate that by
 // returning the snapshot unconditionally; the production guard only replays a
 // non-empty snapshot, and only for a subsequent instance.
+const serializeCalls = vi.hoisted(() => ({ count: 0 }));
+
 vi.mock("@xterm/addon-serialize", () => {
   class MockSerializeAddon {
-    serialize = vi.fn(() => SERIALIZED_SCROLLBACK);
+    serialize = vi.fn(() => {
+      serializeCalls.count += 1;
+      return SERIALIZED_SCROLLBACK;
+    });
     dispose = vi.fn();
   }
   return { SerializeAddon: MockSerializeAddon };
@@ -123,6 +128,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   mockCreateTerminal.mockClear();
   mockCreateTerminal.mockResolvedValue("fresh-session");
+  serializeCalls.count = 0;
   xtermInstances.length = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -229,5 +235,47 @@ describe("Terminal — scrollback survives reconnect (#1126)", () => {
       exportSpy.mockRestore();
       restoreSpy.mockRestore();
     }
+  });
+});
+
+describe("Terminal — scrollback serialization only when needed (#4308)", () => {
+  it("does not serialize the scrollback on a plain unmount (tab close)", async () => {
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal tabId="tab-1" config={LOCAL_CONFIG} isVisible={true} />
+        </TerminalPortalProvider>
+      );
+    });
+    await act(async () => {
+      await wait(50);
+    });
+
+    // Closing the tab discards the xterm for good — no snapshot is needed, so
+    // serializing a possibly multi-MB buffer would only delay the close.
+    act(() => {
+      root.render(<TerminalPortalProvider>{null}</TerminalPortalProvider>);
+    });
+    expect(serializeCalls.count).toBe(0);
+  });
+
+  it("serializes the scrollback exactly once on a reconnect", async () => {
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal tabId="tab-1" config={LOCAL_CONFIG} isVisible={true} />
+        </TerminalPortalProvider>
+      );
+    });
+    await act(async () => {
+      await wait(50);
+    });
+    act(() => {
+      useAppStore.getState().reconnectTerminal("tab-1");
+    });
+    await act(async () => {
+      await wait(50);
+    });
+    expect(serializeCalls.count).toBe(1);
   });
 });

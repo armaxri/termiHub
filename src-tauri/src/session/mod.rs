@@ -16,6 +16,7 @@ mod persistent_controller;
 pub mod process_ops;
 pub mod rdp_trust_store;
 pub mod registry;
+pub mod remote_desktop_frames;
 pub mod remote_proxy;
 pub mod retained_request;
 pub mod session_log;

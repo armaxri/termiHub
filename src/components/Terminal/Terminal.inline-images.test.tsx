@@ -242,15 +242,20 @@ describe("Terminal — inline images (PROD-057)", () => {
     expect(addon.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("still snapshots the scrollback on teardown with the image addon loaded", async () => {
+  it("still snapshots the scrollback on a reconnect with the image addon loaded", async () => {
     renderTerminal();
     await settle();
     expect(h.imageInstances).toHaveLength(1);
 
-    unmountOnce();
+    // A reconnect re-runs the creation effect; its teardown takes the #1126
+    // snapshot (a plain unmount no longer does, #4308).
+    act(() => {
+      useAppStore.getState().reconnectTerminal("tab-1");
+    });
+    await settle();
 
-    // The #1126 snapshot is taken from the serialize addon (text only); the
-    // image addon must not interfere with it.
+    // The snapshot is taken from the serialize addon (text only); the image
+    // addon must not interfere with it.
     expect(h.serializeInstances[0].serialize).toHaveBeenCalledTimes(1);
     expect(h.imageInstances[0].dispose).toHaveBeenCalledTimes(1);
   });

@@ -11,6 +11,11 @@ pub enum CredentialType {
     KeyPassphrase,
     /// A password used to elevate a save (e.g., `sudo` for an elevated write).
     SudoPassword,
+    /// Every other secret a connection's settings schema declares — e.g. the
+    /// VNC SSH-gateway `sshPassword`, a plugin's password field or an inline
+    /// jump-host hop's password — as one JSON object
+    /// ([`termihub_core::connection::secrets::TakenSecrets`]) (#4289).
+    FieldSecrets,
 }
 
 impl fmt::Display for CredentialType {
@@ -19,6 +24,7 @@ impl fmt::Display for CredentialType {
             CredentialType::Password => write!(f, "password"),
             CredentialType::KeyPassphrase => write!(f, "key_passphrase"),
             CredentialType::SudoPassword => write!(f, "sudo_password"),
+            CredentialType::FieldSecrets => write!(f, "field_secrets"),
         }
     }
 }
@@ -33,14 +39,15 @@ impl CredentialType {
     /// each such call site — stops it from silently drifting out of date when a
     /// new variant is added; the `all_lists_every_credential_type` guard test
     /// forces every new variant to be added here.
-    pub const ALL: [CredentialType; 3] = [
+    pub const ALL: [CredentialType; 4] = [
         CredentialType::Password,
         CredentialType::KeyPassphrase,
         CredentialType::SudoPassword,
+        CredentialType::FieldSecrets,
     ];
 
     /// Parse the string form produced by [`Display`](fmt::Display)
-    /// (`"password"`, `"key_passphrase"`, `"sudo_password"`).
+    /// (`"password"`, `"key_passphrase"`, `"sudo_password"`, `"field_secrets"`).
     ///
     /// Returns `None` for an unrecognized string.
     pub fn from_type_str(s: &str) -> Option<Self> {
@@ -48,6 +55,7 @@ impl CredentialType {
             "password" => Some(CredentialType::Password),
             "key_passphrase" => Some(CredentialType::KeyPassphrase),
             "sudo_password" => Some(CredentialType::SudoPassword),
+            "field_secrets" => Some(CredentialType::FieldSecrets),
             _ => None,
         }
     }
@@ -183,10 +191,11 @@ mod tests {
             match ct {
                 CredentialType::Password
                 | CredentialType::KeyPassphrase
-                | CredentialType::SudoPassword => {}
+                | CredentialType::SudoPassword
+                | CredentialType::FieldSecrets => {}
             }
         }
-        assert_eq!(CredentialType::ALL.len(), 3);
+        assert_eq!(CredentialType::ALL.len(), 4);
         // No duplicates.
         for (i, a) in CredentialType::ALL.iter().enumerate() {
             for b in &CredentialType::ALL[i + 1..] {
@@ -257,6 +266,15 @@ mod tests {
         let map_key = key.to_string();
         let parsed = CredentialKey::from_map_key(&map_key).unwrap();
         assert_eq!(parsed, key);
+    }
+
+    #[test]
+    fn credential_key_field_secrets_round_trip() {
+        // Schema-classified secrets other than `password` (#4289).
+        let key = CredentialKey::new("conn-vnc", CredentialType::FieldSecrets);
+        assert_eq!(key.to_string(), "conn-vnc:field_secrets");
+        assert_eq!(CredentialKey::from_map_key(&key.to_string()), Some(key));
+        assert!(CredentialType::ALL.contains(&CredentialType::FieldSecrets));
     }
 
     #[test]

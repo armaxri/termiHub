@@ -63,6 +63,18 @@ fn encode_then_parse_round_trips() {
 }
 
 #[test]
+fn camel_case_secret_field_names_are_recognised() {
+    // Connection settings keys are camelCase: the VNC SSH-gateway
+    // `sshPassword` must be redacted like `ssh_password` (#4289).
+    for name in ["sshPassword", "keyPassphrase", "apiToken", "clientSecret"] {
+        assert!(is_secret_field(name), "{name}");
+    }
+    for name in ["sessionId", "keyCount", "typeId", "hostName"] {
+        assert!(!is_secret_field(name), "{name}");
+    }
+}
+
+#[test]
 fn secret_field_names_are_recognised() {
     for name in [
         "password",

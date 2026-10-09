@@ -13,8 +13,8 @@ evidence:
   - .github/workflows/release-linux-smoke.yml:37
   - .github/workflows/release-windows-smoke.yml:44
   - .github/workflows/release-macos-smoke.yml:53
-status: open
-resolution: ""
+status: fixed
+resolution: "#4281 — release.yml calls the install smokes as reusable workflows; mark-latest needs every smoke"
 audit: 2026-10
 commit: 663465d52
 relation: new
