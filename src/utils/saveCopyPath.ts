@@ -1,4 +1,4 @@
-import { getBasename } from "@/utils/formatters";
+import { getBasename } from "@/utils/paths";
 
 /**
  * Suggest a likely-writable default destination for the SFTP "Save a copy…"

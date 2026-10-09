@@ -3,8 +3,8 @@ import { AlertCircle, ArrowUp, Folder, Upload } from "lucide-react";
 import { Modal, Button, Field, Input, Spinner } from "@/components/ui";
 import { isImeComposing } from "@/utils/imeComposition";
 import { errorMessage } from "@/utils/errorMessage";
-import { parentDirPath } from "@/utils/fileDragMove";
 import type { RemoteFolderListing } from "./browseRemoteFiles";
+import { parentDir } from "@/utils/paths";
 
 interface RemoteDesktopUploadFolderDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -154,7 +154,7 @@ export function RemoteDesktopUploadFolderDialog({
                   size="sm"
                   fullWidth
                   icon={<ArrowUp size={14} />}
-                  onClick={() => load(parentDirPath(list.listing.path))}
+                  onClick={() => load(parentDir(list.listing.path))}
                   data-testid="remote-desktop-folder-picker-up"
                 >
                   ..
