@@ -6,8 +6,8 @@ severity: medium
 category: data-safety
 is_workaround: false
 subsystem: src-tauri/src/credential/master_password.rs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4295 — change_password writes the vault under the new key before adopting it; a failed write keeps the old key"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
