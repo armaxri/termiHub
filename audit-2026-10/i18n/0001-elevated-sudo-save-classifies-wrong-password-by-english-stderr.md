@@ -14,8 +14,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1143
   - src/components/FileEditor/FileEditor.tsx:1178
   - src/components/FileEditor/FileEditor.tsx:1236
-status: open
-resolution: ""
+status: fixed
+resolution: "#4290 — sudo runs under LC_ALL=C with a unique -p prompt; wrong password is classified from the prompt count, exit status and an authorization marker, not translated text"
 audit: 2026-10
 commit: 663465d52
 relation: new

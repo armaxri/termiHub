@@ -836,9 +836,10 @@ pub trait SftpAdvancedOps: Send {
     /// Write `content` to `remote_path` with `sudo`-elevated privileges (#1328).
     ///
     /// SFTP-uploads the buffer to a termiHub-generated `/tmp/termihub-<uuid>`,
-    /// then `sudo -S -p ''` runs a fixed `/bin/sh` script that rewrites the
-    /// destination in place (preserving owner/mode/ACLs), classified into an
-    /// [`ElevatedWriteResult`]. The destination path is POSIX-quoted and passed
+    /// then `sudo -k -S -p <unique prompt>` (under the C locale) runs a fixed
+    /// `/bin/sh` script that rewrites the destination in place (preserving
+    /// owner/mode/ACLs), classified locale-independently into an
+    /// [`ElevatedWriteResult`] (#4290). The destination path is POSIX-quoted and passed
     /// as a positional argument, so a hostile remote path cannot inject shell
     /// commands; the password is only ever sent on stdin and is **never** logged.
     async fn write_file_content_elevated(
