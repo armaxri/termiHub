@@ -1,7 +1,7 @@
 import React from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Modal, useModalPortalContainer } from "@/components/ui";
-import { isMac } from "@/utils/platform";
+import { getActionAccelerator } from "@/services/keybindings";
 
 /** Props for {@link ZoomOverlay}. */
 export interface ZoomOverlayProps {
@@ -66,6 +66,8 @@ function ZoomTitle({ title, icon, menu }: Pick<ZoomOverlayProps, "title" | "icon
  * and returns focus to where it was when it opened.
  */
 export function ZoomOverlay({ title, icon, onClose, menu, children }: ZoomOverlayProps) {
+  // The effective (possibly user-customised) Toggle Panel Zoom binding (#4374).
+  const zoomAccelerator = getActionAccelerator("zoom-panel");
   return (
     <Modal
       open
@@ -76,7 +78,7 @@ export function ZoomOverlay({ title, icon, onClose, menu, children }: ZoomOverla
       title={<ZoomTitle title={title} icon={icon} menu={menu} />}
       headExtra={
         <span className="zoom-overlay__hint" data-testid="zoom-overlay-hint">
-          Shift+Esc or {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} to close
+          {zoomAccelerator ? `Shift+Esc or ${zoomAccelerator} to close` : "Shift+Esc to close"}
         </span>
       }
       onEscapeKeyDown={handleEscape}

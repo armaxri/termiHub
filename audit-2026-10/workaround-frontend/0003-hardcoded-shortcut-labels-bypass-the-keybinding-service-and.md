@@ -20,8 +20,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1700
   - src/components/FileEditor/FileEditor.tsx:1701
   - src/services/keybindings.ts:660
-status: open
-resolution: ""
+status: fixed
+resolution: "#4374 — shortcut hints use withActionAccelerator/getActionAccelerator/modKeyAccelerator; navigator.platform sniff removed and lint-banned"
 audit: 2026-10
 commit: 663465d52
 relation: new

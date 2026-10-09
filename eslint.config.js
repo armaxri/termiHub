@@ -71,6 +71,30 @@ export default tseslint.config(
           message:
             'Do not swallow a rejection silently (#4333). Use fireAndForget(p, "<reason>") for best-effort work, or log/toast the error in the handler.',
         },
+        {
+          // Name sorting policy (#4374, I18N-014): raw localeCompare uses the
+          // engine-default locale and no natural numeric ordering.
+          selector: "CallExpression[callee.property.name='localeCompare']",
+          message:
+            "Sort names with compareNames from @/utils/locale — the shared UI-locale collator with natural number ordering (#4374).",
+        },
+        {
+          // Date formatting policy (#4374, I18N-015): a bare toLocale*String()
+          // (or one given `undefined`) uses the engine default — possibly "C".
+          selector:
+            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/]:matches([arguments.length=0], [arguments.0.type='Identifier'][arguments.0.name='undefined'])",
+          message:
+            "Pass resolveUiLocale() or use the shared helpers in @/utils/formatters (formatAbsoluteTime, formatClockTime, …) (#4374).",
+        },
+        {
+          // Shortcut-hint policy (#4374, WA-FE2-003): a hand-built "Ctrl+X" /
+          // "Cmd+X" hint goes stale on the other platform and ignores user
+          // overrides. "Ctrl+Alt+Del" names a key sequence sent to a remote host.
+          selector:
+            "JSXAttribute[name.name=/^(title|aria-label|content)$/] :matches(Literal[value=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/], TemplateElement[value.raw=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/])",
+          message:
+            "Build shortcut hints with withActionAccelerator / getActionAccelerator from @/services/keybindings (#4374).",
+        },
       ],
     },
   },
@@ -168,6 +192,13 @@ export default tseslint.config(
           property: "clipboard",
           message:
             'Use readText/writeText from "@tauri-apps/plugin-clipboard-manager" — navigator.clipboard fails in an unfocused WKWebView (#4327).',
+        },
+        {
+          // Deprecated, and its value differs per webview; use isMac() /
+          // getPlatform() from @/utils/platform (#4374).
+          object: "navigator",
+          property: "platform",
+          message: "Use isMac() / getPlatform() from @/utils/platform (#4374).",
         },
       ],
     },
