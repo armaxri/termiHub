@@ -91,3 +91,22 @@ tests:
       - "Git Bash is now a normal row; the set-up entry is gone."
     verification: manual
     tags: [os-native, hardware]
+
+  - id: MT-LOCAL-32
+    release_gate: true
+    manual_reason: "live xterm render pacing and UI responsiveness need a foreground display"
+    name: "Output flood stays bounded and Ctrl+C stops it promptly"
+    pr: 4417
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell tab and run yes (Windows: a PowerShell loop printing a line forever)."
+      - "Let it run for 30 seconds and watch termiHub's memory in the OS task manager."
+      - "Press Ctrl+C."
+    expected:
+      - "Memory stays roughly flat; the UI keeps responding to clicks and tab switches."
+      - "Output stops within about a second and the prompt returns."
+      - "The app log shows no 'write data discarded' errors."
+    verification: manual
+    tags: [visual]

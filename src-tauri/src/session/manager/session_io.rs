@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use termihub_core::connection::ConnectionType;
+use termihub_core::session::pump::OutputFlowGate;
 use tokio::sync::{watch, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use tracing::{info, warn};
 
@@ -35,6 +36,10 @@ pub(in crate::session) struct SessionIo {
     gate: Arc<RwLock<()>>,
     /// Orders the session's input writes.
     lane: Arc<InputLane>,
+    /// The frontend's output pause/resume switch (PERF2-002). Only wired into
+    /// the output reader for sessions whose producer blocks on a full channel;
+    /// for the rest (agent-proxied sessions) flipping it has no effect.
+    output_flow: OutputFlowGate,
 }
 
 impl SessionIo {
@@ -46,6 +51,11 @@ impl SessionIo {
             connection: connection.clone(),
             _gate: gate,
         })
+    }
+
+    /// The session's output flow gate (a shared handle).
+    pub(super) fn output_flow(&self) -> OutputFlowGate {
+        self.output_flow.clone()
     }
 
     /// Take the next input ticket for this session, with its lane.

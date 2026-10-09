@@ -2478,6 +2478,9 @@ fn spawn_output_forwarder(
         max_coalesce_bytes: 32 * 1024,
         // Ignored when `wait_for_clear` is false.
         clear_wait_timeout: Duration::from_secs(0),
+        // No frontend flow control on the agent yet (PERF2-002 follow-up): the
+        // desktop has no pause command for agent-hosted sessions.
+        flow: None,
     };
     // Run under the caller's span: for a `connection.create` that is the
     // session's `agent_session` span carrying the desktop correlation id

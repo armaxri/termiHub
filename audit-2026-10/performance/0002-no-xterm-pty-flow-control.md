@@ -6,8 +6,8 @@ severity: medium
 category: perf
 is_workaround: false
 subsystem: src/components/Terminal/Terminal.tsx, core/src/session/pump.rs, src-tauri/src/session/output_sink.rs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4307 — xterm write-callback watermarks pause the desktop output pump (PTY backpressure) and bound the staged frontend buffer; agent path in #4416"
 audit: 2026-10
 commit: 663465d52
 relation: new

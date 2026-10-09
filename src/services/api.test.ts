@@ -29,6 +29,7 @@ import {
   getConnectionTypes,
   sendInput,
   resizeTerminal,
+  setTerminalOutputPaused,
   closeTerminal,
   listSerialPorts,
   listAvailableShells,
@@ -308,6 +309,17 @@ describe("api service", () => {
         sessionId: "session-1",
         cols: 120,
         rows: 40,
+      });
+    });
+
+    it("setTerminalOutputPaused invokes with session ID and paused flag", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await setTerminalOutputPaused("session-1", true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("set_terminal_output_paused", {
+        sessionId: "session-1",
+        paused: true,
       });
     });
 
