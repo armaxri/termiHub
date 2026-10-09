@@ -2672,4 +2672,185 @@ mod tests {
         let parsed: StorageFormat = serde_json::from_value(migrated).unwrap();
         assert!(parsed.connections.is_empty());
     }
+
+    // ── Cross-process lock (PER2-001, #4285) ────────────────────────
+
+    /// Two stores on one file, as two `--stdio`/`--listen` workers would hold
+    /// it: each loaded the file before the other saved. A save from the stale
+    /// store must merge the peer's connection in, never overwrite it.
+    #[tokio::test]
+    async fn stale_store_save_keeps_a_peer_workers_connection() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let worker_a = ConnectionStore::new(path.clone());
+        let worker_b = ConnectionStore::new(path.clone());
+
+        worker_a
+            .create(make_connection("conn-a", "A", false))
+            .await
+            .unwrap();
+        worker_b
+            .create(make_connection("conn-b", "B", false))
+            .await
+            .unwrap();
+
+        let reloaded = ConnectionStore::new(path);
+        assert!(reloaded.get("conn-a").await.is_some(), "A's save was lost");
+        assert!(reloaded.get("conn-b").await.is_some(), "B's save was lost");
+        // The stale store refreshed from disk while saving.
+        assert!(worker_b.get("conn-a").await.is_some());
+    }
+
+    /// A delete in one worker must not be undone by a stale save in another,
+    /// and an update to a connection a peer deleted reports "not found".
+    #[tokio::test]
+    async fn stale_store_does_not_resurrect_a_peer_delete() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let seed = ConnectionStore::new(path.clone());
+        seed.create(make_connection("conn-1", "One", false))
+            .await
+            .unwrap();
+        let worker_a = ConnectionStore::new(path.clone());
+        let worker_b = ConnectionStore::new(path.clone());
+
+        assert!(worker_a.delete("conn-1").await.unwrap());
+        worker_b
+            .create_folder(make_folder("folder-1", "F", None))
+            .await
+            .unwrap();
+        let updated = worker_b
+            .update(
+                "conn-1",
+                Some("Renamed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(updated.is_none(), "update must see the peer's delete");
+
+        let reloaded = ConnectionStore::new(path);
+        assert!(reloaded.get("conn-1").await.is_none(), "delete was undone");
+        assert_eq!(reloaded.list().await.1.len(), 1);
+    }
+
+    /// Several threads, each with its own store (so its own file handles and
+    /// OS-level lock), create connections concurrently. None may be lost.
+    #[test]
+    fn concurrent_stores_in_threads_lose_no_connections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let workers = 4;
+        let per_worker = 15;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(workers));
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    let store = ConnectionStore::new(path);
+                    barrier.wait();
+                    rt.block_on(async {
+                        for i in 0..per_worker {
+                            let id = format!("conn-{w}-{i}");
+                            store
+                                .create(make_connection(&id, &id, false))
+                                .await
+                                .unwrap();
+                        }
+                    });
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            connections_on_disk(&path),
+            workers * per_worker,
+            "concurrent workers lost saved connections"
+        );
+    }
+
+    /// Number of connections persisted in the store file at `path`.
+    fn connections_on_disk(path: &Path) -> usize {
+        read_json(path)["connections"].as_array().unwrap().len()
+    }
+
+    /// Env vars that turn [`concurrent_writer_process_helper`] into a writer.
+    const WRITER_PATH_ENV: &str = "TERMIHUB_TEST_CONNSTORE_PATH";
+    const WRITER_PREFIX_ENV: &str = "TERMIHUB_TEST_CONNSTORE_PREFIX";
+    const WRITER_COUNT: usize = 15;
+
+    /// Child half of [`concurrent_processes_lose_no_connections`]: a no-op in a
+    /// normal test run, a connection writer when re-executed with the env set.
+    #[tokio::test]
+    async fn concurrent_writer_process_helper() {
+        let (Ok(path), Ok(prefix)) = (
+            std::env::var(WRITER_PATH_ENV),
+            std::env::var(WRITER_PREFIX_ENV),
+        ) else {
+            return;
+        };
+        let store = ConnectionStore::new(PathBuf::from(path));
+        for i in 0..WRITER_COUNT {
+            let id = format!("{prefix}-{i}");
+            store
+                .create(make_connection(&id, &id, false))
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Real multi-process regression test: several agent processes save to one
+    /// `connections.json` at once. Every connection each one saved must survive.
+    #[test]
+    fn concurrent_processes_lose_no_connections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let exe = std::env::current_exe().expect("current test exe");
+        let processes = 4;
+        let children: Vec<_> = (0..processes)
+            .map(|p| {
+                std::process::Command::new(&exe)
+                    .args([
+                        "--exact",
+                        "--test-threads=1",
+                        "-q",
+                        "session::definitions::tests::concurrent_writer_process_helper",
+                    ])
+                    .env(WRITER_PATH_ENV, &path)
+                    .env(WRITER_PREFIX_ENV, format!("proc{p}"))
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("spawn writer process")
+            })
+            .collect();
+        for child in children {
+            let out = child.wait_with_output().expect("wait for writer");
+            assert!(
+                out.status.success(),
+                "writer failed: {}\nstdout: {}\nstderr: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            );
+        }
+
+        assert_eq!(
+            connections_on_disk(&path),
+            processes * WRITER_COUNT,
+            "concurrent agent processes lost saved connections"
+        );
+    }
 }
