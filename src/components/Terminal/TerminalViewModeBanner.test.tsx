@@ -64,4 +64,12 @@ describe("TerminalViewModeBanner", () => {
     expect(reconnectTerminal).toHaveBeenCalledTimes(1);
     expect(reconnectTerminal).toHaveBeenCalledWith("tab-42");
   });
+
+  it("announces the agent disconnect politely in a live region (#4331)", () => {
+    agentDisconnected["tab-8"] = true;
+    render("tab-8");
+    const region = container.querySelector("[role='status']");
+    expect(region?.getAttribute("aria-live")).toBe("polite");
+    expect(region?.textContent).toContain("Agent disconnected");
+  });
 });
