@@ -12,8 +12,8 @@ evidence:
   - src/store/slices/layoutPersistenceSlice.ts:351
   - src/App.tsx:246-248
   - src/utils/cliWorkspace.ts:24-38
-status: open
-resolution: ""
+status: fixed
+resolution: "#4306 — palette and forwarded --workspace launches go through the guarded requestLaunchWorkspace"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

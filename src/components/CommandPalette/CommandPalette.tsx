@@ -122,7 +122,7 @@ export function CommandPalette(): React.ReactElement {
   const workspaces = useAppStore((s) => s.workspaces);
   const playMacro = useAppStore((s) => s.playMacro);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
-  const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const requestLaunchWorkspace = useAppStore((s) => s.requestLaunchWorkspace);
   const getBroadcastTargetTabIds = useAppStore((s) => s.getBroadcastTargetTabIds);
   // Subscribed so the broadcast entry appears/disappears as broadcasting toggles.
   const broadcast = useProjectedBroadcast();
@@ -282,12 +282,13 @@ export function CommandPalette(): React.ReactElement {
         // Resolve the group at run time so it reflects the latest connections.
         void runWorkflow(entry.workflowId, { targetTabIds: getBroadcastTargetTabIds() });
       } else if (entry.kind === "workspace") {
-        void launchWorkspace(entry.workspaceId);
+        // The shared entry point confirms first when live sessions would end (UX2-002).
+        requestLaunchWorkspace(entry.workspaceId);
       } else {
         void connect(entry.connection);
       }
     },
-    [connect, playMacro, runWorkflow, launchWorkspace, getBroadcastTargetTabIds, setOpen]
+    [connect, playMacro, runWorkflow, requestLaunchWorkspace, getBroadcastTargetTabIds, setOpen]
   );
 
   const handleKeyDown = useCallback(
