@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react";
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
+import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
 import * as RadixSelect from "@radix-ui/react-select";
 import {
@@ -768,27 +769,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     ]
   );
 
-  // Deterministic, synchronous validity straight from the schema (the same
-  // approach ConnectionSettingsForm/CustomRuleEditor use) so errors and the Save
-  // gate update on the same render as the edit and stay testable without awaiting.
-  const topLevelValidity = useMemo(() => {
-    const errors: Record<string, string> = {};
-    const result = topLevelSchema.safeParse({
-      name,
-      sourceFile,
-      persistent,
-      icon: icon ?? null,
-      terminalOptions,
-      agentSettings,
-    });
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const key = issue.path.join(".");
-        if (!(key in errors)) errors[key] = issue.message;
-      }
-    }
-    return { valid: result.success, errors };
-  }, [topLevelSchema, name, sourceFile, persistent, icon, terminalOptions, agentSettings]);
+  // Deterministic, synchronous validity from the shared hook (UISF2-003), so
+  // errors and the Save gate update on the same render as the edit and stay
+  // testable without awaiting. The schema depends on state declared after the
+  // form (the editing mode), so this uses the validity half of
+  // useZodEditorForm rather than the whole scaffold.
+  const topLevelValidity = useZodValidity(topLevelSchema, {
+    name,
+    sourceFile,
+    persistent,
+    icon: icon ?? null,
+    terminalOptions,
+    agentSettings,
+  });
 
   // The blank-name issue disables Save (validity is false) without surfacing
   // inline text: its sentinel message is filtered out here.

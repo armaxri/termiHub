@@ -138,4 +138,61 @@ describe("ConnectionSettingsForm — validity reporting", () => {
     expect(container.textContent).not.toContain("Host");
     expect(container.querySelector("[data-testid='after-port']")).not.toBeNull();
   });
+
+  it("shows the cleared required field's zod error inline (UISF2-003)", async () => {
+    const onValidity = vi.fn();
+    await act(async () => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={SCHEMA}
+          settings={{ host: "example.com", port: 22 }}
+          onChange={() => {}}
+          onValidityChange={onValidity}
+        />
+      );
+    });
+    await flush();
+    expect(container.querySelector('[data-testid="field-host-error"]')).toBeNull();
+
+    const hostInput = container.querySelector<HTMLInputElement>('[data-testid="field-host"]')!;
+    await act(async () => setInputValue(hostInput, ""));
+    await flush();
+
+    expect(container.querySelector('[data-testid="field-host-error"]')?.textContent).toBe(
+      "Host is required"
+    );
+    const last = onValidity.mock.calls[onValidity.mock.calls.length - 1];
+    expect(last[0]).toBe(false);
+    expect(last[1]).toEqual({ host: "Host is required" });
+  });
+
+  it("folds a nested list-item issue onto its top-level field key (UISF2-003)", async () => {
+    const listSchema: SettingsSchema = {
+      groups: [
+        {
+          key: "env",
+          label: "Environment",
+          fields: [
+            { key: "env", label: "Env", fieldType: { type: "keyValueList" }, required: false },
+          ],
+        },
+      ],
+    };
+    const onValidity = vi.fn();
+    await act(async () => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={listSchema}
+          settings={{ env: [{ key: "A", value: 1 }] }}
+          onChange={() => {}}
+          onValidityChange={onValidity}
+        />
+      );
+    });
+    await flush();
+
+    const last = onValidity.mock.calls[onValidity.mock.calls.length - 1];
+    expect(last[0]).toBe(false);
+    expect(Object.keys(last[1])).toEqual(["env"]);
+  });
 });

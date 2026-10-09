@@ -29,11 +29,16 @@ export function settingsSchemaToZod(schema: SettingsSchema) {
 
 function fieldToZod(field: SettingsField): z.ZodTypeAny {
   const ft = field.fieldType;
+  // A cleared required field arrives as `undefined` or `null` (text inputs map
+  // "" to `undefined`), which zod would report as "Invalid input: expected
+  // string, received undefined". Give that type issue the field's own message,
+  // so the user sees "Host is required" instead (UISF2-003).
+  const required = { error: `${field.label} is required` };
 
   switch (ft.type) {
     case "port": {
       const portSchema = z
-        .number()
+        .number(field.required ? required : undefined)
         .int("Must be an integer")
         .min(1, "Port must be between 1 and 65535")
         .max(65535, "Port must be between 1 and 65535");
@@ -41,7 +46,7 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
     }
 
     case "number": {
-      let num = z.number();
+      let num = z.number(field.required ? required : undefined);
       if (ft.min !== undefined) num = num.min(ft.min, `Must be at least ${ft.min}`);
       if (ft.max !== undefined) num = num.max(ft.max, `Must be at most ${ft.max}`);
       return field.required ? num : num.nullish();
@@ -54,7 +59,7 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
       // An optional select may be absent from a stored config (e.g. a remote
       // agent saved before `updateStrategy` existed) or `null`-cleared on a
       // type switch; neither may block Save (#3298). Required stays strict.
-      return field.required ? z.string() : z.string().nullish();
+      return field.required ? z.string(required) : z.string().nullish();
 
     case "text":
     case "password":
@@ -62,9 +67,7 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
     case "serialPort":
     case "dockerContainer":
     case "savedConnection":
-      return field.required
-        ? z.string().min(1, `${field.label} is required`)
-        : z.string().nullish();
+      return field.required ? z.string(required).min(1, required.error) : z.string().nullish();
 
     case "keyValueList":
       return z.array(z.object({ key: z.string(), value: z.string() })).nullish();

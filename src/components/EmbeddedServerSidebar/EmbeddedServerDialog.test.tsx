@@ -414,4 +414,41 @@ describe("EmbeddedServerDialog", () => {
       directoryListing: true,
     });
   });
+
+  describe("zod field errors (UISF2-003)", () => {
+    const byTestId = (id: string) =>
+      document.querySelector(`[data-testid="${id}"]`) as HTMLInputElement;
+    const errorFor = (inputId: string) => document.getElementById(`${inputId}-error`);
+    const save = () => byTestId("server-dialog-save") as unknown as HTMLButtonElement;
+
+    it("shows the name and root-directory errors until both are filled in", async () => {
+      await render(<EmbeddedServerDialog {...baseProps} />);
+      expect(errorFor("server-dialog-name-input")?.textContent).toBe("Name is required.");
+      expect(errorFor("server-dialog-root-input")?.textContent).toBe("Root directory is required.");
+      expect(save().disabled).toBe(true);
+
+      typeInto(byTestId("server-dialog-name"), "Firmware");
+      expect(errorFor("server-dialog-name-input")).toBeNull();
+      expect(save().disabled).toBe(true);
+
+      typeInto(byTestId("server-dialog-root"), "/srv/fw");
+      expect(errorFor("server-dialog-root-input")).toBeNull();
+      expect(save().disabled).toBe(false);
+    });
+
+    it("shows 'Port is required.' for a cleared port and blocks Save", async () => {
+      await render(<EmbeddedServerDialog {...baseProps} />);
+      typeInto(byTestId("server-dialog-name"), "Firmware");
+      typeInto(byTestId("server-dialog-root"), "/srv/fw");
+      expect(save().disabled).toBe(false);
+
+      typeInto(byTestId("server-dialog-port"), "");
+      expect(errorFor("server-dialog-port-input")?.textContent).toBe("Port is required.");
+      expect(save().disabled).toBe(true);
+
+      typeInto(byTestId("server-dialog-port"), "8081");
+      expect(errorFor("server-dialog-port-input")).toBeNull();
+      expect(save().disabled).toBe(false);
+    });
+  });
 });
