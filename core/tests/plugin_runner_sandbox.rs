@@ -46,6 +46,10 @@ use termihub_core::plugin::{HostError, PluginHost};
 
 const WAIT: Duration = Duration::from_secs(10);
 
+/// The probe opts in to `allowLocalNetwork` (#4367) because its bridged
+/// `netecho` check dials a loopback echo server. The opt-in only widens what
+/// the host-side bridge may dial; the direct escape attempts never go through
+/// the bridge and must still be refused by the OS sandbox.
 const PROBE_MANIFEST: &str = r#"{
     "id": "escape-probe",
     "name": "Escape Probe",
@@ -56,6 +60,7 @@ const PROBE_MANIFEST: &str = r#"{
     "apiVersion": "1.1",
     "platforms": ["windows", "linux", "macos"],
     "permissions": ["terminal", "network"],
+    "connectionPolicy": { "allowLocalNetwork": true },
     "extensions": {
         "terminalBackend": {
             "connectionType": "probe",

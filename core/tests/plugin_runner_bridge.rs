@@ -129,6 +129,12 @@ fn load(
     }
 }
 
+/// A manifest `connectionPolicy` opting in to local-network targets, so the
+/// loopback echo server is reachable (SEC2-005).
+fn local_network() -> Option<serde_json::Value> {
+    Some(serde_json::json!({ "allowLocalNetwork": true }))
+}
+
 /// A local TCP echo server; returns its port and a counter of accepted
 /// connections.
 fn echo_server() -> (u16, Arc<Mutex<usize>>) {
@@ -161,7 +167,7 @@ fn netecho(port: u16) -> serde_json::Value {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_allowed_connection_reaches_the_peer_through_a_passed_socket() {
     let work = tempfile::TempDir::new().unwrap();
-    let plugin = load(work.path(), &["terminal", "network"], &[], None);
+    let plugin = load(work.path(), &["terminal", "network"], &[], local_network());
     let (port, accepted) = echo_server();
 
     assert_eq!(plugin.probe(netecho(port)).await, "NETECHO:ping");
@@ -176,7 +182,7 @@ async fn an_allowed_connection_reaches_the_peer_through_a_passed_socket() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_stream_proxy_fallback_carries_the_same_connection() {
     let work = tempfile::TempDir::new().unwrap();
-    let plugin = load(work.path(), &["terminal", "network"], &[], None);
+    let plugin = load(work.path(), &["terminal", "network"], &[], local_network());
     let (port, _accepted) = echo_server();
     let runner = plugin.runner();
     runner.force_stream_proxy(true);
@@ -202,6 +208,22 @@ async fn a_connection_without_the_network_permission_is_denied() {
     assert_eq!(denials[0].reason, DenialReason::Permission);
 }
 
+/// SEC2-005: `network` alone does not reach loopback — without the manifest's
+/// `allowLocalNetwork` opt-in the host refuses the dial-out as a permission
+/// denial and never connects.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_loopback_connection_without_the_local_network_opt_in_is_denied() {
+    let work = tempfile::TempDir::new().unwrap();
+    let plugin = load(work.path(), &["terminal", "network"], &[], None);
+    let (port, accepted) = echo_server();
+
+    assert_eq!(plugin.probe(netecho(port)).await, "NETWORK_DENIED");
+    assert_eq!(*accepted.lock().unwrap(), 0, "the host never connected");
+    let denials = plugin.runner().bridge_denials();
+    assert_eq!(denials.len(), 1);
+    assert_eq!(denials[0].reason, DenialReason::Permission);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_manifest_connection_ceiling_is_enforced_out_of_process() {
     let work = tempfile::TempDir::new().unwrap();
@@ -209,7 +231,7 @@ async fn the_manifest_connection_ceiling_is_enforced_out_of_process() {
         work.path(),
         &["terminal", "network"],
         &[],
-        Some(serde_json::json!({ "maxConnections": 2 })),
+        Some(serde_json::json!({ "maxConnections": 2, "allowLocalNetwork": true })),
     );
     let (port, _accepted) = echo_server();
     let line = plugin

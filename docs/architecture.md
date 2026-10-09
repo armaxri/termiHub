@@ -3508,7 +3508,11 @@ sandbox is a pre-v1.0 requirement and approved the concept
   folder (`<plugins>/.data/<id>`, where `HOME` and `TMPDIR` point); it cannot open other files,
   create sockets, start processes or reach devices. Declared `network` / `filesystem` permissions
   are served only by the capability bridge, which now runs in the host across the IPC boundary;
-  an approved connection is passed to the runner as a connected socket handle.
+  an approved connection is passed to the runner as a connected socket handle. The bridge resolves
+  the host once and connects only to addresses the blocked-address guard shared with the HTTP
+  monitor's SSRF check (`core::network::address_guard`, #4367) allows: link-local, unspecified,
+  broadcast and cloud-metadata targets never, loopback and private ranges only with the manifest's
+  `connectionPolicy.allowLocalNetwork` opt-in.
 - **Fail closed.** The runner reports the layers it actually enforced before `dlopen`. If a layer is
   missing (mostly a Linux kernel without landlock) the plugin loads only with the hash-bound
   `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. A missing or
