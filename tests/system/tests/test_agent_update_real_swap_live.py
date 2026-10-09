@@ -134,10 +134,21 @@ class TestAgentUpdateRealSwapLive(
         )
 
     def _agent_version(self, name: str) -> str:
-        capabilities = self.require_agent(name).get("capabilities") or {}
-        version = capabilities.get("agentVersion")
-        assert version, f"connected agent {name!r} reported no agentVersion"
-        return version
+        """The connected agent's reported version, once the region carries it.
+
+        ``connectionState`` and ``capabilities`` reach the agents region on two
+        separate paths: the backend's ``connected`` event drives the state, and
+        the connect call's result is mirrored as ``agent.setCapabilities`` only
+        after it resolves. So ``wait_agent_connected`` can return a moment before
+        the capabilities land — wait for the version instead of reading it once
+        (#4526).
+        """
+
+        def version() -> str | None:
+            capabilities = (self.find_agent(name) or {}).get("capabilities") or {}
+            return capabilities.get("agentVersion")
+
+        return self.wait(version, what=f"connected agent {name!r} to report its agentVersion")
 
     def test_apply_now_then_last_tab_close_really_swaps_and_reattaches(
         self, remote_agent_update_swap_fixtures: ContainerControl
