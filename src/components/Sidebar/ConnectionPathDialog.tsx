@@ -19,6 +19,7 @@ import { onJumpHostHopStatus, onJumpHostProbeComplete, HopProbeStatus } from "@/
 import { frontendLog } from "@/utils/frontendLog";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
+import { newId } from "@/services/transport/ids";
 import "./ConnectionPathDialog.css";
 
 interface ConnectionPathDialogProps {
@@ -82,7 +83,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
   useEffect(() => {
     if (!open) return;
 
-    const probeId = `probe-${connection.id}-${Date.now()}`;
+    const probeId = newId("probe");
     const probedNodeCount = hops.length + 1;
     setStatuses(Array.from({ length: probedNodeCount }, () => "pending" as NodeStatus));
     setMessages({});

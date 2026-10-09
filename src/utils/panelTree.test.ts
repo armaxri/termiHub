@@ -15,7 +15,9 @@ import {
   normalizeSizes,
   countTabsInTree,
   isWindowEmpty,
+  generatePanelId,
 } from "./panelTree";
+import { generateGroupId } from "@/store/layoutHelpers";
 
 /** Create a minimal tab for testing. */
 function makeTab(id: string, panelId: string): TerminalTab {
@@ -702,5 +704,17 @@ describe("isWindowEmpty (#1902)", () => {
     const staleStored = makeLeaf("leaf-1");
     const groups = [makeGroup("g1", staleStored)];
     expect(isWindowEmpty(liveActive, groups, "g1")).toBe(false);
+  });
+});
+
+describe("generated ids (#4372)", () => {
+  // Prefixed ULIDs from the shared newId(): 26 Crockford base32 characters.
+  it.each([
+    ["panel", generatePanelId],
+    ["group", generateGroupId],
+  ])("%s ids are prefixed ULIDs and unique within one millisecond", (prefix, gen) => {
+    const ids = Array.from({ length: 200 }, () => gen());
+    for (const id of ids) expect(id).toMatch(new RegExp(`^${prefix}-[0-9A-HJKMNP-TV-Z]{26}$`));
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
