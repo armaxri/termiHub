@@ -2,6 +2,7 @@ import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { isImeComposing } from "@/utils/imeComposition";
+import { Button } from "./Button";
 import "./ui.css";
 
 /**
@@ -61,8 +62,26 @@ export interface ModalProps {
    * called for keys that belong to an IME composition.
    */
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
+  /**
+   * The modal holds unsaved input (UX2-004). While `true`, every dismiss path
+   * (Escape, a click on the scrim, the X, and any {@link ModalClose} button)
+   * first raises an {@link UnsavedChangesDialog}; only "Discard" forwards the
+   * close to {@link ModalProps.onOpenChange | onOpenChange}. Explicit actions
+   * that close the modal themselves (e.g. Save) are unaffected.
+   */
+  dirty?: boolean;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
+}
+
+/**
+ * Wrap a footer action (typically a Cancel {@link Button}) so clicking it
+ * dismisses the enclosing {@link Modal} through the same path as Escape and the
+ * X — including the {@link ModalProps.dirty | dirty} guard. The child receives
+ * the click handler, so it must forward `onClick` and a ref (as `Button` does).
+ */
+export function ModalClose({ children }: { children: React.ReactElement }): React.ReactElement {
+  return <Dialog.Close asChild>{children}</Dialog.Close>;
 }
 
 /**
@@ -79,15 +98,27 @@ export function Modal({
   hideClose = false,
   size = "md",
   onKeyDown,
+  dirty = false,
   ...rest
 }: ModalProps): React.ReactElement {
   // Track the content node so descendants can portal into it (#1868). A callback
   // ref stored in state re-renders once the node mounts, so menus opened later
   // pick up the real container rather than falling back to `document.body`.
   const [contentEl, setContentEl] = React.useState<HTMLDivElement | null>(null);
+  // The discard prompt raised by a dismiss while `dirty` (UX2-004).
+  const [confirmDiscard, setConfirmDiscard] = React.useState(false);
+  if (!open && confirmDiscard) setConfirmDiscard(false);
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next && dirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onOpenChange(next);
+  };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         {/* The scrim carries `<testid>-overlay` so system tests can exercise
             click-outside-to-dismiss (#4010). */}
@@ -153,8 +184,103 @@ export function Modal({
             <div className="ui-modal__body">{children}</div>
             {footer ? <div className="ui-modal__foot">{footer}</div> : null}
           </ModalPortalContainerContext.Provider>
+          {/* Nested inside the content so Radix stacks it as a child layer:
+              Escape or a click outside the prompt dismisses only the prompt. */}
+          <UnsavedChangesDialog
+            open={confirmDiscard}
+            subject="form"
+            onCancel={() => setConfirmDiscard(false)}
+            onJustClose={() => {
+              setConfirmDiscard(false);
+              onOpenChange(false);
+            }}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/** What holds the unsaved changes, which picks the {@link UnsavedChangesDialog} copy. */
+export type UnsavedChangesSubject = "connection" | "file" | "tunnel" | "workspace" | "form";
+
+/** Props for the shared {@link UnsavedChangesDialog}. */
+export interface UnsavedChangesDialogProps {
+  /** Whether the dialog is open (controlled). */
+  open: boolean;
+  /** What holds the changes; drives the message ("This file has unsaved changes"). */
+  subject: UnsavedChangesSubject;
+  /** Optional display name of the item, quoted in the message. */
+  name?: string;
+  /** Keep editing (also fired on Escape / scrim / X). */
+  onCancel: () => void;
+  /** Close and drop the changes. */
+  onJustClose: () => void;
+  /**
+   * Save, then close. When omitted (a caller that cannot save from here, such as
+   * the {@link Modal} dismiss guard), only Cancel and "Discard changes" are offered.
+   */
+  onSaveAndClose?: () => void;
+}
+
+/** The message for a subject, optionally naming the item. */
+function unsavedChangesMessage(subject: UnsavedChangesSubject, name?: string): string {
+  const who = name ? `“${name}”` : subject === "form" ? "You" : `This ${subject}`;
+  const verb = subject === "form" && !name ? "have" : "has";
+  return `${who} ${verb} unsaved changes. What would you like to do?`;
+}
+
+/**
+ * The single "unsaved changes" confirmation (UISF2-005), shared by every editor
+ * that can lose work on close: the connection, file, tunnel and workspace
+ * editors, and the {@link Modal} dirty-dismiss guard.
+ *
+ * It lives beside {@link Modal} because Modal renders it for its own guard; a
+ * separate module would form an import cycle.
+ *
+ * The message is the dialog's accessible description. The visible copy repeats
+ * it for sighted users but is hidden from assistive tech, so a screen reader
+ * announces it once.
+ */
+export function UnsavedChangesDialog({
+  open,
+  subject,
+  name,
+  onCancel,
+  onJustClose,
+  onSaveAndClose,
+}: UnsavedChangesDialogProps): React.ReactElement {
+  const message = unsavedChangesMessage(subject, name);
+  return (
+    <Modal
+      open={open}
+      onOpenChange={(isOpen) => !isOpen && onCancel()}
+      title="Unsaved Changes"
+      description={message}
+      data-testid="unsaved-changes-dialog"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel} data-testid="unsaved-changes-cancel">
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onJustClose} data-testid="unsaved-changes-just-close">
+            {onSaveAndClose ? "Just Close" : "Discard changes"}
+          </Button>
+          {onSaveAndClose ? (
+            <Button
+              variant="primary"
+              onClick={onSaveAndClose}
+              data-testid="unsaved-changes-save-and-close"
+            >
+              Save &amp; Close
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+      <p aria-hidden="true" data-testid="unsaved-changes-message">
+        {message}
+      </p>
+    </Modal>
   );
 }
