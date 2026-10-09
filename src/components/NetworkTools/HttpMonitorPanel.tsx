@@ -11,6 +11,7 @@ import {
   Select,
 } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useListenerGroup } from "@/hooks/useTauriListener";
 import {
   networkHttpMonitorStart,
   networkHttpMonitorStop,
@@ -81,10 +82,10 @@ export function HttpMonitorPanel() {
 
   // The check listener filters by the active monitor id; a ref mirrors the state
   // so the callback (registered before start) always reads the current id without
-  // re-subscribing. `unlistenCheckRef` lets us tear the listener down on
-  // stop/unmount/restart.
+  // re-subscribing. The listener group tears the listener down on
+  // stop/unmount/restart, including one still registering at unmount (#4576).
   const activeMonitorIdRef = useRef<string | null>(null);
-  const unlistenCheckRef = useRef<(() => void) | null>(null);
+  const checkListener = useListenerGroup();
   // Guards against a Start double-fire (#1147, GAP #7). The Button's async
   // lifecycle only disables on the *next* click; two clicks in the same tick
   // both reach handleStart before React re-renders the pending state, spawning
@@ -115,10 +116,9 @@ export function HttpMonitorPanel() {
   }, [loadMonitors]);
 
   const stopListening = useCallback(() => {
-    unlistenCheckRef.current?.();
-    unlistenCheckRef.current = null;
+    checkListener.release();
     pendingChecksRef.current = [];
-  }, []);
+  }, [checkListener]);
 
   /** Append a check result to the rolling history (capped at MAX_HISTORY). */
   const appendCheck = useCallback((result: HttpCheckResult) => {
@@ -145,15 +145,14 @@ export function HttpMonitorPanel() {
       setActiveMonitorId(id);
       setHistory([]);
       try {
-        const unlisten = await onHttpMonitorCheck((result: HttpCheckResult) => {
-          if (result.monitorId === activeMonitorIdRef.current) appendCheck(result);
-        });
-        // The user may have switched monitors while the listener registered.
-        if (activeMonitorIdRef.current !== id) {
-          unlisten();
-          return;
-        }
-        unlistenCheckRef.current = unlisten;
+        const held = await checkListener.attach(() =>
+          onHttpMonitorCheck((result: HttpCheckResult) => {
+            if (result.monitorId === activeMonitorIdRef.current) appendCheck(result);
+          })
+        );
+        // The user may have switched monitors (or the panel unmounted) while the
+        // listener registered; the group has then already unlistened it.
+        if (!held || activeMonitorIdRef.current !== id) return;
         const stored = await listHttpMonitorChecks(id, MAX_HISTORY);
         if (activeMonitorIdRef.current === id) {
           setHistory((prev) => mergeChecks(stored, prev, MAX_HISTORY));
@@ -162,7 +161,7 @@ export function HttpMonitorPanel() {
         frontendLog("http_monitor", `Failed to load check history: ${errorMessage(err)}`);
       }
     },
-    [stopListening, appendCheck]
+    [stopListening, appendCheck, checkListener]
   );
 
   /** Export the displayed monitor's full recorded history as CSV. */
@@ -218,16 +217,21 @@ export function HttpMonitorPanel() {
       // such checks and reconcile them once the id is set (#2684); dropping them
       // left the panel blank until the next interval (30s by default) on a fast
       // (e.g. loopback) target.
-      unlistenCheckRef.current = await onHttpMonitorCheck((result: HttpCheckResult) => {
-        const activeId = activeMonitorIdRef.current;
-        if (activeId !== null) {
-          if (result.monitorId === activeId) appendCheck(result);
-          return;
-        }
-        // No active id yet: only buffer while our own start is in flight, so a
-        // stray event outside a start is still ignored.
-        if (startInFlightRef.current) pendingChecksRef.current.push(result);
-      });
+      const held = await checkListener.attach(() =>
+        onHttpMonitorCheck((result: HttpCheckResult) => {
+          const activeId = activeMonitorIdRef.current;
+          if (activeId !== null) {
+            if (result.monitorId === activeId) appendCheck(result);
+            return;
+          }
+          // No active id yet: only buffer while our own start is in flight, so a
+          // stray event outside a start is still ignored.
+          if (startInFlightRef.current) pendingChecksRef.current.push(result);
+        })
+      );
+      // The panel unmounted (or the listener was torn down) while registering:
+      // the group already unlistened it, so abandon this start (#4576).
+      if (!held) return;
 
       const monitorId = await networkHttpMonitorStart(
         url.trim(),
@@ -269,6 +273,7 @@ export function HttpMonitorPanel() {
     loadMonitors,
     stopListening,
     appendCheck,
+    checkListener,
   ]);
 
   const handleStop = useCallback(async () => {

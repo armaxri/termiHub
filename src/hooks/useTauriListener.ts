@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -103,4 +103,72 @@ export function useTauriListener<T>(
       dispose();
     };
   }, [event, scope]);
+}
+
+/**
+ * A set of listeners registered imperatively (from a click handler rather than
+ * an effect) that must not outlive the component (#4576).
+ */
+export interface ListenerGroup {
+  /**
+   * Register a listener into the group. Resolves `true` when the listener is
+   * now held by the group, or `false` when the group was released or the
+   * component unmounted while registration was pending; the late listener has
+   * then already been unlistened, and the caller should abandon its run.
+   * A registration error propagates to the caller.
+   */
+  attach(register: () => Promise<UnlistenFn>): Promise<boolean>;
+  /** Unlisten every held listener and invalidate every pending registration. */
+  release(): void;
+  /** Whether the owning component has unmounted. */
+  isDisposed(): boolean;
+}
+
+/**
+ * A {@link ListenerGroup} tied to the component's lifetime: unmount releases
+ * it, and a registration that resolves after unmount is unlistened at once —
+ * the imperative counterpart of {@link subscribeGuarded}'s disposed guard.
+ */
+export function useListenerGroup(): ListenerGroup {
+  const [group] = useState(() => {
+    let disposed = false;
+    let generation = 0;
+    const held = new Set<UnlistenFn>();
+    const release = () => {
+      generation += 1;
+      const fns = [...held];
+      held.clear();
+      for (const fn of fns) fn();
+    };
+    return {
+      api: {
+        async attach(register: () => Promise<UnlistenFn>) {
+          const gen = generation;
+          const fn = await register();
+          if (disposed || gen !== generation) {
+            fn();
+            return false;
+          }
+          held.add(fn);
+          return true;
+        },
+        release,
+        isDisposed: () => disposed,
+      } satisfies ListenerGroup,
+      mount() {
+        disposed = false;
+      },
+      dispose() {
+        disposed = true;
+        release();
+      },
+    };
+  });
+
+  useEffect(() => {
+    group.mount();
+    return group.dispose;
+  }, [group]);
+
+  return group.api;
 }
