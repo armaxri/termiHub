@@ -161,6 +161,9 @@ pub async fn connect_agent(
 ) -> Result<AgentConnectResult, TerminalError> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
+    // A manual connect supersedes a coordinated-update reconnect the backend
+    // is driving for this agent (#4489): this connect owns the agent now.
+    manager.cancel_update_reconnect(&agent_id, true);
     tauri::async_runtime::spawn_blocking(move || {
         manager.connect_agent(&agent_id, &config, agent_settings.as_ref())
     })
@@ -184,6 +187,23 @@ pub fn disconnect_agent(
     let reason = disconnect_reason(end_hosted_sessions);
     info!(agent_id, ?reason, "Disconnecting remote agent");
     agent_manager.disconnect_agent_with_reason(&agent_id, reason)
+}
+
+/// Stop the backend's coordinated-update reconnect for an agent (#4489).
+///
+/// `superseded` (default `false`) says whether this is the user's Cancel — the
+/// windows then offer a manual Reconnect — or a newer action that owns the agent
+/// from here on (deleting it), for which the notice simply goes away. Returns
+/// whether a reconnect was running.
+#[tauri::command]
+pub fn cancel_agent_update_reconnect(
+    agent_id: String,
+    superseded: Option<bool>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> bool {
+    let superseded = superseded.unwrap_or(false);
+    info!(agent_id, superseded, "Stopping the agent-update reconnect");
+    agent_manager.cancel_update_reconnect(&agent_id, superseded)
 }
 
 /// The end reason of a `disconnect_agent` call (#4447): a user end unless the

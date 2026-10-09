@@ -799,6 +799,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::connect_agent,
             commands::agent::cancel_connect_agent,
             commands::agent::disconnect_agent,
+            commands::agent::cancel_agent_update_reconnect,
             // Test-bridge-only (SEC-005): registered only when the bridge is
             // compiled in, so release builds expose no transport-sever command.
             #[cfg(feature = "test-bridge")]

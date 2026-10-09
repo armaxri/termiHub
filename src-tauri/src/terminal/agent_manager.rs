@@ -111,6 +111,7 @@ mod reconnect;
 mod recovery;
 mod state_events;
 mod stdout_reader;
+mod update_reconnect;
 use alive::AgentAlive;
 pub(crate) use io_lanes::AgentIoSender;
 use io_lanes::{GateError, IoBudget, AGENT_IO_DATA_BUDGET, AGENT_IO_MAX_CHUNK};
@@ -140,6 +141,7 @@ pub(crate) use recovery::{
 use state_events::parse_agent_connection_state;
 use state_events::{emit_agent_disconnected, emit_agent_state, emit_agent_state_with_error};
 use stdout_reader::read_handshake_line;
+use update_reconnect::UpdateReconnectRegistry;
 
 /// A failed agent JSON-RPC request: the agent's error `code` (when it answered
 /// with a JSON-RPC error) plus the human message. Carrying the code lets
@@ -465,6 +467,26 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         _reason: AgentEndReason,
     ) -> Result<(), TerminalError> {
         self.disconnect_agent(agent_id)
+    }
+
+    /// Start the backend-driven reconnect for a coordinated agent update
+    /// (`agent.update_pending`, #4489): suspend the agent keeping its transport
+    /// config, then reconnect it once for every window. Returns whether a new
+    /// reconnect started (`false` for a duplicate notice or a mock client).
+    fn begin_update_reconnect(
+        self: Arc<Self>,
+        _agent_id: &str,
+        _requested_by_version: &str,
+        _estimated_restart_secs: u64,
+    ) -> bool {
+        false
+    }
+
+    /// Stop a coordinated-update reconnect: the user's Cancel (`superseded ==
+    /// false`), or a newer action that owns the agent from here on
+    /// (`superseded == true`). Returns whether one was running (#4489).
+    fn cancel_update_reconnect(&self, _agent_id: &str, _superseded: bool) -> bool {
+        false
     }
 
     /// Check if an agent is connected.
@@ -1111,6 +1133,9 @@ pub struct AgentConnectionManager<R: Runtime = Wry> {
     /// Bound on the post-auth connect handshake ([`AGENT_HANDSHAKE_TIMEOUT`];
     /// shortened only by tests).
     handshake_timeout: std::time::Duration,
+    /// The coordinated-update reconnects the backend is driving, one per agent
+    /// for every window (#4489). See [`update_reconnect`].
+    update_reconnects: UpdateReconnectRegistry,
     app_handle: AppHandle<R>,
 }
 
@@ -1125,6 +1150,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             agent_configs: AgentConfigStore::new(),
             io_budgets: Arc::new(Mutex::new(HashMap::new())),
             handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
+            update_reconnects: UpdateReconnectRegistry::default(),
             app_handle,
         }
     }
@@ -1648,6 +1674,27 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         reason: AgentEndReason,
     ) -> Result<(), TerminalError> {
+        // Any disconnect from outside supersedes a coordinated-update reconnect
+        // the backend is driving for this agent (#4489): the newer action owns
+        // the agent from here on.
+        self.supersede_update_reconnect(agent_id);
+        self.end_agent_connection(agent_id, reason, true)
+            .map(|_| ())
+    }
+
+    /// Tear an agent connection down with `reason`, returning the transport
+    /// config the live connection was established with (`None` when only an
+    /// in-flight connect was cancelled).
+    ///
+    /// `scrub_config` drops the retained reattach config too — every user end
+    /// does. The coordinated-update suspend (#4489) keeps it: the agent comes
+    /// back on the new binary and the backend reconnects it.
+    fn end_agent_connection(
+        &self,
+        agent_id: &str,
+        reason: AgentEndReason,
+        scrub_config: bool,
+    ) -> Result<Option<RetainedAgentConfig>, TerminalError> {
         let mut agents = self
             .agents
             .lock()
@@ -1672,13 +1719,15 @@ impl<R: Runtime> AgentConnectionManager<R> {
         {
             budget.close();
         }
-        // Scrub the reattach config unconditionally, before returning either arm:
-        // a user disconnect is a terminal point, and the agent may already have
+        // Scrub the reattach config (unless this is the update suspend), before
+        // returning either arm: a user disconnect is a terminal point, and the agent may already have
         // been *reaped* (no live entry) while its reattach config lingers — that
         // config must not survive the user's disconnect (#2472). The agents lock
         // is dropped first so the config-store lock is never held nested under it.
         drop(agents);
-        self.agent_configs.clear(agent_id);
+        if scrub_config {
+            self.agent_configs.clear(agent_id);
+        }
 
         if let Some(conn) = live {
             // Cooperative shutdown first: a live task processes `Disconnect` and
@@ -1693,10 +1742,10 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // framing we still care about. A no-op if the task already exited.
             conn.io_task.abort();
             emit_agent_disconnected(&self.app_handle, agent_id, reason);
-            Ok(())
+            Ok(Some(conn.reattach_config.clone()))
         } else if cancelled_connect {
             // The in-flight connect emits `disconnected` itself once it unwinds.
-            Ok(())
+            Ok(None)
         } else {
             Err(TerminalError::RemoteError(format!(
                 "Agent {} not connected",
@@ -2929,6 +2978,24 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn is_connected(&self, agent_id: &str) -> bool {
         AgentConnectionManager::is_connected(self, agent_id)
+    }
+
+    fn begin_update_reconnect(
+        self: Arc<Self>,
+        agent_id: &str,
+        requested_by_version: &str,
+        estimated_restart_secs: u64,
+    ) -> bool {
+        AgentConnectionManager::begin_update_reconnect(
+            &self,
+            agent_id,
+            requested_by_version,
+            estimated_restart_secs,
+        )
+    }
+
+    fn cancel_update_reconnect(&self, agent_id: &str, superseded: bool) -> bool {
+        AgentConnectionManager::cancel_update_reconnect(self, agent_id, superseded)
     }
 
     fn connected_agent_ids(&self) -> Vec<String> {

@@ -5,6 +5,7 @@
     "agent-setup-progress",
     "agent-state-change",
     "agent-update-available",
+    "agent-update-reconnect",
     "app-quit-cancelled",
     "app-quit-requested",
     "cli-workspace-requested",
