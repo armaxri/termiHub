@@ -49,7 +49,7 @@ tests:
     release_gate: true
     manual_reason: "macOS app-menu Quit (Cmd+Q) is OS-native; the bridge cannot drive it"
     name: "macOS — Cmd+Q with a live local shell asks before quitting"
-    pr: 4296
+    pr: 4458
     platforms: [macos]
     prerequisites:
       - app: true
