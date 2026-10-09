@@ -31,7 +31,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMainModule } from "./is-main-module.mjs";
 
-/** Source trees that ship in a release artifact (desktop app, core, agent, plugin API, plugin runner, RDP sidecar). */
+/** Source trees that ship in a release artifact (desktop app, core, agent, plugin API, plugin runner, Windows security helper, RDP sidecar). */
 export const SCAN_ROOTS = [
   "src",
   "src-tauri/src",
@@ -39,6 +39,7 @@ export const SCAN_ROOTS = [
   "agent/src",
   "plugin-api/src",
   "plugin-runner/src",
+  "win-security/src",
   "rdp-sidecar/src",
 ];
 

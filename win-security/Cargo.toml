@@ -1,0 +1,33 @@
+[package]
+name = "termihub-win-security"
+version = "0.1.0"
+description = "The one current-user SID / protected-DACL helper for termiHub's per-user Windows endpoints"
+edition = "2021"
+rust-version.workspace = true
+# Internal: a leaf crate shared by termihub-core and termihub-plugin-runner, never
+# published. `publish = false` lets cargo-deny's `[licenses] private.ignore` skip
+# its missing per-crate license field (the repo is MIT, see /LICENSE).
+publish = false
+
+# Why a separate crate (#4322, DUP2-004): core and the plugin runner each built
+# their own current-user DACL with duplicated unsafe FFI, and the copies drifted
+# (only the runner's kept the `TOKEN_USER` buffer aligned). The helper cannot
+# live in core, because core's dependency on the runner is optional and the
+# runner must not depend on core; nor in the runner, which core only pulls in
+# with the `plugin` feature. A leaf crate that depends on windows-sys only can be
+# a plain dependency of both. On non-Windows targets only the pure SDDL builder
+# and the DACL summary types compile, so unix builds pull in nothing.
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+tempfile = "3"
+# The pipe-creation test builds a raw named pipe (`PIPE_ACCESS_DUPLEX`).
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

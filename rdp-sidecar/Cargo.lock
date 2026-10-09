@@ -3926,6 +3926,7 @@ dependencies = [
  "shellexpand",
  "socket2 0.5.10",
  "surge-ping",
+ "termihub-win-security",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -3963,6 +3964,13 @@ dependencies = [
  "wl-clipboard-rs",
  "x11-clipboard",
  "x509-cert",
+]
+
+[[package]]
+name = "termihub-win-security"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
