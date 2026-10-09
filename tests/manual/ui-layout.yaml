@@ -217,3 +217,41 @@ tests:
       - "The refresh-interval menu opens on top of the dialog and picking an interval updates the button label."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-49
+    release_gate: true
+    manual_reason: "Monaco paints its editor theme on a real canvas/DOM in a WebView; the colorScheme mapping is unit-tested in monacoCustomLanguages.test.ts"
+    name: "Every light theme gets a light file editor"
+    pr: 4600
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open any text file in the file editor."
+      - "In Settings > Appearance, switch the theme to Solarized Light, then Light, then Dark."
+      - "Create a custom theme based on Light, select it, and look at the open editor."
+    expected:
+      - "Solarized Light and Light show a light editor (light background, dark code text)."
+      - "Dark shows the dark editor."
+      - "The light custom theme shows a light editor, not a dark block inside a light app."
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-50
+    release_gate: true
+    manual_reason: "uPlot draws on a <canvas>; seeing the repaint needs a WebView (the rebuild with new colours is unit-tested in themeRecolour.test.tsx)"
+    name: "Charts and primary buttons follow a live theme switch"
+    pr: 4600
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open Network Tools > Ping, start a ping so the latency chart is drawing."
+      - "Without closing it, switch the theme in Settings > Appearance from Dark to Light."
+      - "Create a custom theme, set its Accent to a light yellow (#ffd700) and watch the Save Theme button."
+    expected:
+      - "The latency chart's line, axis labels and grid lines change to the light palette at once; no dark grid lines remain."
+      - "The chart keeps its data and keeps updating."
+      - "With the yellow accent, primary button text turns dark and stays readable."
+    verification: manual
+    tags: [visual]
