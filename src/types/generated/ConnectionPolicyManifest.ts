@@ -13,12 +13,12 @@
  */
 export type ConnectionPolicyManifest = { 
 /**
- * Maximum number of concurrent mediated connections a session may hold open.
- * `None` keeps the host default.
+ * Maximum number of concurrent mediated connections a session may hold open,
+ * 1 to 256. `None` keeps the host default.
  */
 maxConnections?: number, 
 /**
- * Connect timeout, in milliseconds, applied to each mediated dial-out.
- * `None` keeps the host default.
+ * Connect timeout, in milliseconds, applied to each mediated dial-out,
+ * 1 to 600000 (ten minutes). `None` keeps the host default.
  */
 connectTimeoutMs?: number, };

@@ -85,16 +85,67 @@ pub enum Platform {
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionPolicyManifest {
-    /// Maximum number of concurrent mediated connections a session may hold open.
-    /// `None` keeps the host default.
+    /// Maximum number of concurrent mediated connections a session may hold open,
+    /// 1 to 256. `None` keeps the host default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_connections: Option<usize>,
-    /// Connect timeout, in milliseconds, applied to each mediated dial-out.
-    /// `None` keeps the host default.
+    /// Connect timeout, in milliseconds, applied to each mediated dial-out,
+    /// 1 to 600000 (ten minutes). `None` keeps the host default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub connect_timeout_ms: Option<u64>,
+}
+
+/// Smallest `connectionPolicy.maxConnections` a manifest may declare (#4534).
+///
+/// `0` would refuse every `open_connection` with `ResourceLimit`; a plugin that
+/// needs no connections should not request the `network` permission instead.
+pub const MIN_MAX_CONNECTIONS: usize = 1;
+
+/// Largest `connectionPolicy.maxConnections` a manifest may declare (#4534):
+/// a per-session ceiling that still bounds sockets and file descriptors.
+pub const MAX_MAX_CONNECTIONS: usize = 256;
+
+/// Smallest `connectionPolicy.connectTimeoutMs` a manifest may declare (#4534).
+///
+/// `0` becomes `Duration::ZERO`, which `TcpStream::connect_timeout` refuses, so
+/// every connect of such a plugin would fail.
+pub const MIN_CONNECT_TIMEOUT_MS: u64 = 1;
+
+/// Largest `connectionPolicy.connectTimeoutMs` a manifest may declare (#4534):
+/// ten minutes, so a dial-out to an unreachable host cannot hang a session for
+/// longer than that.
+pub const MAX_CONNECT_TIMEOUT_MS: u64 = 600_000;
+
+impl ConnectionPolicyManifest {
+    /// Check each declared field against its allowed range
+    /// ([`MIN_MAX_CONNECTIONS`]..=[`MAX_MAX_CONNECTIONS`],
+    /// [`MIN_CONNECT_TIMEOUT_MS`]..=[`MAX_CONNECT_TIMEOUT_MS`]). Absent fields
+    /// keep the host default and are always accepted.
+    pub fn validate(&self) -> Result<(), ManifestValidationError> {
+        if let Some(max) = self.max_connections {
+            if !(MIN_MAX_CONNECTIONS..=MAX_MAX_CONNECTIONS).contains(&max) {
+                return Err(ManifestValidationError::InvalidConnectionPolicy {
+                    field: "maxConnections",
+                    value: u64::try_from(max).unwrap_or(u64::MAX),
+                    min: MIN_MAX_CONNECTIONS as u64,
+                    max: MAX_MAX_CONNECTIONS as u64,
+                });
+            }
+        }
+        if let Some(ms) = self.connect_timeout_ms {
+            if !(MIN_CONNECT_TIMEOUT_MS..=MAX_CONNECT_TIMEOUT_MS).contains(&ms) {
+                return Err(ManifestValidationError::InvalidConnectionPolicy {
+                    field: "connectTimeoutMs",
+                    value: ms,
+                    min: MIN_CONNECT_TIMEOUT_MS,
+                    max: MAX_CONNECT_TIMEOUT_MS,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The `extensions` object: which extension points a plugin provides.
@@ -339,7 +390,8 @@ impl PluginManifest {
     /// Deserialization has already guaranteed the shape (known fields, known
     /// enum values); this layer enforces the invariants the type system cannot:
     /// a filesystem-safe `id`, non-empty identity fields, a parseable
-    /// `apiVersion`, and at least one declared extension point.
+    /// `apiVersion`, at least one declared extension point, and in-range
+    /// `connectionPolicy` limits.
     pub fn validate(&self) -> Result<(), ManifestValidationError> {
         validate_plugin_id(&self.id)?;
         require_non_empty("name", &self.name)?;
@@ -364,6 +416,9 @@ impl PluginManifest {
                     reason,
                 }
             })?;
+        }
+        if let Some(policy) = &self.connection_policy {
+            policy.validate()?;
         }
         if let Some(url) = &self.update_url {
             super::update_check::validate_https_url(url)
@@ -480,6 +535,21 @@ pub enum ManifestValidationError {
         path: String,
         /// What is wrong with it.
         reason: &'static str,
+    },
+    /// A `connectionPolicy` field lies outside its allowed range (#4534) — for
+    /// example `connectTimeoutMs: 0`, which would make every connect fail.
+    #[error(
+        "plugin manifest `connectionPolicy.{field}` must be between {min} and {max} (got {value})"
+    )]
+    InvalidConnectionPolicy {
+        /// The offending field's manifest (camelCase) name.
+        field: &'static str,
+        /// The declared value.
+        value: u64,
+        /// The smallest accepted value.
+        min: u64,
+        /// The largest accepted value.
+        max: u64,
     },
     /// Two `terminalBackend.libraries` entries point at the same file (PLG-011):
     /// each platform must carry its own library.
@@ -1063,6 +1133,101 @@ mod tests {
         );
     }
 
+    // ── connectionPolicy bounds (#4534) ──────────────────────────────
+
+    fn with_connection_policy(policy: &str) -> PluginManifest {
+        let json = valid_manifest_json().replace(
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],",
+            &format!(
+                "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],\n\
+                 \"connectionPolicy\": {policy},"
+            ),
+        );
+        parse_manifest(&json).expect("should parse")
+    }
+
+    #[test]
+    fn validate_rejects_zero_connect_timeout() {
+        // `Duration::ZERO` makes every `TcpStream::connect_timeout` fail, so a
+        // zero timeout would validate yet never connect.
+        let err = with_connection_policy(r#"{ "connectTimeoutMs": 0 }"#)
+            .validate()
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ManifestValidationError::InvalidConnectionPolicy {
+                field: "connectTimeoutMs",
+                value: 0,
+                min: MIN_CONNECT_TIMEOUT_MS,
+                max: MAX_CONNECT_TIMEOUT_MS,
+            }
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("connectionPolicy.connectTimeoutMs") && message.contains("got 0"),
+            "message should name the field and value: {message}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_connect_timeout_above_upper_bound() {
+        let too_long = MAX_CONNECT_TIMEOUT_MS + 1;
+        assert_eq!(
+            with_connection_policy(&format!(r#"{{ "connectTimeoutMs": {too_long} }}"#)).validate(),
+            Err(ManifestValidationError::InvalidConnectionPolicy {
+                field: "connectTimeoutMs",
+                value: too_long,
+                min: MIN_CONNECT_TIMEOUT_MS,
+                max: MAX_CONNECT_TIMEOUT_MS,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_connections() {
+        // `0` would refuse every `open_connection` with `ResourceLimit`.
+        assert_eq!(
+            with_connection_policy(r#"{ "maxConnections": 0 }"#).validate(),
+            Err(ManifestValidationError::InvalidConnectionPolicy {
+                field: "maxConnections",
+                value: 0,
+                min: MIN_MAX_CONNECTIONS as u64,
+                max: MAX_MAX_CONNECTIONS as u64,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_rejects_max_connections_above_upper_bound() {
+        let too_many = MAX_MAX_CONNECTIONS + 1;
+        assert_eq!(
+            with_connection_policy(&format!(r#"{{ "maxConnections": {too_many} }}"#)).validate(),
+            Err(ManifestValidationError::InvalidConnectionPolicy {
+                field: "maxConnections",
+                value: too_many as u64,
+                min: MIN_MAX_CONNECTIONS as u64,
+                max: MAX_MAX_CONNECTIONS as u64,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_accepts_connection_policy_values_in_range() {
+        for policy in [
+            r#"{ "connectTimeoutMs": 1 }"#.to_string(),
+            r#"{ "connectTimeoutMs": 5000 }"#.to_string(),
+            format!(r#"{{ "connectTimeoutMs": {MAX_CONNECT_TIMEOUT_MS} }}"#),
+            r#"{ "maxConnections": 1 }"#.to_string(),
+            format!(r#"{{ "maxConnections": {MAX_MAX_CONNECTIONS} }}"#),
+            r#"{ "maxConnections": 2, "connectTimeoutMs": 5000 }"#.to_string(),
+            "{}".to_string(),
+        ] {
+            with_connection_policy(&policy)
+                .validate()
+                .unwrap_or_else(|e| panic!("{policy} should validate: {e}"));
+        }
+    }
+
     // ── docs/plugin-authoring.md examples stay valid (#4324) ─────────
 
     /// The plugin authoring guide, embedded so a doc edit rebuilds the test.
@@ -1151,6 +1316,20 @@ mod tests {
                 serde_json::from_value(value["connectionPolicy"].clone())
                     .unwrap_or_else(|e| panic!("snippet does not parse: {e}\n{snippet}"));
             assert!(policy.max_connections.is_some() || policy.connect_timeout_ms.is_some());
+        }
+    }
+
+    #[test]
+    fn authoring_guide_states_the_connection_policy_bounds() {
+        // The Connection policy table must quote the limits `validate` enforces.
+        for bound in [
+            format!("`{MIN_MAX_CONNECTIONS}`–`{MAX_MAX_CONNECTIONS}`"),
+            format!("`{MIN_CONNECT_TIMEOUT_MS}`–`{MAX_CONNECT_TIMEOUT_MS}`"),
+        ] {
+            assert!(
+                AUTHORING_DOC.contains(&bound),
+                "docs/plugin-authoring.md does not state the range {bound}"
+            );
         }
     }
 }
