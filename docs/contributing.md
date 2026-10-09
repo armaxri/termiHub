@@ -186,27 +186,27 @@ a macOS-only break — surface on `develop` after merge instead of on the PR.
 ([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
 each job runs only if the PR can affect it:
 
-| Check                                                     | Runs on a PR when…                                        |
-| --------------------------------------------------------- | --------------------------------------------------------- |
-| Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                            |
-| Rust Code Quality (Windows) (clippy)                      | Rust changed                                              |
-| Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                  |
-| Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half |
-| Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                |
-| Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)     |
-| Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                  |
-| RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
-| Shell Script Quality                                      | a shell/cmd script changed                                |
-| Workflow Lint (actionlint)                                | a `.github/` file changed                                 |
-| Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes         |
-| Plugin IPC Fuzz Crate (stable check)                      | `plugin-runner/`, `plugin-api/` or Cargo.toml changed     |
-| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
-| Security Audit                                            | a dependency manifest/lockfile changed                    |
-| Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |
-| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed (not comments)  |
-| Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)  |
-| Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)    |
-| Lint Commit Messages                                      | always                                                    |
+| Check                                                     | Runs on a PR when…                                                     |
+| --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                                         |
+| Rust Code Quality (Windows) (clippy)                      | Rust changed                                                           |
+| Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                               |
+| Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half              |
+| Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                             |
+| Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)                  |
+| Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                               |
+| RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                                 |
+| Shell Script Quality                                      | a shell/cmd script changed                                             |
+| Workflow Lint (actionlint)                                | a `.github/` file changed                                              |
+| Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes                      |
+| Plugin IPC Fuzz Crate (stable check)                      | `plugin-runner/`, `plugin-api/`, `win-security/` or Cargo.toml changed |
+| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)                   |
+| Security Audit                                            | a dependency manifest/lockfile changed                                 |
+| Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed              |
+| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed (not comments)               |
+| Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)               |
+| Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)                 |
+| Lint Commit Messages                                      | always                                                                 |
 
 The test and build rows (Run Tests, Agent Live Tests, Build, the agent
 cross-builds, Plugin Packaging, Integration, System-Test Harness) also skip when
