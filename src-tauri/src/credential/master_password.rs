@@ -445,13 +445,23 @@ impl MasterPasswordStore {
         let mut new_salt = vec![0u8; SALT_LEN];
         OsRng.fill_bytes(&mut new_salt);
         let mut raw_key = derive_key(new_password, &new_salt)?;
-        let new_key = raw_key.to_vec();
+        let mut new_key = raw_key.to_vec();
         raw_key.zeroize();
         let new_cost = Argon2Cost::current();
 
+        // Seal and write the vault under the new key *before* touching the
+        // in-memory key (PER2-003, #4295). If the write fails, the store keeps
+        // the old key, so memory still matches the file on disk and the next
+        // save does not silently re-key the vault to the rejected password.
+        let creds = self.credentials_snapshot()?;
+        let written = self.seal_and_write(&new_salt, &new_key, &new_cost, &creds);
+        drop(creds);
+        if let Err(e) = written {
+            new_key.zeroize();
+            return Err(e.context("Failed to re-encrypt credentials with new password"));
+        }
         self.adopt_key(new_salt, new_key, new_cost);
-        self.save_to_disk()
-            .context("Failed to re-encrypt credentials with new password")
+        Ok(())
     }
 
     /// Returns `true` if the credentials file exists on disk.
