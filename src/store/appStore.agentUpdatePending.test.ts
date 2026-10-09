@@ -43,7 +43,7 @@ describe("handleAgentUpdatePending (coordinated-update notice, #1602)", () => {
     disconnect = vi.fn().mockResolvedValue(undefined);
     connect = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({
-      disconnectRemoteAgent: disconnect as unknown as (agentId: string) => Promise<void>,
+      disconnectRemoteAgent: disconnect as never,
       connectRemoteAgent: connect as unknown as (
         agentId: string,
         password?: string
@@ -66,7 +66,8 @@ describe("handleAgentUpdatePending (coordinated-update notice, #1602)", () => {
     expect(pending.estimatedRestartSecs).toBe(5);
 
     // Disconnecting is the ack the updating host waits for.
-    expect(disconnect).toHaveBeenCalledWith(AGENT_ID);
+    // A suspend, not a user end: the hosted tabs resume after the update (#4309).
+    expect(disconnect).toHaveBeenCalledWith(AGENT_ID, { endHostedSessions: false });
     // A loading toast surfaces the in-progress suspend.
     expect(toastMocks.loading).toHaveBeenCalledTimes(1);
     // The reconnect has not fired yet.

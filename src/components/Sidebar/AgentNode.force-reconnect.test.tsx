@@ -151,7 +151,8 @@ describe("AgentNode — force reconnect wiring", () => {
       await capturedDialogProps.onForceReconnect!();
     });
 
-    expect(mockDisconnect).toHaveBeenCalledWith(AGENT_ID);
+    // A reconnect follows, so the hosted tabs stay resumable (#4309).
+    expect(mockDisconnect).toHaveBeenCalledWith(AGENT_ID, { endHostedSessions: false });
     expect(mockConnect).toHaveBeenCalled();
   });
 
