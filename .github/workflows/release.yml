@@ -283,24 +283,12 @@ jobs:
         # no Apple Developer-ID / notarization yet. build-and-upload re-signs the
         # .app ad-hoc so it launches (and satisfies the Apple Silicon kernel), but
         # Gatekeeper still shows an "unverified developer" prompt on first open.
-        # Document the one-step bypass in every release body so the beta stays
-        # turnkey for users. Appended AFTER the security marker so the marker stays
-        # first (src-tauri/src/commands/update.rs greps the body for it).
-        run: |
-          {
-            echo ""
-            echo "---"
-            echo ""
-            echo "### macOS — unsigned public beta (one-step bypass)"
-            echo ""
-            echo "termiHub is an **unsigned public beta** (no Apple Developer ID / notarization yet)."
-            echo "The app is ad-hoc signed so it runs, but on first launch macOS shows an"
-            echo "\"unverified developer\" prompt. Bypass it once, either way:"
-            echo ""
-            echo "- **Right-click** \`termiHub.app\` in Finder → **Open** → **Open** in the dialog."
-            echo "  macOS remembers this per app, so you only do it once."
-            echo "- Or from a terminal: \`xattr -dr com.apple.quarantine /Applications/termiHub.app\`"
-          } >> release_notes.md
+        # Document the one-time approval in every release body so the beta stays
+        # turnkey for users. The text comes from scripts/internal/macos-first-launch.mjs,
+        # the single source README.md is checked against (#4279). Appended AFTER the
+        # security marker so the marker stays first (src-tauri/src/commands/update.rs
+        # greps the body for it).
+        run: node scripts/internal/macos-first-launch.mjs >> release_notes.md
 
       # Release channel (PKG-014): there is no `latest` git tag — clients (the
       # desktop update check and the agent self-updater) follow GitHub's own
@@ -626,8 +614,8 @@ jobs:
       # (inner components signed in the wrong order), which Gatekeeper classifies as
       # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc
       # signature instead triggers "unverified developer", which users can bypass via
-      # right-click → Open (see the release notes). We re-sign the entire bundle
-      # ourselves, inside-out, to guarantee consistency. Ad-hoc signatures are also
+      # System Settings → Privacy & Security → Open Anyway (see the release notes).
+      # We re-sign the entire bundle ourselves, inside-out, to guarantee consistency. Ad-hoc signatures are also
       # required by the Apple Silicon kernel — a completely unsigned binary is killed
       # immediately at exec time on M1/M2/M3/M4. Ported verbatim from dev-build.yml.
       - name: Re-sign macOS DMG with consistent ad-hoc signature

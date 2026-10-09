@@ -28,7 +28,15 @@ Download the latest release for your platform from the [GitHub Releases page](ht
 
 1. Download the `.dmg` for your architecture — `termiHub-0.1.0-macos-arm64.dmg` (Apple Silicon) or `termiHub-0.1.0-macos-x64.dmg` (Intel).
 2. Open the DMG and drag **termiHub** into your **Applications** folder.
-3. Because the app is unsigned, a normal double-click is blocked by Gatekeeper on first launch. Instead, **right-click (or Control-click) the app → Open → Open**. macOS remembers this choice for subsequent launches.
+3. Because the app is unsigned, Gatekeeper blocks the first launch with an "unverified developer" warning. Approve it once, either way:
+
+   <!-- macos-first-launch:begin -->
+   - **macOS 15 (Sequoia) and later:** open the app once and dismiss the warning, then open **System Settings → Privacy & Security**, scroll to **Security** and click **Open Anyway**. Confirm with **Open** (and your password if asked).
+   - **Any macOS version, from a terminal:** `xattr -dr com.apple.quarantine /Applications/termiHub.app`
+   - **macOS 14 (Sonoma) and earlier only:** right-click (or Control-click) the app → **Open** → **Open**.
+   <!-- macos-first-launch:end -->
+
+   macOS remembers the approval, so later launches work normally.
 
 ### Windows x64
 
@@ -81,7 +89,7 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 
 ### Known limitations (beta)
 
-- **Unsigned binaries** — macOS shows a Gatekeeper prompt (right-click → Open) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
+- **Unsigned binaries** — macOS shows a Gatekeeper prompt (System Settings → Privacy & Security → Open Anyway) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
 - **No auto-update** — termiHub does not self-install updates; download new versions manually from the [Releases page](https://github.com/armaxri/termiHub/releases). It does, however, **check for updates** on startup (see the privacy note below).
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.

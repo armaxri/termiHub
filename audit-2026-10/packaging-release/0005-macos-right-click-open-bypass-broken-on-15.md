@@ -12,8 +12,8 @@ evidence:
   - README.md:84
   - .github/workflows/dev-build.yml:309
   - .github/workflows/dev-build.yml:727
-status: open
-resolution: ""
+status: fixed
+resolution: "#4279 — release body and README now give the macOS 15+ Open Anyway flow from one source"
 audit: 2026-10
 commit: 663465d52
 relation: new

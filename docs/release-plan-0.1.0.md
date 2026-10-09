@@ -517,7 +517,7 @@ the release is blocked until fixed:
 For a beta, some things are explicitly out of scope. Document these in
 the release notes:
 
-- [ ] macOS: App is unsigned — users must right-click → Open on first launch
+- [ ] macOS: App is unsigned — users must approve the first launch in System Settings → Privacy & Security → Open Anyway (macOS 15+), or run the `xattr` one-liner
 - [ ] Windows: SmartScreen may warn — users must click "More info" → "Run anyway"
 - [ ] No auto-update — users must manually download new versions
 - [ ] Serial port support requires platform-specific drivers
