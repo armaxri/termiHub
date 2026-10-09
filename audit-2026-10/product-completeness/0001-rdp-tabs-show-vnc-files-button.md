@@ -17,8 +17,8 @@ evidence:
   - core/src/connection/graphical_files.rs:123
   - src-tauri/src/session/graphical_manager.rs:490
   - core/src/backends/rdp_sidecar/config.rs:440
-status: open
-resolution: ""
+status: fixed
+resolution: "#4348 — file channel is type-aware (notOffered from the schema); RDP tabs hide the Files button and drop overlay"
 audit: 2026-10
 commit: 663465d52
 relation: new

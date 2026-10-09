@@ -16,8 +16,8 @@ evidence:
   - src-tauri/src/session/graphical_file_channel.rs:104
   - src-tauri/src/session/graphical_manager.rs:491
   - core/src/backends/vnc/config.rs:656
-status: open
-resolution: ""
+status: fixed
+resolution: "#4348 — backend reports notOffered for types without a fileTransfer opt-in; RDP tabs hide the Files button, drop overlay and toast"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -50,7 +50,8 @@ pub use graphical::{
     MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
 };
 pub use graphical_files::{
-    FileChannelPolicy, FileChannelUnavailable, FileSideChannel, FileSideChannelKind,
+    schema_offers_file_side_channel, FileChannelPolicy, FileChannelUnavailable, FileSideChannel,
+    FileSideChannelKind, FILE_TRANSFER_KEY,
 };
 pub use graphical_monitors::{
     monitor_fields, multi_monitor_requested, resolve_monitor_layout, MonitorLayout, MonitorMode,

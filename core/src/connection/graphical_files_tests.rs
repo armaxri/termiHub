@@ -29,6 +29,7 @@ fn linked(vnc_host: &str, host: &str) -> FileSideChannel {
 const ON: FileChannelPolicy = FileChannelPolicy {
     file_transfer: true,
     view_only: false,
+    not_offered: false,
 };
 
 #[test]
@@ -145,6 +146,7 @@ fn view_only_is_refused_even_with_a_route() {
     let policy = FileChannelPolicy {
         file_transfer: true,
         view_only: true,
+        not_offered: false,
     };
     assert_eq!(
         resolve_file_side_channel(
@@ -162,6 +164,7 @@ fn setting_off_is_refused_even_with_a_route() {
     let policy = FileChannelPolicy {
         file_transfer: false,
         view_only: true,
+        not_offered: false,
     };
     assert_eq!(
         resolve_file_side_channel(
@@ -172,6 +175,66 @@ fn setting_off_is_refused_even_with_a_route() {
         ),
         Err(FileChannelUnavailable::Disabled),
         "off is reported before view-only"
+    );
+}
+
+#[test]
+fn a_type_without_the_feature_is_refused_first_even_with_a_route() {
+    // #4348: an agent-hosted RDP session has an agent route, and no
+    // `fileTransfer` key — it must not read as "turned off" (Disabled).
+    assert_eq!(
+        resolve_file_side_channel(
+            FileChannelPolicy::not_offered(),
+            Some(agent("lab-pi", "localhost")),
+            Some(ssh("tiger-box", "localhost")),
+            None
+        ),
+        Err(FileChannelUnavailable::NotOffered)
+    );
+    let policy = FileChannelPolicy {
+        not_offered: true,
+        ..ON
+    };
+    assert_eq!(policy.refusal(), Some(FileChannelUnavailable::NotOffered));
+}
+
+#[test]
+fn schema_offers_the_side_channel_only_with_the_opt_in() {
+    use crate::connection::schema::{FieldType, SettingsField, SettingsGroup, SettingsSchema};
+    let schema = |key: &str| SettingsSchema {
+        groups: vec![SettingsGroup {
+            key: "g".to_string(),
+            label: "G".to_string(),
+            fields: vec![SettingsField {
+                key: key.to_string(),
+                label: key.to_string(),
+                description: None,
+                help_text: None,
+                field_type: FieldType::Boolean,
+                required: false,
+                default: None,
+                placeholder: None,
+                supports_env_expansion: false,
+                supports_tilde_expansion: false,
+                visible_when: None,
+            }],
+            collapsed: false,
+        }],
+    };
+    assert!(schema_offers_file_side_channel(&schema("fileTransfer")));
+    assert!(!schema_offers_file_side_channel(&schema(
+        "driveRedirection"
+    )));
+    assert!(!schema_offers_file_side_channel(&SettingsSchema {
+        groups: vec![]
+    }));
+}
+
+#[test]
+fn not_offered_serializes_camel_case() {
+    assert_eq!(
+        serde_json::to_value(FileChannelUnavailable::NotOffered).unwrap(),
+        serde_json::json!("notOffered")
     );
 }
 

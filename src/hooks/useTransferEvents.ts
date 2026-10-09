@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { onTransferProgress, onSessionOwnershipChanged } from "@/services/events";
 import { toast } from "@/components/ui";
 import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
+import { isBatchTransfer } from "@/hooks/batchTransferToasts";
 
 /**
  * Raise the single terminal-phase toast for a settled transfer (#1286).
@@ -22,9 +23,14 @@ import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
  *   (`FileBrowser`/`OpenConnectionsModal`), so toasting the `cancelled` phase
  *   here would double up. The in-flight row simply disappears from the
  *   Transfers UI.
+ *
+ * A transfer that belongs to a graphical-session upload batch stays quiet
+ * too: that batch raises one summary toast for the whole drop (#4348).
  */
 function toastTerminalPhase(progress: TransferProgress): void {
   const { phase, direction, fileName, message } = progress;
+  if (phase !== "done" && phase !== "error") return;
+  if (isBatchTransfer(progress)) return;
   // A queued local-disk copy (#3567) is neither a download nor an upload.
   const isLocalCopy = progress.sessionId === LOCAL_TRANSFER_SESSION;
   if (phase === "done") {

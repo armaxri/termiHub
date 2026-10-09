@@ -107,6 +107,27 @@ impl FileChannelContext {
             linked,
         }
     }
+
+    /// The context of a session whose connection type has no side-channel
+    /// file transfer (#4348, e.g. RDP): every resolution reports
+    /// `unavailable` with reason `notOffered`, so the UI hides the feature
+    /// instead of pointing to a setting the type does not have.
+    pub(crate) fn not_offered() -> Self {
+        Self {
+            policy: FileChannelPolicy::not_offered(),
+            ..Self::default()
+        }
+    }
+
+    /// [`Self::new`] for a type whose settings schema offers the side channel,
+    /// else [`Self::not_offered`].
+    pub(crate) fn for_type(offered: bool, settings: &Value, agent: Option<AgentFileRoute>) -> Self {
+        if offered {
+            Self::new(settings, agent)
+        } else {
+            Self::not_offered()
+        }
+    }
 }
 
 /// A linked saved SSH connection, ready to connect: the settings resolved
