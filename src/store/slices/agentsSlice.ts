@@ -47,10 +47,11 @@ import { agentBookmarkScopePrefix } from "@/utils/fileBookmarkScope";
  * the agent-hosted connection-definition and folder CRUD, and the per-client
  * update presentation state (`agentUpdates` / `agentUpdatesDismissed` /
  * `agentUpdatePending`) including the coordinated-update notice
- * (`handleAgentUpdatePending` / `handleAgentUpdateReconnect`, #1602, #4489). The agent list, sessions,
- * definitions and folders themselves stay region-authoritative (#2409) — they
- * live in the shared `agents` projection region (`currentAgentsView()`), and
- * these actions are thin backend-command wrappers that mirror `agent.*` intents.
+ * (`handleAgentUpdatePending` / `handleAgentUpdateReconnect`, #1602, #4489).
+ * The agent list, sessions, definitions and folders themselves stay
+ * region-authoritative (#2409) — they live in the shared `agents` projection
+ * region (`currentAgentsView()`), and these actions are thin backend-command
+ * wrappers that mirror `agent.*` intents.
  *
  * Extracted verbatim from the monolithic root store as a behavior-preserving
  * Zustand slice — every action still receives the shared `set`/`get` typed
