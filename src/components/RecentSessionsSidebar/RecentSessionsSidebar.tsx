@@ -21,18 +21,13 @@ import "./RecentSessionsSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
- * Recent-sessions list matcher: matches the (already lower-cased) query against
- * a session's title, dedup key, or connection type. A custom matcher passed to
- * {@link useListFilter} — the recent-sessions entries carry title/dedupKey/
- * connectionType rather than the default name/description/tags shape (UISF-020).
+ * Searchable text of a recent session: its title, dedup key, and connection
+ * type. Passed to {@link useListFilter} — the recent-sessions entries carry
+ * title/dedupKey/connectionType rather than the default name/description/tags
+ * shape (UISF-020).
  */
-function entryMatches(entry: SessionHistoryEntry, query: string): boolean {
-  if (!query) return true;
-  return (
-    entry.title.toLowerCase().includes(query) ||
-    entry.dedupKey.toLowerCase().includes(query) ||
-    entry.connectionType.toLowerCase().includes(query)
-  );
+function entryFields(entry: SessionHistoryEntry): string[] {
+  return [entry.title, entry.dedupKey, entry.connectionType];
 }
 
 /**
@@ -57,7 +52,7 @@ export function RecentSessionsSidebar() {
   const [saveEntry, setSaveEntry] = useState<SessionHistoryEntry | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const { query, setQuery, filtered } = useListFilter(history, entryMatches);
+  const { query, setQuery, filtered } = useListFilter(history, entryFields);
 
   // Reconnect by reusing the credential-aware saved-connection flow with a
   // synthetic (unsaved) connection: SSH password/passphrase prompts and stored
