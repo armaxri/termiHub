@@ -3,10 +3,17 @@
 //! rename. Any failure before the commit discards the staging directory and
 //! puts the credentials back. The committed files are swapped into place on
 //! the next start by [`super::pending::apply_pending_restore`].
+//!
+//! The credentials are imported right away, but the stores only at the next
+//! start, so a committed restore also carries what that start needs to undo
+//! the import if the swap fails (#4295): a copy of the credential vault taken
+//! just before the import ([`CREDENTIALS_COPY_FILE`]) and a record of the
+//! import ([`CREDENTIALS_RECORD_FILE`]).
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -23,6 +30,32 @@ pub const STAGING_DIR: &str = ".backup-restore-staging";
 pub const PENDING_DIR: &str = ".backup-restore-pending";
 /// Manifest listing the staged store files. Written last during staging.
 pub const MANIFEST_FILE: &str = "manifest.json";
+
+/// Copy of the credential vault file, taken just before the import (#4295).
+pub const CREDENTIALS_COPY_FILE: &str = "credentials-rollback.enc";
+/// Record of a credential import that a committed restore already applied.
+/// Present only when the import changed (or may have changed) credentials.
+pub const CREDENTIALS_RECORD_FILE: &str = "credentials-imported.json";
+
+/// What a committed restore already did to the credential store, so a failed
+/// swap at the next start can revert it (#4295).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialImportRecord {
+    /// The vault file, relative to the config dir, that [`CREDENTIALS_COPY_FILE`]
+    /// restores. `None` when the store keeps no such file (the OS keychain):
+    /// its imported credentials cannot be reverted.
+    pub vault_file: Option<String>,
+    /// SHA-256 (hex) of the vault file right after the import. The copy is put
+    /// back only while the vault is still exactly that, so a credential saved
+    /// or a master password changed after the restore is never undone.
+    pub imported_sha256: Option<String>,
+}
+
+/// SHA-256 of `bytes`, hex-encoded.
+pub(super) fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
 
 /// Manifest format with only top-level store files.
 pub const MANIFEST_FORMAT_FILES_ONLY: u32 = 1;
@@ -260,6 +293,71 @@ fn import_legacy_secrets(
     result
 }
 
+/// The store's vault file name when it is a plain file directly in
+/// `config_dir` (the master-password vault), so the next start can find it.
+fn vault_file_name(store: &dyn CredentialStore, config_dir: &Path) -> Option<String> {
+    let path = store.vault_file()?;
+    if path.parent()? != config_dir {
+        return None;
+    }
+    path.file_name()?.to_str().map(str::to_owned)
+}
+
+/// Copy the credential vault into the staging dir before the import changes
+/// it. Returns the vault's file name, or `None` when the store keeps no vault
+/// file there (nothing to copy).
+fn copy_vault(
+    store: &dyn CredentialStore,
+    config_dir: &Path,
+    staging: &Path,
+) -> Result<Option<String>, VaultError> {
+    let Some(name) = vault_file_name(store, config_dir) else {
+        return Ok(None);
+    };
+    let vault = config_dir.join(&name);
+    if !vault.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&vault).map_err(|e| {
+        other(format!(
+            "Could not back up the credential store before restoring: {e}"
+        ))
+    })?;
+    write_atomic(&staging.join(CREDENTIALS_COPY_FILE), &text).map_err(|e| {
+        other(format!(
+            "Could not back up the credential store before restoring: {e:#}"
+        ))
+    })?;
+    Ok(Some(name))
+}
+
+/// Record the applied credential import in the staging dir (written before
+/// the commit, so it is committed together with the stores).
+fn record_import(
+    config_dir: &Path,
+    staging: &Path,
+    vault_copy: Option<String>,
+) -> Result<(), VaultError> {
+    let imported_sha256 = match &vault_copy {
+        Some(name) => Some(sha256_hex(&std::fs::read(config_dir.join(name)).map_err(
+            |e| {
+                other(format!(
+                    "Could not read the credential store after the import: {e}"
+                ))
+            },
+        )?)),
+        None => None,
+    };
+    let record = CredentialImportRecord {
+        vault_file: vault_copy,
+        imported_sha256,
+    };
+    let text = serde_json::to_string_pretty(&record)
+        .map_err(|e| other(format!("Could not record the credential import: {e}")))?;
+    write_atomic(&staging.join(CREDENTIALS_RECORD_FILE), &text)
+        .map_err(|e| other(format!("Could not record the credential import: {e:#}")))
+}
+
 /// Apply a restore: stage the chosen stores, import the credentials, then
 /// commit. All-or-nothing: on any failure nothing is committed and the
 /// credential store is rolled back.
@@ -290,6 +388,12 @@ pub fn apply(
         }
     };
     let outcome = (|| {
+        // A restart-applied restore keeps a copy of the vault from before the
+        // import, so a swap that fails at the next start can revert it.
+        let vault_copy = match (store, &staged) {
+            (Some(store), Some(staged)) => copy_vault(store, config_dir, &staged.staging)?,
+            _ => None,
+        };
         let mut credentials_result = None;
         let mut covered: Vec<&CredentialKey> = Vec::new();
         if let (Some(strategy), Some(vault)) = (request.credentials, opened.credentials.as_ref()) {
@@ -305,6 +409,9 @@ pub fn apply(
             covered.extend(vault.entries.iter().map(|(key, _)| key));
         }
         import_legacy_secrets(&prepared.secrets, &covered, store, &mut snapshots)?;
+        if let (Some(staged), false) = (&staged, snapshots.is_empty()) {
+            record_import(config_dir, &staged.staging, vault_copy)?;
+        }
         Ok::<_, VaultError>(credentials_result)
     })();
     let credentials_result = match outcome {

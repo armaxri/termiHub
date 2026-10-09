@@ -12,13 +12,22 @@
 //! moves the original into the rollback directory and the staged copy into
 //! place. Every step is idempotent, so a resumed swap and a rollback can tell
 //! the original from the restored copy by where the original now lives.
+//!
+//! Credentials (#4295): the restore imported them before it was committed. A
+//! failed swap puts the credential vault back from the copy the restore took
+//! before importing — but only while the vault is still exactly as the import
+//! left it. A store without a vault file (the OS keychain) cannot be reverted,
+//! and the warning then says the backup's credentials were kept.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
-use super::commit::{MANIFEST_FORMAT_FILES_ONLY, MANIFEST_FORMAT_WITH_PLUGINS};
+use super::commit::{
+    sha256_hex, CredentialImportRecord, CREDENTIALS_COPY_FILE, CREDENTIALS_RECORD_FILE,
+    MANIFEST_FORMAT_FILES_ONLY, MANIFEST_FORMAT_WITH_PLUGINS,
+};
 use super::restore::{PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
 use super::{plugins, sections};
 use crate::connection::recovery::RecoveryWarning;
@@ -53,10 +62,95 @@ fn remove_dir(path: &Path) {
     }
 }
 
-fn failure_warning(details: String) -> RecoveryWarning {
+/// What a failed swap did about the credentials the restore had imported.
+#[derive(Debug, PartialEq, Eq)]
+enum CredentialRevert {
+    /// The restore imported no credentials; nothing to revert.
+    NothingImported,
+    /// The credential vault is back to its state before the restore.
+    Reverted,
+    /// The imported credentials are still in the store, for this reason.
+    Kept(String),
+}
+
+/// Undo the credential import of a committed restore whose swap failed
+/// (#4295). Must run before the pending directory is removed. Idempotent: a
+/// vault already put back (an interrupted earlier attempt) counts as reverted.
+fn revert_credentials(config_dir: &Path, pending: &Path) -> CredentialRevert {
+    let Ok(text) = std::fs::read_to_string(pending.join(CREDENTIALS_RECORD_FILE)) else {
+        return CredentialRevert::NothingImported;
+    };
+    let record: CredentialImportRecord = match serde_json::from_str(&text) {
+        Ok(record) => record,
+        Err(e) => {
+            return CredentialRevert::Kept(format!(
+                "the record of the credential import is malformed: {e}"
+            ))
+        }
+    };
+    let (Some(file), Some(imported_sha256)) = (record.vault_file, record.imported_sha256) else {
+        return CredentialRevert::Kept(
+            "the credential store keeps no file that could be put back".to_string(),
+        );
+    };
+    // Only a plain file name directly in the config dir is accepted.
+    if Path::new(&file).file_name().and_then(|n| n.to_str()) != Some(file.as_str()) {
+        return CredentialRevert::Kept(format!(
+            "the record names an invalid credential file \"{file}\""
+        ));
+    }
+    let copy = match std::fs::read_to_string(pending.join(CREDENTIALS_COPY_FILE)) {
+        Ok(copy) => copy,
+        Err(e) => {
+            return CredentialRevert::Kept(format!(
+                "the copy of the previous credential store is unreadable: {e}"
+            ))
+        }
+    };
+    let target = config_dir.join(&file);
+    let current = match std::fs::read(&target) {
+        Ok(current) => current,
+        Err(e) => {
+            return CredentialRevert::Kept(format!("the credential store could not be read: {e}"))
+        }
+    };
+    if current == copy.as_bytes() {
+        return CredentialRevert::Reverted;
+    }
+    if sha256_hex(&current) != imported_sha256 {
+        return CredentialRevert::Kept(
+            "the credential store changed after the restore, so it was left as it is".to_string(),
+        );
+    }
+    match write_atomic(&target, &copy) {
+        Ok(()) => {
+            info!("Reverted the credentials imported by the failed backup restore");
+            CredentialRevert::Reverted
+        }
+        Err(e) => CredentialRevert::Kept(format!(
+            "the previous credential store could not be written back: {e:#}"
+        )),
+    }
+}
+
+/// Revert the credential import, then build the warning for a failed restore.
+/// The message only promises unchanged data when that is true.
+fn failure_warning(config_dir: &Path, pending: &Path, mut details: String) -> RecoveryWarning {
+    let message = match revert_credentials(config_dir, pending) {
+        CredentialRevert::NothingImported | CredentialRevert::Reverted => {
+            "Restoring the backup failed. Your previous data was kept unchanged.".to_string()
+        }
+        CredentialRevert::Kept(reason) => {
+            error!("Could not revert the credentials of a failed backup restore: {reason}");
+            details.push_str(&format!(". The imported credentials were kept: {reason}"));
+            "Restoring the backup failed. Your previous data was kept, but the credentials \
+             from the backup had already been imported and are still in your credential store."
+                .to_string()
+        }
+    };
     RecoveryWarning {
         file_name: "backup restore".to_string(),
-        message: "Restoring the backup failed. Your previous data was kept unchanged.".to_string(),
+        message,
         details: Some(details),
     }
 }
@@ -262,9 +356,10 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
         Ok(m) => m,
         Err(e) => {
             error!("Discarding an invalid pending backup restore: {e}");
+            let warning = failure_warning(config_dir, &pending, e);
             remove_dir(&pending);
             remove_dir(&rollback);
-            return Some(failure_warning(e));
+            return Some(warning);
         }
     };
 
@@ -272,9 +367,10 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
         Ok(s) => s,
         Err(e) => {
             error!("Could not prepare the backup restore: {e}");
+            let warning = failure_warning(config_dir, &pending, e);
             remove_dir(&pending);
             remove_dir(&rollback);
-            return Some(failure_warning(e));
+            return Some(warning);
         }
     };
 
@@ -312,8 +408,9 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
                     rollback.display()
                 ));
             }
+            let warning = failure_warning(config_dir, &pending, details);
             remove_dir(&pending);
-            return Some(failure_warning(details));
+            return Some(warning);
         }
     }
 

@@ -690,6 +690,7 @@ async fn run_output_reader_emits_chunks_and_exit() {
         new_session_loggers(),
         new_session_tab_ids(),
         CancellationToken::new(),
+        None,
     )
     .await;
 
@@ -750,6 +751,7 @@ async fn run_output_reader_stops_on_cancellation_without_eof() {
             new_session_loggers(),
             new_session_tab_ids(),
             reader_cancel,
+            None,
         )
         .await;
     });
@@ -816,6 +818,7 @@ async fn run_output_reader_writes_to_active_session_logger() {
         session_loggers.clone(),
         new_session_tab_ids(),
         CancellationToken::new(),
+        None,
     )
     .await;
 
@@ -854,6 +857,7 @@ async fn run_output_reader_stops_on_emitter_failure() {
         new_session_loggers(),
         new_session_tab_ids(),
         CancellationToken::new(),
+        None,
     )
     .await;
 
@@ -891,6 +895,7 @@ async fn collect_stream_events(chunks: Vec<Vec<u8>>) -> Vec<TerminalOutputEvent>
         new_session_loggers(),
         new_session_tab_ids(),
         CancellationToken::new(),
+        None,
     )
     .await;
 
@@ -4307,6 +4312,9 @@ mod close_ownership;
 
 // One stalled session must not freeze the others (#4300).
 mod blocking_io;
+
+/// Frontend flow control reaches the output reader (PERF2-002, #4307).
+mod output_flow;
 
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;

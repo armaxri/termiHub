@@ -1268,6 +1268,11 @@ See [Remote Protocol](remote-protocol.md) for the full protocol specification an
 - **Tokio** runtime for all async operations in Rust
 - **Bounded channels** (`sync_channel(64)`) for terminal output with backpressure
 - **Output coalescing**: backend reads coalesce pending chunks (up to 32 KB) into a single IPC event
+- **Output flow control** (PERF2-002): the terminal counts bytes handed to `xterm.write` until
+  their write callback fires, calls `set_terminal_output_paused` above a 2 MiB high watermark and
+  resumes below 512 KiB. While paused the output pump stops reading, so the bounded channel and
+  the OS PTY buffer backpressure the program; input is unaffected. Agent-proxied sessions are not
+  paused yet (their channel is fed by `try_send`, which would drop output)
 - **Task cancellation**: each terminal session owns its async tasks, cleaned up on close
 
 ### IPC Communication

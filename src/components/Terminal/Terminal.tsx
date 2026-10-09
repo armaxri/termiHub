@@ -46,6 +46,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { createSessionOutputFlow } from "@/utils/terminalFlowControl";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
 import {
@@ -881,8 +882,12 @@ export function Terminal({
         let lastSentCols = 0;
         let lastSentRows = 0;
 
-        // Output batching: buffer chunks and flush in a single RAF callback.
-        const outputBuffer: Uint8Array[] = [];
+        // Output batching: stage chunks and flush in a single RAF callback.
+        // The staged buffer is bounded and paces the backend by xterm's write
+        // callbacks (PERF2-002, see terminalFlowControl).
+        const outputFlow = createSessionOutputFlow(sessionId, (msg) =>
+          frontendLog("terminal", `${msg} tab=${tabId}`)
+        );
         let rafId: number | null = null;
         // Fallback timer paired with the RAF (#2136): when a plugin protocol
         // parser is active, transformed output is pushed to the buffer from a
@@ -905,7 +910,7 @@ export function Terminal({
             clearTimeout(flushTimer);
             flushTimer = null;
           }
-          if (outputBuffer.length === 0) return;
+          if (!outputFlow.hasStaged) return;
 
           // Hold the output (bounded) while the inline-image addon is still
           // loading: bytes parsed before it attaches lose their images (#4017).
@@ -972,21 +977,23 @@ export function Terminal({
             });
           };
 
-          if (outputBuffer.length === 1) {
-            xterm.write(outputBuffer[0], afterWrite);
-          } else {
-            // Concatenate all buffered chunks into one write
-            let totalLen = 0;
-            for (const chunk of outputBuffer) totalLen += chunk.length;
-            const merged = new Uint8Array(totalLen);
-            let offset = 0;
-            for (const chunk of outputBuffer) {
-              merged.set(chunk, offset);
-              offset += chunk.length;
-            }
-            xterm.write(merged, afterWrite);
+          // All staged chunks as one write; `null` while xterm's backlog is at
+          // the high watermark — the pending write callback reschedules.
+          const batch = outputFlow.takeBatch();
+          if (batch === null) return;
+          try {
+            xterm.write(batch, () => {
+              outputFlow.written(batch.length);
+              afterWrite();
+              if (outputFlow.hasStaged) scheduleFlush();
+            });
+          } catch (err) {
+            // xterm refused the write (its own overflow guard): keep the bytes
+            // and retry on the next tick instead of throwing every frame.
+            outputFlow.restore(batch);
+            frontendLog("terminal", `xterm write deferred tab=${tabId}: ${errorMessage(err)}`);
+            flushTimer = setTimeout(flushOutput, 16);
           }
-          outputBuffer.length = 0;
         };
 
         // Discard any output that landed in pendingOutput while we were
@@ -1054,12 +1061,12 @@ export function Terminal({
           // the sandbox host, which returns the (possibly transformed) bytes in
           // arrival order via the callback.
           if (!sandboxHasParsers() && !sandboxSessionPending(sessionId)) {
-            outputBuffer.push(data);
+            outputFlow.push(data);
             scheduleFlush();
             return;
           }
           enqueueSandboxTransform(sessionId, data, (out) => {
-            outputBuffer.push(out);
+            outputFlow.push(out);
             scheduleFlush();
           });
         });
@@ -1238,6 +1245,17 @@ export function Terminal({
             rafId = null;
           }
           flushOutput();
+          // Hand xterm whatever the backlog limit held back, then never leave
+          // the backend paused behind a terminal that is going away.
+          const rest = outputFlow.takeBatch(true);
+          if (rest) {
+            try {
+              xterm.write(rest);
+            } catch {
+              // xterm is past its own overflow guard; nothing more to do here.
+            }
+          }
+          outputFlow.dispose();
           // Drop any still-in-flight sandbox transforms for this session — the
           // tab is going away, so losing a few final transformed chunks is
           // acceptable and avoids awaiting the worker in a sync cleanup (#2136).

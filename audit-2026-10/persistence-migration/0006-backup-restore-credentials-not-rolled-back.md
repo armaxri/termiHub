@@ -6,8 +6,8 @@ severity: low
 category: data-safety
 is_workaround: false
 subsystem: src-tauri/src/backup
-status: open
-resolution: ""
+status: fixed
+resolution: "#4295 — a failed startup swap restores the pre-import vault copy; keychain stores get an accurate warning (#4414)"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

@@ -690,6 +690,19 @@ export async function sessionLoggingStatus(sessionId: SessionId): Promise<Sessio
   return await invoke<SessionLogStatus | null>("session_logging_status", { sessionId });
 }
 
+/**
+ * Pause or resume a session's output stream (PERF2-002, #4307). The terminal
+ * pauses when xterm.js falls too far behind and resumes once it has drained;
+ * while paused the backend stops reading the session's output. Input is not
+ * affected.
+ */
+export async function setTerminalOutputPaused(
+  sessionId: SessionId,
+  paused: boolean
+): Promise<void> {
+  await invoke("set_terminal_output_paused", { sessionId, paused });
+}
+
 /** Resize a terminal session */
 export async function resizeTerminal(
   sessionId: SessionId,
