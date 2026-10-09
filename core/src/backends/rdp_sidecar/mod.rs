@@ -840,7 +840,7 @@ impl ConnectionType for SidecarRdp {
         ));
         let writer_task = tokio::spawn(run_writer(stdin, sidecar_rx, cancel.clone()));
         let supervisor_task = tokio::spawn(supervise(child, cancel.clone()));
-        let mut tasks = vec![reader_task, writer_task, supervisor_task];
+        let tasks = vec![reader_task, writer_task, supervisor_task];
         // Forward the helper's logs and panics into the desktop log (#4320,
         // OBS2-003). Runs to the pipe's EOF, which follows the helper's exit,
         // so a dying sidecar's last words are still captured; it is detached
@@ -852,7 +852,7 @@ impl ConnectionType for SidecarRdp {
         self.frame_rx = StdMutex::new(Some(frame_rx));
         self.cursor_rx = StdMutex::new(Some(cursor_rx));
         self.cert_prompt_rx = StdMutex::new(Some(cert_prompt_rx));
-        self.tasks = std::mem::take(&mut tasks);
+        self.tasks = tasks;
         self.runtime = Some(Arc::new(SidecarRuntime {
             to_sidecar,
             shared,
