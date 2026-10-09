@@ -183,7 +183,11 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   useEffect(() => {
     return () => {
       if (taskIdRef.current) {
-        void networkPingStop(taskIdRef.current).catch(() => {});
+        const taskId = taskIdRef.current;
+        // Best-effort: the panel is gone, so there is no UI left to report to.
+        void networkPingStop(taskId).catch((err: unknown) =>
+          frontendLog("ping", `stop ping ${taskId} on unmount failed: ${errorMessage(err)}`)
+        );
       }
       cleanup();
     };

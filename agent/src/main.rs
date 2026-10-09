@@ -26,8 +26,11 @@ mod state;
 mod store_version;
 mod test_parent_watchdog;
 mod transport;
-mod tunnel;
 mod update;
+
+// Compiled once, in the library, so its end-to-end tests can run in their own
+// test binary (#4288); `crate::tunnel` paths resolve through this import.
+use termihub_agent::tunnel;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;

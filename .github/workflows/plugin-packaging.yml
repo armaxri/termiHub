@@ -18,6 +18,7 @@ on:
     paths:
       - 'plugin-api/**'
       - 'plugin-runner/**'
+      - 'win-security/**'
       - 'core/tests/plugin_runner*'
       - 'core/src/plugin/**'
       - 'core/src/bin/plugin_*.rs'

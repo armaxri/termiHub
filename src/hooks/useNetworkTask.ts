@@ -126,7 +126,18 @@ export function useNetworkTask({
   // Cancel any in-flight task and drop listeners on unmount.
   useEffect(() => {
     return () => {
-      if (taskIdRef.current) void cancelRef.current(taskIdRef.current).catch(() => {});
+      if (taskIdRef.current) {
+        const taskId = taskIdRef.current;
+        // Best-effort: the panel is gone, so there is no UI left to report to.
+        void cancelRef
+          .current(taskId)
+          .catch((err: unknown) =>
+            frontendLog(
+              "network_task",
+              `cancel task ${taskId} on unmount failed: ${errorMessage(err)}`
+            )
+          );
+      }
       teardown();
     };
   }, [teardown]);

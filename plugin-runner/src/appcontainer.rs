@@ -26,11 +26,11 @@ use std::io;
 use std::path::Path;
 use std::sync::Mutex;
 
-use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, HLOCAL, TRUE};
+use windows_sys::Win32::Foundation::{LocalFree, ERROR_ALREADY_EXISTS, HLOCAL};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW,
-    EXPLICIT_ACCESS_W, GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, TRUSTEE_IS_SID,
-    TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
+    GetNamedSecurityInfoW, SetEntriesInAclW, SetNamedSecurityInfoW, EXPLICIT_ACCESS_W,
+    GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP,
+    TRUSTEE_W,
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
@@ -46,6 +46,8 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
 };
+
+use termihub_win_security::sid_to_string;
 
 use crate::sandbox::app_container_name;
 use crate::win::{os_error, to_wide};
@@ -124,7 +126,8 @@ impl AppContainer {
         }
         let owned = FreedSid(sid);
         let sid = copy_sid(owned.0)?;
-        let sid_string = sid_to_string(sid.as_ptr().cast_mut().cast())?;
+        // SAFETY: `sid` holds a valid SID copied from the profile's.
+        let sid_string = unsafe { sid_to_string(sid.as_ptr().cast_mut().cast()) }?;
         Ok(Self {
             name,
             sid,
@@ -295,7 +298,9 @@ fn profile_exists_unlocked(plugin_id: &str) -> io::Result<bool> {
     let hr = unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &mut sid) };
     check_hresult(hr, "DeriveAppContainerSidFromAppContainerName")?;
     let sid = FreedSid(sid);
-    let key_path = format!(r"{PROFILE_MAPPINGS_KEY}\{}", sid_to_string(sid.0)?);
+    // SAFETY: a valid SID from the derive call, freed only when `sid` drops.
+    let sid_string = unsafe { sid_to_string(sid.0) }?;
+    let key_path = format!(r"{PROFILE_MAPPINGS_KEY}\{sid_string}");
     let wide = to_wide(key_path.as_ref())?;
     let mut key: HKEY = std::ptr::null_mut();
     // SAFETY: a predefined root, a NUL-terminated subkey, an out-pointer for
@@ -367,26 +372,6 @@ fn copy_sid(sid: PSID) -> io::Result<Box<[u32]>> {
         return Err(io::Error::last_os_error());
     }
     Ok(buffer)
-}
-
-/// `sid` as `S-1-…`.
-fn sid_to_string(sid: PSID) -> io::Result<String> {
-    let mut wide: *mut u16 = std::ptr::null_mut();
-    // SAFETY: `sid` is valid; `wide` receives a `LocalAlloc`ed string.
-    if unsafe { ConvertSidToStringSidW(sid, &mut wide) } != TRUE {
-        return Err(io::Error::last_os_error());
-    }
-    let mut chars = 0usize;
-    // SAFETY: `wide` is NUL-terminated.
-    let text = unsafe {
-        while *wide.add(chars) != 0 {
-            chars += 1;
-        }
-        String::from_utf16_lossy(std::slice::from_raw_parts(wide, chars))
-    };
-    // SAFETY: allocated by `ConvertSidToStringSidW`.
-    unsafe { LocalFree(wide as HLOCAL) };
-    Ok(text)
 }
 
 /// An object's DACL, read with `GetNamedSecurityInfoW` (the descriptor that

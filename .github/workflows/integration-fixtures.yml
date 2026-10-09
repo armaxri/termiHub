@@ -422,6 +422,20 @@ jobs:
           TERMIHUB_REQUIRE_DOCKER: "1"
         run: cargo test -p termihub-agent --test ssh_files_only_integration
 
+      - name: Run the agent-hosted tunnel suite against the fixtures
+        # agent/tests/tunnel_integration.rs (#4288, TBE2-001): the agent's own
+        # tunnel registry opens SSH sessions to the default-profile
+        # `ssh-tunnel-target` and forwards real traffic over local (-L), remote
+        # (-R) and dynamic (-D, SOCKS5) tunnels. The suite has its own test
+        # binary so its trust-all host-key verifier cannot race the agent's
+        # unattended-connect unit tests. The per-PR gate has no fixture up, so
+        # there it self-skips; TERMIHUB_REQUIRE_DOCKER=1 makes a missing fixture
+        # a failure here. Runs even when an earlier suite failed.
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        run: cargo test -p termihub-agent --test tunnel_integration
+
       - name: Headless X detection in a clean container
         # LinuxXEnv::detect() (#1055, #4005) against a real headless Linux box:
         # no DISPLAY, no Wayland, no X socket, no X server binary. The runner

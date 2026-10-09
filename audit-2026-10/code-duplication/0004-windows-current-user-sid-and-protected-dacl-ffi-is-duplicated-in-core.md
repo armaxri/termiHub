@@ -13,8 +13,8 @@ evidence:
   - plugin-runner/src/ipc/pipe.rs:430-480
   - plugin-runner/src/ipc/pipe.rs:494-520
   - core/Cargo.toml:156
-status: open
-resolution: ""
+status: fixed
+resolution: "#4322 — one termihub-win-security leaf crate (aligned TOKEN_USER, protected DACL) now builds the core IPC and plugin-runner pipe DACLs"
 audit: 2026-10
 commit: 663465d52
 relation: new

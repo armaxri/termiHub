@@ -12,7 +12,7 @@ import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDia
 import { setFileLogLevel, getLogFilePath, getCredentialStoreStatus } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { buildDebugInfo } from "@/utils/debugInfo";
-import { frontendError } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { KeyPathInput } from "./KeyPathInput";
 import { CrashDiagnosticsFields } from "./CrashDiagnosticsFields";
 import { SettingsField } from "./SettingsField";
@@ -91,8 +91,12 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
       const cred = await getCredentialStoreStatus();
       credentialStoreMode = cred.mode;
       credentialStoreStatus = cred.status;
-    } catch {
+    } catch (err) {
       // Credential-store status is best-effort; leave it unknown on failure.
+      frontendLog(
+        "general_settings",
+        `credential-store status for debug info: ${errorMessage(err)}`
+      );
     }
     try {
       const info = buildDebugInfo({

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileDown, X } from "lucide-react";
-import { toast } from "sonner";
-import { Button, Spinner, ContentOverlay, toast as uiToast } from "@/components/ui";
+import { Button, Spinner, ContentOverlay, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
@@ -14,7 +13,8 @@ import {
 } from "@/hooks/useRemoteDesktopFiles";
 import { TerminalWindowEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
 import { remoteDesktopGetClipboard, remoteDesktopMonitorLayout } from "@/services/api";
-import { fireAndForget } from "@/utils/frontendLog";
+import { fireAndForget, frontendWarn } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import type { MonitorRect, RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS, effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
@@ -136,7 +136,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
                 hint: "Checking the file route — try again.",
               }
             : { title: "File transfer isn't available right now", hint: files.message };
-      uiToast.info(why.title, { description: why.hint });
+      toast.info(why.title, { description: why.hint });
     },
     [sessionLive, evicted, session.viewOnly, remoteFiles]
   );
@@ -234,7 +234,11 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           .then((text) => {
             if (text) setClipboardDraft(text);
           })
-          .catch(() => {});
+          .catch((err: unknown) => {
+            // The panel still opens with the last draft; tell the user it is stale.
+            frontendWarn("remote_desktop", `get remote clipboard failed: ${errorMessage(err)}`);
+            toast.error("Could not read the remote clipboard", { description: errorMessage(err) });
+          });
         void session.remoteClipboardFiles().then(setClipboardFiles);
       }
       return next;

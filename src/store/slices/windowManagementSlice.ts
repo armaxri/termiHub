@@ -34,7 +34,7 @@ import { captureAllTabGroups } from "@/utils/workspaceLayout";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
-import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog, frontendWarn } from "@/utils/frontendLog";
 
 /** Debounce timer for reporting a secondary window's layout slice (#1925). */
 let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
@@ -227,10 +227,11 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       // tests returning `undefined`) to an empty map so the fold gate never
       // reads through `undefined`.
       get().setSessionOwners(owners ?? {});
-    } catch {
-      // Ownership is advisory (see `bestEffortOwnership`): a failed refetch (IPC
-      // unavailable / unit test stub) must never disrupt the transfer UI. The
-      // stale map simply keeps the previous scoping.
+    } catch (err) {
+      // Ownership is advisory (see `bestEffortOwnership`): a failed refetch must
+      // never disrupt the transfer UI — the stale map keeps the previous scoping.
+      // It is still a real IPC failure, so it reaches the Log Viewer.
+      frontendWarn("window_management", `refresh session owners failed: ${errorMessage(err)}`);
     }
   },
   isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),

@@ -39,7 +39,7 @@ import {
   startAgentUpdateReconnect,
 } from "@/store/agentUpdateReconnect";
 import { toast, type ToastOptions } from "@/components/ui";
-import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { errorMessage } from "@/utils/errorMessage";
 import { agentBookmarkScopePrefix } from "@/utils/fileBookmarkScope";
@@ -715,8 +715,9 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // Optimistically replace the folder (with its flipped expansion) in the
     // region (#2409), then fire-and-forget persist the expansion state.
     mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
-    apiUpdateAgentFolder(agentId, buildAgentFolderExpanded(folderId, folder.isExpanded)).catch(
-      () => {}
+    fireAndForget(
+      apiUpdateAgentFolder(agentId, buildAgentFolderExpanded(folderId, folder.isExpanded)),
+      `persist agent folder ${folderId} expansion`
     );
   },
 });

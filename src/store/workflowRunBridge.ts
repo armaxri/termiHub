@@ -368,9 +368,10 @@ async function dispatchWorkflow(
   // because a non-Tauri env without a socket throws *synchronously* from transport
   // construction (not as a rejection); the dispatch below then logs + no-ops.
   try {
-    void ensureWorkflowSubscribed().catch(() => {
-      /* logged in ensureWorkflowSubscribed */
-    });
+    // ensureWorkflowSubscribed logs the failure itself; keep a call-site trace too.
+    void ensureWorkflowSubscribed().catch((err: unknown) =>
+      frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
+    );
   } catch {
     /* handled by the dispatch try/catch below */
   }
