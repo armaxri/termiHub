@@ -26,6 +26,10 @@ class FakeAddon implements WebglAddonLike {
   }
 }
 
+function last<T>(items: T[]): T | undefined {
+  return items[items.length - 1];
+}
+
 function makeTerminal(
   id: string,
   pool: WebglContextPool,
@@ -95,7 +99,7 @@ describe("createWebglRenderer", () => {
     // The most recently shown terminals hold the contexts; evicted ones are on DOM.
     expect(terms[19].controller.active).toBe(true);
     expect(terms[0].controller.active).toBe(false);
-    expect(terms[0].changes.at(-1)).toEqual({ renderer: "dom", reason: "evicted" });
+    expect(last(terms[0].changes)).toEqual({ renderer: "dom", reason: "evicted" });
   });
 
   it("holds no context at all for terminals that are never visible", () => {
@@ -113,13 +117,13 @@ describe("createWebglRenderer", () => {
     t.controller.setVisible(true);
     expect(t.controller.active).toBe(true);
     expect(t.loadAddon).toHaveBeenCalledWith(t.addons[0]);
-    expect(t.changes.at(-1)).toEqual({ renderer: "webgl", reason: "visible" });
+    expect(last(t.changes)).toEqual({ renderer: "webgl", reason: "visible" });
 
     t.controller.setVisible(false);
     expect(t.addons[0].dispose).toHaveBeenCalledTimes(1);
     expect(t.controller.active).toBe(false);
     expect(pool.size).toBe(0);
-    expect(t.changes.at(-1)).toEqual({ renderer: "dom", reason: "hidden" });
+    expect(last(t.changes)).toEqual({ renderer: "dom", reason: "hidden" });
 
     t.controller.setVisible(true);
     expect(t.addons).toHaveLength(2);
@@ -148,7 +152,7 @@ describe("createWebglRenderer", () => {
     expect(t.addons[0].dispose).toHaveBeenCalledTimes(1);
     expect(t.controller.active).toBe(false);
     expect(pool.size).toBe(0);
-    expect(t.changes.at(-1)).toEqual({ renderer: "dom", reason: "context-lost" });
+    expect(last(t.changes)).toEqual({ renderer: "dom", reason: "context-lost" });
 
     // Not retried while still visible (no thrash loop on a GPU that keeps losing).
     t.controller.setVisible(true);
@@ -170,7 +174,7 @@ describe("createWebglRenderer", () => {
     t.controller.setVisible(true);
     expect(t.controller.active).toBe(false);
     expect(pool.size).toBe(0);
-    expect(t.changes.at(-1)).toEqual({ renderer: "dom", reason: "unavailable" });
+    expect(last(t.changes)).toEqual({ renderer: "dom", reason: "unavailable" });
 
     t.controller.setVisible(false);
     t.controller.setVisible(true);

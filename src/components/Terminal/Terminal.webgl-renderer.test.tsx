@@ -178,11 +178,15 @@ afterEach(() => {
   globalThis.cancelAnimationFrame = originalCAF;
 });
 
+// Stable across renders: a fresh config object would re-run the xterm creation
+// effect on every re-render and mask the visibility-driven lease under test.
+const LOCAL_CONFIG = { type: "local" as const, config: {} };
+
 function renderTerminal(isVisible = true) {
   act(() => {
     root.render(
       <TerminalPortalProvider>
-        <Terminal tabId="tab-1" config={{ type: "local", config: {} }} isVisible={isVisible} />
+        <Terminal tabId="tab-1" config={LOCAL_CONFIG} isVisible={isVisible} />
       </TerminalPortalProvider>
     );
   });
