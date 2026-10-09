@@ -61,6 +61,8 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
+import { consumeTerminalRefocusPending } from "@/components/Terminal/terminalRefocus";
+import { isFocusUnclaimed } from "@/utils/focusGuard";
 import { TerminalFilesOnlyPanel } from "@/components/Terminal/TerminalFilesOnlyPanel";
 import {
   TerminalEvictedOverlay,
@@ -1231,10 +1233,32 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // primary action (#4331), and this parent effect would otherwise run after it
   // and pull focus back into the dead terminal.
   useEffect(() => {
-    if (isVisible && !showDisconnectOverlayRef.current) {
+    if (!isVisible || showDisconnectOverlayRef.current) return;
+    // Mounted because a reconnect the user started from an overlay (Retry,
+    // Reconnect, Start New Shell) succeeded (#4513): the overlay held focus, so
+    // return it to the terminal — but never take it from a dialog or another
+    // panel the user moved to while the session was connecting.
+    if (consumeTerminalRefocusPending(tabId)) {
+      if (slotRef.current && isFocusUnclaimed(slotRef.current)) focusTerminal(tabId);
+      return;
+    }
+    focusTerminal(tabId);
+  }, [isVisible, tabId, focusTerminal]);
+
+  // The disconnect overlay closed in place because the session came back
+  // (#4513): its primary action held focus and has just left the DOM, so return
+  // focus to the terminal when it is unclaimed (body or still in this panel).
+  const sessionBack = !isEvicted && !isExited && !isReconnecting && !isAutoReconnectWaiting;
+  const prevShowDisconnectOverlayRef = useRef(showDisconnectOverlay);
+  useEffect(() => {
+    const wasShown = prevShowDisconnectOverlayRef.current;
+    prevShowDisconnectOverlayRef.current = showDisconnectOverlay;
+    if (!wasShown || showDisconnectOverlay || !sessionBack) return;
+    consumeTerminalRefocusPending(tabId);
+    if (isVisible && slotRef.current && isFocusUnclaimed(slotRef.current)) {
       focusTerminal(tabId);
     }
-  }, [isVisible, tabId, focusTerminal]);
+  }, [showDisconnectOverlay, sessionBack, isVisible, tabId, focusTerminal]);
 
   return (
     <div

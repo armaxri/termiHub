@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef } from "react";
+import { isFocusUnclaimed } from "@/utils/focusGuard";
 import { LiveRegion, type LiveRegionPoliteness } from "./LiveRegion";
 import "./ui.css";
 
@@ -100,7 +101,7 @@ export function ContentOverlay({
     if (!autoFocusPrimaryAction) return;
     const body = bodyRef.current;
     const primary = actionsRef.current?.querySelector<HTMLElement>("button:not(:disabled)");
-    if (!body || !primary || !canTakeFocus(body)) return;
+    if (!body || !primary || !isFocusUnclaimed(body)) return;
     primary.focus();
     // Re-run when the announced content changes (a new variant in the same
     // instance), never on an unchanged re-render.
@@ -151,15 +152,4 @@ export function ContentOverlay({
 function defaultAnnouncement(heading: React.ReactNode, subheading: React.ReactNode): string {
   if (typeof heading !== "string") return "";
   return typeof subheading === "string" ? `${heading}. ${subheading}` : heading;
-}
-
-/**
- * Whether moving focus into the overlay would not steal it from the user: the
- * focus is nowhere (the page body) or already inside the overlay's host.
- */
-function canTakeFocus(body: HTMLElement): boolean {
-  const active = document.activeElement;
-  if (!active || active === document.body) return true;
-  const host = body.closest("[data-overlay-host]") ?? body.parentElement;
-  return host?.contains(active) ?? false;
 }
