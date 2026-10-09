@@ -474,7 +474,11 @@ flowchart LR
           <li>
             <strong>Idle shutdown (Windows managed server).</strong> When the last X11-forwarding
             session closes and <code>stopXServerWhenIdle</code> is on, the managed server is
-            stopped; it is always stopped on app exit (no orphan <code>vcxsrv.exe</code>).
+            stopped after a 30&nbsp;s grace period (<code>IDLE_STOP_GRACE</code>); a new X11
+            session inside that window cancels the stop and reuses the server. The setting
+            applies at runtime: turning it off cancels a pending stop, turning it on while the
+            server is idle arms one. The server is always stopped on app exit (no orphan
+            <code>vcxsrv.exe</code>).
           </li>
           <li>
             <strong>Per-platform strategy:</strong> Windows → guided install of VcXsrv via winget;
@@ -576,7 +580,7 @@ stateDiagram-v2
     Running --> Running: new X11 session adopts same server
     Running --> Idle: last X11 session closed
     Idle --> Running: new X11 session opens
-    Idle --> Stopped: stopXServerWhenIdle or app exit
+    Idle --> Stopped: stopXServerWhenIdle (after 30 s grace) or app exit
     Adopted --> [*]: app exit (external left running)
     Running --> Stopped: app exit (managed killed)
     Failed --> Absent: user retries
@@ -664,6 +668,7 @@ sequenceDiagram
     S1->>Mgr: close (refcount 1)
     S2->>Mgr: close (refcount 0)
     alt stopXServerWhenIdle = on
+        Note over Mgr: 30 s grace (a new session cancels it)
         Mgr->>VcX: terminate
         Note over Mgr,VcX: managed server stopped when idle
     else keep running
