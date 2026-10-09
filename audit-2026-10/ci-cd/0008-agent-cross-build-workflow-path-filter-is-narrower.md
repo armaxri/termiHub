@@ -14,8 +14,8 @@ evidence:
   - scripts/internal/ci-changes.mjs:110
   - core/Cargo.toml:110
   - core/Cargo.toml:151
-status: open
-resolution: ""
+status: fixed
+resolution: "#4358 — agent.yml paths now cover AGENT_ROOTS/AGENT_FILES plus the pinned toolchain; ci-changes.test.mjs pins the lists together"
 audit: 2026-10
 commit: 663465d52
 relation: new

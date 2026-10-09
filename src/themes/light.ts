@@ -46,6 +46,7 @@ export const lightTheme: ThemeDefinition = {
     accentColor: "#0366d6",
     accentHover: "#0350a0",
     focusBorder: "#0366d6",
+    textOnAccent: "#ffffff",
 
     // Status
     colorSuccess: "#22863a",

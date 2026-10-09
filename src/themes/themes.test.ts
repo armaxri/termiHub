@@ -34,6 +34,7 @@ const REQUIRED_KEYS: (keyof ThemeColors)[] = [
   "accentColor",
   "accentHover",
   "focusBorder",
+  "textOnAccent",
   "colorSuccess",
   "colorWarning",
   "colorError",

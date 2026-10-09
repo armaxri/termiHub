@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AGENT_FILES,
+  AGENT_ROOTS,
   classify,
   allAreas,
   testMatrix,
@@ -21,6 +23,7 @@ import {
 } from "./ci-changes.mjs";
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "ci-changes.mjs");
+const REPO_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..");
 
 const on = (flags) => Object.keys(flags).filter((k) => flags[k]);
 
@@ -218,7 +221,7 @@ describe("classify", () => {
 
   it("adds scripts for any shell script, wherever it lives", () => {
     expect(classify(["agent/docker/entrypoint.sh"])).toMatchObject({ rust: true, scripts: true });
-    expect(on(classify(["tests/docker/ssh/setup.sh"]))).toEqual(["scripts"]);
+    expect(on(classify(["tests/docker/ssh/setup.sh"]))).toEqual(["scripts", "harness"]);
   });
 
   it("maps the Python harness to harness", () => {
@@ -227,6 +230,33 @@ describe("classify", () => {
 
   it("runs the harness contract test when the in-app test bridge changes", () => {
     expect(on(classify(["src/testbridge/protocol.ts"]))).toEqual(["frontend", "harness"]);
+  });
+
+  it("runs the machinery suite for files its isolation tests read (#4358, TIN2-003)", () => {
+    // test_dev_local.py parses the compose files and the shell resolver; a PR
+    // touching only these used to skip the machinery job and merge untested.
+    expect(on(classify(["tests/docker/docker-compose.yml"]))).toEqual(["scripts", "harness"]);
+    expect(on(classify(["scripts/internal/dev-local-env.sh"]))).toEqual([
+      "frontend",
+      "scripts",
+      "harness",
+    ]);
+    expect(classify(["examples/docker/docker-compose.yml"])).toMatchObject({ harness: true });
+    expect(classify(["examples/dev3.dev.local.json"])).toMatchObject({ harness: true });
+    for (const fixture of ["sh", "ps1"]) {
+      expect(classify([`scripts/internal/native-sshd-fixture.${fixture}`])).toMatchObject({
+        harness: true,
+        scripts: true,
+      });
+    }
+    expect(classify(["scripts/test.sh"])).toMatchObject({ harness: true });
+    expect(classify(["scripts/test-system-py.sh"])).toMatchObject({ harness: true });
+    expect(classify(["scripts/internal/build-system-test-agent.sh"])).toMatchObject({
+      harness: true,
+    });
+    // Unrelated scripts and examples stay off the harness lane.
+    expect(classify(["scripts/dev.sh"]).harness).toBe(false);
+    expect(classify(["examples/plugins/clock-widget/src/lib.rs"]).harness).toBe(false);
   });
 
   it("fails open on CI plumbing", () => {
@@ -247,6 +277,55 @@ describe("classify", () => {
 
   it("ignores blank lines and normalises backslashes", () => {
     expect(on(classify(["", "  ", "src\\main.tsx"]))).toEqual(["frontend"]);
+  });
+});
+
+describe("agent.yml path filter (#4358, CI2-008)", () => {
+  // No YAML parser is a direct dependency, so read the two `paths:` lists
+  // line-wise: `  <event>:` at indent 2, then `    paths:`, then `      - '…'`
+  // items (comments skipped) until the first other line.
+  const text = readFileSync(path.join(REPO_ROOT, ".github/workflows/agent.yml"), "utf8");
+  const pathsOf = (event) => {
+    const lines = text.split("\n");
+    let at = lines.indexOf(`  ${event}:`);
+    if (at < 0) throw new Error(`agent.yml has no ${event} trigger`);
+    while (at < lines.length && !/^ {4}paths:\s*$/.test(lines[at])) at += 1;
+    const found = [];
+    for (at += 1; at < lines.length; at += 1) {
+      if (/^\s*#/.test(lines[at])) continue;
+      const item = /^ {6}- '([^']+)'\s*$/.exec(lines[at]);
+      if (!item) break;
+      found.push(item[1]);
+    }
+    if (found.length === 0) throw new Error(`agent.yml ${event} has no paths filter`);
+    return found;
+  };
+  const triggers = {
+    pull_request: { paths: pathsOf("pull_request") },
+    push: { paths: pathsOf("push") },
+  };
+  const toolchain = ["rust-toolchain*", ".github/rust-version", ".github/actions/setup-rust/**"];
+
+  it.each(["pull_request", "push"])("%s paths cover every agent input", (event) => {
+    const paths = triggers[event].paths;
+    for (const root of AGENT_ROOTS) expect(paths).toContain(`${root}**`);
+    for (const file of AGENT_FILES) expect(paths).toContain(file);
+    for (const entry of toolchain) expect(paths).toContain(entry);
+  });
+
+  it("uses the same paths for pull_request and push", () => {
+    expect([...triggers.push.paths].sort()).toEqual([...triggers.pull_request.paths].sort());
+  });
+
+  it("classifies every agent.yml path pattern as an agent input", () => {
+    // The converse direction: nothing in the filter that the job gate would
+    // then skip, except the workflow's own plumbing and scripts it runs.
+    const own = /^(\.github\/|scripts\/|tests\/release-crash-probe\/)/;
+    for (const pattern of triggers.pull_request.paths) {
+      if (own.test(pattern)) continue;
+      const sample = pattern.replace(/\*\*$/, "x.rs").replace(/\*$/, ".toml");
+      expect(classify([sample]).agent, pattern).toBe(true);
+    }
   });
 });
 
