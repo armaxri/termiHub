@@ -6,8 +6,8 @@ severity: low
 category: migration
 is_workaround: false
 subsystem: src-tauri/src/utils/migrate.rs
-status: open
-resolution: ""
+status: fixed
+resolution: "#4297 — salvage takes the migrated JSON Value (corrupt branch runs T::migrate first); v1 schedules salvage seeds history"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

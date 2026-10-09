@@ -72,9 +72,9 @@ impl crate::utils::migrate::VersionedStore for SessionHistoryStore {
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt history
     /// entries instead of resetting the whole browsable history.
-    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
         crate::utils::migrate::salvage_list_store::<Self, SessionHistoryEntry>(
-            raw, file_name, "entries",
+            value, file_name, "entries",
         )
     }
 }

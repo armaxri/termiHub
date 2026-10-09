@@ -6,8 +6,8 @@ severity: low
 category: migration
 is_workaround: false
 subsystem: src-tauri/src/connection
-status: open
-resolution: ""
+status: fixed
+resolution: "#4297 — connections/external stores keep top-level extra; external files parse through a version gate (newer refused, never rewritten) and keep their own version on rewrite"
 audit: "2026-10"
 commit: "663465d52"
 relation: previous-incomplete

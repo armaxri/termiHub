@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{Macro, MacroStore};
-use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
+use super::config::MacroStore;
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
-use crate::utils::migrate::{salvage_list_store, Salvage};
+use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 const FILE_NAME: &str = "macros.json";
 
@@ -31,68 +31,13 @@ impl MacroStorage {
         })
     }
 
-    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    /// Load through the shared schema-version gate
+    /// ([`load_store_with_recovery`], PER2-002): a newer file is left intact and
+    /// reported, an older one migrates, and a corrupt one is backed up to a
+    /// fresh `.bak` and salvaged per entry — rewritten only once the backup is
+    /// safely on disk.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<MacroStore>> {
-        if !self.file_path.exists() {
-            return Ok(RecoveryResult {
-                data: MacroStore::default(),
-                warnings: Vec::new(),
-            });
-        }
-
-        let data = fs::read_to_string(&self.file_path).context("Failed to read macros file")?;
-
-        // Fast path: normal parse succeeds
-        if let Ok(store) = serde_json::from_str::<MacroStore>(&data) {
-            return Ok(RecoveryResult {
-                data: store,
-                warnings: Vec::new(),
-            });
-        }
-
-        // Parse failed — back up the corrupt file first
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Macros file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        // Granular recovery (PER-004): drop only the individually-corrupt macro
-        // entries and keep the rest; reset the whole store only when even the
-        // container is unparseable.
-        if let Salvage::Recovered {
-            data: store,
-            warnings,
-        } = salvage_list_store::<MacroStore, Macro>(&data, FILE_NAME, "macros")
-        {
-            self.save(&store)
-                .context("Failed to save salvaged macros")?;
-            return Ok(RecoveryResult {
-                data: store,
-                warnings,
-            });
-        }
-
-        let parse_error = serde_json::from_str::<MacroStore>(&data)
-            .err()
-            .map(|e| e.to_string());
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Macros file was corrupt and has been reset.".to_string(),
-            details: parse_error,
-        };
-        tracing::error!("Macros file corrupt, resetting to defaults");
-
-        let defaults = MacroStore::default();
-        self.save(&defaults)
-            .context("Failed to save default macros after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        load_store_with_recovery::<MacroStore>(&self.file_path, FILE_NAME)
     }
 
     /// Save the macro store to disk (pretty-printed JSON).
@@ -100,7 +45,15 @@ impl MacroStorage {
     /// The write is atomic (temp file in the same directory + rename), so an
     /// interrupted save can never truncate the existing file and lose the user's
     /// hand-authored macros (same data-loss class as PER-002/PER-003).
+    ///
+    /// Before writing, [`guard_not_newer`] refuses to overwrite a file written
+    /// by a newer schema version (PER2-002).
     pub fn save(&self, store: &MacroStore) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            <MacroStore as VersionedStore>::STORE_NAME,
+            <MacroStore as VersionedStore>::CURRENT_VERSION,
+        )?;
         let data = serde_json::to_string_pretty(store).context("Failed to serialize macros")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write macros file")?;
@@ -132,6 +85,7 @@ mod tests {
     fn sample_store() -> MacroStore {
         MacroStore {
             version: "1".to_string(),
+            extra: Default::default(),
             macros: vec![Macro {
                 id: "macro-1".to_string(),
                 name: "List".to_string(),
@@ -286,5 +240,66 @@ mod tests {
             "a failed save must leave the previous store fully intact"
         );
         serde_json::from_str::<MacroStore>(&after).expect("preserved store still parses");
+    }
+    /// PER2-002: a macros.json written by a NEWER schema is refused, not
+    /// treated as corrupt: load runs on defaults with a warning, leaves the file
+    /// byte-for-byte intact (no backup), and a later save refuses to clobber it.
+    #[test]
+    fn newer_version_file_is_left_intact() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = r#"{"version":"99","macros":{"restructured":true}}"#;
+        fs::write(&storage.file_path, newer).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].message.contains("newer version"));
+        assert!(result.data.macros.is_empty());
+
+        let err = storage.save(&MacroStore::default()).unwrap_err();
+        assert!(err.to_string().contains("newer version"), "{err}");
+
+        assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), newer);
+        assert!(!storage.file_path.with_extension("json.bak").exists());
+    }
+
+    /// PER2-002: unknown top-level fields survive a load → save round-trip.
+    #[test]
+    fn unknown_top_level_fields_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"1","macros":[],"futureField":{"nested":true}}"#,
+        )
+        .unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        storage.save(&loaded.data).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(
+            on_disk["futureField"],
+            serde_json::json!({"nested": true}),
+            "unknown field must be written back out"
+        );
+    }
+
+    /// ERR2-002: a second corruption never overwrites the first backup.
+    #[test]
+    fn second_corruption_keeps_earlier_backup() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let backup = storage.file_path.with_extension("json.bak");
+        fs::write(&backup, "earlier backup").unwrap();
+        fs::write(&storage.file_path, "corrupt again!!!").unwrap();
+
+        storage.load_with_recovery().unwrap();
+
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "earlier backup");
+        let second = dir.path().join("macros.json.bak.1");
+        assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
     }
 }

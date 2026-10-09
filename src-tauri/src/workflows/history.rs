@@ -127,8 +127,8 @@ impl crate::utils::migrate::VersionedStore for WorkflowRunHistoryStore {
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt run
     /// records instead of resetting the whole browsable history.
-    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
-        crate::utils::migrate::salvage_list_store::<Self, WorkflowRun>(raw, file_name, "runs")
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, WorkflowRun>(value, file_name, "runs")
     }
 }
 
