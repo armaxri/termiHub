@@ -15,6 +15,7 @@ use crate::commands::remote_desktop::release_on_takeover;
 use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
+use crate::window::quit::{finish_if_ready, QuitCoordinator, QUIT_CANCELLED_EVENT};
 use crate::window::{
     superseded_notification, HandoffRecord, WindowLayoutReport, WindowManager, MAIN_WINDOW_LABEL,
 };
@@ -345,6 +346,34 @@ pub async fn replay_session_scrollback(
     Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
 
+/// The **calling** window agrees to a pending explicit quit (#4296): it had
+/// nothing to lose, or the user chose "Quit" in its decision dialog. Once every
+/// window asked has agreed, the app exits.
+#[tauri::command]
+pub fn quit_window_ready(app: AppHandle, window: WebviewWindow, quit: State<'_, QuitCoordinator>) {
+    let outcome = quit.window_ready(window.label());
+    finish_if_ready(&app, outcome);
+}
+
+/// The **calling** window is showing the quit decision dialog (#4296), so the
+/// quit waits for the user there instead of timing the window out.
+#[tauri::command]
+pub fn quit_window_prompting(window: WebviewWindow, quit: State<'_, QuitCoordinator>) {
+    quit.ack_prompting(window.label());
+}
+
+/// The user cancelled a pending explicit quit in some window (#4296). The app
+/// keeps running and every other window drops its quit dialog.
+#[tauri::command]
+pub fn cancel_quit(app: AppHandle, quit: State<'_, QuitCoordinator>) {
+    if quit.cancel() {
+        tracing::info!("Quit cancelled by the user (#4296)");
+        if let Err(e) = app.emit(QUIT_CANCELLED_EVENT, ()) {
+            tracing::warn!("Failed to emit {QUIT_CANCELLED_EVENT}: {e}");
+        }
+    }
+}
+
 /// Quit the app with exit code 0, exactly as an explicit Quit does
 /// (`AppHandle::exit`), on the system-test harness's request (#3657).
 ///
@@ -360,6 +389,10 @@ pub async fn replay_session_scrollback(
 #[tauri::command]
 pub fn test_exit_app(app: AppHandle) -> Result<(), String> {
     exit_app_gated(crate::utils::test_bridge::is_test_bridge_enabled(), || {
+        // The harness quit must never wait on the quit decision dialog (#4296).
+        if let Some(quit) = app.try_state::<QuitCoordinator>() {
+            quit.force_confirm();
+        }
         app.exit(0)
     })
 }

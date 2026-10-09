@@ -11,8 +11,8 @@ evidence:
   - src-tauri/src/window/mod.rs:148-157
   - src/App.tsx:265-288
   - docs/testing.md:2439
-status: open
-resolution: ""
+status: fixed
+resolution: "#4296 — Cmd+Q and menu Quit now route through the window close decision dialog before exiting"
 audit: 2026-10
 commit: 663465d52
 relation: new
