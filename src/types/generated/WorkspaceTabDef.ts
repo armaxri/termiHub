@@ -24,4 +24,21 @@ title?: string,
 /**
  * Optional command to run after the session connects.
  */
-initialCommand?: string, };
+initialCommand?: string, 
+/**
+ * An imported command that has not been confirmed on this machine yet
+ * (#4434). It is shown on the tab and in the workspace editor but never
+ * typed into the session automatically: the frontend promotes it to
+ * [`Self::initial_command`] only once its exact text is on the
+ * machine-local confirmation list (`AppSettings.workspaceImportAllowlist`).
+ * Every import moves `initial_command` here, so an imported file can never
+ * decide on its own what runs.
+ */
+pendingInitialCommand?: string, 
+/**
+ * Set on import when the tab carries an [`Self::inline_config`] (#4434).
+ * The tab does not connect until the user confirms that exact connection
+ * config on this machine. Always re-set by an import, whatever the file
+ * says, so it only ever makes a tab more restricted.
+ */
+inlineConfigUnconfirmed?: boolean, };

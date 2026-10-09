@@ -26,6 +26,12 @@ export interface UnlockGateOptions {
    * with a reference always reads the stored passphrase.
    */
   credentialRef?: string;
+  /**
+   * The connect or save reads or writes the connection's stored schema
+   * secrets other than `password` (#4429) — e.g. a VNC SSH-tunnel password —
+   * so it needs the store whatever the auth method.
+   */
+  fieldSecrets?: boolean;
 }
 
 /**
@@ -34,14 +40,17 @@ export interface UnlockGateOptions {
  * - `password` auth always reads a stored password.
  * - `key` auth only reads a stored passphrase when `savePassword` is set.
  * - `key` auth with a shared named credential reference always reads it.
+ * - Stored schema field secrets (`fieldSecrets`) always need the store.
  * - Everything else (agent auth, key without savePassword) needs no stored secret.
  */
 function needsStoredCredential({
   authMethod,
   savePassword,
   credentialRef,
+  fieldSecrets,
 }: UnlockGateOptions): boolean {
   return (
+    Boolean(fieldSecrets) ||
     authMethod === "password" ||
     (authMethod === "key" && (Boolean(savePassword) || Boolean(credentialRef?.trim())))
   );

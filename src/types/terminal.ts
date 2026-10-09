@@ -373,6 +373,19 @@ export interface TerminalTab {
    * history. Cleared after the first (re)attach.
    */
   pendingScrollbackReplay?: boolean;
+  /**
+   * An imported workspace command not yet confirmed on this machine (#4434).
+   * Never typed automatically: the tab shows it with a "Confirm and run"
+   * prompt, and only a confirmation moves it to {@link initialCommand}-style
+   * execution.
+   */
+  pendingImportedCommand?: string;
+  /**
+   * The tab opens an imported inline connection config that is not yet
+   * confirmed on this machine (#4434). The tab does not connect (no session is
+   * created) until the user confirms it.
+   */
+  pendingImportedConnection?: boolean;
 }
 
 /**

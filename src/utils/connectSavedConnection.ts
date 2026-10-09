@@ -66,6 +66,7 @@ import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { resolveGraphicalSettings } from "@/utils/graphicalSecret";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
 import { errorMessage } from "@/utils/errorMessage";
 
 /** Options for {@link connectSavedConnection}. */
@@ -151,7 +152,34 @@ export async function connectSavedConnection(
     return { status: "refused", reason: pluginIssue.message };
   }
 
+  // Schema secrets other than `password` (a VNC SSH-tunnel password, an
+  // inline jump-host hop's password, a plugin secret) live in the credential
+  // store, not in the loaded settings (#4289): take them from the store behind
+  // the unlock gate, else prompt — unattended, refuse instead (#4429). Checked
+  // synchronously first so a connect that needs none stays synchronous.
   let config = connection.config;
+  const schema = useAppStore
+    .getState()
+    .connectionTypes.find((t) => t.typeId === config.type)?.schema;
+  const settings = config.config as Record<string, unknown>;
+  if (neededFieldSecrets(schema, settings).length > 0) {
+    const fieldSecrets = await resolveFieldSecrets({
+      schema,
+      settings,
+      connectionId: connection.id,
+      sourceFile: connection.sourceFile ?? null,
+      requestPassword,
+      unattended,
+    });
+    if (fieldSecrets.status === "canceled") {
+      toast.info(fieldSecrets.reason);
+      return { status: "canceled" };
+    }
+    if (fieldSecrets.status === "refused") {
+      return { status: "refused", reason: fieldSecrets.reason };
+    }
+    config = { ...config, config: fieldSecrets.settings } as typeof config;
+  }
   const cfg = config.config;
 
   // An agent-hosted target is connected unattended by its agent, which must

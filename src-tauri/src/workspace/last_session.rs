@@ -738,6 +738,8 @@ mod tests {
             agent_ref: None,
             title: None,
             initial_command: None,
+            pending_initial_command: None,
+            inline_config_unconfirmed: false,
         }
     }
 
