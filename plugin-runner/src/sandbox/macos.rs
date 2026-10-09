@@ -17,13 +17,51 @@
 //!
 //! **Rules.** `(deny default)`; read + map-exec of the system libraries
 //! (`/usr/lib`, `/System/Library`, the OS cryptexes); `/dev/null`, `/dev/random`
-//! and `/dev/urandom`; `sysctl-read`; process info and signals for itself only;
+//! and `/dev/urandom`; the OpenSSL / LibreSSL CA bundle under `/private/etc/ssl`
+//! (read only, plus the metadata of the `/etc` symlink, so `/etc/ssl/cert.pem`
+//! resolves); `sysctl-read` of a fixed list of names ([`SYSCTL_NAMES`]);
+//! process info and signals for itself only; `mach-lookup` of the per-user
+//! certificate trust daemon `com.apple.trustd.agent` only (#4342);
 //! `(deny network*)`, `(deny process-exec* process-fork)`, `(deny iokit-open)`;
 //! an explicit deny of each denied folder (the user's home); then the install
 //! folder read + map-exec and the data folder read/write. Seatbelt applies the
 //! **last** matching rule, so the install and data allowances win inside a
-//! denied home folder. No `mach-lookup` rule is needed: dyld's shared cache and
-//! libSystem are mapped before the profile is applied.
+//! denied home folder. No other `mach-lookup` rule is needed: dyld's shared
+//! cache and libSystem are mapped before the profile is applied.
+//!
+//! **Default-allowed operations (#4342, SEC2-008).** `(deny default)` does not
+//! cover every operation: on macOS 26, reading another process's information
+//! (`proc_listallpids`, `proc_pidinfo`, `proc_pidpath` and, through an
+//! unfiltered `sysctl-read`, `kern.proc.*` and `KERN_PROCARGS2` — the argv
+//! and environment of the user's other processes) succeeded under the old
+//! profile, although it only allowed `process-info*` for `(target self)`. The
+//! profile therefore denies `process-info*` explicitly before allowing it for
+//! itself, and narrows `sysctl-read` to named values; both are needed (either
+//! alone still let `KERN_PROCARGS2` of the parent through).
+//!
+//! **Trust store (#4342, PLG2-004).** A plugin does TLS itself over the
+//! socket the bridge passes in, so it must be able to verify certificates
+//! against the system and the user's (corporate) roots. Security.framework
+//! evaluates trust in `trustd`: allowing `mach-lookup` of
+//! `com.apple.trustd.agent` makes `SecTrustEvaluateWithError` work (and with
+//! it `rustls-platform-verifier`, `native-tls` and `security-framework`).
+//! Anchor *enumeration* (`SecTrustCopyAnchorCertificates`,
+//! `SecTrustSettingsCopyCertificates`, as `rustls-native-certs` does) also
+//! needs `com.apple.SecurityServer` and the keychain files, which stay denied:
+//! a plugin should evaluate trust through the platform verifier instead.
+//!
+//! **How the names were chosen.** Empirically, on macOS 26.5 (Apple
+//! silicon): first every `sysctl-read` was allowed `(with report)` and the
+//! runner, the escape-probe fixture and a Rust test program (tokio
+//! multi-thread runtime, `available_parallelism`, `std_detect`, thread
+//! spawning, large allocations) and a C program calling the libc functions
+//! that read sysctls (`sysconf`, `uname`, `gethostname`, …) were run while
+//! `log stream --predicate 'sender == "Sandbox"'` recorded every
+//! `allow sysctl-read <name>`; then the narrowed profile was run the same way
+//! and every `deny(1) sysctl-read <name>` was either added (e.g.
+//! `hw.pagesize_compat`, which `sysconf(_SC_PAGESIZE)` reads) or left denied
+//! (identifiers such as `kern.uuid`, `kern.boottime`, `hw.model`, and
+//! `vm.loadavg`). `docs/plugin-authoring.md` lists the result.
 //!
 //! Descriptors opened before the profile was applied keep working: the IPC
 //! socket, the pinned library handle and the connected sockets the host passes
@@ -50,13 +88,75 @@ const PROFILE_HEAD: &str = r#"(version 1)
   (subpath "/System/Volumes/Preboot/Cryptexes/OS"))
 (allow file-read* (literal "/dev/urandom") (literal "/dev/random"))
 (allow file-read* file-write-data (literal "/dev/null"))
-(allow sysctl-read)
+(allow file-read* (subpath "/private/etc/ssl"))
+(allow file-read-metadata (literal "/etc"))
+(allow sysctl-read
+  (sysctl-name
+    "hw.activecpu" "hw.byteorder" "hw.cachelinesize" "hw.cachelinesize_compat"
+    "hw.cpufamily" "hw.cpusubtype" "hw.cputype" "hw.l1dcachesize" "hw.l1icachesize"
+    "hw.l2cachesize" "hw.l3cachesize" "hw.logicalcpu" "hw.logicalcpu_max" "hw.machine"
+    "hw.memsize" "hw.ncpu" "hw.pagesize" "hw.pagesize_compat" "hw.physicalcpu"
+    "hw.physicalcpu_max" "hw.tbfrequency" "hw.tbfrequency_compat" "kern.argmax"
+    "kern.hostname" "kern.maxfilesperproc" "kern.osproductversion" "kern.osrelease"
+    "kern.ostype" "kern.osvariant_status" "kern.osversion" "kern.usrstack64"
+    "kern.version" "sysctl.proc_translated")
+  (sysctl-name-prefix "hw.optional.")
+  (sysctl-name-prefix "hw.perflevel"))
+(deny process-info*)
 (allow process-info* (target self))
 (allow signal (target self))
+(allow mach-lookup (global-name "com.apple.trustd.agent"))
 (deny network*)
 (deny process-exec* process-fork)
 (deny iokit-open)
 "#;
+
+/// The `sysctl-read` names the profile allows exactly (see the module docs for
+/// how they were chosen). Kept in sync with `PROFILE_HEAD` by a unit test.
+pub const SYSCTL_NAMES: &[&str] = &[
+    "hw.activecpu",
+    "hw.byteorder",
+    "hw.cachelinesize",
+    "hw.cachelinesize_compat",
+    "hw.cpufamily",
+    "hw.cpusubtype",
+    "hw.cputype",
+    "hw.l1dcachesize",
+    "hw.l1icachesize",
+    "hw.l2cachesize",
+    "hw.l3cachesize",
+    "hw.logicalcpu",
+    "hw.logicalcpu_max",
+    "hw.machine",
+    "hw.memsize",
+    "hw.ncpu",
+    "hw.pagesize",
+    "hw.pagesize_compat",
+    "hw.physicalcpu",
+    "hw.physicalcpu_max",
+    "hw.tbfrequency",
+    "hw.tbfrequency_compat",
+    "kern.argmax",
+    "kern.hostname",
+    "kern.maxfilesperproc",
+    "kern.osproductversion",
+    "kern.osrelease",
+    "kern.ostype",
+    "kern.osvariant_status",
+    "kern.osversion",
+    "kern.usrstack64",
+    "kern.version",
+    "sysctl.proc_translated",
+];
+
+/// The `sysctl-read` name prefixes the profile allows: CPU feature flags
+/// (`std_detect`, ring, aws-lc, OpenSSL) and the per-performance-level CPU
+/// counts.
+pub const SYSCTL_NAME_PREFIXES: &[&str] = &["hw.optional.", "hw.perflevel"];
+
+/// The only Mach service a plugin may look up: the per-user certificate trust
+/// daemon, for `SecTrustEvaluateWithError` (#4342).
+pub const TRUST_SERVICE: &str = "com.apple.trustd.agent";
 
 /// A generated profile: SBPL text plus the parameters it references.
 #[derive(Debug, Clone, PartialEq, Eq)]
