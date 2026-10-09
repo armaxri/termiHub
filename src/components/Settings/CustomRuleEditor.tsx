@@ -1,7 +1,8 @@
 import { useMemo } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller } from "react-hook-form";
 import { z } from "zod";
+import { AlertCircle } from "lucide-react";
+import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Button, Checkbox, ColorInput, Field, Input } from "@/components/ui";
 import { compileRules, findMatches, normalizeHexColor } from "@/services/syntaxHighlighting";
 import { resolveActiveRules } from "@/services/syntaxHighlightingConfig";
@@ -145,51 +146,24 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
   // across re-renders and the preview/save keep the same identity.
   const initialRule = useMemo(() => rule ?? createCustomRule(), [rule]);
 
-  const { control, getValues } = useForm<HighlightRule>({
-    defaultValues: initialRule,
-    resolver: zodResolver(customRuleSchema),
-    mode: "onChange",
-  });
+  // The shared RHF + zod scaffold (UISF2-003): `draft` is a complete, stable
+  // snapshot of the rule, and `errors` / `canSave` update on the same render as
+  // the edit.
+  const {
+    form: { control, getValues },
+    draft,
+    errors,
+    canSave,
+  } = useZodEditorForm<HighlightRule>({ schema: customRuleSchema, defaultValues: initialRule });
 
-  // Live form values. `useWatch` can lag the seeded defaults by a render, and it
-  // only surfaces registered fields, so merge it over the initial rule to keep a
-  // complete draft for the preview and validity checks.
-  const watched = useWatch({ control });
-  const draft: HighlightRule = {
-    ...initialRule,
-    ...watched,
-    style: { ...initialRule.style, ...watched?.style },
-  };
-
-  // Deterministic, synchronous validity derived straight from the schema — the
-  // same approach ConnectionSettingsForm uses — rather than react-hook-form's
-  // async error proxy, so errors and the Save gate update on the same render as
-  // the edit (and stay testable without awaiting).
-  const validity = useMemo(() => {
-    const errors: Record<string, string> = {};
-    const result = customRuleSchema.safeParse(draft);
-    if (!result.success) {
-      for (const issue of result.error.issues) {
-        const key = issue.path.join(".");
-        if (!(key in errors)) errors[key] = issue.message;
-      }
-    }
-    return { valid: result.success, errors };
-    // `draft` is rebuilt every render from the watched values; keying on its
-    // serialization avoids recomputing when nothing actually changed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(draft)]);
-
-  const nameError = validity.errors["name"];
-  const patternError = validity.errors["pattern"];
-  const colorError = validity.errors["style.color"];
-  const canSave = validity.valid;
+  const nameError = errors["name"];
+  const patternError = errors["pattern"];
+  const colorError = errors["style.color"];
 
   const previewLines = useMemo(() => {
     const compiled = compileRules(buildPreviewRules(draft, config));
     return PREVIEW_SAMPLE.map((line) => segmentLine(line, findMatches(line, compiled)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(draft), config]);
+  }, [draft, config]);
 
   const handleSave = () => {
     if (!canSave) return;
@@ -296,6 +270,8 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
               <Input
                 value={field.value ?? ""}
                 error={!!colorError}
+                aria-invalid={colorError ? true : undefined}
+                aria-describedby={colorError ? "custom-rule-color-error" : undefined}
                 spellCheck={false}
                 autoComplete="off"
                 size="sm"
@@ -307,6 +283,17 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
             </div>
           )}
         />
+        {colorError && (
+          <span
+            className="ui-field__msg"
+            id="custom-rule-color-error"
+            role="alert"
+            data-testid="custom-rule-color-error"
+          >
+            <AlertCircle className="ui-field__msg-icon" aria-hidden="true" />
+            {colorError}
+          </span>
+        )}
         <div className="custom-rule-editor__row">
           <Controller
             name="style.bold"
