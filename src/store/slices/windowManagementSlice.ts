@@ -3,6 +3,7 @@ import { StateCreator } from "zustand";
 import type { AppState } from "../appStore";
 import {
   buildTransferAwareHandoff,
+  canCarryEditorBuffer,
   currentWindowLabel,
   pruneForeignTransfers,
 } from "../windowHelpers";
@@ -23,8 +24,10 @@ import type {
   MoveWindowTarget,
   TabHandoffRecord,
   WindowInfo,
+  WindowCloseDirtyEditor,
   WindowCloseRequest,
 } from "@/types/window";
+import type { TerminalTab } from "@/types/terminal";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import { resolveWindowEviction } from "@/utils/tabOwnership";
 import { captureAllTabGroups } from "@/utils/workspaceLayout";
@@ -181,9 +184,26 @@ export interface WindowManagementSlice {
   endWindowSessions: () => Promise<void>;
   /**
    * Safe close outcome (#1903): re-parent every owned live session tab into
-   * another window so nothing is lost, reusing the #1900 hand-off seam.
+   * another window so nothing is lost, reusing the #1900 hand-off seam. Dirty
+   * file editors move too, carrying their unsaved buffer (#4412). Rejects,
+   * moving nothing, while a dirty editor cannot carry its unsaved state.
    */
   moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
+}
+
+/**
+ * The window-close dialog rows for this window's unsaved editors (UX2-003),
+ * each flagged with whether "Move tabs" can carry its buffer (#4412).
+ */
+function dirtyEditorRows(
+  tabs: TerminalTab[],
+  editorDirty: Readonly<Record<string, boolean>>
+): WindowCloseDirtyEditor[] {
+  return dirtyEditorTabs(tabs, editorDirty).map((tab) => ({
+    tabId: tab.id,
+    title: tab.title,
+    movable: canCarryEditorBuffer(tab),
+  }));
 }
 
 export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowManagementSlice> = (
@@ -320,10 +340,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     const sessions = classifyWindowCloseSessions(tabs);
     // Unsaved editors carry no session, so the session classification never
     // sees them; a dirty editor alone must still stop the close (UX2-003).
-    const dirtyEditors = dirtyEditorTabs(tabs, get().editorDirtyTabs).map((tab) => ({
-      tabId: tab.id,
-      title: tab.title,
-    }));
+    const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
     if (dirtyEditors.length > 0) {
       set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors } });
       return "prompt";
@@ -351,10 +368,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
   prepareAppQuit: () => {
     const tabs = collectWindowTabs(get());
     const sessions = classifyWindowCloseSessions(tabs);
-    const dirtyEditors = dirtyEditorTabs(tabs, get().editorDirtyTabs).map((tab) => ({
-      tabId: tab.id,
-      title: tab.title,
-    }));
+    const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
     if (dirtyEditors.length === 0 && !windowCloseWouldLoseData(sessions)) return "ready";
     set({
       pendingWindowClose: {
@@ -388,22 +402,39 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
   },
 
   moveWindowSessionsToWindow: async (target) => {
-    const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
+    const windowTabs = collectWindowTabs(get());
+    const dirty = dirtyEditorTabs(windowTabs, get().editorDirtyTabs);
+    // An editor whose unsaved state cannot travel blocks the whole move: moving
+    // the rest and closing the window would discard it silently (#4412).
+    const stuck = dirty.filter((tab) => !canCarryEditorBuffer(tab));
+    if (stuck.length > 0) {
+      throw new Error(
+        `Save or discard ${stuck.map((tab) => `"${tab.title}"`).join(", ")} before moving tabs`
+      );
+    }
+    // Session tabs first, so a remote editor's backing session is already in
+    // the destination when the editor reloads its file there.
+    const tabs = [
+      ...windowTabs.filter((tab) => tab.sessionId),
+      ...dirty.filter((tab) => !tab.sessionId),
+    ];
     if (tabs.length === 0) return;
+
+    // Build a hand-off record per tab before anything else happens. Each
+    // record holds its editor buffer by value, so the source window's teardown
+    // (#4313) dropping the editor's state cannot reach the moved copy (#4412).
+    // The Transfer Queue is region-authoritative and shared (#2229), so no queue
+    // rows are carried — the destination window already sees them; this window
+    // is being torn down, so no source-side transient-map release is needed.
+    const records: TabHandoffRecord[] = tabs.map((tab) => buildTransferAwareHandoff(tab).record);
 
     // Mark every session as moving up front so a source Terminal unmounting
     // during the window teardown does NOT tear down the backend session — the
     // destination window adopts each still-running session (#1900 seam).
-    const sessionIds = tabs.map((tab) => tab.sessionId as string);
+    const sessionIds = tabs.flatMap((tab) => (tab.sessionId ? [tab.sessionId] : []));
     set((state) => ({
       movingSessionIds: Array.from(new Set([...state.movingSessionIds, ...sessionIds])),
     }));
-
-    // Build a hand-off record per tab. The Transfer Queue is region-authoritative
-    // and shared (#2229), so no queue rows are carried — the destination window
-    // already sees them; this window is being torn down, so no source-side
-    // transient-map release is needed either.
-    const records: TabHandoffRecord[] = tabs.map((tab) => buildTransferAwareHandoff(tab).record);
     try {
       if (target.kind === "new") {
         // Create the destination window seeded with the first tab, then queue

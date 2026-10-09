@@ -2,6 +2,7 @@ import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowRight,
+  Ban,
   FileWarning,
   Network,
   Plug,
@@ -10,13 +11,15 @@ import {
   TriangleAlert,
   Trash2,
 } from "lucide-react";
-import { Button, Modal, Select } from "@/components/ui";
+import { Button, Modal, Select, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { getLayoutTabGroups } from "@/store/layoutSelectors";
+import { getAllLeaves } from "@/utils/panelTree";
 import { cancelQuit, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
 import { windowDisplayName } from "@/types/window";
-import type { WindowCloseSessionRow } from "@/types/window";
+import type { WindowCloseDirtyEditor, WindowCloseSessionRow } from "@/types/window";
 import "./CloseWindowDecisionDialog.css";
 
 /**
@@ -38,10 +41,13 @@ import "./CloseWindowDecisionDialog.css";
  * All-persistent and empty windows never reach this dialog; they close with a
  * toast (or silently) from {@link AppState.prepareWindowClose}.
  *
- * A window holding an editor with unsaved changes always reaches it (UX2-003):
- * each such editor is listed as discarded, so the close is never silent. Moving
- * re-parents only live sessions, so it is offered only when there are some; a
- * window with nothing but unsaved editors offers Cancel or "Discard & close".
+ * A window holding an editor with unsaved changes always reaches it (UX2-003),
+ * so the close is never silent. "Move tabs" carries dirty file editors with
+ * their unsaved buffer (#4412). An editor that cannot carry its unsaved state
+ * (the connection, tunnel, workspace and settings forms) blocks the move until
+ * the user explicitly discards it here or opens it to save or discard. Without a
+ * window to move to, unsaved editors are listed as discarded and the choices are
+ * Cancel or "Discard & close".
  *
  * The same dialog answers an app quit (Cmd+Q / menu Quit, #4296) when the
  * request's `mode` is `"quit"`. Then "Quit" tells the backend this window
@@ -89,16 +95,63 @@ export function CloseWindowDecisionDialog() {
     await getCurrentWindow().destroy();
   };
 
+  const count = request.sessions.length;
+  const dirtyEditors = request.dirtyEditors ?? [];
+  const dirtyCount = dirtyEditors.length;
+  const movableCount = dirtyEditors.filter((editor) => editor.movable).length;
+  const blockedEditors = dirtyEditors.filter((editor) => !editor.movable);
+  // Move is offered when there is somewhere to go and something to carry; it
+  // stays disabled while an editor would otherwise be discarded silently.
+  const showMove = canMove && (count > 0 || movableCount > 0);
+  const moveBlocked = blockedEditors.length > 0;
+
   const handleMove = async () => {
-    if (!selected) return;
-    await moveWindowSessionsToWindow({ kind: "existing", label: selected });
+    if (!selected || moveBlocked) return;
+    try {
+      await moveWindowSessionsToWindow({ kind: "existing", label: selected });
+    } catch (err) {
+      // Nothing was handed off for good: keep the window and the dialog open so
+      // the user can retry or choose another outcome.
+      frontendError("multi_window", `Moving this window's tabs failed: ${errorMessage(err)}`);
+      toast.error(`Could not move the tabs: ${errorMessage(err)}`);
+      return;
+    }
     setRequest(null);
     await getCurrentWindow().destroy();
   };
 
-  const count = request.sessions.length;
-  const dirtyEditors = request.dirtyEditors ?? [];
-  const dirtyCount = dirtyEditors.length;
+  /** Explicit Discard of one blocked editor: close its tab without saving. */
+  const handleDiscardEditor = async (editor: WindowCloseDirtyEditor) => {
+    const store = useAppStore.getState();
+    const located = locateTab(editor.tabId);
+    if (located) {
+      store.setEditorDirty(editor.tabId, false);
+      store.setActiveTabGroup(located.groupId);
+      store.closeTab(editor.tabId, located.panelId);
+    }
+    const remaining = dirtyEditors.filter((e) => e.tabId !== editor.tabId);
+    if (count === 0 && remaining.length === 0) {
+      // Nothing is left that closing would lose, so close as asked.
+      setRequest(null);
+      await getCurrentWindow().destroy();
+      return;
+    }
+    setRequest({ ...request, dirtyEditors: remaining });
+  };
+
+  /**
+   * Leave the close and open the blocked editor with its own unsaved-changes
+   * prompt, where the user saves or discards it explicitly.
+   */
+  const handleReviewEditor = (editor: WindowCloseDirtyEditor) => {
+    setRequest(null);
+    const located = locateTab(editor.tabId);
+    if (!located) return;
+    const store = useAppStore.getState();
+    store.setActiveTabGroup(located.groupId);
+    store.setActiveTab(editor.tabId, located.panelId);
+    store.setPendingCloseRequest({ tabId: editor.tabId, panelId: located.panelId });
+  };
   const moveLabel =
     others.length === 1 && selected ? `Move tabs to ${windowDisplayName(selected)}` : "Move tabs";
 
@@ -137,8 +190,13 @@ export function CloseWindowDecisionDialog() {
               </>
             )}
           </Button>
-          {canMove && count > 0 && (
-            <Button variant="primary" onClick={handleMove} data-testid="close-window-decision-move">
+          {showMove && (
+            <Button
+              variant="primary"
+              onClick={handleMove}
+              disabled={moveBlocked}
+              data-testid="close-window-decision-move"
+            >
               <ArrowRight className="li" aria-hidden="true" /> {moveLabel}
             </Button>
           )}
@@ -155,13 +213,31 @@ export function CloseWindowDecisionDialog() {
             </>
           )}
           {count > 0 && dirtyCount > 0 && " "}
-          {dirtyCount > 0 && (
-            <>
-              {dirtyCount} unsaved editor{dirtyCount === 1 ? "" : "s"} will be discarded.
-            </>
-          )}
+          {dirtyCount > 0 &&
+            (showMove ? (
+              <>
+                {dirtyCount} unsaved editor{dirtyCount === 1 ? "" : "s"}: moving keeps{" "}
+                {dirtyCount === 1 ? "it" : "them"}, closing discards{" "}
+                {dirtyCount === 1 ? "it" : "them"}.
+              </>
+            ) : (
+              <>
+                {dirtyCount} unsaved editor{dirtyCount === 1 ? "" : "s"} will be discarded.
+              </>
+            ))}
         </p>
       </div>
+
+      {showMove && moveBlocked && (
+        <p
+          className="close-window-decision__blocked"
+          data-testid="close-window-decision-move-blocked"
+        >
+          {blockedEditors.map((editor) => `"${editor.title}"`).join(", ")} can&apos;t be moved with
+          unsaved changes. Save or discard {blockedEditors.length === 1 ? "it" : "them"} to move the
+          tabs.
+        </p>
+      )}
 
       {others.length > 1 && count > 0 && (
         <div className="close-window-decision__target">
@@ -189,17 +265,63 @@ export function CloseWindowDecisionDialog() {
             <FileWarning className="li close-window-decision__row-icon" aria-hidden="true" />
             <span className="close-window-decision__row-name">{editor.title}</span>
             <span className="close-window-decision__row-type">editor</span>
-            <span
-              className="close-window-decision__pill close-window-decision__pill--terminate"
-              data-testid="close-window-decision-outcome-discard"
-            >
-              <Trash2 className="li" aria-hidden="true" /> Unsaved — discarded
-            </span>
+            {!showMove ? (
+              <span
+                className="close-window-decision__pill close-window-decision__pill--terminate"
+                data-testid="close-window-decision-outcome-discard"
+              >
+                <Trash2 className="li" aria-hidden="true" /> Unsaved — discarded
+              </span>
+            ) : editor.movable ? (
+              <span
+                className="close-window-decision__pill close-window-decision__pill--detach"
+                data-testid="close-window-decision-outcome-move"
+              >
+                <ArrowRight className="li" aria-hidden="true" /> Unsaved — moves with tabs
+              </span>
+            ) : (
+              <>
+                <span
+                  className="close-window-decision__pill close-window-decision__pill--terminate"
+                  data-testid="close-window-decision-outcome-blocked"
+                >
+                  <Ban className="li" aria-hidden="true" /> Can&apos;t be moved
+                </span>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  onClick={() => handleReviewEditor(editor)}
+                  data-testid="close-window-decision-review-editor"
+                >
+                  Save or discard…
+                </Button>
+                <Button
+                  variant="danger"
+                  size="xs"
+                  onClick={() => void handleDiscardEditor(editor)}
+                  data-testid="close-window-decision-discard-editor"
+                >
+                  Discard
+                </Button>
+              </>
+            )}
           </div>
         ))}
       </div>
     </Modal>
   );
+}
+
+/** The tab group and panel currently holding `tabId` in this window, if any. */
+function locateTab(tabId: string): { groupId: string; panelId: string } | null {
+  for (const group of getLayoutTabGroups()) {
+    for (const leaf of getAllLeaves(group.rootPanel)) {
+      if (leaf.tabs.some((tab) => tab.id === tabId)) {
+        return { groupId: group.id, panelId: leaf.id };
+      }
+    }
+  }
+  return null;
 }
 
 /** One per-session row: icon, name, connection type, and the outcome pill. */

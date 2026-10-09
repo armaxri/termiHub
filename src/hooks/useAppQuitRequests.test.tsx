@@ -139,7 +139,7 @@ describe("app quit request (#4296)", () => {
 
     expect(quitWindowPrompting).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([
-      { tabId, title: "nginx.conf" },
+      { tabId, title: "nginx.conf", movable: false },
     ]);
   });
 
