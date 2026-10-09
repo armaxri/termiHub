@@ -171,14 +171,15 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # Extract changelog for this version from CHANGELOG.md
+          # Extract this version's '## [X.Y.Z]' section from CHANGELOG.md, capped
+          # under GitHub's release-body limit with a link to the full CHANGELOG
+          # (#4278). Exit 2 = no section for this version → commit-log fallback.
           VERSION=${{ steps.get_version.outputs.version }}
+          rc=0
+          node scripts/internal/extract-release-notes.mjs \
+            --version "$VERSION" --changelog CHANGELOG.md > release_notes.md || rc=$?
 
-          # Get content between version headers
-          CHANGELOG=$(awk "/## \[${VERSION}\]/,/## \[/" CHANGELOG.md | sed '$d' | tail -n +2)
-
-          # If changelog is empty, generate from commits
-          if [ -z "$CHANGELOG" ]; then
+          if [ "$rc" -eq 2 ]; then
             echo "No changelog entry found, generating from commits..."
             # Find the previous tag to bound the log range. On the VERY FIRST
             # release there is no prior tag (and HEAD^ may not even resolve on a
@@ -190,11 +191,12 @@ jobs:
               echo "No previous tag found (first release); using full history."
               RANGE="HEAD"
             fi
-            CHANGELOG=$(git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges)
+            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges > release_commits.txt
+            node scripts/internal/extract-release-notes.mjs \
+              --version "$VERSION" --fallback release_commits.txt > release_notes.md
+          elif [ "$rc" -ne 0 ]; then
+            exit "$rc"
           fi
-
-          # Save to file (multiline support)
-          echo "$CHANGELOG" > release_notes.md
 
       - name: Mark security release
         # The desktop self-update check (src-tauri/src/commands/update.rs) treats a
