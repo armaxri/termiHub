@@ -39,10 +39,11 @@ const en = {
   "connection.hint.permission.title": "Permission denied",
   "connection.hint.permission.serial.linux":
     "On Linux, add your user to the dialout group and re-login:",
-  // Only Linux gates serial ports behind a group; on Windows/macOS a denied
-  // port almost always means another program holds it (#1831).
+  // Only Linux gates serial ports behind a group (#1831). On Windows a port
+  // held by another program is reported as "busy" by the backend (#4368), so a
+  // permission error there is a genuine access-rights problem.
   "connection.hint.permission.serial.windows":
-    "Another application may be using the port, or you may not have permission to access it. Close any program using the port and try again.",
+    "You do not have permission to access this port. Check the port's access rights or ask an administrator.",
   "connection.hint.permission.serial.macos":
     "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
   "connection.hint.busy.serial": "The serial port is already in use by another application.",

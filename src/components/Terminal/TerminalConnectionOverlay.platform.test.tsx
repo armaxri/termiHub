@@ -96,8 +96,10 @@ describe("TerminalConnectionOverlay — platform-aware serial permission hint (#
     expect(
       container.querySelector("[data-testid='terminal-connection-serial-copy-btn']")
     ).toBeNull();
-    // Windows-appropriate guidance instead.
-    expect(text).toContain("Another application may be using the port");
+    // Windows-appropriate guidance instead: a real permission message — a
+    // held port is reported as "busy" by the backend, not as permission (#4368).
+    expect(text).toContain("You do not have permission to access this port");
+    expect(text).not.toContain("Another application may be using the port");
   });
 
   it("does not show the Linux dialout advice on macOS", () => {
