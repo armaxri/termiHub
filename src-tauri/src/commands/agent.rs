@@ -14,9 +14,7 @@ use crate::connection::manager::ConnectionManager;
 use crate::credential::CredentialManager;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_cancel::AgentDeployCancellation;
-use crate::terminal::agent_deploy::{
-    AgentDeployConfig, AgentDeployResult, ConnectedHost,
-};
+use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, ConnectedHost};
 use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
     AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo, AgentFolderInfo,
