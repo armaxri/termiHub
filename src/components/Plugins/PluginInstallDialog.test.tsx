@@ -110,6 +110,19 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     expect(text).toContain("read and write files");
   });
 
+  it("lists every declared filesystem path under the filesystem permission", () => {
+    render(manifest({ filesystemPaths: ["/Users/someone/captures", "/var/log/app"] }));
+    const items = Array.from(
+      document.querySelectorAll('[data-testid="plugin-install-filesystem-paths"] li')
+    ).map((li) => li.textContent);
+    expect(items).toEqual(["/Users/someone/captures", "/var/log/app"]);
+  });
+
+  it("shows no path list when the plugin declares no filesystem paths", () => {
+    render(manifest());
+    expect(document.querySelector('[data-testid="plugin-install-filesystem-paths"]')).toBeNull();
+  });
+
   it("warns that a native terminal-backend plugin is native code in a sandbox", () => {
     render(manifest());
     const warning = document.querySelector('[data-testid="plugin-install-native-warning"]');

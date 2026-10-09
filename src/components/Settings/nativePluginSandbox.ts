@@ -196,20 +196,36 @@ export function accessChips(plugin: InstalledPlugin): AccessChip[] {
     rule: "Read and write in its private data folder",
     denied: false,
   });
-  if (permissions.includes("filesystem") && filesystemPaths && filesystemPaths.length > 0) {
+  const declared =
+    permissions.includes("filesystem") && filesystemPaths && filesystemPaths.length > 0
+      ? filesystemPaths
+      : [];
+  if (declared.length > 0) {
     chips.push({
       id: "declared-files",
       label: "Declared folders",
-      rule: `Through termiHub only: ${filesystemPaths.join(", ")}`,
+      // One folder per line, so every granted path is visible as declared.
+      rule: ["Through termiHub only:", ...declared].join("\n"),
       denied: false,
     });
   }
-  chips.push({
-    id: "files",
-    label: "Your files",
-    rule: "No access to your home folder or other files",
-    denied: true,
-  });
+  chips.push(
+    declared.length > 0
+      ? {
+          // Declared folders may lie inside the home folder, so the denial
+          // must not claim the home folder is out of reach (#4293).
+          id: "files",
+          label: "Other files",
+          rule: "No access to files outside the declared folders",
+          denied: true,
+        }
+      : {
+          id: "files",
+          label: "Your files",
+          rule: "No access to your home folder or other files",
+          denied: true,
+        }
+  );
   chips.push({
     id: "programs",
     label: "Run programs",

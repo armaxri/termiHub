@@ -95,7 +95,7 @@ describe("nativePluginSandbox helpers", () => {
     const chips = accessChips(
       plugin({
         permissions: ["terminal", "network", "filesystem"],
-        filesystemPaths: ["~/captures"],
+        filesystemPaths: ["/Users/someone/captures", "/var/log/app"],
         connectionPolicy: { maxConnections: 2 },
       })
     );
@@ -108,5 +108,23 @@ describe("nativePluginSandbox helpers", () => {
     ]);
     expect(chips[0].rule).toContain("max 2 connections");
     expect(accessChips(plugin()).map((c) => c.id)).toEqual(["data", "files", "programs"]);
+  });
+
+  it("lists every declared folder on its own line and rewords the files denial", () => {
+    const chips = accessChips(
+      plugin({
+        permissions: ["terminal", "filesystem"],
+        filesystemPaths: ["/Users/someone/captures", "/var/log/app"],
+      })
+    );
+    const declared = chips.find((c) => c.id === "declared-files");
+    expect(declared?.rule).toBe("Through termiHub only:\n/Users/someone/captures\n/var/log/app");
+    const files = chips.find((c) => c.id === "files");
+    expect(files?.label).toBe("Other files");
+    expect(files?.rule).toBe("No access to files outside the declared folders");
+    expect(files?.rule).not.toContain("home folder");
+
+    const none = accessChips(plugin()).find((c) => c.id === "files");
+    expect(none?.rule).toBe("No access to your home folder or other files");
   });
 });

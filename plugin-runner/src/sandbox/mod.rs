@@ -133,8 +133,8 @@ pub struct SandboxPolicy {
 /// Why a [`SandboxPolicy`] was refused or could not be applied.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxError {
-    /// A policy path is empty, relative, contains a NUL byte, or names the
-    /// filesystem root.
+    /// A policy path is empty, relative, contains a NUL byte or a `.` / `..`
+    /// segment, or names the filesystem root.
     #[error("sandbox policy path `{path}` is invalid: {reason}")]
     InvalidPath {
         /// The offending path, verbatim.
@@ -153,8 +153,9 @@ pub enum SandboxError {
 }
 
 impl SandboxPolicy {
-    /// Check that every path is usable: absolute, non-empty, free of NUL bytes,
-    /// and not the filesystem root (which would grant or deny everything).
+    /// Check that every path is usable: absolute, non-empty, free of NUL bytes
+    /// and `.` / `..` segments, and not the filesystem root (which would grant
+    /// or deny everything).
     pub fn validate(&self) -> Result<(), SandboxError> {
         let check = |path: &str| -> Result<(), SandboxError> {
             let invalid = |reason| SandboxError::InvalidPath {
@@ -170,6 +171,13 @@ impl SandboxPolicy {
             let p = std::path::Path::new(path);
             if !p.is_absolute() {
                 return Err(invalid("not absolute"));
+            }
+            // A `.` or `..` segment makes the path name something other than
+            // what it reads as: landlock opens `/a/..` as `/` and Windows
+            // normalises `C:\a\..` to `C:\` (#4293). Canonical paths have none.
+            let separators: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+            if path.split(separators).any(|s| s == "." || s == "..") {
+                return Err(invalid("contains a `.` or `..` segment"));
             }
             if p.parent().is_none() {
                 return Err(invalid("is the filesystem root"));

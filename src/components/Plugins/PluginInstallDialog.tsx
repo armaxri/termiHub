@@ -313,6 +313,17 @@ export function PluginInstallDialog({
                   <span className="plugin-install__perm-desc">
                     — {PERMISSION_DESCRIPTIONS[perm]}
                   </span>
+                  {perm === "filesystem" && (manifest.filesystemPaths?.length ?? 0) > 0 && (
+                    <ul
+                      className="plugin-install__perm-paths"
+                      aria-label="Declared folders"
+                      data-testid="plugin-install-filesystem-paths"
+                    >
+                      {manifest.filesystemPaths?.map((path) => (
+                        <li key={path}>{path}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </div>
             ))
