@@ -100,6 +100,9 @@ ALLOWLIST=(
   # desktop build (Windows leg via `shell: bash`); never run by hand.
   "scripts/internal/assert-no-test-bridge.sh" # CI-only binary grep (bash on every runner)
   "scripts/internal/verify-plugin-runner-bundle.sh" # CI bundle check (bash on every runner; release-check.cmd inlines it)
+  # Dev release publisher (#4471): CI-only `gh` helper run by dev-build.yml's
+  # Ubuntu publish job; never run by hand, so a `.cmd` twin would be dead weight.
+  "scripts/internal/dev-release-publish.sh" # CI-only staged dev release swap (Ubuntu)
 )
 
 in_allowlist() {

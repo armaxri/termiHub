@@ -16,8 +16,8 @@ evidence:
   - src-tauri/src/terminal/agent_install.rs:21
   - src-tauri/src/terminal/agent_install.rs:85-89
   - src-tauri/src/terminal/agent_setup.rs:33
-status: open
-resolution: ""
+status: fixed
+resolution: "#4287 — uploads go to a fresh 0700 dir in <config>/updates; apply opens the staged file once (O_NOFOLLOW, owner/mode/nlink checks), verifies and installs one private copy, removes the upload"
 audit: 2026-10
 commit: 663465d52
 relation: new

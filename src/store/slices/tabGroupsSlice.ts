@@ -31,6 +31,7 @@ import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
 import { prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
 import { errorMessage } from "@/utils/errorMessage";
+import { stashCarriedBuffer } from "@/utils/editorBufferRegistry";
 
 /**
  * Tab-groups slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -501,9 +502,14 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         const h = record.tab;
         const targetLeaf = getAllLeaves(state.rootPanel)[0];
         if (!targetLeaf) return state;
+        const newTabId = newId("tab");
+        // Hand a moved editor's unsaved text to the editor that mounts for the
+        // new tab (#4412). It is consumed once, never stored in the tab itself,
+        // so it is not persisted and cannot reappear on a later remount.
+        if (h.editorBuffer !== undefined) stashCarriedBuffer(newTabId, h.editorBuffer);
 
         const newTab: TerminalTab = {
-          id: newId("tab"),
+          id: newTabId,
           sessionId: h.sessionId,
           title: h.title,
           connectionType: h.connectionType,
@@ -517,6 +523,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           ...(h.persistentConnectionId ? { persistentConnectionId: h.persistentConnectionId } : {}),
           ...(h.connectionId ? { connectionId: h.connectionId } : {}),
           ...(h.spawned ? { spawned: true } : {}),
+          // A moved file editor keeps its metadata and any unsaved buffer (#4412).
+          ...(h.editorMeta ? { editorMeta: h.editorMeta } : {}),
           // Repaint history from the backend ring buffer once the fresh xterm
           // (re)attaches to the live session.
           ...(h.sessionId ? { pendingScrollbackReplay: true } : {}),
@@ -546,6 +554,12 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           releasedTransferSessions,
           // Track the hydrated tab's content in the by-id map (part of #2283).
           tabContent: setTabContentEntry(state.tabContent, newTab),
+          // A moved editor with unsaved changes is dirty here from the first
+          // frame, before its buffer has loaded, so closing this window right
+          // away still prompts instead of discarding it (#4412).
+          ...(h.editorDirty
+            ? { editorDirtyTabs: { ...state.editorDirtyTabs, [newTab.id]: true } }
+            : {}),
         };
       }),
 

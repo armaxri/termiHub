@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { collectWindowTabs } from "@/store/layoutHelpers";
 import type { WindowCloseRequest } from "@/types/window";
 import { CloseWindowDecisionDialog } from "./CloseWindowDecisionDialog";
 
@@ -137,9 +138,11 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
   describe("unsaved editors (UX2-003)", () => {
     const dirtyEditors = [{ tabId: "e1", title: "nginx.conf" }];
 
-    it("lists each unsaved editor as discarded", () => {
+    it("lists each unsaved editor as discarded when there is no window to move to", () => {
       render();
-      act(() => useAppStore.getState().setPendingWindowClose(request({ dirtyEditors })));
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ dirtyEditors, otherWindows: [] }))
+      );
 
       const rows = qa("close-window-decision-dirty-row");
       expect(rows).toHaveLength(1);
@@ -176,6 +179,103 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       );
       await act(async () => q("close-window-decision-end").click());
       expect(destroy).toHaveBeenCalledTimes(1);
+    });
+  });
+  describe("moving unsaved editors (#4412)", () => {
+    it("offers Move for a window holding only a movable dirty editor", async () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [{ tabId: "e1", title: "nginx.conf", movable: true }],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-outcome-move").textContent).toContain("moves with tabs");
+      await act(async () => q("close-window-decision-move").click());
+
+      expect(moveWindowSessionsToWindow).toHaveBeenCalledWith({ kind: "existing", label: "win-1" });
+      expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks Move while an editor cannot carry its unsaved state", async () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(
+            request({ dirtyEditors: [{ tabId: "e1", title: "New Connection", movable: false }] })
+          )
+      );
+
+      const move = q("close-window-decision-move") as HTMLButtonElement;
+      expect(move.disabled).toBe(true);
+      expect(q("close-window-decision-move-blocked").textContent).toContain("New Connection");
+      expect(q("close-window-decision-outcome-blocked")).not.toBeNull();
+
+      await act(async () => move.click());
+      expect(moveWindowSessionsToWindow).not.toHaveBeenCalled();
+      expect(destroy).not.toHaveBeenCalled();
+    });
+
+    it("Discard on a blocked editor closes that tab and unblocks Move", async () => {
+      const tabId = useAppStore
+        .getState()
+        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+      useAppStore.getState().setEditorDirty(tabId, true);
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(
+            request({ dirtyEditors: [{ tabId, title: "New Connection", movable: false }] })
+          )
+      );
+
+      await act(async () => q("close-window-decision-discard-editor").click());
+
+      expect(collectWindowTabs(useAppStore.getState()).map((t) => t.id)).not.toContain(tabId);
+      expect(useAppStore.getState().editorDirtyTabs[tabId]).toBeUndefined();
+      expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([]);
+      expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(false);
+      expect(destroy).not.toHaveBeenCalled();
+    });
+
+    it("Save or discard opens the editor's own prompt and keeps the window", async () => {
+      const tabId = useAppStore
+        .getState()
+        .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
+      useAppStore.getState().setEditorDirty(tabId, true);
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(
+            request({ dirtyEditors: [{ tabId, title: "New Connection", movable: false }] })
+          )
+      );
+
+      await act(async () => q("close-window-decision-review-editor").click());
+
+      expect(useAppStore.getState().pendingWindowClose).toBeNull();
+      expect(useAppStore.getState().pendingCloseRequest?.tabId).toBe(tabId);
+      expect(useAppStore.getState().editorDirtyTabs[tabId]).toBe(true);
+      expect(destroy).not.toHaveBeenCalled();
+    });
+
+    it("keeps the window open when the move fails", async () => {
+      moveWindowSessionsToWindow.mockImplementationOnce(() =>
+        Promise.reject(new Error("hand-off failed"))
+      );
+      render();
+      act(() => useAppStore.getState().setPendingWindowClose(request()));
+
+      await act(async () => q("close-window-decision-move").click());
+
+      expect(destroy).not.toHaveBeenCalled();
+      expect(useAppStore.getState().pendingWindowClose).not.toBeNull();
     });
   });
 });

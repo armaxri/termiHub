@@ -34,6 +34,8 @@ enum Stall {
     Reattach,
     /// Never answer `MSG_QUERY_BUFFER`.
     Buffer,
+    /// Take `MSG_DETACH` but never release the connection (#4476).
+    Detach,
 }
 
 /// What a fake daemon observed, per kind of frame.
@@ -98,6 +100,11 @@ impl FakeDaemon {
                         match frame.msg_type {
                             MSG_DETACH => {
                                 seen.detaches.fetch_add(1, Ordering::SeqCst);
+                                if stall == Stall::Detach {
+                                    // Keep the connection open: the client
+                                    // waits for a release that never comes.
+                                    let _ = release_rx.wait_for(|r| *r).await;
+                                }
                                 return;
                             }
                             MSG_KILL => {
@@ -166,12 +173,20 @@ impl DaemonLauncher for QueueLauncher {
 
 /// A manager whose daemon sessions connect to `daemons`, in creation order.
 fn manager(daemons: &[&FakeDaemon]) -> Arc<SessionManager> {
+    manager_with(daemons, test_registry())
+}
+
+/// Like [`manager`], with the given connection-type registry.
+fn manager_with(
+    daemons: &[&FakeDaemon],
+    registry: Arc<ConnectionTypeRegistry>,
+) -> Arc<SessionManager> {
     let launcher = QueueLauncher {
         endpoints: std::sync::Mutex::new(daemons.iter().map(|d| d.endpoint.clone()).collect()),
     };
     Arc::new(SessionManager::with_launcher(
         test_notification_tx(),
-        test_registry(),
+        registry,
         Arc::new(launcher),
     ))
 }
@@ -405,4 +420,311 @@ async fn a_reattach_outliving_its_session_releases_the_daemon() {
     assert_eq!(daemon.seen.kills.load(Ordering::SeqCst), 0);
     // Shut down, so at most listed as still running on the host — never held.
     assert_ne!(attached(&mgr.list().await, &a), Some(true));
+}
+
+// ── In-process write / resize and shutdown (#4476) ─────────────────
+
+/// Writes of this payload block in the backend until the test releases them.
+const STALL: &[u8] = b"stall";
+
+/// What the in-process stall backends observed, shared by all of them.
+#[derive(Default)]
+struct StallState {
+    /// Lets stalled writes return.
+    released: AtomicBool,
+    /// Stalled writes currently blocked in the backend.
+    blocked: AtomicUsize,
+    /// Every write and resize, in the order the backends ran them.
+    ops: std::sync::Mutex<Vec<String>>,
+    disconnects: AtomicUsize,
+}
+
+impl StallState {
+    fn ops(&self) -> Vec<String> {
+        self.ops.lock().unwrap().clone()
+    }
+}
+
+/// An in-process (non-persistent) backend whose `write` of [`STALL`] blocks
+/// like a PTY whose program stopped reading its input.
+struct StallConnection {
+    state: Arc<StallState>,
+}
+
+#[async_trait::async_trait]
+impl termihub_core::connection::ConnectionType for StallConnection {
+    fn type_id(&self) -> &str {
+        "stall"
+    }
+    fn display_name(&self) -> &str {
+        "Stall"
+    }
+    fn settings_schema(&self) -> termihub_core::connection::SettingsSchema {
+        termihub_core::connection::SettingsSchema { groups: vec![] }
+    }
+    fn capabilities(&self) -> termihub_core::connection::Capabilities {
+        termihub_core::connection::Capabilities {
+            monitoring: false,
+            file_browser: false,
+            graphical: false,
+            resize: true,
+            persistent: false,
+            terminal: true,
+            tunneling: false,
+        }
+    }
+    async fn connect(
+        &mut self,
+        _settings: serde_json::Value,
+    ) -> Result<(), termihub_core::errors::SessionError> {
+        Ok(())
+    }
+    async fn disconnect(&mut self) -> Result<(), termihub_core::errors::SessionError> {
+        self.state.disconnects.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn is_connected(&self) -> bool {
+        true
+    }
+    fn write(&self, data: &[u8]) -> Result<(), termihub_core::errors::SessionError> {
+        if data == STALL {
+            self.state.blocked.fetch_add(1, Ordering::SeqCst);
+            while !self.state.released.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            self.state.blocked.fetch_sub(1, Ordering::SeqCst);
+        }
+        self.state
+            .ops
+            .lock()
+            .unwrap()
+            .push(String::from_utf8_lossy(data).into_owned());
+        Ok(())
+    }
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), termihub_core::errors::SessionError> {
+        self.state
+            .ops
+            .lock()
+            .unwrap()
+            .push(format!("resize {cols}x{rows}"));
+        Ok(())
+    }
+    fn subscribe_output(&self) -> termihub_core::connection::OutputReceiver {
+        // Keep the sender alive so the session stays running.
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        std::mem::forget(tx);
+        rx
+    }
+    fn monitoring(&self) -> Option<&dyn termihub_core::monitoring::MonitoringProvider> {
+        None
+    }
+    fn file_browser(&self) -> Option<&dyn termihub_core::files::FileBrowser> {
+        None
+    }
+}
+
+/// The agent's registry plus the `stall` in-process type, sharing `state`.
+fn stall_registry(state: &Arc<StallState>) -> Arc<ConnectionTypeRegistry> {
+    let mut registry = crate::registry::build_registry();
+    let state = state.clone();
+    registry.register(
+        "stall",
+        "Stall",
+        "terminal",
+        Box::new(move || {
+            Box::new(StallConnection {
+                state: state.clone(),
+            })
+        }),
+    );
+    Arc::new(registry)
+}
+
+async fn create_stall(mgr: &SessionManager) -> String {
+    mgr.create("stall", "s".into(), serde_json::json!({}), None)
+        .await
+        .expect("create an in-process session")
+        .id
+}
+
+/// Start a write on `id` in the background.
+fn spawn_write(
+    mgr: &Arc<SessionManager>,
+    id: &str,
+    data: &'static [u8],
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    let mgr = mgr.clone();
+    let id = id.to_string();
+    tokio::spawn(async move { SessionManagerApi::write_input(&*mgr, &id, data).await })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stuck_in_process_write_does_not_block_other_sessions() {
+    let state = Arc::new(StallState::default());
+    let mgr = manager_with(&[], stall_registry(&state));
+    let a = create_stall(&mgr).await;
+    let b = create_stall(&mgr).await;
+    let c = create_stall(&mgr).await;
+
+    let writing = spawn_write(&mgr, &a, STALL);
+    until("the write to block in the backend", || {
+        state.blocked.load(Ordering::SeqCst) == 1
+    })
+    .await;
+
+    promptly("list", mgr.list()).await;
+    promptly("active_count", mgr.active_count()).await;
+    promptly(
+        "write_input",
+        SessionManagerApi::write_input(&*mgr, &b, b"hi"),
+    )
+    .await
+    .expect("input reaches the healthy session");
+    promptly("resize", SessionManagerApi::resize(&*mgr, &b, 80, 24))
+        .await
+        .expect("resize the healthy session");
+    promptly("attach", mgr.attach(&b))
+        .await
+        .expect("attach the healthy session");
+    promptly("detach", mgr.detach(&b))
+        .await
+        .expect("detach the healthy session");
+    promptly("create", create_stall(&mgr)).await;
+    assert!(promptly("close", mgr.close(&c)).await, "closed");
+    assert_eq!(state.ops(), vec!["hi", "resize 80x24"]);
+    assert!(!writing.is_finished(), "the stuck write is still blocked");
+
+    state.released.store(true, Ordering::SeqCst);
+    promptly("the released write", writing)
+        .await
+        .unwrap()
+        .expect("the stalled write completes once the backend drains");
+}
+
+/// Input and resizes queued behind a stalled write on the same session run in
+/// arrival order once it returns — none overtakes it, none is lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn in_process_input_queued_behind_a_stuck_write_keeps_its_order() {
+    let state = Arc::new(StallState::default());
+    let mgr = manager_with(&[], stall_registry(&state));
+    let a = create_stall(&mgr).await;
+
+    let stalled = spawn_write(&mgr, &a, STALL);
+    until("the write to block in the backend", || {
+        state.blocked.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    let one = spawn_write(&mgr, &a, b"one");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let resize = tokio::spawn({
+        let mgr = mgr.clone();
+        let a = a.clone();
+        async move { SessionManagerApi::resize(&*mgr, &a, 100, 30).await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let two = spawn_write(&mgr, &a, b"two");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        state.ops().is_empty(),
+        "nothing overtakes the stalled write"
+    );
+
+    state.released.store(true, Ordering::SeqCst);
+    for op in [stalled, one, resize, two] {
+        promptly("a queued operation", op).await.unwrap().unwrap();
+    }
+    assert_eq!(state.ops(), vec!["stall", "one", "resize 100x30", "two"]);
+}
+
+/// A write whose caller gave up keeps the session's turn until the backend
+/// returns, so later input still cannot overtake it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_abandoned_in_process_write_still_keeps_its_place() {
+    let state = Arc::new(StallState::default());
+    let mgr = manager_with(&[], stall_registry(&state));
+    let a = create_stall(&mgr).await;
+
+    let stalled = spawn_write(&mgr, &a, STALL);
+    until("the write to block in the backend", || {
+        state.blocked.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    stalled.abort();
+    let next = spawn_write(&mgr, &a, b"next");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!next.is_finished(), "input waits for the backend write");
+
+    state.released.store(true, Ordering::SeqCst);
+    promptly("the queued write", next).await.unwrap().unwrap();
+    assert_eq!(state.ops(), vec!["stall", "next"]);
+}
+
+/// Shutdown detaches daemons concurrently and gives up on a stuck one at its
+/// deadline: the other daemons are still released and the agent exits on time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn close_all_with_a_stuck_daemon_meets_its_deadline() {
+    let stuck = FakeDaemon::spawn("stuck-detach", Stall::Detach).await;
+    let healthy = [
+        FakeDaemon::spawn("shut-1", Stall::Nothing).await,
+        FakeDaemon::spawn("shut-2", Stall::Nothing).await,
+        FakeDaemon::spawn("shut-3", Stall::Nothing).await,
+    ];
+    let mgr = manager(&[&stuck, &healthy[0], &healthy[1], &healthy[2]]);
+    for _ in 0..4 {
+        create(&mgr).await;
+    }
+
+    let started = std::time::Instant::now();
+    promptly(
+        "close_all",
+        mgr.close_all_within(Duration::from_millis(500)),
+    )
+    .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "close_all waited {:?} past its deadline",
+        started.elapsed()
+    );
+    assert_eq!(stuck.seen.detaches.load(Ordering::SeqCst), 1);
+    for daemon in &healthy {
+        until("every healthy daemon to be detached", || {
+            daemon.seen.detaches.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        assert_eq!(
+            daemon.seen.kills.load(Ordering::SeqCst),
+            0,
+            "detached, not killed"
+        );
+    }
+    // Listed at most as running unattached on the host, never held.
+    assert!(mgr.list().await.iter().all(|s| !s.attached), "nothing held");
+    stuck.release();
+}
+
+/// Shutdown neither hangs on an in-process session whose write is stuck nor
+/// skips disconnecting the healthy ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn close_all_with_a_stuck_in_process_write_meets_its_deadline() {
+    let state = Arc::new(StallState::default());
+    let mgr = manager_with(&[], stall_registry(&state));
+    let a = create_stall(&mgr).await;
+    create_stall(&mgr).await;
+    create_stall(&mgr).await;
+
+    let writing = spawn_write(&mgr, &a, STALL);
+    until("the write to block in the backend", || {
+        state.blocked.load(Ordering::SeqCst) == 1
+    })
+    .await;
+
+    promptly(
+        "close_all",
+        mgr.close_all_within(Duration::from_millis(500)),
+    )
+    .await;
+    assert!(mgr.list().await.is_empty());
+    assert_eq!(state.disconnects.load(Ordering::SeqCst), 2);
+    state.released.store(true, Ordering::SeqCst);
+    let _ = promptly("the released write", writing).await;
 }

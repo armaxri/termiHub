@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/commands/agent.rs:172
   - core/src/backends/telnet/mod.rs:501
   - src-tauri/src/utils/diagnostics_bundle.rs:86
-status: open
-resolution: ""
+status: fixed
+resolution: "#4317 — README troubleshooting now recommends the redacted Export Diagnostics bundle and warns the raw log is unredacted"
 audit: 2026-10
 commit: "663465d52"
 relation: new

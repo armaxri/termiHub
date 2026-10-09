@@ -21,8 +21,8 @@ evidence:
   - core/src/connection/mod.rs:215
   - src-tauri/src/session/manager.rs:1151
   - src-tauri/src/session/manager.rs:1442
-status: open
-resolution: ""
+status: fixed
+resolution: "#4323 — plugin connect/disconnect run on the blocking pool; connect_cancellable honours the token"
 audit: 2026-10
 commit: 663465d52
 relation: new

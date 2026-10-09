@@ -44,8 +44,9 @@ async fn download_to_file(client: &reqwest::Client, url: &str, dest: &Path) -> R
         .await
         .with_context(|| format!("failed to read response body for {url}"))?;
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
+        // Owner-only (0700) so no other local user can swap the staged binary
+        // (AGT2-002, #4287).
+        super::staged::ensure_private_dir(parent)
             .with_context(|| format!("failed to create staging directory {}", parent.display()))?;
     }
     tokio::fs::write(dest, &bytes)

@@ -45,6 +45,7 @@ use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use tokio_util::sync::CancellationToken;
 
 /// A [`ConnectionType`] backed by a native plugin backend, served by the
 /// plugin's sandboxed runner process (#4182, ADR-19).
@@ -296,6 +297,57 @@ fn humanize_key(key: &str) -> String {
         .join(" ")
 }
 
+/// The error a cancelled connect ends with (the same text as an SSH cancel).
+fn cancelled() -> SessionError {
+    SessionError::SpawnFailed("Connection cancelled".to_string())
+}
+
+/// Everything a plugin connect needs, owned, so it can run on the blocking
+/// pool (#4323).
+struct CreateRequest {
+    handle: Arc<SandboxedPluginHandle>,
+    config_json: String,
+    settings_json: String,
+    output_tx: Arc<Mutex<Option<OutputSender>>>,
+    grant: BridgeGrant,
+    cancel: Option<CancellationToken>,
+}
+
+impl CreateRequest {
+    fn is_cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+    }
+
+    /// Acquire the runner and create the session in it. Blocking.
+    fn run(self) -> Result<SandboxedSession, SessionError> {
+        // The runner holds the session's services and bridge; output arrives
+        // on the runner's reader thread, straight into `output_tx`.
+        let plugin = self.handle.acquire().map_err(map_plugin_error)?;
+        // A cancel during the (re)spawn: create nothing.
+        if self.is_cancelled() {
+            return Err(cancelled());
+        }
+        let session = SandboxedSession::create(
+            plugin,
+            &self.config_json,
+            &self.settings_json,
+            &self.handle.data_dir(),
+            Arc::clone(&self.output_tx),
+            self.grant.clone(),
+        )
+        .map_err(map_plugin_error)?;
+        if self.is_cancelled() {
+            // Cancelled while the plugin was connecting: nobody awaits this
+            // session any more, so close it in the runner now.
+            drop(session);
+            return Err(cancelled());
+        }
+        Ok(session)
+    }
+}
+
 /// Map a plugin-side error to the session-error the terminal layer understands.
 fn map_plugin_error(err: PluginError) -> SessionError {
     match err {
@@ -337,37 +389,77 @@ impl ConnectionType for PluginConnectionType {
     }
 
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
+        self.connect_cancellable(settings, None).await
+    }
+
+    /// Connect off the async workers, abortable via `cancel` (#4323).
+    ///
+    /// Acquiring the runner (which may respawn it: up to the Hello deadline)
+    /// and waiting for the plugin's `create_backend` (up to the 30 s create
+    /// deadline) are blocking, so they run on the blocking pool and the
+    /// worker only awaits the join. Cancelling the token returns at once.
+    ///
+    /// The runner serves plugin calls on one thread, so a `create_backend`
+    /// already in progress cannot be interrupted. The abandoned wait stays on
+    /// the blocking pool and keeps the call counted as in flight, so the
+    /// create deadline and the hang verdict (ADR-19, #4184) are unchanged and
+    /// a user's Cancel is never mistaken for a hang. When the plugin answers,
+    /// the session it created is closed in the runner, so nothing is leaked.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
         if self.backend.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
+        }
+        if cancel.as_ref().is_some_and(CancellationToken::is_cancelled) {
+            return Err(cancelled());
         }
 
         let config_json = serde_json::to_string(&settings)
             .map_err(|e| SessionError::InvalidConfig(format!("settings not serializable: {e}")))?;
 
-        // The runner holds the session's services and bridge; output arrives
-        // on the runner's reader thread, straight into `output_tx`.
-        let plugin = self.handle.acquire().map_err(map_plugin_error)?;
-        // The session's bridge calls are answered by the host under this
-        // session's permissions and connection policy (#4183).
-        let grant = BridgeGrant::new(self.permissions.clone(), self.connection_policy);
-        let backend = SandboxedSession::create(
-            plugin,
-            &config_json,
-            &self.plugin_settings_json,
-            &self.handle.data_dir(),
-            Arc::clone(&self.output_tx),
-            grant,
-        )
-        .map_err(map_plugin_error)?;
+        let request = CreateRequest {
+            handle: Arc::clone(&self.handle),
+            config_json,
+            settings_json: self.plugin_settings_json.clone(),
+            output_tx: Arc::clone(&self.output_tx),
+            // The session's bridge calls are answered by the host under this
+            // session's permissions and connection policy (#4183).
+            grant: BridgeGrant::new(self.permissions.clone(), self.connection_policy),
+            cancel: cancel.clone(),
+        };
+        let mut create = tokio::task::spawn_blocking(move || request.run());
+
+        let joined = match cancel {
+            Some(token) => tokio::select! {
+                biased;
+                joined = &mut create => joined,
+                () = token.cancelled() => {
+                    // The blocking side sees the same token and closes the
+                    // session once the runner answers; it is not awaited.
+                    return Err(cancelled());
+                }
+            },
+            None => create.await,
+        };
+        let backend = joined.map_err(|e| {
+            SessionError::SpawnFailed(format!("the plugin connect task failed: {e}"))
+        })??;
         self.backend = Some(backend);
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(mut backend) = self.backend.take() {
-            // Best-effort graceful close; the session is retired in the runner
-            // when it drops at the end of this scope regardless.
-            let _ = backend.close();
+            // Best-effort graceful close (bounded by the 2 s request deadline),
+            // off the async workers (#4323). The session is retired in the
+            // runner when it drops at the end of the closure regardless.
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = backend.close();
+            })
+            .await;
         }
         // Stop delivering output to the old subscriber.
         *self.output_tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
