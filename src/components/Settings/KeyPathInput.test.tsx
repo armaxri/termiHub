@@ -401,4 +401,74 @@ describe("KeyPathInput combobox interactions", () => {
     expect(input().getAttribute("aria-describedby")).toBe("err-1");
     expect(input().getAttribute("aria-invalid")).toBe("true");
   });
+
+  describe("WAI-ARIA combobox pattern (#4330 / A11Y2-004)", () => {
+    function listbox(): HTMLElement {
+      return query("field-keyPath-key-path-dropdown") as HTMLElement;
+    }
+
+    it("is collapsed with no active descendant until the list opens", () => {
+      render("");
+      expect(input().getAttribute("aria-expanded")).toBe("false");
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+      // aria-controls names the popup even while it is collapsed (ARIA 1.2).
+      expect(input().getAttribute("aria-controls")).toBeTruthy();
+    });
+
+    it("points aria-controls at the rendered listbox and reports it expanded", () => {
+      render("");
+      focusInput();
+      expect(input().getAttribute("aria-expanded")).toBe("true");
+      expect(listbox().id).toBeTruthy();
+      expect(input().getAttribute("aria-controls")).toBe(listbox().id);
+    });
+
+    it("moves aria-activedescendant to the highlighted option on ArrowDown/ArrowUp", () => {
+      render("");
+      focusInput();
+      // Nothing is highlighted until the user arrows into the list.
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+
+      keydown("ArrowDown");
+      const first = query("field-keyPath-key-path-option-0") as HTMLElement;
+      expect(first.id).toBeTruthy();
+      expect(first.getAttribute("aria-selected")).toBe("true");
+      expect(input().getAttribute("aria-activedescendant")).toBe(first.id);
+
+      keydown("ArrowDown");
+      const second = query("field-keyPath-key-path-option-1") as HTMLElement;
+      expect(second.id).toBeTruthy();
+      expect(second.id).not.toBe(first.id);
+      expect(input().getAttribute("aria-activedescendant")).toBe(second.id);
+
+      keydown("ArrowUp");
+      expect(input().getAttribute("aria-activedescendant")).toBe(first.id);
+    });
+
+    it("drops aria-activedescendant when Escape closes the list", () => {
+      render("");
+      focusInput();
+      keydown("ArrowDown");
+      keydown("Escape");
+      expect(input().getAttribute("aria-expanded")).toBe("false");
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+    });
+
+    it("announces the validation message and associates it with the input", async () => {
+      validateSshKey.mockResolvedValue({ status: "error", message: "Key file not found." });
+      vi.useFakeTimers();
+      render("/home/u/.ssh/missing", { "aria-describedby": "err-1" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      const hint = query("field-keyPath-key-path-validation") as HTMLElement;
+      expect(hint).not.toBeNull();
+      const region = hint.closest('[role="status"]') as HTMLElement | null;
+      expect(region).not.toBeNull();
+      const describedBy = (input().getAttribute("aria-describedby") ?? "").split(" ");
+      // The caller's ids are kept and the validation region is appended.
+      expect(describedBy).toContain("err-1");
+      expect(describedBy).toContain(region!.id);
+    });
+  });
 });
