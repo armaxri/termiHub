@@ -320,8 +320,9 @@ REM The unit tests above never touch the bridge integration lane, the Docker
 REM fixture suites or the agent live tests (TOOL-011, #3750), and running them
 REM locally is not reliable (Docker fixtures, a real display, a quiet machine).
 REM So, like the Release workflow, require the newest 'Release Candidate: Full
-REM Integration' run and the post-merge Code Quality and Dev Build push runs to
-REM be green on this exact commit, via the same release-integration-gate.mjs.
+REM Integration' run and the post-merge Code Quality, Dev Build and Security
+REM Audit push runs to be green on this exact commit, via the same
+REM release-integration-gate.mjs.
 REM Needs the gh CLI, logged in. Mirrors release-check.sh.
 for /f %%s in ('git rev-parse HEAD') do set "HEAD_SHA=%%s"
 for /f %%b in ('git rev-parse --abbrev-ref HEAD') do set "GATE_REF=%%b"

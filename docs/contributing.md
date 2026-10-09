@@ -1305,7 +1305,7 @@ a warning:
 | Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
 | Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
 | Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
-| Integration / system tests    | The [release integration gate](#release-integration-gate), run locally: green Release Candidate, Code Quality and Dev Build runs on `HEAD`. Needs `gh`, logged in, and `HEAD` pushed. On failure it prints the exact `gh workflow run release-candidate.yml --ref …` command                                                   |
+| Integration / system tests    | The [release integration gate](#release-integration-gate), run locally: green Release Candidate, Code Quality, Dev Build and Security Audit runs on `HEAD`. Needs `gh`, logged in, and `HEAD` pushed. On failure it prints the exact `gh workflow run release-candidate.yml --ref …` command                                   |
 | TODO/FIXME/HACK markers       | No comment marker in shipped source (`src`, `src-tauri/src`, `core/src`, `agent/src`, `plugin-api/src`, `rdp-sidecar/src`) unless it is listed, with a reason, in [`scripts/release-marker-allowlist.json`](../scripts/release-marker-allowlist.json). An allowlist entry that no longer matches any marker also fails         |
 | Bundle build + smoke test     | `scripts/build.sh` (`build.cmd`) builds the real installer, which must exist, and `scripts/smoke-test.sh` (`smoke-test.cmd`) launches the built app from it. Needs a desktop session (headless Linux uses `xvfb-run` if installed), and no other termiHub instance may be running, because the smoke test refuses to share one |
 
@@ -1455,19 +1455,28 @@ Integration Lanes**, runs
 and refuses to publish unless the **newest** run of each of these is green on the tag's
 exact commit:
 
-| Required run                                                                               | Event               | What it covers                                                                                                                                                        |
-| ------------------------------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)          | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
-| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit) | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
-| [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)       | `push`              | the full app build on all five platforms plus the agent binaries (CI-015)                                                                                             |
+| Required run                                                                                   | Event               | What it covers                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Release Candidate: Full Integration](../.github/workflows/release-candidate.yml)              | `workflow_dispatch` | `system-integration.yml` (bridge integration lane on Linux/macOS/Windows, display-critical grades, agent Docker suites) + `integration-fixtures.yml` (no path filter) |
+| [Code Quality](../.github/workflows/code-quality.yml) (post-merge push run on that commit)     | `push`              | the full three-OS test matrix and **Agent Live Tests (Windows, serial)**                                                                                              |
+| [Dev Build](../.github/workflows/dev-build.yml) (post-merge push run on that commit)           | `push`              | the full app build on all five platforms plus the agent binaries (CI-015)                                                                                             |
+| [Security Audit](../.github/workflows/security-audit.yml) (post-merge push run on that commit) | `push`              | cargo audit/deny, the pnpm production and full-tree audits, the pnpm-overrides check and the third-party notices gate (#4282)                                         |
 
 The newest run decides, so a later red re-run outranks an earlier green one. A run that is
 still in progress fails the gate too.
 
 Dev Build is `cancel-in-progress`, so when a newer push lands on the branch before it
-finishes, the release commit's run concludes `cancelled` and blocks the gate. Re-run it
-(`gh run rerun <dev-build run id>`) and wait for green. A _failed_ Dev Build is a broken full
-build on the release commit: fix it and re-tag.
+finishes, the release commit's run concludes `cancelled` and blocks the gate. Code Quality
+and Security Audit cancel superseded runs on `develop` too (never on `main`). Re-run a
+cancelled run (`gh run rerun <run id>`) and wait for green. A _failed_ Dev Build is a broken
+full build on the release commit: fix it and re-tag.
+
+**Rust supply chain at tag time (#4282).** Next to the integration gate, the Release
+workflow's **Verify Rust Supply Chain** job re-runs `cargo audit` and
+`cargo deny check advisories bans licenses sources` (workspace and RDP sidecar, pinned tool
+versions) on the tagged commit. Advisories are time-based, so an advisory published after the
+Security Audit push run still blocks the release. Every build job needs it, and every release
+cargo build passes `--locked`. See [Supply chain](supply-chain.md#audit-gates).
 
 **Before tagging** (the release commit is already on `main`, so its Code Quality push run
 exists), dispatch the candidate run on it and wait for it to go green:

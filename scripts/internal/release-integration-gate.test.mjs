@@ -31,6 +31,7 @@ const GREEN = {
   "release-candidate.yml": [run()],
   "code-quality.yml": [run({ id: 2, event: "push" })],
   "dev-build.yml": [run({ id: 3, event: "push" })],
+  "security-audit.yml": [run({ id: 4, event: "push" })],
 };
 
 describe("classifyRuns", () => {
@@ -79,11 +80,12 @@ describe("classifyRuns", () => {
 });
 
 describe("evaluateGate", () => {
-  it("requires the release candidate and the Code Quality and Dev Build push runs", () => {
+  it("requires the release candidate and the Code Quality, Dev Build and Security Audit push runs", () => {
     expect(REQUIRED_WORKFLOWS.map((w) => [w.file, w.event])).toEqual([
       ["release-candidate.yml", "workflow_dispatch"],
       ["code-quality.yml", "push"],
       ["dev-build.yml", "push"],
+      ["security-audit.yml", "push"],
     ]);
   });
 
@@ -97,7 +99,7 @@ describe("evaluateGate", () => {
       runsByWorkflow: { ...GREEN, "release-candidate.yml": [] },
     });
     expect(verdict.ok).toBe(false);
-    expect(verdict.results.map((r) => r.state)).toEqual(["missing", "ok", "ok"]);
+    expect(verdict.results.map((r) => r.state)).toEqual(["missing", "ok", "ok", "ok"]);
   });
 
   it("blocks the release when the full Dev Build on the sha failed or was cancelled", () => {
@@ -115,6 +117,52 @@ describe("evaluateGate", () => {
     const verdict = evaluateGate({ sha: SHA, runsByWorkflow: { ...GREEN, "dev-build.yml": [] } });
     expect(verdict.ok).toBe(false);
     expect(verdict.results[2].state).toBe("missing");
+  });
+
+  it("blocks the release when the Security Audit push run on the sha failed or was cancelled", () => {
+    for (const conclusion of ["failure", "cancelled"]) {
+      const verdict = evaluateGate({
+        sha: SHA,
+        runsByWorkflow: { ...GREEN, "security-audit.yml": [run({ event: "push", conclusion })] },
+      });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.results[3].state).toBe("failed");
+    }
+  });
+
+  it("does not accept a missing Security Audit push run", () => {
+    const verdict = evaluateGate({
+      sha: SHA,
+      runsByWorkflow: { ...GREEN, "security-audit.yml": [] },
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.results[3].state).toBe("missing");
+  });
+
+  it("does not accept a Security Audit pull_request or schedule run as the post-merge run", () => {
+    for (const event of ["pull_request", "schedule"]) {
+      const verdict = evaluateGate({
+        sha: SHA,
+        runsByWorkflow: { ...GREEN, "security-audit.yml": [run({ event })] },
+      });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.results[3].state).toBe("missing");
+    }
+  });
+
+  it("accepts a re-run that went green after a cancelled Security Audit push run", () => {
+    const cancelled = run({
+      id: 4,
+      event: "push",
+      conclusion: "cancelled",
+      created_at: "2026-09-27T09:00:00Z",
+    });
+    const rerun = run({ id: 5, event: "push", created_at: "2026-09-27T11:00:00Z" });
+    const verdict = evaluateGate({
+      sha: SHA,
+      runsByWorkflow: { ...GREEN, "security-audit.yml": [cancelled, rerun] },
+    });
+    expect(verdict.ok).toBe(true);
   });
 
   it("does not accept a Code Quality pull_request run as the post-merge run", () => {
@@ -142,12 +190,15 @@ describe("formatReport", () => {
         "release-candidate.yml": [run({ conclusion: "failure" })],
         "code-quality.yml": [],
         "dev-build.yml": [run({ event: "push", conclusion: "failure" })],
+        "security-audit.yml": [],
       },
     });
     const text = formatReport(verdict, ctx).join("\n");
     expect(text).toMatch(/::error::Release Candidate.*concluded failure/);
     expect(text).toMatch(/::error::Code Quality.*no push run on this commit/);
     expect(text).toMatch(/::error::Dev Build.*concluded failure/);
+    expect(text).toMatch(/::error::Security Audit.*no push run on this commit/);
+    expect(text).toContain("gh run rerun <run id> --repo o/r");
     expect(text).toContain("gh workflow run release-candidate.yml --repo o/r --ref v1.2.3");
     expect(text).toContain("gh run rerun 99 --repo o/r --failed");
   });

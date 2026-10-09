@@ -13,7 +13,8 @@
 // system-integration lane is scheduled from the default branch and checks out the
 // branch it grades, so its run's head_sha is NOT the commit it tested. Only the
 // Release Candidate workflow (dispatched on the release ref, grading github.sha)
-// and the post-merge Code Quality / Dev Build push runs are keyed to the exact commit.
+// and the post-merge Code Quality / Dev Build / Security Audit push runs are keyed to
+// the exact commit.
 //
 // scripts/release-check.sh / .cmd run the same gate from a workstation before the
 // tag is pushed (RELEASE_GATE_LOCAL=1, token from `gh auth token`, #3750), so the
@@ -41,6 +42,15 @@ import { isMainModule } from "./is-main-module.mjs";
  *   full build is red could still be tagged. It is cancel-in-progress, so a run
  *   superseded by a newer push concludes `cancelled` and fails the gate — re-run
  *   it (see docs/contributing.md).
+ * - security-audit.yml's push run is the post-merge supply-chain lane (#4282):
+ *   cargo audit + cargo deny for the workspace, the pnpm production and
+ *   full-tree audits, the pnpm-overrides check and the third-party notices
+ *   gate. Per-PR it runs only on manifest changes, so without this a commit
+ *   whose post-merge audit is red could still be tagged. release.yml's
+ *   verify-supply-chain job re-runs the Rust checks at tag time (advisories
+ *   are time-based); this entry adds the npm-side checks release.yml does not
+ *   repeat. Like Code Quality it is cancel-in-progress on develop only (never
+ *   on main, where releases are cut), so a superseded develop run is re-run.
  */
 export const REQUIRED_WORKFLOWS = [
   {
@@ -56,6 +66,11 @@ export const REQUIRED_WORKFLOWS = [
   {
     file: "dev-build.yml",
     name: "Dev Build (post-merge full build)",
+    event: "push",
+  },
+  {
+    file: "security-audit.yml",
+    name: "Security Audit (post-merge push run)",
     event: "push",
   },
 ];
@@ -145,10 +160,10 @@ export function formatReport(verdict, { sha, repo, refName, runUrl, runId, local
     "To fix:",
     `  1. Run the full integration lanes on the release ref:`,
     `       gh workflow run release-candidate.yml --repo ${repo} --ref ${ref}`,
-    "     (a missing Code Quality or Dev Build push run means the commit was never",
-    "     pushed to main/develop — tag a commit that was, so the post-merge lanes grade it;",
-    "     a Dev Build push run cancelled by a newer push is re-run with",
-    `       gh run rerun <dev-build run id> --repo ${repo}`,
+    "     (a missing Code Quality, Dev Build or Security Audit push run means the commit",
+    "     was never pushed to main/develop — tag a commit that was, so the post-merge lanes",
+    "     grade it; a push run cancelled by a newer push is re-run with",
+    `       gh run rerun <run id> --repo ${repo}`,
     "     a failed one is a broken full build: fix it and re-tag)",
     "  2. Wait for it to finish green; fix and re-tag on a red lane (do not bypass).",
     local
