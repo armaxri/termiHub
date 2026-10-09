@@ -692,7 +692,7 @@ def agent_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(fx, "container_runtime", lambda: "docker")
     monkeypatch.setattr(fx, "_docker_os_type", lambda _runtime: "linux")
     monkeypatch.setattr(fx, "_container_musl_target", lambda: "x86_64-unknown-linux-musl")
-    built = tmp_path / "target" / "x86_64-unknown-linux-musl" / "release" / "termihub-agent"
+    built = fx.system_test_agent_binary("x86_64-unknown-linux-musl")
     built.parent.mkdir(parents=True)
     calls: list[list[str]] = []
 
@@ -703,6 +703,17 @@ def agent_tree(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", build)
     return SimpleNamespace(built=built, calls=calls, context=context)
+
+
+def test_test_hooks_agent_never_uses_the_release_agent_path(agent_tree):
+    """#4339: the test-key agent lives in its own target dir, never in
+    ``target/<triple>/release/`` where the real, uploadable agents are built."""
+    target_root = agent_tree.built.parents[3]
+    assert target_root.name == "target"
+    assert agent_tree.built.parents[2].name == "system-test-agent"
+    release = target_root / "x86_64-unknown-linux-musl" / "release"
+    fx.stage_remote_agent_binary()
+    assert not release.exists()
 
 
 def test_embeds_test_signing_key_detects_a_test_hooks_build(tmp_path):

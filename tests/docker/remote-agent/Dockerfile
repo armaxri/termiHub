@@ -11,8 +11,8 @@
 # `.gitignore`).
 #
 # Usage (normally driven by the harness, not by hand):
-#   ./scripts/build-agents.sh --targets x86_64-unknown-linux-musl
-#   cp target/x86_64-unknown-linux-musl/release/termihub-agent \
+#   scripts/internal/build-system-test-agent.sh --target x86_64-unknown-linux-musl
+#   cp target/system-test-agent/x86_64-unknown-linux-musl/release/termihub-agent \
 #      tests/docker/remote-agent/termihub-agent
 #   docker compose -f tests/docker/docker-compose.yml --profile agent build remote-agent
 #   docker compose -f tests/docker/docker-compose.yml --profile agent up -d

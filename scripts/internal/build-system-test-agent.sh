@@ -17,11 +17,15 @@
 #       inverted), so a build that silently lost the feature fails here.
 #   Linux musl target for the host architecture: the binary runs inside a Linux
 #       container of the same arch (no glibc coupling to the image).
+#   Its own cargo target dir, target/system-test-agent (#4339): the binary
+#       trusts the TEST-ONLY key, so it must never land in target/<triple>/release/,
+#       where scripts/build.sh and scripts/build-agents.sh leave the real agents
+#       that developers upload. Sharing the path also overwrote those agents.
 #
 # How it builds, in order:
 #   1. The local cross images (localhost/termihub-cross:<target>, made by
-#      scripts/setup-agent-cross.sh) exist -> delegate to scripts/build-agents.sh,
-#      the normal local-dev path.
+#      scripts/setup-agent-cross.sh) exist -> build with agent/Cross.toml, as
+#      scripts/build-agents.sh does on the normal local-dev path.
 #   2. Otherwise `cross build` with cross-rs' stock images (pulled from GHCR),
 #      exactly like agent.yml / release.yml build the shipped Linux agents. The
 #      custom images only add an lld linker for Windows/Podman hosts.
@@ -95,7 +99,9 @@ case "$TARGET" in
 esac
 
 cd "$REPO_ROOT"
-BINARY="target/$TARGET/release/termihub-agent"
+# Keep in sync with SYSTEM_TEST_AGENT_TARGET_DIR in tests/system/termihub_harness/fixtures.py.
+TARGET_DIR="target/system-test-agent"
+BINARY="$TARGET_DIR/$TARGET/release/termihub-agent"
 
 container_cmd() {
     if [ -n "${CROSS_CONTAINER_ENGINE:-}" ]; then
@@ -143,14 +149,16 @@ if ! command -v cross >/dev/null 2>&1; then
 fi
 
 if has_local_cross_image; then
-    echo "Building $TARGET with the local cross image (scripts/build-agents.sh)"
-    bash scripts/build-agents.sh --targets "$TARGET" --features test-hooks
+    echo "Building $TARGET with the local cross image (agent/Cross.toml) into $TARGET_DIR"
+    CARGO_TARGET_DIR="$TARGET_DIR" CROSS_CONFIG=agent/Cross.toml \
+        cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
 else
-    echo "Building $TARGET with cross-rs' stock image (no localhost/termihub-cross:$TARGET)"
+    echo "Building $TARGET with cross-rs' stock image (no localhost/termihub-cross:$TARGET)" \
+        "into $TARGET_DIR"
     # No CROSS_CONFIG: the repo-root workspace has no Cross.toml, so cross uses
     # its stock GHCR image for the target, as agent.yml does.
-    env -u CROSS_CONFIG cross build --release --target "$TARGET" -p termihub-agent \
-        --features test-hooks
+    env -u CROSS_CONFIG CARGO_TARGET_DIR="$TARGET_DIR" \
+        cross build --release --target "$TARGET" -p termihub-agent --features test-hooks
 fi
 
 if [ ! -f "$BINARY" ]; then
