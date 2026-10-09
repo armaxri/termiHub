@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{TunnelConfig, TunnelStore};
-use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
+use super::config::TunnelStore;
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
-use crate::utils::migrate::{salvage_list_store, Salvage};
+use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 const FILE_NAME: &str = "tunnels.json";
 
@@ -31,68 +31,13 @@ impl TunnelStorage {
         })
     }
 
-    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    /// Load through the shared schema-version gate
+    /// ([`load_store_with_recovery`], PER2-002): a newer file is left intact and
+    /// reported, an older one migrates, and a corrupt one is backed up to a
+    /// fresh `.bak` and salvaged per entry — rewritten only once the backup is
+    /// safely on disk.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<TunnelStore>> {
-        if !self.file_path.exists() {
-            return Ok(RecoveryResult {
-                data: TunnelStore::default(),
-                warnings: Vec::new(),
-            });
-        }
-
-        let data = fs::read_to_string(&self.file_path).context("Failed to read tunnels file")?;
-
-        // Fast path: normal parse succeeds
-        if let Ok(store) = serde_json::from_str::<TunnelStore>(&data) {
-            return Ok(RecoveryResult {
-                data: store,
-                warnings: Vec::new(),
-            });
-        }
-
-        // Parse failed — back up the corrupt file first
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Tunnels file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        // Granular recovery (PER-004): drop only the individually-corrupt tunnel
-        // entries and keep the rest; reset the whole store only when even the
-        // container is unparseable.
-        if let Salvage::Recovered {
-            data: store,
-            warnings,
-        } = salvage_list_store::<TunnelStore, TunnelConfig>(&data, FILE_NAME, "tunnels")
-        {
-            self.save(&store)
-                .context("Failed to save salvaged tunnels")?;
-            return Ok(RecoveryResult {
-                data: store,
-                warnings,
-            });
-        }
-
-        let parse_error = serde_json::from_str::<TunnelStore>(&data)
-            .err()
-            .map(|e| e.to_string());
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Tunnels file was corrupt and has been reset.".to_string(),
-            details: parse_error,
-        };
-        tracing::error!("Tunnels file corrupt, resetting to defaults");
-
-        let defaults = TunnelStore::default();
-        self.save(&defaults)
-            .context("Failed to save default tunnels after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        load_store_with_recovery::<TunnelStore>(&self.file_path, FILE_NAME)
     }
 
     /// Save the tunnel store to disk (pretty-printed JSON).
@@ -100,7 +45,15 @@ impl TunnelStorage {
     /// The write is atomic (temp file in the same directory + rename), so an
     /// interrupted save can never truncate the existing file and lose the saved
     /// tunnels (same data-loss class as PER-002/PER-003).
+    ///
+    /// Before writing, [`guard_not_newer`] refuses to overwrite a file written
+    /// by a newer schema version (PER2-002).
     pub fn save(&self, store: &TunnelStore) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            <TunnelStore as VersionedStore>::STORE_NAME,
+            <TunnelStore as VersionedStore>::CURRENT_VERSION,
+        )?;
         let data = serde_json::to_string_pretty(store).context("Failed to serialize tunnels")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write tunnels file")?;
@@ -170,6 +123,7 @@ mod tests {
 
         let good = TunnelStore {
             version: "1".to_string(),
+            extra: Default::default(),
             tunnels: vec![TunnelConfig {
                 id: "tun-1".to_string(),
                 name: "db".to_string(),

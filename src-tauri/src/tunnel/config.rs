@@ -228,6 +228,10 @@ impl TunnelState {
 pub struct TunnelStore {
     pub version: String,
     pub tunnels: Vec<TunnelConfig>,
+    /// Unknown top-level keys, preserved verbatim for forward compatibility
+    /// (PER2-002).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TunnelStore {
@@ -251,7 +255,19 @@ impl Default for TunnelStore {
         Self {
             version: Self::CURRENT_VERSION.to_string(),
             tunnels: Vec::new(),
+            extra: serde_json::Map::new(),
         }
+    }
+}
+
+/// `tunnels.json` joins the shared schema-version gate (PER2-002): a newer
+/// file is refused instead of reset, and a corrupt one is salvaged per tunnel.
+impl crate::utils::migrate::VersionedStore for TunnelStore {
+    const STORE_NAME: &'static str = "tunnels.json";
+    const CURRENT_VERSION: u32 = TunnelStore::CURRENT_VERSION;
+
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, TunnelConfig>(value, file_name, "tunnels")
     }
 }
 
@@ -349,6 +365,7 @@ mod tests {
     fn tunnel_store_serde_round_trip() {
         let store = TunnelStore {
             version: "1".to_string(),
+            extra: Default::default(),
             tunnels: vec![TunnelConfig {
                 id: "tun-1".to_string(),
                 name: "Test".to_string(),
