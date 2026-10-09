@@ -303,6 +303,24 @@ enum PendingBackup {
     Unreadable,
 }
 
+/// Which cross-process lock [`ConnectionStore::lock_store_file`] takes.
+#[derive(Debug, Clone, Copy)]
+enum LockMode {
+    /// Readers that only refresh the in-memory snapshot.
+    Shared,
+    /// Every read-modify-write of the store file.
+    Exclusive,
+}
+
+/// Why [`ConnectionStore::refresh_from_disk`] re-reads the store file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshMode {
+    /// Serving a read: never back up or rewrite anything.
+    Read,
+    /// About to save: a corrupt file is backed up and salvaged first.
+    Mutation,
+}
+
 /// Result of [`ConnectionStore::load_from_disk`].
 #[derive(Debug, Default)]
 struct Loaded {
@@ -347,6 +365,9 @@ impl ConnectionStore {
     /// Create a new store, loading existing data from disk.
     /// Migrates from legacy `sessions.json` if `connections.json` doesn't exist.
     pub fn new(file_path: PathBuf) -> Self {
+        // Exclusive, not shared: a corrupt file is backed up and the salvage
+        // persisted below, both of which must not race a peer worker's save.
+        let _file_lock = Self::lock_store_file(&file_path, LockMode::Exclusive);
         let (loaded, newer_on_disk) = match Self::load_from_disk(&file_path) {
             Ok(loaded) => (loaded, None),
             Err(newer) => {
@@ -370,7 +391,8 @@ impl ConnectionStore {
         if persist_salvage {
             // The corrupt original is safely backed up: persist the salvaged
             // store so the file parses again and is not re-backed-up on every
-            // start. Nothing else holds the lock yet.
+            // start. Nothing else holds the in-memory lock yet, and the
+            // cross-process lock is still held from the load above.
             if let Ok(defs) = store.definitions.try_lock() {
                 store.save_to_disk(&defs);
             }
@@ -392,7 +414,8 @@ impl ConnectionStore {
 
     /// Get a connection by ID. Returns `None` if not found.
     pub async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
-        let defs = self.definitions.lock().await;
+        let mut defs = self.definitions.lock().await;
+        self.refresh_for_read(&mut defs);
         defs.connections.get(id).map(|c| c.snapshot())
     }
 
@@ -403,11 +426,11 @@ impl ConnectionStore {
     ) -> Result<ConnectionSnapshot, NewerVersionError> {
         conn.normalize_settings();
         let snapshot = conn.snapshot();
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        defs.connections.insert(conn.id.clone(), conn);
-        self.save_to_disk(&defs);
-        Ok(snapshot)
+        self.mutate(|defs| {
+            defs.connections.insert(conn.id.clone(), conn);
+            (snapshot, true)
+        })
+        .await
     }
 
     /// Update an existing connection's fields. Returns `None` if not found.
@@ -423,43 +446,43 @@ impl ConnectionStore {
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        let Some(conn) = defs.connections.get_mut(id) else {
-            return Ok(None);
-        };
+        self.mutate(|defs| {
+            let Some(conn) = defs.connections.get_mut(id) else {
+                return (None, false);
+            };
 
-        if let Some(name) = name {
-            conn.name = name;
-        }
-        if let Some(session_type) = session_type {
-            conn.session_type = session_type;
-        }
-        if let Some(config) = config {
-            conn.config = config;
-        }
-        if let Some(persistent) = persistent {
-            conn.persistent = persistent;
-        }
-        if let Some(folder_id) = folder_id {
-            conn.folder_id = folder_id;
-        }
-        if let Some(terminal_options) = terminal_options {
-            conn.terminal_options = terminal_options;
-        }
-        if let Some(icon) = icon {
-            conn.icon = icon;
-        }
-        conn.normalize_settings();
+            if let Some(name) = name {
+                conn.name = name;
+            }
+            if let Some(session_type) = session_type {
+                conn.session_type = session_type;
+            }
+            if let Some(config) = config {
+                conn.config = config;
+            }
+            if let Some(persistent) = persistent {
+                conn.persistent = persistent;
+            }
+            if let Some(folder_id) = folder_id {
+                conn.folder_id = folder_id;
+            }
+            if let Some(terminal_options) = terminal_options {
+                conn.terminal_options = terminal_options;
+            }
+            if let Some(icon) = icon {
+                conn.icon = icon;
+            }
+            conn.normalize_settings();
 
-        let snapshot = conn.snapshot();
-        self.save_to_disk(&defs);
-        Ok(Some(snapshot))
+            (Some(conn.snapshot()), true)
+        })
+        .await
     }
 
     /// List all connections and folders, including read-only external file connections.
     pub async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
-        let defs = self.definitions.lock().await;
+        let mut defs = self.definitions.lock().await;
+        self.refresh_for_read(&mut defs);
         let external = self.external_snapshots.lock().await;
         let mut conn_list: Vec<ConnectionSnapshot> =
             defs.connections.values().map(|c| c.snapshot()).collect();
@@ -507,23 +530,21 @@ impl ConnectionStore {
 
     /// Delete a connection by ID. Returns `true` if found and deleted.
     pub async fn delete(&self, id: &str) -> Result<bool, NewerVersionError> {
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        let removed = defs.connections.remove(id).is_some();
-        if removed {
-            self.save_to_disk(&defs);
-        }
-        Ok(removed)
+        self.mutate(|defs| {
+            let removed = defs.connections.remove(id).is_some();
+            (removed, removed)
+        })
+        .await
     }
 
     /// Create a new folder. Returns the snapshot.
     pub async fn create_folder(&self, folder: Folder) -> Result<FolderSnapshot, NewerVersionError> {
         let snapshot = folder.snapshot();
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        defs.folders.insert(folder.id.clone(), folder);
-        self.save_to_disk(&defs);
-        Ok(snapshot)
+        self.mutate(|defs| {
+            defs.folders.insert(folder.id.clone(), folder);
+            (snapshot, true)
+        })
+        .await
     }
 
     /// Update an existing folder's fields. Returns `None` if not found.
@@ -534,49 +555,48 @@ impl ConnectionStore {
         parent_id: Option<Option<String>>,
         is_expanded: Option<bool>,
     ) -> Result<Option<FolderSnapshot>, NewerVersionError> {
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        let Some(folder) = defs.folders.get_mut(id) else {
-            return Ok(None);
-        };
+        self.mutate(|defs| {
+            let Some(folder) = defs.folders.get_mut(id) else {
+                return (None, false);
+            };
 
-        if let Some(name) = name {
-            folder.name = name;
-        }
-        if let Some(parent_id) = parent_id {
-            folder.parent_id = parent_id;
-        }
-        if let Some(is_expanded) = is_expanded {
-            folder.is_expanded = is_expanded;
-        }
+            if let Some(name) = name {
+                folder.name = name;
+            }
+            if let Some(parent_id) = parent_id {
+                folder.parent_id = parent_id;
+            }
+            if let Some(is_expanded) = is_expanded {
+                folder.is_expanded = is_expanded;
+            }
 
-        let snapshot = folder.snapshot();
-        self.save_to_disk(&defs);
-        Ok(Some(snapshot))
+            (Some(folder.snapshot()), true)
+        })
+        .await
     }
 
     /// Delete a folder by ID. Moves children (connections and subfolders) to root.
     /// Returns `true` if found and deleted.
     pub async fn delete_folder(&self, id: &str) -> Result<bool, NewerVersionError> {
-        let mut defs = self.definitions.lock().await;
-        self.ensure_writable()?;
-        let removed = defs.folders.remove(id).is_some();
-        if removed {
-            // Move connections in this folder to root
-            for conn in defs.connections.values_mut() {
-                if conn.folder_id.as_deref() == Some(id) {
-                    conn.folder_id = None;
+        self.mutate(|defs| {
+            let removed = defs.folders.remove(id).is_some();
+            if removed {
+                // Move connections in this folder to root
+                for conn in defs.connections.values_mut() {
+                    if conn.folder_id.as_deref() == Some(id) {
+                        conn.folder_id = None;
+                    }
+                }
+                // Move subfolders to root
+                for folder in defs.folders.values_mut() {
+                    if folder.parent_id.as_deref() == Some(id) {
+                        folder.parent_id = None;
+                    }
                 }
             }
-            // Move subfolders to root
-            for folder in defs.folders.values_mut() {
-                if folder.parent_id.as_deref() == Some(id) {
-                    folder.parent_id = None;
-                }
-            }
-            self.save_to_disk(&defs);
-        }
-        Ok(removed)
+            (removed, removed)
+        })
+        .await
     }
 
     /// Ensure a "Default Shell" connection exists if the store is empty.
@@ -585,37 +605,38 @@ impl ConnectionStore {
     /// On Windows it also repairs a previously auto-created "Default Shell"
     /// that still points at a Unix path such as `/bin/sh` (#3727).
     pub async fn ensure_default_shell(&self) {
-        let mut defs = self.definitions.lock().await;
-        if let Err(newer) = self.ensure_writable() {
+        let result = self
+            .mutate(|defs| {
+                if !defs.connections.is_empty() {
+                    let repaired =
+                        cfg!(windows) && repair_unix_default_shell(defs, &detect_default_shell());
+                    return ((), repaired);
+                }
+
+                let shell = detect_default_shell();
+                let default_conn = Connection {
+                    id: format!("conn-{}", uuid::Uuid::new_v4()),
+                    name: DEFAULT_SHELL_NAME.to_string(),
+                    session_type: "local".to_string(),
+                    config: serde_json::json!({ "shell": shell }),
+                    persistent: false,
+                    folder_id: None,
+                    terminal_options: None,
+                    icon: None,
+                    extra: serde_json::Map::new(),
+                };
+
+                info!("Creating default shell connection (shell: {})", shell);
+                defs.connections
+                    .insert(default_conn.id.clone(), default_conn);
+                ((), true)
+            })
+            .await;
+        if let Err(newer) = result {
             // The store looks empty only because a newer agent's file was not
             // loaded; creating a default here would overwrite it (#3920).
             warn!("Skipping default shell setup: {newer}");
-            return;
         }
-        if !defs.connections.is_empty() {
-            if cfg!(windows) && repair_unix_default_shell(&mut defs, &detect_default_shell()) {
-                self.save_to_disk(&defs);
-            }
-            return;
-        }
-
-        let shell = detect_default_shell();
-        let default_conn = Connection {
-            id: format!("conn-{}", uuid::Uuid::new_v4()),
-            name: DEFAULT_SHELL_NAME.to_string(),
-            session_type: "local".to_string(),
-            config: serde_json::json!({ "shell": shell }),
-            persistent: false,
-            folder_id: None,
-            terminal_options: None,
-            icon: None,
-            extra: serde_json::Map::new(),
-        };
-
-        info!("Creating default shell connection (shell: {})", shell);
-        defs.connections
-            .insert(default_conn.id.clone(), default_conn);
-        self.save_to_disk(&defs);
     }
 
     /// Get the default storage path: `~/.config/termihub-agent/connections.json`.
@@ -910,6 +931,124 @@ impl ConnectionStore {
             value
         };
         Ok(serde_json::from_value(value).map_err(|e| e.to_string()))
+    }
+
+    /// Take the cross-process lock on the store file's sidecar (PER2-001).
+    ///
+    /// Several agent processes (`--stdio` workers, `--listen` connections)
+    /// share one per-user `connections.json`; the lock serialises their
+    /// read-modify-write cycles. It is an OS file lock, so a crashed holder
+    /// never leaves it stale. If it cannot be taken (an unwritable config dir,
+    /// say) this degrades to the unlocked behaviour with a warning rather than
+    /// refusing to save.
+    fn lock_store_file(path: &Path, mode: LockMode) -> Option<crate::fs::FileLock> {
+        let acquired = match mode {
+            LockMode::Shared => crate::fs::FileLock::acquire_shared(path),
+            LockMode::Exclusive => crate::fs::FileLock::acquire(path),
+        };
+        match acquired {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                warn!(
+                    "Could not acquire cross-process lock for {}: {:#}; proceeding without \
+                     it (a concurrent agent process could lose a saved connection)",
+                    path.display(),
+                    e
+                );
+                None
+            }
+        }
+    }
+
+    /// Cross-process-safe read-modify-write of the store (PER2-001).
+    ///
+    /// Under the in-memory lock and an exclusive file lock: re-read the file
+    /// (so a peer process's saves since this store loaded are merged, not
+    /// clobbered by a stale whole-store save), apply the single `delta`, and
+    /// write the result atomically. `delta` returns its result and whether it
+    /// changed anything; an unchanged store is not rewritten.
+    ///
+    /// The file lock is held only for one small file read and write, so the
+    /// brief blocking wait for a peer is acceptable on the async worker.
+    async fn mutate<R>(
+        &self,
+        delta: impl FnOnce(&mut Definitions) -> (R, bool),
+    ) -> Result<R, NewerVersionError> {
+        let mut defs = self.definitions.lock().await;
+        // Every read of the store file happens under the file lock, so no
+        // reader holds it open while a peer renames over it (windows refuses
+        // to replace a file another process has open).
+        let _file_lock = Self::lock_store_file(&self.file_path, LockMode::Exclusive);
+        self.ensure_writable()?;
+        self.refresh_from_disk(&mut defs, RefreshMode::Mutation)?;
+        let (result, changed) = delta(&mut defs);
+        if changed {
+            self.save_to_disk(&defs);
+        }
+        Ok(result)
+    }
+
+    /// Bring the in-memory snapshot up to date with peer processes' saves
+    /// before serving a read, under a shared file lock.
+    ///
+    /// Best-effort: an unreadable, corrupt or newer file leaves the in-memory
+    /// snapshot as it is (the read path never backs up or rewrites anything).
+    fn refresh_for_read(&self, defs: &mut Definitions) {
+        if self.newer_on_disk.is_some() {
+            return;
+        }
+        let _file_lock = Self::lock_store_file(&self.file_path, LockMode::Shared);
+        if let Err(newer) = self.refresh_from_disk(defs, RefreshMode::Read) {
+            debug!("Serving cached connections: {newer}");
+        }
+    }
+
+    /// Replace `defs` with the store file's current contents. Call with the
+    /// cross-process lock held.
+    ///
+    /// A missing file keeps `defs` (data migrated from a legacy file, or not
+    /// yet saved, is not discarded). An unreadable file keeps `defs` too. A
+    /// corrupt file is, on the mutation path only, backed up and salvaged
+    /// exactly like at load (#3931). A newer agent's file is an error and
+    /// leaves `defs` untouched (#3920).
+    fn refresh_from_disk(
+        &self,
+        defs: &mut Definitions,
+        mode: RefreshMode,
+    ) -> Result<(), NewerVersionError> {
+        let bytes = match std::fs::read(&self.file_path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                warn!(
+                    "Could not re-read {}: {}; using the connections already loaded",
+                    self.file_path.display(),
+                    e
+                );
+                return Ok(());
+            }
+        };
+        let parsed = match std::str::from_utf8(&bytes) {
+            Ok(raw) => Self::parse_storage(raw)?,
+            Err(e) => Err(format!("not valid UTF-8: {e}")),
+        };
+        match parsed {
+            Ok(storage) => *defs = storage.into_definitions(),
+            Err(reason) => {
+                if mode == RefreshMode::Read {
+                    return Ok(());
+                }
+                let loaded = Self::recover_corrupt(&self.file_path, bytes, &reason);
+                *defs = loaded.definitions;
+                if loaded.pending_backup.is_some() {
+                    *self
+                        .pending_backup
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = loaded.pending_backup;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Refuse a mutation when the store file was written by a newer agent —
@@ -2671,5 +2810,186 @@ mod tests {
         let migrated = migrate_definitions(value.clone(), 0).unwrap();
         let parsed: StorageFormat = serde_json::from_value(migrated).unwrap();
         assert!(parsed.connections.is_empty());
+    }
+
+    // ── Cross-process lock (PER2-001, #4285) ────────────────────────
+
+    /// Two stores on one file, as two `--stdio`/`--listen` workers would hold
+    /// it: each loaded the file before the other saved. A save from the stale
+    /// store must merge the peer's connection in, never overwrite it.
+    #[tokio::test]
+    async fn stale_store_save_keeps_a_peer_workers_connection() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let worker_a = ConnectionStore::new(path.clone());
+        let worker_b = ConnectionStore::new(path.clone());
+
+        worker_a
+            .create(make_connection("conn-a", "A", false))
+            .await
+            .unwrap();
+        worker_b
+            .create(make_connection("conn-b", "B", false))
+            .await
+            .unwrap();
+
+        let reloaded = ConnectionStore::new(path);
+        assert!(reloaded.get("conn-a").await.is_some(), "A's save was lost");
+        assert!(reloaded.get("conn-b").await.is_some(), "B's save was lost");
+        // The stale store refreshed from disk while saving.
+        assert!(worker_b.get("conn-a").await.is_some());
+    }
+
+    /// A delete in one worker must not be undone by a stale save in another,
+    /// and an update to a connection a peer deleted reports "not found".
+    #[tokio::test]
+    async fn stale_store_does_not_resurrect_a_peer_delete() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let seed = ConnectionStore::new(path.clone());
+        seed.create(make_connection("conn-1", "One", false))
+            .await
+            .unwrap();
+        let worker_a = ConnectionStore::new(path.clone());
+        let worker_b = ConnectionStore::new(path.clone());
+
+        assert!(worker_a.delete("conn-1").await.unwrap());
+        worker_b
+            .create_folder(make_folder("folder-1", "F", None))
+            .await
+            .unwrap();
+        let updated = worker_b
+            .update(
+                "conn-1",
+                Some("Renamed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(updated.is_none(), "update must see the peer's delete");
+
+        let reloaded = ConnectionStore::new(path);
+        assert!(reloaded.get("conn-1").await.is_none(), "delete was undone");
+        assert_eq!(reloaded.list().await.1.len(), 1);
+    }
+
+    /// Several threads, each with its own store (so its own file handles and
+    /// OS-level lock), create connections concurrently. None may be lost.
+    #[test]
+    fn concurrent_stores_in_threads_lose_no_connections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let workers = 4;
+        let per_worker = 15;
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(workers));
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    let store = ConnectionStore::new(path);
+                    barrier.wait();
+                    rt.block_on(async {
+                        for i in 0..per_worker {
+                            let id = format!("conn-{w}-{i}");
+                            store
+                                .create(make_connection(&id, &id, false))
+                                .await
+                                .unwrap();
+                        }
+                    });
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            connections_on_disk(&path),
+            workers * per_worker,
+            "concurrent workers lost saved connections"
+        );
+    }
+
+    /// Number of connections persisted in the store file at `path`.
+    fn connections_on_disk(path: &Path) -> usize {
+        read_json(path)["connections"].as_array().unwrap().len()
+    }
+
+    /// Env vars that turn [`concurrent_writer_process_helper`] into a writer.
+    const WRITER_PATH_ENV: &str = "TERMIHUB_TEST_CONNSTORE_PATH";
+    const WRITER_PREFIX_ENV: &str = "TERMIHUB_TEST_CONNSTORE_PREFIX";
+    const WRITER_COUNT: usize = 15;
+
+    /// Child half of [`concurrent_processes_lose_no_connections`]: a no-op in a
+    /// normal test run, a connection writer when re-executed with the env set.
+    #[tokio::test]
+    async fn concurrent_writer_process_helper() {
+        let (Ok(path), Ok(prefix)) = (
+            std::env::var(WRITER_PATH_ENV),
+            std::env::var(WRITER_PREFIX_ENV),
+        ) else {
+            return;
+        };
+        let store = ConnectionStore::new(PathBuf::from(path));
+        for i in 0..WRITER_COUNT {
+            let id = format!("{prefix}-{i}");
+            store
+                .create(make_connection(&id, &id, false))
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Real multi-process regression test: several agent processes save to one
+    /// `connections.json` at once. Every connection each one saved must survive.
+    #[test]
+    fn concurrent_processes_lose_no_connections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let exe = std::env::current_exe().expect("current test exe");
+        let processes = 4;
+        let children: Vec<_> = (0..processes)
+            .map(|p| {
+                std::process::Command::new(&exe)
+                    .args([
+                        "--exact",
+                        "--test-threads=1",
+                        "-q",
+                        "session::definitions::tests::concurrent_writer_process_helper",
+                    ])
+                    .env(WRITER_PATH_ENV, &path)
+                    .env(WRITER_PREFIX_ENV, format!("proc{p}"))
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("spawn writer process")
+            })
+            .collect();
+        for child in children {
+            let out = child.wait_with_output().expect("wait for writer");
+            assert!(
+                out.status.success(),
+                "writer failed: {}\nstdout: {}\nstderr: {}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            );
+        }
+
+        assert_eq!(
+            connections_on_disk(&path),
+            processes * WRITER_COUNT,
+            "concurrent agent processes lost saved connections"
+        );
     }
 }
