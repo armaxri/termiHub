@@ -1271,8 +1271,12 @@ See [Remote Protocol](remote-protocol.md) for the full protocol specification an
 - **Output flow control** (PERF2-002): the terminal counts bytes handed to `xterm.write` until
   their write callback fires, calls `set_terminal_output_paused` above a 2 MiB high watermark and
   resumes below 512 KiB. While paused the output pump stops reading, so the bounded channel and
-  the OS PTY buffer backpressure the program; input is unaffected. Agent-proxied sessions are not
-  paused yet (their channel is fed by `try_send`, which would drop output)
+  the OS PTY buffer backpressure the program; input is unaffected. For an agent-proxied session
+  (#4416) the pause is forwarded to the agent as `connection.output_flow`, whose own session pump
+  (or session daemon) then stops reading, so the remote PTY backpressures the program. The agent
+  I/O task hands agent output to each session over an unbounded route, so it never blocks or
+  drops a chunk; the agent's pause bounds that backlog. An agent older than protocol 0.27.0 is
+  never paused, and its sessions fall back to the terminal's 32 MiB staged-output cap
 - **Task cancellation**: each terminal session owns its async tasks, cleaned up on close
 
 ### IPC Communication
