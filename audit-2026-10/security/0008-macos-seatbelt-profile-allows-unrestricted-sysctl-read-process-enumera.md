@@ -9,8 +9,8 @@ subsystem: "plugin-runner/src/sandbox/macos.rs"
 evidence:
   - plugin-runner/src/sandbox/macos.rs:53
   - plugin-runner/src/sandbox/macos.rs:54
-status: open
-resolution: ""
+status: fixed
+resolution: "#4342 — sysctl-read narrowed to traced names; process-info* denied explicitly (KERN_PROCARGS2 was readable)"
 audit: 2026-10
 commit: 663465d52
 relation: new

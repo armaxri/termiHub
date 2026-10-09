@@ -3550,9 +3550,24 @@ sandbox is a pre-v1.0 requirement and approved the concept
   monitor's SSRF check (`core::network::address_guard`, #4367) allows: link-local, unspecified,
   broadcast and cloud-metadata targets never, loopback and private ranges only with the manifest's
   `connectionPolicy.allowLocalNetwork` opt-in.
+- **Profile tuning (#4342, audit 2026-10).** The TLS trust store is readable, because a plugin does
+  TLS itself over the passed socket: on Linux the distribution CA bundles and hashed folders
+  (read-only landlock rules, never the `private` key folders); on macOS the per-user trust daemon
+  (`mach-lookup` of `com.apple.trustd.agent`, so `SecTrustEvaluateWithError` works) and
+  `/private/etc/ssl`. Linux answers inotify with `ENOSYS` and, where the user namespace is
+  available, also enters a mount namespace whose home folder is an empty read-only `tmpfs` with only
+  the install and data folders bound back, so `stat` probing of the user's files fails (landlock
+  does not mediate metadata; without the namespace that leak remains and is documented). macOS
+  narrows `sysctl-read` to named values found by tracing and denies `process-info*` explicitly
+  before allowing it for the runner: `(deny default)` alone let a plugin list processes and read
+  other processes' arguments and environment.
 - **Fail closed.** The runner reports the layers it actually enforced before `dlopen`. If a layer is
   missing (mostly a Linux kernel without landlock) the plugin loads only with the hash-bound
-  `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. A missing or
+  `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. Linux reduced
+  isolation additionally requires the namespace layer or Yama `ptrace_scope` ≥ 1 (#4342): with
+  neither, a same-user plugin could open `/proc/<pid>/mem` of the host for writing, so the setup
+  fails. Making the host non-dumpable was rejected: it protects only termiHub's own memory and
+  changes the whole application's behaviour. A missing or
   tampered bundled runner (checked against a digest compiled into the app) disables native plugins.
 - **Crash isolation.** A crash, `panic = "abort"`, hang (ping deadline) or resource-limit breach
   ends only that plugin's sessions; `RestartTracker` restarts it up to three times, then
@@ -3574,7 +3589,9 @@ sandbox is a pre-v1.0 requirement and approved the concept
 - Plugin authors see three behaviour changes, documented in
   [`plugin-authoring.md`](plugin-authoring.md#the-plugin-sandbox): direct `std::net` / `std::fs`
   outside the data folder fails with a permission error (use the bridge), no process spawning, and
-  `HOME` / `TMPDIR` point into the data folder. No third-party plugin had shipped, so there was no
+  `HOME` / `TMPDIR` point into the data folder. Since #4342 also: inotify is unavailable on Linux,
+  and TLS roots load through the platform verifier on macOS (anchor enumeration needs the keychain,
+  which stays closed) or the CA bundles on Linux. No third-party plugin had shipped, so there was no
   dual-mode period.
 - Each enabled plugin costs one process; terminal I/O crosses a socket (budget: at most +0.5 ms p99
   echo latency, an absolute throughput floor instead of a ratio, #4190).

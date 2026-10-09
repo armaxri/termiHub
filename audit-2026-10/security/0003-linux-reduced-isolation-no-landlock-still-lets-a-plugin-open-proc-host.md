@@ -14,8 +14,8 @@ evidence:
   - src/components/Settings/nativePluginSandbox.ts:77
   - src/components/Settings/nativePluginSandbox.ts:83
   - core/src/plugin/host.rs:935
-status: open
-resolution: ""
+status: fixed
+resolution: "#4342 — reduced isolation needs the userns (home masked, no ptrace over the host) or Yama ptrace_scope>=1, else refused; warning wording in #4605"
 audit: 2026-10
 commit: 663465d52
 relation: new

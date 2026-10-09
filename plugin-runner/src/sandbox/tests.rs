@@ -34,9 +34,24 @@ fn profile_snapshot_with_data_and_denied_home() {
   (subpath "/System/Volumes/Preboot/Cryptexes/OS"))
 (allow file-read* (literal "/dev/urandom") (literal "/dev/random"))
 (allow file-read* file-write-data (literal "/dev/null"))
-(allow sysctl-read)
+(allow file-read* (subpath "/private/etc/ssl"))
+(allow file-read-metadata (literal "/etc"))
+(allow sysctl-read
+  (sysctl-name
+    "hw.activecpu" "hw.byteorder" "hw.cachelinesize" "hw.cachelinesize_compat"
+    "hw.cpufamily" "hw.cpusubtype" "hw.cputype" "hw.l1dcachesize" "hw.l1icachesize"
+    "hw.l2cachesize" "hw.l3cachesize" "hw.logicalcpu" "hw.logicalcpu_max" "hw.machine"
+    "hw.memsize" "hw.ncpu" "hw.pagesize" "hw.pagesize_compat" "hw.physicalcpu"
+    "hw.physicalcpu_max" "hw.tbfrequency" "hw.tbfrequency_compat" "kern.argmax"
+    "kern.hostname" "kern.maxfilesperproc" "kern.osproductversion" "kern.osrelease"
+    "kern.ostype" "kern.osvariant_status" "kern.osversion" "kern.usrstack64"
+    "kern.version" "sysctl.proc_translated")
+  (sysctl-name-prefix "hw.optional.")
+  (sysctl-name-prefix "hw.perflevel"))
+(deny process-info*)
 (allow process-info* (target self))
 (allow signal (target self))
+(allow mach-lookup (global-name "com.apple.trustd.agent"))
 (deny network*)
 (deny process-exec* process-fork)
 (deny iokit-open)
@@ -136,9 +151,83 @@ fn profile_denies_network_processes_and_iokit() {
     ] {
         assert!(sbpl.contains(rule), "missing {rule}");
     }
-    assert!(!sbpl.contains("mach-lookup"), "no mach services are needed");
+    // The certificate trust daemon is the only Mach service (#4342).
+    assert_eq!(sbpl.matches("mach-lookup").count(), 1, "{sbpl}");
+    assert!(sbpl.contains(&format!(
+        "(allow mach-lookup (global-name \"{}\"))",
+        super::macos::TRUST_SERVICE
+    )));
+    for service in [
+        "com.apple.SecurityServer",
+        "com.apple.trustd\"",
+        "global-name-prefix",
+    ] {
+        assert!(!sbpl.contains(service), "{service} must not be reachable");
+    }
     assert!(!sbpl.contains("(allow network"));
     assert!(!sbpl.contains("(allow process-exec"));
+}
+
+/// SEC2-008 (#4342): `sysctl-read` is limited to named values — the process
+/// table (`kern.proc.*`), other processes' arguments and environment
+/// (`kern.procargs2`) and machine identifiers stay unreadable — and other
+/// processes' information is denied explicitly (`(deny default)` alone does
+/// not cover it), before the allowance for the runner itself.
+#[test]
+fn sysctl_read_is_narrowed_and_process_info_is_self_only() {
+    use super::macos::{SYSCTL_NAMES, SYSCTL_NAME_PREFIXES};
+    let sbpl = seatbelt_profile(&policy()).unwrap().sbpl;
+    assert!(
+        !sbpl.contains("(allow sysctl-read)"),
+        "unfiltered sysctl-read is back"
+    );
+    let rule_start = sbpl.find("(allow sysctl-read").unwrap();
+    let rule_end = rule_start + sbpl[rule_start..].find("))\n").unwrap() + 2;
+    let rule = &sbpl[rule_start..rule_end];
+    for name in SYSCTL_NAMES {
+        assert!(rule.contains(&format!("\"{name}\"")), "{name} missing");
+    }
+    for prefix in SYSCTL_NAME_PREFIXES {
+        assert!(rule.contains(&format!("(sysctl-name-prefix \"{prefix}\")")));
+    }
+    let quoted = rule.matches('"').count() / 2;
+    assert_eq!(
+        quoted,
+        SYSCTL_NAMES.len() + SYSCTL_NAME_PREFIXES.len(),
+        "the rule names exactly the listed values: {rule}"
+    );
+    for leak in [
+        "kern.proc",
+        "kern.procargs",
+        "kern.uuid",
+        "kern.boottime",
+        "hw.model",
+        "\"kern.\"",
+        "\"hw.\"",
+    ] {
+        assert!(!rule.contains(leak), "{leak} must stay unreadable");
+    }
+    let deny = sbpl.find("(deny process-info*)\n").expect("explicit deny");
+    let allow = sbpl.find("(allow process-info* (target self))").unwrap();
+    assert!(deny < allow, "the self allowance must come last");
+    assert_eq!(sbpl.matches("(allow process-info*").count(), 1);
+}
+
+/// PLG2-004 (#4342): the OpenSSL / LibreSSL CA bundle is readable, never
+/// writable, and nothing else under `/private/etc` is.
+#[test]
+fn the_ca_bundle_is_read_only() {
+    let sbpl = seatbelt_profile(&policy()).unwrap().sbpl;
+    assert!(sbpl.contains("(allow file-read* (subpath \"/private/etc/ssl\"))"));
+    let etc_rules: Vec<&str> = sbpl.lines().filter(|l| l.contains("/etc")).collect();
+    assert_eq!(
+        etc_rules,
+        [
+            "(allow file-read* (subpath \"/private/etc/ssl\"))",
+            // Resolving the `/etc` → `/private/etc` symlink itself.
+            "(allow file-read-metadata (literal \"/etc\"))",
+        ]
+    );
 }
 
 #[test]
