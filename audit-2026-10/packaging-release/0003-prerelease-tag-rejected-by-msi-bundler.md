@@ -14,8 +14,8 @@ evidence:
   - scripts/release-check.sh:274-276
   - src-tauri/tauri.conf.json:4
   - src-tauri/tauri.conf.json:66
-status: open
-resolution: ""
+status: fixed
+resolution: "#4283 — Windows leg maps beta.N/rc.N/final tags to a monotonic numeric bundle.windows.wix.version; verify-version rejects unmappable tags"
 audit: 2026-10
 commit: 663465d52
 relation: new
