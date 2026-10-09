@@ -1304,4 +1304,13 @@ mod tests {
             }
         }
     }
+
+    /// #4348: RDP moves files with drive redirection and clipboard copy/paste;
+    /// it has no `fileTransfer` opt-in, so its tabs hide the side-channel UI.
+    #[test]
+    fn rdp_schema_offers_no_side_channel_file_transfer() {
+        assert!(!crate::connection::schema_offers_file_side_channel(
+            &rdp_settings_schema()
+        ));
+    }
 }

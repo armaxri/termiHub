@@ -856,3 +856,43 @@ mod live {
         );
     }
 }
+
+/// #4348: an RDP session — even agent-hosted, where the agent route exists —
+/// reports `notOffered`, not `disabled` (which would point to a "File
+/// Transfer" setting RDP does not have).
+#[tokio::test]
+async fn a_type_without_the_feature_reports_not_offered() {
+    let settings = json!({ "host": "office-pc" });
+    let result = resolve_file_channel(
+        &FileChannelContext::for_type(false, &settings, agent_route("localhost")),
+        ssh_backend(true),
+        agents(FakeAgent::with_desktop(true)),
+    )
+    .await;
+    assert_eq!(
+        result,
+        RemoteDesktopFileChannel::Unavailable {
+            reason: FileChannelUnavailable::NotOffered
+        }
+    );
+    // A type that offers it still reads its opt-in (off → Disabled).
+    let result = resolve_file_channel(
+        &FileChannelContext::for_type(true, &settings, agent_route("localhost")),
+        ssh_backend(true),
+        agents(FakeAgent::with_desktop(true)),
+    )
+    .await;
+    assert_eq!(
+        result,
+        RemoteDesktopFileChannel::Unavailable {
+            reason: FileChannelUnavailable::Disabled
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(RemoteDesktopFileChannel::Unavailable {
+            reason: FileChannelUnavailable::NotOffered
+        })
+        .unwrap(),
+        json!({ "status": "unavailable", "reason": "notOffered" })
+    );
+}

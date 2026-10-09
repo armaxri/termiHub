@@ -31,6 +31,8 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
+use super::schema::SettingsSchema;
+
 /// The settings key of a direct graphical connection's linked SSH file route
 /// (#4194): the id of a saved SSH connection, or empty for none.
 pub const FILE_TRANSFER_VIA_KEY: &str = "fileTransferVia";
@@ -85,9 +87,26 @@ pub enum FileChannelUnavailable {
     /// The session is view-only: files are refused in both directions.
     ViewOnly,
     /// Neither an SSH tunnel nor an agent carries this connection and no saved
-    /// SSH connection is linked (direct VNC; a deleted link counts as none), or
-    /// the backend type has no side channel at all.
+    /// SSH connection is linked (direct VNC; a deleted link counts as none).
     NoRoute,
+    /// The connection type has no side-channel file transfer at all (#4348):
+    /// its settings schema offers no `fileTransfer` opt-in (RDP, which moves
+    /// files with drive redirection and clipboard copy/paste instead). The UI
+    /// hides the feature rather than pointing to a setting that does not exist.
+    NotOffered,
+}
+
+/// The settings key of the side-channel opt-in (#4191).
+pub const FILE_TRANSFER_KEY: &str = "fileTransfer";
+
+/// Whether a connection type offers side-channel file transfer: its settings
+/// schema has the `fileTransfer` opt-in (#4348). Only VNC does today.
+pub fn schema_offers_file_side_channel(schema: &SettingsSchema) -> bool {
+    schema
+        .groups
+        .iter()
+        .flat_map(|g| g.fields.iter())
+        .any(|f| f.key == FILE_TRANSFER_KEY)
 }
 
 /// The per-connection policy inputs of route resolution.
@@ -97,6 +116,10 @@ pub struct FileChannelPolicy {
     pub file_transfer: bool,
     /// The connection's `viewOnly` flag.
     pub view_only: bool,
+    /// The connection type has no side channel at all (#4348); see
+    /// [`FileChannelUnavailable::NotOffered`]. `false` by default, so a
+    /// policy read from settings alone describes a type that offers it.
+    pub not_offered: bool,
 }
 
 impl FileChannelPolicy {
@@ -111,16 +134,31 @@ impl FileChannelPolicy {
                 .unwrap_or(false)
         };
         Self {
-            file_transfer: flag("fileTransfer"),
+            file_transfer: flag(FILE_TRANSFER_KEY),
             view_only: flag("viewOnly"),
+            not_offered: false,
         }
     }
 
-    /// The refusal this policy imposes regardless of route, if any. An opted-out
-    /// connection reports [`FileChannelUnavailable::Disabled`] before a
-    /// view-only one reports [`FileChannelUnavailable::ViewOnly`].
+    /// The policy of a connection type without side-channel file transfer
+    /// (#4348): every resolution is refused with
+    /// [`FileChannelUnavailable::NotOffered`].
+    pub fn not_offered() -> Self {
+        Self {
+            not_offered: true,
+            ..Self::default()
+        }
+    }
+
+    /// The refusal this policy imposes regardless of route, if any. A type
+    /// without the feature reports [`FileChannelUnavailable::NotOffered`]
+    /// first; then an opted-out connection reports
+    /// [`FileChannelUnavailable::Disabled`] before a view-only one reports
+    /// [`FileChannelUnavailable::ViewOnly`].
     pub fn refusal(self) -> Option<FileChannelUnavailable> {
-        if !self.file_transfer {
+        if self.not_offered {
+            Some(FileChannelUnavailable::NotOffered)
+        } else if !self.file_transfer {
             Some(FileChannelUnavailable::Disabled)
         } else if self.view_only {
             Some(FileChannelUnavailable::ViewOnly)
