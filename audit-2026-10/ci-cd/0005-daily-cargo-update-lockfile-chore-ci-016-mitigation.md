@@ -10,8 +10,8 @@ evidence:
   - .github/workflows/cargo-update-lockfile.yml:39
   - .github/workflows/cargo-update-lockfile.yml:40
   - .github/workflows/cargo-update-lockfile.yml:210
-status: open
-resolution: ""
+status: partial
+resolution: "#4277 — a self-path develop push trigger registers and runs the chore, then the dispatcher runs it daily; first-PR and auto-merge check needs main (#4448)"
 audit: 2026-10
 commit: 663465d52
 relation: regression

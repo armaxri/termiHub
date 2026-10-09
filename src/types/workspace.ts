@@ -53,6 +53,12 @@ export type { WorkspaceSummary } from "./generated/WorkspaceSummary";
 export type { WorkspaceImportPreview } from "./generated/WorkspaceImportPreview";
 
 /**
+ * An imported tab carrying a command or an inline connection config that waits
+ * for confirmation on this machine (#4434).
+ */
+export type { UntrustedImportedTab } from "./generated/UntrustedImportedTab";
+
+/**
  * Outcome of exporting workspaces as portable JSON, plus non-fatal warnings
  * (e.g. a tab bound to a connection id several connection files hold).
  */

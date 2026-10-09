@@ -44,6 +44,23 @@ pub struct WorkspaceTabDef {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub initial_command: Option<String>,
+    /// An imported command that has not been confirmed on this machine yet
+    /// (#4434). It is shown on the tab and in the workspace editor but never
+    /// typed into the session automatically: the frontend promotes it to
+    /// [`Self::initial_command`] only once its exact text is on the
+    /// machine-local confirmation list (`AppSettings.workspaceImportAllowlist`).
+    /// Every import moves `initial_command` here, so an imported file can never
+    /// decide on its own what runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub pending_initial_command: Option<String>,
+    /// Set on import when the tab carries an [`Self::inline_config`] (#4434).
+    /// The tab does not connect until the user confirms that exact connection
+    /// config on this machine. Always re-set by an import, whatever the file
+    /// says, so it only ever makes a tab more restricted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub inline_config_unconfirmed: bool,
 }
 
 /// Recursive layout tree for a workspace.
@@ -302,6 +319,47 @@ pub struct WorkspaceExportEntry {
 pub struct WorkspaceImportPreview {
     pub workspace_count: usize,
     pub total_tab_count: usize,
+    /// Tabs that would import with a command or an inline connection config
+    /// the user has not confirmed on this machine (#4434).
+    pub untrusted_tabs: Vec<UntrustedImportedTab>,
+}
+
+/// One imported tab that carries something the import file decides on its own
+/// (#4434): a command typed into the session after it connects, or an inline
+/// connection config. Listed in the import preview and result so the import
+/// notice can show the user exactly what the file wants to run.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct UntrustedImportedTab {
+    /// Name of the workspace the tab belongs to.
+    pub workspace_name: String,
+    /// The tab's title override, when it has one.
+    #[cfg_attr(test, ts(optional))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_title: Option<String>,
+    /// The tab's imported `initialCommand`, verbatim.
+    #[cfg_attr(test, ts(optional))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The inline connection config's type (for example `local` or `ssh`).
+    #[cfg_attr(test, ts(optional))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_type: Option<String>,
+    /// Where the inline config connects: `user@host:port`, a shell, a WSL
+    /// distribution, a serial port or a container image.
+    #[cfg_attr(test, ts(optional))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_target: Option<String>,
+    /// A command embedded in the inline config itself (`config.initialCommand`),
+    /// which the backend also types into the session after it starts.
+    #[cfg_attr(test, ts(optional))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_command: Option<String>,
+    /// Whether opening the inline config starts a program on this machine (a
+    /// local shell, WSL, a container, or an unknown/plugin type).
+    pub spawns_local_process: bool,
 }
 
 /// Outcome of exporting workspaces as portable JSON (#3625).
@@ -337,6 +395,10 @@ pub struct WorkspaceImportResult {
     pub imported_count: usize,
     /// Human-readable, non-blocking warnings raised during the import.
     pub warnings: Vec<String>,
+    /// Tabs of the imported workspaces that carry a command or an inline
+    /// connection config, which now wait for confirmation on this machine
+    /// before they run or connect (#4434).
+    pub untrusted_tabs: Vec<UntrustedImportedTab>,
 }
 
 impl Default for WorkspaceStore {
@@ -364,6 +426,8 @@ mod tests {
                     agent_ref: None,
                     title: None,
                     initial_command: None,
+                    pending_initial_command: None,
+                    inline_config_unconfirmed: false,
                 }],
             },
             window_id: None,
@@ -392,6 +456,8 @@ mod tests {
                                     agent_ref: None,
                                     title: Some("Server".to_string()),
                                     initial_command: Some("cd /app && npm start".to_string()),
+                                    pending_initial_command: None,
+                                    inline_config_unconfirmed: false,
                                 }],
                             },
                             WorkspaceLayoutNode::Leaf {
@@ -402,6 +468,8 @@ mod tests {
                                         agent_ref: None,
                                         title: None,
                                         initial_command: None,
+                                        pending_initial_command: None,
+                                        inline_config_unconfirmed: false,
                                     },
                                     WorkspaceTabDef {
                                         connection_ref: None,
@@ -412,6 +480,8 @@ mod tests {
                                         agent_ref: None,
                                         title: Some("Local Shell".to_string()),
                                         initial_command: None,
+                                        pending_initial_command: None,
+                                        inline_config_unconfirmed: false,
                                     },
                                 ],
                             },
@@ -449,6 +519,8 @@ mod tests {
                 agent_ref: None,
                 title: None,
                 initial_command: None,
+                pending_initial_command: None,
+                inline_config_unconfirmed: false,
             }],
         };
         let json = serde_json::to_string(&leaf).unwrap();
@@ -473,6 +545,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
                 WorkspaceLayoutNode::Leaf {
@@ -482,6 +556,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
             ],
@@ -513,6 +589,8 @@ mod tests {
             agent_ref: None,
             title: Some("My Shell".to_string()),
             initial_command: Some("ls -la".to_string()),
+            pending_initial_command: None,
+            inline_config_unconfirmed: false,
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(!json.contains("connectionRef"));
@@ -531,6 +609,8 @@ mod tests {
             agent_ref: None,
             title: None,
             initial_command: None,
+            pending_initial_command: None,
+            inline_config_unconfirmed: false,
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(!json.contains("inlineConfig"));
@@ -550,6 +630,8 @@ mod tests {
             }),
             title: Some("My Remote Shell".to_string()),
             initial_command: None,
+            pending_initial_command: None,
+            inline_config_unconfirmed: false,
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(json.contains("agentRef"));
@@ -570,6 +652,8 @@ mod tests {
             agent_ref: None,
             title: None,
             initial_command: None,
+            pending_initial_command: None,
+            inline_config_unconfirmed: false,
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(!json.contains("agentRef"));
@@ -640,6 +724,8 @@ mod tests {
                                     agent_ref: None,
                                     title: None,
                                     initial_command: None,
+                                    pending_initial_command: None,
+                                    inline_config_unconfirmed: false,
                                 },
                                 WorkspaceTabDef {
                                     connection_ref: Some("b".to_string()),
@@ -647,6 +733,8 @@ mod tests {
                                     agent_ref: None,
                                     title: None,
                                     initial_command: None,
+                                    pending_initial_command: None,
+                                    inline_config_unconfirmed: false,
                                 },
                             ],
                         },
@@ -657,6 +745,8 @@ mod tests {
                                 agent_ref: None,
                                 title: None,
                                 initial_command: None,
+                                pending_initial_command: None,
+                                inline_config_unconfirmed: false,
                             }],
                         },
                     ],
@@ -669,6 +759,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
             ],
@@ -737,6 +829,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
                 WorkspaceLayoutNode::Leaf {
@@ -746,6 +840,8 @@ mod tests {
                         agent_ref: None,
                         title: None,
                         initial_command: None,
+                        pending_initial_command: None,
+                        inline_config_unconfirmed: false,
                     }],
                 },
             ],

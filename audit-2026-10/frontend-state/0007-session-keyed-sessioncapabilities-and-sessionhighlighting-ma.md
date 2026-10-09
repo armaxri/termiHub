@@ -12,8 +12,8 @@ evidence:
   - src/store/slices/layoutSlice.ts:281
   - src/store/slices/sessionHighlightingSlice.ts:21
   - src/store/slices/sessionHighlightingSlice.ts:31
-status: open
-resolution: ""
+status: fixed
+resolution: "#4313 — sessionCapabilities and sessionHighlighting pruned on session replace, session end and tab close or move"
 audit: 2026-10
 commit: 663465d52
 relation: new

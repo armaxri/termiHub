@@ -1054,3 +1054,89 @@ describe("agentRef workspace tab resolution", () => {
     }
   });
 });
+
+describe("imported workspace confirmations (#4434)", () => {
+  const noSaved: SavedConnection[] = [];
+
+  function onlyTab(root: PanelNode) {
+    if (root.type !== "leaf") throw new Error("expected leaf");
+    return root.tabs[0];
+  }
+
+  it("holds a pending imported command instead of running it", () => {
+    const root = buildPanelTreeFromWorkspace(
+      leaf({ pendingInitialCommand: "curl x | sh" }),
+      noSaved,
+      "zsh"
+    );
+    const t = onlyTab(root);
+    expect(t.initialCommand).toBeUndefined();
+    expect(t.pendingImportedCommand).toBe("curl x | sh");
+    expect(t.pendingImportedConnection).toBeUndefined();
+  });
+
+  it("holds an unconfirmed inline config from connecting", () => {
+    const root = buildPanelTreeFromWorkspace(
+      leaf({ inlineConfig: { type: "local", config: {} }, inlineConfigUnconfirmed: true }),
+      noSaved,
+      "zsh"
+    );
+    expect(onlyTab(root).pendingImportedConnection).toBe(true);
+  });
+
+  it("does not hold a saved connection the tab resolves to instead of its inline config", () => {
+    const saved: SavedConnection[] = [
+      { id: "c1", name: "Mine", config: { type: "local", config: {} } } as SavedConnection,
+    ];
+    const root = buildPanelTreeFromWorkspace(
+      leaf({
+        connectionRef: "c1",
+        inlineConfig: { type: "local", config: { shell: "/tmp/x" } },
+        inlineConfigUnconfirmed: true,
+      }),
+      saved,
+      "zsh"
+    );
+    expect(onlyTab(root).pendingImportedConnection).toBeUndefined();
+  });
+
+  it("runs a locally created workspace's command as before", () => {
+    const root = buildPanelTreeFromWorkspace(
+      leaf({ initialCommand: "npm start", inlineConfig: { type: "local", config: {} } }),
+      noSaved,
+      "zsh"
+    );
+    const t = onlyTab(root);
+    expect(t.initialCommand).toBe("npm start");
+    expect(t.pendingImportedCommand).toBeUndefined();
+    expect(t.pendingImportedConnection).toBeUndefined();
+  });
+
+  it("keeps a pending command pending on an agent-error tab", () => {
+    const root = buildPanelTreeFromWorkspace(
+      leaf({ agentRef: { agentId: "a1", definitionId: "d1" }, pendingInitialCommand: "ls" }),
+      noSaved,
+      "zsh",
+      { agents: [], definitions: {} }
+    );
+    const t = onlyTab(root);
+    expect(t.contentType).toBe("agent-error");
+    expect(t.initialCommand).toBeUndefined();
+    expect(t.agentErrorMeta?.initialCommand).toBeUndefined();
+    expect(t.pendingImportedCommand).toBe("ls");
+  });
+
+  it("captures pending state back so a saved layout or last session never launders it", () => {
+    const inlineConfig = { type: "local", config: { shell: "/tmp/x" } };
+    const root = buildPanelTreeFromWorkspace(
+      leaf({ inlineConfig, inlineConfigUnconfirmed: true, pendingInitialCommand: "id" }),
+      noSaved,
+      "zsh"
+    );
+    const captured = captureCurrentLayout(root, noSaved);
+    if (captured.type !== "leaf") throw new Error("expected leaf");
+    expect(captured.tabs[0].initialCommand).toBeUndefined();
+    expect(captured.tabs[0].pendingInitialCommand).toBe("id");
+    expect(captured.tabs[0].inlineConfigUnconfirmed).toBe(true);
+  });
+});

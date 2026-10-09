@@ -17,11 +17,13 @@ use crate::connection::credential_scope::{
 use crate::connection::placement::PlaceMode;
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::secret_fields::{
-    has_plaintext_field_secrets, may_have_field_secrets, restore_saved_field_secrets,
+    has_plaintext_field_secrets, may_have_field_secrets, read_field_secrets,
+    restore_saved_field_secrets, store_field_secrets,
 };
 use crate::connection::secret_migration::migrate_plaintext_field_secrets;
 use crate::connection::tree::flatten_tree;
 use crate::credential::{CredentialKey, CredentialStoreStatus, CredentialType};
+use termihub_core::connection::secrets::TakenSecrets;
 
 impl ConnectionManager {
     /// Paths of every configured external file, enabled or not.
@@ -107,6 +109,40 @@ impl ConnectionManager {
         if let Err(e) = restore_saved_field_secrets(&*self.credential_store, &owner, settings) {
             tracing::warn!(connection_id, error = %e, "Could not restore saved connection secrets");
         }
+    }
+
+    /// The schema secrets other than `password` stored for connection
+    /// `connection_id` in `source_file` (`None` = main store), for the
+    /// frontend connect flow to use or prompt for (#4429). Fails — e.g. on a
+    /// locked store — rather than reporting none.
+    pub fn stored_field_secrets(
+        &self,
+        connection_id: &str,
+        source_file: Option<&str>,
+    ) -> Result<TakenSecrets> {
+        let key = self.connection_credential_key(
+            connection_id,
+            source_file,
+            CredentialType::FieldSecrets,
+        );
+        read_field_secrets(&*self.credential_store, &key.connection_id)
+    }
+
+    /// Save `secrets` (entered in the connect prompt with its Save box
+    /// checked) for connection `connection_id` in `source_file`, merged over
+    /// the field secrets already stored (#4429).
+    pub fn save_field_secrets(
+        &self,
+        connection_id: &str,
+        source_file: Option<&str>,
+        secrets: TakenSecrets,
+    ) -> Result<()> {
+        let key = self.connection_credential_key(
+            connection_id,
+            source_file,
+            CredentialType::FieldSecrets,
+        );
+        store_field_secrets(&*self.credential_store, &key.connection_id, secrets)
     }
 
     /// The credential store saved connections' secrets live in.

@@ -17,8 +17,8 @@ evidence:
   - .github/workflows/windows-ssh-host.yml:33
   - .github/workflows/vendored-forks.yml:42
   - .github/workflows/system-integration.yml:125
-status: open
-resolution: ""
+status: partial
+resolution: "#4277 — scheduled-dispatch.yml owns the develop lanes' crons; develop pushes dispatch stale lanes and a heartbeat fails on dark lanes; the crons need the file on main (#4448)"
 audit: 2026-10
 commit: 663465d52
 relation: new
