@@ -101,10 +101,12 @@ overflow-checks = true
 # anyway (default `debug = 0`), so "debuginfo" strips only what std/dependency
 # rlibs bring in: frames get function names, not source lines.
 #
-# Cost: SIZE_PLACEHOLDER
+# Cost, measured on macOS aarch64 against `strip -x` (what `strip = true` runs
+# there): desktop `termihub` 53.9 -> 72.3 MB (+34%, +2.4 MB / +12% gzipped),
+# `termihub-agent` 27.4 -> 35.4 MB (+29%).
 # Windows: MSVC keeps symbols in a separate .pdb that is not shipped, so Windows
 # field reports still show bare addresses; shipping split debug symbols
-# (.dSYM/.pdb) as release artifacts is the follow-up. Checked per PR by
+# (.dSYM/.pdb) as release artifacts is #4504. Checked per PR by
 # scripts/internal/check-release-crash-symbols.sh (agent.yml). Does not affect
 # behaviour or optimization level.
 strip = "debuginfo"
