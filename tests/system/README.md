@@ -386,6 +386,14 @@ Each **suite (class)** gets a clean app set up once and shared by its tests; the
 next suite gets its own fresh app. Use a **new class** to force a clean app/state;
 use a **new method in the same class** to keep running in the existing instance.
 
+The app never reads or writes your `~/.ssh/known_hosts` (#4339). Each harness
+process (each xdist worker) owns a temp `known_hosts` file
+(`termihub_harness.known_hosts`), and every launch passes it to the app as
+`TERMIHUB_TEST_KNOWN_HOSTS_FILE`, which only a test-bridge build honours. The
+throwaway sshd endpoints pre-trust their host keys there. A suite that needs the
+app to miss a variable from your environment lists it in `unset_app_env` (for
+example `("SSH_AUTH_SOCK",)`).
+
 ### What `SystemTest` (the base) gives you
 
 | Member                                     | Purpose                                                                                                                                                                         |
