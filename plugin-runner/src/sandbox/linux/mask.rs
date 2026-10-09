@@ -132,10 +132,11 @@ impl Plan {
     /// is (or lies inside) a kept folder, is not masked separately.
     pub fn mask(denied: &[PathBuf], keep: &[PathBuf], workdir: &Path) -> io::Result<Self> {
         let keep = outermost(keep.to_vec());
-        let denied: Vec<PathBuf> = outermost(denied.iter().filter(|d| is_dir(d)).cloned().collect())
-            .into_iter()
-            .filter(|d| !keep.iter().any(|k| d.starts_with(k)))
-            .collect();
+        let denied: Vec<PathBuf> =
+            outermost(denied.iter().filter(|d| is_dir(d)).cloned().collect())
+                .into_iter()
+                .filter(|d| !keep.iter().any(|k| d.starts_with(k)))
+                .collect();
         let mut plan = Self::default();
         plan.steps.push(Step::Private);
         for dir in &denied {

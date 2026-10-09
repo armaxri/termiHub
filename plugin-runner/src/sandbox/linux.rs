@@ -1122,7 +1122,9 @@ mod tests {
             .chain(super::TRUST_STORE_PATHS)
             .chain(super::SYSTEM_WRITE_FILES);
         for path in readable {
-            for forbidden in ["/etc", "/etc/ssl", "/etc/pki", "/proc", "/home", "/root", "/var"] {
+            for forbidden in [
+                "/etc", "/etc/ssl", "/etc/pki", "/proc", "/home", "/root", "/var",
+            ] {
                 assert_ne!(path, &forbidden, "{forbidden} must not be granted whole");
             }
             assert!(!path.contains("private"), "{path} must not be granted");
