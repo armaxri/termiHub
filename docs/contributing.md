@@ -200,10 +200,10 @@ each job runs only if the PR can affect it:
 | Workflow Lint (actionlint)                                | a `.github/` file changed                                              |
 | Rustdoc (-D warnings) + `cargo fmt`                       | Rust changed, including comment-only Rust changes                      |
 | Plugin IPC Fuzz Crate (stable check)                      | `plugin-runner/`, `plugin-api/`, `win-security/` or Cargo.toml changed |
-| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)                   |
+| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` or files it reads (drift guard: also frontend)         |
 | Security Audit                                            | a dependency manifest/lockfile changed                                 |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed              |
-| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed (not comments)               |
+| Agent — Linux musl cross-builds                           | anything the agent builds from changed (`agent` area, not comments)    |
 | Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)               |
 | Integration (Docker fixtures)                             | a backend/fixture path changed (not comment-only Rust)                 |
 | Lint Commit Messages                                      | always                                                                 |
