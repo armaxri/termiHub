@@ -256,8 +256,15 @@ fn handle_shell_integration_command(install: bool) -> ! {
 /// Invoked when the last window closes on Windows/Linux, and on an explicit quit
 /// on macOS (where last-window-close instead keeps the app alive) — see the
 /// per-OS policy in [`window::should_teardown_on_last_window`] /
-/// [`window::should_prevent_exit`] (#1903).
+/// [`window::quit::decide_exit_request`] (#1903, #4296).
 fn run_app_teardown(app_handle: &tauri::AppHandle) {
+    // Run once: an exit can reach here from both its exit path and
+    // `RunEvent::Exit` (#4296).
+    if let Some(quit) = app_handle.try_state::<window::quit::QuitCoordinator>() {
+        if !quit.take_teardown() {
+            return;
+        }
+    }
     // Remove this process's drag-out staging dirs (#3457) synchronously, so the
     // staged remote copies never outlive the app even if exit races the task below.
     if let Some(staging) = app_handle.try_state::<files::drag_out::DragOutStaging>() {
@@ -890,6 +897,10 @@ pub fn run() -> anyhow::Result<()> {
             commands::window::take_pending_handoffs,
             commands::window::send_handoff_to_window,
             commands::window::replay_session_scrollback,
+            // Explicit-quit handshake (#4296)
+            commands::window::quit_window_ready,
+            commands::window::quit_window_prompting,
+            commands::window::cancel_quit,
             // Test-bridge-only (SEC-005, #3657): a normal quit so an
             // LLVM-instrumented test build writes its coverage profile.
             #[cfg(feature = "test-bridge")]
@@ -1077,22 +1088,49 @@ pub fn run() -> anyhow::Result<()> {
                 _ => {}
             }
 
-            // Per-OS quit policy (#1903). On macOS, closing the last window does
-            // NOT quit the app (WKWebView convention: it stays in the Dock), so
-            // an `ExitRequested` triggered by that close is prevented; an
-            // explicit quit (menu Quit / `AppHandle::exit`, `code == Some`) runs
-            // teardown and proceeds. Windows/Linux fall through to the default
-            // (quit), tearing down when the last window is destroyed below.
+            // Per-OS quit policy (#1903) + explicit-quit decision (#4296). On
+            // macOS, closing the last window does NOT quit the app (WKWebView
+            // convention: it stays in the Dock). An explicit quit (Cmd+Q / menu
+            // Quit / `AppHandle::exit`, `code == Some`) with windows open is
+            // prevented until every window agreed through the same decision the
+            // window close uses; see `window::quit`. A proceeding exit runs the
+            // teardown that the last window's Destroyed did not already run.
             if let RunEvent::ExitRequested { code, api, .. } = &event {
-                if window::should_prevent_exit(*code) {
-                    info!("Last window closed; keeping app alive (macOS Dock) (#1903)");
-                    api.prevent_exit();
-                } else if cfg!(target_os = "macos") {
-                    // Explicit quit on macOS: teardown was deferred from the
-                    // last window's Destroyed, so run it now before exiting.
-                    info!("Explicit quit; running app-wide teardown (#1903)");
-                    run_app_teardown(app_handle);
+                let phase = app_handle
+                    .try_state::<window::quit::QuitCoordinator>()
+                    .map_or(window::quit::QuitPhase::Confirmed, |q| q.phase());
+                let decision = window::quit::decide_exit_request(
+                    *code,
+                    cfg!(target_os = "macos"),
+                    app_handle.webview_windows().len(),
+                    phase,
+                );
+                match decision {
+                    window::quit::ExitDecision::KeepAliveInDock => {
+                        info!("Last window closed; keeping app alive (macOS Dock) (#1903)");
+                        api.prevent_exit();
+                    }
+                    window::quit::ExitDecision::PreventAndPrompt => {
+                        api.prevent_exit();
+                        window::quit::start_quit_flow(app_handle);
+                    }
+                    window::quit::ExitDecision::PreventWhilePrompting => {
+                        info!("Quit already awaiting a decision; ignoring repeat (#4296)");
+                        api.prevent_exit();
+                    }
+                    window::quit::ExitDecision::Proceed => {
+                        if code.is_some() || cfg!(target_os = "macos") {
+                            info!("Quit proceeding; running app-wide teardown (#1903)");
+                            run_app_teardown(app_handle);
+                        }
+                    }
                 }
+            }
+
+            // An exit that bypassed `ExitRequested` (macOS `terminate:` from the
+            // Dock's Quit, logout or shutdown) still gets its teardown (#4296).
+            if let RunEvent::Exit = &event {
+                run_app_teardown(app_handle);
             }
 
             // On macOS the app can outlive its windows; a Dock-icon click with no
@@ -1151,6 +1189,12 @@ pub fn run() -> anyhow::Result<()> {
                 // window can never inherit them and dead sinks do not linger.
                 if let Some(ps) = app_handle.try_state::<commands::projection::ProjectionState>() {
                     ps.release_principal(label);
+                }
+                // A window destroyed while a quit awaits its answer can no longer
+                // answer; stop waiting on it (#4296).
+                if let Some(quit) = app_handle.try_state::<window::quit::QuitCoordinator>() {
+                    let outcome = quit.window_gone(label);
+                    window::quit::finish_if_ready(app_handle, outcome);
                 }
                 // Drop the window's binary remote-desktop frame channels (#4291).
                 if let Some(frames) = app_handle
