@@ -57,7 +57,7 @@ describe("TabGroupChips — New Tab Group shortcut label (#4374)", () => {
   it("shows Cmd on macOS", async () => {
     setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     await render();
-    expect(addButton()?.getAttribute("aria-label")).toBe("New Tab Group (Shift+Cmd+t)");
+    expect(addButton()?.getAttribute("aria-label")).toBe("New Tab Group (Cmd+Shift+T)");
   });
 
   it("shows the user's customised binding", async () => {

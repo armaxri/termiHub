@@ -215,6 +215,70 @@ describe("CSS token discipline (#1059)", () => {
 });
 
 /**
+ * Components that may hide or re-style a scrollbar, each a named exception
+ * documented in the ui-modernization concept's "One scrollbar" rule (#4585).
+ * Adding an entry here requires recording the exception and its reason there.
+ *
+ * - Terminal.css: the terminal draws its own gutter scrollbar
+ *   (terminalScrollbar.ts) so the bar stays put in horizontal-scroll mode; the
+ *   native xterm viewport bar is hidden to avoid a second vertical bar, and the
+ *   horizontal bar's height is pinned to the bottom reserve FitAddon accounts for.
+ */
+const SCROLLBAR_OVERRIDE_ALLOWLIST: string[] = ["components/Terminal/Terminal.css"];
+
+/** Scrollbar declarations/selectors a component must not use outside the allowlist. */
+const SCROLLBAR_OVERRIDE_PATTERNS: RegExp[] = [
+  /scrollbar-width\s*:\s*none/i,
+  /::-webkit-scrollbar/i,
+  /scrollbar-color\s*:/i,
+];
+
+describe("one scrollbar (#4585)", () => {
+  it("no component hides or re-styles the scrollbar outside the allowlist", () => {
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      if (SCROLLBAR_OVERRIDE_ALLOWLIST.some((allowed) => toPosix(file).endsWith(allowed))) {
+        continue;
+      }
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      if (SCROLLBAR_OVERRIDE_PATTERNS.some((re) => re.test(css))) {
+        offenders.push(file);
+      }
+    }
+    expect(
+      offenders,
+      `Scrollbars are styled globally in global.css; remove the override or document a ` +
+        `named exception in the ui-modernization concept and SCROLLBAR_OVERRIDE_ALLOWLIST: ` +
+        offenders.join(", ")
+    ).toEqual([]);
+  });
+
+  it("every allowlisted file still exists (no stale exceptions)", () => {
+    for (const allowed of SCROLLBAR_OVERRIDE_ALLOWLIST) {
+      expect(
+        cssFiles.some((f) => toPosix(f).endsWith(allowed)),
+        `${allowed} is allowlisted but no longer exists`
+      ).toBe(true);
+    }
+  });
+
+  it("the terminal's gutter thumb is persistently visible, not auto-hidden (#3144)", () => {
+    const terminalCss = cssFiles.find((f) =>
+      toPosix(f).endsWith("components/Terminal/Terminal.css")
+    );
+    expect(terminalCss, "Terminal.css should exist").toBeDefined();
+    const css = stripCssComments(readFileSync(terminalCss as string, "utf8"));
+    const thumbRule = /\.terminal-vscroll-thumb\s*\{([^}]*)\}/.exec(css);
+    expect(thumbRule, ".terminal-vscroll-thumb rule should exist").not.toBeNull();
+    const body = (thumbRule as RegExpExecArray)[1];
+    expect(body).toMatch(/background-color:\s*var\(--scrollbar-thumb\)/);
+    expect(body).not.toMatch(/opacity:\s*0\b/);
+    // The horizontal-scroll thumb must not be made transparent at rest either.
+    expect(css).not.toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*transparent/);
+  });
+});
+
+/**
  * Persistent-scrollbar guard (#3144).
  *
  * The global scrollbar was originally "subtle, auto-hide" (#1045): the thumb was

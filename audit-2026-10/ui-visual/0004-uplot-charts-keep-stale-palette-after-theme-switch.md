@@ -13,8 +13,8 @@ evidence:
   - src/components/StatusBar/MetricSparkline.tsx:49
   - src/components/StatusBar/MetricSparkline.tsx:72
   - src/components/charts/uplot.ts:88
-status: open
-resolution: ""
+status: fixed
+resolution: "#4356 — engine bumps a theme revision on every apply; useUplot rebuilds charts on it; hex fallbacks dropped"
 audit: 2026-10
 commit: 663465d52
 relation: new

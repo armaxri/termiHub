@@ -155,4 +155,17 @@ describe("ShortcutsOverlay", () => {
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  it("renders letter keys upper-case in both platform columns (#4598)", () => {
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+    });
+    const cells = (action: string) =>
+      Array.from(document.querySelectorAll(`[data-testid="shortcut-row-${action}"] td`)).map(
+        (td) => td.textContent
+      );
+    expect(cells("toggle-sidebar")[1]).toContain("Ctrl+Shift+B");
+    expect(cells("toggle-sidebar")[2]).toContain("Cmd+B");
+    expect(cells("new-tab-group")[2]).toContain("Cmd+Shift+T");
+  });
 });

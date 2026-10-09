@@ -3,7 +3,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
   getDefaultBindings,
   getEffectiveCombo,
-  serializeBinding,
+  formatBindingForDisplay,
   getOverrides,
   isUnboundCombo,
 } from "@/services/keybindings";
@@ -46,7 +46,7 @@ export function buildCheatSheetHtml(): string {
         .map((b) => {
           const effective = getEffectiveCombo(b.action);
           const combo = isUnboundCombo(effective) ? null : (effective ?? b.winLinuxDefault);
-          const keyStr = combo ? serializeBinding(combo) : "Unbound";
+          const keyStr = combo ? formatBindingForDisplay(combo) : "Unbound";
           const isOverride = overriddenActions.has(b.action);
           const overrideMark = isOverride
             ? '<span class="override-mark" title="Custom binding">&dagger;</span>'

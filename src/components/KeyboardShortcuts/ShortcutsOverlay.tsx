@@ -6,7 +6,7 @@ import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings
 import {
   getDefaultBindings,
   getEffectiveCombo,
-  serializeBinding,
+  formatBindingForDisplay,
   isUnboundCombo,
 } from "@/services/keybindings";
 import { isMac } from "@/utils/platform";
@@ -123,14 +123,16 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
               </tr>
               {group.bindings.map((binding) => {
                 const winLinux = binding.winLinuxDefault
-                  ? serializeBinding(binding.winLinuxDefault)
+                  ? formatBindingForDisplay(binding.winLinuxDefault, false)
                   : "Unbound";
-                const mac = binding.macDefault ? serializeBinding(binding.macDefault) : "Unbound";
+                const mac = binding.macDefault
+                  ? formatBindingForDisplay(binding.macDefault, true)
+                  : "Unbound";
                 const effective = getEffectiveCombo(binding.action);
                 const effectiveStr = isUnboundCombo(effective)
                   ? "Unbound"
                   : effective
-                    ? serializeBinding(effective)
+                    ? formatBindingForDisplay(effective)
                     : "";
 
                 return (

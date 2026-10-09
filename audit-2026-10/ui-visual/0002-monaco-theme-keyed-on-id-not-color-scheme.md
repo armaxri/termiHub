@@ -15,8 +15,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:441
   - src/themes/solarized-light.ts:7
   - src/themes/types.ts:89
-status: open
-resolution: ""
+status: fixed
+resolution: "#4356 — getMonacoTheme keys on colorScheme, so every light theme gets the light editor"
 audit: 2026-10
 commit: 663465d52
 relation: new
