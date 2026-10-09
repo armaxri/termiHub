@@ -13,8 +13,8 @@ evidence:
   - core/src/backends/ssh/mod.rs:372
   - core/src/backends/ssh/auth.rs:250
   - src/components/ConnectionEditor/ConnectionEditor.tsx:456
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — agent-auth error test un-skipped (app without SSH_AUTH_SOCK) and MT-SSH-08 restored; allowlist entry removed"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -20,8 +20,8 @@ evidence:
   - tests/system/termihub_harness/orchestrator.py:183
   - core/src/backends/ssh/host_key.rs:214
   - tests/system/tests/test_ssh_tunnels.py:125
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — per-run temp known_hosts passed to test-bridge builds via TERMIHUB_TEST_KNOWN_HOSTS_FILE; ~/.ssh untouched"
 audit: 2026-10
 commit: 663465d52
 relation: new

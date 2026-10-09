@@ -15,8 +15,8 @@ evidence:
   - examples/docker/docker-compose.yml:8
   - tests/system/tests/test_dev_local.py:215
   - docs/testing.md:1819
-status: open
-resolution: ""
+status: fixed
+resolution: "#4339 — quick-start SSH moved to base 2230; every dev-local-env.sh port is collision-checked across slots"
 audit: 2026-10
 commit: 663465d52
 relation: new
