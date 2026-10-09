@@ -12,7 +12,8 @@ import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
 import { GeneralSettings } from "./GeneralSettings";
 import { resetAppInfoCache } from "@/hooks/useAppInfo";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
+import { writeText as pluginWriteText } from "@tauri-apps/plugin-clipboard-manager";
 
 vi.mock("@/utils/shell-detection", () => ({
   detectAvailableShells: vi.fn().mockResolvedValue([]),
@@ -46,7 +47,8 @@ const BASE_SETTINGS: AppSettings = {
 
 let container: HTMLDivElement;
 let root: Root;
-let writeText: ReturnType<typeof vi.fn>;
+let browserWriteText: ReturnType<typeof vi.fn>;
+const writeText = vi.mocked(pluginWriteText);
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -63,8 +65,11 @@ describe("GeneralSettings — copy debug info (OBS-008)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     resetAppInfoCache();
-    writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    // The copy goes through the Tauri clipboard plugin (#4327); navigator.clipboard
+    // rejects on macOS/WKWebView when the window is not focused.
+    writeText.mockReset().mockResolvedValue(undefined);
+    browserWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText: browserWriteText } });
   });
 
   afterEach(() => {
@@ -101,5 +106,28 @@ describe("GeneralSettings — copy debug info (OBS-008)", () => {
     expect(copied).toContain("develop");
     expect(copied).toContain("/home/u/logs/termihub.log");
     expect(copied).toContain("os_keychain (unlocked)");
+    expect(browserWriteText).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed clipboard write with an error toast", async () => {
+    const errorSpy = vi.spyOn(toast, "error");
+    writeText.mockRejectedValue(new Error("clipboard denied"));
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <GeneralSettings settings={BASE_SETTINGS} onChange={() => {}} />
+        </TooltipProvider>
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>("[data-testid='settings-copy-debug-info']")!
+        .click();
+    });
+    await flush();
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("clipboard denied"));
   });
 });
