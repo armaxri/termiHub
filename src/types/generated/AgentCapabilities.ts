@@ -65,6 +65,13 @@ unattendedConnect?: boolean,
  */
 fileRanges?: boolean, 
 /**
+ * Whether the agent pauses an agent-hosted session's output on
+ * `connection.output_flow` (protocol 0.27.0, #4416), backpressuring the
+ * program on the agent host. `false` for older agents, whose sessions are
+ * never paused (the terminal's staged-output cap applies instead).
+ */
+outputFlow?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

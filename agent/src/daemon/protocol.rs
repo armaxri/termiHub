@@ -84,6 +84,16 @@ pub const MSG_PING: u8 = 0x0C;
 /// Agent → Daemon: the answer to a [`MSG_DAEMON_PING`] (#3140). Empty payload.
 pub const MSG_AGENT_PONG: u8 = 0x0D;
 
+/// Agent → Daemon: pause (`1`) or resume (`0`) reading the session's output
+/// (#4416). Payload: one byte. While paused the daemon stops reading its
+/// backend's output channel, so the program is backpressured through its PTY;
+/// input and every other frame keep flowing. The pause belongs to the worker
+/// that sent it: a newly attached worker starts flowing, and an unattached
+/// daemon always reads (into its ring buffer). Sent only to a daemon that
+/// advertised [`CAP_OUTPUT_FLOW`]; a daemon from before it logs and skips the
+/// unknown frame.
+pub const MSG_OUTPUT_FLOW: u8 = 0x0E;
+
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
 /// re-attach.
@@ -185,6 +195,11 @@ pub const CAP_HEARTBEAT: u8 = 0x08;
 /// backend's ranged file access (#3587). A daemon from before it does not set
 /// it, so the worker never sends it a request it would drop.
 pub const CAP_FILE_RANGES: u8 = 0x10;
+
+/// [`MSG_CAPABILITIES`] flag: the daemon honors [`MSG_OUTPUT_FLOW`] (#4416). A
+/// daemon from before it (it survives agent upgrades) does not set it, so the
+/// worker knows that pausing it would have no effect.
+pub const CAP_OUTPUT_FLOW: u8 = 0x20;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;

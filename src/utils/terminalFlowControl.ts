@@ -16,10 +16,13 @@
  *   backend is asked to resume.
  * - Staged output is only handed to xterm while its backlog is under the high
  *   watermark, so xterm's queue stays bounded too.
+ * - Agent-hosted sessions pause the same way: the backend forwards the pause to
+ *   the agent (`connection.output_flow`, #4416), which stops reading the
+ *   session's output on the remote host.
  * - As a last-resort safety net the staged buffer is hard-capped. The cap is
- *   only reached when the producer ignores pause (agent-hosted sessions,
- *   which have no backend pause yet); the oldest staged output is then
- *   dropped, which is still better than xterm throwing it away wholesale.
+ *   only reached when the producer ignores pause (a session on an agent older
+ *   than protocol 0.27.0, which cannot be paused); the oldest staged output is
+ *   then dropped, which is still better than xterm throwing it away wholesale.
  *
  * Input (Ctrl+C included) is a separate path and is never held back.
  */

@@ -123,6 +123,7 @@ impl AgentRpcClient for FakeAgent {
             session_files: false,
             unattended_connect: false,
             file_ranges: false,
+            output_flow: false,
             agent_version: "0.8.1".to_string(),
         })
     }
