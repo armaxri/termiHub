@@ -101,6 +101,7 @@ describe("nativePluginSandbox helpers", () => {
     );
     expect(chips.map((c) => [c.id, c.denied])).toEqual([
       ["network", false],
+      ["local-network", true],
       ["data", false],
       ["declared-files", false],
       ["files", true],
@@ -108,6 +109,30 @@ describe("nativePluginSandbox helpers", () => {
     ]);
     expect(chips[0].rule).toContain("max 2 connections");
     expect(accessChips(plugin()).map((c) => c.id)).toEqual(["data", "files", "programs"]);
+  });
+
+  it("shows the local-network opt-in as a trust chip (SEC2-005)", () => {
+    const denied = accessChips(plugin({ permissions: ["terminal", "network"] })).find(
+      (c) => c.id === "local-network"
+    );
+    expect(denied?.denied).toBe(true);
+    expect(denied?.rule).toBe("Cannot reach this computer (localhost) or private networks");
+
+    const allowed = accessChips(
+      plugin({
+        permissions: ["terminal", "network"],
+        connectionPolicy: { allowLocalNetwork: true },
+      })
+    ).find((c) => c.id === "local-network");
+    expect(allowed?.denied).toBe(false);
+    expect(allowed?.label).toBe("Local network");
+    expect(allowed?.rule).toBe(
+      "May reach this computer (localhost) and private networks; cloud metadata stays blocked"
+    );
+
+    // Without `network` the opt-in grants nothing, so no chip is shown.
+    const noNetwork = accessChips(plugin({ connectionPolicy: { allowLocalNetwork: true } }));
+    expect(noNetwork.some((c) => c.id === "local-network")).toBe(false);
   });
 
   it("lists every declared folder on its own line and rewords the files denial", () => {
