@@ -10,6 +10,6 @@
 - Plugin settings and the plugin trust files written by a newer termiHub are
   never overwritten. A damaged copy is backed up (`<file>.bak`, `<file>.bak.1`,
   …) before it is replaced (#4334).
-- Remote agent: a damaged `connections.json` or `state.json` is now backed up
-  as `<file>.bak`, `<file>.bak.1`, … instead of `<file>.corrupt-<timestamp>`,
-  the same naming the desktop uses (#4334).
+- Remote agent: a damaged `connections.json`, or a `state.json` with a damaged
+  entry, is now backed up as `<file>.bak`, `<file>.bak.1`, … instead of
+  `<file>.corrupt-<timestamp>`, the same naming the desktop uses (#4334).
