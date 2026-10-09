@@ -88,7 +88,9 @@ No mutating or async user action may resolve silently. Pick the mechanism:
 ### 5. One scrollbar, one motion language
 
 Scrollbars are styled globally (`src/styles/global.css`: a persistent, visible
-thumb on every platform, per #3144) — never re-style scrollbars in a component. Use `--transition-*` tokens for all motion;
+thumb on every platform, per #3144) — never re-style scrollbars in a component
+(the only named exception is the terminal's gutter scrollbar, documented in the
+concept and allow-listed in `tokenDiscipline.test.ts`). Use `--transition-*` tokens for all motion;
 wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/exit
 (fade + 8px rise) for overlays and toasts.
 
