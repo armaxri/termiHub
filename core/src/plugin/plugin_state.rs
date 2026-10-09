@@ -200,16 +200,24 @@ fn read_unlocked(plugins_root: &Path) -> Result<StateStore, StateError> {
             persist::release_unbacked_corrupt(&path);
             Ok(store)
         }
+        // A newer schema this build cannot parse is not corruption: use the
+        // fail-safe rebuild in memory, leave the file (and trust) untouched.
+        Err(_) if is_newer(&raw) => Ok(rebuilt_from_installed(plugins_root).0),
         Err(e) => Ok(recover_corrupt(plugins_root, &e.to_string())),
     }
 }
 
-/// Rebuild a corrupt `plugin-state.json` from the installed plugin
-/// directories (PER2-004): every plugin disabled with [`RECOVERED_REASON`],
-/// every native plugin's trust acknowledgment revoked, the original backed up
-/// before the rebuilt store replaces it. When the backup fails the rebuilt
-/// store is used in memory only and saves stay refused.
-fn recover_corrupt(plugins_root: &Path, detail: &str) -> StateStore {
+/// Whether `raw` is JSON whose `version` is newer than this build's.
+fn is_newer(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|value| persist::read_version(&value))
+        .is_some_and(|found| found > CURRENT_VERSION)
+}
+
+/// A store with one **disabled** record per installed plugin (reason
+/// [`RECOVERED_REASON`]), plus the ids of the native ones.
+fn rebuilt_from_installed(plugins_root: &Path) -> (StateStore, Vec<String>) {
     let mut store = StateStore::default();
     let mut native = Vec::new();
     for (dir, manifest) in super::manager::installed_manifests(plugins_root) {
@@ -226,6 +234,16 @@ fn recover_corrupt(plugins_root: &Path, detail: &str) -> StateStore {
             },
         );
     }
+    (store, native)
+}
+
+/// Rebuild a corrupt `plugin-state.json` from the installed plugin
+/// directories (PER2-004): every plugin disabled with [`RECOVERED_REASON`],
+/// every native plugin's trust acknowledgment revoked, the original backed up
+/// before the rebuilt store replaces it. When the backup fails the rebuilt
+/// store is used in memory only and saves stay refused.
+fn recover_corrupt(plugins_root: &Path, detail: &str) -> StateStore {
+    let (store, native) = rebuilt_from_installed(plugins_root);
     // Revoke first: re-enabling a native plugin must ask for trust again even
     // if the rebuilt file cannot be written.
     let mut trust = super::native_trust::NativeTrustStore::load(plugins_root);

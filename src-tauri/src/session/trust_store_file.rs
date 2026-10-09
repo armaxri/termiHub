@@ -385,7 +385,7 @@ pub fn persist(path: &Path, entries: &TrustEntries, file_name: &str) -> Result<(
     }
     let sidecar = version_sidecar_path(path);
     if read_sidecar(path) != SidecarVersion::Known(TRUST_STORE_FORMAT_VERSION) {
-        write_atomic(&sidecar, &format!("{TRUST_STORE_FORMAT_VERSION}\n"))
+        write_atomic(&sidecar, format!("{TRUST_STORE_FORMAT_VERSION}\n"))
             .map_err(|e| PersistError::Io(e.to_string()))?;
     }
     let json =

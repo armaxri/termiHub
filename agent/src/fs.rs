@@ -166,7 +166,7 @@ mod tests {
                         // Widen the race window so a missing lock reliably drops
                         // updates.
                         std::thread::yield_now();
-                        write_atomic(&path, &(cur + 1).to_string()).unwrap();
+                        write_atomic(&path, (cur + 1).to_string()).unwrap();
                     }
                 })
             })

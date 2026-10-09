@@ -134,6 +134,23 @@ fn a_newer_state_file_is_refused() {
     assert_eq!(read(&tmp.path().join(STATE_FILE_NAME)), newer);
 }
 
+/// A newer-schema state file this build cannot parse is not treated as
+/// corrupt: the plugins read as disabled, but nothing is backed up, rewritten
+/// or revoked.
+#[test]
+fn an_unparseable_newer_state_file_is_left_alone() {
+    let tmp = corrupt_root();
+    let root = tmp.path();
+    let newer = r#"{"version":99,"plugins":["a new shape"]}"#;
+    std::fs::write(root.join(STATE_FILE_NAME), newer).unwrap();
+
+    let store = plugin_state::read(root).unwrap();
+    assert!(store.plugins.values().all(|r| !r.enabled));
+    assert_eq!(read(&root.join(STATE_FILE_NAME)), newer);
+    assert!(!root.join(format!("{STATE_FILE_NAME}.bak")).exists());
+    assert!(NativeTrustStore::load(root).ack("nat").is_some());
+}
+
 /// PER2-004: concurrent auto-disables (the host's crash handling) serialize,
 /// so no update is lost, and no shared temp file is left behind.
 #[test]
