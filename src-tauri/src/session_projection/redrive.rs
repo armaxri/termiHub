@@ -23,6 +23,14 @@
 //! attempt and its `connected` / `reconnectFailed` outcome; nothing else mirrors
 //! them.
 //!
+//! # Session identity
+//!
+//! A re-created (or re-attached) session gets the same side effects as a
+//! user-initiated connect (#4301): [`SessionManager::on_session_opened`] binds
+//! it to the saved connection stamped on the retained request and fires the
+//! transfer-resume triggers, so edits, renames, credential lookups and
+//! interrupted transfers still reach the tab after an automatic reconnect.
+//!
 //! # Secret lifetime
 //!
 //! The retained `settings` may carry resolved secrets. A successful redrive
@@ -35,7 +43,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
-use crate::session::manager::SessionManager;
+use crate::session::manager::{SessionManager, SessionOrigin};
 use crate::session_projection::projection::{
     fold_agent_session_held_by_peer, fold_session_transition,
 };
@@ -104,6 +112,15 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
         // (running process continues) instead of minting a new one, and emits
         // session-lost if the agent no longer lists it. `None` for a direct tab.
         let agent_session_id = request.agent_session_id.clone();
+        // Where the tab's session came from (#4301): the re-created session is
+        // bound to the same saved connection and fires the same transfer-resume
+        // triggers a user-initiated connect does, so later edits, renames,
+        // credential lookups and relaunches still reach it.
+        let origin = SessionOrigin::new(
+            request.saved_connection_id.as_deref(),
+            agent_id.as_deref(),
+            &settings,
+        );
         drop(request);
 
         // A unique per-attempt connect id in the `${tabId}:${retry}` form so the
@@ -159,7 +176,7 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                 // `connection.list`. Direct tabs and agent tabs with no retained
                 // session id fall through to the create path below.
                 if let Some(remote_sid) = agent_session_id.as_deref() {
-                    reattach_or_lose(&app, &manager, &tab_id, aid, remote_sid).await;
+                    reattach_or_lose(&app, &manager, &tab_id, aid, remote_sid, &origin).await;
                     return;
                 }
             }
@@ -191,6 +208,10 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                         let _ = manager.close_session(&new_session_id).await;
                         return;
                     }
+                    // Bind the new session before the frontend learns its id,
+                    // so a transfer started on it right away records its saved
+                    // connection; then resume the transfers it lets continue.
+                    manager.on_session_opened(&new_session_id, &origin).await;
                     // Fold the success at the source: settle the tab live and hand
                     // the frontend the new backend session id to re-attach to
                     // (#2457) — the region is keyed by the stable tab id.
@@ -234,6 +255,7 @@ async fn reattach_or_lose<R: Runtime>(
     tab_id: &str,
     agent_id: &str,
     remote_session_id: &str,
+    origin: &SessionOrigin,
 ) {
     // Ask the agent which sessions are live/recovered. Runs on the blocking pool
     // (the client parks on `blocking_recv`), like the transport re-establish.
@@ -282,6 +304,12 @@ async fn reattach_or_lose<R: Runtime>(
                 let _ = manager.close_session(&reattach.session_id).await;
                 return;
             }
+            // The entry is the tab's session (a Reclaim resumes output on it),
+            // so bind it like any other (#4301). Nothing resumes while another
+            // desktop holds it.
+            manager
+                .bind_session_origin(&reattach.session_id, origin)
+                .await;
             fold_agent_session_held_by_peer(app, tab_id, Some(reattach.session_id), false);
         }
         Ok(reattach) => {
@@ -294,6 +322,9 @@ async fn reattach_or_lose<R: Runtime>(
                 let _ = manager.close_session(&new_session_id).await;
                 return;
             }
+            // Bind the re-attached session and resume the transfers waiting for
+            // its saved connection or agent, as on the create path (#4301).
+            manager.on_session_opened(&new_session_id, origin).await;
             // Settle the tab live and hand the frontend the new backend session id
             // to re-attach terminal I/O to (#2457); the live process continues.
             let sid = new_session_id.clone();
