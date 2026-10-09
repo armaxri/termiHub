@@ -15,7 +15,7 @@ import type { LogEntry } from "@/types/terminal";
 
 vi.mock("@/services/api", () => ({
   getLogs: vi.fn(),
-  clearLogs: vi.fn(),
+  clearLogs: vi.fn(() => Promise.resolve()),
 }));
 
 let backendListener: ((entry: LogEntry) => void) | null = null;
@@ -131,6 +131,26 @@ describe("LogViewer frontend entry de-duplication (#4327)", () => {
     await flush();
 
     expect(rowsMatching("seen before close")).toHaveLength(1);
+  });
+
+  it("does not bring cleared frontend entries back on remount", async () => {
+    vi.mocked(getLogs).mockResolvedValue([]);
+    frontendWarn("probe", "cleared warning");
+    await act(async () => root.render(<LogViewer isVisible={true} />));
+    await flush();
+    expect(rowsMatching("cleared warning")).toHaveLength(1);
+
+    const clear = container.querySelector<HTMLButtonElement>('button[title="Clear logs"]');
+    await act(async () => clear?.click());
+    await flush();
+    expect(rowsMatching("cleared warning")).toHaveLength(0);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<LogViewer isVisible={true} />));
+    await flush();
+
+    expect(rowsMatching("cleared warning")).toHaveLength(0);
   });
 
   it("still shows ordinary backend entries", async () => {
