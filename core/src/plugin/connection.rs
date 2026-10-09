@@ -81,7 +81,8 @@ pub struct PluginConnectionType {
     /// reader thread reads the latest value for every output frame.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// The plugin's runner. Declared last, so a live session is retired before
-    /// this connection's reference to the runner is released.
+    /// this connection's reference to the runner is released (the `Drop` impl
+    /// keeps that order when it hands the session to the blocking pool, #4499).
     handle: Arc<SandboxedPluginHandle>,
 }
 
@@ -345,6 +346,40 @@ impl CreateRequest {
             return Err(cancelled());
         }
         Ok(session)
+    }
+}
+
+impl Drop for PluginConnectionType {
+    /// Close a still-live session without blocking the dropping thread (#4499).
+    ///
+    /// Closing waits (bounded by the 2 s request deadline) for the runner's
+    /// `Close` reply. A connection dropped on a Tokio worker without an awaited
+    /// [`disconnect`](ConnectionType::disconnect), for example by a teardown
+    /// path that only removes the session entry, would hold that worker for the
+    /// whole wait. When a runtime is current the session is handed to the
+    /// blocking pool instead, together with a reference to the runner, so the
+    /// ADR-19 order is kept there: the session retires before that runner
+    /// reference is released. Without a runtime (a plain thread), it closes
+    /// inline as before.
+    fn drop(&mut self) {
+        let Some(session) = self.backend.take() else {
+            return;
+        };
+        // Stop delivering output to the old subscriber, as `disconnect` does.
+        *self.output_tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                let handle = Arc::clone(&self.handle);
+                // Not awaited: the close finishes in the background. If the
+                // runtime is already shutting down the task never runs, and the
+                // closure (with the session) is dropped right here instead.
+                drop(runtime.spawn_blocking(move || {
+                    drop(session);
+                    drop(handle);
+                }));
+            }
+            Err(_) => drop(session),
+        }
     }
 }
 
