@@ -27,6 +27,7 @@ from termihub_harness import (
     BastionControl,
     BridgeError,
     ConnectionsUi,
+    ComposeFixtureFailed,
     ContainerRuntimeUnavailable,
     JumpHostUi,
     PasswordPromptUi,
@@ -163,6 +164,6 @@ class TestSshJumpHostReconnect(
             # Never leave the shared bastion stopped for the suites after this one.
             try:
                 bastion.restore()
-            except ContainerRuntimeUnavailable as exc:
+            except (ContainerRuntimeUnavailable, ComposeFixtureFailed) as exc:
                 print(f"[jump-host] could not restore {bastion.container}: {exc}")
             self.close_all_tabs()

@@ -13,8 +13,8 @@ evidence:
   - agent/src/io/transport.rs:23
   - src-tauri/src/terminal/agent_forward.rs:100-109
   - src-tauri/src/session/agent_port_forward.rs:369-371
-status: open
-resolution: ""
+status: fixed
+resolution: "#4284 — agent.forward.connect streams are credit-windowed both ways (agent.forward.ack, protocol 0.28.0); a slow consumer slows the remote source"
 audit: 2026-10
 commit: 663465d52
 relation: new

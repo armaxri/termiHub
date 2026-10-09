@@ -35,6 +35,7 @@ from termihub_harness import (
     SSH_PASSWORD,
     SSH_USERNAME,
     AgentUi,
+    ComposeFixtureFailed,
     ContainerRuntimeUnavailable,
     CrashReportUi,
     PasswordPromptUi,
@@ -81,7 +82,7 @@ class TestAgentCrashNoticeLive(
         for name in self.seeded:
             try:
                 self.host.remove_path(f"{AGENT_CRASH_DIR}/{name}")
-            except ContainerRuntimeUnavailable:
+            except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
                 pass
         if not self.crash_notice_setting():
             self.set_crash_notice_enabled(True)

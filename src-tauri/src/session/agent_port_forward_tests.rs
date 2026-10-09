@@ -2,7 +2,13 @@
 //! and the forward lifecycle against an in-process fake agent.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::Duration;
+
+use termihub_core::session::forward_window::{ForwardWindow, AGENT_FORWARD_WINDOW};
+
+use crate::terminal::agent_forward::ForwardEvent;
+use tokio::sync::mpsc::UnboundedSender;
 
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -47,11 +53,63 @@ fn rdp_route_defaults_to_3389() {
     assert_eq!(r.target_port, 3389);
     let r = agent_route(
         "rdp",
-        &json!({ "agentId": "a", "host": "win", "port": "3390" }),
+        &json!({ "agentId": "a", "host": "win", "port": 3390 }),
     )
     .unwrap()
     .unwrap();
     assert_eq!(r.target_port, 3390);
+}
+
+/// DUP2-008 (#4284): the routed target port is exactly the port the direct
+/// connection dials — both come from core's `VncConfig` / `RdpConfig`
+/// `effective_port`, for default, custom and display-derived ports, and for
+/// editor-cleared (`null`) fields.
+#[test]
+fn routed_and_direct_ports_agree() {
+    use termihub_core::backends::rdp_sidecar::config::RdpConfig;
+    use termihub_core::backends::vnc::VncConfig;
+
+    let vnc_cases = [
+        json!({ "agentId": "a", "host": "h" }),
+        json!({ "agentId": "a", "host": "h", "port": 5905 }),
+        json!({ "agentId": "a", "host": "h", "port": 5905, "display": 3 }),
+        json!({ "agentId": "a", "host": "h", "port": null, "display": null }),
+    ];
+    for settings in vnc_cases {
+        let direct = VncConfig::from_settings(settings.clone())
+            .unwrap()
+            .effective_port();
+        let routed = agent_route("vnc", &settings).unwrap().unwrap().target_port;
+        assert_eq!(routed, direct, "{settings}");
+    }
+    let rdp_cases = [
+        json!({ "agentId": "a", "host": "h" }),
+        json!({ "agentId": "a", "host": "h", "port": 3390 }),
+        json!({ "agentId": "a", "host": "h", "port": 0 }),
+        json!({ "agentId": "a", "host": "h", "port": null }),
+    ];
+    for settings in rdp_cases {
+        let direct = RdpConfig::from_settings(settings.clone())
+            .unwrap()
+            .effective_port();
+        let routed = agent_route("rdp", &settings).unwrap().unwrap().target_port;
+        assert_eq!(routed, direct, "{settings}");
+    }
+}
+
+/// DUP2-008 (#4284): settings the direct connection would reject are
+/// rejected by the route too, instead of being guessed at — a port given as a
+/// string, or an explicit VNC port 0 (no server listens there).
+#[test]
+fn the_route_rejects_what_the_direct_path_rejects() {
+    let err = agent_route(
+        "rdp",
+        &json!({ "agentId": "a", "host": "h", "port": "3390" }),
+    )
+    .unwrap_err();
+    assert!(err.contains("Invalid RDP settings"), "{err}");
+    let err = agent_route("vnc", &json!({ "agentId": "a", "host": "h", "port": 0 })).unwrap_err();
+    assert!(err.contains("port"), "{err}");
 }
 
 #[test]
@@ -132,15 +190,41 @@ struct Log {
 /// target (like `agent.forward.connect`) and pumps it into the sink; `send`
 /// writes to it; `close` drops it. `down` makes every open fail as a
 /// disconnected agent would.
+///
+/// By default it behaves like an agent from before #4284 (grants no window).
+/// [`FakeAgent::with_flow`] makes it a flow-controlling agent: it reads the
+/// target only while it has credit from the desktop's acks, and acks the
+/// desktop's bytes once written to the target.
 #[derive(Default)]
 struct FakeAgent {
     down: std::sync::atomic::AtomicBool,
+    /// The window this agent grants (`None`: an older agent).
+    grant: Option<u64>,
     log: Mutex<Log>,
     writers: Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>,
     readers: Mutex<HashMap<String, tokio::task::AbortHandle>>,
     /// Sinks toward the desktop, so a test can simulate the agent transport
     /// dropping every stream (the relay's `clear`).
-    sinks: Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>,
+    sinks: Mutex<HashMap<String, UnboundedSender<ForwardEvent>>>,
+    /// Target → desktop credit per stream (flow-controlling agent only).
+    windows: Mutex<HashMap<String, Arc<ForwardWindow>>>,
+    /// Bytes read from targets and sent toward the desktop.
+    read_from_target: Arc<AtomicUsize>,
+    /// Bytes the desktop acknowledged.
+    acked_by_desktop: AtomicUsize,
+    /// Desktop bytes sent but not yet written to the target, and the most
+    /// that ever were at once.
+    inbound_unacked: Arc<AtomicUsize>,
+    inbound_peak: Arc<AtomicUsize>,
+}
+
+impl FakeAgent {
+    fn with_flow(window: u64) -> Self {
+        Self {
+            grant: Some(window),
+            ..Self::default()
+        }
+    }
 }
 
 impl FakeAgent {
@@ -159,8 +243,14 @@ impl ForwardTransport for FakeAgent {
         stream_id: &str,
         host: &str,
         port: u16,
-        sink: UnboundedSender<Vec<u8>>,
-    ) -> Result<(), String> {
+        window: Option<u64>,
+        sink: UnboundedSender<ForwardEvent>,
+    ) -> Result<Option<u64>, String> {
+        assert_eq!(
+            window,
+            Some(AGENT_FORWARD_WINDOW as u64),
+            "the desktop always requests the shared window"
+        );
         if self.down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(forward_failure_message(
                 host,
@@ -182,22 +272,56 @@ impl ForwardTransport for FakeAgent {
         };
         let (mut rd, mut wr) = conn.into_split();
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let granted = self.grant;
+        let window = granted.map(|w| Arc::new(ForwardWindow::new(w as usize)));
+        let acks = sink.clone();
+        let unacked = self.inbound_unacked.clone();
         rt.spawn(async move {
             while let Some(b) = rx.recv().await {
                 if wr.write_all(&b).await.is_err() {
                     break;
                 }
+                if granted.is_some() {
+                    unacked.fetch_sub(b.len(), AtomicOrdering::SeqCst);
+                    let _ = acks.send(ForwardEvent::Ack(b.len() as u64));
+                }
             }
         });
         let to_desktop = sink.clone();
+        let reader_window = window.clone();
+        let read_count = self.read_from_target.clone();
         let reader = rt.spawn(async move {
-            let mut buf = vec![0u8; 1024];
-            while let Ok(n) = rd.read(&mut buf).await {
-                if n == 0 || to_desktop.send(buf[..n].to_vec()).is_err() {
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                let limit = match &reader_window {
+                    Some(w) => match w.wait_credit().await {
+                        Some(credit) => credit.min(buf.len()),
+                        None => break,
+                    },
+                    None => buf.len(),
+                };
+                let n = match rd.read(&mut buf[..limit]).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if let Some(w) = &reader_window {
+                    w.consume(n);
+                }
+                read_count.fetch_add(n, AtomicOrdering::SeqCst);
+                if to_desktop
+                    .send(ForwardEvent::Data(buf[..n].to_vec()))
+                    .is_err()
+                {
                     break;
                 }
             }
         });
+        if let Some(w) = window {
+            self.windows
+                .lock()
+                .unwrap()
+                .insert(stream_id.to_string(), w);
+        }
         self.writers
             .lock()
             .unwrap()
@@ -210,10 +334,17 @@ impl ForwardTransport for FakeAgent {
             .lock()
             .unwrap()
             .insert(stream_id.to_string(), sink);
-        Ok(())
+        Ok(granted)
     }
 
     fn send(&self, stream_id: &str, data: Vec<u8>) -> Result<(), String> {
+        if self.grant.is_some() {
+            let now = self
+                .inbound_unacked
+                .fetch_add(data.len(), AtomicOrdering::SeqCst)
+                + data.len();
+            self.inbound_peak.fetch_max(now, AtomicOrdering::SeqCst);
+        }
         self.writers
             .lock()
             .unwrap()
@@ -223,10 +354,21 @@ impl ForwardTransport for FakeAgent {
             .map_err(|_| "gone".to_string())
     }
 
+    fn ack(&self, stream_id: &str, bytes: u64) {
+        self.acked_by_desktop
+            .fetch_add(bytes as usize, AtomicOrdering::SeqCst);
+        if let Some(w) = self.windows.lock().unwrap().get(stream_id) {
+            w.release(bytes as usize);
+        }
+    }
+
     fn close(&self, stream_id: &str) {
         self.log.lock().unwrap().closed.push(stream_id.to_string());
         self.writers.lock().unwrap().remove(stream_id);
         self.sinks.lock().unwrap().remove(stream_id);
+        if let Some(w) = self.windows.lock().unwrap().remove(stream_id) {
+            w.close();
+        }
         if let Some(r) = self.readers.lock().unwrap().remove(stream_id) {
             r.abort();
         }
@@ -374,6 +516,159 @@ async fn agent_down_fails_the_dial_with_a_clear_reason() {
     agent.down.store(false, std::sync::atomic::Ordering::SeqCst);
     let _ok = roundtrip(fwd.local_port(), b"back").await;
     assert!(fwd.last_error().is_none());
+}
+
+// ── flow control (#4284) ───────────────────────────────────────────
+
+/// A target that writes `total` bytes as fast as it is let.
+async fn flood_target(total: usize) -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        if let Ok((mut c, _)) = l.accept().await {
+            let chunk = vec![0x5Au8; 64 * 1024];
+            let mut sent = 0;
+            while sent < total {
+                let n = chunk.len().min(total - sent);
+                if c.write_all(&chunk[..n]).await.is_err() {
+                    return;
+                }
+                sent += n;
+            }
+            let _ = c.shutdown().await;
+        }
+    });
+    port
+}
+
+/// A slow canvas: the backend stops reading, so the desktop stops acking and
+/// the agent stops reading the target — the remote source is slowed instead
+/// of the agent (or the desktop) buffering without bound. Once the backend
+/// reads again, everything arrives.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_backend_slows_the_remote_source() {
+    let total = 64 * 1024 * 1024;
+    let window = 64 * 1024;
+    let target = flood_target(total).await;
+    let agent = Arc::new(FakeAgent::with_flow(window));
+    let fwd = AgentPortForward::start(agent.clone(), "127.0.0.1".into(), target)
+        .await
+        .unwrap();
+
+    // The backend connects but does not read.
+    let mut backend = TcpStream::connect(("127.0.0.1", fwd.local_port()))
+        .await
+        .unwrap();
+    // Let the pipeline fill up and stall.
+    let mut last = 0;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let now = agent.read_from_target.load(AtomicOrdering::SeqCst);
+        if now == last && now > 0 {
+            break;
+        }
+        last = now;
+    }
+    let read = agent.read_from_target.load(AtomicOrdering::SeqCst);
+    let acked = agent.acked_by_desktop.load(AtomicOrdering::SeqCst);
+    assert!(
+        read <= acked + window as usize,
+        "the agent never runs more than the window ahead of the desktop's acks \
+         (read {read}, acked {acked})"
+    );
+    assert!(
+        read < total / 2,
+        "a stalled backend must stall the source, not drain it (read {read} of {total})"
+    );
+
+    // The canvas catches up: everything arrives, in full.
+    let mut got = 0usize;
+    let mut buf = vec![0u8; 256 * 1024];
+    while got < total {
+        let n = tokio::time::timeout(Duration::from_secs(20), backend.read(&mut buf))
+            .await
+            .expect("stream resumes")
+            .unwrap();
+        assert!(n > 0, "stream ended early after {got} bytes");
+        got += n;
+    }
+    assert_eq!(got, total);
+}
+
+/// Throughput both ways through a flow-controlled agent: a large payload
+/// echoes back intact, and the desktop never had more than the window of its
+/// own bytes unacknowledged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_flow_controlled_stream_carries_bulk_both_ways() {
+    let window = 32 * 1024;
+    let target = echo_target().await;
+    let agent = Arc::new(FakeAgent::with_flow(window));
+    let fwd = AgentPortForward::start(agent.clone(), "127.0.0.1".into(), target)
+        .await
+        .unwrap();
+
+    let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 253) as u8).collect();
+    let c = TcpStream::connect(("127.0.0.1", fwd.local_port()))
+        .await
+        .unwrap();
+    let (mut rd, mut wr) = c.into_split();
+    let to_send = payload.clone();
+    // The writer hands its half back: dropping it would half-close the
+    // stream, which the forward treats as the backend hanging up.
+    let writer = tokio::spawn(async move {
+        wr.write_all(&to_send).await.unwrap();
+        wr
+    });
+    let mut got = vec![0u8; payload.len()];
+    tokio::time::timeout(Duration::from_secs(30), rd.read_exact(&mut got))
+        .await
+        .expect("echo in time")
+        .unwrap();
+    let _wr = writer.await.unwrap();
+    assert!(got == payload, "bulk bytes arrive intact and in order");
+    let peak = agent.inbound_peak.load(AtomicOrdering::SeqCst);
+    assert!(
+        peak <= window as usize,
+        "desktop kept {peak} bytes unacked, above the {window}-byte window"
+    );
+    assert!(agent.acked_by_desktop.load(AtomicOrdering::SeqCst) > 0);
+}
+
+/// An agent from before #4284 grants no window: the stream still forwards
+/// (unbounded, as before), and the desktop never sends it an ack.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_without_flow_control_still_forwards() {
+    let target = echo_target().await;
+    let agent = Arc::new(FakeAgent::default());
+    let fwd = AgentPortForward::start(agent.clone(), "127.0.0.1".into(), target)
+        .await
+        .unwrap();
+    let big: Vec<u8> = vec![7u8; 4 * AGENT_FORWARD_WINDOW];
+    let _c = roundtrip(fwd.local_port(), &big).await;
+    assert_eq!(
+        agent.acked_by_desktop.load(AtomicOrdering::SeqCst),
+        0,
+        "an older agent is never sent agent.forward.ack"
+    );
+}
+
+/// Dropping a flow-controlled forward while the desktop waits for credit
+/// still closes the stream at the agent (teardown frees its state).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropping_a_stalled_flow_controlled_forward_closes_the_stream() {
+    let target = flood_target(16 * 1024 * 1024).await;
+    let agent = Arc::new(FakeAgent::with_flow(4096));
+    let fwd = AgentPortForward::start(agent.clone(), "127.0.0.1".into(), target)
+        .await
+        .unwrap();
+    let _backend = TcpStream::connect(("127.0.0.1", fwd.local_port()))
+        .await
+        .unwrap();
+    wait_until(|| agent.windows.lock().unwrap().len() == 1).await;
+    drop(fwd);
+    wait_until(|| agent.log.lock().unwrap().closed.len() == 1).await;
+    assert!(agent.windows.lock().unwrap().is_empty());
+    assert!(agent.sinks.lock().unwrap().is_empty());
 }
 
 // ── through the graphical session manager (VNC backend) ────────────
@@ -549,7 +844,7 @@ mod live {
     use crate::session::rdp_trust_store::RdpTrustStore;
 
     type Pending = Arc<Mutex<HashMap<u64, std::sync::mpsc::Sender<Value>>>>;
-    type Sinks = Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>;
+    type Sinks = Arc<Mutex<HashMap<String, UnboundedSender<ForwardEvent>>>>;
 
     /// A [`ForwardTransport`] speaking JSON-RPC to an agent child process.
     struct StdioAgent {
@@ -593,11 +888,17 @@ mod live {
                         Some("agent.forward.data") => {
                             let data = b64.decode(params["data"].as_str().unwrap_or("")).unwrap();
                             if let Some(tx) = s.lock().unwrap().get(sid) {
-                                let _ = tx.send(data);
+                                let _ = tx.send(ForwardEvent::Data(data));
                             }
                         }
                         Some("agent.forward.close") => {
                             s.lock().unwrap().remove(sid);
+                        }
+                        Some("agent.forward.ack") => {
+                            if let Some(tx) = s.lock().unwrap().get(sid) {
+                                let bytes = params["bytes"].as_u64().unwrap_or(0);
+                                let _ = tx.send(ForwardEvent::Ack(bytes));
+                            }
                         }
                         _ => {}
                     }
@@ -646,21 +947,29 @@ mod live {
             stream_id: &str,
             host: &str,
             port: u16,
-            sink: UnboundedSender<Vec<u8>>,
-        ) -> Result<(), String> {
+            window: Option<u64>,
+            sink: UnboundedSender<ForwardEvent>,
+        ) -> Result<Option<u64>, String> {
             self.sinks
                 .lock()
                 .unwrap()
                 .insert(stream_id.to_string(), sink);
             let reply = self.call(
                 "agent.forward.connect",
-                json!({ "stream_id": stream_id, "host": host, "port": port }),
+                json!({ "stream_id": stream_id, "host": host, "port": port, "window": window }),
             );
             if let Some(err) = reply.get("error") {
                 self.sinks.lock().unwrap().remove(stream_id);
                 return Err(err["message"].as_str().unwrap_or("error").to_string());
             }
-            Ok(())
+            Ok(reply["result"]["window"].as_u64())
+        }
+
+        fn ack(&self, stream_id: &str, bytes: u64) {
+            self.write(
+                "agent.forward.ack",
+                json!({ "stream_id": stream_id, "bytes": bytes }),
+            );
         }
 
         fn send(&self, stream_id: &str, data: Vec<u8>) -> Result<(), String> {

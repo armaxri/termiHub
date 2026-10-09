@@ -21,6 +21,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    ComposeFixtureFailed,
     ContainerRuntimeUnavailable,
     FilesUi,
     PasswordPromptUi,
@@ -70,7 +71,7 @@ class TestFileBrowserDragSftpLive(
             for path in self._remote_paths:
                 try:
                     self._server.remove_path(path)
-                except ContainerRuntimeUnavailable:
+                except (ContainerRuntimeUnavailable, ComposeFixtureFailed):
                     pass
 
     def test_dragging_a_remote_file_onto_a_folder_renames_it_on_the_server(self):

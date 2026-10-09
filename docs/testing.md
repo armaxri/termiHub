@@ -613,7 +613,23 @@ the coverage it _can_ run rather than failing on fixtures it cannot reach. A
 reachable daemon that runs Windows containers counts as "no runtime" too. What
 does **not** skip on CI is `compose` running and failing — a container-name
 conflict, a bad compose file, a build error raises `ComposeFixtureFailed` and
-reds the lane (#4103: a name conflict once skipped ~100 Linux suites unnoticed). This
+reds the lane (#4103: a name conflict once skipped ~100 Linux suites unnoticed).
+The same goes for a fixture that times out after the runtime was found: a
+`compose` timeout, a port that never opens, a VNC/FTP server that never greets or
+an RDP server that never answers (#4315).
+
+Every nightly lane also runs a **skip guard** (#4315). Each run lists its skipped
+tests and their reasons in the terminal and the GitHub step summary, and a lane
+that names itself in `TERMIHUB_SKIP_GUARD_LANE` fails on a skip reason that
+[`tests/system/skip-allowlist.json`](../tests/system/skip-allowlist.json) does not
+expect for that lane (each entry records _why_), on more skips than the lane's
+`max_skips` baseline, and when it ran nothing. The Linux leg also sets
+`TERMIHUB_REQUIRE_FIXTURES=1`, which fails any "fixture unavailable" skip and a
+missing RDP sidecar. Every lane runs under xdist (the serial ones with `-n 1`) so
+the harness' per-phase hang guard arms: a hung test crashes its worker with a
+dump of all stacks, the running processes, and the app's state, screenshot and
+log tail under `tests/system/artifacts/`, and a replacement worker runs the
+rest. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#per-feature-walkthrough-triage-3695) (the live tunnel UI tests run
 on macOS against the native loopback sshd instead, #4005) and ADR-5.
