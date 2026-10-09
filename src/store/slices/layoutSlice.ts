@@ -7,7 +7,6 @@ import {
   currentLayoutSnapshot,
   generateGroupId,
   getComposedLayout,
-  omitKey,
   patchTabContentEntry,
   postLayoutSnapshot,
   removeTabFromLeaf,
@@ -53,8 +52,8 @@ import {
 } from "@/store/layoutBridge";
 import { mirrorSessionIntent } from "@/store/sessionBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
-import { currentBroadcastView } from "@/store/broadcastBridge";
 import { createLayoutCommit } from "./layoutCommit";
+import { prunedSessionState, prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
 
 /**
  * Core tabs/panel layout slice (ARCH-001/FES-011, appStore god-module split via
@@ -288,8 +287,16 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         // `tabContent`, so patch it there — the composed tree reflects it on read.
         const leaf = findLeafByTab(getComposedLayout(raw).rootPanel, tabId);
         if (!leaf) return raw;
+        // A superseded (reconnect, fresh shell) or cleared (session ended) session
+        // drops its session-keyed entries unless another tab still shows it
+        // (#4313, FES2-007) — otherwise they grow with every new session id.
+        const sessionPatch =
+          prevSessionId && prevSessionId !== sessionId
+            ? prunedSessionState(raw, prevSessionId, tabId)
+            : {};
         return {
           tabContent: patchTabContentEntry(raw.tabContent, tabId, { sessionId }),
+          ...sessionPatch,
         };
       });
 
@@ -504,10 +511,11 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       const prevLayout = get();
       const preLayout = currentLayoutSnapshot(prevLayout);
 
-      // Session-intents cut (#2203): the tab is gone — drop its lifecycle record
-      // from the shared region so the store does not leak a dead session. Any
-      // pending backend reconnect timer is cancelled by `session.remove`.
-      mirrorSessionIntent("session.remove", tabId);
+      // Shared teardown (#4313): drop the tab's lifecycle record from the shared
+      // region (#2203 — any pending backend reconnect timer is cancelled by
+      // `session.remove`) and its broadcast membership (#1955). The same helper
+      // runs when a tab is moved to another window.
+      releaseTabFromSharedRegions(get, tabId);
 
       // On-disconnect workflow triggers (#3791): closing a tab whose session is
       // still live is a user close. Checked before the tab leaves the layout.
@@ -527,38 +535,10 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       }
 
       const closeNext = setLayoutLocal((state) => {
-        // Clean up per-tab state for the closed tab
-        const remainingCwds = omitKey(state.tabCwds, tabId);
-        const remainingHs = omitKey(state.tabHorizontalScrolling, tabId);
-        const remainingDirty = omitKey(state.editorDirtyTabs, tabId);
-        const remainingColors = omitKey(state.tabColors, tabId);
-        // Prune the closed tab's content from the by-id map (part of #2283).
-        const remainingTabContent = omitKey(state.tabContent, tabId);
-        const remainingOpts = omitKey(state.tabTerminalOptions, tabId);
-        const remainingSearch = omitKey(state.terminalSearchVisible, tabId);
-        const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
-        const remainingSpawnErrorKinds = omitKey(state.terminalSpawnErrorKinds, tabId);
-        const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
-        const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
-        const remainingView = omitKey(state.terminalViewMode, tabId);
-        const remainingReattach = omitKey(state.terminalReattaching, tabId);
-        const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
-        const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
-        const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
-        // FES-003: prune the one-shot force-fresh-reconnect flag so it does not
-        // leak a stranded entry when the tab closes.
-        const remainingForceFresh = omitKey(state.terminalForceFreshReconnect, tabId);
-
-        // Remove this tab from any persistent session's attachedTabIds
-        const persistentSessions = { ...state.persistentSessions };
-        for (const [connId, entry] of Object.entries(persistentSessions)) {
-          if (entry.attachedTabIds.includes(tabId)) {
-            persistentSessions[connId] = {
-              ...entry,
-              attachedTabIds: entry.attachedTabIds.filter((id) => id !== tabId),
-            };
-          }
-        }
+        // Clean up per-tab and per-session state for the closed tab (#4313):
+        // every per-tab map, persistent attachedTabIds, and the session-keyed
+        // maps when no other tab shows the session.
+        const pruned = prunedTabState(state, tabId);
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -580,62 +560,16 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
             rootPanel,
             activePanelId,
             zoomedTabId,
-            persistentSessions,
-            tabCwds: remainingCwds,
-            tabHorizontalScrolling: remainingHs,
-            editorDirtyTabs: remainingDirty,
-            tabColors: remainingColors,
-            tabContent: remainingTabContent,
-            tabTerminalOptions: remainingOpts,
-            terminalSearchVisible: remainingSearch,
-            terminalSpawnErrors: remainingSpawnErrors,
-            terminalSpawnErrorKinds: remainingSpawnErrorKinds,
-            terminalRetryCounters: remainingRetryCounters,
-            terminalConnectDeadline: remainingConnectDeadline,
-            terminalViewMode: remainingView,
-            terminalReattaching: remainingReattach,
-            terminalReconnectPrompt: remainingPrompt,
-            terminalAutoRetryCount: remainingAutoRetry,
-            terminalWaitingForAgent: remainingWaiting,
-            terminalForceFreshReconnect: remainingForceFresh,
+            ...pruned,
           };
         }
 
         return {
           rootPanel,
           zoomedTabId,
-          persistentSessions,
-          tabCwds: remainingCwds,
-          tabHorizontalScrolling: remainingHs,
-          editorDirtyTabs: remainingDirty,
-          tabColors: remainingColors,
-          tabContent: remainingTabContent,
-          tabTerminalOptions: remainingOpts,
-          terminalSearchVisible: remainingSearch,
-          terminalSpawnErrors: remainingSpawnErrors,
-          terminalSpawnErrorKinds: remainingSpawnErrorKinds,
-          terminalRetryCounters: remainingRetryCounters,
-          terminalConnectDeadline: remainingConnectDeadline,
-          terminalViewMode: remainingView,
-          terminalReattaching: remainingReattach,
-          terminalReconnectPrompt: remainingPrompt,
-          terminalAutoRetryCount: remainingAutoRetry,
-          terminalWaitingForAgent: remainingWaiting,
-          terminalForceFreshReconnect: remainingForceFresh,
+          ...pruned,
         };
       });
-
-      // Broadcast (#1955): closing the source tab ends broadcast entirely;
-      // closing a plain target silently drops it from the set. Membership is
-      // sourced from the authoritative region (#2206).
-      const bcView = currentBroadcastView();
-      if (bcView.active) {
-        if (bcView.sourceTabId === tabId) {
-          get().stopBroadcast();
-        } else if (bcView.targetTabIds.includes(tabId)) {
-          get().removeBroadcastTarget(tabId);
-        }
-      }
 
       // Optimistic-fold overlay (#2283 slice D'): mirror the structural close into
       // the region via `layout.closeTabStructure` (the structural half only —
