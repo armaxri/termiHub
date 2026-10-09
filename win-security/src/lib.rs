@@ -10,11 +10,11 @@
 //!   inherited from the parent) that grants `GENERIC_ALL` to the current user,
 //!   any extra SIDs the caller names, and optionally `LocalSystem`. It is pure and
 //!   compiles on every platform, so its shape is unit-tested everywhere.
-//! * On Windows, [`ProtectedDacl`] owns the converted descriptor plus the
+//! * On Windows, `ProtectedDacl` owns the converted descriptor plus the
 //!   `SECURITY_ATTRIBUTES` that point at it (for `CreateNamedPipeW` and friends)
 //!   and can stamp the DACL on an existing file or directory
-//!   ([`ProtectedDacl::apply_to_path`]).
-//! * [`current_user_sid_string`] and [`peer_sid_string`] resolve the SIDs the
+//!   (`ProtectedDacl::apply_to_path`).
+//! * `current_user_sid_string` and `peer_sid_string` resolve the SIDs the
 //!   per-user policy compares; [`DaclSummary`] reads a DACL back so tests can
 //!   assert exactly which ACEs an object carries.
 
