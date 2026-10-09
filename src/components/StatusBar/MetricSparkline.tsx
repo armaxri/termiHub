@@ -46,7 +46,7 @@ export function MetricSparkline({
 
   const makeOptions = (container: HTMLDivElement): uPlot.Options => {
     const styles = getComputedStyle(container);
-    const accent = cssVar(styles, "--accent-color", "#3794ff");
+    const accent = cssVar(styles, "--accent-color");
     return {
       width: container.clientWidth || width,
       height,
@@ -70,7 +70,7 @@ export function MetricSparkline({
   const containerRef = useUplot({
     data: chart.data,
     makeOptions,
-    // Recreate only when structural options (range / height) change.
+    // Recreate on structural options (range / height); useUplot adds the theme.
     recreateDeps: [min, max, height, width],
   });
 

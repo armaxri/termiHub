@@ -7,6 +7,7 @@ export {
   getXtermTheme,
   getCurrentTheme,
   onThemeChange,
+  getThemeRevision,
 } from "./engine";
 export { COLOR_TOKEN_GROUPS } from "./colorTokens";
 export {

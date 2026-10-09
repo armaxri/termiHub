@@ -12,8 +12,8 @@ evidence:
   - src/themes/colorTokens.ts:69
   - src/themes/engine.ts:141
   - src/components/ThemeEditor/ThemeEditor.tsx:183
-status: open
-resolution: ""
+status: fixed
+resolution: "#4356 — textOnAccent theme token; custom/plugin themes derive it from the accent by WCAG contrast"
 audit: 2026-10
 commit: 663465d52
 relation: new
