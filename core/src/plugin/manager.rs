@@ -251,6 +251,18 @@ pub enum PluginManagerError {
         /// A pending (unconfirmed) version change for the same install, if any.
         version: Option<Box<VersionChange>>,
     },
+
+    /// The installed plugin's `manifest.json` no longer parses or validates
+    /// (e.g. a stricter validation rule landed after it was installed, #4392).
+    /// It is listed in the [`PluginState::Error`] state so the user can see
+    /// why and uninstall it, but it is never enabled or loaded.
+    #[error("plugin `{id}` has an invalid manifest and cannot be loaded: {reason}")]
+    InvalidManifest {
+        /// The plugin id (its install directory name).
+        id: String,
+        /// Why the manifest was rejected.
+        reason: String,
+    },
 }
 
 /// The caller's consent flags for [`PluginManager::install_with`].
@@ -358,9 +370,15 @@ impl PluginManager {
     ///
     /// Each sub*directory* with a readable, valid `manifest.json` becomes an
     /// [`InstalledPlugin`]; its state is derived from API compatibility and the
-    /// persisted enabled/disabled flag. Directories whose manifest is missing or
-    /// invalid are skipped (they were never installed through this manager, or
-    /// were corrupted) rather than aborting the whole scan.
+    /// persisted enabled/disabled flag. Directories without a `manifest.json`
+    /// are skipped (they were never installed through this manager).
+    ///
+    /// A plugin whose `manifest.json` exists but no longer parses or validates
+    /// (e.g. installed before a validation rule was tightened) is **not**
+    /// hidden: it is listed as [`PluginState::Error`] with the rejection reason
+    /// as its message, under a placeholder manifest carrying only its id (the
+    /// directory name) and a leniently-read name/version/author (#4392). It is
+    /// never loaded and cannot be enabled, but it can be uninstalled.
     pub fn list(&self) -> Result<Vec<InstalledPlugin>, PluginManagerError> {
         if !self.root.exists() {
             return Ok(Vec::new());
@@ -373,23 +391,40 @@ impl PluginManager {
                 continue;
             }
             let dir = entry.path();
-            let manifest = match read_manifest(&dir) {
-                Some(m) => m,
-                None => continue,
-            };
-            out.push(self.installed_plugin_from(manifest, &state, &dir));
+            match read_listed_manifest(&dir) {
+                ListedManifest::Valid(manifest) => {
+                    out.push(self.installed_plugin_from(manifest, &state, &dir));
+                }
+                ListedManifest::Invalid(invalid) => {
+                    out.push(invalid_plugin_from(invalid, &state, &dir));
+                }
+                ListedManifest::Absent => {}
+            }
         }
         out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
         Ok(out)
     }
 
     /// Look up a single installed plugin by id.
+    ///
+    /// Like [`list`](Self::list), a plugin whose manifest no longer validates is
+    /// returned in the [`PluginState::Error`] state rather than reported missing.
     pub fn get(&self, id: &str) -> Result<InstalledPlugin, PluginManagerError> {
+        if !is_valid_plugin_id(id) {
+            return Err(PluginManagerError::NotFound(id.into()));
+        }
         let dir = self.plugin_dir(id);
-        let manifest =
-            read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
-        let state = self.read_state_store()?;
-        Ok(self.installed_plugin_from(manifest, &state, &dir))
+        match read_listed_manifest(&dir) {
+            ListedManifest::Valid(manifest) => {
+                let state = self.read_state_store()?;
+                Ok(self.installed_plugin_from(manifest, &state, &dir))
+            }
+            ListedManifest::Invalid(invalid) => {
+                let state = self.read_state_store()?;
+                Ok(invalid_plugin_from(invalid, &state, &dir))
+            }
+            ListedManifest::Absent => Err(PluginManagerError::NotFound(id.into())),
+        }
     }
 
     /// Assess how much a `.termihub-plugin` package can be trusted before
@@ -846,8 +881,18 @@ impl PluginManager {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let dir = self.plugin_dir(id);
-        let manifest =
-            read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
+        let manifest = match read_listed_manifest(&dir) {
+            ListedManifest::Valid(manifest) => manifest,
+            // Never enable (or load) a plugin whose manifest fails validation —
+            // fail closed with the reason, leaving its persisted flag untouched.
+            ListedManifest::Invalid(invalid) => {
+                return Err(PluginManagerError::InvalidManifest {
+                    id: id.into(),
+                    reason: invalid.reason,
+                });
+            }
+            ListedManifest::Absent => return Err(PluginManagerError::NotFound(id.into())),
+        };
 
         let ((), state) = plugin_state::update(&self.root, |state| {
             let record = state
@@ -1258,10 +1303,136 @@ pub(crate) fn installed_manifests(plugins_root: &Path) -> Vec<(PathBuf, PluginMa
 }
 
 fn read_manifest(dir: &Path) -> Option<PluginManifest> {
-    let json = std::fs::read_to_string(dir.join(MANIFEST_FILE_NAME)).ok()?;
-    let manifest = parse_manifest(&json).ok()?;
-    manifest.validate().ok()?;
-    Some(manifest)
+    match read_listed_manifest(dir) {
+        ListedManifest::Valid(manifest) => Some(manifest),
+        ListedManifest::Invalid(_) | ListedManifest::Absent => None,
+    }
+}
+
+/// Longest leniently-read display string (name/version/author) carried by the
+/// placeholder manifest of an [`ListedManifest::Invalid`] plugin.
+const MAX_LENIENT_FIELD_CHARS: usize = 128;
+
+/// What a plugin directory's `manifest.json` resolves to for listing.
+enum ListedManifest {
+    /// The manifest parses and validates — a loadable plugin.
+    Valid(PluginManifest),
+    /// The manifest exists but does not parse or validate (#4392).
+    Invalid(InvalidManifest),
+    /// No `manifest.json`, or a directory name that is not a plugin id — not
+    /// an installed plugin.
+    Absent,
+}
+
+/// An installed plugin whose manifest was rejected: a display-only placeholder
+/// manifest plus the rejection reason.
+struct InvalidManifest {
+    /// Placeholder carrying only the id (directory name) and a leniently-read
+    /// name/version/author. Every capability-bearing field (extensions,
+    /// permissions, filesystem paths, update URL, settings, …) is left empty, so
+    /// nothing from the rejected manifest can be acted on.
+    manifest: PluginManifest,
+    /// Why the manifest was rejected (parse or validation error).
+    reason: String,
+}
+
+/// Read and classify `dir`'s `manifest.json` (#4392).
+///
+/// Only directories named by a valid plugin id that contain a `manifest.json`
+/// count as installed plugins; anything else is [`ListedManifest::Absent`]. A
+/// manifest that cannot be read, parsed or validated becomes
+/// [`ListedManifest::Invalid`] with the reason, so it is surfaced instead of
+/// silently dropped.
+fn read_listed_manifest(dir: &Path) -> ListedManifest {
+    let path = dir.join(MANIFEST_FILE_NAME);
+    let Some(id) = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| is_valid_plugin_id(n))
+    else {
+        return ListedManifest::Absent;
+    };
+    let json = match std::fs::read_to_string(&path) {
+        Ok(json) => json,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ListedManifest::Absent,
+        Err(e) => {
+            return ListedManifest::Invalid(invalid_manifest(
+                id,
+                None,
+                format!("could not read plugin manifest: {e}"),
+            ));
+        }
+    };
+    let manifest = match parse_manifest(&json) {
+        Ok(manifest) => manifest,
+        Err(e) => {
+            return ListedManifest::Invalid(invalid_manifest(id, Some(&json), e.to_string()));
+        }
+    };
+    if let Err(e) = manifest.validate() {
+        return ListedManifest::Invalid(invalid_manifest(id, Some(&json), e.to_string()));
+    }
+    if manifest.id != id {
+        // An install always extracts into `<root>/<manifest.id>`, so a mismatch
+        // means the directory was tampered with or renamed.
+        return ListedManifest::Invalid(invalid_manifest(
+            id,
+            Some(&json),
+            format!(
+                "plugin manifest id `{}` does not match its install directory `{id}`",
+                manifest.id
+            ),
+        ));
+    }
+    ListedManifest::Valid(manifest)
+}
+
+/// Build the display-only placeholder for a rejected manifest. `json` is the
+/// raw manifest text, read leniently (any JSON object) for name/version/author.
+fn invalid_manifest(id: &str, json: Option<&str>, reason: String) -> InvalidManifest {
+    let raw: Option<Map<String, Value>> = json.and_then(|j| serde_json::from_str(j).ok());
+    let field = |key: &str| -> Option<String> {
+        let value = raw.as_ref()?.get(key)?.as_str()?.trim();
+        let clean: String = value
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MAX_LENIENT_FIELD_CHARS)
+            .collect();
+        (!clean.is_empty()).then_some(clean)
+    };
+    let manifest = PluginManifest {
+        id: id.to_owned(),
+        name: field("name").unwrap_or_else(|| id.to_owned()),
+        version: field("version").unwrap_or_default(),
+        author: field("author").unwrap_or_default(),
+        description: String::new(),
+        license: String::new(),
+        api_version: String::new(),
+        platforms: Vec::new(),
+        permissions: Vec::new(),
+        filesystem_paths: Vec::new(),
+        extensions: Default::default(),
+        connection_policy: None,
+        settings: None,
+        update_url: None,
+    };
+    InvalidManifest { manifest, reason }
+}
+
+/// The [`InstalledPlugin`] for a plugin whose manifest was rejected: always
+/// [`PluginState::Error`] with the reason, regardless of its persisted flag.
+fn invalid_plugin_from(invalid: InvalidManifest, state: &StateStore, dir: &Path) -> InstalledPlugin {
+    let installed_at = state
+        .plugins
+        .get(&invalid.manifest.id)
+        .map(|r| r.installed_at)
+        .unwrap_or_else(|| dir_install_time(dir));
+    InstalledPlugin {
+        manifest: invalid.manifest,
+        state: PluginState::Error,
+        error_message: Some(invalid.reason),
+        installed_at,
+    }
 }
 
 /// Recover who signed an installed plugin from the `signature.json` extraction
@@ -2678,19 +2849,24 @@ mod tests {
     }
 
     #[test]
-    fn scan_skips_dirs_without_valid_manifest() {
+    fn scan_skips_dirs_without_manifest_and_surfaces_broken_ones() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("real", "1.0"), &[]);
         mgr.install(&pkg, true, false).unwrap();
 
-        // A stray directory with no manifest, and one with garbage.
+        // A stray directory with no manifest (skipped), and one with garbage —
+        // surfaced as `Error` so the user can see and uninstall it (#4392).
         std::fs::create_dir_all(mgr.root().join("stray")).unwrap();
         std::fs::create_dir_all(mgr.root().join("broken")).unwrap();
         std::fs::write(mgr.root().join("broken").join(MANIFEST_FILE_NAME), "{ bad").unwrap();
 
         let list = mgr.list().unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].manifest.id, "real");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].manifest.id, "broken");
+        assert_eq!(list[0].state, PluginState::Error);
+        assert!(list[0].error_message.is_some());
+        assert_eq!(list[1].manifest.id, "real");
+        assert_eq!(list[1].state, PluginState::Installed);
     }
 
     #[test]
