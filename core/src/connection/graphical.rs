@@ -680,7 +680,9 @@ pub enum GraphicalState {
     Disconnected,
     /// Actively retrying after an unexpected drop.
     Reconnecting,
-    /// The server closed the session cleanly (logoff).
+    /// The server ended the session on purpose — the user logged off remotely
+    /// or an administrator disconnected it. Never auto-reconnected; the
+    /// frontend offers a manual Reconnect.
     ServerClosed,
     /// Authentication was rejected.
     AuthFailed,
@@ -714,15 +716,23 @@ pub const MAX_RECONNECT_ATTEMPTS: u32 =
 
 /// Pure, protocol-agnostic driver of the shared session state machine.
 ///
-/// Holds no I/O; it exists so the transition rules (and the bounded auto-retry
-/// cap) are unit-testable without a backend or Tauri. The
+/// Holds no I/O; it exists so the transition rules are unit-testable without a
+/// backend or Tauri. The
 /// [`GraphicalSessionManager`](../../session) drives it in response to backend
 /// and user events and emits `remote-desktop-state` on each change.
+///
+/// It does **not** own the reconnect budget (#4321): the session supervisor
+/// runs the canonical `reconnect_reducer` engine, which decides whether
+/// another attempt is allowed, and reports each attempt here through
+/// [`enter_reconnecting`](Self::enter_reconnecting) so the emitted state
+/// carries the attempt the frontend renders.
+///
+/// [`Closed`](GraphicalState::Closed) — the user's Stop / disconnect — is
+/// sticky: no later backend or reconnect event leaves it.
 #[derive(Debug, Clone)]
 pub struct SessionStateMachine {
     state: GraphicalState,
-    reconnect_attempts: u32,
-    max_reconnects: u32,
+    reconnect_attempt: u32,
 }
 
 impl Default for SessionStateMachine {
@@ -736,8 +746,7 @@ impl SessionStateMachine {
     pub fn new() -> Self {
         Self {
             state: GraphicalState::Connecting,
-            reconnect_attempts: 0,
-            max_reconnects: MAX_RECONNECT_ATTEMPTS,
+            reconnect_attempt: 0,
         }
     }
 
@@ -746,10 +755,23 @@ impl SessionStateMachine {
         self.state
     }
 
-    /// How many auto-reconnect attempts have been consumed since the last
-    /// successful `Active`.
-    pub fn reconnect_attempts(&self) -> u32 {
-        self.reconnect_attempts
+    /// The auto-reconnect attempt most recently entered (1-based), or `0` when
+    /// none has run since the last successful `Active`.
+    pub fn reconnect_attempt(&self) -> u32 {
+        self.reconnect_attempt
+    }
+
+    /// Whether the user ended the session (sticky).
+    fn is_closed(&self) -> bool {
+        self.state == GraphicalState::Closed
+    }
+
+    /// Move to `target` unless the user already closed the session.
+    fn set(&mut self, target: GraphicalState) -> GraphicalState {
+        if !self.is_closed() {
+            self.state = target;
+        }
+        self.state
     }
 
     /// The transport came up; move `Connecting`/`Reconnecting` → `Authenticating`.
@@ -765,8 +787,7 @@ impl SessionStateMachine {
 
     /// Authentication succeeded and the first frame arrived; become `Active`.
     ///
-    /// Resets the reconnect counter — a fresh live session starts the retry
-    /// budget over.
+    /// Resets the reconnect attempt — a fresh live session starts over.
     pub fn activated(&mut self) -> GraphicalState {
         if matches!(
             self.state,
@@ -776,7 +797,7 @@ impl SessionStateMachine {
                 | GraphicalState::Resizing
         ) {
             self.state = GraphicalState::Active;
-            self.reconnect_attempts = 0;
+            self.reconnect_attempt = 0;
         }
         self.state
     }
@@ -797,76 +818,43 @@ impl SessionStateMachine {
         self.state
     }
 
-    /// The connection dropped unexpectedly; move to `Disconnected` (auto-retry
-    /// pending). Only meaningful from a live state.
-    pub fn connection_dropped(&mut self) -> GraphicalState {
-        if self.state.is_live() {
-            self.state = GraphicalState::Disconnected;
-        }
-        self.state
-    }
-
-    /// Begin an auto-reconnect attempt.
-    ///
-    /// From `Disconnected`, if the attempt budget is not exhausted, increments
-    /// the counter and moves to `Reconnecting`; once the cap is hit it stays
-    /// `Disconnected` and returns it so the manager surfaces the manual
-    /// reconnect prompt.
-    pub fn begin_reconnect(&mut self) -> GraphicalState {
-        if self.state == GraphicalState::Disconnected
-            && self.reconnect_attempts < self.max_reconnects
-        {
-            self.reconnect_attempts += 1;
+    /// The reconnect engine started auto-reconnect attempt `attempt` (1-based);
+    /// move to `Reconnecting` from any state but `Closed`. The engine has
+    /// already checked its budget, so there is no cap here.
+    pub fn enter_reconnecting(&mut self, attempt: u32) -> GraphicalState {
+        if !self.is_closed() {
             self.state = GraphicalState::Reconnecting;
+            self.reconnect_attempt = attempt;
         }
         self.state
     }
 
-    /// An auto-reconnect attempt failed (the re-dial errored, or the new
-    /// connection dropped before painting a frame); `Reconnecting` →
-    /// `Disconnected`, so the next [`begin_reconnect`](Self::begin_reconnect)
-    /// can consume another attempt — or, once the budget is spent, the session
-    /// rests in `Disconnected` for the manual reconnect prompt.
-    pub fn reconnect_attempt_failed(&mut self) -> GraphicalState {
-        if self.state == GraphicalState::Reconnecting {
-            self.state = GraphicalState::Disconnected;
-        }
-        self.state
-    }
-
-    /// Whether another auto-reconnect attempt is allowed.
-    pub fn can_reconnect(&self) -> bool {
-        self.reconnect_attempts < self.max_reconnects
+    /// The session dropped and no automatic retry is running (auto-reconnect
+    /// off, budget spent, or a non-retryable drop): rest in `Disconnected`, the
+    /// manual reconnect prompt. Keeps the last attempt for the overlay.
+    pub fn disconnected(&mut self) -> GraphicalState {
+        self.set(GraphicalState::Disconnected)
     }
 
     /// Authentication was rejected.
     pub fn auth_failed(&mut self) -> GraphicalState {
-        self.state = GraphicalState::AuthFailed;
-        self.state
+        self.set(GraphicalState::AuthFailed)
     }
 
     /// The transport failed to establish.
     pub fn connect_failed(&mut self) -> GraphicalState {
-        self.state = GraphicalState::ConnectFailed;
-        self.state
+        self.set(GraphicalState::ConnectFailed)
     }
 
-    /// The server closed the session cleanly.
+    /// The server ended the session on purpose (a remote logoff, an admin
+    /// disconnect): rest in `ServerClosed` with no automatic retry.
     pub fn server_closed(&mut self) -> GraphicalState {
-        self.state = GraphicalState::ServerClosed;
-        self.state
+        self.set(GraphicalState::ServerClosed)
     }
 
     /// The user (or a manual dismiss) ended the session. Always terminal.
     pub fn closed(&mut self) -> GraphicalState {
         self.state = GraphicalState::Closed;
-        self.state
-    }
-
-    /// A manual reconnect from a failed/dropped state restarts the machine.
-    pub fn manual_reconnect(&mut self) -> GraphicalState {
-        self.state = GraphicalState::Connecting;
-        self.reconnect_attempts = 0;
         self.state
     }
 }
@@ -1162,61 +1150,52 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_caps_at_three_attempts() {
+    fn enter_reconnecting_tracks_the_engine_attempt_without_a_cap_of_its_own() {
+        // The canonical reconnect engine owns the budget (#4321); the machine
+        // only records which attempt is running, whatever number it is.
         let mut sm = SessionStateMachine::new();
         sm.transport_up();
         sm.activated();
-        // Drop → Disconnected, then three successful auto-retries.
-        for expected in 1..=MAX_RECONNECT_ATTEMPTS {
-            assert_eq!(sm.connection_dropped(), GraphicalState::Disconnected);
-            assert_eq!(sm.begin_reconnect(), GraphicalState::Reconnecting);
-            assert_eq!(sm.reconnect_attempts(), expected);
-            // Simulate the retry's transport failing back to a live-less drop:
-            // put it back to Disconnected via a fresh live cycle would reset the
-            // counter, so instead we model repeated drops without re-activating.
-            sm.state = GraphicalState::Active; // pretend it briefly reconnected then dropped
+        for attempt in 1..=MAX_RECONNECT_ATTEMPTS + 2 {
+            assert_eq!(sm.enter_reconnecting(attempt), GraphicalState::Reconnecting);
+            assert_eq!(sm.reconnect_attempt(), attempt);
         }
-        // Fourth drop: budget exhausted, begin_reconnect stays Disconnected.
-        assert_eq!(sm.connection_dropped(), GraphicalState::Disconnected);
-        assert_eq!(sm.begin_reconnect(), GraphicalState::Disconnected);
-        assert!(!sm.can_reconnect());
     }
 
     #[test]
-    fn failed_attempt_returns_to_disconnected_until_budget_spent() {
-        let mut sm = SessionStateMachine::new();
-        sm.transport_up();
-        sm.activated();
-        sm.connection_dropped();
-        for expected in 1..=MAX_RECONNECT_ATTEMPTS {
-            assert_eq!(sm.begin_reconnect(), GraphicalState::Reconnecting);
-            assert_eq!(sm.reconnect_attempts(), expected);
-            assert_eq!(sm.reconnect_attempt_failed(), GraphicalState::Disconnected);
+    fn disconnected_rests_from_any_open_state_and_keeps_the_attempt() {
+        for prepare in [
+            |_: &mut SessionStateMachine| {},
+            |sm: &mut SessionStateMachine| {
+                sm.transport_up();
+            },
+            |sm: &mut SessionStateMachine| {
+                sm.transport_up();
+                sm.activated();
+            },
+            |sm: &mut SessionStateMachine| {
+                sm.enter_reconnecting(4);
+            },
+        ] {
+            let mut sm = SessionStateMachine::new();
+            prepare(&mut sm);
+            let attempt = sm.reconnect_attempt();
+            assert_eq!(sm.disconnected(), GraphicalState::Disconnected);
+            assert_eq!(sm.reconnect_attempt(), attempt);
         }
-        // Budget spent: the next begin is refused and the session rests in
-        // Disconnected (manual prompt).
-        assert!(!sm.can_reconnect());
-        assert_eq!(sm.begin_reconnect(), GraphicalState::Disconnected);
-        // Only meaningful from Reconnecting.
-        let mut live = SessionStateMachine::new();
-        live.transport_up();
-        live.activated();
-        assert_eq!(live.reconnect_attempt_failed(), GraphicalState::Active);
     }
 
     #[test]
-    fn activation_resets_reconnect_budget() {
+    fn activation_resets_the_reconnect_attempt() {
         let mut sm = SessionStateMachine::new();
         sm.transport_up();
         sm.activated();
-        sm.connection_dropped();
-        sm.begin_reconnect();
-        assert_eq!(sm.reconnect_attempts(), 1);
-        // A genuine reconnect that reaches Active resets the budget.
+        sm.enter_reconnecting(3);
+        assert_eq!(sm.reconnect_attempt(), 3);
+        // A genuine reconnect that reaches Active starts the count over.
         sm.transport_up();
         sm.activated();
-        assert_eq!(sm.reconnect_attempts(), 0);
-        assert!(sm.can_reconnect());
+        assert_eq!(sm.reconnect_attempt(), 0);
     }
 
     #[test]
@@ -1226,15 +1205,6 @@ mod tests {
         assert_eq!(sm.auth_failed(), GraphicalState::AuthFailed);
         assert!(!sm.state().is_live());
         assert!(!sm.state().is_terminal());
-    }
-
-    #[test]
-    fn manual_reconnect_restarts() {
-        let mut sm = SessionStateMachine::new();
-        sm.connect_failed();
-        assert!(sm.state().is_terminal());
-        assert_eq!(sm.manual_reconnect(), GraphicalState::Connecting);
-        assert_eq!(sm.reconnect_attempts(), 0);
     }
 
     #[test]
@@ -1248,6 +1218,32 @@ mod tests {
         sm2.activated();
         assert_eq!(sm2.server_closed(), GraphicalState::ServerClosed);
         assert!(sm2.state().is_terminal());
+    }
+
+    #[test]
+    fn server_close_during_a_reconnect_keeps_the_attempt() {
+        let mut sm = SessionStateMachine::new();
+        sm.enter_reconnecting(2);
+        assert_eq!(sm.server_closed(), GraphicalState::ServerClosed);
+        assert_eq!(sm.reconnect_attempt(), 2);
+    }
+
+    #[test]
+    fn a_user_close_is_sticky() {
+        // The user's Stop (#4321): nothing a backend or the reconnect engine
+        // reports afterwards may reopen the session.
+        let mut sm = SessionStateMachine::new();
+        sm.transport_up();
+        sm.activated();
+        sm.closed();
+        assert_eq!(sm.enter_reconnecting(1), GraphicalState::Closed);
+        assert_eq!(sm.disconnected(), GraphicalState::Closed);
+        assert_eq!(sm.server_closed(), GraphicalState::Closed);
+        assert_eq!(sm.auth_failed(), GraphicalState::Closed);
+        assert_eq!(sm.connect_failed(), GraphicalState::Closed);
+        assert_eq!(sm.transport_up(), GraphicalState::Closed);
+        assert_eq!(sm.activated(), GraphicalState::Closed);
+        assert_eq!(sm.reconnect_attempt(), 0);
     }
 
     #[test]

@@ -18,8 +18,8 @@ evidence:
   - src/components/RemoteDesktop/RemoteDesktopOverlay.tsx:77
   - src/components/RemoteDesktop/RemoteDesktopOverlay.tsx:93
   - core/src/connection/lifecycle.rs:148
-status: open
-resolution: ""
+status: fixed
+resolution: "#4321 — reconnect engine is the sole budget (enter_reconnecting); RDP deliberate ERRINFO ends reach ServerClosed with no retry"
 audit: 2026-10
 commit: 663465d52
 relation: new

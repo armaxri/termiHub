@@ -522,12 +522,14 @@ Handshake that establishes the protocol version and exchanges capabilities.
 }
 ```
 
-| Param                                           | Type      | Description                                                                                                                                                                                    |
-| ----------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `protocolVersion`                               | `string`  | Requested protocol version                                                                                                                                                                     |
-| `client`                                        | `string`  | Client identifier                                                                                                                                                                              |
-| `clientVersion`                                 | `string`  | Client application version                                                                                                                                                                     |
-| `clientCapabilities.keyboardInteractivePrompts` | `boolean` | The desktop shows agent-relayed SSH keyboard-interactive prompts (0.10.0+; absent = `false`) — see [Interactive SSH Authentication on the Agent](#interactive-ssh-authentication-on-the-agent) |
+| Param                                           | Type       | Description                                                                                                                                                                                    |
+| ----------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocolVersion`                               | `string`   | Requested protocol version                                                                                                                                                                     |
+| `client`                                        | `string`   | Client identifier                                                                                                                                                                              |
+| `clientVersion`                                 | `string`   | Client application version                                                                                                                                                                     |
+| `clientCapabilities.keyboardInteractivePrompts` | `boolean`  | The desktop shows agent-relayed SSH keyboard-interactive prompts (0.10.0+; absent = `false`) — see [Interactive SSH Authentication on the Agent](#interactive-ssh-authentication-on-the-agent) |
+| `externalConnectionFiles`                       | `string[]` | Paths on the agent host loaded as read-only external connection files; absent = none                                                                                                           |
+| `agentSettings`                                 | `object`   | Runtime settings, the same object [`agent.settingsUpdate`](#agentsettingsupdate) replaces later; absent = all defaults                                                                         |
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
@@ -1214,6 +1216,124 @@ The agent sends a `connection.exit` notification before the response if the sess
 
 ---
 
+### `connection.types`
+
+List the connection types this agent can host, with each type's settings schema and capabilities.
+The desktop calls it to refresh the agent's type list after connecting (the same list arrives in the
+`initialize` result as `capabilities.connectionTypes`). Present since protocol 0.2.0.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.types",
+  "params": {},
+  "id": 30
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "types": [
+      {
+        "typeId": "local",
+        "displayName": "Local Shell",
+        "icon": "terminal",
+        "schema": { "groups": [] },
+        "capabilities": {
+          "monitoring": true,
+          "fileBrowser": true,
+          "graphical": false,
+          "resize": true,
+          "persistent": true,
+          "terminal": true,
+          "tunneling": false
+        }
+      }
+    ]
+  },
+  "id": 30
+}
+```
+
+| Result Field                       | Type                   | Description                                                                        |
+| ---------------------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| `types`                            | `ConnectionTypeInfo[]` | Registered connection types, in registration order                                 |
+| `types[].typeId`                   | `string`               | Machine-readable type id (e.g. `"ssh"`), the `type` of `connection.create`         |
+| `types[].displayName`              | `string`               | Human-readable name                                                                |
+| `types[].icon`                     | `string`               | Icon identifier for the UI                                                         |
+| `types[].schema`                   | `SettingsSchema`       | `{groups: [...]}` — the settings form the desktop renders for the type             |
+| `types[].capabilities.monitoring`  | `boolean`              | System monitoring supported. For `local` it reflects the agent host's real support |
+| `types[].capabilities.fileBrowser` | `boolean`              | File browsing supported                                                            |
+| `types[].capabilities.graphical`   | `boolean`              | Graphical remote-desktop type (VNC, RDP); absent = `false`                         |
+| `types[].capabilities.resize`      | `boolean`              | Terminal resize supported                                                          |
+| `types[].capabilities.persistent`  | `boolean`              | Sessions survive agent reconnects                                                  |
+| `types[].capabilities.terminal`    | `boolean`              | Has an interactive terminal; absent = `true`                                       |
+| `types[].capabilities.tunneling`   | `boolean`              | Can host SSH-style port forwards; absent = `false`                                 |
+
+**Errors:**
+
+- `-32007` Not initialized
+
+---
+
+### `session.getBuffer`
+
+Read a session's buffered output — the ring buffer of a **persistent** (daemon-backed) session, base64
+encoded. The desktop calls it when it re-attaches a persistent session to replay the output the
+user missed. A non-persistent session has no ring buffer and answers with empty `data`. Present since
+protocol 0.2.0 (#666); the ring-buffer size is the `persistentScrollbackBufferSizeMb` agent setting
+(see [`agent.settingsUpdate`](#agentsettingsupdate)).
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session.getBuffer",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+  },
+  "id": 31
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "data": "dXNlckBob3N0On4kIA=="
+  },
+  "id": 31
+}
+```
+
+| Param        | Type     | Description          |
+| ------------ | -------- | -------------------- |
+| `session_id` | `string` | Session to read from |
+
+| Result Field | Type     | Description                                                     |
+| ------------ | -------- | --------------------------------------------------------------- |
+| `session_id` | `string` | The session that was read                                       |
+| `data`       | `string` | Base64 ring-buffer contents; empty for a non-persistent session |
+
+**Errors:**
+
+- `-32007` Not initialized
+- `-32602` Invalid params
+- `-32001` Session not found (no such session, or the session daemon could not answer the buffer
+  query)
+
+---
+
 ### `health.check`
 
 Check agent health and connectivity. Can be used as a keepalive.
@@ -1455,6 +1575,70 @@ Gracefully shut down the agent process. Active sessions are detached (left runni
 | -------- | --------------------- |
 | `-32007` | Agent not initialized |
 | `-32015` | Shutdown failed       |
+
+---
+
+### `agent.settingsUpdate`
+
+Replace the agent's runtime settings mid-connection. The desktop sends it when the user changes an
+agent's settings while connected, so the change applies without a reconnect. The params are the same
+`AgentSettings` object the desktop sends as `agentSettings` in [`initialize`](#initialize), **flat**
+(not wrapped). Every field is optional and falls back to its default. Present since protocol 0.2.0
+(#608).
+
+The whole settings object is replaced. Only `persistentScrollbackBufferSizeMb` takes effect at once:
+it sets the ring-buffer size for persistent sessions started **after** the update (existing sessions
+keep their buffer). The value is clamped to the agent's hard cap, and `0` is floored to 64 KiB.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.settingsUpdate",
+  "params": {
+    "enableMonitoring": true,
+    "enableFileBrowser": true,
+    "enableDocker": true,
+    "defaultShell": "/bin/zsh",
+    "startingDirectory": "~",
+    "logLevel": "info",
+    "verboseTracing": false,
+    "persistentScrollbackBufferSizeMb": 4
+  },
+  "id": 32
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "applied": true },
+  "id": 32
+}
+```
+
+| Param                              | Type      | Description                                                       |
+| ---------------------------------- | --------- | ----------------------------------------------------------------- |
+| `enableMonitoring`                 | `boolean` | Default `true`                                                    |
+| `enableFileBrowser`                | `boolean` | Default `true`                                                    |
+| `enableDocker`                     | `boolean` | Default `true`                                                    |
+| `defaultShell`                     | `string?` | Preferred shell; omitted = the agent's own default                |
+| `startingDirectory`                | `string`  | Default `""`                                                      |
+| `logLevel`                         | `string`  | Default `"info"`                                                  |
+| `verboseTracing`                   | `boolean` | Default `false`                                                   |
+| `persistentScrollbackBufferSizeMb` | `integer` | Ring-buffer size for new persistent sessions in MiB (default `1`) |
+
+| Result Field | Type      | Description   |
+| ------------ | --------- | ------------- |
+| `applied`    | `boolean` | Always `true` |
+
+**Errors:**
+
+- `-32007` Not initialized (checked before the params are parsed)
+- `-32602` Invalid params (a field of the wrong type)
 
 ---
 
@@ -2301,6 +2485,237 @@ Get metadata for a single file or directory.
 
 ---
 
+### `connection.files.mkdir`
+
+Create a directory, including any missing parent directories. Present since protocol 0.2.0. The
+desktop's agent file browser and the VNC/RDP file-transfer path both use it.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.mkdir",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "path": "/home/user/new-dir"
+  },
+  "id": 23
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 23
+}
+```
+
+| Param           | Type      | Description                                                     |
+| --------------- | --------- | --------------------------------------------------------------- |
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `path`          | `string`  | Directory to create                                             |
+
+**Errors:**
+
+- `-32007` Not initialized
+- `-32602` Invalid params
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+- plus the `connection_id` resolution errors of [`connection.files.list`](#connectionfileslist)
+  (`-32006`, `-32008`, `-32023`)
+
+---
+
+### `connection.files.set_permissions`
+
+Change the permission bits of a file or directory (`chmod`). Added in protocol 0.8.0 (#2774)
+without a version bump or capability: an agent that predates it answers
+[`-32601` Method not found](#standard-json-rpc-errors).
+
+Supported by the agent host's local filesystem on Unix and by an agent-hosted SSH session (SFTP
+`setstat`). FTP, Docker, WSL and a Windows local filesystem answer `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.set_permissions",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "path": "/home/user/run.sh",
+    "mode": 493
+  },
+  "id": 24
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 24
+}
+```
+
+| Param           | Type      | Description                                                                                    |
+| --------------- | --------- | ---------------------------------------------------------------------------------------------- |
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem                                |
+| `path`          | `string`  | File or directory to change                                                                    |
+| `mode`          | `integer` | The low 12 bits of a Unix mode, as a decimal number (`493` = `0o755`); higher bits are ignored |
+
+**Errors:** as [`connection.files.mkdir`](#connectionfilesmkdir); `-32013` when the backend cannot
+change permissions.
+
+---
+
+### `connection.files.set_owner`
+
+Change the owning user and/or group of a file or directory (`chown`). Added in protocol 0.8.0
+(#3201) without a version bump or capability: an older agent answers `-32601`.
+
+`uid` and `gid` are each optional; an absent one is left unchanged (the `chown(2)` "-1 means keep"
+rule), and a call with neither is a no-op that succeeds. Supported by the agent host's local
+filesystem on Unix and by an agent-hosted SSH session (SFTP `setstat`). FTP, Docker, WSL and a
+Windows local filesystem answer `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.set_owner",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "path": "/srv/data",
+    "uid": 1000,
+    "gid": 1000
+  },
+  "id": 25
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 25
+}
+```
+
+| Param           | Type       | Description                                                     |
+| --------------- | ---------- | --------------------------------------------------------------- |
+| `connection_id` | `string?`  | Connection to scope the operation to. Omit for local filesystem |
+| `path`          | `string`   | File or directory to change                                     |
+| `uid`           | `integer?` | New owner user id; absent = unchanged                           |
+| `gid`           | `integer?` | New owner group id; absent = unchanged                          |
+
+**Errors:** as [`connection.files.mkdir`](#connectionfilesmkdir); `-32013` when the backend cannot
+change ownership.
+
+---
+
+### `connection.files.create_symlink`
+
+Create a symbolic link at `link_path` pointing at `target` (`ln -s`). Added in protocol 0.8.0
+(#3201) without a version bump or capability: an older agent answers `-32601`.
+
+`target` is stored verbatim, so it may be relative or dangling. Supported by the agent host's local
+filesystem on Unix and by an agent-hosted SSH session (SFTP `symlink`). FTP, Docker, WSL and a
+Windows local filesystem answer `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.create_symlink",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "target": "../shared/config.yaml",
+    "link_path": "/home/user/app/config.yaml"
+  },
+  "id": 26
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 26
+}
+```
+
+| Param           | Type      | Description                                                     |
+| --------------- | --------- | --------------------------------------------------------------- |
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `target`        | `string`  | Path the link points at, stored verbatim                        |
+| `link_path`     | `string`  | Path of the new link                                            |
+
+**Errors:** as [`connection.files.mkdir`](#connectionfilesmkdir); `-32013` when the backend cannot
+create links.
+
+---
+
+### `connection.files.copy`
+
+Copy a file or a directory tree from `src` to `dest` **within the same connection** (directories are
+copied recursively; the kind is detected with a `stat`). Added in protocol 0.8.0 (#3201) without a
+version bump or capability: an older agent answers `-32601`. Copying between two connections is the
+transfer subsystem's job, not this method's.
+
+Supported by the agent host's local filesystem (native, recursive, nested symlinks preserved) and by
+an agent-hosted SSH session (streamed over SFTP). FTP, Docker and WSL answer `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.copy",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "src": "/home/user/project",
+    "dest": "/home/user/project-backup"
+  },
+  "id": 27
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 27
+}
+```
+
+| Param           | Type      | Description                                                     |
+| --------------- | --------- | --------------------------------------------------------------- |
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `src`           | `string`  | Source path                                                     |
+| `dest`          | `string`  | Destination path on the same connection                         |
+
+**Errors:** as [`connection.files.mkdir`](#connectionfilesmkdir); `-32013` when the backend has no
+copy primitive.
+
+---
+
 ### `connection.files.read_range`
 
 Read a bounded slice of a file at an offset (0.26.0+, #3587). The desktop's queued transfer of an agent-hosted session downloads one slice per request. On an FTP session (#4113) a slice is a `REST <offset>` + `RETR` whose data connection is closed once `length` bytes arrived; the server's single completion reply (`226`, or `426`/`451` for the cut-short transfer) is consumed so the control connection stays in step.
@@ -2778,6 +3193,104 @@ Tool params are camelCase. The streaming tools always run as [streaming tool run
 **Minimum agent version.** Network tools need an agent that advertises `capabilities.toolStreaming` — protocol **0.9.0** or newer. The desktop checks the capability before it sends anything: an older agent is refused with an `agent_outdated` error telling the user to update the agent to use network tools (the agent-update flow is the remedy). It never fails silently or on a missing method.
 
 The HTTP monitor is not on this path: a monitor is agent-hosted per monitor through [`service.*`](#agent-hosted-embedded-servers-service).
+
+### `tool.list`
+
+List the tools registered in the agent's core `ToolRegistry`. Discovery only: the desktop does not
+call it today, it picks tools by `toolId` (see the table above). Added in protocol 0.5.0 (#2148)
+without a version bump.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.list",
+  "params": {},
+  "id": 40
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      { "toolId": "ping", "displayName": "Ping" },
+      { "toolId": "dns", "displayName": "DNS Lookup" }
+    ]
+  },
+  "id": 40
+}
+```
+
+| Result Field          | Type     | Description                                 |
+| --------------------- | -------- | ------------------------------------------- |
+| `tools`               | `array`  | Registered tools, in registration order     |
+| `tools[].toolId`      | `string` | The id to pass to `tool.run` / `tool.start` |
+| `tools[].displayName` | `string` | Human-readable name                         |
+
+**Errors:**
+
+- `-32007` Not initialized
+
+### `tool.run`
+
+Run a tool to completion and return everything at once: the collect-and-return counterpart of
+[`tool.start`](#toolstart). The agent collects the events the tool emits and replies when the run
+ends, so the call is bounded by the desktop's 60 s agent-request timeout and cannot be cancelled.
+The desktop uses it for the one-shot tools (DNS lookup, Wake-on-LAN, open ports). Added in protocol
+0.5.0 (#2148) without a version bump.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.run",
+  "params": {
+    "toolId": "dns",
+    "params": { "hostname": "example.com", "recordType": "A", "server": null }
+  },
+  "id": 41
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "events": [],
+    "result": {
+      "records": [
+        { "recordType": "A", "name": "example.com", "value": "93.184.216.34", "ttl": 300 }
+      ],
+      "queryMs": 12
+    }
+  },
+  "id": 41
+}
+```
+
+| Param    | Type     | Description                                    |
+| -------- | -------- | ---------------------------------------------- |
+| `toolId` | `string` | The tool to run (see [`tool.list`](#toollist)) |
+| `params` | `object` | The tool's own camelCase params; absent = `{}` |
+
+| Result Field | Type      | Description                                                |
+| ------------ | --------- | ---------------------------------------------------------- |
+| `events`     | `array`   | Every event the tool emitted, in order                     |
+| `result`     | `unknown` | The tool's aggregate result (see the table above per tool) |
+
+**Errors:**
+
+- `-32007` Not initialized
+- `-32602` Invalid params (`toolId` missing or not a string)
+- `-32603` Internal error (unknown `toolId`, or the tool failed; the message says which)
 
 ### Streaming tool runs (`tool.start`, `tool.cancel`)
 
@@ -3697,6 +4210,38 @@ Sessions themselves survive: they live in detached daemons and are recovered on 
 | ---------------------- | --------- | --------------------------------------------------------------------------------------- |
 | `requestedByVersion`   | `string`  | Version of the desktop that requested the update. `"unknown"` if it could not be read.  |
 | `estimatedRestartSecs` | `integer` | How long the agent expects to be unavailable, for the notice's restart progress display |
+
+---
+
+### `agent.update_available`
+
+The agent's optional self-update found a newer release (#1355). Sent only by an agent started with
+self-update enabled (`allow_self_update`, off by default): a background timer polls GitHub releases
+every 24 hours and, when a newer version exists, sends one notice per cycle. When the agent is idle
+it first downloads and verifies the binary (`staged: true`) and sends the notice **before** it
+applies the update, since a successful apply re-execs the agent. The desktop shows its agent-update
+toast. Best effort: with no desktop attached the notice is dropped and the next cycle repeats it.
+Present since protocol 0.2.0.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.update_available",
+  "params": {
+    "currentVersion": "0.1.0",
+    "availableVersion": "0.2.0",
+    "downloadUrl": "https://github.com/armaxri/termiHub/releases/download/v0.2.0/termihub-agent-x86_64-linux",
+    "staged": false
+  }
+}
+```
+
+| Param              | Type      | Description                                                        |
+| ------------------ | --------- | ------------------------------------------------------------------ |
+| `currentVersion`   | `string`  | The agent's running version                                        |
+| `availableVersion` | `string`  | The newer release's version                                        |
+| `downloadUrl`      | `string?` | The release asset for this platform; absent when none is published |
+| `staged`           | `boolean` | `true` once the binary is downloaded and verified, ready to apply  |
 
 ---
 

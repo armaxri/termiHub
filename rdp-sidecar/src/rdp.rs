@@ -679,7 +679,7 @@ where
         (readvertise, host_clip_watch)
     };
 
-    let terminated = drive(
+    let end = drive(
         result,
         framed,
         connector_config,
@@ -695,16 +695,28 @@ where
     // A server that ends the session with a credential / privilege `ERRINFO`
     // rejected the logon (#3390): report it as an auth failure, not a clean
     // close, so the desktop does not auto-reconnect into the same rejection.
-    if let Some(reason) = terminated.filter(failure::is_auth_disconnect) {
-        let _ = write_message(ipc_out, &SidecarMessage::State(GraphicalState::AuthFailed)).await;
-        return Err(failure::ServerLogonRejected(reason.description()).into());
+    if let failure::SessionEnd::Server(reason) = &end {
+        if failure::is_auth_disconnect(reason) {
+            let _ =
+                write_message(ipc_out, &SidecarMessage::State(GraphicalState::AuthFailed)).await;
+            return Err(failure::ServerLogonRejected(reason.description()).into());
+        }
     }
 
-    let _ = write_message(
-        ipc_out,
-        &SidecarMessage::State(GraphicalState::ServerClosed),
-    )
-    .await;
+    // A server end with a deliberate session-end `ERRINFO` (a remote logoff,
+    // an admin disconnect, #4321) and a process / reactivation error with its
+    // reason (#4509) are typed, so the desktop shows them instead of
+    // auto-reconnecting. A transport drop or a bare server disconnect (a
+    // restarting server) reports nothing, so the desktop retries it.
+    if let Some((kind, message)) = failure::end_failure(&end) {
+        info!(?kind, %message, "rdp session ended");
+        let _ = write_message(
+            ipc_out,
+            &SidecarMessage::State(failure::failure_state(kind)),
+        )
+        .await;
+        let _ = write_message(ipc_out, &SidecarMessage::Failure { kind, message }).await;
+    }
     Ok(())
 }
 
@@ -713,9 +725,11 @@ where
 /// re-advertising the local file list on a shared-folder change (#1788) or a
 /// host-clipboard file-list change (#1794).
 ///
-/// Returns the server's graceful-disconnect reason when the server ended the
-/// session (so the caller can tell an auth `ERRINFO` from a clean close, #3390),
-/// or `None` for any other end (host disconnect, transport error).
+/// Returns how the session ended (#4321): the server's graceful-disconnect
+/// reason when the server ended it (so the caller can tell an auth `ERRINFO`
+/// from a deliberate close, #3390), a typed failure for a process or
+/// reactivation error (#4509), or [`failure::SessionEnd::Dropped`] for any other
+/// end (host disconnect, transport error).
 // Each argument is a distinct capability the loop owns (transport halves, config,
 // the CLIPRDR event channel, the folder-watch ticks, the IPC endpoints); bundling
 // them into a struct would only rename them without reducing coupling.
@@ -730,7 +744,7 @@ async fn drive<R, W>(
     mut host_clip_watch: Option<crate::host_clipboard_watch::HostClipboardWatch>,
     ipc_in: &mut R,
     ipc_out: &mut W,
-) -> Option<GracefulDisconnectReason>
+) -> failure::SessionEnd
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -769,14 +783,14 @@ where
     .await
     .is_err()
     {
-        return None;
+        return failure::SessionEnd::Dropped;
     }
 
     // The host read is one `select!` branch among several, so it must be
     // cancel-safe: a plain `read_message` dropped mid-frame (a server PDU won the
     // race) loses the bytes it consumed and desyncs every later frame (#4042).
     let mut host_in = MessageReader::new(ipc_in);
-    let mut terminated = None;
+    let mut end = failure::SessionEnd::Dropped;
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
     // The latest host clipboard content pushed via `SetClipboard` (text, #1756)
@@ -939,9 +953,14 @@ where
                         // end as an ordinary server close, not a protocol error.
                         if let Some(reason) = disconnect_ultimatum_reason(action, &payload) {
                             info!(?reason, "server ended the session (MCS Disconnect Provider Ultimatum)");
-                            terminated = Some(GracefulDisconnectReason::ServerInitiated);
+                            end = failure::SessionEnd::Server(
+                                GracefulDisconnectReason::ServerInitiated,
+                            );
                         } else {
+                            // The PDU was read whole, so this is the server's data,
+                            // not a transport drop: terminal, with its reason (#4509).
                             warn!(error = %e, "rdp process error");
+                            end = failure::process_error_end(&e);
                         }
                         break;
                     }
@@ -965,7 +984,7 @@ where
                     Flow::Continue => {}
                     Flow::Stop => break,
                     Flow::Terminate(reason) => {
-                        terminated = Some(reason);
+                        end = failure::SessionEnd::Server(reason);
                         break;
                     }
                     Flow::Reactivate => {
@@ -1005,6 +1024,7 @@ where
                             }
                             Err(e) => {
                                 warn!(error = %e, "rdp deactivation-reactivation failed");
+                                end = failure::reactivation_end(&e);
                                 break;
                             }
                         }
@@ -1077,7 +1097,7 @@ where
             }
         }
     }
-    terminated
+    end
 }
 
 /// Re-enumerate and re-advertise the local file offer, then flush the CLIPRDR
