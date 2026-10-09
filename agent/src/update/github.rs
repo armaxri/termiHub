@@ -7,13 +7,13 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use termihub_core::agent_release_asset::{
+    agent_asset_suffix, agent_checksum_asset_name, agent_release_asset_name,
+    agent_signature_asset_name, is_windows_os,
+};
 
 /// The default GitHub repository agent releases are published to.
 pub const DEFAULT_REPO: &str = "armaxri/termiHub";
-
-/// Base name of the agent binary release asset (an arch suffix is appended,
-/// e.g. `termihub-agent-linux-x64`).
-const ASSET_BASE: &str = "termihub-agent";
 
 /// A single downloadable asset attached to a GitHub release.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -34,13 +34,14 @@ pub struct ReleaseInfo {
 impl ReleaseInfo {
     /// Find the download URL for the binary asset matching `arch_suffix`
     /// (e.g. `"linux-x64"`) and, when present, its `.sha256` checksum and `.sig`
-    /// signature sidecars.
+    /// signature sidecars. Asset names come from the shared
+    /// [`termihub_core::agent_release_asset`] scheme (#4302).
     ///
     /// Returns `None` when no binary asset for this platform is published.
     pub fn asset_urls_for(&self, arch_suffix: &str) -> Option<AssetUrls> {
-        let binary_name = format!("{ASSET_BASE}-{arch_suffix}");
-        let checksum_name = format!("{binary_name}.sha256");
-        let signature_name = format!("{binary_name}.sig");
+        let binary_name = agent_release_asset_name(arch_suffix);
+        let checksum_name = agent_checksum_asset_name(arch_suffix);
+        let signature_name = agent_signature_asset_name(arch_suffix);
 
         let binary_url = self
             .assets
@@ -82,22 +83,20 @@ pub fn parse_release_json(body: &str) -> Result<ReleaseInfo> {
     serde_json::from_str(body).context("failed to parse GitHub releases/latest JSON")
 }
 
-/// Map the compile-time OS/arch to the published agent asset suffix.
+/// Map the compile-time OS/arch to the published agent asset suffix the
+/// self-updater may download.
 ///
-/// Agent binaries are published for Linux only (`linux-x64`, `linux-arm64`,
-/// `linux-armv7`). Returns `None` on any other platform, so the self-update
-/// check skips cleanly rather than downloading a non-existent asset.
+/// Delegates to the shared [`agent_asset_suffix`] (the same table the desktop
+/// deployer uses, #4302 / DUP2-009), so Linux and macOS agents resolve their
+/// published asset. Windows is deliberately excluded: Windows agents are
+/// published, but an in-place self-update apply is Unix-only, so a Windows
+/// agent only notifies connected desktops instead of downloading a binary it
+/// cannot apply. Returns `None` for any unpublished platform.
 pub fn asset_suffix_for(os: &str, arch: &str) -> Option<&'static str> {
-    if os != "linux" {
+    if is_windows_os(os) {
         return None;
     }
-    match arch {
-        "x86_64" => Some("linux-x64"),
-        "aarch64" => Some("linux-arm64"),
-        // `std::env::consts::ARCH` reports "arm" for 32-bit ARM (armv7).
-        "arm" => Some("linux-armv7"),
-        _ => None,
-    }
+    agent_asset_suffix(os, arch)
 }
 
 /// The published asset suffix for the platform the agent is running on.
