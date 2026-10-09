@@ -468,8 +468,15 @@ function comboKeyToCode(key: string): string | null {
  * produced character (`event.key`, case-insensitive) for punctuation and named
  * keys — which are intentionally matched by character — and for environments
  * that supply no `event.code` (e.g. some synthetic test events).
+ *
+ * Exported so ad-hoc handlers (e.g. a list's Ctrl/Cmd+A select-all) share the
+ * same layout-independent matching as the keybinding service (#4374). Accepts a
+ * React synthetic event as well, since only `key`/`code` are read.
  */
-function eventKeyMatches(event: KeyboardEvent, comboKey: string): boolean {
+export function eventKeyMatches(
+  event: Pick<KeyboardEvent, "key" | "code">,
+  comboKey: string
+): boolean {
   const code = comboKeyToCode(comboKey);
   if (code && event.code) {
     return event.code === code;
