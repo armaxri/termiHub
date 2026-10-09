@@ -77,7 +77,7 @@ const DATA_ACCEPT_TIMEOUT: Duration = Duration::from_secs(15);
 const OVERFLOW_DRAIN_TIME: Duration = Duration::from_millis(500);
 /// Most client bytes discarded (never buffered) after an overlong line.
 const OVERFLOW_DRAIN_BYTES: usize = 64 * 1024;
-/// Ports tried for a passive listener before answering `425`.
+/// Spread-out fallback ports tried for a passive listener before answering `425`.
 const DATA_BIND_ATTEMPTS: u32 = 64;
 
 // ─── Control-line framing ─────────────────────────────────────────────────────
@@ -483,28 +483,79 @@ async fn open_passive(
     }
 }
 
-/// Bind a passive listener on `ip`, trying `preferred` first and then the
-/// following ports of `range` (wrapping), up to [`DATA_BIND_ATTEMPTS`].
+/// Bind a passive listener on `ip` in `range`: the `preferred` port first,
+/// then an OS-assigned port if it falls in the range, then up to
+/// [`DATA_BIND_ATTEMPTS`] ports spread across the range ([`fallback_ports`]).
+///
+/// The fallbacks are deliberately not the ports right after `preferred`: on
+/// Windows the passive range is the OS dynamic port range, where Hyper-V/WinNAT
+/// exclude whole blocks of ~100 ports (bind fails with `WSAEACCES`) and the
+/// sequential ephemeral allocator leaves long runs of ports busy, so a run of
+/// adjacent ports can all fail together (#4563). An OS-assigned port never
+/// lands in an excluded block.
 fn bind_data_listener(
     ip: IpAddr,
     preferred: u16,
     range: &RangeInclusive<u16>,
 ) -> io::Result<TcpListener> {
-    let (start, end) = (u32::from(*range.start()), u32::from(*range.end()));
-    let span = end - start + 1;
-    let first = u32::from(preferred).clamp(start, end) - start;
-    let mut last_err = io::Error::new(io::ErrorKind::AddrInUse, "no free passive port");
-    for i in 0..DATA_BIND_ATTEMPTS.min(span) {
-        let port = (start + (first + i) % span) as u16;
-        match std::net::TcpListener::bind(SocketAddr::new(ip, port)) {
-            Ok(std_listener) => {
+    let preferred = preferred.clamp(*range.start(), *range.end());
+    let mut last_err = match try_bind(ip, preferred) {
+        Ok(listener) => return Ok(listener),
+        Err(e) => e,
+    };
+    match std::net::TcpListener::bind(SocketAddr::new(ip, 0)) {
+        Ok(std_listener) => {
+            let in_range = std_listener
+                .local_addr()
+                .is_ok_and(|addr| range.contains(&addr.port()));
+            if in_range {
                 std_listener.set_nonblocking(true)?;
                 return TcpListener::from_std(std_listener);
             }
+        }
+        Err(e) => last_err = e,
+    }
+    for port in fallback_ports(preferred, range) {
+        match try_bind(ip, port) {
+            Ok(listener) => return Ok(listener),
             Err(e) => last_err = e,
         }
     }
     Err(last_err)
+}
+
+/// Bind a non-blocking tokio listener on exactly `ip:port`.
+fn try_bind(ip: IpAddr, port: u16) -> io::Result<TcpListener> {
+    let std_listener = std::net::TcpListener::bind(SocketAddr::new(ip, port))?;
+    std_listener.set_nonblocking(true)?;
+    TcpListener::from_std(std_listener)
+}
+
+/// The ports [`bind_data_listener`] tries after `preferred` (which must be in
+/// `range`): up to [`DATA_BIND_ATTEMPTS`] distinct ports of `range`, never
+/// `preferred` itself, stepping by a stride coprime with the range size and
+/// close to its golden-ratio fraction so successive candidates land far apart
+/// instead of in one contiguous block.
+pub(super) fn fallback_ports(
+    preferred: u16,
+    range: &RangeInclusive<u16>,
+) -> impl Iterator<Item = u16> {
+    let (start, end) = (u32::from(*range.start()), u32::from(*range.end()));
+    let span = end - start + 1;
+    let first = u32::from(preferred).clamp(start, end) - start;
+    let mut stride = (span * 618 / 1000).max(1);
+    while gcd(stride, span) != 1 {
+        stride += 1;
+    }
+    (1..=DATA_BIND_ATTEMPTS.min(span - 1))
+        .map(move |i| (start + (first + i * stride) % span) as u16)
+}
+
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 /// Wait for the client's data connection. A connection from any other source
