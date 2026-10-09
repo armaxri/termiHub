@@ -3124,20 +3124,21 @@ Each domain was migrated behind flags via a **per-domain strangler-fig sequence*
    tests plus that instant revert — no per-domain manual GUI gate.
 4. **Reducer removal** — delete the now-dead local reducers, after the parity/soak window.
 
-**Status: essentially complete.** Every UI domain has been inverted onto its own region + `<domain>.*`
-intents and drives the live UI. The regions registered in `src-tauri/src/lib.rs` are: `tunnels`
-(the Phase-2 pilot, #2150), `session-lifecycle` (#2152), `connections` and `agents` (#2283),
-`settings` (#2227), `system-monitors` (#2224), `transfers` (#2229), and the client-scoped
+**Status: complete.** Every UI domain has been inverted onto its own region + `<domain>.*` intents
+and drives the live UI. The shared regions are seeded at boot by `boot::seed_projection_regions`
+(`src-tauri/src/boot/mod.rs`) plus `plugin_sandbox_projection::seed`: `tunnels` (the Phase-2 pilot,
+#2150), `session-lifecycle` (#2152), `system-monitors` (#2224), `agents` and `connections` (#2283),
+`settings` (#2227), `transfers` (#2229), and the **read-only** `plugin-sandbox` region (#4188, no
+intents — it reports each native plugin's OS-sandbox state). The client-scoped regions —
 `layout@<clientId>` (#2151), `restore-cohort@<clientId>` (#2206), `file-browser@<clientId>`,
-`broadcast@<clientId>`, and `workflow-run@<clientId>` (#2206/#2152). With the sessions/agents
-inversion complete, the **frontend client-side reconnect engine was deleted** — session and agent
-reconnection is now driven entirely from the backend projection (#2283; automation-proven, #2553).
-The projections are no longer optional shadows: they are the authority the UI reads and writes
-through.
-
-- **One deferred outlier.** `layout@<clientId>` is registered, served, and mutation-cut, but its
-  hot-path panel-tree reducer removal was deferred and is tracked as `TODO(maintainer)` **#2562** — the
-  layout reducers remain as the render source in the deferred slice pending that removal.
+`broadcast@<clientId>` and `workflow-run@<clientId>` (#2206/#2152) — are created on first subscribe.
+(The test-bridge build also seeds a `diag.counter` diagnostic region.) With the sessions/agents
+inversion complete, the **frontend client-side reconnect engine was deleted** (#2558) — session and
+agent reconnection is driven entirely by the backend redrive (`session_projection::redrive`,
+#2283; automation-proven, #2553). Layout is fully inverted too: the layout region is the only writer
+of the panel tree and the appStore `rootPanel`/`tabGroups` mirror fields were removed (#2562). The
+projections are no longer optional shadows: they are the authority the UI reads and writes through;
+`appStore` keeps only UI-local state and the per-region mirror caches.
 
 **Rationale:**
 
@@ -3163,9 +3164,7 @@ through.
   client's own view, but the authoritative update is still asynchronous.
 - **Region plumbing.** Each domain now carries a backend region module, an intent vocabulary, a
   frontend cache binding, and parity tests — more moving parts than a single in-WebView reducer, and
-  every new projection domain registers in the shared `lib.rs` `setup()` block.
-- **One deferred reducer removal** (`layout`, #2562) still keeps a local reducer alive in that slice,
-  so that one domain temporarily retains the very dual-state shape this ADR removes.
+  every new shared projection domain registers in `boot::seed_projection_regions`.
 
 ---
 
