@@ -49,6 +49,8 @@
 #
 # A fifth section runs assert-no-test-bridge.sh (#4122) on dummy binaries: it
 # must pass one without the test-bridge build marker and fail on one with it.
+# assert-no-agent-test-hooks.sh (#4362) gets the same treatment with the agent's
+# test-hook env-var names (e.g. TERMIHUB_TEST_PARENT_PID).
 #
 # The same section runs verify-plugin-runner-bundle.sh (#4202) on a stub app and
 # runner: it must pass a runner that answers with its usage code and whose
@@ -80,6 +82,7 @@ SCRIPTS=(
   "scripts/build-agents.sh"
   "scripts/internal/agent-update-signing.sh"
   "scripts/internal/apply-branch-protection.sh"
+  "scripts/internal/assert-no-agent-test-hooks.sh"
   "scripts/internal/assert-no-test-bridge.sh"
   "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
@@ -551,6 +554,31 @@ guard_run() { # <label> <expected exit> <binary...>
 guard_run "passes a binary without the marker" 0 "$TB/release-app"
 guard_run "fails a binary built with test-bridge" 1 "$TB/release-app" "$TB/test-bridge-app"
 guard_run "refuses a missing binary" 2 "$TB/missing"
+
+# --- Release agent test-hook guard (#4362) ---
+# assert-no-agent-test-hooks.sh must pass an agent without the test-hook env
+# names and fail on one carrying TERMIHUB_TEST_PARENT_PID (the parent-death
+# watchdog, WA-RS2-003) — the name read from its Rust definition, like the guard.
+AH="scripts/internal/assert-no-agent-test-hooks.sh"
+ah_name="$(sed -n 's/^pub const PARENT_PID_ENV: &str = "\(.*\)";$/\1/p' \
+  agent/src/test_parent_watchdog.rs)"
+printf 'release\0agent\0' >"$TB/release-agent"
+printf 'test\0%s\0agent' "$ah_name" >"$TB/watchdog-agent"
+ah_run() { # <label> <expected exit> <binary...>
+  local label="$1" want="$2" out rc=0
+  shift 2
+  out="$(bash "$AH" "$@" 2>&1)" || rc=$?
+  if [ -n "$ah_name" ] && [ "$rc" -eq "$want" ]; then
+    echo "ok    agent test-hook guard: ${label} (exit ${rc})"
+  else
+    echo "::error file=${AH}::agent test-hook guard: ${label}: expected exit ${want}, got ${rc}"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    failures=$((failures + 1))
+  fi
+}
+ah_run "passes an agent without test hooks" 0 "$TB/release-agent"
+ah_run "fails an agent carrying the watchdog" 1 "$TB/release-agent" "$TB/watchdog-agent"
+ah_run "refuses a missing binary" 2 "$TB/missing"
 
 # --- Bundled plugin runner check (#4202) ---
 # The stub runner answers like the real one: exit 64 (usage) to a wrong

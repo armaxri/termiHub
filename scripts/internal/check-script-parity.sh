@@ -92,6 +92,9 @@ ALLOWLIST=(
   # agent build (Windows leg via `shell: bash`, i.e. Git Bash) and by release.yml
   # on Ubuntu; never run by hand, so a `.cmd` twin would be dead weight.
   "scripts/internal/assert-no-test-signing-key.sh" # CI-only binary grep (bash on every runner)
+  # Agent test-hook guard (#4362): CI-only gate run next to it by agent.yml and
+  # release.yml; never run by hand.
+  "scripts/internal/assert-no-agent-test-hooks.sh" # CI-only binary grep (bash on every runner)
   # Bundled RDP helper digest check (#4222): CI-only gate run inside the
   # re-signed macOS .app and the Linux packages (release.yml / dev-build.yml,
   # release install smokes, #4243).

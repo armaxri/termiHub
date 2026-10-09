@@ -12,9 +12,15 @@
 //! daemon the agent spawns watches the same test process and goes down with it
 //! too.
 //!
-//! **Inert in production:** nothing but the test harnesses ever sets the
-//! variable, and with it absent (or unparseable) [`start_from_env`] returns
-//! without spawning anything, so the agent behaves exactly as before.
+//! **Not in production:** the module is compiled only into debug builds and
+//! `test-hooks` builds (`#[cfg(any(debug_assertions, feature = "test-hooks"))]`
+//! on its `mod` declaration in `main.rs`), the same gate as the #1579
+//! startup-delay hook (WA-RS-009). A default `cargo build --release` agent
+//! contains neither this code nor the env-var name, so nothing can arm it
+//! (WA-RS2-003; checked by `scripts/internal/assert-no-agent-test-hooks.sh`).
+//! Where it is compiled in, it is still inert unless the variable is set:
+//! with it absent (or unparseable) [`start_from_env`] returns without spawning
+//! anything.
 //!
 //! Why a PID watch rather than Linux `PR_SET_PDEATHSIG`: the death signal fires
 //! when the *thread* that spawned the child exits, not the process — and each
