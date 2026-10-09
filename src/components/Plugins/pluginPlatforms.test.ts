@@ -96,4 +96,15 @@ describe("pluginPlatformSupport", () => {
     );
     expect(support?.kind === "multi" && support.entries.some((e) => e.isCurrent)).toBe(false);
   });
+
+  it("sorts unrecognised triples naturally via the shared collator (#4374)", () => {
+    const support = pluginPlatformSupport(
+      manifest({ libraries: { "custom10-x-y": "a", "custom2-x-y": "b" } }),
+      null
+    );
+    expect(support?.kind === "multi" && support.entries.map((e) => e.triple)).toEqual([
+      "custom2-x-y",
+      "custom10-x-y",
+    ]);
+  });
 });

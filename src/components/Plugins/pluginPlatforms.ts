@@ -8,6 +8,7 @@
  * computer's entry marked, for the install dialog and the plugin detail panel.
  */
 import type { PluginManifest } from "@/types/plugin";
+import { compareNames } from "@/utils/locale";
 
 /** Friendly architecture names, keyed by the triple's first component. */
 const ARCH_LABELS: Record<string, string> = {
@@ -72,6 +73,6 @@ export function pluginPlatformSupport(
   if (triples.length === 0) return { kind: "legacy" };
   const entries = triples
     .map((triple) => ({ triple, label: platformLabel(triple), isCurrent: triple === hostPlatform }))
-    .sort((a, b) => a.label.localeCompare(b.label) || a.triple.localeCompare(b.triple));
+    .sort((a, b) => compareNames(a.label, b.label) || compareNames(a.triple, b.triple));
   return { kind: "multi", entries };
 }
