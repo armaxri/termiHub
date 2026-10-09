@@ -271,9 +271,11 @@ export interface StateChangeDeps {
   getAllTabs: () => TerminalTab[];
 }
 
+// Resolved on call, not at import: many component tests mock these modules
+// partially, and reading a missing export at module load would throw.
 const DEFAULT_DEPS: StateChangeDeps = {
-  listAgentSessions: apiListAgentSessions,
-  getAllTabs: getAllTabsAcrossGroupTrees,
+  listAgentSessions: (agentId) => apiListAgentSessions(agentId),
+  getAllTabs: () => getAllTabsAcrossGroupTrees(),
 };
 
 /** Region statuses in which a tab has already ended and must be left alone. */
