@@ -93,5 +93,7 @@ describe("PingPanel — live stats", () => {
 
     await emitResult({ seq: 2, latencyMs: 6, timedOut: false, tcpFallback: true });
     expect(container.textContent).toContain(notice);
+    // A TCP connect carries no IP TTL, so the notice says it is unavailable (#4337).
+    expect(container.textContent).toContain("TTL is not available over TCP");
   });
 });

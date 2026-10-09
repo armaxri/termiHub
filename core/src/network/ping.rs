@@ -9,7 +9,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use surge_ping::{Client, Config, PingIdentifier, PingSequence, ICMP};
+use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
@@ -159,16 +159,18 @@ async fn icmp_ping(ip: IpAddr, seq: u32, timeout_ms: u64) -> Result<PingResult, 
         reason: e.to_string(),
     })?;
 
-    let mut pinger = client.pinger(ip, PingIdentifier(rand_id())).await;
+    let mut pinger = client
+        .pinger(ip, PingIdentifier(rand::random::<u16>()))
+        .await;
     pinger.timeout(Duration::from_millis(timeout_ms));
 
     let payload = b"termihub";
 
     match pinger.ping(PingSequence(seq as u16), payload).await {
-        Ok((_packet, duration)) => Ok(PingResult {
+        Ok((packet, duration)) => Ok(PingResult {
             seq,
-            latency_ms: Some(duration.as_millis() as u64),
-            ttl: None, // surge-ping doesn't expose TTL directly
+            latency_ms: Some(rtt_ms(duration)),
+            ttl: reply_ttl(&packet),
             timed_out: false,
             tcp_fallback: false,
         }),
@@ -192,10 +194,10 @@ async fn tcp_ping(ip: IpAddr, seq: u32, timeout_ms: u64) -> Result<PingResult, N
         tokio::time::timeout(Duration::from_millis(timeout_ms), TcpStream::connect(addr)).await;
 
     let (latency_ms, timed_out) = match result {
-        Ok(Ok(_)) => (Some(connect_start.elapsed().as_millis() as u64), false),
+        Ok(Ok(_)) => (Some(rtt_ms(connect_start.elapsed())), false),
         Ok(Err(_)) => {
             // Port refused — connection still proves the host is up; use latency.
-            (Some(connect_start.elapsed().as_millis() as u64), false)
+            (Some(rtt_ms(connect_start.elapsed())), false)
         }
         Err(_) => (None, true),
     };
@@ -203,18 +205,33 @@ async fn tcp_ping(ip: IpAddr, seq: u32, timeout_ms: u64) -> Result<PingResult, N
     Ok(PingResult {
         seq,
         latency_ms,
+        // A TCP handshake exposes no IP TTL to user space; report it as unknown
+        // rather than inventing a value.
         ttl: None,
         timed_out,
         tcp_fallback: true,
     })
 }
 
-fn rand_id() -> u16 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u16)
-        .unwrap_or(0x4E5A)
+/// The IP TTL (IPv4) or hop limit (IPv6) carried by an echo reply, when the
+/// socket delivered it.
+///
+/// IPv4 replies read through a raw socket — or a datagram ICMP socket on
+/// macOS — include the IP header, so the TTL is known. Linux datagram ICMP
+/// sockets strip it (surge-ping reports `None`), and the kernel always strips
+/// the IPv6 header, for which surge-ping reports a hop limit of `0`. Both mean
+/// "unknown", so they map to `None` (#4337).
+fn reply_ttl(packet: &IcmpPacket) -> Option<u8> {
+    match packet {
+        IcmpPacket::V4(p) => p.get_ttl(),
+        IcmpPacket::V6(p) => Some(p.get_max_hop_limit()).filter(|&hops| hops != 0),
+    }
+}
+
+/// Round-trip time in whole milliseconds, rounded to nearest rather than
+/// truncated, so a 0.6 ms LAN reply reads as 1 ms instead of 0 ms.
+fn rtt_ms(duration: Duration) -> u64 {
+    (duration.as_secs_f64() * 1000.0).round() as u64
 }
 
 fn compute_stats(sent: u32, received: u32, latencies: &[f64]) -> PingStats {
@@ -299,6 +316,78 @@ mod tests {
     fn compute_stats_partial_loss() {
         let stats = compute_stats(4, 2, &[10.0, 20.0]);
         assert!((stats.loss_percent - 50.0).abs() < 0.01);
+    }
+
+    /// A raw-socket IPv4 echo reply (20-byte IP header + 8-byte ICMP echo
+    /// reply) carrying `ttl`, as macOS/Windows/raw sockets deliver it.
+    fn ipv4_echo_reply(ttl: u8) -> Vec<u8> {
+        let mut buf = vec![
+            0x45, 0x00, 0x00, 0x1c, // version/IHL, DSCP, total length 28
+            0x00, 0x00, 0x00, 0x00, // id, flags/fragment
+            ttl, 0x01, 0x00, 0x00, // TTL, protocol ICMP, header checksum
+            127, 0, 0, 1, // source
+            127, 0, 0, 1, // destination
+        ];
+        // ICMP echo reply: type 0, code 0, checksum, identifier 0x1234, seq 1.
+        buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x01]);
+        buf
+    }
+
+    #[test]
+    fn ipv4_reply_ttl_is_reported() {
+        // Regression for #4337 (LIBBE2-003): the reply TTL was dropped.
+        let local = std::net::Ipv4Addr::LOCALHOST;
+        let packet = surge_ping::Icmpv4Packet::decode(
+            &ipv4_echo_reply(57),
+            socket2_surge::Type::RAW,
+            local,
+            local,
+        )
+        .expect("decode echo reply");
+        assert_eq!(reply_ttl(&surge_ping::IcmpPacket::V4(packet)), Some(57));
+    }
+
+    #[test]
+    fn ipv6_reply_without_hop_limit_reports_no_ttl() {
+        // The kernel strips the IPv6 header from ICMPv6 replies, so surge-ping
+        // reports a hop limit of 0. That is "unknown", not a real TTL of 0.
+        let reply = [0x81, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x01];
+        let packet = surge_ping::Icmpv6Packet::decode(&reply, std::net::Ipv6Addr::LOCALHOST)
+            .expect("decode echo reply");
+        assert_eq!(reply_ttl(&surge_ping::IcmpPacket::V6(packet)), None);
+    }
+
+    #[test]
+    fn round_trip_time_is_rounded_not_truncated() {
+        assert_eq!(rtt_ms(Duration::from_micros(400)), 0);
+        assert_eq!(rtt_ms(Duration::from_micros(600)), 1);
+        assert_eq!(rtt_ms(Duration::from_micros(1_499)), 1);
+        assert_eq!(rtt_ms(Duration::from_micros(1_500)), 2);
+    }
+
+    #[tokio::test]
+    async fn tcp_fallback_reports_ttl_as_unavailable() {
+        // A TCP connect carries no IP TTL; the result must say so with `None`
+        // rather than inventing one.
+        let r = tcp_ping(IpAddr::from_str("127.0.0.1").unwrap(), 1, 2000)
+            .await
+            .expect("tcp ping loopback");
+        assert!(r.tcp_fallback);
+        assert_eq!(r.ttl, None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_icmp_loopback_reply_reports_ttl() {
+        // macOS datagram ICMP sockets deliver the IPv4 header, so a real echo
+        // reply must carry a TTL. Skipped silently where ICMP is unavailable or
+        // dropped (sandboxed runners) — the decode tests above cover the logic.
+        let ip = IpAddr::from_str("127.0.0.1").unwrap();
+        if let Ok(r) = icmp_ping(ip, 1, 2000).await {
+            if !r.timed_out {
+                assert!(r.ttl.is_some(), "ICMP reply without TTL: {r:?}");
+            }
+        }
     }
 
     #[tokio::test]
