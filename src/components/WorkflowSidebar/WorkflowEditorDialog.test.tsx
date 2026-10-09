@@ -383,4 +383,21 @@ describe("WorkflowEditorDialog", () => {
       { kind: "on-connect", connectionIds: ["Prod/conn-1", "x"] },
     ]);
   });
+
+  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
+    render();
+    const nameError = () => document.getElementById("workflow-editor-name-error");
+    const save = () => query("workflow-editor-save") as HTMLButtonElement;
+    expect(nameError()).toBeNull();
+    expect(save().disabled).toBe(false);
+
+    setInput("workflow-editor-name", "");
+    expect(nameError()?.textContent).toBe("Name is required.");
+    expect(query("workflow-editor-name")?.getAttribute("aria-invalid")).toBe("true");
+    expect(save().disabled).toBe(true);
+
+    setInput("workflow-editor-name", "Prod login");
+    expect(nameError()).toBeNull();
+    expect(save().disabled).toBe(false);
+  });
 });

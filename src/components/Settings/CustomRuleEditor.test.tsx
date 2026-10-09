@@ -173,4 +173,34 @@ describe("CustomRuleEditor", () => {
     );
     expect(colored).toBeDefined();
   });
+
+  describe("zod field errors (UISF2-003)", () => {
+    const save = () => byTestId("custom-rule-save") as HTMLButtonElement;
+    const nameError = () => document.getElementById("custom-rule-name-error");
+
+    it("shows 'Name is required.' for a blank name and blocks Save until one is typed", () => {
+      render();
+      setInput(byTestId("custom-rule-pattern"), "TODO");
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(save().disabled).toBe(true);
+
+      setInput(byTestId("custom-rule-name"), "TODO markers");
+      expect(nameError()).toBeNull();
+      expect(save().disabled).toBe(false);
+    });
+
+    it("shows the hex colour error and blocks Save until the colour is valid", () => {
+      render();
+      setInput(byTestId("custom-rule-name"), "TODO markers");
+      setInput(byTestId("custom-rule-pattern"), "TODO");
+      setInput(byTestId("custom-rule-color-hex"), "not-a-colour");
+      expect(byTestId("custom-rule-color-error")?.textContent).toBe("Use a #RRGGBB color.");
+      expect(byTestId("custom-rule-color-hex").getAttribute("aria-invalid")).toBe("true");
+      expect(save().disabled).toBe(true);
+
+      setInput(byTestId("custom-rule-color-hex"), "#112233");
+      expect(byTestId("custom-rule-color-error")).toBeNull();
+      expect(save().disabled).toBe(false);
+    });
+  });
 });

@@ -158,4 +158,25 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     expect(useAppStore.getState().startTunnel).toHaveBeenCalledWith(expect.any(String));
     expect(toastMock.success).not.toHaveBeenCalled();
   });
+
+  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", async () => {
+    await render();
+    const nameError = () => document.getElementById(`tunnel-name-${TAB_ID}-error`);
+    expect(nameError()?.textContent).toBe("Name is required.");
+    expect(nameInput().getAttribute("aria-invalid")).toBe("true");
+    expect(saveButton().disabled).toBe(true);
+
+    setValue(nameInput(), "Dev DB");
+    expect(nameError()).toBeNull();
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("shows the SSH-connection error when there is no SSH connection to pick", async () => {
+    seedConnectionsRegion({ connections: [] });
+    await render();
+    setValue(nameInput(), "Dev DB");
+    const sshField = container.querySelector('[data-testid="tunnel-editor-ssh-connection-field"]');
+    expect(sshField?.textContent).toContain("An SSH connection is required.");
+    expect(saveButton().disabled).toBe(true);
+  });
 });
