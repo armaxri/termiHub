@@ -198,7 +198,7 @@ pub fn prune_family(
     let mut total: u64 = members.iter().map(|m| m.len).sum();
     let mut count = members.len();
     let mut candidates: Vec<&Member> = members.iter().filter(|m| !keep.contains(&m.path)).collect();
-    candidates.sort_by(|a, b| (!a.archive, a.modified).cmp(&(!b.archive, b.modified)));
+    candidates.sort_by_key(|m| (!m.archive, m.modified));
 
     for member in candidates {
         if total <= max_total_bytes && count <= max_files {
