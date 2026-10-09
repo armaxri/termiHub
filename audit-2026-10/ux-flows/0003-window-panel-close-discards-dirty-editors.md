@@ -13,8 +13,8 @@ evidence:
   - src/store/slices/tabOpenersSlice.ts:417
   - src/components/Terminal/TerminalView.tsx:401-422
   - src/components/Terminal/TabBar.tsx:170-190
-status: open
-resolution: ""
+status: fixed
+resolution: "#4314 — window close prompts and lists unsaved editors; split-panel close counts them through the shared bulk-close guard"
 audit: 2026-10
 commit: 663465d52
 relation: new
