@@ -426,6 +426,52 @@ mod tests {
         );
     }
 
+    /// SEC2-005: without the manifest's `allowLocalNetwork` opt-in a plugin
+    /// cannot dial a loopback service — the host refuses before connecting.
+    #[test]
+    fn loopback_is_denied_without_the_local_network_opt_in() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let policy = ConnectionPolicy::default();
+        let slots = ConnectionSlots::new(&policy);
+        let granted = perms(&[PluginPermission::Network], &[]);
+
+        for host in ["127.0.0.1", "localhost"] {
+            let err = guarded_connect(&granted, &policy, &slots, host, port).unwrap_err();
+            assert_eq!(err, PluginStatus::PermissionDenied, "{host} must be refused");
+        }
+        listener.set_nonblocking(true).unwrap();
+        assert!(
+            listener.accept().is_err(),
+            "a refused loopback dial-out must never reach the socket"
+        );
+    }
+
+    /// SEC2-005 / SEC2-007: link-local, unspecified, broadcast and cloud
+    /// metadata targets are refused as a permission denial (never dialled), by
+    /// default.
+    #[test]
+    fn metadata_and_link_local_targets_are_always_denied() {
+        let policy = ConnectionPolicy::new(DEFAULT_MAX_CONNECTIONS, Duration::from_millis(300));
+        let slots = ConnectionSlots::new(&policy);
+        let granted = perms(&[PluginPermission::Network], &[]);
+        for host in [
+            "169.254.169.254",
+            "169.254.1.1",
+            "100.100.100.200",
+            "0.0.0.0",
+            "255.255.255.255",
+            "::",
+            "fe80::1",
+            "fd00:ec2::254",
+            "::ffff:169.254.169.254",
+            "64:ff9b::a9fe:a9fe",
+        ] {
+            let err = guarded_connect(&granted, &policy, &slots, host, 80).unwrap_err();
+            assert_eq!(err, PluginStatus::PermissionDenied, "{host} must be refused");
+        }
+    }
+
     #[test]
     fn network_is_mediated_when_granted() {
         // With `network` granted the host opens the connection and hands back a

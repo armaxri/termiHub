@@ -1087,6 +1087,14 @@ mod tests {
             ("::", "ipv6 unspecified"),
             ("fe80::1", "ipv6 link-local"),
             ("::ffff:169.254.169.254", "ipv4-mapped metadata"),
+            // SEC2-007: metadata endpoints outside link-local space.
+            ("100.100.100.200", "alibaba cloud metadata"),
+            ("fd00:ec2::254", "aws ipv6 imds"),
+            ("::ffff:100.100.100.200", "ipv4-mapped alibaba metadata"),
+            // NAT64 (64:ff9b::/96) forms of blocked IPv4 targets.
+            ("64:ff9b::a9fe:a9fe", "nat64 metadata"),
+            ("64:ff9b::6464:64c8", "nat64 alibaba metadata"),
+            ("64:ff9b::", "nat64 unspecified"),
         ] {
             let ip: IpAddr = addr.parse().unwrap();
             assert!(
@@ -1115,6 +1123,12 @@ mod tests {
             "::ffff:127.0.0.1", // ipv4-mapped loopback
             "fc00::1",          // ipv6 unique-local
             "fd12:3456::1",     // ipv6 unique-local
+            // SEC2-007: shared address space (RFC 6598, 100.64/10) is internal.
+            "100.64.0.1",
+            "100.127.255.254",
+            // NAT64 forms of loopback / private targets.
+            "64:ff9b::7f00:1",
+            "64:ff9b::c0a8:101",
         ] {
             let ip: IpAddr = addr.parse().unwrap();
             assert!(
@@ -1137,6 +1151,9 @@ mod tests {
             "172.15.0.1",           // just outside 172.16/12
             "172.32.0.1",           // just outside 172.16/12
             "2606:4700:4700::1111", // public IPv6
+            "100.63.255.255",       // just below 100.64/10
+            "100.128.0.1",          // just above 100.64/10
+            "64:ff9b::808:808",     // NAT64 of public 8.8.8.8
         ] {
             let ip: IpAddr = addr.parse().unwrap();
             assert!(
