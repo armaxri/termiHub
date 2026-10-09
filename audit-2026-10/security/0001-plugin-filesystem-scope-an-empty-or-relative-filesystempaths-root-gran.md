@@ -16,8 +16,8 @@ evidence:
   - core/src/plugin/capabilities.rs:217
   - src/components/Settings/nativePluginSandbox.ts:199
   - src/components/Settings/nativePluginSandbox.ts:211
-status: open
-resolution: ""
+status: fixed
+resolution: "#4293 — manifest and scope reject empty, relative, dot-segment and root filesystemPaths; loader refuses home/config/plugins overlap"
 audit: 2026-10
 commit: 663465d52
 relation: new
