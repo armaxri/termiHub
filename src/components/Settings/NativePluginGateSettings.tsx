@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore } from "@/store/appStore";
 import { usePluginSandbox } from "@/store/usePluginSandbox";
 import {
@@ -52,13 +52,11 @@ export function NativePluginGateSettings() {
 
   useEffect(() => {
     void load();
-    // Enabling/acknowledging/revoking (here or on the plugin detail panel) emits
-    // the plugin-changed event; re-fetch so the acknowledgment list stays current.
-    const unlisten = listen("plugin-changed", () => void load());
-    return () => {
-      void unlisten.then((off) => off());
-    };
   }, [load]);
+
+  // Enabling/acknowledging/revoking (here or on the plugin detail panel) emits
+  // the plugin-changed event; re-fetch so the acknowledgment list stays current.
+  useTauriListener<void>("plugin-changed", () => void load(), "native_plugin_gate");
 
   /** Installed native plugins — those declaring a terminal-backend extension. */
   const nativePlugins = useMemo(
