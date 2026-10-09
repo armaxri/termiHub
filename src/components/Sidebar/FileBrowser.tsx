@@ -97,6 +97,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { parentDir } from "@/utils/paths";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -185,6 +186,10 @@ export function FileMenuItems({
   Separator: React.ElementType;
   testIdPrefix: string;
 }) {
+  // "Share via …" switches to the Services sidebar, which is an experimental
+  // view; with experimental features off that view is hidden, so the menu
+  // items are hidden too (#4498) — same gate as the activity-bar Services item.
+  const experimental = useExperimentalFeatures();
   return (
     <>
       {entry.isDirectory && (
@@ -196,7 +201,7 @@ export function FileMenuItems({
           <FolderOpen size={14} /> Open
         </Item>
       )}
-      {entry.isDirectory && onShareVia && (
+      {entry.isDirectory && onShareVia && experimental && (
         <>
           <Separator className="context-menu__separator" />
           <Item
