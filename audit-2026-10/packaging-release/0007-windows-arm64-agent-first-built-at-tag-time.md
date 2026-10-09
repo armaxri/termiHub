@@ -14,8 +14,8 @@ evidence:
   - .github/workflows/dev-build.yml:518
   - docs/contributing.md:1462
   - scripts/internal/release-integration-gate.mjs:58
-status: open
-resolution: ""
+status: fixed
+resolution: "#4302 — dev-build.yml builds windows-x64 and windows-arm64 agents (static CRT + vcruntime check) before tag time"
 audit: 2026-10
 commit: 663465d52
 relation: new
