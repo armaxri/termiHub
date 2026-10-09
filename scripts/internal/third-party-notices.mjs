@@ -15,9 +15,10 @@
 //     pure function of the lockfiles + the pinned cargo-about version.
 //   - npm: `pnpm licenses list --prod --json` (production deps only — what ships
 //     in the frontend bundle), with each package's own LICENSE/NOTICE files.
-//   - External programs and bundled native binaries: THIRD_PARTY_LICENSES.md
-//     (the X servers termiHub installs but does not bundle, and the Windows
-//     ConPTY host it bundles) plus their texts under licenses/.
+//   - External programs, bundled native binaries and bundled fonts:
+//     THIRD_PARTY_LICENSES.md (the X servers termiHub installs but does not
+//     bundle, the Windows ConPTY host and the Geist / MesloLGS Nerd Font files
+//     it bundles) plus their texts under licenses/ (EXTERNAL_TEXTS).
 //
 // Identical license texts are printed once and referenced by number.
 //
@@ -34,7 +35,9 @@
 //             with the CARGO_ABOUT env var).
 //   check     Cheap config gate (no cargo-about, no network): about.toml's accepted
 //             list matches deny.toml's allowlist, every npm production dependency
-//             has an allowlisted license, and the external-program inputs exist.
+//             has an allowlisted license, the external-program inputs exist, and
+//             every font file under src/ and public/ has an EXTERNAL_TEXTS entry
+//             (#4357, SUP2-003).
 //             Rust crate licenses are gated by cargo-deny's `licenses` check.
 //
 // The pure helpers are exported for unit testing (third-party-notices.test.mjs).
@@ -65,7 +68,18 @@ export const RUST_COMPONENTS = [
 /** Lockfile roots that must be fetched before running cargo-about `--frozen`. */
 const CARGO_FETCH_MANIFESTS = ["Cargo.toml", "rdp-sidecar/Cargo.toml"];
 
-/** License texts of the external programs / bundled binaries documented in THIRD_PARTY_LICENSES.md. */
+/** The MesloLGS Nerd Font Mono files (Meslo LG base font + Nerd Fonts 3.3.0 glyph sets). */
+const MESLO_FONTS = [
+  "public/fonts/MesloLGSNerdFontMono-Regular.ttf",
+  "public/fonts/MesloLGSNerdFontMono-Bold.ttf",
+];
+
+/**
+ * License texts of the external programs, bundled binaries and bundled fonts
+ * documented in THIRD_PARTY_LICENSES.md. `fonts` lists the repo font files an
+ * entry covers; `check` fails when a shipped font file is covered by none
+ * (fontNoticeProblems, #4357).
+ */
 export const EXTERNAL_TEXTS = [
   {
     file: "licenses/GPL-3.0.txt",
@@ -78,7 +92,111 @@ export const EXTERNAL_TEXTS = [
     id: "MIT",
     users: ["Microsoft ConPTY host - conpty.dll, OpenConsole.exe (Windows installer, #4121)"],
   },
+  // Bundled fonts (#4357, SUP2-003). Both ship inside the frontend bundle.
+  {
+    file: "licenses/OFL-1.1-geist.txt",
+    id: "OFL-1.1",
+    users: ["Geist font (Vercel) - UI typeface, Geist-Variable.woff2"],
+    fonts: ["src/assets/fonts/Geist-Variable.woff2"],
+  },
+  ...nerdFontTexts(),
 ];
+
+/**
+ * MesloLGS Nerd Font Mono: the Apache-2.0 Meslo LG base font plus every glyph
+ * set the Nerd Fonts 3.3.0 patcher merges in (upstream license-audit.md).
+ */
+function nerdFontTexts() {
+  const user = (what) => `MesloLGS Nerd Font Mono - ${what}`;
+  const glyphs = [
+    ["nerd-fonts-LICENSE.txt", "MIT AND OFL-1.1", "Nerd Fonts patcher and patched font"],
+    ["nerd-fonts-codicons-CC-BY-4.0.txt", "CC-BY-4.0", "Codicons glyphs (Microsoft)"],
+    ["nerd-fonts-devicons-MIT.txt", "MIT", "Devicons glyphs"],
+    ["nerd-fonts-font-awesome.txt", "CC-BY-4.0 AND OFL-1.1", "Font Awesome glyphs (Fonticons)"],
+    ["nerd-fonts-font-awesome-extension-MIT.txt", "MIT", "Font Awesome Extension glyphs"],
+    ["nerd-fonts-font-logos-Unlicense.txt", "Unlicense", "Font Logos glyphs"],
+    ["nerd-fonts-iec-power-symbols-MIT.txt", "MIT", "IEC Power Symbols glyphs"],
+    ["nerd-fonts-material-design-icons.txt", "Apache-2.0", "Material Design Icons glyphs"],
+    ["nerd-fonts-octicons-MIT.txt", "MIT", "Octicons glyphs (GitHub)"],
+    ["nerd-fonts-pomicons-OFL-1.1.txt", "OFL-1.1", "Pomicons glyphs"],
+    ["nerd-fonts-powerline-extra-symbols-MIT.txt", "MIT", "Powerline Extra Symbols glyphs"],
+    ["nerd-fonts-powerline-symbols-MIT.txt", "MIT", "Powerline Symbols glyphs"],
+    ["nerd-fonts-seti-ui-MIT.txt", "MIT", "Seti-UI glyphs"],
+    ["nerd-fonts-weather-icons-OFL-1.1.txt", "OFL-1.1", "Weather Icons glyphs"],
+  ];
+  return [
+    {
+      file: "licenses/Apache-2.0-meslo-lg.txt",
+      id: "Apache-2.0",
+      users: [user("Meslo LG base font (André Berg)")],
+      fonts: MESLO_FONTS,
+    },
+    ...glyphs.map(([file, id, what]) => ({
+      file: `licenses/${file}`,
+      id,
+      users: [user(what)],
+      fonts: MESLO_FONTS,
+    })),
+  ];
+}
+
+/** Directories whose font files ship in the frontend bundle (Vite src/ + public/). */
+export const FONT_ROOTS = ["src", "public"];
+
+/** Font file extensions the notices gate tracks. */
+const FONT_FILE_RE = /\.(woff2?|ttf|otf)$/i;
+
+/**
+ * Every font file under the given roots, as repo-relative forward-slash paths.
+ *
+ * @param {string} root - repository root.
+ * @param {string[]} [roots] - directories to scan.
+ * @returns {string[]} sorted font paths.
+ */
+export function listFontFiles(root, roots = FONT_ROOTS) {
+  const found = [];
+  const walk = (rel) => {
+    const abs = path.join(root, rel);
+    if (!existsSync(abs)) return;
+    for (const name of readdirSync(abs)) {
+      if (name === "node_modules") continue;
+      const childRel = `${rel}/${name}`;
+      if (statSync(path.join(root, childRel)).isDirectory()) walk(childRel);
+      else if (FONT_FILE_RE.test(name)) found.push(childRel);
+    }
+  };
+  for (const r of roots) walk(r);
+  return found.sort(compareStrings);
+}
+
+/**
+ * Bundled fonts carry their own licenses but come from no lockfile, so the
+ * generated notices only cover them through EXTERNAL_TEXTS (#4357, SUP2-003).
+ * Report each shipped font file no entry covers, and each covered path that no
+ * longer exists (a stale entry).
+ *
+ * @param {string[]} fontFiles - repo-relative font paths that ship.
+ * @param {{file: string, fonts?: string[]}[]} texts - EXTERNAL_TEXTS entries.
+ * @returns {string[]} problems.
+ */
+export function fontNoticeProblems(fontFiles, texts) {
+  const covered = new Set(texts.flatMap((t) => t.fonts ?? []));
+  const problems = [];
+  for (const font of fontFiles) {
+    if (!covered.has(font)) {
+      problems.push(
+        `bundled font ${font} has no license entry: add its license text under licenses/, an ` +
+          `EXTERNAL_TEXTS entry listing it in \`fonts\` and a THIRD_PARTY_LICENSES.md section`
+      );
+    }
+  }
+  const present = new Set(fontFiles);
+  for (const font of [...covered].sort(compareStrings)) {
+    if (!present.has(font))
+      problems.push(`EXTERNAL_TEXTS lists font ${font}, which does not exist`);
+  }
+  return problems;
+}
 
 /** File names treated as a package's license / notice files. */
 const LICENSE_FILE_RE = /^(licen[cs]e|copying|notice)([.\-_].*)?$/i;
@@ -241,6 +359,7 @@ export function runCheck(root) {
   }
   if (!existsSync(path.join(root, "THIRD_PARTY_LICENSES.md")))
     problems.push("missing THIRD_PARTY_LICENSES.md");
+  problems.push(...fontNoticeProblems(listFontFiles(root), EXTERNAL_TEXTS));
   const workflowDir = path.join(root, ".github", "workflows");
   if (existsSync(workflowDir)) {
     const workflows = Object.fromEntries(

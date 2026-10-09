@@ -43,6 +43,15 @@ on:
       - 'about.toml'
       - 'THIRD_PARTY_LICENSES.md'
       - 'licenses/**'
+      # Bundled fonts: notices:check fails on a font with no license entry (#4357).
+      - 'src/**/*.woff2'
+      - 'src/**/*.woff'
+      - 'src/**/*.ttf'
+      - 'src/**/*.otf'
+      - 'public/**/*.woff2'
+      - 'public/**/*.woff'
+      - 'public/**/*.ttf'
+      - 'public/**/*.otf'
       - 'scripts/internal/third-party-notices*.mjs'
       - '.github/actions/setup-pnpm/**'
   push:
@@ -236,8 +245,9 @@ jobs:
   # bundles THIRD_PARTY_NOTICES.txt; this job proves on every dependency change
   # that the release-time generation will still succeed:
   #   - `notices:check`: about.toml's accepted list equals deny.toml's allowlist
-  #     (cargo-deny above is what rejects an unapproved Rust license), and every
-  #     npm production dependency resolves to an allowlisted license;
+  #     (cargo-deny above is what rejects an unapproved Rust license), every
+  #     npm production dependency resolves to an allowlisted license, and every
+  #     bundled font file under src/ or public/ has a license entry (#4357);
   #   - `notices:generate`: the pinned cargo-about finds a license text for
   #     every crate of the desktop app, agent and RDP sidecar (`--fail`), and
   #     every npm package gets one — a gap cargo-deny does not see.
