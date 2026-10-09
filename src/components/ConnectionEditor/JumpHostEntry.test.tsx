@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { JumpHostEntry } from "./JumpHostEntry";
+import { checkA11y } from "@/test/axe";
+import { pressRadioArrow } from "@/test/radioKeyboard";
 import type { JumpHostConfig } from "@/types/connection";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 
@@ -112,5 +114,36 @@ describe("JumpHostEntry", () => {
     const onChange = render({ hop: hop({ connectionId: "conn-a" }) });
     act(() => query("jump-host-source-saved-0")?.click());
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  describe("source selector semantics (UISF2-002)", () => {
+    it("is a named radiogroup of radios from the shared primitive", () => {
+      render({ hop: hop() });
+      const saved = query("jump-host-source-saved-0") as HTMLElement;
+      const group = saved.closest('[role="radiogroup"]') as HTMLElement;
+      expect(group).not.toBeNull();
+      expect(group.getAttribute("aria-label")).toBe("Jump host source");
+      expect(group.classList.contains("ui-radio-group--cards")).toBe(true);
+      expect(saved.getAttribute("role")).toBe("radio");
+      expect(query("jump-host-source-inline-0")?.getAttribute("role")).toBe("radio");
+    });
+
+    it("is a single tab stop with arrow-key selection", async () => {
+      const onChange = render({ hop: hop() });
+      const inline = query("jump-host-source-inline-0") as HTMLElement;
+      const saved = query("jump-host-source-saved-0") as HTMLElement;
+      // Roving tabindex: the radios are never all independent tab stops.
+      const stops = [inline, saved].filter((el) => el.getAttribute("tabindex") === "0");
+      expect(stops.length).toBeLessThanOrEqual(1);
+      act(() => inline.focus());
+      await pressRadioArrow(inline, "ArrowLeft");
+      expect(document.activeElement).toBe(saved);
+      expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ connectionId: "conn-a" }));
+    });
+
+    it("has no a11y violations", async () => {
+      render({ hop: hop({ connectionId: "conn-a" }) });
+      expect(await checkA11y(container)).toHaveNoViolations();
+    });
   });
 });

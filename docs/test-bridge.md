@@ -31,7 +31,7 @@ surface **inside the app** — the same idea as Qt's in-process test interfaces.
 flowchart TD
     R["Scenario runner / coding agent"] --> D["Driver interface (port)<br/>click · type · readTerminal · getState"]
     D --> T["BridgeTransport"]
-    T -->|in-process / browser.execute| G["window.__termihubTestBridge.dispatch"]
+    T -->|in-process| G["window.__termihubTestBridge.dispatch"]
     T -->|WebSocket| WSC["in-app WS client<br/>(connects out to the runner)"]
     WSC --> G
     G --> DP["dispatchCommand"]
@@ -41,9 +41,10 @@ flowchart TD
 ```
 
 The `Driver` never knows which transport is underneath, so the same test runs
-in-process, through WebDriver `browser.execute`, or over a WebSocket to an
-external test runner — the last of which works on **every** platform, including
-headless macOS.
+in-process or over a WebSocket to an external test runner (the Python harness in
+`tests/system/`) — the latter works on **every** platform, including headless
+macOS. (A WebDriver `browser.execute` transport existed for the retired
+WebdriverIO suite, #1027.)
 
 ## Cross-platform WebSocket transport
 
@@ -249,6 +250,12 @@ unmount.
 | `readCoverage`             | Read a chunk of `window.__coverage__` (coverage builds only)   |
 | `exitApp`                  | Test-only: quit the app normally (coverage profiles, below)    |
 | `stubNativeDialog`         | Test-only: answer the next native open/save dialog (below)     |
+| `projectionSubscribe`      | Attach to a projection region and record its diff frames       |
+| `projectionDispatch`       | Dispatch a `<domain>.*` intent; returns the `IntentAck`        |
+| `projectionState`          | Read a subscription's recorded frames + cache state            |
+| `projectionDropNext`       | Test-only: drop the next N diffs to force a gap → resync       |
+| `projectionResync`         | Re-baseline a subscription's cache from the backend            |
+| `projectionUnsubscribe`    | Detach one projection subscription (idempotent)                |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -257,10 +264,10 @@ agent-readable `error` — so a runner branches on results instead of catching.
 **Adding a command** means touching every place the vocabulary is declared: the
 `BridgeCommand` union (`src/testbridge/protocol.ts`), the dispatcher switch, the
 Python mirror `BRIDGE_ACTIONS` (`tests/system/termihub_harness/protocol.py`), a
-Driver verb in `bridge.py`, and the fake app (`tests/system/tests/fake_app.py` —
-fake it, or list it in `UNHANDLED_ACTIONS`). The per-PR machinery suite's
-`test_bridge_protocol_contract.py` fails on drift between them in either
-direction (MOCK-010).
+Driver verb in `bridge.py`, the fake app (`tests/system/tests/fake_app.py` —
+fake it, or list it in `UNHANDLED_ACTIONS`), and a row in the table above. The
+per-PR machinery suite's `test_bridge_protocol_contract.py` fails on drift
+between them in either direction (MOCK-010; the doc table since #4369).
 
 ### Writing into a terminal (`terminalInput`)
 
@@ -385,7 +392,7 @@ the terminal has no live WebGL context. Both default to the active terminal tab
 and fail when no terminal is registered for it. Python:
 `driver.measure_terminal(tab_id=None)` and
 `driver.lose_terminal_webgl_context(tab_id=None)`; the suite is
-`tests/system/tests/test_xterm_render_paths.py`.
+`tests/system/tests/test_terminal_render_paths.py`.
 
 ### Glyph cells and IME composition (`readTerminalCells`, `compose`)
 
@@ -776,6 +783,20 @@ await driver.getValue("field-port"); // "22" — the live, controlled value
 The scenario runner exposes this as the `valueEquals` check
 (`{ assert: "valueEquals", testId, value }`), alongside `textEquals`.
 
+### Projection assertions (`projection*`)
+
+The backend projection regions (ADR-14) push their versioned diffs over a
+per-region Tauri IPC channel, so the DOM/state verbs cannot see them. The six
+`projection*` verbs subscribe through the app's real transport and
+`ProjectionClient` cache and record every raw frame in a page-scoped
+`ProjectionRecorder` (`src/testbridge/projectionRecorder.ts`). The Python
+`Driver` exposes them as `projection_subscribe`, `projection_dispatch`,
+`projection_state`, `projection_drop_next`, `projection_resync` and
+`projection_unsubscribe`, and `ProjectionHarness`
+(`tests/system/termihub_harness/projection.py`) wraps them into assertions. See
+[testing.md → Projection-assertion harness](testing.md#projection-assertion-harness-2164)
+and the [ADR-14 substrate](architecture.md#adr-14-backend-projection-regions-as-the-single-source-of-ui-state-strangler-migration).
+
 ## Programmatic use
 
 ```ts
@@ -793,13 +814,18 @@ if (!output.includes("HELLO_MARKER")) {
 }
 ```
 
-From a WebdriverIO test, the same `dispatch` is reachable through the page realm:
+From a Python system test (`tests/system/`), the same vocabulary is reached over
+the WebSocket bridge through the `Driver` façade (`termihub_harness/bridge.py`),
+whose snake_case verbs mirror the actions:
 
-```js
-const res = await browser.execute((cmd) => window.__termihubTestBridge?.dispatch(cmd), {
-  action: "readTerminal",
-  joinFullWidthRows: true,
-});
+```python
+def test_reads_marker(bridge, app):
+    app.start(bridge.port)
+    driver = bridge.wait_for_app()
+
+    driver.click("connection-item-abc")
+    output = driver.read_terminal(join_full_width_rows=True)
+    assert "HELLO_MARKER" in output
 ```
 
 ## Authoring scenarios

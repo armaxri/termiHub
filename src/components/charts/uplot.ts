@@ -11,14 +11,16 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { DependencyList, MutableRefObject } from "react";
 import uPlot from "uplot";
+import { useThemeRevision } from "@/hooks/useThemeRevision";
 
 /**
- * Resolve a CSS custom property to a concrete colour. A `<canvas>` cannot read
+ * Resolve a CSS custom property to a concrete value. A `<canvas>` cannot read
  * `var(--token)`, so series/axis colours must be resolved to real values before
- * they reach uPlot; the fallback covers a token that is missing or a headless
- * (jsdom) environment where computed styles are empty.
+ * they reach uPlot. The theme engine always writes every colour token, so the
+ * optional fallback is only for non-colour values (e.g. a font stack) in a
+ * headless (jsdom) environment where computed styles are empty.
  */
-export function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+export function cssVar(styles: CSSStyleDeclaration, name: string, fallback = ""): string {
   return styles.getPropertyValue(name).trim() || fallback;
 }
 
@@ -27,9 +29,9 @@ export interface UseUplotSpec {
   /** Current uPlot data tuple. Memoise it so the update effect only fires on change. */
   data: uPlot.AlignedData;
   /**
-   * Build the uPlot options for the (mounted) container. Called on create and
-   * whenever {@link recreateDeps} changes, so it may read `getComputedStyle` to
-   * resolve theme tokens. Must set `height` (used to keep the chart's height
+   * Build the uPlot options for the (mounted) container. Called on create,
+   * whenever {@link recreateDeps} changes, and whenever the active theme is
+   * re-applied, so it may read `getComputedStyle` to resolve theme tokens. Must set `height` (used to keep the chart's height
    * fixed across container-width resizes) and `width`.
    */
   makeOptions: (container: HTMLDivElement) => uPlot.Options;
@@ -46,8 +48,9 @@ export interface UseUplotSpec {
 /**
  * Own a uPlot instance's full lifecycle for a container `<div>`: create it once
  * (wired to the container width), keep its width in sync via a `ResizeObserver`,
- * push new data on every update, and destroy it on unmount. Returns the ref the
- * caller must attach to its container element.
+ * push new data on every update, and destroy it on unmount. The plot is also
+ * rebuilt on every theme change so the canvas re-reads the colour tokens
+ * (UI2-004). Returns the ref the caller must attach to its container element.
  */
 export function useUplot({
   data,
@@ -56,6 +59,9 @@ export function useUplot({
   onUpdate,
 }: UseUplotSpec): MutableRefObject<HTMLDivElement | null> {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Bumps on every theme apply/preview; a canvas cannot follow CSS variables,
+  // so the plot is rebuilt to re-resolve its colours (UI2-004).
+  const themeRevision = useThemeRevision();
   const plotRef = useRef<uPlot | null>(null);
   // Latest closures/data read inside effects without widening their deps.
   const onUpdateRef = useRef(onUpdate);
@@ -83,9 +89,9 @@ export function useUplot({
       plot.destroy();
       plotRef.current = null;
     };
-    // Recreate only when the caller's structural options change.
+    // Recreate only when the caller's structural options or the theme change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, recreateDeps);
+  }, [...recreateDeps, themeRevision]);
 
   useEffect(() => {
     const plot = plotRef.current;

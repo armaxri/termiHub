@@ -275,3 +275,68 @@ fn a_live_token_connect_and_disconnect_work_normally() {
         conn.disconnect().await.unwrap();
     });
 }
+
+/// How long the plugin holds its `close` in the drop tests (#4499): long
+/// enough that a close run inline on the runtime's one thread would still be
+/// pending when the other task is checked, short of the host's 2 s close
+/// deadline so the close itself still succeeds.
+const STALL_CLOSE_MS: u64 = 1_000;
+
+#[test]
+fn dropping_a_connected_plugin_connection_does_not_block_the_runtime() {
+    let fixture = Fixture::new();
+    let pid = fixture.handle().running().and_then(|r| r.pid()).unwrap();
+    current_thread().block_on(async {
+        let mut conn = fixture.connection();
+        conn.connect(serde_json::json!({ "stallCloseMs": STALL_CLOSE_MS }))
+            .await
+            .expect("the session starts in the runner");
+        assert_eq!(fixture.sessions(), 1);
+
+        // Drop the live connection on the runtime's only thread without an
+        // awaited `disconnect`, then let an unrelated task run. Both are
+        // spawned before this task yields, so the runtime polls the drop first.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let dropper = tokio::spawn(async move { drop(conn) });
+        let other = tokio::spawn(async move { tx.send(()).unwrap() });
+        rx.await.expect("the unrelated task ran");
+
+        // The session is retired only once its close finishes. Had the drop
+        // closed inline, the stalled `Close` reply would have held this thread
+        // and the session would already be gone; it is still being closed.
+        assert!(dropper.is_finished(), "the drop returned at once");
+        assert_eq!(
+            fixture.sessions(),
+            1,
+            "the drop must not wait for the runner's Close reply on the worker"
+        );
+        other.await.unwrap();
+        dropper.await.unwrap();
+
+        // The close still completes in the background: nothing is leaked, and
+        // a slow close within its deadline is not a hang.
+        assert!(
+            eventually(|| fixture.sessions() == 0).await,
+            "the dropped session is closed in the runner"
+        );
+        let runner = fixture.handle().running().expect("the runner still runs");
+        assert_eq!(runner.pid(), Some(pid));
+    });
+}
+
+#[test]
+fn dropping_a_connected_plugin_connection_outside_a_runtime_closes_it_inline() {
+    let fixture = Fixture::new();
+    let mut conn = current_thread().block_on(async {
+        let mut conn = fixture.connection();
+        conn.connect(serde_json::json!({}))
+            .await
+            .expect("the session starts in the runner");
+        conn
+    });
+    assert!(conn.is_connected());
+    assert_eq!(fixture.sessions(), 1);
+    // No runtime is current here, so the drop closes the session itself.
+    drop(std::mem::replace(&mut conn, fixture.connection()));
+    assert_eq!(fixture.sessions(), 0, "the drop closed the session inline");
+}

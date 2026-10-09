@@ -26,7 +26,7 @@
         --bg-input: #1a1e2c;
         --bg-dropdown: #161b24;
         --color-info: #6db0ff;
-        --shadow-focus: 0 0 0 3px rgba(61, 125, 232, 0.22);
+        --shadow-focus: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--focus-border);
         --shadow-dropdown: 0 8px 28px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
         --transition-fast: 130ms cubic-bezier(0.16, 1, 0.3, 1);
         --transition-normal: 220ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -507,9 +507,10 @@
         <p>
           termiHub already ships a real design-token system (<code>src/styles/variables.css</code>,
           ~125 tokens: a 4-8-12-16-24 spacing scale (since #3170 the full scale is
-          2·4·6·8·10·12·16·24·32, with 6/10 as half-step tiers), a radius scale, semantic status colors,
-          connection-state colors, spring transitions) and a clean theme engine with four themes.
-          Scrollbars were recently unified into one auto-hide style.
+          2·4·6·8·10·12·16·24·32, with 6/10 as half-step tiers), a radius scale, semantic status
+          colors, connection-state colors, spring transitions) and a clean theme engine with four
+          themes. Scrollbars were recently unified into one style (since #3144 a persistent, visible
+          thumb).
           <strong>The foundation is strong — the problem is adoption, not architecture.</strong>
         </p>
         <p>
@@ -1022,11 +1023,22 @@
         <h3>Consistency rules (always on)</h3>
         <ul>
           <li>
-            <strong>One scrollbar.</strong> Scrollbars are styled globally (auto-hide,
-            <code>global.css</code>); components never re-style them. Fixes the one straggler (<code
-              >TabGroupChips.css</code
-            >
-            forcing <code>scrollbar-width: none</code>).
+            <strong>One scrollbar.</strong> Scrollbars are styled globally (persistent, visible
+            thumb on every platform, #3144, <code>global.css</code>); components never re-style
+            them. Fixes the one straggler (<code>TabGroupChips.css</code> forcing
+            <code>scrollbar-width: none</code>). Enforced by the <code>tokenDiscipline</code>
+            &ldquo;one scrollbar&rdquo; test: any component that hides or re-styles a scrollbar
+            fails unless it is on the allow-list, and every allow-list entry is a named exception
+            recorded here.
+            <br />
+            <em>Named exception &mdash; terminal (<code>Terminal/Terminal.css</code>):</em> the
+            terminal draws its own gutter scrollbar (<code>terminalScrollbar.ts</code>), because in
+            horizontal-scroll mode the <code>.xterm</code> element is widened and scrolled, so a bar
+            attached to it would drift to the content&rsquo;s right edge. The native xterm viewport
+            bar is therefore hidden (a second vertical bar otherwise), and the horizontal
+            bar&rsquo;s height is pinned to the bottom reserve FitAddon accounts for. Both thumbs
+            still use the global scrollbar tokens and are persistently visible (#3144), so the
+            terminal looks and behaves like every other scrollbar (#4585).
           </li>
           <li>
             <strong>One motion language.</strong> Dialogs and toasts share one enter (fade + 8px
@@ -1272,16 +1284,20 @@ stateDiagram-v2
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-25 (status reconciliation) ·
-          <strong>Status:</strong> implemented. All five roadmap phases shipped and their issues
-          (#1059–#1063) are closed — the phase-4 dialog/form migration is <strong>complete</strong>:
-          every <code>&lt;Modal&gt;</code> call site (including the Port Scanner large-scan warning, WoL
-          save modal and <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives.
-          The last residual — <strong>bespoke <code>__btn</code> classes in ~15 non-dialog
-          panel/banner/sidebar surfaces</strong> (<a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>)
-          — has since landed via PR
-          <a href="https://github.com/armaxri/termiHub/pull/1906">#1906</a>, so those surfaces now
-          compose <code>ui/Button</code>. Concept moved <code>partial/</code> →
+          <strong>Last synced:</strong> 2026-10-09 (#4369: scrollbar, focus-ring and list-library
+          wording; #4585: component scrollbar overrides) · <strong>Status:</strong> implemented. All
+          five roadmap phases shipped and their issues (#1059–#1063) are closed — the phase-4
+          dialog/form migration is <strong>complete</strong>: every <code>&lt;Modal&gt;</code> call
+          site (including the Port Scanner large-scan warning, WoL save modal and
+          <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives. The last
+          residual —
+          <strong
+            >bespoke <code>__btn</code> classes in ~15 non-dialog panel/banner/sidebar
+            surfaces</strong
+          >
+          (<a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>) — has since landed
+          via PR <a href="https://github.com/armaxri/termiHub/pull/1906">#1906</a>, so those
+          surfaces now compose <code>ui/Button</code>. Concept moved <code>partial/</code> →
           <code>implemented/</code>; because it is the design-system source of truth referenced by
           <code>.claude/CLAUDE.md</code>, <code>.claude/agents/ui-design.md</code> and
           <code>docs/architecture.md</code>, that move updated those references too.
@@ -1324,7 +1340,9 @@ stateDiagram-v2
                   Tokens <code>--overlay-bg</code>, <code>--text-on-accent</code>,
                   <code>--control-height-*</code>
                 </td>
-                <td><strong>Resolved</strong> — all present in <code>src/styles/variables.css</code></td>
+                <td>
+                  <strong>Resolved</strong> — all present in <code>src/styles/variables.css</code>
+                </td>
                 <td>Resolved</td>
                 <td>—</td>
               </tr>
@@ -1339,10 +1357,11 @@ stateDiagram-v2
                 <td>5</td>
                 <td>All ~33 dialogs/forms migrated onto the primitives (roadmap phase 4)</td>
                 <td>
-                  <strong>Resolved</strong> — every <code>&lt;Modal&gt;</code> call site composes the
-                  primitives, including the Port Scanner large-scan warning, WoL save modal and
-                  <code>Sidebar/ConfirmDeleteDialog.tsx</code> (they import <code>Modal</code>/<code>Button</code>/<code>Field</code>
-                  from <code>@/components/ui</code>). Phase-4 issue
+                  <strong>Resolved</strong> — every <code>&lt;Modal&gt;</code> call site composes
+                  the primitives, including the Port Scanner large-scan warning, WoL save modal and
+                  <code>Sidebar/ConfirmDeleteDialog.tsx</code> (they import
+                  <code>Modal</code>/<code>Button</code>/<code>Field</code> from
+                  <code>@/components/ui</code>). Phase-4 issue
                   <a href="https://github.com/armaxri/termiHub/issues/1062">#1062</a> is closed.
                   (Consolidating those confirmation dialogs further onto the higher-level
                   <code>ConfirmDialog</code> primitive is a separate concern tracked by the
@@ -1353,20 +1372,68 @@ stateDiagram-v2
               </tr>
               <tr>
                 <td>6</td>
-                <td>
-                  Phase-4 acceptance: "no component defines its own <code>__btn</code>"
-                </td>
+                <td>Phase-4 acceptance: "no component defines its own <code>__btn</code>"</td>
                 <td>
                   <strong>Resolved</strong> — the ~15 non-dialog panel/banner/sidebar surfaces that
                   still defined bespoke <code>__btn</code>/<code>-btn</code> classes (e.g.
                   <code>ConnectionEditor.css</code>, <code>NetworkTools.css</code>,
-                  <code>TunnelSidebar.css</code>, <code>TerminalReconnectPrompt.css</code>) were migrated
-                  onto <code>ui/Button</code>.
+                  <code>TunnelSidebar.css</code>, <code>TerminalReconnectPrompt.css</code>) were
+                  migrated onto <code>ui/Button</code>.
                 </td>
                 <td>Resolved</td>
                 <td>
                   Landed via <a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a> (PR
                   <a href="https://github.com/armaxri/termiHub/pull/1906">#1906</a>) — closed.
+                </td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>Scrollbars "auto-hide" (problem statement + consistency rules)</td>
+                <td>
+                  The #3144 maintainer decision made the thumb persistently visible on every
+                  platform (<code>src/styles/global.css</code>, pinned by the
+                  <code>tokenDiscipline</code> "persistent scrollbar" tests)
+                </td>
+                <td>Resolved</td>
+                <td>Concept wording updated to "persistent, visible thumb (#3144)" (#4369)</td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>Proposed <code>--shadow-focus</code> single 22%-alpha ring</td>
+                <td>
+                  A11Y-007 replaced it with the double ring
+                  <code>0 0 0 2px var(--bg-primary), 0 0 0 4px var(--focus-border)</code>
+                </td>
+                <td>Resolved</td>
+                <td>Proposed-token block updated to the shipped value (#4369)</td>
+              </tr>
+              <tr>
+                <td>9</td>
+                <td>Long-list virtualization via <code>@tanstack/react-virtual</code></td>
+                <td>
+                  Installed (<code>package.json</code>);
+                  <code>.claude/agents/ui-design.md</code> named the non-installed
+                  <code>react-virtuoso</code>
+                </td>
+                <td>Resolved</td>
+                <td>Agent rule corrected to <code>@tanstack/react-virtual</code> (#4369)</td>
+              </tr>
+              <tr>
+                <td>10</td>
+                <td>"Components never re-style scrollbars"</td>
+                <td>
+                  <code>Terminal/Terminal.css</code> (xterm viewport, documented reason) and
+                  <code>Sidebar/FileBrowser.css</code> (breadcrumb row) set
+                  <code>scrollbar-width: none</code>
+                </td>
+                <td>Resolved</td>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/4585">#4585</a>: the
+                  breadcrumb override was removed (global scrollbar). The terminal keeps its native
+                  viewport bar hidden as a named exception in the consistency rules (its gutter
+                  scrollbar replaces it), and its gutter and horizontal thumbs were made
+                  persistently visible instead of hover-only. A <code>tokenDiscipline</code>
+                  allow-list test now fails any other component scrollbar override
                 </td>
               </tr>
             </tbody>

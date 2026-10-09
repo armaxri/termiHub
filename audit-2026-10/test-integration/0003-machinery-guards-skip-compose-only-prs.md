@@ -15,8 +15,8 @@ evidence:
   - tests/system/tests/test_dev_local.py:155
   - tests/system/tests/test_dev_local.py:167
   - tests/system/tests/test_dev_local.py:215
-status: open
-resolution: ""
+status: fixed
+resolution: "#4358 — ci-changes.mjs turns on harness for the compose files, dev-local-env.sh, dev.local.json samples and the scripts the machinery suite reads"
 audit: 2026-10
 commit: 663465d52
 relation: new

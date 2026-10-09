@@ -5,7 +5,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import type { CredentialStorageMode, SwitchCredentialStoreResult } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Select, Toggle, toast } from "@/components/ui";
+import { Button, RadioGroup, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
@@ -357,27 +357,29 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>
 
-          <div className="settings-panel__radio-group" role="radiogroup" aria-label="Storage mode">
-            {STORAGE_MODE_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                className={`settings-panel__radio-option${currentMode === option.value ? " settings-panel__radio-option--active" : ""}`}
-                data-testid={option.testId}
-                onClick={() => void handleModeSelect(option.value)}
-                aria-pressed={currentMode === option.value}
-                disabled={switching}
-              >
-                <div className="settings-panel__radio-option-label">
-                  <Shield size={14} />
+          <RadioGroup
+            variant="cards"
+            className="settings-panel__radio-group"
+            value={currentMode}
+            onValueChange={(v) => void handleModeSelect(v as CredentialStorageMode)}
+            disabled={switching}
+            aria-label="Storage mode"
+            data-testid="storage-mode-group"
+            options={STORAGE_MODE_OPTIONS.map((option) => ({
+              value: option.value,
+              label: (
+                <>
+                  <Shield size={14} aria-hidden="true" />
                   <span>{option.label}</span>
                   {option.badge && (
                     <span className="settings-panel__radio-option-badge">{option.badge}</span>
                   )}
-                </div>
-                <p className="settings-panel__radio-option-desc">{option.description}</p>
-              </button>
-            ))}
-          </div>
+                </>
+              ),
+              description: option.description,
+              "data-testid": option.testId,
+            }))}
+          />
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
             <form className="settings-panel__inline-dialog" data-testid="master-password-setup">

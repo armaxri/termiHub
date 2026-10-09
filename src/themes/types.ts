@@ -40,6 +40,12 @@ export interface ThemeColors {
   accentColor: string;
   accentHover: string;
   focusBorder: string;
+  /**
+   * Foreground for text and icons drawn on the accent surface (primary buttons,
+   * checked checkboxes, active chips). Built-in themes pin it; custom and
+   * plugin themes derive it from `accentColor` by WCAG contrast (UI2-003).
+   */
+  textOnAccent: string;
 
   // Status colors
   colorSuccess: string;

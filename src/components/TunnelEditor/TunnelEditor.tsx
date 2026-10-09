@@ -21,6 +21,8 @@ import {
   Button,
   Input,
   NumberInput,
+  RadioGroup,
+  type RadioGroupOption,
   Select,
   Field,
   Toggle,
@@ -153,6 +155,18 @@ const tunnelFormSchema = z
       }
     }
   });
+
+/** The three tunnel kinds, offered as one shared radio-card selector (UISF2-002). */
+const TUNNEL_TYPE_OPTIONS: RadioGroupOption[] = [
+  { value: "local", label: "Local", description: "ssh -L", "data-testid": "tunnel-type-local" },
+  { value: "remote", label: "Remote", description: "ssh -R", "data-testid": "tunnel-type-remote" },
+  {
+    value: "dynamic",
+    label: "Dynamic",
+    description: "ssh -D (SOCKS5)",
+    "data-testid": "tunnel-type-dynamic",
+  },
+];
 
 /**
  * Tab-based editor for an SSH tunnel: name, SSH connection, run-location host,
@@ -559,33 +573,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </Field>
 
         <div className="tunnel-editor__field">
-          <label className="tunnel-editor__label">Tunnel Type</label>
-          <div className="tunnel-editor__type-selector" data-testid="tunnel-editor-type-selector">
-            <button
-              className={`tunnel-editor__type-option ${tunnelType.type === "local" ? "tunnel-editor__type-option--active" : ""}`}
-              onClick={() => handleTypeChange("local")}
-              data-testid="tunnel-type-local"
-            >
-              <span className="tunnel-editor__type-option-title">Local</span>
-              <span className="tunnel-editor__type-option-desc">ssh -L</span>
-            </button>
-            <button
-              className={`tunnel-editor__type-option ${tunnelType.type === "remote" ? "tunnel-editor__type-option--active" : ""}`}
-              onClick={() => handleTypeChange("remote")}
-              data-testid="tunnel-type-remote"
-            >
-              <span className="tunnel-editor__type-option-title">Remote</span>
-              <span className="tunnel-editor__type-option-desc">ssh -R</span>
-            </button>
-            <button
-              className={`tunnel-editor__type-option ${tunnelType.type === "dynamic" ? "tunnel-editor__type-option--active" : ""}`}
-              onClick={() => handleTypeChange("dynamic")}
-              data-testid="tunnel-type-dynamic"
-            >
-              <span className="tunnel-editor__type-option-title">Dynamic</span>
-              <span className="tunnel-editor__type-option-desc">ssh -D (SOCKS5)</span>
-            </button>
-          </div>
+          <span className="tunnel-editor__label" id={`tunnel-type-label-${tabId}`}>
+            Tunnel Type
+          </span>
+          <RadioGroup
+            variant="cards"
+            orientation="horizontal"
+            value={tunnelType.type}
+            onValueChange={(v) => handleTypeChange(v as "local" | "remote" | "dynamic")}
+            aria-labelledby={`tunnel-type-label-${tabId}`}
+            data-testid="tunnel-editor-type-selector"
+            options={TUNNEL_TYPE_OPTIONS}
+          />
         </div>
 
         <TunnelDiagram tunnelType={tunnelType} />

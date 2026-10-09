@@ -15,15 +15,20 @@
 
 ## 1. Where the state lives
 
-| Layer                             | Carrier                                                          | Location                                                 |
-| --------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------- |
-| Coarse per-session status (enum)  | `SessionStatus`                                                  | `src-tauri/src/session_projection/store.rs:47-83`        |
-| Composed auto-reconnect sub-state | `ReconnectState { phase, attempt, delay_ms }`                    | `core/src/reconnect_backoff.rs:80-88`                    |
-| Authoritative store               | `SessionLifecycleStore` (`HashMap<sessionId, SessionLifecycle>`) | `src-tauri/src/session_projection/store.rs:251-256`      |
-| Full lifecycle record             | `SessionLifecycle`                                               | `src-tauri/src/session_projection/store.rs:139-189`      |
-| Intent routing (`session.*`)      | `register_session_intents`                                       | `src-tauri/src/session_projection/projection.rs:389-544` |
-| Backend reconnect timer driver    | `ReconnectTimerDriver`                                           | `src-tauri/src/session_projection/timer.rs:153-237`      |
-| Pure backoff reducer              | `reconnect_reducer`                                              | `core/src/reconnect_backoff.rs:185-262`                  |
+References in this document are **symbol-based** (file + item name), not
+`file:line`, so they do not drift as the code moves; `scripts/internal/check-doc-symbols.mjs`
+verifies that every cited symbol still exists in its cited file.
+
+| Layer                             | Carrier                                                          | Location (file → item)                                                                                            |
+| --------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Coarse per-session status (enum)  | `SessionStatus`                                                  | `core/src/connection/lifecycle.rs` → `SessionStatus` (re-exported by `src-tauri/src/session_projection/store.rs`) |
+| Composed auto-reconnect sub-state | `ReconnectState { phase, attempt, delay_ms }`                    | `core/src/reconnect_backoff.rs` → `ReconnectState`                                                                |
+| Authoritative store               | `SessionLifecycleStore` (`HashMap<sessionId, SessionLifecycle>`) | `src-tauri/src/session_projection/store.rs` → `SessionLifecycleStore`                                             |
+| Full lifecycle record             | `SessionLifecycle`                                               | `src-tauri/src/session_projection/store.rs` → `SessionLifecycle`                                                  |
+| Intent routing (`session.*`)      | `register_session_intents`                                       | `src-tauri/src/session_projection/projection.rs` → `register_session_intents`                                     |
+| Backend reconnect timer driver    | `ReconnectTimerDriver`                                           | `src-tauri/src/session_projection/timer.rs` → `ReconnectTimerDriver`                                              |
+| Backend reconnect redrive         | `AppReconnectRedrive`                                            | `src-tauri/src/session_projection/redrive.rs` → `AppReconnectRedrive`                                             |
+| Pure backoff reducer              | `reconnect_reducer`                                              | `core/src/reconnect_backoff.rs` → `reconnect_reducer`                                                             |
 
 The store is keyed by the frontend **tab id** (stable across a reconnect), which
 carries the current **backend** session id (`sessionId` field) the client should
@@ -54,14 +59,14 @@ the shell but SFTP works, so the session stays `Connected` for the Files sidebar
 and editor, #4078; for an agent-hosted session the agent reports it with
 `connection.filesOnly`, #4081).
 
-`EndReason` (`store.rs:87-103`): `User` (graceful user teardown), `Unexpected`
+`EndReason` (`store.rs` → `EndReason`): `User` (graceful user teardown), `Unexpected`
 (a drop, a candidate for reconnect), `Error` (a connect/reconnect attempt
 errored), `Normal` (a clean process exit / `exit 0`, #2637).
 
 ## 3. The `session.*` intents (triggers)
 
 Every transition is a `session.*` intent (or a backend-source fold, see §6),
-routed in `projection.rs:389-544`; each calls the matching `SessionLifecycleStore`
+routed in `projection.rs` → `register_session_intents`; each calls the matching `SessionLifecycleStore`
 method, publishes the region diff, and reconciles the backend timer.
 
 | Intent                     | Store method            | Effect                                                                                           |
@@ -194,7 +199,7 @@ drops the record entirely.
 `reconnectBackoff.ts`, #1962/#2144). The store folds coarse status from its phase;
 the backend `ReconnectTimerDriver` (`timer.rs`) supplies the wall clock.
 
-### Phases (`ReconnectPhase`, `reconnect_backoff.rs:69-77`)
+### Phases (`ReconnectPhase`, `reconnect_backoff.rs`)
 
 - `Idle` — not auto-reconnecting.
 - `Waiting` — a backoff timer is counting down `delay_ms` before the next attempt.
@@ -202,7 +207,7 @@ the backend `ReconnectTimerDriver` (`timer.rs`) supplies the wall clock.
 - `Connected` — the transport came back; the loop settled successfully.
 - `Gaveup` — attempts exhausted or the user cancelled; hand off to the manual overlay.
 
-### Reducer (`reconnect_reducer`, `reconnect_backoff.rs:185-262`)
+### Reducer (`reconnect_reducer`, `reconnect_backoff.rs`)
 
 ```mermaid
 stateDiagram-v2
@@ -250,11 +255,11 @@ Give-up is `attempt >= max_attempts` (`should_give_up`).
 ### How the timer drives it (`ReconnectTimerDriver`, `timer.rs`)
 
 After every transition the routes call `ReconnectTimerDriver::sync`
-(`timer.rs:198-212`), which reconciles a per-session one-shot timer against the
+(`timer.rs` → `ReconnectTimerDriver::sync`), which reconciles a per-session one-shot timer against the
 current phase:
 
 - **`Waiting`** → arm (replacing any prior) a one-shot for `delay_ms`. On elapse,
-  `fire` (`timer.rs:223-236`) advances the store (`reconnect_attempt`:
+  `fire` (`timer.rs` → `ReconnectTimerDriver::fire`) advances the store (`reconnect_attempt`:
   `Waiting → Connecting`, attempt++), publishes the diff, then invokes the
   optional backend redrive (#2454). The attempt's **outcome** (`session.connected`
   or `session.reconnectFailed`) comes from whoever owns the transport.
@@ -268,13 +273,13 @@ so only a user `Cancel` (→ `Gaveup` → `Disconnected`) stops it.
 ## 6. Backend-source folds (no client intent)
 
 Some transitions are folded server-side, at the source, rather than mirrored by a
-client `session.*` intent (`projection.rs:234-380`). They must only drive
+client `session.*` intent (`projection.rs` → `fold_session_transition` and the other `fold_*` functions). They must only drive
 transitions that **converge** with the client's same-event dispatch.
 
 | Fold                                | Store method → status                     | Trigger                                                                                                                                                                                                                |
 | ----------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connect_auth_failed`               | `AuthFailed` (loop idle)                  | Initial connect rejected by auth (SM-005, `store.rs:366-378`).                                                                                                                                                         |
-| `reconnect_auth_failed`             | `AuthFailed` (engine `Cancel` → `Gaveup`) | A reconnect attempt rejected by auth: stop the loop immediately (`store.rs:397-417`).                                                                                                                                  |
+| `connect_auth_failed`               | `AuthFailed` (loop idle)                  | Initial connect rejected by auth (SM-005, `store.rs` → `connect_auth_failed`).                                                                                                                                         |
+| `reconnect_auth_failed`             | `AuthFailed` (engine `Cancel` → `Gaveup`) | A reconnect attempt rejected by auth: stop the loop immediately (`store.rs` → `reconnect_auth_failed`).                                                                                                                |
 | `fold_agent_transport_reconnecting` | `Reconnecting` (loop **stays idle**)      | An agent tab's transport hit a _transient_ break the agent I/O task is re-establishing in place (#2555/#2556). Keeps the `sessionId` (the live session survives).                                                      |
 | `fold_agent_session_recovered`      | `Connected`                               | The agent recovered its live session in place after the transient break.                                                                                                                                               |
 | `fold_agent_session_lost`           | `SessionLost`                             | Transport back, but the hosted session is confirmed gone (#2564).                                                                                                                                                      |

@@ -393,6 +393,50 @@ export function serializeBinding(combo: KeyCombo | KeyCombo[]): string {
   return serializeCombo(combo);
 }
 
+/**
+ * Format a combo for **display only** (#4598) — never for persistence.
+ *
+ * Differs from {@link serializeCombo} (which is also the stored override
+ * format consumed by {@link parseBinding} and must stay byte-identical) in two
+ * ways:
+ *
+ * - A single-character key is upper-cased, so `{ key: "b", meta: true }`
+ *   renders as `Cmd+B` rather than `Cmd+b`, matching the Win/Linux default
+ *   that already stores `B`.
+ * - Modifiers follow the platform convention, primary modifier first:
+ *   - macOS: `Cmd+Ctrl+Shift+Alt+Key` (e.g. `Cmd+Shift+T`)
+ *   - Windows/Linux: `Ctrl+Shift+Alt+Cmd+Key` (e.g. `Ctrl+Shift+T`)
+ *
+ * `mac` selects the convention; it defaults to the current platform. Pass it
+ * explicitly to render the other platform's defaults (shortcuts overlay).
+ */
+export function formatComboForDisplay(combo: KeyCombo, mac: boolean = isMac()): string {
+  const parts: string[] = [];
+  if (mac && combo.meta) parts.push("Cmd");
+  if (combo.ctrl) parts.push("Ctrl");
+  if (combo.shift) parts.push("Shift");
+  if (combo.alt) parts.push("Alt");
+  if (!mac && combo.meta) parts.push("Cmd");
+  const key = normalizeKeyDisplay(combo.key);
+  parts.push(key.length === 1 ? key.toUpperCase() : key);
+  return parts.join("+");
+}
+
+/**
+ * Format a combo or chord sequence for display (see
+ * {@link formatComboForDisplay}). Chords are space-separated, e.g.
+ * `Cmd+K Cmd+S`. Display only — use {@link serializeBinding} to persist.
+ */
+export function formatBindingForDisplay(
+  combo: KeyCombo | KeyCombo[],
+  mac: boolean = isMac()
+): string {
+  if (Array.isArray(combo)) {
+    return combo.map((c) => formatComboForDisplay(c, mac)).join(" ");
+  }
+  return formatComboForDisplay(combo, mac);
+}
+
 /** Normalize key names for display. */
 function normalizeKeyDisplay(key: string): string {
   const MAP: Record<string, string> = {
@@ -468,8 +512,15 @@ function comboKeyToCode(key: string): string | null {
  * produced character (`event.key`, case-insensitive) for punctuation and named
  * keys — which are intentionally matched by character — and for environments
  * that supply no `event.code` (e.g. some synthetic test events).
+ *
+ * Exported so ad-hoc handlers (e.g. a list's Ctrl/Cmd+A select-all) share the
+ * same layout-independent matching as the keybinding service (#4374). Accepts a
+ * React synthetic event as well, since only `key`/`code` are read.
  */
-function eventKeyMatches(event: KeyboardEvent, comboKey: string): boolean {
+export function eventKeyMatches(
+  event: Pick<KeyboardEvent, "key" | "code">,
+  comboKey: string
+): boolean {
   const code = comboKeyToCode(comboKey);
   if (code && event.code) {
     return event.code === code;
@@ -659,7 +710,28 @@ export function getDefaultBindings(): KeyBinding[] {
  */
 export function getActionAccelerator(action: string): string | null {
   const combo = getEffectiveCombo(action);
-  return combo ? serializeBinding(combo) : null;
+  return combo ? formatBindingForDisplay(combo) : null;
+}
+
+/**
+ * Append an action's effective accelerator to a tooltip/label, e.g.
+ * `"Toggle Sidebar (Ctrl+Shift+B)"` (#4374). The hint follows the platform
+ * default and any user override via {@link getActionAccelerator}; when the
+ * action is unbound or unknown the bare label is returned, without a
+ * parenthetical. Use this instead of hand-building a shortcut string.
+ */
+export function withActionAccelerator(label: string, action: string): string {
+  const accelerator = getActionAccelerator(action);
+  return accelerator ? `${label} (${accelerator})` : label;
+}
+
+/**
+ * Render a primary-modifier shortcut that is not a configurable app action —
+ * e.g. Monaco's built-in `CtrlCmd+S` save — as `Cmd+S` on macOS and `Ctrl+S`
+ * elsewhere, in the same format as {@link getActionAccelerator} (#4374).
+ */
+export function modKeyAccelerator(key: string): string {
+  return formatComboForDisplay(isMac() ? { key, meta: true } : { key, ctrl: true });
 }
 
 /**
@@ -730,7 +802,7 @@ export function processKeyEvent(event: KeyboardEvent): string | null {
 
     if (eventMatchesCombo(event, combo[0])) {
       pendingChordCombo = combo[0];
-      chordStateCallback?.(serializeCombo(combo[0]));
+      chordStateCallback?.(formatComboForDisplay(combo[0]));
 
       chordTimerId = setTimeout(() => {
         cancelChord();

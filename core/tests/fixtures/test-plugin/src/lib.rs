@@ -64,6 +64,8 @@ struct EchoBackend {
     alive: AtomicBool,
     /// The ABI 1.1 host services, kept for the `?cancelled` query.
     services: Option<PluginHostServices>,
+    /// Block inside `close` for this many milliseconds (#4499).
+    stall_close_ms: u64,
 }
 
 impl PluginTerminalBackend for EchoBackend {
@@ -95,6 +97,10 @@ impl PluginTerminalBackend for EchoBackend {
     }
 
     fn close(&self) -> Result<(), PluginError> {
+        if self.stall_close_ms > 0 {
+            // A slow close: the runner's Close reply waits on it.
+            std::thread::sleep(std::time::Duration::from_millis(self.stall_close_ms));
+        }
         self.alive.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -476,6 +482,10 @@ struct ProbeConfig {
     /// answering, so the host-side tests can model a slow plugin connect
     /// (#4323). `0` (the default) answers at once.
     stall_create_ms: u64,
+    /// Block inside the backend's `close` for this many milliseconds, so the
+    /// host-side tests can model a runner that is slow to answer `Close`
+    /// (#4499). `0` (the default) closes at once.
+    stall_close_ms: u64,
 }
 
 /// Run the requested capability probe through the host `bridge` and report the
@@ -671,6 +681,7 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
         output,
         alive: AtomicBool::new(true),
         services,
+        stall_close_ms: cfg.stall_close_ms,
     }));
     // SAFETY: caller guarantees `out_backend` is valid and writable.
     unsafe {

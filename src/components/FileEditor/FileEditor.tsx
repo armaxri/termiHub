@@ -61,6 +61,7 @@ import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferReg
 import "./FileEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { getBasename } from "@/utils/paths";
+import { modKeyAccelerator } from "@/services/keybindings";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;
@@ -296,10 +297,11 @@ export function FileEditor({
   // dismissible banner shown above the editor so the buffer (and its unsaved
   // changes) stay intact and the user can retry. (#969)
   const [saveError, setSaveError] = useState<string | null>(null);
-  // Monaco theme derived from the active termiHub theme.  getCurrentTheme()
-  // always returns the resolved theme (dark or light), even when the setting
-  // is "system", so this handles all three settings modes correctly.
-  const [monacoTheme, setMonacoTheme] = useState(() => getMonacoTheme(getCurrentTheme().id));
+  // Monaco theme derived from the active termiHub theme's colorScheme.
+  // getCurrentTheme() always returns the resolved theme (built-in, Solarized,
+  // custom, or plugin — "system" resolves to dark or light), so every light
+  // theme gets the light editor (UI2-002).
+  const [monacoTheme, setMonacoTheme] = useState(() => getMonacoTheme(getCurrentTheme()));
 
   // Path a scratch buffer was saved to via Save As. Once set, the scratch tab
   // behaves like a normal on-disk editor (subsequent saves write here directly).
@@ -431,15 +433,15 @@ export function FileEditor({
     return null;
   }, [meta.isRemote, meta.scratch, meta.sessionBrowser, sessionSftpCapable]);
 
-  // Re-derive Monaco theme when the settings theme changes (dark / light / system).
+  // Re-derive Monaco theme when the settings theme changes.
   useEffect(() => {
-    setMonacoTheme(getMonacoTheme(getCurrentTheme().id));
+    setMonacoTheme(getMonacoTheme(getCurrentTheme()));
   }, [themeSetting]);
 
   // Also update when the OS theme changes while in "system" mode.
   useEffect(() => {
     return onThemeChange(() => {
-      setMonacoTheme(getMonacoTheme(getCurrentTheme().id));
+      setMonacoTheme(getMonacoTheme(getCurrentTheme()));
     });
   }, []);
 
@@ -1732,9 +1734,7 @@ export function FileEditor({
                 ? "This file is read-only — use “Save a copy…” or Download"
                 : listingReadonly
                   ? "This file is read-only on the server — saving is disabled"
-                  : isUnsavedScratch
-                    ? "Save As... (Ctrl+S)"
-                    : "Save (Ctrl+S)"
+                  : `${isUnsavedScratch ? "Save As..." : "Save"} (${modKeyAccelerator("S")})`
             }
             data-testid="file-editor-save"
           >

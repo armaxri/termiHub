@@ -6,8 +6,8 @@ severity: low
 category: stale-reference
 is_workaround: false
 subsystem: "docs/test-bridge.md"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — path corrected to tests/system/tests/test_terminal_render_paths.py"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

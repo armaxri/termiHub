@@ -18,6 +18,7 @@ import type {
   ScheduleWeekday,
 } from "@/types/schedule";
 import { SCHEDULE_WEEKDAYS } from "@/types/schedule";
+import { formatRelativeDay, formatShortDate } from "@/utils/formatters";
 
 /** Shortest interval, in minutes (mirrors the backend). */
 export const MIN_INTERVAL_MINUTES = 1;
@@ -220,19 +221,14 @@ function hhmm(d: Date): string {
 
 /**
  * A compact local rendering of a next-run instant: "today 09:00",
- * "tomorrow 09:00", or "Wed 3 Jun 09:00".
+ * "tomorrow 09:00", or "Wed, Jun 3 09:00". The relative day and the date are
+ * both rendered in the UI locale (#4374), so they never mix languages.
  */
 export function formatNextRun(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((dayStart(d) - dayStart(now)) / (24 * 60 * 60 * 1000));
-  if (days === 0) return `today ${hhmm(d)}`;
-  if (days === 1) return `tomorrow ${hhmm(d)}`;
-  const date = d.toLocaleDateString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
-  return `${date} ${hhmm(d)}`;
+  const day = days === 0 || days === 1 ? formatRelativeDay(days) : formatShortDate(d);
+  return `${day} ${hhmm(d)}`;
 }

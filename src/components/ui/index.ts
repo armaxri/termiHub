@@ -46,7 +46,12 @@ export { Checkbox } from "./Checkbox";
 export type { CheckboxProps, CheckboxChecked } from "./Checkbox";
 
 export { RadioGroup, RadioGroupItem } from "./RadioGroup";
-export type { RadioGroupProps, RadioGroupOption, RadioGroupItemProps } from "./RadioGroup";
+export type {
+  RadioGroupProps,
+  RadioGroupOption,
+  RadioGroupItemProps,
+  RadioGroupVariant,
+} from "./RadioGroup";
 
 export { Tooltip, TooltipProvider } from "./Tooltip";
 export type { TooltipProps, TooltipProviderProps } from "./Tooltip";

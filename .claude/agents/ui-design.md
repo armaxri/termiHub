@@ -50,13 +50,15 @@ primitive doesn't exist yet (the layer is being introduced per the concept, Phas
 The primitives are thin, token'd **skins over libraries already in
 `package.json`** — do not reinvent their machinery:
 
-- `Modal` / `Select` / `Tabs` / menus → **Radix** (`@radix-ui/react-dialog`,
-  `-select`, `-tabs`, `-dropdown-menu`, `-context-menu`)
+- `Modal` / `Select` / menus / `Toggle` / `Checkbox` / `RadioGroup` / `Tooltip` →
+  **Radix** (`@radix-ui/react-dialog`, `-select`, `-dropdown-menu`, `-context-menu`,
+  `-switch`, `-checkbox`, `-radio-group`, `-tooltip`). A future `Tabs` primitive
+  should propose `@radix-ui/react-tabs` (not installed yet)
 - `Field` + forms → **`react-hook-form` + `@hookform/resolvers` + `zod`**
   (the schema-driven `DynamicForm` already uses zod — wire, don't rebuild)
 - `Toast` → **`sonner`** (its promise/loading toast resolves in place — ideal for
   agent deploy, tunnel start, import). Radix Toast is the zero-new-vendor fallback.
-- long lists → **`react-virtuoso`**; color → **`react-colorful`**; charts →
+- long lists → **`@tanstack/react-virtual`**; color → **`react-colorful`**; charts →
   **`uplot`**; icons → **`lucide-react`**.
   Per the repo's "Prefer Libraries Over Custom Code" standard, propose a dependency
   before a custom implementation; "I could write it in 50 lines" is not a reason.
@@ -85,8 +87,10 @@ No mutating or async user action may resolve silently. Pick the mechanism:
 
 ### 5. One scrollbar, one motion language
 
-Scrollbars are styled globally (auto-hide, `src/styles/global.css`) — never
-re-style scrollbars in a component. Use `--transition-*` tokens for all motion;
+Scrollbars are styled globally (`src/styles/global.css`: a persistent, visible
+thumb on every platform, per #3144) — never re-style scrollbars in a component
+(the only named exception is the terminal's gutter scrollbar, documented in the
+concept and allow-listed in `tokenDiscipline.test.ts`). Use `--transition-*` tokens for all motion;
 wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/exit
 (fade + 8px rise) for overlays and toasts.
 

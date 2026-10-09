@@ -6,8 +6,8 @@ severity: low
 category: stale-reference
 is_workaround: false
 subsystem: "docs/architecture.md"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4369 — regenerated the Level-2 desktop/core/agent tables from the real dirs, fixed FTP paths, CI lanes table, VcXsrv"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

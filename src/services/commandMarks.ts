@@ -157,10 +157,19 @@ const PROMPT_FLASH_CLASS = "terminal-prompt-flash";
 /** How long the jump-to-prompt highlight stays visible. */
 export const PROMPT_FLASH_MS = 800;
 
+/**
+ * Most commands a tracker keeps. Records normally die with their prompt line
+ * when it is trimmed out of the scrollback; this cap bounds the bookkeeping
+ * even when that never happens (#4354). The oldest records are dropped first.
+ */
+export const DEFAULT_MAX_COMMAND_RECORDS = 10_000;
+
 /** Options for {@link CommandMarkTracker}. */
 export interface CommandMarkTrackerOptions {
   /** Whether the success/failure gutter decoration is rendered (default true). */
   decorations?: boolean;
+  /** Most records kept before the oldest are disposed (default {@link DEFAULT_MAX_COMMAND_RECORDS}). */
+  maxRecords?: number;
 }
 
 /** Tracks OSC 133 command marks for one terminal. See the module docs. */
@@ -168,6 +177,7 @@ export class CommandMarkTracker implements IDisposable {
   private readonly term: CommandMarkTerminal;
   private records: CommandRecord[] = [];
   private decorationsEnabled: boolean;
+  private readonly maxRecords: number;
   /** Prompt last jumped to, and the viewport position that jump produced. */
   private nav: { marker: IMarker; viewportY: number } | null = null;
   private flash: { decoration: IDecoration; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -176,6 +186,7 @@ export class CommandMarkTracker implements IDisposable {
   constructor(term: CommandMarkTerminal, options: CommandMarkTrackerOptions = {}) {
     this.term = term;
     this.decorationsEnabled = options.decorations ?? true;
+    this.maxRecords = Math.max(1, Math.floor(options.maxRecords ?? DEFAULT_MAX_COMMAND_RECORDS));
   }
 
   /**
@@ -398,6 +409,7 @@ export class CommandMarkTracker implements IDisposable {
       }
       this.records = [...restored, ...this.records];
       for (const record of restored) this.decorate(record);
+      this.enforceCap();
     } catch {
       // Restoring marks is best effort; it must never break the terminal.
     }
@@ -506,12 +518,46 @@ export class CommandMarkTracker implements IDisposable {
     this.decorate(record);
   }
 
+  /**
+   * Opens a record for a new command. A mark on the same line as the current
+   * record's prompt is the same prompt whatever that record's state (a shell
+   * re-emitting A/C/D without printing a newline): the record is reset in
+   * place instead, so repeats cannot pile up records, markers and decorations
+   * on one line that is never trimmed (#4354).
+   */
   private startRecord(): CommandRecord | undefined {
+    const current = this.current();
+    if (current && !current.prompt.isDisposed && current.prompt.line === this.cursorLine()) {
+      this.resetRecord(current);
+      return current;
+    }
     const marker = this.term.registerMarker(0);
     if (!marker) return undefined;
     const record: CommandRecord = { prompt: marker, state: "prompt" };
     this.records.push(record);
+    this.enforceCap();
     return record;
+  }
+
+  /** Returns a record to the fresh "prompt" state, keeping its prompt marker. */
+  private resetRecord(record: CommandRecord): void {
+    this.undecorate(record);
+    record.input?.marker.dispose();
+    record.output?.marker.dispose();
+    record.end?.marker.dispose();
+    record.input = undefined;
+    record.output = undefined;
+    record.end = undefined;
+    record.exitCode = undefined;
+    record.state = "prompt";
+  }
+
+  /** Drops (and disposes) the oldest records beyond {@link maxRecords}. */
+  private enforceCap(): void {
+    const excess = this.records.length - this.maxRecords;
+    if (excess <= 0) return;
+    const dropped = this.records.splice(0, excess);
+    for (const record of dropped) this.disposeRecord(record);
   }
 
   // ---------------------------------------------------------------------------
@@ -706,15 +752,29 @@ export class CommandMarkTracker implements IDisposable {
     record.decoration = undefined;
   }
 
-  /** Drop records whose prompt line was trimmed out of the scrollback (or cleared). */
+  /**
+   * Drop records whose prompt line was trimmed out of the scrollback (or
+   * cleared). Records are ordered by line and trimming removes the oldest
+   * lines, so only the front is inspected: O(trimmed) per call rather than a
+   * walk over every record on every mark (#4354). A disposed newest record
+   * means the whole buffer went (e.g. a scrollback clear), so sweep all.
+   */
   private prune(): void {
-    if (this.records.length === 0) return;
-    const kept: CommandRecord[] = [];
-    for (const record of this.records) {
-      if (record.prompt.isDisposed) this.disposeRecord(record);
-      else kept.push(record);
+    const records = this.records;
+    if (records.length === 0) return;
+    if (records[records.length - 1].prompt.isDisposed) {
+      const kept: CommandRecord[] = [];
+      for (const record of records) {
+        if (record.prompt.isDisposed) this.disposeRecord(record);
+        else kept.push(record);
+      }
+      this.records = kept;
+      return;
     }
-    this.records = kept;
+    let trimmed = 0;
+    while (trimmed < records.length && records[trimmed].prompt.isDisposed) trimmed++;
+    if (trimmed === 0) return;
+    for (const record of records.splice(0, trimmed)) this.disposeRecord(record);
   }
 
   private disposeRecord(record: CommandRecord): void {

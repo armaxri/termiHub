@@ -824,7 +824,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::detect_agent_arch,
             commands::agent::setup_remote_agent,
             commands::agent::cancel_agent_setup,
-            commands::agent::probe_remote_agent,
             commands::agent::update_agent,
             commands::agent::update_agent_force,
             commands::agent::list_agent_hosts,

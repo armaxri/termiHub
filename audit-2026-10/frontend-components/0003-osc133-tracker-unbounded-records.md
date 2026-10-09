@@ -12,8 +12,8 @@ evidence:
   - src/services/commandMarks.ts:509-515
   - src/services/commandMarks.ts:710-718
   - src/components/Terminal/Terminal.tsx:1693
-status: open
-resolution: ""
+status: fixed
+resolution: "#4354 — same-line A/B/C reuses the current record, records capped at 10,000 (oldest disposed), front-only prune"
 audit: 2026-10
 commit: 663465d52
 relation: new
