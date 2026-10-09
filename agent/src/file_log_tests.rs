@@ -129,7 +129,8 @@ fn the_daemon_stderr_capture_appends_and_is_capped() {
     // And a live writer that outgrows it is truncated by the watchdog's check.
     f.write_all(&vec![b'y'; (STDERR_CAP_BYTES + 1) as usize])
         .unwrap();
-    assert!(shared::enforce_cap(&f, STDERR_CAP_BYTES).unwrap());
+    let watcher = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    assert!(shared::enforce_cap(&watcher, STDERR_CAP_BYTES).unwrap());
     assert!(fs::metadata(&path).unwrap().len() <= STDERR_CAP_BYTES);
 }
 

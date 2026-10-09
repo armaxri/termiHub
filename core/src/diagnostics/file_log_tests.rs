@@ -177,6 +177,10 @@ fn a_cap_of_one_file_truncates_in_place() {
 
 // ── Self-healing: a renamed or deleted live file is reopened ────────
 
+// Unix only: following the live path relies on inode identity and on a deleted
+// or renamed open file freeing its name at once. The per-process files are the
+// primary fix on every platform; this is the unix defence in depth.
+#[cfg(unix)]
 #[test]
 fn a_live_file_deleted_underneath_the_writer_is_recreated() {
     let dir = tempfile::tempdir().unwrap();
@@ -193,6 +197,10 @@ fn a_live_file_deleted_underneath_the_writer_is_recreated() {
     );
 }
 
+// Unix only: following the live path relies on inode identity and on a deleted
+// or renamed open file freeing its name at once. The per-process files are the
+// primary fix on every platform; this is the unix defence in depth.
+#[cfg(unix)]
 #[test]
 fn a_writer_whose_file_another_writer_rotated_follows_the_live_path() {
     // OBS2-002: two writers sharing one path. When A rotates, B's handle points
@@ -505,7 +513,7 @@ fn enforce_cap_truncates_an_append_handle_that_outgrew_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("stderr.log");
     let mut writer = open_capped(&path, 1024).unwrap();
-    let watcher = writer.try_clone().unwrap();
+    let watcher = fs::OpenOptions::new().write(true).open(&path).unwrap();
 
     writer.write_all(&[b'x'; 1500]).unwrap();
     assert!(

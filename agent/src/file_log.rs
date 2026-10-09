@@ -158,27 +158,32 @@ pub fn open(role: AgentRole) -> io::Result<RotatingLogFile> {
 }
 
 /// Name of the stderr capture file for a session daemon.
+#[cfg(any(unix, test))]
 fn daemon_stderr_name(session_id: &str) -> String {
     format!("{LOG_FAMILY}-stderr-daemon-{session_id}.log")
 }
 
 /// Name of the registry daemon's stderr capture file.
+#[cfg(any(unix, test))]
 fn registry_stderr_name() -> String {
     format!("{LOG_FAMILY}-stderr-registry.log")
 }
 
+#[cfg(any(unix, test))]
 fn open_stderr_capture_in(dir: &Path, name: &str) -> Option<File> {
     shared::open_capped(&dir.join(name), STDERR_CAP_BYTES).ok()
 }
 
 /// Open the stderr capture file for the session daemon `session_id` (see the
 /// module docs). `None` when it cannot be opened; the launcher then discards
-/// the daemon's stderr.
+/// the daemon's stderr. Unix only: a Windows daemon's stderr is discarded.
+#[cfg(unix)]
 pub fn open_daemon_stderr(session_id: &str) -> Option<File> {
     open_stderr_capture_in(&log_dir(), &daemon_stderr_name(session_id))
 }
 
 /// Open the registry daemon's stderr capture file (see [`open_daemon_stderr`]).
+#[cfg(unix)]
 pub fn open_registry_stderr() -> Option<File> {
     open_stderr_capture_in(&log_dir(), &registry_stderr_name())
 }

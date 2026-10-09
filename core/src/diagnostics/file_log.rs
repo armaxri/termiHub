@@ -220,17 +220,19 @@ pub fn open_capped(path: &Path, cap: u64) -> io::Result<File> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let file = OpenOptions::new().create(true).append(true).open(path)?;
-    if file.metadata()?.len() > cap {
-        file.set_len(0)?;
+    // Truncate through a separate write handle: on Windows an append-only
+    // handle lacks the write-data access that setting the length needs.
+    if fs::metadata(path).is_ok_and(|m| m.len() > cap) {
+        File::create(path)?;
     }
-    Ok(file)
+    OpenOptions::new().create(true).append(true).open(path)
 }
 
 /// Truncate `file` to empty if it has grown past `cap`. Returns whether it did.
 ///
 /// A no-op for anything that is not a regular file (a pipe, a tty, `/dev/null`),
-/// so it is safe to point at an inherited stderr.
+/// so it is safe to point at an inherited stderr. `file` needs write access
+/// (on unix any writable descriptor, including an append-mode one).
 pub fn enforce_cap(file: &File, cap: u64) -> io::Result<bool> {
     let meta = file.metadata()?;
     if !meta.is_file() || meta.len() <= cap {
@@ -473,7 +475,9 @@ impl Rotator {
 
 impl Write for Rotator {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.follow_live_path()?;
+        // Best-effort: if the live path cannot be checked or reopened, keep
+        // writing to the current handle rather than dropping the event.
+        let _ = self.follow_live_path();
         // Rotate *before* writing so a single event is never split across two
         // files. `written > 0` keeps an event larger than the cap from spinning
         // the rotation on an already-empty file.
