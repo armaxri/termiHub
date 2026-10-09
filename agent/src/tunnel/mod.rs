@@ -298,7 +298,7 @@ impl AgentTunnelRegistry {
 
     /// Stop a running tunnel, returning whether one was found.
     ///
-    /// Removing the entry drops the [`RunningTunnel`], which stops the forwarder
+    /// Removing the entry drops the `RunningTunnel`, which stops the forwarder
     /// and releases the SSH session.
     pub async fn stop(&self, tunnel_id: &str) -> bool {
         self.tunnels.lock().await.remove(tunnel_id).is_some()
