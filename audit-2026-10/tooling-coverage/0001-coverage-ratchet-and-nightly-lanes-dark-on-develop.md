@@ -16,8 +16,8 @@ evidence:
   - ".github/workflows/integration-fixtures.yml:1"
   - ".github/workflows/system-integration.yml:1"
   - "scripts/release-check.sh:368-372"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4277 — coverage, fixtures-coverage and plugin-sandbox lanes are dispatched on develop when stale; heartbeat fails past 36 h; misleading comments fixed"
 audit: 2026-10
 commit: 663465d52
 relation: regression

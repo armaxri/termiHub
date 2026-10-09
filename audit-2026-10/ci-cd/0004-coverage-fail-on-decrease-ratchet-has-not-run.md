@@ -10,8 +10,8 @@ evidence:
   - .github/workflows/coverage.yml:17
   - .github/workflows/coverage.yml:33
   - .github/workflows/coverage.yml:36
-status: open
-resolution: ""
+status: fixed
+resolution: "#4277 — the ratchet is dispatched on develop (push catch-up now, scheduled-dispatch.yml cron once on main); heartbeat alarm past 36 h"
 audit: 2026-10
 commit: 663465d52
 relation: regression
