@@ -381,70 +381,25 @@
   white-space: nowrap;
 }
 
-/* Connection Picker */
-.connection-picker__overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: var(--z-sticky);
-}
-
+/* Connection Picker — the body of the shared ui/Modal (#4332). The dialog
+   shell (scrim, head, close button, focus trap) comes from the primitive. */
 .connection-picker {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
-  width: 400px;
-  max-height: 500px;
   display: flex;
   flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
-.connection-picker__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-md) var(--spacing-lg);
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.connection-picker__title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.connection-picker__close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-}
-
-.connection-picker__close:hover {
-  background: var(--bg-hover);
-}
-
+/* The modal body scrolls; keep the search box in view above the list. */
 .connection-picker__search {
-  margin: var(--spacing-sm) var(--spacing-lg);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised);
+  background: var(--bg-secondary);
 }
 
 .connection-picker__list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xs) var(--spacing-sm) var(--spacing-sm);
+  display: flex;
+  flex-direction: column;
 }
 
 .connection-picker__item {
@@ -462,8 +417,8 @@
   text-align: left;
 }
 
-.connection-picker__item:hover {
-  background: var(--bg-hover);
+.connection-picker__item--active {
+  background: var(--bg-active);
 }
 
 .connection-picker__item--inline {
@@ -478,9 +433,9 @@
 
 .connection-picker__item-type {
   font-size: var(--font-size-2xs);
-  padding: 1px var(--spacing-xs);
+  padding: var(--spacing-xxs) var(--spacing-xs);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   color: var(--text-secondary);
   text-transform: uppercase;
 }
