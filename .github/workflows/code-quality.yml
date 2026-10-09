@@ -322,8 +322,10 @@ jobs:
   # supply-chain gate (advisories/bans/licenses/sources against rdp-sidecar's own
   # Cargo.lock + rdp-sidecar/deny.toml). All steps run in rdp-sidecar/.
   #
-  # PR lane: only when rdp-sidecar/** changes (#3325). Post-merge: always, so a
-  # time-based RUSTSEC/yank on the sidecar lockfile still surfaces on develop.
+  # PR lane: when rdp-sidecar/** changes (#3325), or what the sidecar compiles
+  # from outside it — core/**, win-security/** and the root Cargo.toml (#4357).
+  # Post-merge: always. The daily time-based RUSTSEC/yank scan of the sidecar
+  # lockfile (cargo audit + cargo deny) lives in security-audit.yml (#4357).
   rdp-sidecar-quality:
     name: RDP Sidecar Quality
     runs-on: ubuntu-latest
