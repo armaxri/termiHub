@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isOwnDragOut } from "@/utils/fileDragOut";
+import { subscribeGuarded } from "./useTauriListener";
 
 /**
  * Listens for OS-level file drag-and-drop events (Finder, Explorer, etc.) over a
@@ -27,8 +28,8 @@ export function useOsFileDrop(
   onDropRef.current = onDrop;
 
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
     let ownDrag = false;
+    let active = true;
 
     const isOver = (pos: { x: number; y: number } | undefined): boolean => {
       const el = containerRef.current;
@@ -40,46 +41,51 @@ export function useOsFileDrop(
       return logX >= rect.left && logX <= rect.right && logY >= rect.top && logY <= rect.bottom;
     };
 
-    getCurrentWindow()
-      .onDragDropEvent((event) => {
-        const payload = event.payload;
-        // A row this window is dragging out to the OS (#3457) passing back over
-        // termiHub is not an upload: never highlight it or re-import it here.
-        if (payload.type === "enter") {
-          ownDrag = isOwnDragOut(payload.paths);
-          setDragPaths(ownDrag ? [] : payload.paths);
-        }
-        if (payload.type === "drop" && isOwnDragOut(payload.paths)) ownDrag = true;
-        if (ownDrag) {
-          setIsDragOver(false);
-          if (payload.type === "drop" || payload.type === "leave") ownDrag = false;
-          return;
-        }
-        if (payload.type === "enter" || payload.type === "over") {
-          // Drag "over" fires continuously while the cursor moves; only re-render
-          // when this element's hover state actually flips. With one listener per
-          // pane this avoids redundant updates across every pane on every event.
-          const over = isOver(payload.position);
-          setIsDragOver((prev) => (prev === over ? prev : over));
-        } else if (payload.type === "drop") {
-          setDragPaths([]);
-          if (isOver(payload.position)) {
+    // Disposed guard (FES2-005): an unmount before registration resolves still
+    // unregisters the listener once it does.
+    const dispose = subscribeGuarded(
+      () =>
+        getCurrentWindow().onDragDropEvent((event) => {
+          if (!active) return;
+          const payload = event.payload;
+          // A row this window is dragging out to the OS (#3457) passing back over
+          // termiHub is not an upload: never highlight it or re-import it here.
+          if (payload.type === "enter") {
+            ownDrag = isOwnDragOut(payload.paths);
+            setDragPaths(ownDrag ? [] : payload.paths);
+          }
+          if (payload.type === "drop" && isOwnDragOut(payload.paths)) ownDrag = true;
+          if (ownDrag) {
             setIsDragOver(false);
-            onDropRef.current(payload.paths);
+            if (payload.type === "drop" || payload.type === "leave") ownDrag = false;
+            return;
+          }
+          if (payload.type === "enter" || payload.type === "over") {
+            // Drag "over" fires continuously while the cursor moves; only re-render
+            // when this element's hover state actually flips. With one listener per
+            // pane this avoids redundant updates across every pane on every event.
+            const over = isOver(payload.position);
+            setIsDragOver((prev) => (prev === over ? prev : over));
+          } else if (payload.type === "drop") {
+            setDragPaths([]);
+            if (isOver(payload.position)) {
+              setIsDragOver(false);
+              onDropRef.current(payload.paths);
+            } else {
+              setIsDragOver(false);
+            }
           } else {
             setIsDragOver(false);
+            setDragPaths([]);
           }
-        } else {
-          setIsDragOver(false);
-          setDragPaths([]);
-        }
-      })
-      .then((fn) => {
-        unlisten = fn;
-      });
+        }),
+      "os_file_drop",
+      "drag-drop events"
+    );
 
     return () => {
-      if (unlisten) unlisten();
+      active = false;
+      dispose();
       setIsDragOver(false);
       setDragPaths([]);
     };

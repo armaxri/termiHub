@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { AppWindow } from "lucide-react";
 import { toast } from "@/components/ui";
 import { xServerConnectConsentReply, xServerInstallDependency } from "@/services/api";
@@ -14,6 +13,7 @@ import { XServerSetupContent, type XServerSetupPhase } from "./XServerSetupConte
 import { driveXServerEnsure } from "./xServerProvisioning";
 import { guideTerminalInstall } from "./guideTerminalInstall";
 import { errorMessage } from "@/utils/errorMessage";
+import { subscribeGuarded, useTauriSubscription } from "@/hooks/useTauriListener";
 
 /** Progress steps that end the backend-driven connect provisioning. */
 const TERMINAL_STEPS = new Set(["ready", "failed", "skipped"]);
@@ -54,27 +54,20 @@ export function XServerConnectConsent() {
   const driverRef = useRef<Driver>("backend");
 
   // Subscribe to connect-time consent prompts for the lifetime of the app.
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let cancelled = false;
-    void (async () => {
-      unlisten = await onXServerConsentNeeded((req) => {
-        if (cancelled) return;
-        frontendLog("x_server_connect_consent", `consent needed (id=${req.id})`);
-        repliedRef.current = false;
-        driverRef.current = "backend";
-        setRequest(req);
-        setPhase("consent");
-        setProgress(null);
-        setError(null);
-        setRawError(null);
-      });
-    })();
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  useTauriSubscription(
+    onXServerConsentNeeded,
+    (req) => {
+      frontendLog("x_server_connect_consent", `consent needed (id=${req.id})`);
+      repliedRef.current = false;
+      driverRef.current = "backend";
+      setRequest(req);
+      setPhase("consent");
+      setProgress(null);
+      setError(null);
+      setRawError(null);
+    },
+    "x_server_connect_consent"
+  );
 
   // While provisioning, stream progress. The backend path resolves on a terminal
   // step; the ensure (retry) path resolves via the x_server_ensure promise.
@@ -99,30 +92,32 @@ export function XServerConnectConsent() {
     }
 
     // Backend-driven: the resumed connect emits progress and a terminal step.
-    let unlisten: UnlistenFn | undefined;
     let cancelled = false;
-    void (async () => {
-      unlisten = await onXServerProgress((p) => {
-        if (cancelled) return;
-        setProgress(p);
-        if (!TERMINAL_STEPS.has(p.step)) return;
-        if (p.step === "ready") {
-          toast.success("X server ready");
-          close();
-        } else if (p.step === "skipped") {
-          close();
-        } else {
-          // failed — surface a recoverable error screen instead of closing.
-          frontendLog("x_server_connect_consent", `provisioning failed: ${p.message}`);
-          setError(null);
-          setRawError(p.message);
-          setPhase("error");
-        }
-      });
-    })();
+    const dispose = subscribeGuarded(
+      () =>
+        onXServerProgress((p) => {
+          if (cancelled) return;
+          setProgress(p);
+          if (!TERMINAL_STEPS.has(p.step)) return;
+          if (p.step === "ready") {
+            toast.success("X server ready");
+            close();
+          } else if (p.step === "skipped") {
+            close();
+          } else {
+            // failed — surface a recoverable error screen instead of closing.
+            frontendLog("x_server_connect_consent", `provisioning failed: ${p.message}`);
+            setError(null);
+            setRawError(p.message);
+            setPhase("error");
+          }
+        }),
+      "x_server_connect_consent",
+      "x-server-progress"
+    );
     return () => {
       cancelled = true;
-      unlisten?.();
+      dispose();
     };
     // Only the phase transition should (re)start provisioning; driverRef is read
     // fresh each run and the helper callbacks are stable.

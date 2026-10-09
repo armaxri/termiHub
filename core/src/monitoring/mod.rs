@@ -29,6 +29,15 @@ pub mod exec_provider;
 // (distroless containers, #3202), consumed by the exec provider.
 #[cfg(any(feature = "docker", feature = "wsl"))]
 pub mod container_stats;
+// Event-driven stop / pause / interval plumbing shared by the local, exec and
+// SSH collect loops (#4366): the cancellation token is the single stop signal.
+#[cfg(any(
+    feature = "local-shell",
+    feature = "docker",
+    feature = "wsl",
+    feature = "ssh"
+))]
+pub(crate) mod loop_control;
 pub mod parser;
 pub mod provider;
 pub mod status;

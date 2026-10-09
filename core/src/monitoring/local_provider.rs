@@ -16,7 +16,6 @@
 //! which resets its CPU/network delta baselines just as a fresh SSH session
 //! would.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::errors::CoreError;
+use crate::monitoring::loop_control::{cancellable_sleep, LoopControls};
 use crate::monitoring::{
     BackoffSchedule, CollectLoopState, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
     MonitoringSender, MonitoringSubscription, StatsCollector, SystemStats, BACKOFF_CAP,
@@ -42,9 +42,6 @@ const HOST_LABEL: &str = "local";
 /// this is only the starting value.
 const MONITORING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MONITORING_INTERVAL_MS);
 
-/// How often a paused loop wakes to re-check whether it should resume.
-const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
-
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
 
@@ -62,53 +59,15 @@ const COLLECT_TIMEOUT: Duration = Duration::from_secs(10);
 type CollectorFactory =
     Arc<dyn Fn() -> Result<Box<dyn StatsCollector>, CoreError> + Send + Sync + 'static>;
 
-/// Shared, live-updatable controls for a running collect loop.
-///
-/// The loop reads these every tick so `set_interval` / `set_paused` steer a
-/// running subscription without tearing it down. `interval_ms` is atomic so
-/// updates are lock-free.
-struct LoopControls {
-    interval_ms: AtomicU64,
-    paused: AtomicBool,
-}
-
-impl LoopControls {
-    fn new(interval: Duration) -> Self {
-        Self {
-            interval_ms: AtomicU64::new(interval.as_millis() as u64),
-            paused: AtomicBool::new(false),
-        }
-    }
-
-    fn interval(&self) -> Duration {
-        Duration::from_millis(self.interval_ms.load(Ordering::SeqCst).max(1))
-    }
-
-    fn set_interval(&self, interval: Duration) {
-        self.interval_ms
-            .store(interval.as_millis().max(1) as u64, Ordering::SeqCst);
-    }
-
-    fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::SeqCst)
-    }
-
-    fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::SeqCst);
-    }
-}
-
 /// Background monitoring task state, cancelled and marked dead on drop so a
 /// torn-down subscription stops promptly.
 struct MonitoringTask {
-    alive: Arc<AtomicBool>,
     cancel: CancellationToken,
     controls: Arc<LoopControls>,
 }
 
 impl Drop for MonitoringTask {
     fn drop(&mut self) {
-        self.alive.store(false, Ordering::SeqCst);
         self.cancel.cancel();
     }
 }
@@ -226,27 +185,6 @@ async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopSt
     let _ = status_tx.send(loop_state.update()).await;
 }
 
-/// Sleep `delay` in small increments, returning early if the loop is asked to
-/// stop (either `alive` cleared or `cancel` fired).
-///
-/// Returns `true` if the full delay elapsed, `false` if interrupted.
-async fn interruptible_sleep(
-    mut delay: Duration,
-    alive: &AtomicBool,
-    cancel: &CancellationToken,
-) -> bool {
-    let tick = Duration::from_millis(100);
-    while delay > Duration::ZERO {
-        if !alive.load(Ordering::SeqCst) || cancel.is_cancelled() {
-            return false;
-        }
-        let step = tick.min(delay);
-        tokio::time::sleep(step).await;
-        delay = delay.saturating_sub(step);
-    }
-    true
-}
-
 /// Re-open the collector under a bounded exponential backoff once the loop has
 /// gone `Stale`.
 ///
@@ -260,7 +198,6 @@ async fn reconnect_with_backoff(
     mut backoff: BackoffSchedule,
     loop_state: &mut CollectLoopState,
     status_tx: &MonitorStatusSender,
-    alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> Option<Box<dyn StatsCollector>> {
     if loop_state.begin_reconnect().is_some() {
@@ -268,7 +205,7 @@ async fn reconnect_with_backoff(
     }
 
     while let Some(delay) = backoff.next_delay() {
-        if !interruptible_sleep(delay, alive, cancel).await {
+        if !cancellable_sleep(delay, cancel).await {
             return None;
         }
         match build_collector(factory).await {
@@ -296,19 +233,21 @@ async fn run_collect_loop(
     reconnect_backoff: BackoffSchedule,
     tx: MonitoringSender,
     status_tx: MonitorStatusSender,
-    alive: Arc<AtomicBool>,
     cancel: CancellationToken,
 ) {
     let collector: SharedCollector = Arc::new(std::sync::Mutex::new(collector));
     let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
-    while alive.load(Ordering::SeqCst) {
+    while !cancel.is_cancelled() {
         // Paused: keep the collector alive but skip collection.
         if controls.is_paused() {
             if loop_state.pause().is_some() {
                 emit_status(&status_tx, &loop_state).await;
             }
-            interruptible_sleep(PAUSE_POLL_INTERVAL, &alive, &cancel).await;
+            // Await the resume event (or teardown) instead of polling.
+            if !controls.wait_until_resumed(&cancel).await {
+                break;
+            }
             continue;
         }
         if loop_state.resume().is_some() {
@@ -349,7 +288,6 @@ async fn run_collect_loop(
                 reconnect_backoff.clone(),
                 &mut loop_state,
                 &status_tx,
-                &alive,
                 &cancel,
             )
             .await
@@ -367,7 +305,9 @@ async fn run_collect_loop(
             }
         }
 
-        interruptible_sleep(controls.interval(), &alive, &cancel).await;
+        if !cancellable_sleep(controls.interval(), &cancel).await {
+            break;
+        }
     }
     debug!("Local monitoring task stopped");
 }
@@ -390,7 +330,6 @@ impl MonitoringProvider for LocalMonitoringProvider {
             tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
         let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
 
-        let alive = Arc::new(AtomicBool::new(true));
         let controls = Arc::new(LoopControls::new(self.interval));
 
         tokio::spawn(run_collect_loop(
@@ -402,16 +341,11 @@ impl MonitoringProvider for LocalMonitoringProvider {
             self.reconnect_backoff.clone(),
             tx,
             status_tx,
-            alive.clone(),
             cancel.clone(),
         ));
 
         if let Ok(mut guard) = self.task.lock() {
-            *guard = Some(MonitoringTask {
-                alive,
-                cancel,
-                controls,
-            });
+            *guard = Some(MonitoringTask { cancel, controls });
         }
 
         Ok(MonitoringSubscription {
@@ -452,7 +386,7 @@ impl MonitoringProvider for LocalMonitoringProvider {
 mod tests {
     use super::*;
     use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn sample_stats() -> SystemStats {
         SystemStats {

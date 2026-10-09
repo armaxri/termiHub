@@ -166,4 +166,94 @@ describe("useNetworkTask", () => {
     act(() => root.unmount());
     expect(opts.cancel).toHaveBeenCalledWith("task-1");
   });
+  // FES2-006 (#4375): a run whose start() resolves after the hook unmounted must
+  // cancel the task it started, since nothing else is left to cancel it.
+  it("cancels a task whose start resolves after unmount", async () => {
+    let resolveStart: (id: string) => void = () => {};
+    const start = vi.fn(() => new Promise<string>((r) => (resolveStart = r)));
+    const { opts } = mount({ start });
+    let runPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      runPromise = latest.run();
+      await Promise.resolve();
+    });
+    act(() => root.unmount());
+    expect(opts.cancel).not.toHaveBeenCalled();
+    resolveStart("late-task");
+    await runPromise;
+    expect(opts.cancel).toHaveBeenCalledWith("late-task");
+  });
+
+  it("tears down a listener registered after unmount", async () => {
+    const lateUnlisten = vi.fn();
+    let resolveSubscribe: () => void = () => {};
+    const subscribe = vi.fn(
+      (c: NetworkTaskContext) =>
+        new Promise<void>((r) => {
+          resolveSubscribe = () => {
+            c.register(lateUnlisten);
+            r();
+          };
+        })
+    );
+    const { opts } = mount({ subscribe });
+    let runPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      runPromise = latest.run();
+      await Promise.resolve();
+    });
+    act(() => root.unmount());
+    resolveSubscribe();
+    await runPromise;
+    expect(lateUnlisten).toHaveBeenCalledTimes(1);
+    // The run was abandoned before start, so no backend task was launched.
+    expect(opts.start).not.toHaveBeenCalled();
+  });
+
+  it("cancels a superseded run's task when a newer run started first", async () => {
+    const resolvers: Array<(id: string) => void> = [];
+    const start = vi.fn(() => new Promise<string>((r) => resolvers.push(r)));
+    const { opts } = mount({ start });
+    let first: Promise<void> = Promise.resolve();
+    let second: Promise<void> = Promise.resolve();
+    await act(async () => {
+      first = latest.run();
+      await Promise.resolve();
+      await Promise.resolve();
+      second = latest.run();
+      await Promise.resolve();
+      await Promise.resolve();
+      resolvers[0]("old-task");
+      await first;
+      resolvers[1]("new-task");
+      await second;
+    });
+    expect(opts.cancel).toHaveBeenCalledWith("old-task");
+    expect(opts.cancel).not.toHaveBeenCalledWith("new-task");
+    // The newer run owns the task id: stop cancels it, not the superseded one.
+    vi.mocked(opts.cancel).mockClear();
+    await act(async () => {
+      await latest.stop();
+    });
+    expect(opts.cancel).toHaveBeenCalledWith("new-task");
+  });
+
+  it("does not re-arm the task id when the run finished before start resolved", async () => {
+    let resolveStart: (id: string) => void = () => {};
+    const start = vi.fn(() => new Promise<string>((r) => (resolveStart = r)));
+    const { opts, getCtx } = mount({ start });
+    await act(async () => {
+      const runPromise = latest.run();
+      await Promise.resolve();
+      getCtx().finish("completed");
+      resolveStart("done-task");
+      await runPromise;
+    });
+    expect(latest.status).toBe("completed");
+    await act(async () => {
+      await latest.stop();
+    });
+    // stop() is a no-op: the finished task's id was never stored.
+    expect(opts.cancel).not.toHaveBeenCalled();
+  });
 });

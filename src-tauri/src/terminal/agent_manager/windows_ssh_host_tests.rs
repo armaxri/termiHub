@@ -58,7 +58,6 @@
 //! line, so a skip there can never pass for a green.
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -66,7 +65,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 
 use super::live_channel_support::{channel_rpc, read_counter_until};
-use super::{read_handshake_line, reconnect_agent, serialize_request};
+use super::{read_handshake_line, reconnect_agent, serialize_request, AgentAlive};
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
@@ -573,7 +572,7 @@ async fn establish(
     termihub_core::backends::ssh::handler::SshSession,
     russh::Channel<russh::client::Msg>,
 ) {
-    let alive = Arc::new(AtomicBool::new(true));
+    let alive = AgentAlive::new();
     let settings = AgentSettings::default();
     let established = tokio::time::timeout(
         ESTABLISH_CEILING,

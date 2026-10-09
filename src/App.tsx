@@ -44,6 +44,7 @@ import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSupers
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useInterruptedFolderPastes } from "@/hooks/useInterruptedFolderPastes";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
+import { useTauriListener } from "@/hooks/useTauriListener";
 import { usePluginEvents } from "@/hooks/usePluginEvents";
 import { useScheduledRuns } from "@/hooks/useScheduledRuns";
 import { usePluginUpdateSchedule } from "@/hooks/usePluginUpdateSchedule";
@@ -117,6 +118,9 @@ function App() {
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
     let unlistenLayoutChanged: (() => void) | null = null;
+    // Disposed guard (FEC2-005): the restore below is long and async; a cleanup
+    // that runs first must not leave a store subscription or listener behind.
+    let disposed = false;
 
     // Post-#2562 the rich layout is composed from these raw inputs; the panel tree
     // changes iff one of them changes ref (structure → `layoutView`, tab content
@@ -132,6 +136,7 @@ function App() {
     // Attached only after the initial restore so restoring does not immediately
     // re-save. The save aggregates every open window's slice (#1925).
     const enableAutoSave = () => {
+      if (disposed) return;
       unsubscribe = useAppStore.subscribe((state, prevState) => {
         if (layoutChanged(state, prevState)) state.scheduleLastSessionSave();
       });
@@ -141,6 +146,7 @@ function App() {
     // backend aggregation authority on every layout change (#1925), so the main
     // window's save spans every window it cannot see across the JS boundary.
     const enableSecondaryLayoutReport = () => {
+      if (disposed) return;
       unsubscribe = useAppStore.subscribe((state, prevState) => {
         if (layoutChanged(state, prevState)) state.scheduleWindowLayoutReport();
       });
@@ -200,12 +206,16 @@ function App() {
       // Multi-window (#1925): a secondary window reporting a layout change nudges
       // the main window here so the aggregated session is re-persisted with that
       // window's latest slice.
-      unlistenLayoutChanged = await listen<void>("window-layout-changed", () => {
+      if (disposed) return;
+      const off = await listen<void>("window-layout-changed", () => {
         useAppStore.getState().scheduleLastSessionSave();
       });
+      if (disposed) off();
+      else unlistenLayoutChanged = off;
     })();
 
     return () => {
+      disposed = true;
       if (unsubscribe) unsubscribe();
       if (unlistenLayoutChanged) unlistenLayoutChanged();
     };
@@ -228,14 +238,11 @@ function App() {
 
   // Reload connections when another running instance modifies connections.json.
   // The backend polls the file's mtime every second and emits this event on change.
-  useEffect(() => {
-    const unlistenPromise = listen<void>("connections-changed", () => {
-      useAppStore.getState().reloadConnectionsFromBackend();
-    });
-    return () => {
-      void unlistenPromise.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<void>(
+    "connections-changed",
+    () => useAppStore.getState().reloadConnectionsFromBackend(),
+    "app"
+  );
 
   // Per-workspace settings (PROD-052): follow the backend's active workspace so a
   // workspace switch (from any window) applies its theme / font overrides live.
@@ -263,14 +270,11 @@ function App() {
   // Multi-window (#1900): a tab moved into an already-open window arrives as a
   // queued hand-off plus a global `window-handoff` nudge. Every window drains
   // its own queue; only the targeted window has a record, so the rest no-op.
-  useEffect(() => {
-    const unlistenPromise = listen<void>("window-handoff", () => {
-      void useAppStore.getState().receivePendingHandoffs();
-    });
-    return () => {
-      void unlistenPromise.then((fn) => fn());
-    };
-  }, []);
+  useTauriListener<void>(
+    "window-handoff",
+    () => void useAppStore.getState().receivePendingHandoffs(),
+    "app"
+  );
 
   // Multi-window (#1903): intercept this window's close so live sessions are not
   // silently killed. `prepareWindowClose` decides: an empty or all-persistent

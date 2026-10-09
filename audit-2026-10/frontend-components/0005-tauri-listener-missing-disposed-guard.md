@@ -15,8 +15,8 @@ evidence:
   - src/components/OpenConnections/XServerConnectConsent.tsx:57-76
   - src/components/OpenConnections/XServerConnectConsent.tsx:101-128
   - src/components/OpenConnections/xServerProvisioning.ts:27-45
-status: open
-resolution: ""
+status: fixed
+resolution: "#4375 — shared useTauriListener/useTauriSubscription disposed-guard hooks adopted by every listed listener setup"
 audit: 2026-10
 commit: 663465d52
 relation: new
