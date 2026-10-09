@@ -1213,8 +1213,9 @@ export function FileEditor({
         if (fromStore && hostLabel) {
           try {
             await removeCredential(hostLabel, "sudo_password");
-          } catch {
-            // best-effort cleanup
+          } catch (err) {
+            // Best-effort cleanup: the prompt below replaces the stale password anyway.
+            frontendLog("file_editor", `discard stale sudo password failed: ${errorMessage(err)}`);
           }
         }
       }
