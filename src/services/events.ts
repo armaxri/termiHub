@@ -33,6 +33,7 @@ import type { OwnershipSupersededPayload } from "@/types/generated/OwnershipSupe
 import type { AgentSetupProgress } from "@/types/generated/AgentSetupProgress";
 import type { AgentUpdateAvailableEvent } from "@/types/generated/AgentUpdateAvailableEvent";
 import type { RemoteAgentUpdatePendingEvent } from "@/types/generated/RemoteAgentUpdatePendingEvent";
+import type { AgentUpdateReconnectEvent } from "@/types/generated/AgentUpdateReconnectEvent";
 import type { VscodeEditCompleteEvent } from "@/types/generated/VscodeEditCompleteEvent";
 import type { LocalFileChangedPayload } from "@/types/generated/LocalFileChangedPayload";
 import type { LocalDirChangedPayload } from "@/types/generated/LocalDirChangedPayload";
@@ -504,10 +505,9 @@ export interface RemoteAgentUpdatePending {
 }
 
 /**
- * Subscribe to `agent.update_pending` notifications forwarded by the backend as
- * `remote-agent-update-pending` Tauri events (#1602). Fires on a host *other*
- * than the one initiating a coordinated update; the frontend suspends the
- * affected session and queues an auto-reconnect. Returns the unlisten handle.
+ * Subscribe to `remote-agent-update-pending` Tauri events (#1602): another host
+ * is updating an agent. The backend has suspended the agent and is reconnecting
+ * it (#4489); the frontend shows the waiting notice. Returns the unlisten handle.
  */
 export async function onRemoteAgentUpdatePending(
   callback: (pending: RemoteAgentUpdatePending) => void
@@ -522,6 +522,20 @@ export async function onRemoteAgentUpdatePending(
       });
     }
   );
+}
+
+/**
+ * Subscribe to `agent-update-reconnect` Tauri events (#4489): how the backend's
+ * reconnect after a coordinated agent update ended (reconnected, failed,
+ * cancelled or superseded). Broadcast to every window. Returns the unlisten
+ * handle.
+ */
+export async function onAgentUpdateReconnect(
+  callback: (event: AgentUpdateReconnectEvent) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentUpdateReconnectEvent>(TAURI_EVENT.agentUpdateReconnect, (event) => {
+    callback(event.payload);
+  });
 }
 
 /** Subscribe to VS Code edit-complete events (remote file re-upload). */

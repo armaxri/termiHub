@@ -1,21 +1,22 @@
-import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { onRemoteAgentUpdatePending } from "@/services/events";
-import { cancelAllAgentUpdateReconnects } from "@/store/agentUpdateReconnect";
+import { onAgentUpdateReconnect, onRemoteAgentUpdatePending } from "@/services/events";
 import { useTauriSubscription } from "./useTauriListener";
 
 /**
- * Hook that bridges backend `remote-agent-update-pending` events (#1602) to the
- * store's coordinated-update handling. Each event is an agent's
- * `agent.update_pending` notification — broadcast when *another* host initiates
- * a coordinated update (#1351) — forwarded by the desktop backend. Handling it
- * shows the "being updated by another host" notice, suspends the affected agent
- * connection (the disconnect is the ack) and reconnects to the new version with
- * backoff (#4311). Unmounting stops every running reconnect loop, so no timer
- * outlives the window that owns it.
+ * Hook that presents the backend's coordinated agent-update reconnect (#1602,
+ * #4489). When another host updates an agent, the backend suspends the agent
+ * and reconnects it once for every window; this window only shows its state:
+ *
+ * - `remote-agent-update-pending` — the "being updated by another host"
+ *   waiting notice, with a Cancel;
+ * - `agent-update-reconnect` — how the reconnect ended (reconnected, failed or
+ *   cancelled with a manual Reconnect, or superseded by a newer action).
+ *
+ * No timer runs in the window, so nothing needs stopping on unmount.
  */
 export function useAgentUpdatePendingEvents(): void {
   const handleAgentUpdatePending = useAppStore((s) => s.handleAgentUpdatePending);
+  const handleAgentUpdateReconnect = useAppStore((s) => s.handleAgentUpdateReconnect);
 
   useTauriSubscription(
     onRemoteAgentUpdatePending,
@@ -29,5 +30,5 @@ export function useAgentUpdatePendingEvents(): void {
     "agent_update"
   );
 
-  useEffect(() => cancelAllAgentUpdateReconnects, []);
+  useTauriSubscription(onAgentUpdateReconnect, handleAgentUpdateReconnect, "agent_update");
 }

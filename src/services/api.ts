@@ -2383,6 +2383,23 @@ export async function requestAgentUpdate(
 }
 
 /**
+ * Stop the backend's reconnect after a coordinated agent update (#4489). By
+ * default this is the user's Cancel, which every window reports with a manual
+ * Reconnect. `{ superseded: true }` marks a newer action that owns the agent
+ * (deleting it): the notice simply goes away. Resolves to whether a reconnect
+ * was running.
+ */
+export async function cancelAgentUpdateReconnect(
+  agentId: string,
+  options?: { superseded?: boolean }
+): Promise<boolean> {
+  if (options?.superseded) {
+    return await invoke<boolean>("cancel_agent_update_reconnect", { agentId, superseded: true });
+  }
+  return await invoke<boolean>("cancel_agent_update_reconnect", { agentId });
+}
+
+/**
  * Disconnect from a remote agent. By default this is a user Disconnect, which
  * the backend reports to every window as such so all of them end the agent's
  * hosted tabs (#4447). `{ endHostedSessions: false }` marks a suspend that is
