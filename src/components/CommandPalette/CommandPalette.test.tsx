@@ -200,6 +200,23 @@ describe("CommandPalette", () => {
     expect(connectSpy).not.toHaveBeenCalled();
   });
 
+  it("asks to confirm a workspace launch that would end live sessions (UX2-002)", () => {
+    const launchWorkspace = vi.fn(() => Promise.resolve());
+    setStore({
+      launchWorkspace,
+      workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }],
+    });
+    act(() => {
+      useAppStore.getState().addTab("live", "local");
+      const tab = getAllLeaves(layoutState().rootPanel)[0].tabs[0];
+      useAppStore.getState().setTabSessionId(tab.id, "sess-live");
+    });
+    typeInto("launch workspace: dev");
+    keydown("Enter");
+    expect(launchWorkspace).not.toHaveBeenCalled();
+    expect(useAppStore.getState().pendingWorkspaceLaunch).toMatchObject({ id: "ws-1", count: 1 });
+  });
+
   it("connects the highlighted connection on Enter and closes", () => {
     typeInto("production");
     keydown("Enter");

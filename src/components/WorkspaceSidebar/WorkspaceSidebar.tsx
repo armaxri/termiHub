@@ -1,11 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus, Save } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import {
-  getAllTabsAcrossGroupTrees,
-  useActiveTabGroupId,
-  useLayoutTabGroups,
-} from "@/store/layoutSelectors";
+import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { Button, toast, Tooltip, ConfirmDialog } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
@@ -26,7 +22,7 @@ export function WorkspaceSidebar() {
   const deleteWorkspace = useAppStore((s) => s.deleteWorkspaceFromBackend);
   const duplicateWorkspace = useAppStore((s) => s.duplicateWorkspaceInBackend);
   const openWorkspaceEditorTab = useAppStore((s) => s.openWorkspaceEditorTab);
-  const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const requestLaunchWorkspace = useAppStore((s) => s.requestLaunchWorkspace);
   const launchingWorkspaceId = useAppStore((s) => s.launchingWorkspaceId);
   const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
   const tabGroups = useLayoutTabGroups();
@@ -42,14 +38,6 @@ export function WorkspaceSidebar() {
     scope: SaveWorkspaceScope;
     description?: string;
   } | null>(null);
-  // The workspace pending launch once the user confirms tearing down live
-  // sessions (UX-026). `count` is the number of open sessions that would be lost.
-  const [pendingLaunch, setPendingLaunch] = useState<{
-    id: string;
-    name: string;
-    count: number;
-  } | null>(null);
-
   // The delete/export/import flows come from the shared sidebar hooks (UISF-020).
   const exportWorkspacesToFile = useJsonFileExport("workspaces");
   const importWorkspacesFromFile = useJsonFileImport("workspaces");
@@ -70,34 +58,13 @@ export function WorkspaceSidebar() {
     openWorkspaceEditorTab(null);
   }, [openWorkspaceEditorTab]);
 
-  // Launching a workspace tears down every live session before swapping in the
-  // new layout (`teardownAllSessions`, appStore.ts). Delete is guarded but the
-  // more-destructive Launch was not (UX-026), so confirm first — but ONLY when
-  // there are live sessions to lose. When nothing is running, launch directly so
-  // the common case is not nagged.
+  // Launching tears down every live session (UX-026). The live-session confirm
+  // sits in the shared `requestLaunchWorkspace` entry point (UX2-002), rendered
+  // by the app-level ConfirmWorkspaceLaunchDialog, so every launch path shares it.
   const handleLaunch = useCallback(
-    (workspaceId: string) => {
-      const liveCount = getAllTabsAcrossGroupTrees().filter((t) => t.sessionId).length;
-      if (liveCount > 0) {
-        const workspace = workspaces.find((ws) => ws.id === workspaceId);
-        setPendingLaunch({
-          id: workspaceId,
-          name: workspace?.name ?? "this workspace",
-          count: liveCount,
-        });
-        return;
-      }
-      launchWorkspace(workspaceId);
-    },
-    [launchWorkspace, workspaces]
+    (workspaceId: string) => requestLaunchWorkspace(workspaceId),
+    [requestLaunchWorkspace]
   );
-
-  const handleConfirmLaunch = useCallback(() => {
-    if (!pendingLaunch) return;
-    const { id } = pendingLaunch;
-    setPendingLaunch(null);
-    void launchWorkspace(id);
-  }, [pendingLaunch, launchWorkspace]);
 
   const handleEdit = useCallback(
     (workspaceId: string) => {
@@ -334,24 +301,6 @@ export function WorkspaceSidebar() {
             ? `Delete workspace "${workspaceDelete.pending.name}"? This cannot be undone.`
             : ""
         }
-      />
-      <ConfirmDialog
-        open={pendingLaunch !== null}
-        variant="danger"
-        title="Close live sessions?"
-        message={
-          pendingLaunch
-            ? `Launching "${pendingLaunch.name}" will close ${pendingLaunch.count} open ` +
-              `session${pendingLaunch.count === 1 ? "" : "s"} and replace your current layout. ` +
-              `Continue?`
-            : ""
-        }
-        confirmLabel="Launch"
-        confirmVariant="danger"
-        testIdBase="confirm-launch-workspace"
-        data-testid="confirm-launch-workspace-dialog"
-        onConfirm={handleConfirmLaunch}
-        onCancel={() => setPendingLaunch(null)}
       />
     </div>
   );

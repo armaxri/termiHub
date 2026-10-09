@@ -35,6 +35,20 @@ describe("launchWorkspaceByName", () => {
     expect(launch).toHaveBeenCalledWith("ws-1");
   });
 
+  it("routes a forwarded launch through the confirm-first entry point (UX2-002)", async () => {
+    seedWorkspaces(["Dev Box"]);
+    const launch = vi.spyOn(useAppStore.getState(), "launchWorkspace").mockResolvedValue();
+    const request = vi
+      .spyOn(useAppStore.getState(), "requestLaunchWorkspace")
+      .mockImplementation(() => {});
+
+    const launched = await launchWorkspaceByName("Dev Box", { confirmIfLive: true });
+
+    expect(launched).toBe(true);
+    expect(request).toHaveBeenCalledWith("ws-0");
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("returns false without launching when no workspace matches", async () => {
     seedWorkspaces(["Other"]);
     const launch = vi.spyOn(useAppStore.getState(), "launchWorkspace").mockResolvedValue();
