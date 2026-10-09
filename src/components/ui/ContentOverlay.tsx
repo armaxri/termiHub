@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useId, useRef } from "react";
+import { LiveRegion, type LiveRegionPoliteness } from "./LiveRegion";
 import "./ui.css";
 
 /**
@@ -31,6 +32,33 @@ export interface ContentOverlayProps {
   children?: React.ReactNode;
   /** Optional row of action buttons, laid out centred and wrapping. */
   actions?: React.ReactNode;
+  /**
+   * Announce the screen to assistive tech through an always-mounted live region
+   * (#4331): `assertive` for failures the user must act on (an `alert`),
+   * `polite` for disconnects and other state changes (a `status`). Omit for
+   * screens that need no announcement.
+   */
+  announce?: LiveRegionPoliteness;
+  /**
+   * Plain-text announcement. Defaults to the heading plus the subheading when
+   * both are strings; pass it explicitly to include an error message rendered
+   * in `children`.
+   */
+  announcement?: string;
+  /**
+   * Id of a caller-rendered element (typically the error text in `children`)
+   * that, with the subheading, forms the body's accessible description.
+   */
+  describedBy?: string;
+  /**
+   * Move focus to the first action when the overlay appears or its announcement
+   * changes while this is true (#4331). Pass the surface's "is the active tab"
+   * flag so background tabs never steal focus. Focus is only taken from the
+   * page body or from inside the overlay's host (the nearest
+   * `[data-overlay-host]` ancestor, else the overlay's parent), never from a
+   * control elsewhere such as a dialog or the sidebar.
+   */
+  autoFocusPrimaryAction?: boolean;
   /** Extra class on the body wrapper for per-surface tweaks (e.g. a max-width). */
   className?: string;
   /** Test hook forwarded to the body wrapper element. */
@@ -55,23 +83,83 @@ export function ContentOverlay({
   subheading,
   children,
   actions,
+  announce,
+  announcement,
+  describedBy,
+  autoFocusPrimaryAction = false,
   className,
   "data-testid": dataTestId,
 }: ContentOverlayProps): React.ReactElement {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const headingId = useId();
+  const subheadingId = useId();
+  const spoken = announcement ?? defaultAnnouncement(heading, subheading);
+
+  useEffect(() => {
+    if (!autoFocusPrimaryAction) return;
+    const body = bodyRef.current;
+    const primary = actionsRef.current?.querySelector<HTMLElement>("button:not(:disabled)");
+    if (!body || !primary || !canTakeFocus(body)) return;
+    primary.focus();
+    // Re-run when the announced content changes (a new variant in the same
+    // instance), never on an unchanged re-render.
+  }, [autoFocusPrimaryAction, spoken]);
+
   const classes = ["ui-content-overlay", className ?? ""].filter(Boolean).join(" ");
+  const describedByIds =
+    [subheading != null ? subheadingId : "", describedBy ?? ""].filter(Boolean).join(" ") ||
+    undefined;
   return (
-    <div className={classes} data-testid={dataTestId} aria-busy={busy || undefined}>
+    <div
+      ref={bodyRef}
+      className={classes}
+      data-testid={dataTestId}
+      role="group"
+      aria-labelledby={headingId}
+      aria-describedby={describedByIds}
+      aria-busy={busy || undefined}
+    >
+      {announce && spoken && (
+        <LiveRegion message={spoken} politeness={announce} data-testid="content-overlay-live" />
+      )}
       {icon}
       <p
+        id={headingId}
         className="ui-content-overlay__heading"
         role={busy ? "status" : undefined}
         aria-live={busy ? "polite" : undefined}
       >
         {heading}
       </p>
-      {subheading != null && <p className="ui-content-overlay__subheading">{subheading}</p>}
+      {subheading != null && (
+        <p id={subheadingId} className="ui-content-overlay__subheading">
+          {subheading}
+        </p>
+      )}
       {children}
-      {actions != null && <div className="ui-content-overlay__actions">{actions}</div>}
+      {actions != null && (
+        <div ref={actionsRef} className="ui-content-overlay__actions">
+          {actions}
+        </div>
+      )}
     </div>
   );
+}
+
+/** Heading + subheading as one sentence pair, when both are plain text. */
+function defaultAnnouncement(heading: React.ReactNode, subheading: React.ReactNode): string {
+  if (typeof heading !== "string") return "";
+  return typeof subheading === "string" ? `${heading}. ${subheading}` : heading;
+}
+
+/**
+ * Whether moving focus into the overlay would not steal it from the user: the
+ * focus is nowhere (the page body) or already inside the overlay's host.
+ */
+function canTakeFocus(body: HTMLElement): boolean {
+  const active = document.activeElement;
+  if (!active || active === document.body) return true;
+  const host = body.closest("[data-overlay-host]") ?? body.parentElement;
+  return host?.contains(active) ?? false;
 }

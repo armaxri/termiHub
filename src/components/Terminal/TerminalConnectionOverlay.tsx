@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useId } from "react";
 import { ServerCrash, RefreshCw, Loader2, Zap, Ban, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
@@ -177,6 +177,9 @@ export function TerminalConnectionOverlay({
     errorKind === "agent-auth"
       ? "terminal-connection-agent-copy-btn"
       : "terminal-connection-serial-copy-btn";
+
+  // The spawn error is part of the failure overlay's accessible description.
+  const errorTextId = useId();
 
   const cls = `terminal-connection-overlay${isVisible ? "" : " terminal-connection-overlay--hidden"}`;
 
@@ -370,6 +373,11 @@ export function TerminalConnectionOverlay({
         icon={<ServerCrash size={32} className="terminal-connection-overlay__icon" />}
         heading="Connection failed"
         subheading={tabTitle}
+        announce="assertive"
+        // `error` is already the store's display string, not a raw IPC error.
+        announcement={["Connection failed.", `${tabTitle}:`, error].join(" ")}
+        describedBy={errorTextId}
+        autoFocusPrimaryAction={isVisible}
         actions={
           <>
             <Button
@@ -393,7 +401,9 @@ export function TerminalConnectionOverlay({
         }
       >
         <div className="terminal-connection-overlay__error-box">
-          <span className="terminal-connection-overlay__error-text">{error}</span>
+          <span id={errorTextId} className="terminal-connection-overlay__error-text">
+            {error}
+          </span>
         </div>
 
         {hint &&
