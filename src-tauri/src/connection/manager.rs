@@ -5,9 +5,8 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    AgentSettings, ConnectionFolder, ConnectionStore, EncryptedConnectionExport,
-    ExternalConnectionStore, FlatConnectionStore, ImportPreview, ImportResult, SavedConnection,
-    SavedRemoteAgent,
+    AgentSettings, ConnectionFolder, EncryptedConnectionExport, ExternalConnectionStore,
+    FlatConnectionStore, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
 };
 use super::credential_migration::follow_id_changes;
 use super::credential_scope::{owner_id, FileScopes, STATE_FILE_NAME};
@@ -883,76 +882,6 @@ impl ConnectionManager {
         self.follow_references(&id_changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&id_changes);
         Ok(())
-    }
-
-    /// Export all connections and folders as a JSON string. Every secret field
-    /// the connection types' schemas declare is stripped (#4289).
-    pub fn export_json(&self) -> Result<String> {
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let export_conns: Vec<SavedConnection> = store
-            .connections
-            .iter()
-            .cloned()
-            .map(strip_for_export)
-            .collect();
-
-        let tree = build_tree(&export_conns, &store.folders);
-        let export_store = ConnectionStore {
-            version: "2".to_string(),
-            children: tree,
-            agents: store.agents.clone(),
-            extra: Default::default(),
-        };
-        serde_json::to_string_pretty(&export_store)
-            .context("Failed to serialize connections for export")
-    }
-
-    /// Import connections and folders from a JSON string.
-    /// Returns the number of connections actually added — a connection whose id
-    /// the store already holds is skipped and not counted (#4210).
-    pub fn import_json(&self, json: &str) -> Result<usize> {
-        self.migrate_credential_scopes();
-        let imported: ConnectionStore =
-            serde_json::from_str(json).context("Failed to parse import data")?;
-
-        let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
-        self.migrate_imported_type_ids(&mut imported_conns);
-        let mut count = 0;
-
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        self.sync_from_disk(&mut store);
-
-        // Merge: add imported folders that don't already exist (by name path)
-        for folder in imported_folders {
-            if !store.folders.iter().any(|f| f.id == folder.id) {
-                store.folders.push(folder);
-            }
-        }
-
-        // Merge: add imported connections that don't already exist (strip passwords)
-        for conn in imported_conns {
-            if !store.connections.iter().any(|c| c.id == conn.id) {
-                count += 1;
-                store
-                    .connections
-                    .push(prepare_for_storage(conn, None, &*self.credential_store)?);
-            }
-        }
-
-        // Deduplicate after merge
-        {
-            let FlatConnectionStore {
-                connections,
-                folders,
-                ..
-            } = &mut *store;
-            deduplicate_sibling_names(connections, folders);
-        }
-
-        self.storage
-            .save_flat(&store)
-            .context("Failed to persist after import")?;
-        Ok(count)
     }
 
     /// Rewrite legacy plugin connection-type ids in freshly imported connections
@@ -1847,7 +1776,9 @@ pub(crate) fn save_external_file(
 }
 
 /// Write an `ExternalConnectionStore` with `connections` to `file_path`, their
-/// saved passwords going to the store under `file_id`'s scope.
+/// saved passwords going to the store under `file_id`'s scope (test fixtures
+/// only since the `save_external_file` command was removed, #4344).
+#[cfg(test)]
 fn write_new_external_file(
     file_path: &str,
     name: &str,
@@ -2723,69 +2654,10 @@ mod tests {
         );
     }
 
-    // Regression: import_json did not call sync_from_disk before merging and saving.
-    // A stale instance could resurrect connections that were deleted by the active
-    // instance simply by running an import (e.g., the user imports a backup file).
-    #[test]
-    fn import_json_does_not_resurrect_connection_deleted_by_another_instance() {
-        let dir = tempfile::tempdir().unwrap();
-        let cred_store = Arc::new(MockStore::new());
-
-        let make_conn = |name: &str| SavedConnection {
-            extra: Default::default(),
-            icon: None,
-            id: name.to_string(),
-            name: name.to_string(),
-            config: ConnectionConfig {
-                type_id: "local".to_string(),
-                settings: serde_json::json!({"shell": "bash"}),
-            },
-            folder_id: None,
-            terminal_options: None,
-            source_file: None,
-        };
-
-        // Populate with a connection, then drop the setup instance.
-        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
-        setup.save_connection(make_conn("Old Connection")).unwrap();
-        drop(setup);
-
-        // "Instance B" (stale) loads ["Old Connection"] into its in-memory store.
-        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
-
-        // "Instance A" deletes "Old Connection" — disk is now empty.
-        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
-        instance_a.delete_connection("Old Connection").unwrap();
-        drop(instance_a);
-
-        // Instance B imports JSON (e.g., the user imports a backup file).
-        // Without sync_from_disk, instance_b would merge the import on top of its
-        // stale in-memory state and write ["Old Connection", "Imported"] back to disk.
-        let import_json = r#"{
-            "version": "2",
-            "children": [
-                {"type": "connection", "name": "Imported",
-                 "config": {"type": "local", "config": {"shell": "bash"}}}
-            ],
-            "agents": []
-        }"#;
-        instance_b.import_json(import_json).unwrap();
-
-        let all = instance_b.get_all().unwrap();
-        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
-        assert!(
-            !names.contains(&"Old Connection"),
-            "import_json must not resurrect connections deleted by another instance; got: {names:?}"
-        );
-        assert!(
-            names.contains(&"Imported"),
-            "imported connection must be present; got: {names:?}"
-        );
-    }
-
     // Regression: import_encrypted_json did not call sync_from_disk before merging
-    // and saving.  Same resurrection hazard as import_json, triggered via encrypted
-    // import (e.g., the user restores from an encrypted backup).
+    // and saving. A stale instance could resurrect connections that were deleted by
+    // the active instance simply by running an import (e.g., the user restores
+    // from an encrypted backup).
     #[test]
     fn import_encrypted_json_does_not_resurrect_connection_deleted_by_another_instance() {
         let dir = tempfile::tempdir().unwrap();
@@ -3364,21 +3236,6 @@ mod tests {
         ],
         "agents": []
     }"#;
-
-    #[test]
-    fn import_json_resolves_legacy_plugin_type_ids() {
-        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
-        let dir = tempfile::tempdir().unwrap();
-        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
-        let manager =
-            ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
-                .unwrap();
-        assert_eq!(manager.import_json(LEGACY_IMPORT).unwrap(), 3);
-        let all = manager.get_all().unwrap();
-        assert_eq!(type_of(&all.connections, "Legacy"), "plugin:beta:k8s");
-        assert_eq!(type_of(&all.connections, "Gone"), "mqtt");
-        assert_eq!(type_of(&all.connections, "Builtin"), "local");
-    }
 
     #[test]
     fn import_encrypted_json_resolves_legacy_plugin_type_ids() {

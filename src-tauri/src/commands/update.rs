@@ -6,7 +6,6 @@ use tauri::{AppHandle, State};
 use tracing::debug;
 
 use crate::connection::manager::ConnectionManager;
-use crate::connection::settings::UpdateSettings;
 
 const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/releases/latest";
 
@@ -272,14 +271,6 @@ pub fn set_update_auto_check(
     let mut settings = manager.get_settings();
     settings.updates.auto_check = enabled;
     manager.save_settings(settings).map_err(|e| e.to_string())
-}
-
-/// Return the current update settings (auto-check flag, last check time, skipped version).
-#[tauri::command]
-pub fn get_update_settings(
-    manager: State<'_, ConnectionManager>,
-) -> Result<UpdateSettings, String> {
-    Ok(manager.get_settings().updates)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

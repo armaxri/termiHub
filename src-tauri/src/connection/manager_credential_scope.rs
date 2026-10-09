@@ -382,8 +382,10 @@ impl ConnectionManager {
         Ok(written)
     }
 
-    /// Write an external connection file (the `save_external_file` command),
-    /// keeping its file id so its connections keep their secrets.
+    /// Test fixture: write a new external connection file with a file id, so
+    /// its connections keep their secrets. (The `save_external_file` command
+    /// that used this had no frontend caller and was removed, #4344.)
+    #[cfg(test)]
     pub fn save_external_file(
         &self,
         path: &str,

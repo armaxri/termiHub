@@ -51,4 +51,3 @@ pub mod vscode;
 /// test bridge (#2646). Test-bridge-only (SEC-005); compiled out of release.
 #[cfg(all(target_os = "linux", feature = "test-bridge"))]
 pub mod webview_console;
-pub mod x11_detect;

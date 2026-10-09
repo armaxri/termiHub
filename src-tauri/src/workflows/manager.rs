@@ -95,7 +95,9 @@ impl WorkflowManager {
         Ok(store.workflows.clone())
     }
 
-    /// Get a single workflow by ID.
+    /// Get a single workflow by ID (a test lookup since the `get_workflow`
+    /// command had no frontend caller and was removed, #4344).
+    #[cfg(test)]
     pub fn get_workflow(&self, id: &str) -> Result<Workflow, TerminalError> {
         let store = self
             .store

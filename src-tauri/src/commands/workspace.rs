@@ -7,8 +7,7 @@ use crate::connection::config::SavedConnection;
 use crate::connection::manager::ConnectionManager;
 use crate::utils::errors::TerminalError;
 use crate::workspace::config::{
-    WorkspaceDefinition, WorkspaceExportResult, WorkspaceImportPreview, WorkspaceImportResult,
-    WorkspaceSummary,
+    WorkspaceDefinition, WorkspaceExportResult, WorkspaceImportResult, WorkspaceSummary,
 };
 use crate::workspace::connection_refs::ConnectionRefMap;
 use crate::workspace::import_trust::mark_groups_untrusted;
@@ -210,12 +209,6 @@ pub fn import_workspaces(
 ) -> Result<WorkspaceImportResult, TerminalError> {
     let connections = unified_connections(&connection_manager)?;
     workspace_manager.import_json(&json, &ConnectionRefMap::for_import(&connections))
-}
-
-/// Preview a workspace import file without importing.
-#[tauri::command]
-pub fn preview_import_workspaces(json: String) -> Result<WorkspaceImportPreview, TerminalError> {
-    WorkspaceManager::preview_import_json(&json)
 }
 
 /// Persist the current session (open tab groups and layout, plus the active

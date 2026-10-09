@@ -1119,9 +1119,6 @@ impl AgentRpcClient for NullAgent {
     fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
         unimplemented!()
     }
-    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        unimplemented!()
-    }
     fn save_definition(
         &self,
         _: &str,
@@ -1538,9 +1535,6 @@ impl AgentRpcClient for RetainAgent {
         Ok(Vec::new())
     }
     fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
         unimplemented!()
     }
     fn save_definition(
@@ -2950,9 +2944,6 @@ impl AgentRpcClient for SpyAgent {
     fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
         unimplemented!()
     }
-    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        unimplemented!()
-    }
     fn save_definition(
         &self,
         _: &str,
@@ -3331,9 +3322,6 @@ impl AgentRpcClient for FailingAttachAgent {
         unimplemented!()
     }
     fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
-        unimplemented!()
-    }
-    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
         unimplemented!()
     }
     fn save_definition(

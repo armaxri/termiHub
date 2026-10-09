@@ -4,9 +4,9 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    count_tabs, follow_connection_id_changes_in_groups, WorkspaceDefinition, WorkspaceExportData,
-    WorkspaceExportEntry, WorkspaceExportResult, WorkspaceImportPreview, WorkspaceImportResult,
-    WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
+    follow_connection_id_changes_in_groups, WorkspaceDefinition, WorkspaceExportData,
+    WorkspaceExportEntry, WorkspaceExportResult, WorkspaceImportResult, WorkspaceLayoutNode,
+    WorkspaceStore, WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
 use super::connection_refs::{ConnectionRefMap, RefLookup};
 use super::import_trust::{collect_untrusted_tabs, mark_groups_untrusted};
@@ -460,36 +460,6 @@ impl WorkspaceManager {
         Ok(WorkspaceImportResult {
             imported_count: count,
             warnings,
-            untrusted_tabs,
-        })
-    }
-
-    /// Preview an import file without importing.
-    pub fn preview_import_json(json: &str) -> Result<WorkspaceImportPreview, TerminalError> {
-        let data: WorkspaceExportData = serde_json::from_str(json)
-            .map_err(|e| TerminalError::WorkspaceError(format!("Invalid import data: {e}")))?;
-
-        let total_tab_count = data
-            .workspaces
-            .iter()
-            .flat_map(|ws| ws.tab_groups.iter())
-            .map(|g| count_tabs(&g.layout))
-            .sum();
-        let workspace_count = data.workspaces.len();
-
-        let untrusted_tabs = data
-            .workspaces
-            .into_iter()
-            .flat_map(|ws| {
-                let mut groups = ws.tab_groups;
-                mark_groups_untrusted(&mut groups);
-                collect_untrusted_tabs(&ws.name, &groups)
-            })
-            .collect();
-
-        Ok(WorkspaceImportPreview {
-            workspace_count,
-            total_tab_count,
             untrusted_tabs,
         })
     }
@@ -1256,30 +1226,6 @@ mod tests {
         assert_eq!(workspaces.len(), 2);
     }
 
-    #[test]
-    fn preview_import_counts() {
-        let json = r#"{
-            "version": "1",
-            "workspaces": [
-                { "name": "WS1", "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [
-                    { "connectionRef": "a" }, { "connectionRef": "b" }
-                ] } }] },
-                { "name": "WS2", "tabGroups": [
-                    { "name": "Dev", "layout": { "type": "split", "direction": "horizontal", "children": [
-                        { "type": "leaf", "tabs": [{ "connectionRef": "c" }] },
-                        { "type": "leaf", "tabs": [{ "connectionRef": "d" }] }
-                    ] } },
-                    { "name": "Deploy", "layout": { "type": "leaf", "tabs": [{ "connectionRef": "e" }] } }
-                ] }
-            ]
-        }"#;
-
-        let preview = WorkspaceManager::preview_import_json(json).unwrap();
-        assert_eq!(preview.workspace_count, 2);
-        assert_eq!(preview.total_tab_count, 5); // 2 + 2 + 1
-        assert!(preview.untrusted_tabs.is_empty());
-    }
-
     const UNTRUSTED_IMPORT: &str = r#"{
         "version": "1",
         "workspaces": [{
@@ -1352,19 +1298,6 @@ mod tests {
             .unwrap();
         assert_eq!(result.imported_count, 0);
         assert!(result.untrusted_tabs.is_empty());
-    }
-
-    /// #4434: the preview lists the same tabs without importing anything.
-    #[test]
-    fn preview_lists_untrusted_tabs() {
-        let preview = WorkspaceManager::preview_import_json(UNTRUSTED_IMPORT).unwrap();
-        assert_eq!(preview.total_tab_count, 3);
-        assert_eq!(preview.untrusted_tabs.len(), 2);
-        assert_eq!(preview.untrusted_tabs[0].workspace_name, "Imported");
-        assert_eq!(
-            preview.untrusted_tabs[1].connection_target.as_deref(),
-            Some("shell /bin/zsh")
-        );
     }
 
     /// #4434: a workspace created or edited locally keeps its command as a

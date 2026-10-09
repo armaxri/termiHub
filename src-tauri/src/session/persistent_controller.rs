@@ -38,8 +38,8 @@ use crate::utils::errors::TerminalError;
 
 use super::line_ending::LineEnding;
 use super::manager::{
-    EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent,
-    PersistentSessionSummary, SessionEntry, SessionInfo, SessionManager, SessionOrigin, TabBinding,
+    EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent, SessionEntry,
+    SessionInfo, SessionManager, SessionOrigin, TabBinding,
 };
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 
@@ -462,11 +462,15 @@ impl<'a> PersistentController<'a> {
         Ok(count)
     }
 
-    /// List all registered persistent sessions and their current state.
-    pub(super) async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
+    /// List all registered persistent sessions and their current state (test
+    /// introspection only, #4344).
+    #[cfg(test)]
+    pub(super) async fn list_persistent_sessions(
+        &self,
+    ) -> Vec<super::manager::PersistentSessionSummary> {
         let ps = self.manager.persistent_sessions.lock().await;
         ps.values()
-            .map(|r| PersistentSessionSummary {
+            .map(|r| super::manager::PersistentSessionSummary {
                 connection_id: r.connection_id.clone(),
                 session_id: r.session_id.clone(),
                 attached_tab_count: r.attached_tabs.len() as u32,
