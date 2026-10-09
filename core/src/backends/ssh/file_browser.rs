@@ -929,4 +929,41 @@ mod tests {
             "as_any must expose the concrete SftpFileBrowser for downcasting"
         );
     }
+
+    fn sftp_status(code: russh_sftp::protocol::StatusCode) -> russh_sftp::client::error::Error {
+        russh_sftp::client::error::Error::Status(russh_sftp::protocol::Status {
+            id: 0,
+            status_code: code,
+            error_message: "server says".to_string(),
+            language_tag: String::new(),
+        })
+    }
+
+    /// Only a definite `NO_SUCH_FILE` is "not found" (#4299): a caller picking
+    /// a free name must never mistake a permission or transport error on an
+    /// existing file for a free name and overwrite it.
+    #[test]
+    fn stat_error_maps_only_no_such_file_to_not_found() {
+        use russh_sftp::protocol::StatusCode;
+        assert!(matches!(
+            stat_error("/d/a.txt", sftp_status(StatusCode::NoSuchFile)),
+            FileError::NotFound(p) if p == "/d/a.txt"
+        ));
+        for code in [
+            StatusCode::PermissionDenied,
+            StatusCode::Failure,
+            StatusCode::ConnectionLost,
+            StatusCode::NoConnection,
+        ] {
+            let mapped = stat_error("/d/a.txt", sftp_status(code));
+            assert!(
+                !matches!(mapped, FileError::NotFound(_)),
+                "{code:?} must not read as not found: {mapped}"
+            );
+        }
+        assert!(!matches!(
+            stat_error("/d/a.txt", russh_sftp::client::error::Error::Timeout),
+            FileError::NotFound(_)
+        ));
+    }
 }

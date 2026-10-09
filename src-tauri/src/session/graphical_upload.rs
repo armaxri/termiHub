@@ -658,3 +658,7 @@ pub(crate) fn cancel_session_transfers(registry: &TransferRegistry, session_id: 
 #[cfg(test)]
 #[path = "graphical_upload_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "graphical_upload_naming_tests.rs"]
+mod naming_tests;
