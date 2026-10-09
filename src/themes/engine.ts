@@ -119,6 +119,18 @@ let currentTheme: ThemeDefinition = darkTheme;
 let mediaQuery: MediaQueryList | null = null;
 let mediaListener: EventListener | null = null;
 const changeCallbacks = new Set<ThemeChangeCallback>();
+/**
+ * Monotonic counter bumped every time a theme is (re-)applied. Lets consumers
+ * that bake resolved colours into something CSS cannot reach (a uPlot canvas)
+ * key a rebuild on it via `useSyncExternalStore` (UI2-004).
+ */
+let themeRevision = 0;
+
+/** Bump the theme revision and run every registered change callback. */
+function notifyThemeChange(): void {
+  themeRevision += 1;
+  for (const cb of changeCallbacks) cb();
+}
 
 /**
  * Resolve a theme setting string (`"dark"`, `"light"`, `"system"`,
@@ -199,13 +211,16 @@ export function applyTheme(
   removeMediaListener();
   currentTheme = resolveTheme(setting, customThemes);
   setCssVariables(currentTheme);
+  // Settings-driven applies (theme switch, custom-theme save, workspace
+  // override) notify too, so canvas consumers recolour live (UI2-004).
+  notifyThemeChange();
 
   if (setting === "system" && typeof window !== "undefined") {
     mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     mediaListener = ((e: MediaQueryListEvent) => {
       currentTheme = e.matches ? darkTheme : lightTheme;
       setCssVariables(currentTheme);
-      for (const cb of changeCallbacks) cb();
+      notifyThemeChange();
     }) as EventListener;
     mediaQuery.addEventListener("change", mediaListener);
   }
@@ -223,7 +238,7 @@ export function previewTheme(theme: ThemeDefinition): void {
   removeMediaListener();
   currentTheme = resolveCustomTheme(theme);
   setCssVariables(currentTheme);
-  for (const cb of changeCallbacks) cb();
+  notifyThemeChange();
 }
 
 /**
@@ -267,14 +282,21 @@ export function getCurrentTheme(): ThemeDefinition {
 }
 
 /**
- * Register a callback that fires when the OS theme changes while in
- * "system" mode. Returns an unsubscribe function.
+ * Register a callback that fires whenever the active theme is (re-)applied:
+ * a settings-driven {@link applyTheme}, a {@link previewTheme} from the theme
+ * editor, or an OS color-scheme change while in "system" mode. Returns an
+ * unsubscribe function.
  */
 export function onThemeChange(callback: ThemeChangeCallback): () => void {
   changeCallbacks.add(callback);
   return () => {
     changeCallbacks.delete(callback);
   };
+}
+
+/** The current theme revision; changes whenever the active theme is re-applied. */
+export function getThemeRevision(): number {
+  return themeRevision;
 }
 
 /** Clean up the matchMedia listener and all registered callbacks. */
