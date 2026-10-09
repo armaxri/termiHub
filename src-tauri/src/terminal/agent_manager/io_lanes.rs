@@ -21,8 +21,9 @@
 //!   stream's close must follow its last bytes), but never wait for credit: they
 //!   are fixed-size, human- or once-per-stream-rate, and a close must never be
 //!   blocked by a full budget.
-//! * **Control** — everything else (requests, (un)registrations, keyboard-
-//!   interactive answers, `Disconnect`, the test sever) — is never gated and is
+//! * **Control** — everything else (requests, output flow control,
+//!   (un)registrations, keyboard-interactive answers, `Disconnect`, the test
+//!   sever) — is never gated and is
 //!   served **ahead of** queued data: [`IoLanes::next_command`] moves data out of
 //!   the ingress into its own lane as it arrives, so a control command behind a
 //!   full data backlog is reached after at most the one write already in flight.
@@ -115,7 +116,11 @@ pub(crate) fn lane_of(cmd: &AgentIoCommand) -> Lane {
         AgentIoCommand::SessionResize { .. } | AgentIoCommand::AgentForwardClose { .. } => {
             Lane::Data { cost: 0 }
         }
+        // A pause must never wait behind a queued paste, and a resume never
+        // behind anything: flow control rides the control lane, FIFO with the
+        // other control commands so pause/resume keep their order (#4416).
         AgentIoCommand::Request { .. }
+        | AgentIoCommand::SessionOutputFlow { .. }
         | AgentIoCommand::RegisterSession { .. }
         | AgentIoCommand::UnregisterSession { .. }
         | AgentIoCommand::RegisterFilesOnly { .. }

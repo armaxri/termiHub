@@ -161,7 +161,8 @@ impl RemoteProxy {
         remote_session_id: String,
         agent_manager: Arc<dyn AgentRpcClient>,
     ) -> Result<(Self, ReattachOutcome), SessionError> {
-        let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
+        // Unbounded: the I/O task never blocks or drops output (#4416).
+        let (std_tx, std_rx) = mpsc::channel::<Vec<u8>>();
 
         agent_manager
             .register_session_output(&agent_id, &remote_session_id, std_tx)
@@ -392,7 +393,10 @@ impl ConnectionType for RemoteProxy {
     fn subscribe_output(&self) -> OutputReceiver {
         let (tokio_tx, tokio_rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
 
-        // Take the std receiver and bridge it to the tokio channel.
+        // Take the std receiver and bridge it to the tokio channel. The bridge
+        // blocks while the bounded tokio channel is full (a paused output
+        // reader), so the backlog waits in the unbounded std channel — never
+        // dropped — while the agent itself is paused (#4416).
         let std_rx = self.std_output_rx.lock().ok().and_then(|mut r| r.take());
 
         if let Some(std_rx) = std_rx {
@@ -636,9 +640,10 @@ impl RemoteProxy {
 
         let remote_sid = session_info.session_id.clone();
 
-        // Set up output channel: std sync channel for agent_manager,
-        // which we'll bridge to tokio in subscribe_output().
-        let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
+        // Set up output channel: an unbounded std channel the agent I/O task
+        // never blocks or drops on (#4416, see `OutputSender`), bridged into the
+        // session's bounded tokio channel in subscribe_output().
+        let (std_tx, std_rx) = mpsc::channel::<Vec<u8>>();
 
         // Register the output sender with the agent manager.
         // `register_session_output` does not block on a response — just pushes a
@@ -1883,6 +1888,7 @@ mod tests {
                     session_files: false,
                     unattended_connect: false,
                     file_ranges: false,
+                    output_flow: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),

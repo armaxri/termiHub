@@ -26,7 +26,8 @@ use tracing::{error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::protocol::methods::{
-    AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams, SessionResizeParams,
+    AgentForwardCloseParams, AgentForwardDataParams, SessionInputParams, SessionOutputFlowParams,
+    SessionResizeParams,
 };
 
 use super::agent_stderr::AgentStderr;
@@ -348,6 +349,25 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                 if let Ok(line) = serialize_request(
                                     request_id,
                                     termihub_core::protocol::methods::CONNECTION_RESIZE,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
+                            }
+                        }
+                        AgentIoCommand::SessionOutputFlow { session_id, paused } => {
+                            // Fire-and-forget like resize: the reply is not
+                            // awaited, so a slow agent never holds this loop
+                            // (#4416). Only sent to an agent advertising
+                            // `outputFlow` (checked by the sender).
+                            request_id += 1;
+                            if let Ok(params) = serde_json::to_value(SessionOutputFlowParams {
+                                session_id,
+                                paused,
+                            }) {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::CONNECTION_OUTPUT_FLOW,
                                     params,
                                 ) {
                                     let _ = channel.data(line.as_bytes()).await;

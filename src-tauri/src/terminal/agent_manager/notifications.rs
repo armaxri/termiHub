@@ -293,8 +293,11 @@ pub(super) fn handle_notification(
                 return;
             };
             if let Some(output_tx) = session_outputs.get(&n.session_id) {
-                // Use try_send to avoid blocking the async I/O task.
-                let _ = output_tx.try_send(data);
+                // Never dropped, never blocking (#4416): the route is unbounded,
+                // so this only fails once the session's receiver is gone. The
+                // receiving side backpressures, and a paused terminal pauses the
+                // agent (`connection.output_flow`), which bounds the backlog.
+                let _ = output_tx.send(data);
             }
         }
         m if m == CONNECTION_MONITORING_DATA => {

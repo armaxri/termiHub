@@ -305,6 +305,10 @@ impl<'a> PersistentController<'a> {
                     // below (CONC-011), so `close_session` can stop it directly.
                     let reader_cancel = CancellationToken::new();
 
+                    // Flow control for the re-created session (#4416), as on create.
+                    let io = super::manager::session_io::SessionIo::default();
+                    let output_flow = self.manager.output_flow_for(Some(agent_id.as_str()), &io);
+
                     // Re-insert under the same session_id so the tab's existingSessionId
                     // prop and the TerminalOutputDispatcher's pendingOutput buffer both
                     // continue to work without any frontend state update.
@@ -325,7 +329,7 @@ impl<'a> PersistentController<'a> {
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),
                                 reader_cancel: reader_cancel.clone(),
-                                io: super::manager::session_io::SessionIo::default(),
+                                io,
                             },
                         );
                     }
@@ -351,8 +355,7 @@ impl<'a> PersistentController<'a> {
                             session_loggers,
                             session_tab_ids,
                             reader_cancel,
-                            // Agent-proxied: not flow-controlled (PERF2-002).
-                            None,
+                            output_flow,
                         )
                         .await;
                     });

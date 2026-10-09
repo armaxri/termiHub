@@ -1230,11 +1230,10 @@ impl SessionManager {
 
         // Frontend flow control (PERF2-002): a direct session's producer blocks
         // on the full output channel, so pausing the reader backpressures the
-        // PTY. An agent-proxied session's channel is fed by `try_send` in the
-        // agent I/O task, which would DROP output under a paused reader, so it
-        // is left unwired there.
+        // PTY. An agent-proxied session is wired only when its agent pauses too
+        // (#4416); see `output_flow_for`.
         let io = SessionIo::default();
-        let output_flow = agent_id.is_none().then(|| io.output_flow());
+        let output_flow = self.output_flow_for(agent_id, &io);
 
         // Store session, promoting its capacity reservation to a live entry
         // under the same `sessions` lock so the occupied-slot count never dips.
@@ -1518,16 +1517,69 @@ impl SessionManager {
         }
     }
 
+    /// The output flow gate to wire into a new session's output reader
+    /// (PERF2-002, #4416), or `None` to leave it unpaused.
+    ///
+    /// A direct session always gets one: its producer blocks on the full
+    /// channel. An agent-proxied session gets one only when its agent supports
+    /// `connection.output_flow` — then the agent stops reading the session's
+    /// output too, so pausing the desktop reader holds back at most the output
+    /// already in flight. In front of an older agent that keeps streaming, a
+    /// paused reader would only move the backlog into the desktop, so such a
+    /// session stays unpaused (the terminal's staged-output cap applies).
+    pub(super) fn output_flow_for(
+        &self,
+        agent_id: Option<&str>,
+        io: &SessionIo,
+    ) -> Option<OutputFlowGate> {
+        match agent_id {
+            None => Some(io.output_flow()),
+            Some(aid) if self.agent_manager.supports_output_flow(aid) => Some(io.output_flow()),
+            Some(_) => None,
+        }
+    }
+
     /// Pause or resume a session's output stream (PERF2-002). The frontend
     /// pauses when xterm.js has too many unparsed bytes and resumes once it
     /// has drained; while paused the output reader stops reading, so the
     /// bounded channel and then the OS PTY buffer backpressure the program.
-    /// Input is unaffected. No-op for an unknown session, and for an
-    /// agent-proxied one, whose reader is not flow-controlled.
+    /// Input is unaffected. No-op for an unknown session.
+    ///
+    /// For an agent-proxied session (#4416) the pause is forwarded to the
+    /// agent (`connection.output_flow`), which stops reading the session's
+    /// output on the agent host, so the remote PTY backpressures the program.
+    /// An agent without that capability is never paused, and neither is the
+    /// desktop gate in front of it: the call is then a silent no-op.
     pub async fn set_output_flow(&self, session_id: &str, paused: bool) {
-        let sessions = self.sessions.lock().await;
-        if let Some(entry) = sessions.get(session_id) {
-            entry.io.output_flow().set_paused(paused);
+        let remote = {
+            let sessions = self.sessions.lock().await;
+            let Some(entry) = sessions.get(session_id) else {
+                return;
+            };
+            match (&entry.info.agent_id, &entry.remote_session_id) {
+                (Some(aid), Some(rsid)) => {
+                    if !self.agent_manager.supports_output_flow(aid) {
+                        entry.io.output_flow().set_paused(false);
+                        return;
+                    }
+                    entry.io.output_flow().set_paused(paused);
+                    Some((aid.clone(), rsid.clone()))
+                }
+                _ => {
+                    entry.io.output_flow().set_paused(paused);
+                    None
+                }
+            }
+        };
+        // Non-blocking (a command into the agent I/O task), so it runs on the
+        // caller's task, outside the sessions lock.
+        if let Some((agent_id, remote_session_id)) = remote {
+            if let Err(e) =
+                self.agent_manager
+                    .set_session_output_paused(&agent_id, &remote_session_id, paused)
+            {
+                warn!(session_id, agent_id, error = %e, "Agent output flow not sent");
+            }
         }
     }
 
@@ -2053,6 +2105,10 @@ impl SessionManager {
         // reader (CONC-011), mirroring the create path.
         let reader_cancel = CancellationToken::new();
 
+        // Flow control for the re-attached session (#4416), as on create.
+        let io = SessionIo::default();
+        let output_flow = self.output_flow_for(Some(agent_id), &io);
+
         // Insert under the fresh desktop session id.
         {
             let mut sessions = self.sessions.lock().await;
@@ -2071,7 +2127,7 @@ impl SessionManager {
                     remote_session_id: Some(remote_session_id.to_string()),
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
-                    io: SessionIo::default(),
+                    io,
                 },
             );
         }
@@ -2123,8 +2179,7 @@ impl SessionManager {
                 session_loggers,
                 session_tab_ids,
                 reader_cancel,
-                // Agent-proxied: not flow-controlled (see the create path).
-                None,
+                output_flow,
             )
             .await;
         });
@@ -2289,6 +2344,23 @@ impl SessionManager {
     #[cfg(test)]
     pub async fn has_session(&self, session_id: &str) -> bool {
         self.sessions.lock().await.contains_key(session_id)
+    }
+
+    /// Insert a raw agent-proxied session entry for testing (#4416).
+    #[cfg(test)]
+    pub async fn insert_test_agent_session(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        remote_session_id: &str,
+        connection: Box<dyn ConnectionType>,
+    ) {
+        self.insert_test_session(session_id, connection).await;
+        let mut sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.info.agent_id = Some(agent_id.to_string());
+            entry.remote_session_id = Some(remote_session_id.to_string());
+        }
     }
 
     /// Insert a raw session entry for testing.

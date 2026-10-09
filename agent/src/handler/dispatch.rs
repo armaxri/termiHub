@@ -50,10 +50,10 @@ use crate::protocol::methods::{
     ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
     SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
     SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams, ToolCancelParams, ToolCancelResult, ToolStartParams,
-    ToolStartResult, TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
-    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdateAuthToken,
-    UpdatePendingNotification, AGENT_UPDATE_PENDING,
+    SessionListResult, SessionOutputFlowParams, SessionResizeParams, ToolCancelParams,
+    ToolCancelResult, ToolStartParams, ToolStartResult, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    UpdateAuthToken, UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use termihub_core::protocol::methods::{DockerListContainersParams, DockerListContainersResult};
 use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
@@ -166,7 +166,13 @@ use termihub_core::monitoring::{
 /// `capabilities.fileRanges` flag (#3587): offset-addressed slices for queued,
 /// resumable transfers. The desktop calls them only on an agent that
 /// advertises the flag; an older desktop ignores it.
-const AGENT_PROTOCOL_VERSION: &str = "0.26.0";
+/// Bumped to 0.27.0 for the additive `connection.output_flow` method and the
+/// matching `capabilities.outputFlow` flag (#4416): the desktop pauses an
+/// agent-hosted session's output when its terminal falls behind, and the agent
+/// stops reading that session's output so the program is backpressured. The
+/// desktop sends it only to an agent that advertises the flag; an older
+/// desktop never sends it.
+const AGENT_PROTOCOL_VERSION: &str = "0.27.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -773,6 +779,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_connection_detach(module)?;
     register_connection_write(module)?;
     register_connection_resize(module)?;
+    register_connection_output_flow(module)?;
     register_agent_forward_data(module)?;
     register_agent_forward_close(module)?;
     register_agent_forward_connect(module)?;
@@ -997,6 +1004,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 session_files: true,
                 unattended_connect: true,
                 file_ranges: true,
+                output_flow: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -1293,6 +1301,36 @@ fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
         session_manager
             .resize(&p.session_id, p.cols, p.rows)
+            .await
+            .map_err(|msg| {
+                rpc_err_data(
+                    errors::SESSION_NOT_FOUND,
+                    msg,
+                    json!({"session_id": p.session_id}),
+                )
+            })?;
+
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
+
+/// `connection.output_flow` (#4416): the desktop terminal fell behind
+/// (`paused: true`) or caught up (`paused: false`). The session stops / resumes
+/// reading its backend's output, so the program is backpressured through its
+/// PTY instead of output piling up anywhere.
+fn register_connection_output_flow(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(pm::CONNECTION_OUTPUT_FLOW, |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: SessionOutputFlowParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.output_flow", e))?;
+
+        session_manager
+            .set_output_paused(&p.session_id, p.paused)
             .await
             .map_err(|msg| {
                 rpc_err_data(
@@ -3797,10 +3835,11 @@ mod tests {
     /// 0.24.0 made the `initialize` result envelope camelCase (#3051), and
     /// 0.25.0 added the `connection.filesOnly` notification (#4081), and
     /// 0.26.0 the ranged `connection.files.*` methods with their `fileRanges`
-    /// capability (#3587).
+    /// capability (#3587), and 0.27.0 `connection.output_flow` with its
+    /// `outputFlow` capability (#4416).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.26.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.27.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -6841,6 +6880,9 @@ mod tests {
 
     /// `connection.create` with `unattended` + its capability (#3877).
     mod unattended_tests;
+
+    /// `connection.output_flow` + its capability (#4416).
+    mod output_flow_tests;
 
     /// `connection.processes.*` for agent-hosted sessions (#3210).
     mod process_tests;
