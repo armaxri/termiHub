@@ -3926,6 +3926,7 @@ dependencies = [
  "shellexpand",
  "socket2 0.5.10",
  "surge-ping",
+ "tempfile",
  "termihub-win-security",
  "thiserror 2.0.19",
  "tokio",
