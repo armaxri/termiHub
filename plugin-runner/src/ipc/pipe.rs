@@ -30,6 +30,7 @@ use std::os::windows::io::{AsHandle, AsRawHandle, BorrowedHandle, FromRawHandle,
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use termihub_win_security::{DaclSpec, ProtectedDacl};
 use windows_sys::Win32::Foundation::{
     GetLastError, SetHandleInformation, BOOL, ERROR_BROKEN_PIPE, ERROR_IO_PENDING,
     ERROR_OPERATION_ABORTED, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED, FALSE, GENERIC_READ,
@@ -256,7 +257,10 @@ fn checked_timeout(timeout: Option<Duration>) -> io::Result<Option<Duration>> {
 
 /// Create the pipe `name` and connect the host's own client end to it.
 fn create(name: &str, extra_sids: &[&str]) -> io::Result<(PipeStream, OwnedHandle)> {
-    let security = security::Descriptor::granting(extra_sids)?;
+    let security = ProtectedDacl::new(&DaclSpec {
+        extra_sids,
+        ..DaclSpec::default()
+    })?;
     let wide = to_wide(name.as_ref())?;
     // SAFETY: `wide` is NUL-terminated and `security` outlives the call.
     let server = owned(unsafe {
@@ -268,7 +272,7 @@ fn create(name: &str, extra_sids: &[&str]) -> io::Result<(PipeStream, OwnedHandl
             PIPE_BUFFER,
             PIPE_BUFFER,
             0,
-            security.attributes(),
+            security.security_attributes(),
         )
     })?;
     // The client end: overlapped too (see the module docs). SQOS keeps the
@@ -410,150 +414,6 @@ fn wait_millis(timeout: Duration) -> u32 {
         .min(INFINITE - 1)
 }
 
-/// The pipe's security descriptor.
-mod security {
-    use std::io;
-
-    use windows_sys::Win32::Foundation::{LocalFree, HANDLE, HLOCAL, TRUE};
-    use windows_sys::Win32::Security::Authorization::{
-        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        SDDL_REVISION_1,
-    };
-    use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
-        TOKEN_USER,
-    };
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-
-    use crate::win::{owned, to_wide};
-
-    /// A protected DACL granting `GENERIC_ALL` to the current user and to the
-    /// given extra SIDs, and nobody else; non-inheritable attributes for it.
-    pub(super) struct Descriptor {
-        descriptor: PSECURITY_DESCRIPTOR,
-        attributes: SECURITY_ATTRIBUTES,
-    }
-
-    impl Descriptor {
-        pub(super) fn granting(extra_sids: &[&str]) -> io::Result<Self> {
-            let mut sddl = format!("D:P(A;;GA;;;{})", current_user_sid()?);
-            for sid in extra_sids {
-                if !is_sid_string(sid) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("`{sid}` is not a SID"),
-                    ));
-                }
-                sddl.push_str(&format!("(A;;GA;;;{sid})"));
-            }
-            let wide = to_wide(sddl.as_ref())?;
-            let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-            // SAFETY: `wide` is NUL-terminated; `descriptor` receives a
-            // `LocalAlloc`ed descriptor freed on drop.
-            let ok = unsafe {
-                ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                    wide.as_ptr(),
-                    SDDL_REVISION_1,
-                    &mut descriptor,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(Self {
-                descriptor,
-                attributes: SECURITY_ATTRIBUTES {
-                    nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                    lpSecurityDescriptor: descriptor,
-                    bInheritHandle: 0,
-                },
-            })
-        }
-
-        pub(super) fn attributes(&self) -> *const SECURITY_ATTRIBUTES {
-            &self.attributes
-        }
-    }
-
-    impl Drop for Descriptor {
-        fn drop(&mut self) {
-            // SAFETY: allocated by `ConvertStringSecurityDescriptorToSecurityDescriptorW`.
-            unsafe { LocalFree(self.descriptor as HLOCAL) };
-        }
-    }
-
-    /// `S-1-<digits and dashes>`: what may be spliced into the SDDL string.
-    fn is_sid_string(sid: &str) -> bool {
-        sid.strip_prefix("S-1-").is_some_and(|rest| {
-            !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit() || b == b'-')
-        })
-    }
-
-    /// The current process user's SID in string form.
-    fn current_user_sid() -> io::Result<String> {
-        let mut token: HANDLE = std::ptr::null_mut();
-        // SAFETY: the pseudo handle of this process; `token` receives a new
-        // handle owned below.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let token = owned(token)?;
-        let raw = std::os::windows::io::AsRawHandle::as_raw_handle(&token);
-        let mut len = 0u32;
-        // Sizing call: expected to fail with the needed length.
-        // SAFETY: a null buffer of length 0 only queries the size.
-        unsafe { GetTokenInformation(raw, TokenUser, std::ptr::null_mut(), 0, &mut len) };
-        if len == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // `u64` storage keeps the `TOKEN_USER` header pointer-aligned.
-        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
-        // SAFETY: `buf` holds at least `len` writable bytes.
-        let ok =
-            unsafe { GetTokenInformation(raw, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) };
-        if ok == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: the call filled `buf` with a `TOKEN_USER` (aligned, see above).
-        let user = unsafe { &*buf.as_ptr().cast::<TOKEN_USER>() };
-        let mut wide: *mut u16 = std::ptr::null_mut();
-        // SAFETY: `user.User.Sid` points into `buf`, alive for the call.
-        if unsafe { ConvertSidToStringSidW(user.User.Sid, &mut wide) } != TRUE {
-            return Err(io::Error::last_os_error());
-        }
-        let mut chars = 0usize;
-        // SAFETY: `wide` is a NUL-terminated string `LocalAlloc`ed by the call.
-        let sid = unsafe {
-            while *wide.add(chars) != 0 {
-                chars += 1;
-            }
-            String::from_utf16_lossy(std::slice::from_raw_parts(wide, chars))
-        };
-        // SAFETY: allocated by `ConvertSidToStringSidW`.
-        unsafe { LocalFree(wide as HLOCAL) };
-        Ok(sid)
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn only_sid_strings_are_accepted() {
-            assert!(is_sid_string("S-1-15-2-1-2-3"));
-            assert!(!is_sid_string("S-1-"));
-            assert!(!is_sid_string("WD"));
-            assert!(!is_sid_string("S-1-5)(A;;GA;;;WD"));
-        }
-
-        #[test]
-        fn the_current_user_sid_resolves() {
-            assert!(current_user_sid().unwrap().starts_with("S-1-"));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,6 +424,36 @@ mod tests {
     fn pair() -> (PipeStream, PipeStream) {
         let (host, runner) = PipeStream::pair().unwrap();
         (host, PipeStream::from(runner))
+    }
+
+    /// #4322: the channel pipe's stored DACL is the shared helper's protected
+    /// one, granting the current user and the extra (AppContainer) SID only —
+    /// no `LocalSystem`, no inherited entries. Read through the client end.
+    #[test]
+    fn the_pipe_dacl_grants_only_the_user_and_the_extra_sids() {
+        use termihub_win_security::{current_user_sid_string, dacl_of_handle};
+
+        let user = current_user_sid_string().unwrap();
+        let app_container = "S-1-15-2-1-2-3-4-5-6-7";
+        let (_host, runner) = PipeStream::pair_with_access(&[app_container]).unwrap();
+        let summary = dacl_of_handle(runner.as_raw_handle()).unwrap();
+        assert!(
+            summary.grants_full_control_to_exactly(&[&user, app_container]),
+            "{summary:?}"
+        );
+
+        let (_host, runner) = PipeStream::pair().unwrap();
+        let summary = dacl_of_handle(runner.as_raw_handle()).unwrap();
+        assert!(
+            summary.grants_full_control_to_exactly(&[&user]),
+            "{summary:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_sid_extra_grant_is_refused() {
+        let err = PipeStream::pair_with_access(&["S-1-5)(A;;GA;;;WD"]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

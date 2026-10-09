@@ -17,7 +17,8 @@ use russh::keys::{PrivateKey, PublicKey};
 use russh::server::{Auth, Msg, Response, Session};
 use russh::{Channel, MethodKind, MethodSet};
 use termihub_core::backends::ssh::host_key::{
-    fingerprint_sha256, set_host_key_verifier, HostKeyInfo, HostKeyVerifier, KnownHostsStatus,
+    fingerprint_sha256, host_key_verifier, set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+    KnownHostsStatus,
 };
 use termihub_core::errors::ConnectFailureKind;
 
@@ -78,17 +79,39 @@ impl TrustTestServer {
     }
 }
 
-/// Register [`TrustTestServer`] as the process-wide verifier. Returns `false`
-/// when another test registered a different one first (the agent's tunnel
-/// integration tests trust every key while their container runs), in which
-/// case the host-key refusal cannot be observed in this process.
-fn install_verifier() -> bool {
-    static OURS: OnceLock<bool> = OnceLock::new();
-    *OURS.get_or_init(|| {
-        set_host_key_verifier(Arc::new(TrustTestServer {
+/// Register [`TrustTestServer`] as the process-wide verifier, and assert that
+/// it is the one in force.
+///
+/// The verifier is a set-once process global, so a test that registered a
+/// different one first would make these tests observe the wrong policy. They
+/// used to skip in that case, which made them order-dependent: the agent-hosted
+/// tunnel E2E tests registered a trust-all verifier in this same binary, and
+/// whichever ran first won (#4288, TBE2-001). Those tests now run in their own
+/// binary (`agent/tests/tunnel_integration.rs`), and a foreign verifier here is
+/// a failure, never a skip.
+fn install_verifier() {
+    static OURS: OnceLock<Arc<dyn HostKeyVerifier>> = OnceLock::new();
+    let ours = OURS.get_or_init(|| {
+        let verifier: Arc<dyn HostKeyVerifier> = Arc::new(TrustTestServer {
             fingerprint: fingerprint_sha256(trusted_host_key().public_key()),
-        }))
-    })
+        });
+        let _ = set_host_key_verifier(Arc::clone(&verifier));
+        verifier
+    });
+    let active = host_key_verifier().expect("a host-key verifier is registered");
+    assert!(
+        Arc::ptr_eq(&active, ours),
+        "another host-key verifier is registered in this process; the unattended \
+         tests must own the process-wide verifier (#4288)"
+    );
+}
+
+/// Regression for #4288: the verifier the unattended tests install is the one
+/// in force, whatever order the tests run in.
+#[test]
+fn install_verifier_owns_the_process_wide_verifier() {
+    install_verifier();
+    install_verifier();
 }
 
 /// What the test server saw, for assertions.
@@ -256,10 +279,7 @@ fn kind(result: &Result<(), SessionError>) -> Option<ConnectFailureKind> {
 /// `interaction_required` — never relayed to the desktop.
 #[tokio::test]
 async fn unattended_otp_round_is_interaction_required() {
-    if !install_verifier() {
-        eprintln!("skipping: another host-key verifier is registered in this process");
-        return;
-    }
+    install_verifier();
     let (port, observed) = serve(trusted_host_key()).await;
     let (_conn, result) = connect_ssh(
         port,
@@ -281,10 +301,7 @@ async fn unattended_otp_round_is_interaction_required() {
 /// before any credential is sent.
 #[tokio::test]
 async fn unattended_untrusted_host_key_is_refused() {
-    if !install_verifier() {
-        eprintln!("skipping: another host-key verifier is registered in this process");
-        return;
-    }
+    install_verifier();
     let (port, observed) = serve(untrusted_host_key()).await;
     let (_conn, result) = connect_ssh(
         port,
@@ -300,10 +317,7 @@ async fn unattended_untrusted_host_key_is_refused() {
 /// refused as `interaction_required`.
 #[tokio::test]
 async fn unattended_missing_password_is_interaction_required() {
-    if !install_verifier() {
-        eprintln!("skipping: another host-key verifier is registered in this process");
-        return;
-    }
+    install_verifier();
     let (port, observed) = serve(trusted_host_key()).await;
     let (_conn, result) =
         connect_ssh(port, serde_json::json!({"authMethod": "password"}), true).await;
@@ -315,10 +329,7 @@ async fn unattended_missing_password_is_interaction_required() {
 /// `interaction_required` instead of asking for the passphrase.
 #[tokio::test]
 async fn unattended_missing_passphrase_is_interaction_required() {
-    if !install_verifier() {
-        eprintln!("skipping: another host-key verifier is registered in this process");
-        return;
-    }
+    install_verifier();
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("id_ed25519");
     std::fs::write(&key_path, ENCRYPTED_KEY).expect("write key");
@@ -339,10 +350,7 @@ async fn unattended_missing_passphrase_is_interaction_required() {
 /// completes and opens the shell.
 #[tokio::test]
 async fn unattended_key_auth_connects() {
-    if !install_verifier() {
-        eprintln!("skipping: another host-key verifier is registered in this process");
-        return;
-    }
+    install_verifier();
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("id_ed25519");
     let pem = client_key()

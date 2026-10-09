@@ -21,8 +21,8 @@ evidence:
   - agent/src/session/unattended_tests.rs:258
   - agent/src/session/unattended_tests.rs:283
   - core/src/backends/ssh/host_key.rs:166
-status: open
-resolution: ""
+status: fixed
+resolution: "#4288 — tunnel E2E moved to agent/tests/tunnel_integration.rs, run in the fixtures lane under TERMIHUB_REQUIRE_DOCKER=1; unattended tests assert they own the verifier"
 audit: 2026-10
 commit: 663465d52
 relation: new

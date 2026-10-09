@@ -26,7 +26,6 @@ mod state;
 mod store_version;
 mod test_parent_watchdog;
 mod transport;
-mod tunnel;
 mod update;
 
 // `RUSSH_CLAMP` is the floor applied to `russh` on the framed stderr sink,
@@ -35,6 +34,10 @@ mod update;
 // per-packet DEBUG/TRACE output never reaches a durable log unless a directive
 // names `russh` explicitly. Shared with the desktop (#4319).
 use termihub_core::diagnostics::file_log::RUSSH_CLAMP;
+// Compiled once, in the library, so its end-to-end tests can run in their own
+// test binary (#4288); `crate::tunnel` paths resolve through this import.
+use termihub_agent::tunnel;
+
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;

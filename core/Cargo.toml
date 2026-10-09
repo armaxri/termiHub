@@ -233,9 +233,13 @@ reqwest = { version = "0.12", default-features = false, features = [
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-# Used to build a per-user DACL for a security-hardened local-IPC listener
-# (the security analog of the Unix socket's 0o700 permissions) — see
-# `ipc::ListenerSecurity::CurrentUserOnly`.
+# The shared current-user SID / protected-DACL helper (#4322): the per-user DACL
+# of a security-hardened local-IPC listener (the security analog of the Unix
+# socket's 0o700 permissions, `ipc::ListenerSecurity::CurrentUserOnly`) and the
+# accept-time peer-SID check (AGT-022).
+termihub-win-security = { path = "../win-security" }
+# Win32 FFI for the rest of core's Windows code (open-ports listing, console
+# probe, plugin-runner watchdog, socket duplication).
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

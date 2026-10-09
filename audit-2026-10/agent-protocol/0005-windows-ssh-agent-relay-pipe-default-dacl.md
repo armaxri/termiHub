@@ -11,8 +11,8 @@ evidence:
   - agent/src/session/agent_forward.rs:347
   - agent/src/daemon/transport.rs:344-346
   - core/src/ipc/local_socket.rs:493-503
-status: open
-resolution: ""
+status: fixed
+resolution: "#4322 — the Windows relay pipe binds via DaemonListener (CurrentUserOnly): per-user protected DACL on every instance plus peer-SID check"
 audit: 2026-10
 commit: 663465d52
 relation: new
