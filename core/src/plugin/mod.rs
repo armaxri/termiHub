@@ -141,8 +141,9 @@ pub use plugin_index::{
     PluginIndexPackage, ToolchainStatus, ANY_PLATFORM, INDEX_SCHEMA_VERSION, MAX_INDEX_BYTES,
 };
 pub use security::{
-    assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,
-    RestartTracker, TrustAssessment, TrustLevel, MAX_RESTART_ATTEMPTS,
+    assess_trust, check_declared_filesystem_path, FilesystemScope, PermissionError, PermissionSet,
+    RecoveryAction, RecoveryState, RestartTracker, TrustAssessment, TrustLevel,
+    MAX_RESTART_ATTEMPTS,
 };
 pub use settings_migration::{migrate_settings, SettingsMigration};
 pub use signature::{

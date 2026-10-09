@@ -201,7 +201,7 @@ async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, Sessi
     map.insert(
         session_id.to_string(),
         SessionEntry {
-            connection: Box::new(MockConnection::default()),
+            connection: Arc::new(MockConnection::default()),
             info: SessionInfo {
                 id: session_id.to_string(),
                 title: "Mock".to_string(),
@@ -213,6 +213,7 @@ async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, Sessi
             remote_session_id: None,
             line_ending: LineEnding::default(),
             reader_cancel: CancellationToken::new(),
+            io: SessionIo::default(),
         },
     );
     drop(map);
@@ -293,7 +294,7 @@ async fn sessions_with_local_browser(
     map.insert(
         session_id.to_string(),
         SessionEntry {
-            connection: Box::new(LocalBrowserConnection::default()),
+            connection: Arc::new(LocalBrowserConnection::default()),
             info: SessionInfo {
                 id: session_id.to_string(),
                 title: "Local".to_string(),
@@ -305,6 +306,7 @@ async fn sessions_with_local_browser(
             remote_session_id: None,
             line_ending: LineEnding::default(),
             reader_cancel: CancellationToken::new(),
+            io: SessionIo::default(),
         },
     );
     drop(map);
@@ -4302,6 +4304,9 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
 
 /// Tab close vs. session ownership (#3401).
 mod close_ownership;
+
+// One stalled session must not freeze the others (#4300).
+mod blocking_io;
 
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;

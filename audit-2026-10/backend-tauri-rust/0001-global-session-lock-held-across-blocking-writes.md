@@ -17,8 +17,8 @@ evidence:
   - core/src/backends/telnet/mod.rs:405
   - src-tauri/src/terminal/agent_manager.rs:2498
   - src-tauri/src/terminal/agent_manager/io_lanes.rs:359
-status: open
-resolution: ""
+status: fixed
+resolution: "#4300 — session writes/resizes run outside the session-map lock; per-session order kept, close defers disconnect"
 audit: 2026-10
 commit: 663465d52
 relation: new

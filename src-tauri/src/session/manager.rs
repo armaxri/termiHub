@@ -352,7 +352,9 @@ pub struct AgentHostedSession {
 /// a session's `connection` and forward file-browser calls (#2076); the manager
 /// remains the only place entries are constructed and mutated.
 pub(super) struct SessionEntry {
-    pub(super) connection: Box<dyn ConnectionType>,
+    /// Shared so blocking backend I/O can run outside the `sessions` lock
+    /// (#4300); see [`session_io`].
+    pub(super) connection: Arc<dyn ConnectionType>,
     pub(super) info: SessionInfo,
     /// Remote session ID assigned by the agent (set for remote proxy sessions).
     pub(super) remote_session_id: Option<String>,
@@ -370,6 +372,10 @@ pub(super) struct SessionEntry {
     /// still runs its normal end-of-stream cleanup (`emit_and_cleanup`), so no
     /// output-buffer / logger state is leaked and no reader lingers.
     pub(super) reader_cancel: CancellationToken,
+    /// Coordinates this session's write / resize / teardown outside the
+    /// `sessions` lock (#4300): the per-session input order and the gate close
+    /// waits on before `disconnect()`.
+    pub(super) io: SessionIo,
 }
 
 /// Entry access the desktop session-ownership map offers its helpers
@@ -1224,11 +1230,12 @@ impl SessionManager {
             sessions.insert(
                 session_id.clone(),
                 SessionEntry {
-                    connection,
+                    connection: Arc::from(connection),
                     info: info.clone(),
                     remote_session_id,
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
+                    io: SessionIo::default(),
                 },
             );
             self.pending_creates
@@ -1422,25 +1429,50 @@ impl SessionManager {
         session_id: &str,
         data: &[u8],
     ) -> Result<(), TerminalError> {
-        let sessions = sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        // Fast-path: skip the blocking write entirely for sessions already
-        // known to be dead (alive flag cleared by a previous write failure or
-        // by the reader thread).  This prevents a cascade of IPC calls from
-        // rapid keystrokes all blocking for SO_SNDTIMEO before giving up.
-        if !entry.connection.is_connected() {
-            return Err(TerminalError::WriteFailed(
-                "session disconnected".to_string(),
-            ));
-        }
+        // Only look the session up under the map lock (#4300): take an I/O
+        // handle and this write's ticket in the session's input order, then
+        // release the lock before the potentially-blocking backend write, so a
+        // stalled session cannot freeze input, resize or close in other tabs.
+        let (handle, lane, ticket) = {
+            let sessions = sessions.lock().await;
+            let entry = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            // Fast-path: skip the blocking write entirely for sessions already
+            // known to be dead (alive flag cleared by a previous write failure
+            // or by the reader thread). This prevents a cascade of IPC calls
+            // from rapid keystrokes all blocking for SO_SNDTIMEO before giving up.
+            if !entry.connection.is_connected() {
+                return Err(TerminalError::WriteFailed(
+                    "session disconnected".to_string(),
+                ));
+            }
+            let handle = entry
+                .io
+                .handle(&entry.connection)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            let (lane, ticket) = entry.io.ticket();
+            (handle, lane, ticket)
+        };
         let data = data.to_vec();
-        // block_in_place lets tokio keep processing other tasks while this
-        // thread blocks on the potentially-slow synchronous write (e.g. SSH
-        // write on a dead connection waiting for SO_SNDTIMEO to fire).
-        tokio::task::block_in_place(|| entry.connection.write(&data))
-            .map_err(|e| TerminalError::WriteFailed(e.to_string()))
+        // Detached so the ticket is always served even if this caller is
+        // dropped mid-wait; a skipped ticket would wedge the session's input.
+        tokio::spawn(async move {
+            let _turn = lane.wait_turn(ticket).await;
+            // Re-check at our turn: an earlier queued write may have found the
+            // session dead, and every further write would block in turn.
+            if !handle.connection.is_connected() {
+                return Err(TerminalError::WriteFailed(
+                    "session disconnected".to_string(),
+                ));
+            }
+            tokio::task::spawn_blocking(move || handle.connection.write(&data))
+                .await
+                .map_err(|e| TerminalError::WriteFailed(e.to_string()))?
+                .map_err(|e| TerminalError::WriteFailed(e.to_string()))
+        })
+        .await
+        .map_err(|e| TerminalError::WriteFailed(e.to_string()))?
     }
 
     /// Send the settings-driven initial command to a freshly created session.
@@ -1476,11 +1508,21 @@ impl SessionManager {
         cols: u16,
         rows: u16,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        tokio::task::block_in_place(|| entry.connection.resize(cols, rows))
+        // Look up under the map lock, resize outside it (#4300). Not ordered
+        // with input: a resize of a session whose write is stalled still runs.
+        let handle = {
+            let sessions = self.sessions.lock().await;
+            let entry = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            entry
+                .io
+                .handle(&entry.connection)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?
+        };
+        tokio::task::spawn_blocking(move || handle.connection.resize(cols, rows))
+            .await
+            .map_err(|e| TerminalError::ResizeFailed(e.to_string()))?
             .map_err(|e| TerminalError::ResizeFailed(e.to_string()))
     }
 
@@ -1604,15 +1646,19 @@ impl SessionManager {
         // deferred update apply, the agent swaps and re-execs before replying.
         // Holding the map lock across that wait froze every other session
         // operation (create, list, input routing) for the same span.
+        //
+        // Likewise `disconnect()` never waits behind a stalled write or resize
+        // still in flight on this session (#4300): it is deferred until that
+        // I/O returns (see `session_io::disconnect_removed`).
         let removed = self.sessions.lock().await.remove(session_id);
-        if let Some(mut entry) = removed {
+        if let Some(entry) = removed {
             // Deterministically stop the detached output-reader task (CONC-011)
             // instead of relying on `disconnect()` to close the output channel
             // and drive the reader to EOF. The reader observes the cancel, breaks
             // its recv loop, and still runs its end-of-stream cleanup, so the
             // scrollback buffer and any session logger are released as usual.
             entry.reader_cancel.cancel();
-            entry.connection.disconnect().await.ok();
+            session_io::disconnect_removed(session_id, entry.connection, entry.io).await;
             info!(session_id, "Closed session");
         }
         Ok(())
@@ -1976,7 +2022,7 @@ impl SessionManager {
             sessions.insert(
                 session_id.clone(),
                 SessionEntry {
-                    connection: Box::new(proxy),
+                    connection: Arc::new(proxy),
                     info: SessionInfo {
                         id: session_id.clone(),
                         title: "Remote".to_string(),
@@ -1988,6 +2034,7 @@ impl SessionManager {
                     remote_session_id: Some(remote_session_id.to_string()),
                     line_ending: LineEnding::default(),
                     reader_cancel: reader_cancel.clone(),
+                    io: SessionIo::default(),
                 },
             );
         }
@@ -2212,7 +2259,7 @@ impl SessionManager {
         sessions.insert(
             session_id.to_string(),
             SessionEntry {
-                connection,
+                connection: Arc::from(connection),
                 info: SessionInfo {
                     id: session_id.to_string(),
                     title: "test".to_string(),
@@ -2224,6 +2271,7 @@ impl SessionManager {
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
                 reader_cancel: CancellationToken::new(),
+                io: SessionIo::default(),
             },
         );
     }
@@ -2414,6 +2462,10 @@ mod files_only;
 
 /// Plugin-process exits for the crash overlay (#4188).
 mod plugin_exit;
+
+/// Backend write / resize / teardown outside the session-map lock (#4300).
+pub(super) mod session_io;
+use session_io::SessionIo;
 
 #[cfg(test)]
 mod tests;

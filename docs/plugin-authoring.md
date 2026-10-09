@@ -74,6 +74,7 @@ silently ignored.
   "apiVersion": "1.1",
   "platforms": ["windows", "linux", "macos"],
   "permissions": ["terminal", "network", "filesystem"],
+  "filesystemPaths": ["/var/log/k8s-exec", "C:\\ProgramData\\k8s-exec"],
   "extensions": {
     "terminalBackend": {
       "connectionType": "k8s-exec",
@@ -97,20 +98,21 @@ silently ignored.
 
 ### Fields
 
-| Field         | Type     | Required | Notes                                                                                                                                                                                                            |
-| ------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`          | string   | yes      | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`).                                   |
-| `name`        | string   | yes      | Human-readable display name.                                                                                                                                                                                     |
-| `version`     | string   | yes      | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.                                                 |
-| `author`      | string   | yes      | Plugin author.                                                                                                                                                                                                   |
-| `description` | string   | yes      | Short description.                                                                                                                                                                                               |
-| `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                                                   |
-| `apiVersion`  | string   | yes      | Plugin ABI version as canonical `"major.minor"` (currently `"1.1"`; theme/JS-only plugins may keep `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility). |
-| `platforms`   | string[] | yes      | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                        |
-| `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                                                                |
-| `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                                                            |
-| `settings`    | object   | no       | User-configurable settings, keyed by setting name.                                                                                                                                                               |
-| `updateUrl`   | string   | no       | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                             |
+| Field             | Type     | Required          | Notes                                                                                                                                                                                                            |
+| ----------------- | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`              | string   | yes               | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`).                                   |
+| `name`            | string   | yes               | Human-readable display name.                                                                                                                                                                                     |
+| `version`         | string   | yes               | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.                                                 |
+| `author`          | string   | yes               | Plugin author.                                                                                                                                                                                                   |
+| `description`     | string   | yes               | Short description.                                                                                                                                                                                               |
+| `license`         | string   | yes               | SPDX-style license identifier.                                                                                                                                                                                   |
+| `apiVersion`      | string   | yes               | Plugin ABI version as canonical `"major.minor"` (currently `"1.1"`; theme/JS-only plugins may keep `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility). |
+| `platforms`       | string[] | yes               | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                        |
+| `permissions`     | string[] | yes               | Requested capabilities (see below). May be empty.                                                                                                                                                                |
+| `filesystemPaths` | string[] | with `filesystem` | Folders the plugin may read and write through termiHub. Required with, and only allowed with, the `filesystem` permission — see [Filesystem paths](#filesystem-paths).                                           |
+| `extensions`      | object   | yes               | Extension points provided; **at least one** required.                                                                                                                                                            |
+| `settings`        | object   | no                | User-configurable settings, keyed by setting name.                                                                                                                                                               |
+| `updateUrl`       | string   | no                | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                             |
 
 ### Permissions
 
@@ -126,6 +128,37 @@ plugin, for instance, needs **none**.
 | `filesystem` | Reading and writing files (scoped to declared paths). |
 | `ui`         | Rendering UI components in designated slots.          |
 | `settings`   | Storing and reading plugin-specific configuration.    |
+
+### Filesystem paths
+
+A plugin with the `filesystem` permission reaches files only through termiHub's
+capability bridge, and only inside the folders it lists in `filesystemPaths`.
+The install dialog shows every listed folder, so list exactly the folders the
+plugin needs. Its own private data folder needs no entry: it is always
+available (see the host context's `data_dir`).
+
+Each entry must be:
+
+- **Absolute**, in POSIX form (`/var/log/app`) or Windows form
+  (`C:\Logs\app`, `D:/captures`, `\\server\share\folder`). One manifest serves
+  every platform, so an entry in another OS's form is accepted but grants
+  nothing on this one. A relative path, `~/…`, `C:folder` or `\folder` is
+  rejected: it would depend on termiHub's working directory.
+- **Normalised**: no `.` or `..` segments.
+- **Below a root**: not `/`, `C:\` or a bare network share
+  (`\\server\share`). Windows verbatim and device paths (`\\?\…`, `\\.\…`)
+  are rejected.
+- **Non-empty**, with no NUL byte.
+
+An entry that breaks one of these rules fails manifest validation, so the
+package does not pack or install. When the plugin loads, termiHub also refuses
+an entry that is, or contains, the user's home folder (such as `/Users` or
+`/home`), and any entry that overlaps termiHub's own config or plugins folder.
+Such a plugin fails to load with an error naming the entry. A subfolder of the
+home folder, such as `/Users/me/captures`, is fine.
+
+Requests are checked the same way at run time. A relative path is refused, and
+so is a path that leaves the declared folders through `..` or a symlink.
 
 ### Settings
 

@@ -9,8 +9,8 @@ subsystem: src-tauri/session/manager
 audit: 2026-10
 commit: 663465d52
 relation: new
-status: open
-resolution: ""
+status: fixed
+resolution: "#4300 — session writes/resizes run outside the session-map lock; per-session order kept, close defers disconnect"
 evidence:
   - src-tauri/src/session/manager.rs:1420
   - src-tauri/src/session/manager.rs:1425
