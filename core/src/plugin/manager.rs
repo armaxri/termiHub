@@ -1421,7 +1421,11 @@ fn invalid_manifest(id: &str, json: Option<&str>, reason: String) -> InvalidMani
 
 /// The [`InstalledPlugin`] for a plugin whose manifest was rejected: always
 /// [`PluginState::Error`] with the reason, regardless of its persisted flag.
-fn invalid_plugin_from(invalid: InvalidManifest, state: &StateStore, dir: &Path) -> InstalledPlugin {
+fn invalid_plugin_from(
+    invalid: InvalidManifest,
+    state: &StateStore,
+    dir: &Path,
+) -> InstalledPlugin {
     let installed_at = state
         .plugins
         .get(&invalid.manifest.id)

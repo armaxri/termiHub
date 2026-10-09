@@ -243,6 +243,55 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(uninstallPlugin).toHaveBeenCalledWith("k8s");
   });
 
+  it("shows the reason and Uninstall for a plugin whose manifest no longer validates (#4392)", async () => {
+    // The backend lists such a plugin as `error` under a placeholder manifest:
+    // id + leniently-read name/version/author, nothing capability-bearing.
+    const uninstallPlugin = vi.fn(() => Promise.resolve());
+    const reason = "plugin manifest `filesystemPaths` entry `/` is the filesystem root";
+    useAppStore.setState({
+      plugins: [
+        {
+          manifest: {
+            id: "old-plugin",
+            name: "Old Plugin",
+            version: "1.2.3",
+            author: "",
+            description: "",
+            license: "",
+            apiVersion: "",
+            platforms: [],
+            permissions: [],
+            extensions: {},
+          },
+          state: "error",
+          errorMessage: reason,
+          installedAt: 1767225600000,
+        },
+      ],
+      uninstallPlugin,
+    });
+    render("old-plugin");
+
+    expect(container.querySelector('[data-testid="plugin-detail"]')?.textContent).toContain(
+      "Old Plugin"
+    );
+    expect(container.querySelector('[data-testid="plugin-detail-error"]')?.textContent).toContain(
+      reason
+    );
+    act(() =>
+      container
+        .querySelector('[data-testid="plugin-action-uninstall"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    );
+    await act(async () => {
+      document
+        .querySelector('[data-testid="plugin-uninstall-confirm"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(uninstallPlugin).toHaveBeenCalledWith("old-plugin");
+  });
+
   describe("supported platforms (#3507)", () => {
     const backend = (libraries?: Record<string, string>) => ({
       extensions: {
