@@ -149,6 +149,34 @@ describe("useConnectSavedConnection", () => {
     expect(addTabSpy).not.toHaveBeenCalled();
   });
 
+  it("queues two concurrent connects' prompts and opens both tabs (#4312)", async () => {
+    const { connect } = await renderHook();
+    let first: Promise<unknown> = Promise.resolve();
+    let second: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      first = connect(makeSshConn("pw-a", "password"));
+      second = connect(makeSshConn("pw-b", "password"));
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    // Both prompts are pending; the first is shown, titled with its connection.
+    expect(useAppStore.getState().passwordPromptQueue).toHaveLength(2);
+    expect(useAppStore.getState().passwordPromptLabel).toBe("SSH pw-a");
+
+    await act(async () => {
+      useAppStore.getState().submitPassword("pw-1");
+      await first;
+    });
+    expect(useAppStore.getState().passwordPromptLabel).toBe("SSH pw-b");
+    await act(async () => {
+      useAppStore.getState().submitPassword("pw-2");
+      await second;
+    });
+
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(addTabSpy).toHaveBeenCalledTimes(2);
+    expect(addTabSpy.mock.calls.map((c) => c[0])).toEqual(["SSH pw-a", "SSH pw-b"]);
+  });
+
   it("does not prompt for password auth when a stored credential exists", async () => {
     mockedResolveCredential.mockResolvedValue("stored-secret");
     const { connect } = await renderHook();

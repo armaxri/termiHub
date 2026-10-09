@@ -488,11 +488,12 @@ export async function connectSavedConnection(
       // The prompt modal is now the feedback surface — clear the pre-connect
       // indicator before it appears (UX-011).
       dismissConnecting();
-      const password = sharedCredential
-        ? await requestPassword(host, username, rejectedCredentialNotice, "password", {
-            allowSave: false,
-          })
-        : await requestPassword(host, username, rejectedCredentialNotice);
+      // The label names the connection in the prompt title, so a queued
+      // prompt says which connect it belongs to (#4312).
+      const password = await requestPassword(host, username, rejectedCredentialNotice, "password", {
+        allowSave: !sharedCredential,
+        label: connection.name,
+      });
       if (password === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
@@ -518,11 +519,13 @@ export async function connectSavedConnection(
       // The prompt modal is now the feedback surface — clear the pre-connect
       // indicator before it appears (UX-011).
       dismissConnecting();
-      const passphrase = sharedCredential
-        ? await requestPassword(host, username, rejectedCredentialNotice, "key_passphrase", {
-            allowSave: false,
-          })
-        : await requestPassword(host, username, rejectedCredentialNotice, "key_passphrase");
+      const passphrase = await requestPassword(
+        host,
+        username,
+        rejectedCredentialNotice,
+        "key_passphrase",
+        { allowSave: !sharedCredential, label: connection.name }
+      );
       if (passphrase === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
         toast.info("Connect canceled");
