@@ -395,9 +395,10 @@ pub const SETUP_GATE_SETTLE: Duration = Duration::from_millis(300);
 pub const SETUP_GATE_CAP: Duration = Duration::from_secs(8);
 
 /// How long after typing the setup the gate waits for it to report back before
-/// typing it once more (#4604). The setup lines run in milliseconds once the
-/// prompt is up, so silence this long means the shell never received them.
-/// Every setup line is idempotent, so a second copy is harmless.
+/// typing it again (#4604), until [`SETUP_GATE_CAP`]. The setup lines run in
+/// milliseconds once the prompt is up, so silence this long means the shell
+/// never received them. Every setup line is idempotent, so a second copy is
+/// harmless.
 pub const SETUP_GATE_RETYPE: Duration = Duration::from_secs(3);
 
 /// How a held-back setup proves it has run ([`SetupGate`], #4604).
@@ -425,7 +426,7 @@ enum Phase {
     /// The setup has been typed; the user's input waits until it has run.
     AwaitSetup {
         deadline: Instant,
-        retype_at: Option<Instant>,
+        retype_at: Instant,
         last_output: Option<Instant>,
         marks: PromptMarkDetector,
     },
@@ -450,8 +451,8 @@ enum Phase {
 ///   not prove the shell ran it, so the user's input (typeahead, the first
 ///   command, a connection's initial command) stays held until the setup
 ///   reports back ([`SetupDone`]) — a readiness signal from the shell itself,
-///   not a timer. If it does not report within [`SETUP_GATE_RETYPE`] the setup
-///   is typed once more; [`SETUP_GATE_CAP`] bounds the wait.
+///   not a timer. Each time it does not report within [`SETUP_GATE_RETYPE`]
+///   the setup is typed again; [`SETUP_GATE_CAP`] bounds the wait.
 ///
 /// Held user input is released in its original order, after the setup.
 #[derive(Debug)]
@@ -548,10 +549,7 @@ impl SetupGate {
                 last_output,
                 ..
             } => {
-                let mut due = *deadline;
-                if let Some(at) = retype_at {
-                    due = due.min(*at);
-                }
+                let mut due = (*deadline).min(*retype_at);
                 if let (SetupDone::OutputSettled, Some(last)) = (self.done, last_output) {
                     due = due.min(*last + SETUP_GATE_SETTLE);
                 }
@@ -581,7 +579,7 @@ impl SetupGate {
                 }
                 self.phase = Phase::AwaitSetup {
                     deadline: now + SETUP_GATE_CAP,
-                    retype_at: Some(now + SETUP_GATE_RETYPE),
+                    retype_at: now + SETUP_GATE_RETYPE,
                     last_output: None,
                     marks: PromptMarkDetector::new(),
                 };
@@ -603,7 +601,7 @@ impl SetupGate {
                     return std::mem::take(&mut self.held);
                 }
                 // The retype is due: the shell has not answered the setup.
-                *retype_at = None;
+                *retype_at = now + SETUP_GATE_RETYPE;
                 *last_output = None;
                 debug!("the session setup did not report back; typing it again");
                 self.setup.clone()
@@ -1141,7 +1139,7 @@ mod tests {
     }
 
     #[test]
-    fn a_setup_the_shell_never_answered_is_typed_once_more() {
+    fn a_setup_the_shell_never_answered_is_typed_again() {
         // #4604: the starting shell dropped the first copy (no echo, no mark).
         let t0 = Instant::now();
         let mut gate = SetupGate::new(true, SetupDone::PromptMark, t0);
@@ -1157,8 +1155,8 @@ mod tests {
             vec![b"setup\r".to_vec()],
             "the setup is typed again, still ahead of the first command"
         );
-        // Only once: after that the cap is the bound.
-        assert_eq!(gate.next_check(), Some(t1 + SETUP_GATE_CAP));
+        // Again after another silent stretch, but never past the cap.
+        assert_eq!(gate.next_check(), Some(t1 + SETUP_GATE_RETYPE * 2));
         assert_eq!(
             output(&mut gate, t1 + SETUP_GATE_RETYPE + ms(50), MARKED_PROMPT),
             vec![b"first\r".to_vec()]
@@ -1197,6 +1195,7 @@ mod tests {
         assert_eq!(silent.poll(t0 + SETUP_GATE_CAP), vec![b"a".to_vec()]);
         let t1 = t0 + SETUP_GATE_CAP;
         assert_eq!(silent.poll(t1 + SETUP_GATE_RETYPE), vec![b"a".to_vec()]);
+        assert_eq!(silent.poll(t1 + SETUP_GATE_RETYPE * 2), vec![b"a".to_vec()]);
         assert_eq!(silent.poll(t1 + SETUP_GATE_CAP), vec![b"user".to_vec()]);
         assert!(!silent.is_holding());
 
