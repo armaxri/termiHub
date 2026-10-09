@@ -501,6 +501,25 @@ mod tests {
     }
 
     #[test]
+    fn plugin_declared_secrets_are_classified_as_secrets() {
+        // A plugin declares a secret with `format: "password"` or the standard
+        // JSON-Schema `writeOnly: true`, under any key (#4289).
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "apiToken": { "type": "string", "writeOnly": true },
+                "pin": { "type": "string", "format": "password" },
+                "host": { "type": "string" }
+            }
+        });
+        let out = config_schema_to_settings_schema(&schema);
+        assert_eq!(
+            crate::connection::secrets::schema_secret_keys(&out),
+            vec!["apiToken".to_string(), "pin".to_string()]
+        );
+    }
+
+    #[test]
     fn label_falls_back_to_humanized_key_without_title() {
         let schema = serde_json::json!({
             "type": "object",
