@@ -83,6 +83,7 @@ SCRIPTS=(
   "scripts/internal/assert-no-test-bridge.sh"
   "scripts/internal/build-system-test-agent.sh"
   "scripts/internal/build-system-test-app.sh"
+  "scripts/internal/check-release-crash-symbols.sh"
   "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/dev-release-publish.sh"
   "scripts/internal/fetch-conpty.sh"

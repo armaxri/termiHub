@@ -6,9 +6,9 @@
 //! both **count** ([`MAX_REPORTS`]) and **age** ([`MAX_REPORT_AGE`]) via
 //! [`prune`], so a crash loop can never fill the disk.
 //!
-//! What a report contains: the app name, version, OS / architecture, a UTC
-//! timestamp, the panicking thread and source location, the panic message
-//! (capped at [`MAX_MESSAGE_BYTES`]) and a backtrace (capped at
+//! What a report contains: the app name, version, git commit, OS /
+//! architecture, a UTC timestamp, the panicking thread and source location, the
+//! panic message (capped at [`MAX_MESSAGE_BYTES`]) and a backtrace (capped at
 //! [`MAX_BACKTRACE_BYTES`]). Everything is run through [`Redactor`] first. It
 //! never contains terminal session content, connection configs, or credentials
 //! by construction — only the panic payload, which is size-capped and redacted
@@ -63,6 +63,9 @@ pub struct CrashDetails {
     pub app: String,
     /// The program's version.
     pub version: String,
+    /// The short git commit the binary was built from (`GIT_HASH`), so a report
+    /// can be matched to the exact source and build that produced it.
+    pub git_hash: String,
     /// The panicking thread's name, if it has one.
     pub thread: Option<String>,
     /// `file:line:col` of the panic, if known.
@@ -71,6 +74,54 @@ pub struct CrashDetails {
     pub message: String,
     /// The captured backtrace, rendered.
     pub backtrace: String,
+}
+
+impl CrashDetails {
+    /// Gather the details of the panic being reported. Call it from inside a
+    /// panic hook: it reads the payload and location from `info` and
+    /// force-captures a backtrace regardless of `RUST_BACKTRACE` (a crash is rare
+    /// and high-value, so the cost is irrelevant).
+    ///
+    /// The backtrace names functions only if the binary keeps its symbol table.
+    /// Release builds use `strip = "debuginfo"` (root `Cargo.toml`, #4316) for
+    /// exactly this reason: `strip = true` removed the symbol table and every
+    /// frame of a shipped build's report read `<unknown>`. Neither profile keeps
+    /// DWARF (`[profile.dev] debug = 0`, release default `debug = 0`), so frames
+    /// carry function names but no source line. Windows is the exception: MSVC
+    /// keeps symbols in a `.pdb` next to the build, which is not shipped, so a
+    /// field report from Windows still shows bare addresses.
+    ///
+    /// Never inlined, so this function appears as a resolved `termihub_core`
+    /// frame near the top of every report — the release-symbol check
+    /// (`scripts/internal/check-release-crash-symbols.sh`) relies on that.
+    #[inline(never)]
+    pub fn capture(
+        info: &std::panic::PanicHookInfo<'_>,
+        app: &str,
+        version: &str,
+        git_hash: &str,
+    ) -> Self {
+        // Rust panics carry either `&str` (from `panic!("literal")`) or `String`
+        // (from `panic!("{}", x)`); anything else is opaque.
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "Box<dyn Any>".to_string());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+        Self {
+            app: app.to_string(),
+            version: version.to_string(),
+            git_hash: git_hash.to_string(),
+            thread: std::thread::current().name().map(str::to_string),
+            location,
+            message,
+            backtrace: std::backtrace::Backtrace::force_capture().to_string(),
+        }
+    }
 }
 
 /// One crash report on disk.
@@ -106,6 +157,7 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
          =====================\n\
          app:       {app}\n\
          version:   {version}\n\
+         commit:    {commit}\n\
          os:        {os} ({family}, {arch})\n\
          time:      {time}\n\
          thread:    {thread}\n\
@@ -120,6 +172,11 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
          redacted. Terminal session content is never recorded.\n",
         app = details.app,
         version = details.version,
+        commit = if details.git_hash.is_empty() {
+            "unknown"
+        } else {
+            details.git_hash.as_str()
+        },
         os = std::env::consts::OS,
         family = std::env::consts::FAMILY,
         arch = std::env::consts::ARCH,
