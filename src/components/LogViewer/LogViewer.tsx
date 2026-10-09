@@ -7,12 +7,33 @@ import { LogEntry } from "@/types/terminal";
 import { Button, SearchInput, toast } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
-import { fireAndForget, frontendWarn, onFrontendLog } from "@/utils/frontendLog";
+import {
+  clearFrontendLogHistory,
+  fireAndForget,
+  frontendWarn,
+  onFrontendLog,
+} from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
+
+/**
+ * Target the backend re-emits forwarded frontend WARN/ERROR entries under
+ * (`record_frontend_log`, OBS-001). The viewer already shows the direct
+ * `frontend::<module>` copy from the frontend log history, so it drops this
+ * echo instead of listing every frontend warning twice (#4327, OBS2-004).
+ */
+const BACKEND_FRONTEND_ECHO_TARGET = "frontend";
+
+function isFrontendEcho(entry: LogEntry): boolean {
+  return entry.target === BACKEND_FRONTEND_ECHO_TARGET;
+}
+
+function capEntries(entries: LogEntry[]): LogEntry[] {
+  return entries.length > MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES) : entries;
+}
 
 const LEVELS = ["ERROR", "WARN", "INFO", "DEBUG"] as const;
 type LogLevel = (typeof LEVELS)[number];
@@ -35,17 +56,29 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   useEffect(() => {
     let cancelled = false;
 
+    const addEntry = (entry: LogEntry) => {
+      if (!cancelled) {
+        setEntries((prev) => capEntries([...prev, entry]));
+      }
+    };
+
+    // Seed from the frontend log history, replacing (not appending to) state so
+    // StrictMode's second effect run cannot list the replayed entries twice.
+    const replayed: LogEntry[] = [];
+    let replaying = true;
+    const unsubFrontend = onFrontendLog(
+      (entry) => (replaying ? replayed.push(entry) : addEntry(entry)),
+      { replayHistory: true }
+    );
+    replaying = false;
+    setEntries(capEntries(replayed));
+
     getLogs(MAX_ENTRIES)
       .then((buffered) => {
         if (!cancelled) {
-          // Prepend backend-buffered entries to any frontend log entries that
-          // may have already been added by the startup buffer flush.
-          setEntries((prev) => {
-            const combined = [...buffered, ...prev];
-            return combined.length > MAX_ENTRIES
-              ? combined.slice(combined.length - MAX_ENTRIES)
-              : combined;
-          });
+          // Prepend the backend backlog to the frontend entries already shown.
+          const backend = buffered.filter((entry) => !isFrontendEcho(entry));
+          setEntries((prev) => capEntries([...backend, ...prev]));
         }
       })
       .catch((err: unknown) => {
@@ -54,20 +87,9 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         frontendWarn("log_viewer", `loading buffered backend logs failed: ${errorMessage(err)}`);
       });
 
-    const addEntry = (entry: LogEntry) => {
-      if (!cancelled) {
-        setEntries((prev) => {
-          const next = [...prev, entry];
-          if (next.length > MAX_ENTRIES) {
-            return next.slice(next.length - MAX_ENTRIES);
-          }
-          return next;
-        });
-      }
-    };
-
-    const unlistenPromise = onLogEntry(addEntry);
-    const unsubFrontend = onFrontendLog(addEntry);
+    const unlistenPromise = onLogEntry((entry) => {
+      if (!isFrontendEcho(entry)) addEntry(entry);
+    });
 
     return () => {
       cancelled = true;
@@ -101,6 +123,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   const handleClear = useCallback(async () => {
     try {
       await clearLogs();
+      clearFrontendLogHistory();
       setEntries([]);
     } catch (err) {
       toast.error("Could not clear logs", { description: errorMessage(err) });

@@ -14,6 +14,7 @@ vi.mock("@/services/events", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({
   onFrontendLog: vi.fn(() => () => {}),
+  clearFrontendLogHistory: vi.fn(),
   fireAndForget: vi.fn(),
   frontendWarn: vi.fn(),
 }));
