@@ -12,7 +12,8 @@
 //! (audit findings AGT-001, AGT-009, TBE-009).
 //!
 //! Only self-contained protocol types (serde DTOs over `termihub-core` types) are
-//! re-exported here; the rest of the agent remains internal to the binary.
+//! re-exported here; the rest of the agent remains internal to the binary — with
+//! one exception, [`tunnel`] (below).
 
 // TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
 // policy (see `.claude/CLAUDE.md` → Rust). Denied for non-test builds; test code
@@ -28,3 +29,9 @@ pub mod protocol;
 // OBS-004): the wire type + parser the desktop links against, and the encoder
 // layer the agent installs, kept together so they cannot drift.
 pub mod log_frame;
+
+// Agent-hosted SSH tunnel forwarding. Lives in the library (and the binary
+// re-uses it from here) so `tests/tunnel_integration.rs` can drive the real
+// registry end to end in its own process (#4288, TBE2-001). It depends only on
+// `termihub-core`.
+pub mod tunnel;
