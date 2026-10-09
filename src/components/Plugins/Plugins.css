@@ -465,6 +465,14 @@
   color: var(--text-secondary);
 }
 
+.plugin-install__perm-paths {
+  margin: var(--spacing-xs) 0 0;
+  padding-left: var(--spacing-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
 /* ── Signer-change (publisher key changed) confirmation (#3489) ────────── */
 .plugin-signer-change__message {
   margin: 0 0 var(--spacing-md);

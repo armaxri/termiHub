@@ -64,7 +64,8 @@ permissions: Array<PluginPermission>,
  * the [`Filesystem`](PluginPermission::Filesystem) permission: the host
  * confines the plugin's filesystem access to these roots (concept §13, "must
  * declare which paths they need"). Absent/empty for plugins that request no
- * filesystem access.
+ * filesystem access. Each entry must be an absolute, normalised path below
+ * a filesystem root ([`validate`](Self::validate), #4293).
  */
 filesystemPaths?: Array<string>, 
 /**

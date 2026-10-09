@@ -32,6 +32,7 @@ fn config(id: &str, server_type: ServerType, root: &std::path::Path) -> Embedded
         ftp_auth: None,
         http_auth: None,
         max_transfer_bytes: None,
+        max_concurrent_sessions: None,
         extra: Default::default(),
     }
 }

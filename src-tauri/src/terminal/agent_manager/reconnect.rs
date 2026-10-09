@@ -4,8 +4,9 @@
 //! agent under the shared [`AGENT_RECONNECT_POLICY`] backoff, with a connect that
 //! is cancellable on the shared `alive` flag (CONC-002).
 //!
-//! Carved verbatim out of the parent `agent_manager` module: no behaviour,
-//! backoff, channel, lock, task or timeout change.
+//! Carved out of the parent `agent_manager` module. Since #4304 each attempt's
+//! post-auth handshake ([`reconnect_handshake`]) is bounded too, so an agent
+//! that never answers `initialize` fails the attempt instead of hanging it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,7 +22,9 @@ use termihub_core::reconnect_backoff::{
     ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
 
-use super::{build_initialize_params, read_handshake_line, serialize_request};
+use super::{
+    build_initialize_params, read_handshake_line, serialize_request, AGENT_HANDSHAKE_TIMEOUT,
+};
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_update_auth::token_path_from_initialize;
 use crate::terminal::backend::RemoteAgentConfig;
@@ -131,18 +134,20 @@ pub(super) async fn reconnect_agent(
         //    instead of parking the I/O task for the whole connect timeout
         //    (CONC-002). The connect itself stays bounded by the 45 s
         //    `SshConfig::connect_timeout`. A watcher task fires the token the
-        //    moment `alive` goes false and is aborted once the connect returns.
+        //    moment `alive` goes false; it also covers the handshake below and
+        //    is aborted once the attempt settles.
         let connect_token = CancellationToken::new();
         // Not app-owned (#3105): connect-scoped; aborted once the connect returns.
         let cancel_watcher = tokio::spawn(cancel_connect_when_disconnected(
             alive.clone(),
             connect_token.clone(),
         ));
-        let connect_result = connect_and_authenticate_cancellable(&ssh_config, connect_token);
-        cancel_watcher.abort();
+        let connect_result =
+            connect_and_authenticate_cancellable(&ssh_config, connect_token.clone());
         let session = match connect_result {
             Ok(s) => s,
             Err(e) => {
+                cancel_watcher.abort();
                 // A Disconnect that fired the token aborts the loop now rather
                 // than looping into another backoff (CONC-002).
                 if !alive.load(Ordering::SeqCst) {
@@ -159,165 +164,31 @@ pub(super) async fn reconnect_agent(
             }
         };
 
-        // 2. Open channel and start agent
-        let mut channel = match session.channel_open_session().await {
-            Ok(c) => c,
+        // 2-4. The post-auth handshake, bounded as one step and raced against
+        //    the same `alive`-driven cancel token (CONC2-004, #4304): an agent
+        //    that execs but never answers `initialize` fails this attempt after
+        //    `AGENT_HANDSHAKE_TIMEOUT`, so backoff and give-up proceed instead of
+        //    the task hanging in `reconnecting` forever.
+        let handshake = reconnect_handshake(
+            &session,
+            config,
+            agent_settings,
+            request_id,
+            AGENT_HANDSHAKE_TIMEOUT,
+            &connect_token,
+        )
+        .await;
+        cancel_watcher.abort();
+        match handshake {
+            Ok((channel, buffered, token_path)) => {
+                return Ok((session, channel, buffered, token_path));
+            }
             Err(e) => {
-                warn!("Reconnect attempt {} failed (channel): {}", attempt + 1, e);
-                state = reconnect_reducer(
-                    &state,
-                    ReconnectEvent::Failure,
-                    &AGENT_RECONNECT_POLICY,
-                    &mut jitter,
-                );
-                continue;
+                if !alive.load(Ordering::SeqCst) {
+                    return Err("Reconnect stopped by user".to_string());
+                }
+                warn!("Reconnect attempt {} failed ({})", attempt + 1, e);
             }
-        };
-        let exec_cmd = config.agent_exec_command();
-        if let Err(e) = channel.exec(false, exec_cmd.as_str()).await {
-            warn!("Reconnect attempt {} failed (exec): {}", attempt + 1, e);
-            state = reconnect_reducer(
-                &state,
-                ReconnectEvent::Failure,
-                &AGENT_RECONNECT_POLICY,
-                &mut jitter,
-            );
-            continue;
-        }
-
-        // 3. Initialize
-        *request_id += 1;
-        let enabled_files: Vec<&str> = config
-            .external_connection_files
-            .iter()
-            .filter(|f| f.enabled)
-            .map(|f| f.path.as_str())
-            .collect();
-        let init_params = build_initialize_params(agent_settings, &enabled_files);
-        let req_line = match serialize_request(
-            *request_id,
-            termihub_core::protocol::methods::INITIALIZE,
-            init_params,
-        ) {
-            Ok(l) => l,
-            Err(e) => {
-                warn!(
-                    "Reconnect attempt {} failed (serialize init): {}",
-                    attempt + 1,
-                    e
-                );
-                state = reconnect_reducer(
-                    &state,
-                    ReconnectEvent::Failure,
-                    &AGENT_RECONNECT_POLICY,
-                    &mut jitter,
-                );
-                continue;
-            }
-        };
-
-        if let Err(e) = channel.data(req_line.as_bytes()).await {
-            warn!(
-                "Reconnect attempt {} failed (write init): {}",
-                attempt + 1,
-                e
-            );
-            state = reconnect_reducer(
-                &state,
-                ReconnectEvent::Failure,
-                &AGENT_RECONNECT_POLICY,
-                &mut jitter,
-            );
-            continue;
-        }
-
-        // 4. Read the initialize response, skipping any notifications the agent
-        // emits before answering (e.g. output from a session it recovered on
-        // startup). Loop until the message whose id matches our request arrives.
-        const MAX_PRE_INIT_MESSAGES: u32 = 1000;
-        let mut line_buf = String::new();
-        let mut skipped: u32 = 0;
-        let mut success = false;
-        // AGT-003 (#3213): the new instance's update auth token file.
-        let mut token_path: Option<String> = None;
-        // Notifications the agent emits before answering `initialize` on this
-        // reconnect — buffered for replay after the channel is handed back, so
-        // an on-attach notice is not dropped (#1660). Reset per attempt: a
-        // failed attempt's buffer belongs to a channel that is being discarded.
-        let mut buffered: Vec<(String, Value)> = Vec::new();
-        loop {
-            let resp_line =
-                match read_handshake_line(&mut channel, &config.host, &mut line_buf).await {
-                    Some(line) => line,
-                    None => {
-                        warn!(
-                            "Reconnect attempt {} failed (channel closed during init read)",
-                            attempt + 1
-                        );
-                        break;
-                    }
-                };
-
-            let msg = match jsonrpc::parse_message(&resp_line) {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!(
-                        "Reconnect attempt {} failed (parse init response): {}",
-                        attempt + 1,
-                        e
-                    );
-                    break;
-                }
-            };
-
-            match jsonrpc::classify_handshake_message(msg, *request_id) {
-                jsonrpc::HandshakeOutcome::Response(result) => {
-                    // Only the token path matters here; the capabilities are
-                    // ignored, and a malformed result still counts as a
-                    // successful re-initialize (as before DUP-001, #3226).
-                    token_path =
-                        serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(result)
-                            .ok()
-                            .and_then(|r| token_path_from_initialize(&r));
-                    success = true;
-                    break;
-                }
-                jsonrpc::HandshakeOutcome::Rejected(message) => {
-                    warn!(
-                        "Reconnect attempt {} failed (init rejected): {}",
-                        attempt + 1,
-                        message
-                    );
-                    break;
-                }
-                jsonrpc::HandshakeOutcome::Buffer { method, params } => {
-                    skipped += 1;
-                    if skipped > MAX_PRE_INIT_MESSAGES {
-                        warn!(
-                            "Reconnect attempt {} failed (too many messages before init response)",
-                            attempt + 1
-                        );
-                        break;
-                    }
-                    buffered.push((method, params));
-                    continue;
-                }
-                jsonrpc::HandshakeOutcome::Skip => {
-                    skipped += 1;
-                    if skipped > MAX_PRE_INIT_MESSAGES {
-                        warn!(
-                            "Reconnect attempt {} failed (too many messages before init response)",
-                            attempt + 1
-                        );
-                        break;
-                    }
-                    continue;
-                }
-            }
-        }
-
-        if success {
-            return Ok((session, channel, buffered, token_path));
         }
 
         // The init handshake did not complete (channel closed / rejected / parse
@@ -335,4 +206,119 @@ pub(super) async fn reconnect_agent(
         "Failed to reconnect after {} attempts",
         AGENT_RECONNECT_POLICY.max_attempts
     ))
+}
+
+/// One reconnect attempt's post-auth handshake: open the exec channel, launch
+/// the agent, write `initialize` and read its answer — the whole of it bounded
+/// by `timeout` and aborted as soon as `cancel` fires (CONC2-004, #4304).
+///
+/// Returns the ready channel, the notifications the agent sent before
+/// answering (replayed after the channel is handed back, #1660) and the new
+/// instance's update auth token path (AGT-003, #3213); or a short reason the
+/// attempt failed, which the caller counts as a [`ReconnectEvent::Failure`].
+#[allow(clippy::type_complexity)]
+pub(super) async fn reconnect_handshake(
+    session: &SshSession,
+    config: &RemoteAgentConfig,
+    agent_settings: &AgentSettings,
+    request_id: &mut u64,
+    timeout: std::time::Duration,
+    cancel: &CancellationToken,
+) -> Result<
+    (
+        russh::Channel<russh::client::Msg>,
+        Vec<(String, Value)>,
+        Option<String>,
+    ),
+    String,
+> {
+    let steps = async {
+        // 2. Open channel and start agent
+        let mut channel = session
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("channel: {e}"))?;
+        let exec_cmd = config.agent_exec_command();
+        channel
+            .exec(false, exec_cmd.as_str())
+            .await
+            .map_err(|e| format!("exec: {e}"))?;
+
+        // 3. Initialize
+        *request_id += 1;
+        let enabled_files: Vec<&str> = config
+            .external_connection_files
+            .iter()
+            .filter(|f| f.enabled)
+            .map(|f| f.path.as_str())
+            .collect();
+        let init_params = build_initialize_params(agent_settings, &enabled_files);
+        let req_line = serialize_request(
+            *request_id,
+            termihub_core::protocol::methods::INITIALIZE,
+            init_params,
+        )
+        .map_err(|e| format!("serialize init: {e}"))?;
+        channel
+            .data(req_line.as_bytes())
+            .await
+            .map_err(|e| format!("write init: {e}"))?;
+
+        // 4. Read the initialize response, skipping any notifications the agent
+        // emits before answering (e.g. output from a session it recovered on
+        // startup). Loop until the message whose id matches our request arrives.
+        // Notifications it emits first are buffered for replay after the
+        // channel is handed back, so an on-attach notice is not dropped (#1660).
+        // The buffer is per attempt: a failed attempt's belongs to a channel
+        // that is being discarded.
+        const MAX_PRE_INIT_MESSAGES: u32 = 1000;
+        let mut line_buf = String::new();
+        let mut skipped: u32 = 0;
+        let mut buffered: Vec<(String, Value)> = Vec::new();
+        loop {
+            let resp_line = read_handshake_line(&mut channel, &config.host, &mut line_buf)
+                .await
+                .ok_or_else(|| "channel closed during init read".to_string())?;
+            let msg = jsonrpc::parse_message(&resp_line)
+                .map_err(|e| format!("parse init response: {e}"))?;
+            match jsonrpc::classify_handshake_message(msg, *request_id) {
+                jsonrpc::HandshakeOutcome::Response(result) => {
+                    // Only the token path matters here; the capabilities are
+                    // ignored, and a malformed result still counts as a
+                    // successful re-initialize (as before DUP-001, #3226).
+                    let token_path =
+                        serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(result)
+                            .ok()
+                            .and_then(|r| token_path_from_initialize(&r));
+                    return Ok((channel, buffered, token_path));
+                }
+                jsonrpc::HandshakeOutcome::Rejected(message) => {
+                    return Err(format!("init rejected: {message}"));
+                }
+                jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                    skipped += 1;
+                    if skipped > MAX_PRE_INIT_MESSAGES {
+                        return Err("too many messages before init response".to_string());
+                    }
+                    buffered.push((method, params));
+                }
+                jsonrpc::HandshakeOutcome::Skip => {
+                    skipped += 1;
+                    if skipped > MAX_PRE_INIT_MESSAGES {
+                        return Err("too many messages before init response".to_string());
+                    }
+                }
+            }
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err("handshake cancelled".to_string()),
+        res = tokio::time::timeout(timeout, steps) => res.unwrap_or_else(|_| {
+            Err(format!(
+                "handshake timed out: no initialize response within {}s",
+                timeout.as_secs_f32()
+            ))
+        }),
+    }
 }

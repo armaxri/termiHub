@@ -9,8 +9,8 @@ subsystem: src-tauri/terminal/agent_manager/reconnect
 audit: 2026-10
 commit: 663465d52
 relation: new
-status: open
-resolution: ""
+status: fixed
+resolution: "#4304 — post-auth handshake (channel open, exec, initialize) bounded by AGENT_HANDSHAKE_TIMEOUT (45 s) on connect and per reconnect attempt, raced against the alive cancel token; timeout counts as a failed attempt"
 evidence:
   - src-tauri/src/terminal/agent_manager/reconnect.rs:163
   - src-tauri/src/terminal/agent_manager/reconnect.rs:177

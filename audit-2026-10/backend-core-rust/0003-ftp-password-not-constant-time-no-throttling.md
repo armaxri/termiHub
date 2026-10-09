@@ -13,8 +13,8 @@ evidence:
   - core/src/embedded_servers/ftp_server.rs:95
   - core/src/embedded_servers/ftp_server.rs:256
   - core/src/embedded_servers/http_server.rs:279
-status: open
-resolution: ""
+status: fixed
+resolution: "#4292 — constant-time secret_eq for user+password; server-wide per-IP lockout (5 fails/60 s), bounded table"
 audit: 2026-10
 commit: 663465d52
 relation: new

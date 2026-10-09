@@ -913,7 +913,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
 ///
 /// The command channel receiver is dropped immediately — none of the
 /// hygiene helpers send over it — so only `alive` is meaningful here.
-fn make_agent_connection(alive: bool) -> AgentConnection {
+pub(super) fn make_agent_connection(alive: bool) -> AgentConnection {
     let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
     let mut conn = make_agent_connection_with_tx(command_tx);
     conn.alive = Arc::new(AtomicBool::new(alive));
@@ -926,14 +926,20 @@ fn make_agent_connection(alive: bool) -> AgentConnection {
 #[test]
 fn reap_agent_removes_its_own_map_entry() {
     let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+    let budgets: IoBudgetMap = Arc::new(Mutex::new(HashMap::new()));
+    let own = make_agent_connection(false);
+    let own_alive = own.alive.clone();
+    let own_budget = IoBudget::new(AGENT_IO_DATA_BUDGET);
     {
         let mut guard = agents.lock().unwrap();
-        guard.insert("agent-1".to_string(), make_agent_connection(false));
+        guard.insert("agent-1".to_string(), own);
         guard.insert("agent-2".to_string(), make_agent_connection(true));
+        let mut b = budgets.lock().unwrap();
+        b.insert("agent-1".to_string(), own_budget.clone());
+        b.insert("agent-2".to_string(), IoBudget::new(AGENT_IO_DATA_BUDGET));
     }
 
-    let weak = Arc::downgrade(&agents);
-    reap_agent(&weak, "agent-1");
+    reap_agent(&reaper_for(&agents, &budgets), "agent-1", &own_alive);
 
     let guard = agents.lock().unwrap();
     assert!(
@@ -944,17 +950,65 @@ fn reap_agent_removes_its_own_map_entry() {
         guard.contains_key("agent-2"),
         "unrelated agents must be left untouched"
     );
+    let b = budgets.lock().unwrap();
+    assert!(
+        !b.contains_key("agent-1"),
+        "the reaped agent's I/O budget goes with its entry (#4304)"
+    );
+    assert!(b.contains_key("agent-2"));
+}
+
+/// The [`AgentReaper`] a task spawned against these maps would hold.
+fn reaper_for(agents: &AgentMap, budgets: &IoBudgetMap) -> AgentReaper {
+    AgentReaper {
+        agents: Arc::downgrade(agents),
+        io_budgets: Arc::downgrade(budgets),
+    }
+}
+
+/// CONC2-005 (#4304): a late reap from an old connection's I/O task must not
+/// evict a newer connection that a concurrent `connect_agent` has published
+/// under the same id — nor its I/O budget.
+#[test]
+fn reap_agent_spares_a_newer_entry_with_the_same_id() {
+    let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+    let budgets: IoBudgetMap = Arc::new(Mutex::new(HashMap::new()));
+    // The old task's own `alive` flag: its entry has since been replaced.
+    let stale_alive = Arc::new(AtomicBool::new(false));
+    let newer_budget = IoBudget::new(AGENT_IO_DATA_BUDGET);
+    agents
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), make_agent_connection(true));
+    budgets
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), newer_budget.clone());
+
+    reap_agent(&reaper_for(&agents, &budgets), "agent-1", &stale_alive);
+
+    assert!(
+        agents.lock().unwrap().contains_key("agent-1"),
+        "a stale reap must leave the newer connection in place"
+    );
+    let b = budgets.lock().unwrap();
+    assert!(
+        b.get("agent-1")
+            .is_some_and(|kept| Arc::ptr_eq(kept, &newer_budget)),
+        "a stale reap must leave the newer connection's budget in place"
+    );
 }
 
 /// A dead weak reference (manager already dropped) must not panic.
 #[test]
 fn reap_agent_tolerates_dropped_manager() {
-    let weak = {
+    let reaper = {
         let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
-        Arc::downgrade(&agents)
+        let budgets: IoBudgetMap = Arc::new(Mutex::new(HashMap::new()));
+        reaper_for(&agents, &budgets)
     };
     // Should be a no-op, not a panic.
-    reap_agent(&weak, "agent-1");
+    reap_agent(&reaper, "agent-1", &Arc::new(AtomicBool::new(false)));
 }
 
 /// Prune sweeps every `alive == false` entry and returns the removed ids,
@@ -2106,8 +2160,18 @@ fn manager_with_live_agent(
 /// reattach config it carried — is gone; only the retained store can
 /// re-establish it.
 fn simulate_reap<R: Runtime>(manager: &AgentConnectionManager<R>, agent_id: &str) {
-    let weak = Arc::downgrade(&manager.agents);
-    reap_agent(&weak, agent_id);
+    let own_alive = manager
+        .agents
+        .lock()
+        .unwrap()
+        .get(agent_id)
+        .map(|conn| conn.alive.clone())
+        .expect("the reaping task's own entry is present");
+    reap_agent(
+        &reaper_for(&manager.agents, &manager.io_budgets),
+        agent_id,
+        &own_alive,
+    );
 }
 
 #[test]

@@ -66,6 +66,7 @@ const serverFormSchema = z
     ftpAuth: ftpAuthSchema.optional(),
     httpAuth: httpAuthSchema.optional(),
     maxTransferBytes: z.number().optional(),
+    maxConcurrentSessions: z.number().optional(),
   })
   .superRefine((form, ctx) => {
     if (form.name.trim() === "") {
