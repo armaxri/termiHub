@@ -45,7 +45,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::backends::rdp_sidecar::config::{RdpConfig, SecurityMode};
 use termihub_core::backends::rdp_sidecar::protocol::{
-    read_message, write_message, HostMessage, MessageReader, SidecarMessage,
+    read_message, write_message, HostMessage, MessageReader, SidecarFailureKind, SidecarMessage,
 };
 use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
@@ -163,10 +163,24 @@ where
 {
     let host = cfg.host.clone();
     let port = cfg.effective_port();
+    // Bound the TCP connect and the X.224 / TLS negotiation by the connect
+    // timeout (#4320, #4401): a firewalled host otherwise waits out the OS TCP
+    // timeout, and a peer that accepts TCP but never speaks RDP hangs the
+    // negotiation forever. The interactive certificate decision is excluded
+    // (a human is reading the fingerprint; it has its own bound), and the
+    // CredSSP exchange after it gets a fresh deadline.
+    let timeout = cfg.connect_timeout();
+    let target = format!("{host}:{port}");
+    let deadline = tokio::time::Instant::now() + timeout;
 
-    let tcp = TcpStream::connect((host.as_str(), port))
-        .await
-        .with_context(|| format!("RDP TCP connect to {host}:{port} failed"))?;
+    let tcp = within(
+        deadline,
+        timeout,
+        &target,
+        TcpStream::connect((host.as_str(), port)),
+    )
+    .await?
+    .with_context(|| format!("RDP TCP connect to {target} failed"))?;
     let client_addr = tcp.local_addr().context("RDP local address failed")?;
 
     let connector_config = build_connector_config(cfg)?;
@@ -226,17 +240,27 @@ where
 
     // 1) X.224 negotiation up to the security-upgrade point.
     let mut framed = TokioFramed::new(tcp);
-    let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector)
-        .await
-        .context("RDP X.224 negotiation failed")?;
+    let should_upgrade = within(
+        deadline,
+        timeout,
+        &target,
+        ironrdp_tokio::connect_begin(&mut framed, &mut connector),
+    )
+    .await?
+    .context("RDP X.224 negotiation failed")?;
 
     // 2) TLS upgrade. IronRDP's TLS layer accepts the server certificate at the
     //    handshake so CredSSP can bind trust to the server public key; we then
     //    gate on that key ourselves (#1758) rather than accepting blindly.
     let (initial_stream, leftover) = framed.into_inner();
-    let (tls_stream, server_cert) = ironrdp_tls::upgrade(initial_stream, host.as_str())
-        .await
-        .context("RDP TLS upgrade failed")?;
+    let (tls_stream, server_cert) = within(
+        deadline,
+        timeout,
+        &target,
+        ironrdp_tls::upgrade(initial_stream, host.as_str()),
+    )
+    .await?
+    .context("RDP TLS upgrade failed")?;
     let server_public_key = ironrdp_tls::extract_tls_server_public_key(&server_cert)
         .ok_or_else(|| anyhow!("could not extract RDP server public key"))?
         .to_vec();
@@ -268,19 +292,60 @@ where
 
     // 3) CredSSP/NLA + channel join + capability exchange.
     let mut network_client = ReqwestNetworkClient::new();
-    let result = crate::nla::connect_finalize(
-        upgraded,
-        connector,
-        &mut framed,
-        &mut network_client,
-        ServerName::new(host),
-        server_public_key,
-        cfg.multi_monitor_layout().as_ref(),
+    let result = within(
+        tokio::time::Instant::now() + timeout,
+        timeout,
+        &target,
+        crate::nla::connect_finalize(
+            upgraded,
+            connector,
+            &mut framed,
+            &mut network_client,
+            ServerName::new(host),
+            server_public_key,
+            cfg.multi_monitor_layout().as_ref(),
+        ),
     )
-    .await
+    .await?
     .context("RDP CredSSP / capability exchange failed")?;
 
     Ok((result, framed, connector_config, clipboard_rx))
+}
+
+/// A clipboard event failure ends the session (the CLIPRDR state can no longer
+/// be trusted). Log it — the desktop forwards the line into its log (#4320) —
+/// and send the typed [`SidecarMessage::Failure`] first so the desktop records
+/// *why* the session ended instead of an unexplained disconnect (OBS2-003).
+async fn report_clipboard_failure<W>(ipc_out: &mut W, error: &anyhow::Error)
+where
+    W: AsyncWrite + Unpin,
+{
+    let message = format!("clipboard event failed; ending the session: {error:#}");
+    warn!("{message}");
+    let _ = write_message(
+        ipc_out,
+        &SidecarMessage::Failure {
+            kind: SidecarFailureKind::Connect,
+            message,
+        },
+    )
+    .await;
+}
+
+/// Run one connect step against `deadline`, failing with the typed
+/// [`failure::ConnectTimedOut`] (#4320, #4401) when it elapses.
+async fn within<F: std::future::Future>(
+    deadline: tokio::time::Instant,
+    timeout: std::time::Duration,
+    target: &str,
+    step: F,
+) -> Result<F::Output> {
+    tokio::time::timeout_at(deadline, step).await.map_err(|_| {
+        anyhow::Error::new(failure::ConnectTimedOut {
+            target: target.to_string(),
+            secs: timeout.as_secs(),
+        })
+    })
 }
 
 /// How long the sidecar blocks the connect waiting for the host's interactive
@@ -847,7 +912,7 @@ where
                         )
                         .await
                         {
-                            warn!(error = format!("{e:#}"), "clipboard event failed; ending the session");
+                            report_clipboard_failure(ipc_out, &e).await;
                             break;
                         }
                     }
@@ -893,7 +958,7 @@ where
                 )
                 .await
                 {
-                    warn!(error = format!("{e:#}"), "clipboard event failed; ending the session");
+                    report_clipboard_failure(ipc_out, &e).await;
                     break;
                 }
                 match handle_outputs(outputs, &image, &mut writer, ipc_out, &mut cursor).await {
@@ -1992,3 +2057,7 @@ mod tests {
             .any(|o| matches!(o, ActiveStageOutput::DeactivateAll)));
     }
 }
+
+#[cfg(test)]
+#[path = "connect_timeout_tests.rs"]
+mod connect_timeout_tests;
