@@ -557,6 +557,28 @@ export async function focusWindow(label: string): Promise<void> {
   await invoke("focus_window", { label });
 }
 
+/**
+ * Tell the backend the *calling* window agrees to a pending app quit (#4296):
+ * it has nothing to lose, or the user chose "Quit" in its decision dialog. The
+ * app exits once every window has agreed.
+ */
+export async function quitWindowReady(): Promise<void> {
+  await invoke("quit_window_ready");
+}
+
+/**
+ * Tell the backend the *calling* window is showing the quit decision dialog
+ * (#4296), so the quit waits for the user instead of timing the window out.
+ */
+export async function quitWindowPrompting(): Promise<void> {
+  await invoke("quit_window_prompting");
+}
+
+/** Cancel a pending app quit (#4296); every window drops its quit dialog. */
+export async function cancelQuit(): Promise<void> {
+  await invoke("cancel_quit");
+}
+
 /** List all currently open windows, each with its last-reported tab count. */
 export async function listWindows(): Promise<WindowInfo[]> {
   return await invoke<WindowInfo[]>("list_windows");

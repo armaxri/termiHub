@@ -12,6 +12,9 @@ import {
 } from "lucide-react";
 import { Button, Modal, Select } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { cancelQuit, quitWindowReady } from "@/services/api";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendError } from "@/utils/frontendLog";
 import { windowDisplayName } from "@/types/window";
 import type { WindowCloseSessionRow } from "@/types/window";
 import "./CloseWindowDecisionDialog.css";
@@ -39,6 +42,11 @@ import "./CloseWindowDecisionDialog.css";
  * each such editor is listed as discarded, so the close is never silent. Moving
  * re-parents only live sessions, so it is offered only when there are some; a
  * window with nothing but unsaved editors offers Cancel or "Discard & close".
+ *
+ * The same dialog answers an app quit (Cmd+Q / menu Quit, #4296) when the
+ * request's `mode` is `"quit"`. Then "Quit" tells the backend this window
+ * agrees (the backend exits the app once every window has), "Cancel" cancels
+ * the whole quit, and moving tabs is not offered since every window is going.
  */
 export function CloseWindowDecisionDialog() {
   const request = useAppStore((s) => s.pendingWindowClose);
@@ -53,9 +61,29 @@ export function CloseWindowDecisionDialog() {
   const selected = targetLabel ?? others[0]?.label;
   const canMove = others.length > 0 && Boolean(selected);
 
-  const handleCancel = () => setRequest(null);
+  const isQuit = request.mode === "quit";
+
+  const answerQuit = async (answer: () => Promise<void>) => {
+    try {
+      await answer();
+    } catch (err) {
+      frontendError("multi_window", `Answering the app quit failed: ${errorMessage(err)}`);
+    }
+  };
+
+  const handleCancel = async () => {
+    setRequest(null);
+    if (isQuit) await answerQuit(cancelQuit);
+  };
 
   const handleEnd = async () => {
+    if (isQuit) {
+      // The app exit ends the sessions; ending them here would leave this
+      // window broken if another window cancels the quit.
+      setRequest(null);
+      await answerQuit(quitWindowReady);
+      return;
+    }
     await endWindowSessions();
     setRequest(null);
     await getCurrentWindow().destroy();
@@ -77,12 +105,14 @@ export function CloseWindowDecisionDialog() {
   return (
     <Modal
       open
-      onOpenChange={(isOpen) => !isOpen && handleCancel()}
-      title="Close this window?"
+      onOpenChange={(isOpen) => {
+        if (!isOpen) void handleCancel();
+      }}
+      title={isQuit ? "Quit termiHub?" : "Close this window?"}
       description={
         count > 0
-          ? "Choose what happens to this window's live sessions before it closes."
-          : "This window has unsaved editors that closing it would discard."
+          ? `Choose what happens to this window's live sessions before ${isQuit ? "termiHub quits" : "it closes"}.`
+          : `This window has unsaved editors that ${isQuit ? "quitting" : "closing it"} would discard.`
       }
       data-testid="close-window-decision-dialog"
       footer={
@@ -97,11 +127,13 @@ export function CloseWindowDecisionDialog() {
           <Button variant="danger" onClick={handleEnd} data-testid="close-window-decision-end">
             {count > 0 ? (
               <>
-                <Power className="li" aria-hidden="true" /> Close &amp; end sessions
+                <Power className="li" aria-hidden="true" /> {isQuit ? "Quit" : "Close"} &amp; end
+                sessions
               </>
             ) : (
               <>
-                <Trash2 className="li" aria-hidden="true" /> Discard &amp; close
+                <Trash2 className="li" aria-hidden="true" /> Discard &amp;{" "}
+                {isQuit ? "quit" : "close"}
               </>
             )}
           </Button>
@@ -119,7 +151,7 @@ export function CloseWindowDecisionDialog() {
           {count > 0 && (
             <>
               This window owns {count} open session{count === 1 ? "" : "s"}. Choose what happens to{" "}
-              {count === 1 ? "it" : "them"} before it closes.
+              {count === 1 ? "it" : "them"} before {isQuit ? "termiHub quits" : "it closes"}.
             </>
           )}
           {count > 0 && dirtyCount > 0 && " "}

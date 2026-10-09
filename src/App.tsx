@@ -54,6 +54,7 @@ import { useSpawnChoiceHandler, useSpawnRequests } from "@/hooks/useSpawnRequest
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useReportWindowTabCount } from "@/hooks/useReportWindowTabCount";
+import { useAppQuitRequests } from "@/hooks/useAppQuitRequests";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
@@ -84,6 +85,9 @@ function App() {
   useHttpMonitorNotifications();
   useWebviewZoom();
   useReportWindowTabCount();
+  // Cmd+Q / menu Quit asks the same detach-vs-terminate question as a window
+  // close before the app exits (#4296).
+  useAppQuitRequests();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
   const settings = useProjectedSettings();

@@ -121,6 +121,13 @@ export interface WindowCloseRequest {
    * (UX2-003). Absent or empty when no editor is dirty.
    */
   dirtyEditors?: WindowCloseDirtyEditor[];
+  /**
+   * Why the dialog is up (#4296). `"close"` (the default when absent) closes
+   * this window; `"quit"` answers an app-wide quit (Cmd+Q / menu Quit), which
+   * the backend completes once every window agreed, so moving tabs to another
+   * window is not offered.
+   */
+  mode?: "close" | "quit";
 }
 
 /** One unsaved editor tab listed in the window-close decision dialog. */
