@@ -36,7 +36,8 @@ export type LinkedSecretOutcome =
  */
 export async function askLinkedSshSecret(
   request: LinkedSecretRequest,
-  requestPassword: RequestPassword
+  requestPassword: RequestPassword,
+  signal?: AbortSignal
 ): Promise<LinkedSecretOutcome> {
   if (request.storeLocked && !request.rejected) {
     const unlocked = await ensureCredentialStoreUnlocked({
@@ -53,11 +54,16 @@ export async function askLinkedSshSecret(
     : "";
   // A shared named credential (#3557) is rotated in Settings, never replaced
   // by a per-connection secret, so its prompt offers no Save box.
-  const entered = request.canSave
-    ? await requestPassword(request.host, request.username, notice, request.kind)
-    : await requestPassword(request.host, request.username, notice, request.kind, {
-        allowSave: false,
-      });
+  // `signal` drops a queued prompt when its tab closes (#4312); the promise
+  // then rejects with an AbortError.
+  const options = {
+    ...(request.canSave ? {} : { allowSave: false }),
+    ...(signal ? { signal } : {}),
+  };
+  const entered =
+    Object.keys(options).length === 0
+      ? await requestPassword(request.host, request.username, notice, request.kind)
+      : await requestPassword(request.host, request.username, notice, request.kind, options);
   if (entered === null) return { status: "canceled" };
 
   if (request.canSave && useAppStore.getState().passwordPromptShouldSave) {

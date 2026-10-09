@@ -75,6 +75,11 @@ export interface ResolveConnectSecretOptions {
    * (#3316).
    */
   allowSave?: boolean;
+  /**
+   * Connection name for the prompt title, so a queued prompt says which
+   * connect it belongs to (#4312). Omitted keeps the generic title.
+   */
+  label?: string;
 }
 
 /**
@@ -88,6 +93,7 @@ export async function resolveConnectSecret({
   sourceFile,
   requestPassword,
   allowSave = true,
+  label,
 }: ResolveConnectSecretOptions): Promise<ConnectSecretResult> {
   if (!schema) return { status: "none" };
 
@@ -139,11 +145,15 @@ export async function resolveConnectSecret({
     }
   }
 
-  // Only pass options when opting out, so the default call shape is unchanged.
+  // Only pass options when there are any, so the default call shape is unchanged.
+  const options: PasswordPromptOptions = {
+    ...(allowSave && !credentialRef ? {} : { allowSave: false }),
+    ...(label ? { label } : {}),
+  };
   const entered =
-    allowSave && !credentialRef
+    Object.keys(options).length === 0
       ? await requestPassword(host, username, "", credentialType)
-      : await requestPassword(host, username, "", credentialType, { allowSave: false });
+      : await requestPassword(host, username, "", credentialType, options);
   if (entered === null) return { status: "canceled" };
   return {
     status: "resolved",

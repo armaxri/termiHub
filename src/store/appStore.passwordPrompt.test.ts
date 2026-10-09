@@ -23,13 +23,7 @@ import { useAppStore } from "./appStore";
  */
 describe("appStore password prompt", () => {
   beforeEach(() => {
-    useAppStore.setState({
-      passwordPromptOpen: false,
-      passwordPromptHost: "",
-      passwordPromptUsername: "",
-      passwordPromptResolve: null,
-      passwordPromptShouldSave: false,
-    });
+    useAppStore.setState(useAppStore.getInitialState());
   });
 
   it("starts closed and empty", () => {
@@ -37,23 +31,24 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptOpen).toBe(false);
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
-    expect(s.passwordPromptResolve).toBeNull();
+    expect(s.passwordPromptQueue).toHaveLength(0);
     expect(s.passwordPromptShouldSave).toBe(false);
   });
 
-  it("requestPassword opens the prompt with the host/username and a pending resolver", () => {
+  it("requestPassword opens the prompt with the host/username and a pending request", () => {
     useAppStore.getState().requestPassword("example.com", "alice");
     const s = useAppStore.getState();
     expect(s.passwordPromptOpen).toBe(true);
     expect(s.passwordPromptHost).toBe("example.com");
     expect(s.passwordPromptUsername).toBe("alice");
-    expect(typeof s.passwordPromptResolve).toBe("function");
+    expect(s.passwordPromptQueue).toHaveLength(1);
     expect(s.passwordPromptShouldSave).toBe(false);
   });
 
   it("defaults the prompt kind to password and carries an explicit kind (UX-010)", () => {
     useAppStore.getState().requestPassword("example.com", "alice");
     expect(useAppStore.getState().passwordPromptKind).toBe("password");
+    useAppStore.getState().dismissPasswordPrompt();
 
     useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
     expect(useAppStore.getState().passwordPromptKind).toBe("key_passphrase");
@@ -79,7 +74,7 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptOpen).toBe(false);
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
-    expect(s.passwordPromptResolve).toBeNull();
+    expect(s.passwordPromptQueue).toHaveLength(0);
     expect(s.passwordPromptShouldSave).toBe(true);
   });
 
@@ -101,7 +96,7 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptOpen).toBe(false);
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
-    expect(s.passwordPromptResolve).toBeNull();
+    expect(s.passwordPromptQueue).toHaveLength(0);
     expect(s.passwordPromptShouldSave).toBe(false);
   });
 
@@ -114,6 +109,7 @@ describe("appStore password prompt", () => {
   it("allows the Save control by default and carries an opt-out (#3316)", () => {
     useAppStore.getState().requestPassword("example.com", "alice");
     expect(useAppStore.getState().passwordPromptAllowSave).toBe(true);
+    useAppStore.getState().dismissPasswordPrompt();
 
     useAppStore.getState().requestPassword("example.com", "alice", "", "password", {
       allowSave: false,

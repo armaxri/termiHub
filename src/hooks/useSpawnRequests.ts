@@ -127,6 +127,7 @@ export async function resolveSpawnSecret(
     connectionId: saved?.id ?? null,
     sourceFile,
     requestPassword: store.requestPassword,
+    label: saved?.name,
   });
   if (secret.status === "canceled") return null;
   if (secret.status === "none") return spawn;
