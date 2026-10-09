@@ -23,6 +23,7 @@ import {
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import {
   monitorMetricValues,
@@ -397,10 +398,16 @@ function HighlightingIndicator() {
 /**
  * Shows running embedded servers count in the status bar.
  * Clicking opens the Services sidebar panel.
+ *
+ * The Services view is experimental: with experimental features off it is
+ * hidden, so the indicator stays visible (a running server must never be
+ * invisible) but is not a link into the hidden view (#4498). Running servers
+ * can still be stopped from the Open Connections panel.
  */
 function ServicesIndicator() {
   const embeddedServerStates = useAppStore((s) => s.embeddedServerStates);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
+  const experimental = useExperimentalFeatures();
 
   const runningCount = Object.values(embeddedServerStates).filter(
     (s) => s.status === "running"
@@ -408,7 +415,24 @@ function ServicesIndicator() {
 
   if (runningCount === 0) return null;
 
-  const servicesLabel = `${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`;
+  const runningLabel = `${runningCount} service${runningCount !== 1 ? "s" : ""} running`;
+
+  if (!experimental) {
+    return (
+      <Tooltip content={runningLabel} side="top">
+        <span
+          className="status-bar__item"
+          aria-label={runningLabel}
+          data-testid="services-indicator"
+        >
+          <Server size={12} />
+          {runningCount}
+        </span>
+      </Tooltip>
+    );
+  }
+
+  const servicesLabel = `${runningLabel} — click to open Services`;
 
   return (
     <Tooltip content={servicesLabel} side="top">

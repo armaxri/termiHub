@@ -198,6 +198,10 @@ class TestEmbeddedServices(
         default unprivileged port (HTTP 8080 / FTP 2121 / TFTP 6969). Returns the
         started server's store config.
         """
+        # The Share-via menu items are gated behind experimental features
+        # (#4498), so enable them first — this case must not rely on an
+        # earlier test having opened the Services sidebar.
+        self.enable_experimental_features()
         # A local terminal gives the file browser a directory to share.
         self.ensure_terminal()
         self.open_file_browser()
