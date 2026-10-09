@@ -142,8 +142,9 @@ describe("executeStep", () => {
       );
 
       expect(outcome.ok).toBe(false);
-      expect(outcome.error).toMatch(/not confirmed on this machine/);
-      expect(outcome.error).toContain("/home/u/.ssh/id_ed25519");
+      const { error } = outcome as { error?: string };
+      expect(error).toMatch(/not confirmed on this machine/);
+      expect(error).toContain("/home/u/.ssh/id_ed25519");
       expect(readScriptFile).not.toHaveBeenCalled();
       expect(send).not.toHaveBeenCalled();
     });
@@ -175,8 +176,9 @@ describe("executeStep", () => {
       );
 
       expect(outcome.ok).toBe(false);
-      expect(outcome.error).toMatch(/could not read script file "\/tmp\/missing.sh"/);
-      expect(outcome.error).toContain("no such file");
+      const { error } = outcome as { error?: string };
+      expect(error).toMatch(/could not read script file "\/tmp\/missing.sh"/);
+      expect(error).toContain("no such file");
       expect(send).not.toHaveBeenCalled();
     });
 

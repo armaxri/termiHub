@@ -24,6 +24,7 @@ import {
   stepKindLabel,
 } from "./workflowStepMeta";
 import { WorkflowStepErrorHandlingEditor } from "./WorkflowStepErrorHandlingEditor";
+import { ScriptSourceField } from "./ScriptSourceField";
 
 /** A working step paired with a stable uid for drag-and-drop and React keys. */
 export interface WorkflowStepEntry {
@@ -191,10 +192,25 @@ function StepKindFields({ fieldId, stepNumber, step, macros, onChange }: StepDet
               id={`workflow-step-script-${fieldId}`}
               value={step.script}
               placeholder="One command per line"
-              onChange={(e) => onChange({ ...step, script: e.target.value })}
+              onChange={(e) => {
+                // Editing the body detaches any script file (#4310): what the
+                // user sees and types is then exactly what runs.
+                const { sourcePath: _detached, ...rest } = step;
+                onChange({ ...rest, script: e.target.value });
+              }}
               data-testid={`workflow-editor-step-script-${fieldId}`}
             />
           </Field>
+          <ScriptSourceField
+            fieldId={fieldId}
+            stepNumber={stepNumber}
+            sourcePath={step.sourcePath}
+            onPick={(path, contents) => onChange({ ...step, script: contents, sourcePath: path })}
+            onDetach={() => {
+              const { sourcePath: _detached, ...rest } = step;
+              onChange(rest);
+            }}
+          />
           <Field
             label="Per-line delay (ms, optional)"
             htmlFor={`workflow-step-linedelay-${fieldId}`}
