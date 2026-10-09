@@ -482,9 +482,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // `workflow.*` intents. Keep the subscription warm so the render hook
   // receives the resulting diffs.
   try {
-    void ensureWorkflowSubscribed().catch(() => {
-      /* logged in the bridge; render simply stays on the last-known view */
-    });
+    // Logged in the bridge too; render simply stays on the last-known view.
+    void ensureWorkflowSubscribed().catch((err: unknown) =>
+      frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
+    );
   } catch {
     /* non-Tauri env without a socket — dispatch logs + no-ops */
   }

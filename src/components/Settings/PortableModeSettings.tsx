@@ -4,8 +4,9 @@ import { CheckCircle2, XCircle, HardDrive, Info } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";
 import type { ConfigFileStatus } from "@/types/connection";
-import { Button, Checkbox } from "@/components/ui";
+import { Button, Checkbox, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
+import { frontendWarn } from "@/utils/frontendLog";
 import "./PortableModeSettings.css";
 
 const PORTABLE_FILES = [
@@ -127,7 +128,11 @@ export function PortableModeSettings() {
     if (isPortableMode && portableDataDir) {
       listConfigFiles(portableDataDir)
         .then(setConfigFiles)
-        .catch(() => {});
+        .catch((err: unknown) => {
+          // Without this the file list just stays empty, which reads as "no config files".
+          frontendWarn("portable_mode", `listing config files failed: ${errorMessage(err)}`);
+          toast.error("Could not list portable config files", { description: errorMessage(err) });
+        });
     }
   }, [isPortableMode, portableDataDir]);
 

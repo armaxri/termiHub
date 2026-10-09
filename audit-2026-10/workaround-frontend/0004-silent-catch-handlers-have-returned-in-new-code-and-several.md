@@ -20,8 +20,8 @@ evidence:
   - src/hooks/useNetworkTask.ts:129
   - src/store/slices/windowManagementSlice.ts:195
   - src/utils/frontendLog.ts:176
-status: open
-resolution: ""
+status: fixed
+resolution: "#4333 — every empty .catch handler logs via fireAndForget/frontendLog or toasts; eslint bans their return"
 audit: 2026-10
 commit: 663465d52
 relation: regression

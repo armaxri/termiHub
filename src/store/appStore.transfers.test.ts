@@ -38,6 +38,8 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { sftpCancelTransfer, listSessionOwners, type TransferProgress } from "@/services/api";
+import { onFrontendLog } from "@/utils/frontendLog";
+import type { LogEntry } from "@/types/terminal";
 import { layoutState } from "@/test/layoutState";
 
 /** Seed one live terminal tab bound to `sessionId` so this window renders it locally. */
@@ -206,9 +208,19 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
       useAppStore.setState({ sessionOwners: { "sess-a": "main" } });
       vi.mocked(listSessionOwners).mockRejectedValueOnce(new Error("ipc down"));
 
-      await useAppStore.getState().refreshSessionOwners();
+      const logged: LogEntry[] = [];
+      const unsubscribe = onFrontendLog((e) => logged.push(e));
+      try {
+        await useAppStore.getState().refreshSessionOwners();
+      } finally {
+        unsubscribe();
+      }
 
       expect(useAppStore.getState().sessionOwners).toEqual({ "sess-a": "main" });
+      // A real IPC failure is no longer swallowed silently (#4333).
+      expect(logged).toContainEqual(
+        expect.objectContaining({ level: "WARN", message: expect.stringContaining("ipc down") })
+      );
     });
   });
 

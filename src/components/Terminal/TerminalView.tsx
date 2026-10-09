@@ -12,7 +12,6 @@ import {
   ScrollText,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
   useActivePanelId,
@@ -24,7 +23,7 @@ import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, toast } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
@@ -42,6 +41,7 @@ import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
+import { frontendWarn } from "@/utils/frontendLog";
 import "./TerminalView.css";
 
 /**
@@ -151,7 +151,10 @@ export function TerminalView() {
           return next;
         });
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        // Only the toolbar's logging indicator may be stale; nothing the user did failed.
+        frontendWarn("terminal_view", `session logging status sync failed: ${errorMessage(err)}`);
+      });
     return () => {
       cancelled = true;
     };

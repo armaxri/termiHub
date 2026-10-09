@@ -14,6 +14,7 @@
  */
 
 import { newClientId } from "./ids";
+import { fireAndForget } from "@/utils/frontendLog";
 import type { FrameHandler, Subscription, Transport } from "./Transport";
 import type { Intent, IntentAck, ProjectionFrame, SnapshotFrame } from "./types";
 
@@ -71,9 +72,12 @@ export class WebSocketTransport implements Transport {
         if (!active) return;
         active = false;
         this.removeHandler(region, onFrame);
-        void this.socket
-          .request("projection.unsubscribe", { region, subscriptionId })
-          .catch(() => {});
+        // Best-effort: the local handler is already gone; a lost unsubscribe only
+        // costs the server one stale subscription until the socket closes.
+        fireAndForget(
+          this.socket.request("projection.unsubscribe", { region, subscriptionId }),
+          `projection unsubscribe ${region}`
+        );
       },
     };
   }

@@ -11,6 +11,7 @@ import {
   tunnelTypeFlag,
 } from "@/utils/tunnelSummary";
 import { errorMessage } from "@/utils/errorMessage";
+import { fireAndForget } from "@/utils/frontendLog";
 
 interface ConnectionPortForwardingSectionProps {
   /**
@@ -51,9 +52,8 @@ export function ConnectionPortForwardingSection({
   );
 
   const tunnelDelete = useDeleteConfirm<{ id: string; message: string }>(({ id }) => {
-    void deleteTunnel(id).catch(() => {
-      // `deleteTunnel` owns its error toast.
-    });
+    // `deleteTunnel` owns its error toast; only keep a trace here.
+    fireAndForget(deleteTunnel(id), `delete tunnel ${id}`);
   });
   const requestDelete = tunnelDelete.request;
 
@@ -64,9 +64,8 @@ export function ConnectionPortForwardingSection({
         requestDelete({ id: tunnelId, message });
         return;
       }
-      void deleteTunnel(tunnelId).catch(() => {
-        // `deleteTunnel` owns its error toast.
-      });
+      // `deleteTunnel` owns its error toast; only keep a trace here.
+      fireAndForget(deleteTunnel(tunnelId), `delete tunnel ${tunnelId}`);
     },
     [tunnels, tunnelStates, deleteTunnel, requestDelete]
   );

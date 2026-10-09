@@ -13,6 +13,8 @@ import type { DragOutControl } from "@/components/Sidebar/FileBrowserDndProvider
 import { flushAsync } from "@/test/flushAsync";
 import { isOwnDragOut, resetDragOutTracking, stagedDragOutCache } from "@/utils/fileDragOut";
 import { useFileDragOut } from "./useFileDragOut";
+import { onFrontendLog } from "@/utils/frontendLog";
+import type { LogEntry } from "@/types/terminal";
 import type { DragOutSource } from "@/utils/fileDragOut";
 
 const api = vi.hoisted(() => ({
@@ -219,6 +221,24 @@ describe("useFileDragOut — remote (SFTP / FTP) pane", () => {
     );
     expect(api.dragOutStart).not.toHaveBeenCalled();
     expect(stagedDragOutCache.size).toBe(0);
+  });
+
+  it("logs an error when discarding the staging dir fails, so the leak is traceable (#4333)", async () => {
+    api.sessionDownload.mockRejectedValue(new Error("permission denied"));
+    api.dragOutDiscardStaging.mockRejectedValue(new Error("busy"));
+    const logged: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => logged.push(e));
+    try {
+      const dragOut = mountDragOut(SFTP);
+      dragOut([entry("/srv/secret")], control(true));
+      await flushAsync();
+    } finally {
+      unsubscribe();
+    }
+
+    const leak = logged.find((e) => e.message.includes("/cache/drag-out/1"));
+    expect(leak?.level).toBe("ERROR");
+    expect(leak?.message).toContain("busy");
   });
 
   it("stages a remote folder recursively through the queue and drags the staged folder", async () => {

@@ -6,8 +6,8 @@ severity: low
 category: ui
 is_workaround: false
 subsystem: "src/components/ui/Toast"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4333 — all four importers use ui/toast; eslint bans sonner outside ui/Toast"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

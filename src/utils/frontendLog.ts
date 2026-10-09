@@ -34,13 +34,13 @@ function forwardToDurableLog(entry: LogEntry, force = false): void {
   if (isForwarding || !isTauriRuntime()) return;
   isForwarding = true;
   try {
+    // Best-effort durability: a backend logging failure must not surface, and
+    // logging it here would recurse into this forwarder. Deliberately ignored.
     void invoke("record_frontend_log", {
       level: entry.level,
       target: entry.target.replace(/^frontend::/, ""),
       message: entry.message,
-    }).catch(() => {
-      /* best-effort durability: a backend logging failure must not surface */
-    });
+    }).catch(() => undefined);
   } catch {
     /* invoke unavailable or threw synchronously — swallow */
   } finally {
