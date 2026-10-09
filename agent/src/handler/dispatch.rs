@@ -32,12 +32,13 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentForwardCloseParams, AgentForwardConnectParams, AgentForwardDataParams,
-    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
-    AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
-    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
-    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
-    CrashReportSummary, CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
+    AgentForwardAckParams, AgentForwardCloseParams, AgentForwardConnectParams,
+    AgentForwardConnectResult, AgentForwardDataParams, AgentRequestDeferredUpdateParams,
+    AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
+    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, CrashReportSummary,
+    CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
     FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
@@ -172,7 +173,12 @@ use termihub_core::monitoring::{
 /// stops reading that session's output so the program is backpressured. The
 /// desktop sends it only to an agent that advertises the flag; an older
 /// desktop never sends it.
-const AGENT_PROTOCOL_VERSION: &str = "0.27.0";
+/// Bumped to 0.28.0 for the additive `agent.forward.ack` method, the optional
+/// `window` of `agent.forward.connect` and the matching
+/// `capabilities.forwardFlow` flag (#4284): a desktop port forward (VNC/RDP)
+/// is credit-windowed in both directions. An older desktop requests no window
+/// and keeps an unbounded stream.
+const AGENT_PROTOCOL_VERSION: &str = "0.28.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -783,6 +789,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_forward_data(module)?;
     register_agent_forward_close(module)?;
     register_agent_forward_connect(module)?;
+    register_agent_forward_ack(module)?;
     register_connection_types(module)?;
     register_session_get_buffer(module)?;
     register_connections_list(module)?;
@@ -1416,11 +1423,33 @@ fn register_agent_forward_connect(
             ));
         }
 
-        session_manager
-            .agent_forward_connect(&p.stream_id, &p.host, p.port)
+        let window = session_manager
+            .agent_forward_connect_windowed(&p.stream_id, &p.host, p.port, p.window)
             .await
             .map_err(|msg| rpc_err(errors::FORWARD_CONNECT_FAILED, msg))?;
         forward_streams.track(&p.stream_id);
+
+        // An unwindowed stream answers `{}`, byte-identical to before #4284.
+        serde_json::to_value(AgentForwardConnectResult { window })
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+/// `agent.forward.ack` (#4284): the desktop consumed `bytes` of a windowed
+/// port-forward stream, returning that much credit to the stream's target
+/// reader. A stray ack (closed or unwindowed stream) is a benign no-op.
+fn register_agent_forward_ack(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::AGENT_FORWARD_ACK, |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: AgentForwardAckParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.forward.ack", e))?;
+
+        session_manager
+            .agent_forward_ack(&p.stream_id, p.bytes)
+            .await;
 
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;

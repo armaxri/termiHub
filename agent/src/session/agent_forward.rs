@@ -51,6 +51,17 @@
 //! connection hosted under an agent reaches its server: the desktop keeps
 //! running the graphical backend and only its TCP transport rides the agent.
 //!
+//! # Flow control (#4284)
+//!
+//! A graphical stream is bulk traffic, so a desktop that asks for it
+//! (`agent.forward.connect` with a `window`, protocol 0.28.0) gets a
+//! credit-windowed stream: at most the granted window is in flight per
+//! direction, acknowledged with `agent.forward.ack` — see
+//! [`agent_forward_flow`](super::agent_forward_flow). A slow desktop canvas then
+//! slows the remote desktop server through TCP instead of queuing data on the
+//! agent. Streams without a window — an older desktop, and the ssh-agent relay,
+//! whose traffic is request/response — are relayed unbounded, as before.
+//!
 //! Both unix and Windows agent hosts relay (#1727 shipped unix; #2038 added the
 //! Windows named-pipe path). Only truly exotic targets with neither a Unix socket
 //! nor a named pipe fall back to #1719's host-local model; [`should_relay`] gates
@@ -61,7 +72,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 use tokio::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
 
@@ -70,6 +81,7 @@ use crate::protocol::messages::JsonRpcNotification;
 use crate::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentForwardOpenParams,
 };
+use crate::session::agent_forward_flow::StreamFlow;
 use crate::transport::to_params;
 
 /// Both directions: a forwarded ssh-agent stream ended.
@@ -85,7 +97,34 @@ pub use crate::protocol::methods::AGENT_FORWARD_OPEN;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Sender that feeds desktop→socket bytes to one accepted relay connection.
+///
+/// Unbounded, but on a windowed stream (#4284) what it holds is capped by
+/// [`StreamFlow::admit`]: the desktop may have at most the window unacked.
 type StreamSink = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
+
+/// One live stream: where desktop bytes go, and its flow control when the
+/// desktop asked for it (#4284).
+struct StreamEntry {
+    sink: StreamSink,
+    flow: Option<Arc<StreamFlow>>,
+}
+
+impl StreamEntry {
+    /// Teardown: wake a reader parked on the stream's exhausted window.
+    fn close(&self) {
+        if let Some(flow) = &self.flow {
+            flow.close();
+        }
+    }
+}
+
+/// What the socket writer needs to acknowledge desktop bytes on a windowed
+/// stream (#4284).
+struct InboundAcks {
+    flow: Arc<StreamFlow>,
+    stream_id: String,
+    notifications: NotificationSender,
+}
 
 /// Per-session listener bookkeeping so a closed session tears its endpoint down.
 ///
@@ -108,8 +147,9 @@ struct ListenerGuard {
 /// handlers write into.
 pub struct AgentForwardRelay {
     notification_tx: NotificationSender,
-    /// `stream_id` → sink writing bytes into that connection (desktop → socket).
-    streams: Mutex<HashMap<String, StreamSink>>,
+    /// `stream_id` → sink writing bytes into that connection (desktop → socket)
+    /// plus its flow control.
+    streams: Mutex<HashMap<String, StreamEntry>>,
     /// Reader tasks of desktop-initiated TCP streams (#3241), so a desktop
     /// `close` stops reading the target too (not only writing to it) and the
     /// target connection is released at once.
@@ -154,11 +194,52 @@ impl AgentForwardRelay {
             .send(JsonRpcNotification::new(method, params));
     }
 
-    /// Feed desktop-supplied bytes (the operator's agent's reply) to the
-    /// matching relay connection. Unknown/closed streams are ignored.
+    /// Feed desktop-supplied bytes (the operator's agent's reply, or a port
+    /// forward's client bytes) to the matching relay connection.
+    /// Unknown/closed streams are ignored. On a windowed stream (#4284) bytes
+    /// past the granted window break the protocol: the stream is closed, not
+    /// buffered without bound.
     pub async fn write(&self, stream_id: &str, data: Vec<u8>) {
-        if let Some(sink) = self.streams.lock().await.get(stream_id) {
-            let _ = sink.send(data);
+        let overrun = {
+            let streams = self.streams.lock().await;
+            let Some(entry) = streams.get(stream_id) else {
+                return;
+            };
+            let len = data.len();
+            if entry.flow.as_ref().is_some_and(|flow| !flow.admit(len)) {
+                true
+            } else {
+                let _ = entry.sink.send(data);
+                false
+            }
+        };
+        if overrun {
+            warn!(
+                stream_id,
+                "desktop overran the forward window; closing the stream"
+            );
+            self.close_stream(stream_id).await;
+            self.notify(
+                AGENT_FORWARD_CLOSE,
+                to_params(&AgentForwardCloseParams {
+                    stream_id: stream_id.to_string(),
+                }),
+            );
+        }
+    }
+
+    /// The desktop consumed `bytes` of a windowed stream (`agent.forward.ack`,
+    /// #4284): return that much credit to its target reader. Unknown or
+    /// unwindowed streams ignore it.
+    pub async fn ack(&self, stream_id: &str, bytes: u64) {
+        if let Some(flow) = self
+            .streams
+            .lock()
+            .await
+            .get(stream_id)
+            .and_then(|entry| entry.flow.as_ref())
+        {
+            flow.ack(bytes);
         }
     }
 
@@ -166,7 +247,9 @@ impl AgentForwardRelay {
     /// conversation finished). Dropping the sink ends the writer task, which
     /// shuts the socket's write side so the daemon's bridge sees EOF.
     pub async fn close_stream(&self, stream_id: &str) {
-        self.streams.lock().await.remove(stream_id);
+        if let Some(entry) = self.streams.lock().await.remove(stream_id) {
+            entry.close();
+        }
         // A desktop-initiated TCP stream also stops reading its target, so the
         // connection to it closes now rather than when the target hangs up.
         if let Some(reader) = self.tcp_readers.lock().await.remove(stream_id) {
@@ -182,12 +265,31 @@ impl AgentForwardRelay {
     /// Fails (and registers nothing) when the id is already in use, or the
     /// target refuses, is unresolvable, or does not answer within
     /// [`TCP_CONNECT_TIMEOUT`]; the error text is what the desktop shows.
+    ///
+    /// Unwindowed — the pre-#4284 behaviour; see
+    /// [`connect_tcp_windowed`](Self::connect_tcp_windowed).
     pub async fn connect_tcp(
         self: &Arc<Self>,
         stream_id: &str,
         host: &str,
         port: u16,
     ) -> Result<(), String> {
+        self.connect_tcp_windowed(stream_id, host, port, None)
+            .await
+            .map(|_| ())
+    }
+
+    /// [`connect_tcp`](Self::connect_tcp) with flow control (#4284): when the
+    /// desktop requested a `window`, both directions of the stream are bounded
+    /// by the window granted, which is returned (capped at the agent's
+    /// maximum). `None` relays unbounded, for a desktop that does not ack.
+    pub async fn connect_tcp_windowed(
+        self: &Arc<Self>,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+        window: Option<u64>,
+    ) -> Result<Option<u64>, String> {
         if self.streams.lock().await.contains_key(stream_id) {
             return Err(format!("forward stream {stream_id} is already open"));
         }
@@ -201,19 +303,40 @@ impl AgentForwardRelay {
         let _ = conn.set_nodelay(true);
         let (read_half, write_half) = conn.into_split();
 
+        let flow = window.map(|w| Arc::new(StreamFlow::granted(w)));
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        self.streams.lock().await.insert(stream_id.to_string(), tx);
-        tokio::spawn(write_socket(write_half, rx));
+        self.streams.lock().await.insert(
+            stream_id.to_string(),
+            StreamEntry {
+                sink: tx,
+                flow: flow.clone(),
+            },
+        );
+        let acks = flow.clone().map(|flow| InboundAcks {
+            flow,
+            stream_id: stream_id.to_string(),
+            notifications: self.notification_tx.clone(),
+        });
+        tokio::spawn(write_socket(write_half, rx, acks));
 
         let relay = Arc::clone(self);
         let sid = stream_id.to_string();
-        let reader = tokio::spawn(async move { relay.read_socket(read_half, sid).await });
+        let reader_flow = flow.clone();
+        let reader =
+            tokio::spawn(async move { relay.read_socket(read_half, sid, reader_flow).await });
         self.tcp_readers
             .lock()
             .await
             .insert(stream_id.to_string(), reader.abort_handle());
-        debug!(stream_id, host, port, "opened desktop port-forward stream");
-        Ok(())
+        let granted = flow.map(|f| f.window() as u64);
+        debug!(
+            stream_id,
+            host,
+            port,
+            ?granted,
+            "opened desktop port-forward stream"
+        );
+        Ok(granted)
     }
 
     /// Start a per-session ssh-agent relay listener and return the socket path
@@ -290,10 +413,13 @@ impl AgentForwardRelay {
             }
         }
         let prefix = stream_prefix(session_id);
-        self.streams
-            .lock()
-            .await
-            .retain(|id, _| !id.starts_with(&prefix));
+        self.streams.lock().await.retain(|id, entry| {
+            let keep = !id.starts_with(&prefix);
+            if !keep {
+                entry.close();
+            }
+            keep
+        });
         let _ = session_id;
     }
 
@@ -371,8 +497,16 @@ impl AgentForwardRelay {
     {
         let (read_half, write_half) = tokio::io::split(conn);
 
+        // TAURI-014: unbounded, and safe for this relay — ssh-agent traffic is
+        // request/response with small messages, so no window is needed.
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        self.streams.lock().await.insert(stream_id.clone(), tx);
+        self.streams.lock().await.insert(
+            stream_id.clone(),
+            StreamEntry {
+                sink: tx,
+                flow: None,
+            },
+        );
         self.notify(
             AGENT_FORWARD_OPEN,
             to_params(&AgentForwardOpenParams {
@@ -380,25 +514,43 @@ impl AgentForwardRelay {
             }),
         );
 
-        tokio::spawn(write_socket(write_half, rx));
+        tokio::spawn(write_socket(write_half, rx, None));
 
         let relay = Arc::clone(&self);
-        tokio::spawn(async move { relay.read_socket(read_half, stream_id).await });
+        tokio::spawn(async move { relay.read_socket(read_half, stream_id, None).await });
     }
 
     /// Pump endpoint → desktop: forward each read as a data notification, and on
     /// EOF/error deregister the stream and tell the desktop it closed.
-    async fn read_socket<R>(self: Arc<Self>, mut read_half: R, stream_id: String)
-    where
+    ///
+    /// On a windowed stream (#4284) each read waits for credit and takes at most
+    /// that much, so no more than the window is ever queued toward the desktop;
+    /// a closed window (teardown) ends the pump.
+    async fn read_socket<R>(
+        self: Arc<Self>,
+        mut read_half: R,
+        stream_id: String,
+        flow: Option<Arc<StreamFlow>>,
+    ) where
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
     {
         use tokio::io::AsyncReadExt;
         let b64 = base64::engine::general_purpose::STANDARD;
         let mut buf = vec![0u8; AGENT_FORWARD_CHUNK_SIZE];
         loop {
-            match read_half.read(&mut buf).await {
+            let limit = match &flow {
+                Some(flow) => match flow.outbound().wait_credit().await {
+                    Some(credit) => credit.min(buf.len()),
+                    None => break,
+                },
+                None => buf.len(),
+            };
+            match read_half.read(&mut buf[..limit]).await {
                 Ok(0) => break,
                 Ok(n) => {
+                    if let Some(flow) = &flow {
+                        flow.outbound().consume(n);
+                    }
                     // `into_params` moves the encoded bytes into the params
                     // object: no more allocations than the old `json!` (#3759).
                     self.notify(
@@ -416,7 +568,9 @@ impl AgentForwardRelay {
                 }
             }
         }
-        self.streams.lock().await.remove(&stream_id);
+        if let Some(entry) = self.streams.lock().await.remove(&stream_id) {
+            entry.close();
+        }
         self.tcp_readers.lock().await.remove(&stream_id);
         self.notify(
             AGENT_FORWARD_CLOSE,
@@ -502,9 +656,13 @@ fn stream_prefix(session_id: &str) -> String {
 /// Pump desktop → endpoint: write each queued reply chunk to the connection until
 /// the desktop closes the stream (sink dropped), then shut the write side so the
 /// daemon's bridge sees EOF. Generic over the connection's write half so the unix
-/// socket and Windows pipe share one body.
-async fn write_socket<W>(mut write_half: W, mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>)
-where
+/// socket and Windows pipe share one body. On a windowed stream (#4284) each
+/// chunk is acknowledged to the desktop once written.
+async fn write_socket<W>(
+    mut write_half: W,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    acks: Option<InboundAcks>,
+) where
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     use tokio::io::AsyncWriteExt;
@@ -513,6 +671,10 @@ where
             break;
         }
         let _ = write_half.flush().await;
+        if let Some(acks) = &acks {
+            acks.flow
+                .written(bytes.len(), &acks.stream_id, &acks.notifications);
+        }
     }
     let _ = write_half.shutdown().await;
 }

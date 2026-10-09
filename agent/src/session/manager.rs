@@ -280,6 +280,26 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         host: &str,
         port: u16,
     ) -> Result<(), String>;
+
+    /// [`agent_forward_connect`](Self::agent_forward_connect) with the desktop's
+    /// requested flow-control window (#4284), returning the window granted
+    /// (`None`: relayed unbounded). Defaults to the unwindowed connect so test
+    /// doubles need not implement it.
+    async fn agent_forward_connect_windowed(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+        _window: Option<u64>,
+    ) -> Result<Option<u64>, String> {
+        self.agent_forward_connect(stream_id, host, port)
+            .await
+            .map(|()| None)
+    }
+
+    /// The desktop consumed `bytes` of a windowed forward stream
+    /// (`agent.forward.ack`, #4284). Defaults to a no-op.
+    async fn agent_forward_ack(&self, _stream_id: &str, _bytes: u64) {}
 }
 
 /// Why [`SessionManagerApi::session_process_manager`] (#3210),
@@ -2833,6 +2853,22 @@ impl SessionManagerApi for SessionManager {
         port: u16,
     ) -> Result<(), String> {
         self.agent_forward.connect_tcp(stream_id, host, port).await
+    }
+
+    async fn agent_forward_connect_windowed(
+        &self,
+        stream_id: &str,
+        host: &str,
+        port: u16,
+        window: Option<u64>,
+    ) -> Result<Option<u64>, String> {
+        self.agent_forward
+            .connect_tcp_windowed(stream_id, host, port, window)
+            .await
+    }
+
+    async fn agent_forward_ack(&self, stream_id: &str, bytes: u64) {
+        self.agent_forward.ack(stream_id, bytes).await;
     }
 }
 
