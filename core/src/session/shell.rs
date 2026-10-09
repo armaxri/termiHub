@@ -409,7 +409,7 @@ pub fn posix_utf8_locale_from_tag(tag: &str) -> Option<String> {
 /// Language & Region, via CoreFoundation), normalized to `xx_YY.UTF-8` and
 /// checked against the installed locales in `/usr/share/locale`, like
 /// WezTerm's `set_lang_from_locale`. Elsewhere, and whenever that fails, it is
-/// [`FALLBACK_UTF8_LOCALE`].
+/// `en_US.UTF-8`.
 pub fn preferred_utf8_locale() -> &'static str {
     static LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     LOCALE.get_or_init(|| system_utf8_locale().unwrap_or_else(|| FALLBACK_UTF8_LOCALE.to_string()))
