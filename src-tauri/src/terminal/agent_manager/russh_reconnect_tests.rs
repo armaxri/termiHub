@@ -1182,7 +1182,7 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
     sshd.stop();
     let old_channel_closed = {
         let close_deadline = Instant::now() + Duration::from_secs(10);
-        let mut buf = String::new();
+        let mut buf = LineSplitter::new();
         loop {
             if Instant::now() >= close_deadline {
                 break false;
@@ -1193,9 +1193,9 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
             )
             .await
             {
-                Ok(None) => break true,  // channel closed — transport is down
-                Ok(Some(_)) => continue, // drain any buffered line
-                Err(_) => continue,      // read timeout — keep polling
+                Ok(Err(_)) => break true, // channel closed — transport is down
+                Ok(Ok(_)) => continue,    // drain any buffered line
+                Err(_) => continue,       // read timeout — keep polling
             }
         }
     };
@@ -1353,7 +1353,7 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     sshd.stop_sparing_daemon();
     let channel_closed = {
         let close_deadline = Instant::now() + Duration::from_secs(10);
-        let mut buf = String::new();
+        let mut buf = LineSplitter::new();
         loop {
             if Instant::now() >= close_deadline {
                 break false;
@@ -1364,9 +1364,9 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
             )
             .await
             {
-                Ok(None) => break true,  // channel closed — transport is down
-                Ok(Some(_)) => continue, // drain any buffered line
-                Err(_) => continue,      // read timeout — keep polling
+                Ok(Err(_)) => break true, // channel closed — transport is down
+                Ok(Ok(_)) => continue,    // drain any buffered line
+                Err(_) => continue,       // read timeout — keep polling
             }
         }
     };
