@@ -109,6 +109,10 @@ pub fn agent_route(type_id: &str, settings: &Value) -> Result<Option<AgentRoute>
 
 /// The port the backend of `type_id` would dial for `settings`, from core's own
 /// config type (DUP2-008).
+#[cfg_attr(
+    not(any(feature = "vnc", feature = "rdp-sidecar")),
+    allow(unused_variables)
+)]
 fn routed_target_port(type_id: &str, settings: &Value) -> Result<u16, String> {
     match type_id {
         #[cfg(feature = "vnc")]
