@@ -31,9 +31,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use sha2::{Digest, Sha256};
 pub use termihub_core::agent_release_asset::is_windows_os;
 use termihub_core::agent_release_asset::{agent_asset_suffix, agent_release_asset_name};
+// The `.sha256` sidecar gate, shared with the agent's self-updater (#4365).
+use termihub_core::agent_update_checksum::{
+    checksum_sidecar_path, file_sha256_hex, parse_sha256_sidecar, verify_file_checksum,
+    CHECKSUM_EXT,
+};
 use termihub_core::agent_update_signature::{
     signature_sidecar_path, SignaturePolicy, SignatureVerdict, SIGNATURE_EXT,
 };
@@ -44,10 +48,6 @@ use crate::utils::fs::is_nonempty_file;
 
 /// GitHub repository for release downloads.
 const GITHUB_REPO: &str = "armaxri/termiHub";
-
-/// File-name suffix for the SHA-256 checksum sidecar published next to every
-/// agent binary release asset (e.g. `termihub-agent-linux-x64.sha256`).
-const CHECKSUM_EXT: &str = termihub_core::agent_release_asset::AGENT_CHECKSUM_EXT;
 
 /// Map a remote OS string and architecture string to the artifact suffix we use.
 ///
@@ -150,73 +150,11 @@ pub fn compute_branch_build_url(branch: &str, arch_suffix: &str) -> String {
     )
 }
 
-/// Compute the lowercase-hex SHA-256 digest of a file's contents.
-///
-/// The file is streamed through the hasher, so arbitrarily large binaries are
-/// never fully buffered in memory.
-pub fn sha256_hex_of_file(path: &Path) -> Result<String> {
-    let mut file = fs::File::open(path)
-        .with_context(|| format!("Failed to open {} for checksum", path.display()))?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)
-        .with_context(|| format!("Failed to read {} for checksum", path.display()))?;
-    Ok(hex::encode(hasher.finalize()))
-}
-
-/// Compute the lowercase-hex SHA-256 digest of an in-memory byte slice.
-///
-/// Used by the coordinated update path to hash exactly the bytes it uploads to
-/// the agent, so it can send the agent the `expectedSha256` to re-verify the
-/// staged binary against before the swap (AGT-004).
-pub fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
-}
-
-/// Parse the expected SHA-256 digest out of a checksum sidecar's contents.
-///
-/// Accepts both a bare 64-char hex digest and the standard `sha256sum` output
-/// format `"<hex>  <filename>"` (text mode) or `"<hex> *<filename>"` (binary
-/// mode) — only the first whitespace-delimited token is considered. The digest
-/// is normalized to lowercase. Returns `None` when the first token is not a
-/// valid 64-character hex string.
-pub fn parse_sha256_sidecar(content: &str) -> Option<String> {
-    let token = content.split_whitespace().next()?.to_ascii_lowercase();
-    if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(token)
-    } else {
-        None
-    }
-}
-
-/// Verify that `path`'s SHA-256 digest equals `expected_hex`.
-///
-/// The comparison is case-insensitive. On mismatch this returns an error whose
-/// message names the file and both digests, so a tampered or corrupted binary
-/// is rejected with a clear, actionable message before it is ever installed or
-/// executed.
-pub fn verify_file_checksum(path: &Path, expected_hex: &str) -> Result<()> {
-    let actual = sha256_hex_of_file(path)?;
-    let expected = expected_hex.trim().to_ascii_lowercase();
-    if actual == expected {
-        Ok(())
-    } else {
-        bail!(
-            "Checksum verification failed for {}: expected SHA-256 {expected}, computed {actual}. \
-             Refusing to use an agent binary that does not match its published checksum.",
-            path.display()
-        );
-    }
-}
-
-/// Return the path of the `.sha256` checksum sidecar for a binary path.
-fn checksum_sidecar_path(binary_path: &Path) -> PathBuf {
-    let mut name = binary_path.as_os_str().to_owned();
-    name.push(".");
-    name.push(CHECKSUM_EXT);
-    PathBuf::from(name)
-}
+/// Lowercase-hex SHA-256 of an in-memory byte slice. The coordinated update
+/// path hashes exactly the bytes it uploads to the agent, so it can send the
+/// agent the `expectedSha256` to re-verify the staged binary against before the
+/// swap (AGT-004). Shared core primitive (#4365).
+pub use termihub_core::util::sha256::sha256_hex_of_bytes;
 
 /// Read the base64 Ed25519 signature from the `.sig` sidecar next to a resolved
 /// agent binary, if one exists (AGT-005, #3213).
@@ -309,7 +247,7 @@ pub fn verify_deploy_bytes(binary_path: &Path, bytes: &[u8], version: &str) -> R
 /// Verify the `.sig` sidecar next to a resolved binary against the binary's
 /// on-disk bytes. See [`verify_signature_for_digest`].
 fn verify_adjacent_signature(binary_path: &Path, policy: &SignaturePolicy) -> Result<()> {
-    let digest = sha256_hex_of_file(binary_path)?;
+    let digest = file_sha256_hex(binary_path)?;
     verify_signature_for_digest(binary_path, &digest, policy)
 }
 
@@ -348,7 +286,7 @@ fn verify_with_adjacent_sidecar(binary_path: &Path, require_checksum: bool) -> R
                     sidecar.display()
                 )
             })?;
-            verify_file_checksum(binary_path, &expected)
+            Ok(verify_file_checksum(binary_path, &expected)?)
         }
         Err(_) if require_checksum => {
             // Release build: a published checksum is mandatory. Refuse to use an
@@ -711,7 +649,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use termihub_core::agent_update_signature::test_support::{sign_digest, test_signing_key};
+    use termihub_core::agent_update_signature::test_support::{
+        sign_digest, sign_digest_in_domain, test_signing_key,
+    };
 
     #[test]
     fn artifact_name_linux_x86_64() {
@@ -1116,120 +1056,10 @@ mod tests {
     /// the hashing implementation.
     const SHA256_OF_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
-    #[test]
-    fn sha256_hex_of_file_matches_known_vector() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("payload.bin");
-        fs::write(&path, b"abc").unwrap();
-
-        let digest = sha256_hex_of_file(&path).unwrap();
-        assert_eq!(digest, SHA256_OF_ABC);
-    }
-
-    #[test]
-    fn sha256_hex_of_file_is_lowercase_hex() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("payload.bin");
-        fs::write(&path, b"some binary content").unwrap();
-
-        let digest = sha256_hex_of_file(&path).unwrap();
-        assert_eq!(digest.len(), 64, "SHA-256 hex must be 64 chars");
-        assert!(
-            digest
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-            "digest must be lowercase hex, got: {digest}"
-        );
-    }
-
-    #[test]
-    fn sha256_hex_of_file_missing_file_errors() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("does-not-exist.bin");
-        assert!(sha256_hex_of_file(&path).is_err());
-    }
-
-    #[test]
-    fn parse_sha256_sidecar_plain_hex() {
-        assert_eq!(
-            parse_sha256_sidecar(SHA256_OF_ABC),
-            Some(SHA256_OF_ABC.to_string())
-        );
-    }
-
-    #[test]
-    fn parse_sha256_sidecar_sha256sum_text_format() {
-        // Standard `sha256sum` text-mode output: "<hex>  <filename>".
-        let line = format!("{SHA256_OF_ABC}  termihub-agent-linux-x64\n");
-        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
-    }
-
-    #[test]
-    fn parse_sha256_sidecar_sha256sum_binary_format() {
-        // Binary-mode output prefixes the filename with '*'.
-        let line = format!("{SHA256_OF_ABC} *termihub-agent-windows-x64.exe\n");
-        assert_eq!(parse_sha256_sidecar(&line), Some(SHA256_OF_ABC.to_string()));
-    }
-
-    #[test]
-    fn parse_sha256_sidecar_uppercase_is_normalized() {
-        let upper = SHA256_OF_ABC.to_ascii_uppercase();
-        assert_eq!(
-            parse_sha256_sidecar(&upper),
-            Some(SHA256_OF_ABC.to_string())
-        );
-    }
-
-    #[test]
-    fn parse_sha256_sidecar_rejects_garbage() {
-        assert_eq!(parse_sha256_sidecar(""), None);
-        assert_eq!(parse_sha256_sidecar("   \n"), None);
-        assert_eq!(parse_sha256_sidecar("not-a-hash"), None);
-        // Too short.
-        assert_eq!(parse_sha256_sidecar("deadbeef"), None);
-        // 64 chars but contains a non-hex char ('g').
-        assert_eq!(parse_sha256_sidecar(&"g".repeat(64)), None);
-    }
-
-    #[test]
-    fn verify_file_checksum_ok_on_match() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("payload.bin");
-        fs::write(&path, b"abc").unwrap();
-
-        assert!(verify_file_checksum(&path, SHA256_OF_ABC).is_ok());
-        // Case-insensitive on the expected side too.
-        assert!(verify_file_checksum(&path, &SHA256_OF_ABC.to_ascii_uppercase()).is_ok());
-    }
-
-    #[test]
-    fn verify_file_checksum_rejects_mismatch_with_clear_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("payload.bin");
-        // Content whose digest is NOT SHA256_OF_ABC.
-        fs::write(&path, b"tampered content").unwrap();
-
-        let err = verify_file_checksum(&path, SHA256_OF_ABC).unwrap_err();
-        let msg = err.to_string().to_ascii_lowercase();
-        assert!(
-            msg.contains("checksum"),
-            "error should mention checksum, got: {err}"
-        );
-        assert!(
-            msg.contains(SHA256_OF_ABC),
-            "error should include the expected checksum, got: {err}"
-        );
-    }
-
-    #[test]
-    fn checksum_sidecar_path_appends_sha256() {
-        let binary = PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64");
-        let sidecar = checksum_sidecar_path(&binary);
-        assert_eq!(
-            sidecar,
-            PathBuf::from("/cache/0.1.0/termihub-agent-linux-x64.sha256")
-        );
-    }
+    // The checksum primitives themselves (`parse_sha256_sidecar`,
+    // `verify_file_checksum`, `checksum_sidecar_path`) are tested once, in
+    // `termihub_core::agent_update_checksum` (#4365). The tests below pin this
+    // consumer's fail-closed use of them.
 
     #[test]
     fn verify_with_adjacent_sidecar_ok_when_matching() {
@@ -1585,6 +1415,50 @@ mod tests {
         .unwrap();
         let err = verify_resolved_binary(&bin, true, &release_policy()).unwrap_err();
         assert!(err.to_string().contains("does not verify"), "got: {err}");
+    }
+
+    /// Regression (#4365): a signature by the trusted key over the right digest
+    /// but under another domain (the plugin-index one) is refused.
+    #[test]
+    fn resolved_entry_with_wrong_domain_signature_is_rejected() {
+        let foreign = sign_digest_in_domain(
+            &test_signing_key(TEST_KEY_SEED),
+            b"termihub-plugin-index-v1\0",
+            SHA256_OF_ABC,
+        );
+        let (_tmp, bin) = resolved_entry(Some(&foreign));
+        for policy in [release_policy(), dev_policy()] {
+            let err = verify_resolved_binary(&bin, true, &policy).unwrap_err();
+            assert!(err.to_string().contains("does not verify"), "got: {err}");
+        }
+    }
+
+    /// Regression (#4365): the shared checksum gate keeps the exact mismatch
+    /// wording, and a missing binary is still an "open for checksum" error.
+    #[test]
+    fn checksum_rejections_keep_their_wording() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"tampered").unwrap();
+        fs::write(checksum_sidecar_path(&binary), SHA256_OF_ABC).unwrap();
+        let err = verify_with_adjacent_sidecar(&binary, true).unwrap_err();
+        let actual = termihub_core::util::sha256::sha256_hex_of_bytes(b"tampered");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Checksum verification failed for {}: expected SHA-256 {SHA256_OF_ABC}, computed \
+                 {actual}. Refusing to use an agent binary that does not match its published \
+                 checksum.",
+                binary.display()
+            )
+        );
+
+        let missing = tmp.path().join("gone");
+        let err = verify_adjacent_signature(&missing, &release_policy()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("Failed to open {} for checksum", missing.display())
+        );
     }
 
     #[test]

@@ -6,8 +6,8 @@ severity: low
 category: supply-chain
 is_workaround: false
 subsystem: "rdp-sidecar / CI"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4357 — Security Audit (RDP sidecar) job runs cargo audit + cargo deny daily/push/PR; cargo-update chore refreshes and gates the sidecar lock; ci-changes runs sidecar for core/win-security/Cargo.toml"
 audit: 2026-10
 commit: 663465d52
 relation: new

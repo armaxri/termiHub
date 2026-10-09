@@ -5,7 +5,10 @@ changed no Rust code — in two related situations:
 
 - A **yanked crate** in `Cargo.lock`. The gate is `cargo deny check advisories`
   with `yanked = "deny"` in [`deny.toml`](../deny.toml) — the deliberate guard
-  from #2074 against silently shipping a withdrawn dependency.
+  from #2074 against silently shipping a withdrawn dependency. The RDP sidecar's
+  own `rdp-sidecar/Cargo.lock` has the same gate
+  ([`rdp-sidecar/deny.toml`](../rdp-sidecar/deny.toml)), run by the
+  **Security Audit (RDP sidecar)** job (#4357).
 - A **freshly-published RUSTSEC advisory** against any dependency. `cargo audit`
   fetches a live advisory DB, so a real vulnerability disclosed upstream flips
   the job red across all open PRs the moment it is published.
@@ -40,7 +43,8 @@ The [`Cargo Update Lockfile`](../.github/workflows/cargo-update-lockfile.yml)
 workflow runs `cargo update` **daily** (04:00 UTC) and on demand
 (`workflow_dispatch`). It pulls compatible patch/minor bumps — including
 off-yanked replacements and freshly-published advisory fixes — into `Cargo.lock`
-and opens a single PR against `develop` when the lockfile changed. Keeping the
+**and `rdp-sidecar/Cargo.lock`** (#4357) and opens a single PR against `develop`
+when either lockfile changed. Keeping the
 lockfile current means a freshly-yanked patch or advisory fix is usually already
 in `develop` before it can red PRs. The cadence is **daily** (previously weekly;
 see #2645): a weekly refresh left every open PR's Security Audit red for up to a
@@ -63,9 +67,12 @@ Operational notes for that PR:
 - **A lockfile that fails the gate opens as a draft, and the run fails.** Before
   opening the PR, the job itself runs the lockfile gate on the refreshed lock:
   `cargo check --workspace --all-targets --all-features --locked` (it compiles),
-  the pre-release tripwire (`scripts/internal/check-prerelease-crates.mjs`) and
-  the same cargo-deny gate as Security Audit
-  (`cargo deny check advisories bans licenses sources`). If any of them fails (a
+  `cargo check --manifest-path rdp-sidecar/Cargo.toml --all-targets --locked`
+  when the sidecar lockfile changed, the pre-release tripwire
+  (`scripts/internal/check-prerelease-crates.mjs`, both lockfiles) and the same
+  cargo-deny gate as Security Audit
+  (`cargo deny check advisories bans licenses sources`) for the workspace and,
+  from `rdp-sidecar/`, for the sidecar. If any of them fails (a
   bump that does not compile, a pre-release bump off the allowlist, a crate
   yanked or flagged after the update, a new license, …), the PR is opened, or an
   open one converted, as a **draft** with the failing output at the top of its
@@ -116,6 +123,8 @@ PR; the PR is fine.
    ```bash
    cargo deny check
    cargo audit
+   # the RDP sidecar has its own lockfile and configs; run from rdp-sidecar/:
+   (cd rdp-sidecar && cargo deny check && cargo audit)
    ```
 
    `cargo deny` prints `error[yanked]` / "detected yanked crate" for a yank;
@@ -131,6 +140,8 @@ PR; the PR is fine.
    # e.g. cargo update -p libssh2-sys
    # advisory with a known fixed version:
    cargo update -p ringbuf --precise 0.5.2
+   # the same crate in the sidecar lockfile:
+   cargo update --manifest-path rdp-sidecar/Cargo.toml -p <crate>
    ```
 
    If the fixed/non-yanked version is outside the allowed range, widen the

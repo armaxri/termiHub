@@ -54,8 +54,9 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
 use tracing::{debug, warn};
+
+use crate::util::sha256::sha256_hex_of_reader;
 
 /// The known-good sidecar SHA-256 (lowercase hex), embedded at build time by
 /// `core/build.rs`. `None` when no digest was staged (dev/branch builds).
@@ -70,8 +71,10 @@ const FILE_SHARE_READ: u32 = 0x0000_0001;
 ///
 /// The file is streamed through the hasher, so an arbitrarily large binary is
 /// hashed without loading it all into memory.
+///
+/// Delegates to the shared [`crate::util::sha256`] primitive (#4365).
 pub fn sha256_hex_of_file(path: &Path) -> std::io::Result<String> {
-    sha256_hex_of_handle(&File::open(path)?)
+    crate::util::sha256::sha256_hex_of_file(path)
 }
 
 /// Compute the lowercase-hex SHA-256 digest of an already-open file, from its
@@ -82,9 +85,7 @@ pub fn sha256_hex_of_file(path: &Path) -> std::io::Result<String> {
 pub fn sha256_hex_of_handle(file: &File) -> std::io::Result<String> {
     let mut reader = file;
     reader.seek(SeekFrom::Start(0))?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut reader, &mut hasher)?;
-    Ok(hex::encode(hasher.finalize()))
+    sha256_hex_of_reader(reader)
 }
 
 /// Open the helper for hashing and (where supported) exec-by-handle.
@@ -363,7 +364,7 @@ mod tests {
     // ── #2835: hash-by-handle + exec-by-handle ─────────────────────────────
 
     fn sha256_hex(bytes: &[u8]) -> String {
-        hex::encode(Sha256::digest(bytes))
+        crate::util::sha256::sha256_hex_of_bytes(bytes)
     }
 
     #[test]
