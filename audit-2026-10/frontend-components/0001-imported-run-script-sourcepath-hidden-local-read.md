@@ -14,8 +14,8 @@ evidence:
   - src/store/slices/workflowRunOnTarget.ts:505
   - src/services/api.ts:1965-1967
   - src-tauri/src/commands/files.rs:110-112
-status: open
-resolution: ""
+status: fixed
+resolution: "#4310 — import strips run-script sourcePath; runner reads only paths on the machine-local allowlist, editor shows/confirms the path, failed reads fail the step"
 audit: 2026-10
 commit: 663465d52
 relation: new
