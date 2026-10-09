@@ -4,6 +4,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogEntry } from "@/types/terminal";
 import { Button, SearchInput, toast } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
@@ -23,14 +24,36 @@ const MAX_ENTRIES = 2000;
 
 /**
  * Target the backend re-emits forwarded frontend WARN/ERROR entries under
- * (`record_frontend_log`, OBS-001). The viewer already shows the direct
- * `frontend::<module>` copy from the frontend log history, so it drops this
- * echo instead of listing every frontend warning twice (#4327, OBS2-004).
+ * (`record_frontend_log`, OBS-001), tagged with the forwarding window's label.
  */
 const BACKEND_FRONTEND_ECHO_TARGET = "frontend";
 
-function isFrontendEcho(entry: LogEntry): boolean {
-  return entry.target === BACKEND_FRONTEND_ECHO_TARGET;
+/**
+ * Whether `entry` is the backend echo of a frontend entry raised in THIS window.
+ * The viewer already shows the direct `frontend::<module>` copy from this
+ * window's frontend log history, so it drops that echo instead of listing every
+ * frontend warning twice (#4327, OBS2-004). Echoes from other windows are the
+ * only way their warnings reach this viewer, so they are kept (#4535). An echo
+ * without a window label cannot be attributed and is dropped, as before.
+ */
+function isOwnFrontendEcho(entry: LogEntry, ownWindow: string): boolean {
+  if (entry.target !== BACKEND_FRONTEND_ECHO_TARGET) return false;
+  return entry.window === undefined || entry.window === ownWindow;
+}
+
+/** Label of the window hosting this viewer, or `""` outside the Tauri runtime. */
+function currentWindowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    // No Tauri window (browser/test without the IPC): nothing to attribute to.
+    return "";
+  }
+}
+
+/** The target column: a cross-window echo also names the window it came from. */
+function displayTarget(entry: LogEntry): string {
+  return entry.window ? `${entry.target} (${entry.window})` : entry.target;
 }
 
 function capEntries(entries: LogEntry[]): LogEntry[] {
@@ -57,6 +80,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   // Load buffered logs and subscribe to real-time events
   useEffect(() => {
     let cancelled = false;
+    const ownWindow = currentWindowLabel();
+    const isOwnEcho = (entry: LogEntry) => isOwnFrontendEcho(entry, ownWindow);
 
     const addEntry = (entry: LogEntry) => {
       if (!cancelled) {
@@ -79,7 +104,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       .then((buffered) => {
         if (!cancelled) {
           // Prepend the backend backlog to the frontend entries already shown.
-          const backend = buffered.filter((entry) => !isFrontendEcho(entry));
+          const backend = buffered.filter((entry) => !isOwnEcho(entry));
           setEntries((prev) => capEntries([...backend, ...prev]));
         }
       })
@@ -90,7 +115,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       });
 
     const unlistenPromise = onLogEntry((entry) => {
-      if (!isFrontendEcho(entry)) addEntry(entry);
+      if (!isOwnEcho(entry)) addEntry(entry);
     });
 
     return () => {
@@ -254,7 +279,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
                   <span className={`log-viewer__level log-viewer__level--${entry.level}`}>
                     {entry.level}
                   </span>
-                  <span className="log-viewer__target">{entry.target}</span>
+                  <span className="log-viewer__target">{displayTarget(entry)}</span>
                   <span className="log-viewer__message">{entry.message}</span>
                 </div>
               </ContextMenu.Trigger>
@@ -299,11 +324,11 @@ function reportFailure(title: string, action: string, err: unknown): void {
 function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
   return (
     entry.message.toLowerCase().includes(searchLower) ||
-    entry.target.toLowerCase().includes(searchLower) ||
+    displayTarget(entry).toLowerCase().includes(searchLower) ||
     entry.level.toLowerCase().includes(searchLower)
   );
 }
 
 function formatEntry(entry: LogEntry): string {
-  return `${entry.timestamp} [${entry.level}] ${entry.target}: ${entry.message}`;
+  return `${entry.timestamp} [${entry.level}] ${displayTarget(entry)}: ${entry.message}`;
 }

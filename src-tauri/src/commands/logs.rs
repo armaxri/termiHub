@@ -2,7 +2,7 @@ use tauri::State;
 use tracing::Level;
 
 use crate::utils::file_log::{self, FileLogReload};
-use crate::utils::log_capture::{LogEntry, SharedLogBuffer};
+use crate::utils::log_capture::{LogEntry, SharedLogBuffer, FRONTEND_LOG_TARGET};
 
 /// Return the most recent log entries from the ring buffer.
 #[tauri::command]
@@ -51,15 +51,6 @@ pub fn get_log_file_path() -> Option<String> {
     file_log::log_file_path().map(|p| p.display().to_string())
 }
 
-/// Tracing target under which frontend-forwarded log lines are emitted.
-///
-/// A `tracing` event's target must be a compile-time constant, so the frontend
-/// sub-target (`terminal`, `store`, …) cannot be the event target itself — it is
-/// folded into the message instead (see [`compose_frontend_message`]). This
-/// constant target matches the `frontend` directive in both the ring-buffer and
-/// file filters, so the entries reach the durable `termihub.log`.
-const FRONTEND_LOG_TARGET: &str = "frontend";
-
 /// Map a frontend level string onto a tracing [`Level`].
 ///
 /// Case-insensitive; unknown levels return `None` so the caller can decide how to
@@ -76,7 +67,8 @@ fn frontend_level(level: &str) -> Option<Level> {
 }
 
 /// Fold the frontend sub-target into the message so the origin survives even
-/// though the tracing event target is the constant [`FRONTEND_LOG_TARGET`].
+/// though the tracing event target is the constant [`FRONTEND_LOG_TARGET`]
+/// (a compile-time constant, so the sub-target cannot be the event target).
 fn compose_frontend_message(target: &str, message: &str) -> String {
     let target = target.trim();
     if target.is_empty() {
@@ -92,21 +84,41 @@ fn compose_frontend_message(target: &str, message: &str) -> String {
 /// durable file log — the file a user is asked to paste into a bug report —
 /// instead of dying in the in-memory LogViewer with the window. Emitted under the
 /// `frontend` target and tagged frontend-origin via the composed message.
+///
+/// Tauri injects the calling `window`; its label travels as the event's `window`
+/// field so each window's Log Viewer can drop only its own echo and still show
+/// other windows' warnings (#4535).
 #[tauri::command]
-pub fn record_frontend_log(level: String, target: String, message: String) {
-    let composed = compose_frontend_message(&target, &message);
-    match frontend_level(&level) {
-        Some(Level::ERROR) => tracing::error!(target: FRONTEND_LOG_TARGET, "{composed}"),
-        Some(Level::WARN) => tracing::warn!(target: FRONTEND_LOG_TARGET, "{composed}"),
-        Some(Level::INFO) => tracing::info!(target: FRONTEND_LOG_TARGET, "{composed}"),
-        Some(Level::DEBUG) => tracing::debug!(target: FRONTEND_LOG_TARGET, "{composed}"),
-        Some(Level::TRACE) => tracing::trace!(target: FRONTEND_LOG_TARGET, "{composed}"),
-        // Unknown level: keep the entry rather than dropping it, at WARN so it is
-        // visible without being alarming.
-        None => tracing::warn!(target: FRONTEND_LOG_TARGET, "{composed}"),
-    }
+pub fn record_frontend_log(window: tauri::Window, level: String, target: String, message: String) {
+    record_frontend_log_from_window(window.label(), &level, &target, &message);
 }
 
+/// Emit a forwarded frontend log line on behalf of the window labelled
+/// `window_label`. Split out of [`record_frontend_log`] so it can be tested
+/// without a live Tauri window.
+fn record_frontend_log_from_window(window_label: &str, level: &str, target: &str, message: &str) {
+    let composed = compose_frontend_message(target, message);
+    match frontend_level(level) {
+        Some(Level::ERROR) => {
+            tracing::error!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}")
+        }
+        Some(Level::WARN) => {
+            tracing::warn!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}")
+        }
+        Some(Level::INFO) => {
+            tracing::info!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}")
+        }
+        Some(Level::DEBUG) => {
+            tracing::debug!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}")
+        }
+        Some(Level::TRACE) => {
+            tracing::trace!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}")
+        }
+        // Unknown level: keep the entry rather than dropping it, at WARN so it is
+        // visible without being alarming.
+        None => tracing::warn!(target: FRONTEND_LOG_TARGET, window = window_label, "{composed}"),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +182,7 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(layer);
 
         crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
-            record_frontend_log("ERROR".into(), "store".into(), "save failed".into());
+            record_frontend_log_from_window("main", "ERROR", "store", "save failed");
         });
 
         let entries = buffer.lock().unwrap().get_recent(10);
@@ -178,5 +190,21 @@ mod tests {
         assert_eq!(entries[0].level, "ERROR");
         assert_eq!(entries[0].target, FRONTEND_LOG_TARGET);
         assert_eq!(entries[0].message, "[store] save failed");
+    }
+    #[test]
+    fn forwarded_frontend_entry_carries_the_source_window_label() {
+        let buffer = create_log_buffer();
+        let layer = LogCaptureLayer::new(buffer.clone());
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
+            record_frontend_log_from_window("win-2", "WARN", "terminal", "slow render");
+        });
+
+        let entries = buffer.lock().unwrap().get_recent(10);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].target, FRONTEND_LOG_TARGET);
+        assert_eq!(entries[0].message, "[terminal] slow render");
+        assert_eq!(entries[0].window.as_deref(), Some("win-2"));
     }
 }
