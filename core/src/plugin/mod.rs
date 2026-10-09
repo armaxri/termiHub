@@ -117,7 +117,8 @@ pub use manifest::{
     ConnectionPolicyManifest, ManifestParseError, ManifestValidationError, Platform,
     PluginExtensions, PluginManifest, PluginPermission, PluginSettingSchema,
     ProtocolParserExtension, SettingType, StatusBarWidgetExtension, TerminalBackendExtension,
-    ThemeEntry, ThemeExtension, WidgetPosition,
+    ThemeEntry, ThemeExtension, WidgetPosition, MAX_CONNECT_TIMEOUT_MS, MAX_MAX_CONNECTIONS,
+    MIN_CONNECT_TIMEOUT_MS, MIN_MAX_CONNECTIONS,
 };
 pub use native_trust::{
     native_library_hash, native_trust_binding, normalize_declared_path, AckAcceptances, AckStatus,

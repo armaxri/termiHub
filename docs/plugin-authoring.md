@@ -171,10 +171,24 @@ session opens through termiHub's capability bridge (`open_connection`, which
 needs the `network` permission). Both fields are optional; an absent field, or
 an absent object, keeps termiHub's default. Unknown keys are rejected.
 
-| Field              | Type    | Default | Notes                                                                                                                                                                     |
-| ------------------ | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `maxConnections`   | integer | `8`     | How many connections one session may hold open at once. The next `open_connection` is refused with `ResourceLimit` until the plugin drops one. `0` allows none.           |
-| `connectTimeoutMs` | integer | `30000` | How long, in milliseconds, termiHub waits for each connection to be established before it gives up and returns `Io`. Use a value above `0`: `0` makes every connect fail. |
+| Field              | Type    | Default | Allowed      | Notes                                                                                                                                          |
+| ------------------ | ------- | ------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxConnections`   | integer | `8`     | `1`–`256`    | How many connections one session may hold open at once. The next `open_connection` is refused with `ResourceLimit` until the plugin drops one. |
+| `connectTimeoutMs` | integer | `30000` | `1`–`600000` | How long, in milliseconds, termiHub waits for each connection to be established before it gives up and returns `Io`.                           |
+
+A value outside its range fails manifest validation with an error naming the
+field, the value, and the allowed range, for example
+`connectionPolicy.connectTimeoutMs must be between 1 and 600000 (got 0)`. Both
+`0` values are refused because they make the plugin unusable: a `0` timeout
+fails every connect, and a `0` connection limit refuses every
+`open_connection`. A plugin that opens no connections should leave out the
+`network` permission instead. The upper bounds keep one session from holding
+hundreds of sockets or waiting on an unreachable host for more than ten minutes.
+
+The same check runs every time termiHub reads an installed plugin, not only at
+install. A plugin installed before these limits existed, with a value now out of
+range, is refused with the same error and never started. Ship an update with
+valid limits.
 
 ```json
 "connectionPolicy": { "maxConnections": 2, "connectTimeoutMs": 5000 }
