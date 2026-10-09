@@ -16,8 +16,11 @@ name: Security Audit
 # Why not every PR: a new advisory/yank used to red EVERY open PR at once while
 # develop stayed green (#2547, #2584, #2585, #2636, #2641). The maintainer
 # accepted (2026-09-25) that such findings surface post-merge instead.
-# The rdp-sidecar lockfile has its own cargo-deny gate in code-quality.yml's
-# "RDP Sidecar Quality" job.
+# The rdp-sidecar crate is workspace-excluded with its OWN Cargo.lock, so it has
+# its own job here ("Security Audit (RDP sidecar)": cargo audit + cargo deny over
+# rdp-sidecar/Cargo.lock) on the same push/daily/PR triggers (#4357, SUP2-004).
+# code-quality.yml's "RDP Sidecar Quality" job also runs its cargo-deny gate,
+# but that workflow has no schedule.
 
 on:
   pull_request:
@@ -36,6 +39,7 @@ on:
       # Third-party notices gate (PKG-009): the generator, its config and inputs.
       - 'rdp-sidecar/Cargo.lock'
       - 'rdp-sidecar/deny.toml'
+      - 'rdp-sidecar/.cargo/audit.toml'
       - 'about.toml'
       - 'THIRD_PARTY_LICENSES.md'
       - 'licenses/**'
@@ -180,6 +184,53 @@ jobs:
         # function: none by design; deny.toml [bans] gates crates that must not appear.
         continue-on-error: true
         run: cargo tree --duplicates --workspace --edges normal || true
+
+  # The RDP sidecar (termihub-rdp-helper) ships in every release but is
+  # workspace-EXCLUDED with its own lockfile (rdp-sidecar/Cargo.lock), which the
+  # job above never reads (#4357, SUP2-004). Same triggers and the same daily
+  # develop+main fan-out, so a RUSTSEC advisory or yank against the sidecar
+  # lockfile surfaces within a day on both branches, without a full build.
+  # Configs: rdp-sidecar/.cargo/audit.toml and rdp-sidecar/deny.toml — both are
+  # picked up because every step runs in rdp-sidecar/.
+  security-audit-sidecar:
+    name: Security Audit (RDP sidecar${{ matrix.ref != '' && format(', {0}', matrix.ref) || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ fromJSON(github.event_name == 'schedule' && '["develop","main"]' || '[""]') }}
+    defaults:
+      run:
+        working-directory: rdp-sidecar
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-audit
+
+      # Equivalent to `cargo audit -f rdp-sidecar/Cargo.lock`, but run from
+      # rdp-sidecar/ so its .cargo/audit.toml (the sidecar's ignore list) applies.
+      - name: Cargo Audit (rdp-sidecar/Cargo.lock)
+        run: cargo audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-deny
+
+      # Same four gates as the workspace step above, against the sidecar's own
+      # lockfile and rdp-sidecar/deny.toml.
+      - name: Cargo Deny (rdp-sidecar supply-chain gate)
+        run: cargo deny check advisories bans licenses sources
 
   # Third-party license notices gate (PKG-009). release.yml generates and
   # bundles THIRD_PARTY_NOTICES.txt; this job proves on every dependency change
