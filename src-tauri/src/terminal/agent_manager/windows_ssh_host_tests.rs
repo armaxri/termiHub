@@ -79,6 +79,7 @@ use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
 use crate::utils::ssh_auth::connect_and_authenticate;
+use termihub_core::ipc::ndjson::LineSplitter;
 
 const PORT_ENV: &str = "TERMIHUB_NATIVE_SSHD_PORT";
 const USER_ENV: &str = "TERMIHUB_NATIVE_SSHD_USER";
@@ -509,7 +510,7 @@ async fn wait_for_text(
     needle: &str,
     deadline: Instant,
 ) -> Result<(), String> {
-    let mut buf = String::new();
+    let mut buf = LineSplitter::new();
     let mut raw = Vec::new();
     while Instant::now() < deadline {
         let read = tokio::time::timeout(
@@ -518,7 +519,7 @@ async fn wait_for_text(
         )
         .await;
         match read {
-            Ok(Some(line)) if !line.is_empty() => {
+            Ok(Ok(line)) => {
                 if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
                     jsonrpc::parse_message(&line)
                 {
@@ -534,8 +535,8 @@ async fn wait_for_text(
                     }
                 }
             }
-            Ok(Some(_)) | Err(_) => continue,
-            Ok(None) => return Err("agent channel closed".to_string()),
+            Err(_) => continue,
+            Ok(Err(e)) => return Err(e.to_string()),
         }
     }
     Err(format!(

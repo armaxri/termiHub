@@ -16,6 +16,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
 use tracing::warn;
 
+use termihub_core::ipc::ndjson::LineSplitter;
 use termihub_core::protocol::methods::{ConnectionEvictedNotification, SessionListResult};
 
 use super::{empty_params, read_handshake_line, serialize_request, MonitoringRoute};
@@ -350,13 +351,12 @@ async fn list_recovered_session_ids(
     channel.data(line.as_bytes()).await.ok()?;
 
     const MAX_SKIPPED: u32 = 1000;
-    let mut buf = String::new();
+    let mut buf = LineSplitter::new();
     let mut skipped: u32 = 0;
     loop {
-        let resp = read_handshake_line(channel, agent_id, &mut buf).await?;
-        if resp.is_empty() {
-            continue;
-        }
+        let resp = read_handshake_line(channel, agent_id, &mut buf)
+            .await
+            .ok()?;
         match jsonrpc::parse_message(&resp) {
             Ok(jsonrpc::JsonRpcMessage::Response { id, result }) if id == req_id => {
                 // Parse the reply into the shared `SessionListResult` DTO (DUP-001);

@@ -215,9 +215,16 @@ Registers a new connection type backed by a native dynamic library (see
 > though it runs in its own [sandboxed process](#the-plugin-sandbox), so it does not
 > load just because it is installed and enabled. The user must turn on **Settings → Plugins → Native
 > Plugins** _and_ explicitly trust the plugin there. The trust
-> acknowledgement is bound to a SHA-256 hash of the library file, so rebuilding or
-> replacing the library requires trusting it again. Until both conditions hold,
-> the host refuses to load the backend.
+> acknowledgement is bound to a SHA-256 hash of the library file **and** to the
+> access the user approved: the manifest's `permissions`, its `filesystemPaths`
+> (normalised, so `/data/app/` and `/data/app` are the same folder) and its
+> `connectionPolicy`. Rebuilding or replacing the library, or shipping a
+> manifest that asks for different access, requires trusting the plugin again.
+> This includes an update that only narrows access: the host requires an exact
+> match, so what the user approved is always exactly what the plugin gets.
+> Uninstalling a plugin also removes its trust acknowledgement. Until both
+> conditions hold, the host refuses to load the backend, and the Settings row
+> shows the plugin as needing re-approval, with the access that was added.
 
 | Field            | Notes                                                                                                                                                    |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -603,7 +610,7 @@ plus a Log Viewer entry.
 
 The sandbox limits what a plugin can reach, not what it draws in its own
 terminal, so native plugins stay default-off and each one still needs the
-user's hash-bound trust acknowledgement. The design is ADR-19 in
+user's trust acknowledgement, bound to the library hash and the approved access. The design is ADR-19 in
 [`architecture.md`](architecture.md).
 
 ### The SDK is internal for 0.1
@@ -957,7 +964,9 @@ What the host guarantees:
   update is installed through the same install dialog as a manual install, with
   its signature/trust banner, permission list and confirmations. A native
   backend's library hash changes with every build, so an updated native plugin
-  must be trusted again before it loads.
+  must be trusted again before it loads. The same applies when an update keeps
+  the library but changes the manifest's `permissions`, `filesystemPaths` or
+  `connectionPolicy`.
 - **Only strictly newer versions are offered** — the check can never lead to a
   downgrade. A newer version whose `minHostAbi` this termiHub cannot load is
   shown as "needs a newer termiHub" and cannot be downloaded.

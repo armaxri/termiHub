@@ -17,11 +17,13 @@ use std::collections::HashSet;
 use serde_json::Value;
 use tracing::{info, warn};
 
+use termihub_core::ipc::ndjson::LineSplitter;
 use termihub_core::protocol::errors::SESSION_HELD_BY_OTHER;
 use termihub_core::protocol::methods::{SessionAttachParams, CONNECTION_ATTACH};
 
 use super::recovery::{evicted_remote_ids, fold_evicted_hosted_sessions, RecoveredSessions};
-use super::{read_handshake_line, serialize_request};
+use super::serialize_request;
+use super::stdout_reader::{frame, read_handshake_line, Frame};
 use crate::session::manager::AgentHostedSession;
 use crate::terminal::jsonrpc;
 
@@ -39,7 +41,7 @@ pub(crate) async fn reattach_after_reconnect<R: tauri::Runtime>(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
     request_id: &mut u64,
-    line_buf: &mut String,
+    line_buf: &mut LineSplitter,
     hosted: &[AgentHostedSession],
     recovered: Option<RecoveredSessions>,
 ) -> (Option<HashSet<String>>, Vec<(String, Value)>) {
@@ -137,7 +139,7 @@ pub(super) async fn reattach_hosted_sessions(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
     request_id: &mut u64,
-    line_buf: &mut String,
+    line_buf: &mut LineSplitter,
     session_ids: &[String],
 ) -> ReattachOutcome {
     let mut outcome = ReattachOutcome::default();
@@ -172,7 +174,7 @@ pub(super) async fn reattach_hosted_sessions(
             }
         }
     }
-    drain_complete_lines(line_buf, &mut outcome.notifications);
+    drain_complete_lines(agent_id, line_buf, &mut outcome.notifications);
     outcome
 }
 
@@ -181,7 +183,7 @@ async fn attach_one(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
     request_id: &mut u64,
-    line_buf: &mut String,
+    line_buf: &mut LineSplitter,
     session_id: &str,
     notifications: &mut Vec<(String, Value)>,
 ) -> AttachReply {
@@ -202,12 +204,9 @@ async fn attach_one(
     }
     let mut skipped: u32 = 0;
     loop {
-        let Some(line) = read_handshake_line(channel, agent_id, line_buf).await else {
+        let Ok(line) = read_handshake_line(channel, agent_id, line_buf).await else {
             return AttachReply::Failed;
         };
-        if line.is_empty() {
-            continue;
-        }
         let Ok(message) = jsonrpc::parse_message(&line) else {
             continue;
         };
@@ -227,13 +226,22 @@ async fn attach_one(
 
 /// Move every complete notification line out of `line_buf`, leaving only a
 /// trailing partial line for the resumed I/O loop to finish.
+///
+/// Stops at an over-cap line: the splitter then discards the rest of it, so
+/// the resumed I/O loop starts at the next line boundary (the frame error is
+/// logged by [`frame`]). In practice this cannot occur here: every chunk was
+/// pushed by [`read_handshake_line`], which rejects an over-cap line itself.
 pub(super) fn drain_complete_lines(
-    line_buf: &mut String,
+    agent_id: &str,
+    line_buf: &mut LineSplitter,
     notifications: &mut Vec<(String, Value)>,
 ) {
-    while let Some(pos) = line_buf.find('\n') {
-        let line = line_buf[..pos].trim().to_string();
-        line_buf.drain(..=pos);
+    while let Some(item) = line_buf.next_line() {
+        let line = match frame(agent_id, item) {
+            Frame::Line(line) => line,
+            Frame::Skip => continue,
+            Frame::Fatal(_) => break,
+        };
         if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
             jsonrpc::parse_message(&line)
         {

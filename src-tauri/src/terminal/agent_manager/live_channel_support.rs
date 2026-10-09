@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::{read_handshake_line, serialize_request};
 use crate::terminal::jsonrpc;
+use termihub_core::ipc::ndjson::LineSplitter;
 
 /// Drive a single JSON-RPC request over the raw agent channel and return its
 /// matching response `result` (ignoring interleaved notifications). This is
@@ -28,14 +29,11 @@ pub(super) async fn channel_rpc(
         .data(line.as_bytes())
         .await
         .map_err(|e| format!("write {method}: {e}"))?;
-    let mut buf = String::new();
+    let mut buf = LineSplitter::new();
     loop {
         let resp = read_handshake_line(channel, "test-agent", &mut buf)
             .await
-            .ok_or_else(|| format!("channel closed before {method} response"))?;
-        if resp.is_empty() {
-            continue;
-        }
+            .map_err(|e| format!("before {method} response: {e}"))?;
         match jsonrpc::parse_message(&resp) {
             Ok(jsonrpc::JsonRpcMessage::Response { id: rid, result }) if rid == id => {
                 return Ok(result)
@@ -61,7 +59,7 @@ pub(super) async fn wait_for_output(
     needle: &str,
     deadline: Instant,
 ) -> bool {
-    let mut buf = String::new();
+    let mut buf = LineSplitter::new();
     while Instant::now() < deadline {
         let read = tokio::time::timeout(
             Duration::from_millis(500),
@@ -69,10 +67,7 @@ pub(super) async fn wait_for_output(
         )
         .await;
         match read {
-            Ok(Some(line)) => {
-                if line.is_empty() {
-                    continue;
-                }
+            Ok(Ok(line)) => {
                 if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
                     jsonrpc::parse_message(&line)
                 {
@@ -87,8 +82,8 @@ pub(super) async fn wait_for_output(
                     }
                 }
             }
-            Ok(None) => return false, // channel closed
-            Err(_) => continue,       // read timeout — re-check the deadline
+            Ok(Err(_)) => return false, // channel closed
+            Err(_) => continue,         // read timeout — re-check the deadline
         }
     }
     false
@@ -107,7 +102,7 @@ pub(super) async fn read_counter_until(
     want: impl Fn(u64) -> bool,
     deadline: Instant,
 ) -> Option<u64> {
-    let mut buf = String::new();
+    let mut buf = LineSplitter::new();
     let mut max: Option<u64> = None;
     while Instant::now() < deadline {
         let read = tokio::time::timeout(
@@ -116,10 +111,7 @@ pub(super) async fn read_counter_until(
         )
         .await;
         match read {
-            Ok(Some(line)) => {
-                if line.is_empty() {
-                    continue;
-                }
+            Ok(Ok(line)) => {
                 if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
                     jsonrpc::parse_message(&line)
                 {
@@ -144,8 +136,8 @@ pub(super) async fn read_counter_until(
                     }
                 }
             }
-            Ok(None) => return max, // channel closed
-            Err(_) => continue,     // read timeout — re-check the deadline
+            Ok(Err(_)) => return max, // channel closed
+            Err(_) => continue,       // read timeout — re-check the deadline
         }
     }
     max

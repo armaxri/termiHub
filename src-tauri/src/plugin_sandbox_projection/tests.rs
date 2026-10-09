@@ -4,7 +4,8 @@ use serde_json::json;
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::plugin::sandbox::PluginRunnerConfig;
 use termihub_core::plugin::{
-    native_library_hash, parse_manifest, InstalledPlugin, NativeTrustStore, PluginHost, PluginState,
+    native_library_hash, parse_manifest, InstalledPlugin, NativeTrustStore, PluginHost,
+    PluginState, TrustBinding,
 };
 
 use super::*;
@@ -41,11 +42,14 @@ fn trusted_plugin(root: &std::path::Path) -> InstalledPlugin {
     );
     std::fs::write(backend.join(lib), b"not a real library").unwrap();
     let hash = native_library_hash(root, "acme").unwrap();
+    let manifest = parse_manifest(MANIFEST).unwrap();
     let mut trust = NativeTrustStore::load(root);
     trust.set_native_enabled(true).unwrap();
-    trust.acknowledge("acme", hash).unwrap();
+    trust
+        .acknowledge("acme", &TrustBinding::new(hash, &manifest))
+        .unwrap();
     InstalledPlugin {
-        manifest: parse_manifest(MANIFEST).unwrap(),
+        manifest,
         state: PluginState::Installed,
         error_message: None,
         installed_at: 0,

@@ -6,8 +6,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde_json::{json, Value};
 use termihub_core::plugin::{
-    generate_keypair, NativeTrustStore, PluginManager, PluginState, TrustStore,
-    NATIVE_TRUST_FILE_NAME,
+    generate_keypair, ApprovedAccess, NativeTrustStore, PluginManager, PluginState, TrustBinding,
+    TrustStore, NATIVE_TRUST_FILE_NAME,
 };
 
 use super::pending::{apply_pending_restore, ROLLBACK_DIR};
@@ -114,8 +114,18 @@ fn populated_source() -> (tempfile::TempDir, Value) {
     // This machine trusts the native plugin; that must never travel.
     let mut native_trust = NativeTrustStore::load(&plugins_root(src.path()));
     native_trust.set_native_enabled(true).unwrap();
-    native_trust.acknowledge(NATIVE_ID, "hash-of-lib").unwrap();
+    native_trust
+        .acknowledge(NATIVE_ID, &native_binding())
+        .unwrap();
     (src, publisher)
+}
+
+/// The binding this machine's native-plugin acknowledgment is recorded for.
+fn native_binding() -> TrustBinding {
+    TrustBinding {
+        library_sha256: "hash-of-lib".to_owned(),
+        access: ApprovedAccess::default(),
+    }
 }
 
 fn backup_of(dir: &Path, encrypt: bool) -> Result<export::BuiltBackup, VaultError> {
@@ -255,7 +265,7 @@ fn a_restored_native_plugin_needs_re_acknowledgment() {
     assert!(!root.join(NATIVE_TRUST_FILE_NAME).exists());
     let trust = NativeTrustStore::load(&root);
     assert!(!trust.is_native_enabled());
-    assert!(!trust.is_acknowledged(NATIVE_ID, "hash-of-lib"));
+    assert!(!trust.is_acknowledged(NATIVE_ID, &native_binding()));
     assert_eq!(
         read_root(dst.path(), "plugin-state.json")["plugins"][NATIVE_ID]["enabled"],
         json!(false)

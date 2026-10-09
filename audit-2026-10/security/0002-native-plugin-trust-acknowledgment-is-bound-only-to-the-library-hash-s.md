@@ -14,8 +14,8 @@ evidence:
   - core/src/plugin/version_change.rs:24
   - src/components/Plugins/PluginInstallDialog.tsx:298
   - src/components/Settings/nativePluginSandbox.ts:182
-status: open
-resolution: ""
+status: fixed
+resolution: "#4294 — trust ack binds library hash plus approved permissions, filesystemPaths and connectionPolicy; any change re-asks (install-dialog diff: #4418)"
 audit: 2026-10
 commit: 663465d52
 relation: new

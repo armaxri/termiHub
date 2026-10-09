@@ -11,8 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:3029-3053
   - src-tauri/src/terminal/agent_manager/reattach.rs:228-236
   - audit/agent-protocol/0013-desktop-read-no-size-cap.md:14
-status: open
-resolution: ""
+status: fixed
+resolution: "#4303 — desktop agent stdout reader capped at MAX_LINE_LEN, single-scan, over-cap line tears down the connection"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete
