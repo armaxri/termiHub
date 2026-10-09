@@ -27,6 +27,23 @@ use super::jump_host::{connect_target, GatewayHold};
 use super::sftp;
 use super::sftp_ops::{self, ElevatedWriteResult, Writability};
 
+/// Map a failed SFTP `stat` to a [`FileError`]: only the server's definite
+/// `NO_SUCH_FILE` is [`FileError::NotFound`] (#4299). Every other failure —
+/// permission denied, a generic failure, a lost connection, a timeout — is an
+/// operation failure, so a caller choosing a free name can never mistake an
+/// existing file it could not stat for a missing one.
+fn stat_error(path: &str, e: russh_sftp::client::error::Error) -> FileError {
+    use russh_sftp::protocol::StatusCode;
+    match e {
+        russh_sftp::client::error::Error::Status(status)
+            if status.status_code == StatusCode::NoSuchFile =>
+        {
+            FileError::NotFound(path.to_string())
+        }
+        other => FileError::OperationFailed(format!("stat failed: {other}")),
+    }
+}
+
 /// State of a connected SFTP session.
 struct SftpState {
     /// The SSH session carrying this SFTP channel. Kept alive for the session
@@ -256,6 +273,30 @@ impl SftpTransferChannel {
             .create(path)
             .await
             .map_err(|e| FileError::OperationFailed(format!("create remote file failed: {e}")))
+    }
+
+    /// Create `path` as a new, empty remote file, failing when anything is
+    /// already there (`CREATE | EXCLUDE`, the SFTP form of `O_EXCL`; #4299).
+    ///
+    /// Never truncates and never follows a dangling symbolic link, so the
+    /// caller owns the file it gets. A refusal because the name is taken is
+    /// reported like any other failure (SFTP v3 has no dedicated status for
+    /// it); re-check the path to tell a clash from a real error.
+    pub async fn create_new(&self, path: &str) -> Result<(), FileError> {
+        use tokio::io::AsyncWriteExt;
+        let mut file = self
+            .sftp
+            .open_with_flags(
+                path,
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await
+            .map_err(|e| {
+                FileError::OperationFailed(format!("create new remote file failed: {e}"))
+            })?;
+        file.shutdown()
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("close new remote file failed: {e}")))
     }
 
     /// Open an existing remote file for streaming reads, seeked to `offset`
@@ -502,7 +543,7 @@ impl FileBrowser for SftpFileBrowser {
 
         sftp::stat(&state.sftp, path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
+            .map_err(|e| stat_error(path, e))
     }
 
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
@@ -928,5 +969,42 @@ mod tests {
             recovered.is_some(),
             "as_any must expose the concrete SftpFileBrowser for downcasting"
         );
+    }
+
+    fn sftp_status(code: russh_sftp::protocol::StatusCode) -> russh_sftp::client::error::Error {
+        russh_sftp::client::error::Error::Status(russh_sftp::protocol::Status {
+            id: 0,
+            status_code: code,
+            error_message: "server says".to_string(),
+            language_tag: String::new(),
+        })
+    }
+
+    /// Only a definite `NO_SUCH_FILE` is "not found" (#4299): a caller picking
+    /// a free name must never mistake a permission or transport error on an
+    /// existing file for a free name and overwrite it.
+    #[test]
+    fn stat_error_maps_only_no_such_file_to_not_found() {
+        use russh_sftp::protocol::StatusCode;
+        assert!(matches!(
+            stat_error("/d/a.txt", sftp_status(StatusCode::NoSuchFile)),
+            FileError::NotFound(p) if p == "/d/a.txt"
+        ));
+        for code in [
+            StatusCode::PermissionDenied,
+            StatusCode::Failure,
+            StatusCode::ConnectionLost,
+            StatusCode::NoConnection,
+        ] {
+            let mapped = stat_error("/d/a.txt", sftp_status(code));
+            assert!(
+                !matches!(mapped, FileError::NotFound(_)),
+                "{code:?} must not read as not found: {mapped}"
+            );
+        }
+        assert!(!matches!(
+            stat_error("/d/a.txt", russh_sftp::client::error::Error::Timeout),
+            FileError::NotFound(_)
+        ));
     }
 }
