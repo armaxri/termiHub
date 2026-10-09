@@ -263,7 +263,7 @@ fn sync_timer_generic<R: tauri::Runtime>(app_handle: &AppHandle<R>, session_id: 
 /// re-establishing. The live session survives in place, so its re-attach id is kept
 /// (see the store method). Resolved by [`fold_agent_session_recovered`] on in-place
 /// recovery, or the frontend's gone/fully-failed resolver otherwise (pending the
-/// view-state migration, #2139).
+/// view-state migration, #2139). A tab that already ended is left alone (SM2-002).
 pub fn fold_agent_transport_reconnecting<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     tab_id: &str,
@@ -302,14 +302,30 @@ pub fn fold_agent_session_recovered<R: tauri::Runtime>(app_handle: &AppHandle<R>
 /// is cleared by the store method (the live agent session is gone). The message
 /// matches the backend-redrive session-lost fold ([`crate::session_projection::redrive`])
 /// so both gone-session paths surface identical wording.
-pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+///
+/// Applies only to a tab still `Reconnecting` (SM2-002, #4305) and returns whether
+/// it did: a tab the user stopped or that already ended keeps its status.
+pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) -> bool {
+    fold_session_lost_if_reconnecting(
+        app_handle,
+        tab_id,
+        "the live agent session could not be recovered",
+    )
+}
+
+/// Fold `SessionLost` with `message` for a tab still `Reconnecting`, then reconcile
+/// the timer. Returns whether the fold applied (SM2-002, #4305).
+fn fold_session_lost_if_reconnecting<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+    message: &str,
+) -> bool {
+    let mut applied = false;
     fold_session_transition(app_handle, |store| {
-        store.session_lost(
-            tab_id,
-            Some("the live agent session could not be recovered".to_string()),
-        );
+        applied = store.session_lost_if_reconnecting(tab_id, Some(message.to_string()));
     });
     sync_timer_generic(app_handle, tab_id);
+    applied
 }
 
 /// The **unconfirmed-session** resolve of [`fold_agent_transport_reconnecting`], folded
@@ -331,14 +347,18 @@ pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab
 /// confirmed at all. Loop-idle (`session_lost` resets the reconnect engine to idle and
 /// clears the re-attach id), so the subsequent timer reconcile is a *cancel* — no redrive
 /// is armed for the settled session.
-pub fn fold_agent_session_unconfirmed<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
-    fold_session_transition(app_handle, |store| {
-        store.session_lost(
-            tab_id,
-            Some("the agent session could not be confirmed after reconnect".to_string()),
-        );
-    });
-    sync_timer_generic(app_handle, tab_id);
+///
+/// Applies only to a tab still `Reconnecting` (SM2-002, #4305) and returns whether
+/// it did, like [`fold_agent_session_lost`].
+pub fn fold_agent_session_unconfirmed<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+) -> bool {
+    fold_session_lost_if_reconnecting(
+        app_handle,
+        tab_id,
+        "the agent session could not be confirmed after reconnect",
+    )
 }
 
 /// The fully-failed resolve of [`fold_agent_transport_reconnecting`], folded at the
@@ -364,13 +384,16 @@ pub fn fold_agent_session_unconfirmed<R: tauri::Runtime>(app_handle: &AppHandle<
 /// Loop-idle (`connect_failed` resets the reconnect engine to idle and clears the
 /// re-attach id), so the subsequent timer reconcile is a *cancel* — no redrive is armed
 /// for a definitively-failed session.
+///
+/// Applies only to a tab still `Reconnecting` (SM2-002, #4305): a tab the user
+/// stopped during the break, or one that already ended, keeps its status.
 pub fn fold_agent_reconnect_failed<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     tab_id: &str,
     error: Option<&str>,
 ) {
     fold_session_transition(app_handle, |store| {
-        store.connect_failed(tab_id, error.map(str::to_string));
+        store.connect_failed_if_reconnecting(tab_id, error.map(str::to_string));
     });
     sync_timer_generic(app_handle, tab_id);
 }

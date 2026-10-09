@@ -123,9 +123,9 @@ impl crate::utils::migrate::VersionedStore for HttpMonitorHistoryStore {
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt monitor
     /// series instead of resetting every monitor's history.
-    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
         crate::utils::migrate::salvage_list_store::<Self, HttpMonitorSeries>(
-            raw, file_name, "monitors",
+            value, file_name, "monitors",
         )
     }
 }

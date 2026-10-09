@@ -280,6 +280,15 @@ pub struct ConnectionStore {
     pub children: Vec<ConnectionTreeNode>,
     #[serde(default)]
     pub agents: Vec<SavedRemoteAgent>,
+    /// Unknown top-level keys, preserved verbatim for forward compatibility
+    /// (PER2-005).
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ConnectionStore {
+    /// The top-level keys the typed store owns; every other key is `extra`.
+    pub const KNOWN_FIELDS: [&'static str; 3] = ["version", "children", "agents"];
 }
 
 impl Default for ConnectionStore {
@@ -288,6 +297,7 @@ impl Default for ConnectionStore {
             version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             children: Vec::new(),
             agents: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -320,6 +330,12 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
     /// `timeoutSecs`, refuses to overwrite a v5 file instead of re-saving the
     /// FTP timeout under its default.
     const CURRENT_VERSION: u32 = 5;
+
+    /// Granular per-node recovery (PER-004) of the migrated document — see
+    /// [`super::storage::salvage_connection_store`].
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        super::storage::salvage_connection_store(&value, file_name)
+    }
 
     fn migrate(
         mut value: serde_json::Value,
@@ -397,6 +413,33 @@ pub struct ExternalConnectionStore {
     pub file_id: Option<String>,
     pub version: String,
     pub children: Vec<ConnectionTreeNode>,
+    /// Unknown top-level keys, preserved verbatim for forward compatibility
+    /// (PER2-005).
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ExternalConnectionStore {
+    /// Parse an external connection file **through the version gate**
+    /// (PER2-005). External files share the `connections.json` node schema, so
+    /// a file whose `version` is newer than [`ConnectionStore`]'s current one
+    /// was written by a newer termiHub: it is refused with a
+    /// [`NewerVersionError`](crate::utils::migrate::NewerVersionError) rather
+    /// than parsed, so no caller can rewrite (and silently downgrade) it.
+    pub fn parse_gated(data: &str) -> anyhow::Result<Self> {
+        use crate::utils::migrate::{read_version, NewerVersionError, VersionedStore};
+        let value: serde_json::Value = serde_json::from_str(data)?;
+        let supported = <ConnectionStore as VersionedStore>::CURRENT_VERSION;
+        if let Some(found) = read_version(&value).filter(|v| *v > supported) {
+            return Err(NewerVersionError {
+                store: "external connection file",
+                found,
+                supported,
+            }
+            .into());
+        }
+        Ok(serde_json::from_value(value)?)
+    }
 }
 
 /// Export format that optionally includes an encrypted credentials section.
@@ -610,6 +653,7 @@ mod tests {
     #[test]
     fn connection_store_v2_serde_round_trip() {
         let store = ConnectionStore {
+            extra: Default::default(),
             version: "2".to_string(),
             children: vec![
                 ConnectionTreeNode::Folder {

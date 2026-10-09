@@ -3,7 +3,7 @@
 //! When the desktop needs to deploy the agent to a remote host, this module
 //! figures out where to get the binary from:
 //!
-//! 1. **Local cache** — `~/.cache/termihub/agent-binaries/<version>/termihub-agent-<arch>`
+//! 1. **Local cache** — `~/.cache/termihub/agent-binaries/<version>/<asset>`
 //! 2. **Bundled resource** — shipped inside the Tauri app bundle
 //! 3. **GitHub Releases download** — fetched on demand and cached locally
 //!
@@ -21,12 +21,19 @@
 //! still verify. Because verification happens at resolution, it covers every
 //! deploy path — the immediate shutdown + install over SSH, the Windows fallback,
 //! and the coordinated push.
+//!
+//! `<asset>` is the published release-asset file name from the shared scheme in
+//! [`termihub_core::agent_release_asset`] (`termihub-agent-<suffix>`, plus `.exe`
+//! for Windows), the same names the agent's self-updater and the release
+//! workflows use (#4302).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
+pub use termihub_core::agent_release_asset::is_windows_os;
+use termihub_core::agent_release_asset::{agent_asset_suffix, agent_release_asset_name};
 use termihub_core::agent_update_signature::{
     signature_sidecar_path, SignaturePolicy, SignatureVerdict, SIGNATURE_EXT,
 };
@@ -40,53 +47,21 @@ const GITHUB_REPO: &str = "armaxri/termiHub";
 
 /// File-name suffix for the SHA-256 checksum sidecar published next to every
 /// agent binary release asset (e.g. `termihub-agent-linux-x64.sha256`).
-const CHECKSUM_EXT: &str = "sha256";
+const CHECKSUM_EXT: &str = termihub_core::agent_release_asset::AGENT_CHECKSUM_EXT;
 
 /// Map a remote OS string and architecture string to the artifact suffix we use.
 ///
 /// The OS string may come from `uname -s` (Linux, macOS, or a MinGW/MSYS/Cygwin
 /// shell on Windows) or from Windows environment probing (`%OS%` → `Windows_NT`).
 /// The architecture string may come from `uname -m` (e.g. `"x86_64"`) or from
-/// `%PROCESSOR_ARCHITECTURE%` (e.g. `"AMD64"`), so the Windows branch matches
-/// case-insensitively.
+/// `%PROCESSOR_ARCHITECTURE%` (e.g. `"AMD64"`).
+///
+/// Delegates to the shared [`agent_asset_suffix`] so the deployer and the
+/// agent's self-updater can never drift apart (#4302, DUP2-009).
 ///
 /// Returns `None` for unsupported OS/architecture combinations.
 pub fn artifact_name_for_os_arch(uname_os: &str, uname_arch: &str) -> Option<&'static str> {
-    // Windows must be checked before the Linux fallback so a MinGW/MSYS/Cygwin
-    // host (whose `uname -s` is e.g. `"MINGW64_NT-10.0"`) is not misdetected.
-    if is_windows_os(uname_os) {
-        return match uname_arch.to_ascii_lowercase().as_str() {
-            "x86_64" | "amd64" => Some("windows-x64"),
-            "aarch64" | "arm64" => Some("windows-arm64"),
-            _ => None,
-        };
-    }
-    match uname_os {
-        "Darwin" => match uname_arch {
-            "x86_64" | "amd64" => Some("macos-x64"),
-            "aarch64" | "arm64" => Some("macos-arm64"),
-            _ => None,
-        },
-        _ => match uname_arch {
-            "x86_64" | "amd64" => Some("linux-x64"),
-            "aarch64" | "arm64" => Some("linux-arm64"),
-            "armv7l" | "armhf" => Some("linux-armv7"),
-            _ => None,
-        },
-    }
-}
-
-/// Returns `true` if an OS string identifies a Windows host.
-///
-/// Recognizes the `uname -s` output of MinGW/MSYS/Cygwin shells
-/// (e.g. `"MINGW64_NT-10.0"`, `"MSYS_NT-..."`, `"CYGWIN_NT-..."`) as well as the
-/// `%OS%` value `"Windows_NT"` reported by `cmd.exe`/PowerShell probing.
-pub fn is_windows_os(os: &str) -> bool {
-    let upper = os.to_ascii_uppercase();
-    upper.starts_with("MINGW")
-        || upper.starts_with("MSYS")
-        || upper.starts_with("CYGWIN")
-        || upper.starts_with("WINDOWS")
+    agent_asset_suffix(uname_os, uname_arch)
 }
 
 /// Return the cache directory for agent binaries.
@@ -104,7 +79,12 @@ pub fn cache_dir() -> PathBuf {
 pub fn cached_binary_path(version: &str, arch_suffix: &str) -> PathBuf {
     cache_dir()
         .join(version)
-        .join(format!("termihub-agent-{arch_suffix}"))
+        .join(agent_release_asset_name(arch_suffix))
+}
+
+/// Return the expected path of a bundled binary inside a resource directory.
+fn bundled_binary_path(resource_dir: &Path, arch_suffix: &str) -> PathBuf {
+    resource_dir.join(agent_release_asset_name(arch_suffix))
 }
 
 /// Look for a cached binary. Returns `Some(path)` if it exists and is non-empty.
@@ -120,24 +100,19 @@ pub fn find_cached_binary(version: &str, arch_suffix: &str) -> Option<PathBuf> {
 
 /// Look for a bundled binary in the Tauri resource directory.
 ///
-/// The binary is expected at `resources/termihub-agent-<arch_suffix>` inside
-/// the app bundle.
+/// The binary is expected at `resources/<asset>` inside the app bundle, where
+/// `<asset>` is the published release-asset name for `arch_suffix`.
 pub fn find_bundled_binary(app_handle: &tauri::AppHandle, arch_suffix: &str) -> Option<PathBuf> {
     use tauri::Manager;
 
     let resource_dir = app_handle.path().resource_dir().ok()?;
-    let binary_name = format!("termihub-agent-{arch_suffix}");
-    let path = resource_dir.join(&binary_name);
+    let path = bundled_binary_path(&resource_dir, arch_suffix);
 
     if path.is_file() {
         debug!("Found bundled agent binary: {}", path.display());
         Some(path)
     } else {
-        debug!(
-            "No bundled agent binary at {} (checked {})",
-            binary_name,
-            path.display()
-        );
+        debug!("No bundled agent binary at {}", path.display());
         None
     }
 }
@@ -169,7 +144,10 @@ pub fn sanitize_branch_name(branch: &str) -> String {
 /// Branch release tags follow the pattern `agent-branch-{sanitized-branch}`.
 pub fn compute_branch_build_url(branch: &str, arch_suffix: &str) -> String {
     let tag = format!("agent-branch-{}", sanitize_branch_name(branch));
-    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-{arch_suffix}")
+    format!(
+        "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{}",
+        agent_release_asset_name(arch_suffix)
+    )
 }
 
 /// Compute the lowercase-hex SHA-256 digest of a file's contents.
@@ -474,7 +452,7 @@ fn remove_download(dest: &Path) {
     let _ = fs::remove_file(signature_sidecar_path(dest));
 }
 
-/// Download the agent binary from an explicit URL and cache it under `cache_key/termihub-agent-{arch}`.
+/// Download the agent binary from an explicit URL and cache it under `cache_key/<asset>`.
 ///
 /// When a `.sha256` sidecar is published next to the URL the download is
 /// verified against it (see [`download_binary_with_checksum`]). This is used for
@@ -491,7 +469,7 @@ where
 {
     let dest = cache_dir()
         .join(cache_key)
-        .join(format!("termihub-agent-{arch_suffix}"));
+        .join(agent_release_asset_name(arch_suffix));
     // Relaxed (dev/branch) posture for both checksum and signature: a missing
     // sidecar is tolerated, a present one must verify.
     download_binary_with_checksum(
@@ -506,7 +484,7 @@ where
 
 /// Resolve the agent binary for a specific branch build.
 ///
-/// Checks the local cache first (under `branch-{sanitized}/termihub-agent-{arch}`),
+/// Checks the local cache first (under `branch-{sanitized}/<asset>`),
 /// then downloads from the branch release on GitHub.
 pub fn resolve_branch_build_binary<F>(
     branch: &str,
@@ -519,7 +497,7 @@ where
     let cache_key = format!("branch-{}", sanitize_branch_name(branch));
     let cached = cache_dir()
         .join(&cache_key)
-        .join(format!("termihub-agent-{arch_suffix}"));
+        .join(agent_release_asset_name(arch_suffix));
 
     if is_nonempty_file(&cached) {
         debug!("Using cached branch build binary: {}", cached.display());
@@ -548,29 +526,58 @@ pub(crate) fn is_dev_build(version: &str) -> bool {
     cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev")
 }
 
-/// Return the base download URL (without arch suffix) for the current build.
+/// Return the release tag the current build downloads agents from.
 ///
 /// Dev builds (debug mode, `-dev` version suffix, or CI dev-build flag) use a
 /// branch-specific tag: `dev-develop-latest` for develop, `dev-latest` for everything
 /// else. Release builds use `v{version}`.
-///
-/// Append an arch suffix (e.g. `"linux-arm64"`) to obtain the full URL.
-pub fn compute_download_base_url(version: &str) -> String {
-    let tag = if is_dev_build(version) {
-        if env!("TERMIHUB_BUILD_BRANCH") == "develop" {
+fn download_tag(version: &str, is_dev: bool, branch: &str) -> String {
+    if is_dev {
+        if branch == "develop" {
             "dev-develop-latest".to_string()
         } else {
             "dev-latest".to_string()
         }
     } else {
         format!("v{version}")
-    };
-    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
+    }
+}
+
+/// The release download directory URL (ending in `/`) for a tag.
+fn download_dir_url(tag: &str) -> String {
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/")
+}
+
+/// Return the base download URL (without arch suffix) for the current build.
+///
+/// Ends in `termihub-agent-`: appending a non-Windows suffix (e.g.
+/// `"linux-arm64"`) yields that asset's URL. Windows assets additionally carry
+/// `.exe` — use [`compute_download_url`] to resolve any suffix correctly.
+pub fn compute_download_base_url(version: &str) -> String {
+    let tag = download_tag(
+        version,
+        is_dev_build(version),
+        env!("TERMIHUB_BUILD_BRANCH"),
+    );
+    format!(
+        "{}{}-",
+        download_dir_url(&tag),
+        termihub_core::agent_release_asset::AGENT_ASSET_BASE
+    )
 }
 
 /// Build the full GitHub Releases download URL for a given version and arch suffix.
 pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
-    format!("{}{}", compute_download_base_url(version), arch_suffix)
+    let tag = download_tag(
+        version,
+        is_dev_build(version),
+        env!("TERMIHUB_BUILD_BRANCH"),
+    );
+    format!(
+        "{}{}",
+        download_dir_url(&tag),
+        agent_release_asset_name(arch_suffix)
+    )
 }
 
 // Test helpers with explicit flags so tests are not affected by
@@ -582,16 +589,11 @@ pub(crate) fn compute_download_base_url_impl(
     branch: &str,
 ) -> String {
     let is_dev = is_debug_build || version.ends_with("-dev");
-    let tag = if is_dev {
-        if branch == "develop" {
-            "dev-develop-latest".to_string()
-        } else {
-            "dev-latest".to_string()
-        }
-    } else {
-        format!("v{version}")
-    };
-    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
+    format!(
+        "{}{}-",
+        download_dir_url(&download_tag(version, is_dev, branch)),
+        termihub_core::agent_release_asset::AGENT_ASSET_BASE
+    )
 }
 
 #[cfg(test)]
@@ -601,10 +603,11 @@ pub(crate) fn compute_download_url_impl(
     is_debug_build: bool,
     branch: &str,
 ) -> String {
+    let is_dev = is_debug_build || version.ends_with("-dev");
     format!(
         "{}{}",
-        compute_download_base_url_impl(version, is_debug_build, branch),
-        arch_suffix
+        download_dir_url(&download_tag(version, is_dev, branch)),
+        agent_release_asset_name(arch_suffix)
     )
 }
 
@@ -846,10 +849,105 @@ mod tests {
     }
 
     #[test]
-    fn artifact_name_unknown_falls_back_to_linux() {
+    fn artifact_name_unknown_os_is_unsupported() {
+        // No agent is published for e.g. FreeBSD; resolving it to a Linux binary
+        // would only fail later at exec time on the remote (#4302).
+        assert_eq!(artifact_name_for_os_arch("FreeBSD", "x86_64"), None);
+    }
+
+    #[test]
+    fn artifact_name_delegates_to_the_shared_core_scheme() {
+        use termihub_core::agent_release_asset::agent_asset_suffix;
+        for os in [
+            "Linux",
+            "Darwin",
+            "Windows_NT",
+            "MINGW64_NT-10.0",
+            "FreeBSD",
+        ] {
+            for arch in [
+                "x86_64", "amd64", "AMD64", "aarch64", "arm64", "armv7l", "mips",
+            ] {
+                assert_eq!(
+                    artifact_name_for_os_arch(os, arch),
+                    agent_asset_suffix(os, arch),
+                    "{os}/{arch}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn windows_download_url_requests_the_published_exe_asset() {
+        // PKG2-002: release.yml publishes termihub-agent-windows-<arch>.exe.
+        for (suffix, asset) in [
+            ("windows-x64", "termihub-agent-windows-x64.exe"),
+            ("windows-arm64", "termihub-agent-windows-arm64.exe"),
+        ] {
+            assert_eq!(
+                compute_download_url_impl("1.2.3", suffix, false, "main"),
+                format!("https://github.com/armaxri/termiHub/releases/download/v1.2.3/{asset}")
+            );
+            assert_eq!(
+                compute_download_url_impl("1.2.3", suffix, true, "develop"),
+                format!(
+                    "https://github.com/armaxri/termiHub/releases/download/dev-develop-latest/{asset}"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn download_url_sidecars_match_the_published_sidecar_names() {
+        use termihub_core::agent_release_asset::{
+            agent_checksum_asset_name, agent_release_asset_name, agent_signature_asset_name,
+            AGENT_ASSET_SUFFIXES,
+        };
+        for suffix in AGENT_ASSET_SUFFIXES {
+            let url = compute_download_url_impl("1.2.3", suffix, false, "main");
+            let dir = "https://github.com/armaxri/termiHub/releases/download/v1.2.3/";
+            assert_eq!(url, format!("{dir}{}", agent_release_asset_name(suffix)));
+            // download_binary_with_checksum fetches `<url>.sha256` / `<url>.sig`.
+            assert_eq!(
+                format!("{url}.{CHECKSUM_EXT}"),
+                format!("{dir}{}", agent_checksum_asset_name(suffix))
+            );
+            assert_eq!(
+                format!("{url}.{SIGNATURE_EXT}"),
+                format!("{dir}{}", agent_signature_asset_name(suffix))
+            );
+        }
+    }
+
+    #[test]
+    fn windows_cache_and_bundle_paths_use_the_exe_asset_name() {
+        let cached = cached_binary_path("0.1.0", "windows-arm64");
+        assert!(
+            cached.ends_with("0.1.0/termihub-agent-windows-arm64.exe"),
+            "got {}",
+            cached.display()
+        );
+        let bundled = bundled_binary_path(Path::new("/res"), "windows-x64");
+        assert_eq!(bundled, Path::new("/res/termihub-agent-windows-x64.exe"));
+        let bundled = bundled_binary_path(Path::new("/res"), "linux-x64");
+        assert_eq!(bundled, Path::new("/res/termihub-agent-linux-x64"));
+    }
+
+    #[test]
+    fn windows_branch_build_url_uses_the_exe_asset_name() {
         assert_eq!(
-            artifact_name_for_os_arch("FreeBSD", "x86_64"),
-            Some("linux-x64")
+            compute_branch_build_url("main", "windows-x64"),
+            "https://github.com/armaxri/termiHub/releases/download/agent-branch-main/termihub-agent-windows-x64.exe"
+        );
+    }
+
+    #[test]
+    fn download_base_url_plus_suffix_still_names_non_windows_assets() {
+        // The setup dialog builds `<base><suffix>` for display; it appends .exe
+        // itself for Windows suffixes.
+        assert_eq!(
+            compute_download_base_url_impl("1.2.3", false, "main"),
+            "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-"
         );
     }
 

@@ -16,8 +16,8 @@ evidence:
   - src-tauri/src/tunnel/storage.rs:68
   - src-tauri/src/macros/storage.rs:55
   - src-tauri/src/embedded_servers/storage.rs:105
-status: open
-resolution: ""
+status: fixed
+resolution: "#4297 — shared recover_corrupt_store backs up to first-free .bak[.N], rewrites only after a successful backup, else runs in memory with an honest warning and arms the save guard; hand-rolled copies folded in"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

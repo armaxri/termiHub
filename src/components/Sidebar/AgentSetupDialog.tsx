@@ -85,6 +85,15 @@ function isWindowsSuffix(s: ArchSuffix): boolean {
   return ARCH_OPTIONS.find((o) => o.suffix === s)?.os === "Windows_NT";
 }
 
+/**
+ * The release-asset file-name tail for an arch suffix: Windows agents are
+ * published as `termihub-agent-windows-<arch>.exe` (the shared scheme in
+ * `core/src/agent_release_asset.rs`, #4302).
+ */
+function assetFileTail(s: ArchSuffix): string {
+  return isWindowsSuffix(s) ? `${s}.exe` : s;
+}
+
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: "detecting" });
   const [selectedArch, setSelectedArch] = useState<ArchSuffix>("linux-x64");
@@ -318,7 +327,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   }, [agent.id, agent.name, onOpenChange, stopProgressListener]);
 
   const effectiveDownloadUrl =
-    phase.kind === "ready" ? `${phase.archInfo.downloadBaseUrl}${selectedArch}` : null;
+    phase.kind === "ready"
+      ? `${phase.archInfo.downloadBaseUrl}${assetFileTail(selectedArch)}`
+      : null;
 
   const sanitizeBranch = (b: string) =>
     b
@@ -327,7 +338,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       .replace(/^-|-$/g, "");
 
   const branchBuildUrl = branchName.trim()
-    ? `https://github.com/armaxri/termiHub/releases/download/agent-branch-${sanitizeBranch(branchName.trim())}/termihub-agent-${selectedArch}`
+    ? `https://github.com/armaxri/termiHub/releases/download/agent-branch-${sanitizeBranch(branchName.trim())}/termihub-agent-${assetFileTail(selectedArch)}`
     : null;
 
   const isSubmitDisabled =

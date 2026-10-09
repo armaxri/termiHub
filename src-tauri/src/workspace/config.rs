@@ -276,9 +276,9 @@ impl crate::utils::migrate::VersionedStore for WorkspaceStore {
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt workspace
     /// definitions instead of resetting every saved workspace.
-    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
         crate::utils::migrate::salvage_list_store::<Self, WorkspaceDefinition>(
-            raw,
+            value,
             file_name,
             "workspaces",
         )

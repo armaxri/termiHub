@@ -54,6 +54,10 @@ pub struct MacroStore {
     pub version: String,
     /// All stored macros.
     pub macros: Vec<Macro>,
+    /// Unknown top-level keys, preserved verbatim for forward compatibility
+    /// (PER2-002).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl MacroStore {
@@ -69,7 +73,19 @@ impl Default for MacroStore {
         Self {
             version: Self::CURRENT_VERSION.to_string(),
             macros: Vec::new(),
+            extra: serde_json::Map::new(),
         }
+    }
+}
+
+/// `macros.json` joins the shared schema-version gate (PER2-002): a newer
+/// file is refused instead of reset, and a corrupt one is salvaged per macro.
+impl crate::utils::migrate::VersionedStore for MacroStore {
+    const STORE_NAME: &'static str = "macros.json";
+    const CURRENT_VERSION: u32 = MacroStore::CURRENT_VERSION;
+
+    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, Macro>(value, file_name, "macros")
     }
 }
 

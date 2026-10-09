@@ -6,6 +6,7 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
+pub mod agent_release_asset;
 #[cfg(feature = "agent-update-signing")]
 pub mod agent_update_signature;
 #[cfg(any(

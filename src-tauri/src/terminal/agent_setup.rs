@@ -92,7 +92,8 @@ pub struct RemoteArchInfo {
     /// Artifact suffix used in binary filenames (e.g. `"linux-arm64"`), or `None` if unsupported.
     pub arch_suffix: Option<String>,
     /// Base download URL without the arch suffix (e.g. `"https://.../dev-latest/termihub-agent-"`).
-    /// Append any supported arch suffix to build the full URL.
+    /// Append an arch suffix to build the full URL — plus `.exe` for a `windows-*`
+    /// suffix, whose release assets are published as `termihub-agent-windows-<arch>.exe`.
     pub download_base_url: String,
     /// Pre-computed GitHub download URL for the detected arch, or `None` if arch is unsupported.
     pub download_url: Option<String>,
@@ -114,9 +115,11 @@ pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchIn
     let arch_suffix = agent_binary::artifact_name_for_os_arch(&os, &arch).map(str::to_string);
     let version = env!("CARGO_PKG_VERSION");
     let download_base_url = agent_binary::compute_download_base_url(version);
+    // Windows assets carry `.exe`, so resolve through the shared asset-name
+    // scheme rather than `<base><suffix>` (#4302).
     let download_url = arch_suffix
         .as_deref()
-        .map(|s| format!("{download_base_url}{s}"));
+        .map(|s| agent_binary::compute_download_url(version, s));
     // Expose the build branch only for feature branches so the UI can offer a
     // pre-filled branch-build option. main/develop/unknown are excluded because
     // those builds are already served by the dev-latest or versioned release.

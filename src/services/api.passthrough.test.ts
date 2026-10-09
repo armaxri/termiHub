@@ -977,6 +977,17 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("disconnect_agent", { agentId: "agent-1" });
     });
 
+    it("disconnectAgent asks the backend to keep hosted sessions resumable (#4447)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await disconnectAgent("agent-1", { endHostedSessions: false });
+
+      expect(mockedInvoke).toHaveBeenCalledWith("disconnect_agent", {
+        agentId: "agent-1",
+        endHostedSessions: false,
+      });
+    });
+
     it("getAgentCapabilities returns the capabilities", async () => {
       const caps = { monitoring: true };
       mockedInvoke.mockResolvedValue(caps);

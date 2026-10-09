@@ -57,8 +57,8 @@ impl VersionedStore for HttpMonitorsFile {
     /// unified backup (PROD-068) takes the version from here.
     const CURRENT_VERSION: u32 = 1;
 
-    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
-        salvage_list_store::<Self, HttpMonitorConfig>(raw, file_name, "monitors")
+    fn salvage(value: serde_json::Value, file_name: &str) -> Salvage<Self> {
+        salvage_list_store::<Self, HttpMonitorConfig>(value, file_name, "monitors")
     }
 }
 

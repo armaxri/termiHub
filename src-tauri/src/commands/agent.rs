@@ -23,7 +23,7 @@ use crate::terminal::agent_manager::{
     AgentFolderInfo, AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
-use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
+use crate::terminal::backend::{AgentEndReason, RemoteAgentConfig, UpdateStrategy};
 use crate::utils::errors::TerminalError;
 use termihub_core::protocol::methods::{
     AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
@@ -178,13 +178,32 @@ pub async fn connect_agent(
     .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
+/// Disconnect a remote agent.
+///
+/// `end_hosted_sessions` (default `true`) says whether this is a user Disconnect
+/// that ends the agent's hosted tabs in every window, or a suspend that is
+/// followed by a reconnect (the agent-update suspend, Force reconnect) and keeps
+/// them resumable (#4447). It sets the reason the `agent-state-change`
+/// "disconnected" event carries.
 #[tauri::command]
 pub fn disconnect_agent(
     agent_id: String,
+    end_hosted_sessions: Option<bool>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), TerminalError> {
-    info!(agent_id, "Disconnecting remote agent");
-    agent_manager.disconnect_agent(&agent_id)
+    let reason = disconnect_reason(end_hosted_sessions);
+    info!(agent_id, ?reason, "Disconnecting remote agent");
+    agent_manager.disconnect_agent_with_reason(&agent_id, reason)
+}
+
+/// The end reason of a `disconnect_agent` call (#4447): a user end unless the
+/// caller asked to keep the hosted sessions resumable.
+fn disconnect_reason(end_hosted_sessions: Option<bool>) -> AgentEndReason {
+    if end_hosted_sessions.unwrap_or(true) {
+        AgentEndReason::User
+    } else {
+        AgentEndReason::Suspend
+    }
 }
 
 /// TEST-ONLY (#2573): abruptly sever a connected agent's transport in-process to
@@ -1340,6 +1359,15 @@ fn is_expected_apply_disconnect(message: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── disconnect end reason (#4447) ─────────────────────────────────────
+
+    #[test]
+    fn disconnect_is_a_user_end_unless_hosted_sessions_stay_resumable() {
+        assert_eq!(disconnect_reason(None), AgentEndReason::User);
+        assert_eq!(disconnect_reason(Some(true)), AgentEndReason::User);
+        assert_eq!(disconnect_reason(Some(false)), AgentEndReason::Suspend);
+    }
 
     // ── coordinated push params (AGT-003 / SEC-006, #3213) ───────────────
 

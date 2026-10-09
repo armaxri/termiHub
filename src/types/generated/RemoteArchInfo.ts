@@ -18,7 +18,8 @@ os: string,
 archSuffix: string | null, 
 /**
  * Base download URL without the arch suffix (e.g. `"https://.../dev-latest/termihub-agent-"`).
- * Append any supported arch suffix to build the full URL.
+ * Append an arch suffix to build the full URL — plus `.exe` for a `windows-*`
+ * suffix, whose release assets are published as `termihub-agent-windows-<arch>.exe`.
  */
 downloadBaseUrl: string, 
 /**

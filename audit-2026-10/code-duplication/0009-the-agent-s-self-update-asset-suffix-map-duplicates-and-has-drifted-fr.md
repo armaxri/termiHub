@@ -12,8 +12,8 @@ evidence:
   - .github/workflows/release.yml:709-713
   - .github/workflows/release.yml:791-793
   - .github/workflows/release.yml:857-859
-status: open
-resolution: ""
+status: fixed
+resolution: "#4302 — desktop deployer and agent self-updater share core agent_asset_suffix; macOS resolves, Windows notify-only"
 audit: 2026-10
 commit: 663465d52
 relation: new

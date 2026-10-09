@@ -363,7 +363,10 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     const endHostedSessions = options?.endHostedSessions ?? true;
     if (endHostedSessions) markAgentDisconnectIntent(agentId);
     try {
-      await apiDisconnectAgent(agentId);
+      // The backend carries the same choice on its "disconnected" event, so every
+      // window — not only this one — ends or resumes the hosted tabs (#4447).
+      if (endHostedSessions) await apiDisconnectAgent(agentId);
+      else await apiDisconnectAgent(agentId, { endHostedSessions: false });
     } catch (err) {
       if (endHostedSessions) clearAgentDisconnectIntent(agentId);
       frontendLog("app_store", `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`);
