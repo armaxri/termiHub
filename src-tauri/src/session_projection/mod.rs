@@ -24,6 +24,8 @@ pub mod store;
 pub mod timer;
 
 #[cfg(test)]
+mod redrive_binding_tests;
+#[cfg(test)]
 mod redrive_resume_tests;
 
 pub use redrive::AppReconnectRedrive;
