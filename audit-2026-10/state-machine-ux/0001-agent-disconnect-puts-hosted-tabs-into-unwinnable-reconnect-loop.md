@@ -20,8 +20,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:1558
   - src-tauri/src/session_projection/store.rs:521
   - src/store/slices/agentsSlice.ts:347
-status: open
-resolution: ""
+status: fixed
+resolution: "#4309 — a user agent Disconnect/Shutdown ends hosted tabs with a manual Reconnect instead of an unwinnable reconnect loop; unexpected loss still reconnects, user-stopped tabs are left alone"
 audit: 2026-10
 commit: 663465d52
 relation: new
