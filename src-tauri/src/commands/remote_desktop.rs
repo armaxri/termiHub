@@ -228,18 +228,29 @@ pub(crate) async fn gated_remote_clipboard_files(
 /// (#4205): the session is bound to it, so its file side-channel transfers are
 /// persisted and — after a restart — resume once a session of the same
 /// connection is active again. Absent for an unsaved connection.
+///
+/// The connect is bounded by the connection's connect timeout (#4298). When
+/// `connect_id` is given, [`remote_desktop_cancel_connect`] with the same id
+/// aborts it while it is still connecting.
 #[tauri::command]
 pub async fn remote_desktop_connect(
     type_id: String,
     settings: Value,
     saved_connection_id: Option<String>,
+    connect_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<String, TerminalError> {
     let agents = Some(agent_manager.inner().clone());
     let session_id = manager
-        .connect_routed(&type_id, settings, agents, app_handle.clone())
+        .connect_routed(
+            &type_id,
+            settings,
+            agents,
+            connect_id.as_deref(),
+            app_handle.clone(),
+        )
         .await?;
     // Remember the saved connection (#4205): a side-channel transfer records
     // it, and the transfers a restart cut off wait for a session of it.
@@ -255,6 +266,20 @@ pub async fn remote_desktop_connect(
         );
     }
     Ok(session_id)
+}
+
+/// Cancel a still-connecting graphical session by the `connect_id` its
+/// [`remote_desktop_connect`] carried (#4298): the connect aborts promptly and
+/// fails with "Connection cancelled". Returns whether a connect with that id
+/// was in flight (a connect that already finished is not affected).
+#[tauri::command]
+pub fn remote_desktop_cancel_connect(
+    connect_id: String,
+    manager: State<'_, GraphicalSessionManager>,
+) -> bool {
+    let found = manager.cancel_connecting(&connect_id);
+    debug!(connect_id, found, "Cancel connecting graphical session");
+    found
 }
 
 /// Resolve a graphical session's file-transfer side channel (#4191, concept
