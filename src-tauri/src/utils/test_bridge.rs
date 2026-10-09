@@ -41,6 +41,29 @@ pub const TEST_BRIDGE_BUILD_MARKER: &str = "termihub-test-bridge-build-marker:v1
 /// terminal). Unset → behaviour is unchanged (the window is still pinned).
 pub const TEST_NO_ALWAYS_ON_TOP_ENV: &str = "TERMIHUB_TEST_NO_ALWAYS_ON_TOP";
 
+/// Env var naming the `known_hosts` file the app reads instead of
+/// `~/.ssh/known_hosts` under the test bridge (#4339). The system-test harness
+/// sets it to a per-run file it seeds with its throwaway sshd's host key, so a
+/// test run never reads or edits the user's real trust file.
+pub const TEST_KNOWN_HOSTS_FILE_ENV: &str = "TERMIHUB_TEST_KNOWN_HOSTS_FILE";
+
+/// Point the SSH known_hosts check at [`TEST_KNOWN_HOSTS_FILE_ENV`] when it is
+/// set. Called only in test-bridge mode; a production build never compiles it.
+pub fn install_known_hosts_override() {
+    if let Some(path) = known_hosts_override_from(std::env::var_os(TEST_KNOWN_HOSTS_FILE_ENV)) {
+        let shown = path.display().to_string();
+        if termihub_core::backends::ssh::host_key::set_known_hosts_file_override(path) {
+            tracing::info!("Test known_hosts file: {shown} (#4339)");
+        }
+    }
+}
+
+/// Pure core of [`install_known_hosts_override`]: an empty value is unset.
+fn known_hosts_override_from(raw: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    raw.filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
 /// Whether an env-var value reads as truthy (`1`/`true`, any case).
 fn flag_is_truthy(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true")
@@ -204,6 +227,16 @@ fn always_on_top_opt_out_from(raw: Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_hosts_override_reads_a_non_empty_path() {
+        assert_eq!(known_hosts_override_from(None), None);
+        assert_eq!(known_hosts_override_from(Some("".into())), None);
+        assert_eq!(
+            known_hosts_override_from(Some("/tmp/run/known_hosts".into())),
+            Some(std::path::PathBuf::from("/tmp/run/known_hosts"))
+        );
+    }
 
     #[test]
     fn init_script_sets_both_globals() {
