@@ -159,6 +159,14 @@ describe("connectionErrorHint — every kind for every family", () => {
     }
   });
 
+  // #4368: the backend now reports a held COM port as "busy", so the Windows
+  // permission hint must no longer guess that another program holds the port.
+  it("gives a pure permission hint for a serial permission error on Windows", () => {
+    const hint = connectionErrorHint("serial", "permission", "windows");
+    expect(hint?.text).toContain("permission");
+    expect(hint?.text).not.toMatch(/another application/i);
+  });
+
   it("gives device guidance for serial not-found and busy", () => {
     expect(hintText("serial", "not-found")).toContain("Serial port not found");
     expect(hintText("serial", "busy")).toContain("already in use");
