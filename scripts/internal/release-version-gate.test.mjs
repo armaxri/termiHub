@@ -39,6 +39,7 @@ const BUILD_JOBS = [
   "agent-binaries-macos",
   "agent-binaries-windows",
   "third-party-notices",
+  "sbom-generate",
   "sbom",
 ];
 
