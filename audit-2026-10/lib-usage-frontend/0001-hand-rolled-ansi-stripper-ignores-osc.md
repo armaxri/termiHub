@@ -6,8 +6,8 @@ severity: medium
 category: correctness
 is_workaround: false
 subsystem: "src/services/workflowOutputTriggers, src/store/slices/workflowRunOnTarget"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4355 — one shared strip-ansi based stripAnsi() in src/utils; stream carry-over strips split sequences"
 audit: 2026-10
 commit: "663465d52"
 relation: new
