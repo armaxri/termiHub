@@ -7868,6 +7868,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "termihub-plugin-api",
+ "termihub-win-security",
  "thiserror 2.0.21",
  "windows-sys 0.59.0",
 ]
