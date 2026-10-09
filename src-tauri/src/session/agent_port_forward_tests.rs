@@ -474,6 +474,7 @@ mod graphical {
                 settings,
                 route(vnc_port),
                 agent.clone(),
+                None,
                 sink.clone(),
             ),
         )
@@ -504,7 +505,7 @@ mod graphical {
 
         let err = tokio::time::timeout(
             Duration::from_secs(20),
-            mgr.connect_forwarded("vnc", settings, route(5999), agent, sink.clone()),
+            mgr.connect_forwarded("vnc", settings, route(5999), agent, None, sink.clone()),
         )
         .await
         .expect("fails in time")
@@ -718,7 +719,7 @@ mod live {
         let route = agent_route("vnc", &settings).unwrap().unwrap();
         let sid = tokio::time::timeout(
             Duration::from_secs(30),
-            mgr.connect_forwarded("vnc", settings, route, agent.clone(), sink.clone()),
+            mgr.connect_forwarded("vnc", settings, route, agent.clone(), None, sink.clone()),
         )
         .await
         .expect("connect in time")

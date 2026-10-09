@@ -17,19 +17,21 @@
 //! drives the unified reconnect engine after an unexpected drop.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
     auto_reconnect_enabled, fixed_resolution_requested, multi_monitor_requested, CertPrompt,
     CertPromptReceiver, ClipboardImage, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
     FrameUpdate, GraphicalState, InputEvent, MonitorLayout, MonitorRect, RemoteClipboardFile,
-    SessionStateMachine,
+    SessionStateMachine, CONNECT_TIMEOUT_KEY,
 };
 use termihub_core::errors::SessionError;
 
@@ -43,13 +45,69 @@ use crate::session::graphical_file_channel::{
     FileChannelContext, LinkedResolver, LinkedSshCache, LinkedSshSource, RemoteDesktopFileChannel,
 };
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
-use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
+use crate::session::graphical_supervisor::{
+    Generation, LastSize, PumpEnd, Supervisor, RECONNECT_DIAL_TIMEOUT,
+};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 /// Maximum concurrent graphical sessions.
 const MAX_GRAPHICAL_SESSIONS: usize = 16;
+
+/// Default bound on the initial graphical connect — TCP connect (or SSH
+/// tunnel / agent forward), TLS and the RFB handshake and auth — when the
+/// settings carry no `connectTimeoutSecs` (PARITY2-002, #4298). The same bound
+/// every automatic re-dial already has, so a first connect and a reconnect give
+/// up on an unresponsive host alike.
+pub(crate) const DEFAULT_GRAPHICAL_CONNECT_TIMEOUT: Duration = RECONNECT_DIAL_TIMEOUT;
+
+/// Upper cap on a configured graphical connect timeout, so a typo can never
+/// make the connect effectively unbounded again.
+pub(crate) const MAX_GRAPHICAL_CONNECT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// The connect timeout for a graphical connect: the unified
+/// `connectTimeoutSecs` setting (#2901) when it is a positive whole number of
+/// seconds (capped at [`MAX_GRAPHICAL_CONNECT_TIMEOUT`]), otherwise
+/// [`DEFAULT_GRAPHICAL_CONNECT_TIMEOUT`].
+pub(crate) fn graphical_connect_timeout(settings: &serde_json::Value) -> Duration {
+    settings
+        .get(CONNECT_TIMEOUT_KEY)
+        .and_then(serde_json::Value::as_u64)
+        .filter(|secs| *secs > 0)
+        .map(|secs| Duration::from_secs(secs).min(MAX_GRAPHICAL_CONNECT_TIMEOUT))
+        .unwrap_or(DEFAULT_GRAPHICAL_CONNECT_TIMEOUT)
+}
+
+/// Cancellation tokens of in-flight graphical connects, keyed by the
+/// frontend-supplied `connect_id` (#4298).
+type ConnectingMap = Arc<StdMutex<HashMap<String, CancellationToken>>>;
+
+/// Removes a `connect_id` from the [`ConnectingMap`] when its connect attempt
+/// ends (success, failure, timeout or cancellation) — RAII so every early
+/// return clears it.
+struct ConnectingGuard {
+    map: ConnectingMap,
+    id: String,
+}
+
+impl Drop for ConnectingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.map.lock() {
+            map.remove(&self.id);
+        }
+    }
+}
+
+/// How an initial connect ended without connecting (#4298).
+enum ConnectAbort {
+    /// The backend reported an error.
+    Backend(SessionError),
+    /// The connect timeout elapsed first.
+    TimedOut(Duration),
+    /// The connect was cancelled by its `connect_id`.
+    Cancelled,
+}
 
 // ── Event payloads ─────────────────────────────────────────────────
 
@@ -284,6 +342,10 @@ pub struct GraphicalSessionManager {
     /// Where a direct session's linked saved SSH connection (#4194) is looked
     /// up; without it a link counts as no route.
     linked_ssh: Option<Arc<dyn LinkedSshSource>>,
+    /// Cancellation tokens of initial connects still in flight, keyed by
+    /// `connect_id`, so closing or cancelling a connecting tab aborts it
+    /// (#4298).
+    connecting: ConnectingMap,
 }
 
 impl GraphicalSessionManager {
@@ -297,7 +359,48 @@ impl GraphicalSessionManager {
             jitter: termihub_core::reconnect_backoff::system_jitter,
             reactivated: None,
             linked_ssh: None,
+            connecting: Arc::default(),
         }
+    }
+
+    /// Cancel an in-flight initial connect by its `connect_id` (#4298).
+    ///
+    /// Aborts the TCP connect / tunnel / TLS / RFB handshake promptly; the
+    /// connect then fails with "Connection cancelled" and its socket and
+    /// partial session are dropped. Returns whether a connect with that id was
+    /// in flight.
+    pub fn cancel_connecting(&self, connect_id: &str) -> bool {
+        let token = self
+            .connecting
+            .lock()
+            .ok()
+            .and_then(|map| map.get(connect_id).cloned());
+        match token {
+            Some(token) => {
+                token.cancel();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Register a cancellation token for `connect_id`, returning it with the
+    /// guard that unregisters it. `None` connects are not cancellable by id.
+    fn register_connecting(
+        &self,
+        connect_id: Option<&str>,
+    ) -> (CancellationToken, Option<ConnectingGuard>) {
+        let token = CancellationToken::new();
+        let guard = connect_id.filter(|id| !id.is_empty()).map(|id| {
+            if let Ok(mut map) = self.connecting.lock() {
+                map.insert(id.to_string(), token.clone());
+            }
+            ConnectingGuard {
+                map: self.connecting.clone(),
+                id: id.to_string(),
+            }
+        });
+        (token, guard)
     }
 
     /// Install where a direct session's linked saved SSH connection is looked
@@ -376,7 +479,8 @@ impl GraphicalSessionManager {
         settings: serde_json::Value,
         sink: S,
     ) -> Result<String, TerminalError> {
-        self.connect_inner(type_id, settings, None, sink).await
+        self.connect_inner(type_id, settings, None, None, sink)
+            .await
     }
 
     /// Connect a graphical session, routing it through an agent when its
@@ -386,17 +490,24 @@ impl GraphicalSessionManager {
     /// tunnels only the TCP transport: a loopback [`AgentPortForward`] whose
     /// streams the agent connects to the target from its own host. The target
     /// must therefore be reachable from the agent host.
+    ///
+    /// `connect_id` makes the connect cancellable via
+    /// [`cancel_connecting`](Self::cancel_connecting) while it is in flight
+    /// (#4298); either way it is bounded by [`graphical_connect_timeout`].
     pub async fn connect_routed<S: GraphicalEventSink>(
         &self,
         type_id: &str,
         settings: serde_json::Value,
         agents: Option<Arc<dyn AgentRpcClient>>,
+        connect_id: Option<&str>,
         sink: S,
     ) -> Result<String, TerminalError> {
         let Some(route) =
             agent_route(type_id, &settings).map_err(TerminalError::ConnectionFailed)?
         else {
-            return self.connect(type_id, settings, sink).await;
+            return self
+                .connect_inner(type_id, settings, None, connect_id, sink)
+                .await;
         };
         let client = agents.ok_or_else(|| {
             TerminalError::ConnectionFailed("The agent manager is not available".to_string())
@@ -410,7 +521,7 @@ impl GraphicalSessionManager {
             return Err(TerminalError::ConnectionFailed(msg));
         }
         let transport = Arc::new(AgentClientTransport::new(client, route.agent_id.clone()));
-        self.connect_forwarded(type_id, settings, route, transport, sink)
+        self.connect_forwarded(type_id, settings, route, transport, connect_id, sink)
             .await
     }
 
@@ -423,6 +534,7 @@ impl GraphicalSessionManager {
         settings: serde_json::Value,
         route: AgentRoute,
         transport: Arc<dyn ForwardTransport>,
+        connect_id: Option<&str>,
         sink: S,
     ) -> Result<String, TerminalError> {
         let forward =
@@ -439,7 +551,8 @@ impl GraphicalSessionManager {
             file_route: route.file_route(),
             trust_host: route.target_host,
         };
-        self.connect_inner(type_id, dial, Some(routed), sink).await
+        self.connect_inner(type_id, dial, Some(routed), connect_id, sink)
+            .await
     }
 
     async fn connect_inner<S: GraphicalEventSink>(
@@ -447,6 +560,7 @@ impl GraphicalSessionManager {
         type_id: &str,
         settings: serde_json::Value,
         routed: Option<Routed>,
+        connect_id: Option<&str>,
         sink: S,
     ) -> Result<String, TerminalError> {
         if self.session_count().await >= MAX_GRAPHICAL_SESSIONS {
@@ -499,19 +613,52 @@ impl GraphicalSessionManager {
 
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
-        if let Err(e) = connection.connect(settings).await {
-            // A tunnel that failed to open explains the backend's EOF (#3241).
-            let msg = routed
-                .as_ref()
-                .and_then(|r| r.forward.last_error())
-                .unwrap_or_else(|| e.to_string());
+        // Bounded and cancellable (PARITY2-002, #4298): an unresponsive host, or
+        // a peer that accepts TCP but never speaks the protocol, fails after
+        // the connect timeout instead of hanging the tab, and closing or
+        // cancelling the connecting tab aborts it at once. Dropping the
+        // in-flight connect future drops its socket / tunnel / sidecar.
+        let timeout = graphical_connect_timeout(&settings);
+        let (cancel, connecting_guard) = self.register_connecting(connect_id);
+        let outcome = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => Err(ConnectAbort::Cancelled),
+            res = tokio::time::timeout(timeout, connection.connect(settings)) => {
+                match res {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(ConnectAbort::Backend(e)),
+                    Err(_) => Err(ConnectAbort::TimedOut(timeout)),
+                }
+            }
+        };
+        drop(connecting_guard);
+        if let Err(abort) = outcome {
+            // Release anything a backend kept from a partial connect; a
+            // backend that never connected treats this as a no-op.
+            if !matches!(abort, ConnectAbort::Backend(_)) {
+                let _ = connection.disconnect().await;
+            }
+            let msg = match &abort {
+                ConnectAbort::Cancelled => "Connection cancelled".to_string(),
+                ConnectAbort::TimedOut(t) => format!(
+                    "Connection to {host} timed out after {}s. Check that the host and port \
+                     are correct, the server is running, and no firewall is blocking the \
+                     connection.",
+                    t.as_secs()
+                ),
+                // A tunnel that failed to open explains the backend's EOF (#3241).
+                ConnectAbort::Backend(e) => routed
+                    .as_ref()
+                    .and_then(|r| r.forward.last_error())
+                    .unwrap_or_else(|| e.to_string()),
+            };
             warn!(session_id = %session_id, error = %msg, "graphical connect failed");
             let mut sm = state.lock().await;
             // A rejected credential (e.g. a wrong VNC password) is a typed
             // `AuthFailed`, not a transport failure (#3390): emit the state the
             // frontend's "Check the credentials" overlay keys on, and return the
             // coded auth error every other backend uses.
-            let auth = matches!(e, SessionError::AuthFailed);
+            let auth = matches!(abort, ConnectAbort::Backend(SessionError::AuthFailed));
             let failed = if auth {
                 sm.auth_failed()
             } else {
@@ -1977,3 +2124,7 @@ mod tests {
         assert!(prompts[0].changed, "changed fingerprint must warn (MITM)");
     }
 }
+
+#[cfg(test)]
+#[path = "graphical_connect_timeout_tests.rs"]
+mod connect_timeout_tests;

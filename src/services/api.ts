@@ -732,17 +732,33 @@ export async function reclaimSession(tabId: string): Promise<void> {
  * (#4205): the backend binds the session to it, so the session's file
  * side-channel transfers are persisted and — after a restart — resume once a
  * session of the same connection is active again. Sent only when set.
+ *
+ * The backend bounds the connect by the connection's connect timeout (#4298).
+ * `connectId` makes it cancellable while still connecting, via
+ * {@link remoteDesktopCancelConnect} with the same id. Sent only when set.
  */
 export async function remoteDesktopConnect(
   typeId: string,
   settings: Record<string, unknown>,
-  savedConnectionId?: string
+  savedConnectionId?: string,
+  connectId?: string
 ): Promise<SessionId> {
   return await invoke<string>("remote_desktop_connect", {
     typeId,
     settings,
     ...(savedConnectionId ? { savedConnectionId } : {}),
+    ...(connectId ? { connectId } : {}),
   });
+}
+
+/**
+ * Abort a still-connecting graphical session by the `connectId` its
+ * {@link remoteDesktopConnect} carried (#4298). The pending connect then
+ * rejects with "Connection cancelled". Resolves to whether a connect with that
+ * id was still in flight.
+ */
+export async function remoteDesktopCancelConnect(connectId: string): Promise<boolean> {
+  return await invoke<boolean>("remote_desktop_cancel_connect", { connectId });
 }
 
 /** Request a new session resolution in pixels (Match Window / dynamic resize). */

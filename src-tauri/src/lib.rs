@@ -586,6 +586,7 @@ pub fn run() -> anyhow::Result<()> {
         .invoke_handler(tauri::generate_handler![
             // Remote-desktop (graphical) commands — protocol-blind (#1680)
             commands::remote_desktop::remote_desktop_connect,
+            commands::remote_desktop::remote_desktop_cancel_connect,
             commands::remote_desktop::remote_desktop_resize,
             commands::remote_desktop::remote_desktop_request_full_frame,
             commands::remote_desktop::remote_desktop_pending_cert_prompt,
