@@ -517,6 +517,11 @@ where
     let _ = write_half.shutdown().await;
 }
 
+/// Flow control for desktop port-forward streams (#4284).
+#[cfg(test)]
+#[path = "agent_forward_flow_tests.rs"]
+mod flow_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

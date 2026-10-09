@@ -3837,10 +3837,11 @@ mod tests {
     /// 0.25.0 added the `connection.filesOnly` notification (#4081), and
     /// 0.26.0 the ranged `connection.files.*` methods with their `fileRanges`
     /// capability (#3587), and 0.27.0 `connection.output_flow` with its
-    /// `outputFlow` capability (#4416).
+    /// `outputFlow` capability (#4416), and 0.28.0 `agent.forward.ack` with
+    /// the connect window and its `forwardFlow` capability (#4284).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.27.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.28.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -3963,6 +3964,76 @@ mod tests {
             errors::INVALID_PARAMS,
             "{invalid}"
         );
+    }
+
+    /// #4284: a desktop that requests a window gets the one the agent grants
+    /// (capped at the agent's maximum); one that does not (an older desktop)
+    /// gets the old empty answer and an unbounded stream.
+    #[tokio::test]
+    async fn agent_forward_connect_grants_a_requested_window() {
+        use termihub_core::session::forward_window::AGENT_FORWARD_WINDOW;
+
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let windowed = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#w1", "host": "127.0.0.1", "port": port,
+                    "window": u64::MAX }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            windowed["result"],
+            json!({ "window": AGENT_FORWARD_WINDOW }),
+            "{windowed}"
+        );
+
+        let legacy = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#w2", "host": "127.0.0.1", "port": port }),
+            3,
+        )
+        .await;
+        assert_eq!(legacy["result"], json!({}), "{legacy}");
+    }
+
+    /// #4284: `agent.forward.ack` is accepted for any stream (a stray ack for a
+    /// closed stream is a no-op) and rejects malformed params.
+    #[tokio::test]
+    async fn agent_forward_ack_succeeds_and_validates() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let ok = dispatch(
+            &handler,
+            "agent.forward.ack",
+            json!({ "stream_id": "gfx#gone", "bytes": 4096 }),
+            2,
+        )
+        .await;
+        assert!(ok.get("result").is_some(), "{ok}");
+
+        let bad = dispatch(
+            &handler,
+            "agent.forward.ack",
+            json!({ "stream_id": "gfx#gone" }),
+            3,
+        )
+        .await;
+        assert_eq!(bad["error"]["code"], errors::INVALID_PARAMS, "{bad}");
+    }
+
+    /// #4284: the agent advertises flow-controlled port forwards.
+    #[tokio::test]
+    async fn initialize_advertises_forward_flow() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(result["result"]["capabilities"]["forwardFlow"], true);
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
