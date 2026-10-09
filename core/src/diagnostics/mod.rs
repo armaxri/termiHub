@@ -11,7 +11,7 @@
 //! - [`crash_report`] — writing, listing, bounding (count + age), and the
 //!   "notify once" bookkeeping for crash reports. Shared by the desktop app and
 //!   the agent, which each install their own panic hook on top of it.
-//! - [`file_log`] (feature `file-log`) — the size-rotating, count-capped log
+//! - `file_log` (feature `file-log`) — the size-rotating, count-capped log
 //!   file writer, the per-directory log-family budget and the `russh` WARN
 //!   clamp. Shared by the desktop and the agent (#4319).
 
