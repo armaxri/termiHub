@@ -753,7 +753,14 @@ anything.
 
 ### Rust
 
-- **No `.unwrap()` in production code** — Use `?` with `anyhow::Result`
+- **No `.unwrap()` in production code** — Use `?` with `anyhow::Result`. Every first-party crate
+  root (`src/lib.rs`, `src/main.rs`, each `[[bin]]`) must carry
+  `#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]` so
+  clippy enforces it; a new crate needs it too.
+  [`scripts/internal/check-crate-policy.mjs`](../scripts/internal/check-crate-policy.mjs) (run by
+  Rust Code Quality and `./scripts/check.sh`) fails if a root lacks it, or if the
+  workspace-excluded `rdp-sidecar`'s `[profile.release]` `overflow-checks`/`strip` drift from the
+  root profile (#4343).
 - **Add context** to errors: `.context("description")`
 - **`PascalCase`** for types/traits, **`snake_case`** for functions/modules, **`UPPER_SNAKE_CASE`** for constants
 - **Doc comments** (`///`) for public APIs

@@ -15,8 +15,8 @@ evidence:
   - src-tauri/src/lib.rs:4
   - rdp-sidecar/src/drive.rs:671
   - plugin-runner/src/lib.rs:1
-status: open
-resolution: ""
+status: fixed
+resolution: "#4343 — sidecar release overflow-checks; no-panic lint on all crate roots; check-crate-policy.mjs CI gate"
 audit: "2026-10"
 commit: "663465d52"
 relation: previous-incomplete
