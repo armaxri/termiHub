@@ -15,7 +15,8 @@
 //! is now wired into the orchestrator, auth and UI (#1050, #1052, #1053).
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use anyhow::Result;
 use termihub_core::backends::ssh::x11::ManagedXServer;
@@ -28,6 +29,41 @@ pub const X11_BASE_PORT: u16 = 6000;
 
 /// Highest display number the manager will try when allocating a free display.
 const MAX_DISPLAY: u32 = 32;
+
+/// How long a managed X server stays up after its last X11 session closes
+/// before the "Stop X Server When Idle" setting shuts it down (#4326).
+///
+/// The window lets a quick reconnect (or a second session opened right after the
+/// first closed) reuse the running server instead of paying a fresh `vcxsrv.exe`
+/// spawn; any new session inside it cancels the pending stop.
+pub const IDLE_STOP_GRACE: Duration = Duration::from_secs(30);
+
+/// Runs a callback once after a delay — the clock behind the idle-stop grace
+/// period, injected so tests can elapse it without sleeping.
+pub trait IdleTimer: Send + Sync {
+    /// Arrange for `fire` to run once, `delay` from now.
+    fn schedule(&self, delay: Duration, fire: Box<dyn FnOnce() + Send>);
+}
+
+/// Real [`IdleTimer`]: a short-lived background thread per armed grace period.
+///
+/// Idle transitions are rare (the last X11 session closing), so one sleeping
+/// thread per transition is cheap; a cancelled timer simply wakes and no-ops.
+pub struct ThreadIdleTimer;
+
+impl IdleTimer for ThreadIdleTimer {
+    fn schedule(&self, delay: Duration, fire: Box<dyn FnOnce() + Send>) {
+        let spawned = std::thread::Builder::new()
+            .name("xserver-idle-stop".to_string())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                fire();
+            });
+        if let Err(e) = spawned {
+            warn!("X server: could not start idle-stop timer, server stays up: {e}");
+        }
+    }
+}
 
 /// TCP port for a given X11 display number.
 pub fn port_for_display(display: u32) -> u16 {
@@ -152,13 +188,41 @@ struct Inner {
     auth_file: Option<PathBuf>,
     /// Number of live X11 sessions using the server.
     refcount: usize,
-    /// Stop the managed server when the last session closes.
+    /// Stop the managed server when the last session closes (the "Stop X
+    /// Server When Idle" setting, kept current via
+    /// [`XServerManager::set_stop_when_idle`]).
     stop_when_idle: bool,
+    /// Bumped whenever a pending idle stop is armed or cancelled; a grace timer
+    /// only acts if the generation it captured is still current.
+    idle_generation: u64,
+}
+
+impl Inner {
+    /// Invalidate any pending idle-stop timer.
+    fn cancel_idle_stop(&mut self) {
+        self.idle_generation = self.idle_generation.wrapping_add(1);
+    }
+
+    /// Terminate the managed child (if any) and reset to `Stopped`.
+    fn stop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            child.terminate();
+        }
+        remove_auth_file(&self.auth_file);
+        self.child = None;
+        self.cookie = None;
+        self.auth_file = None;
+        self.refcount = 0;
+        self.status = XServerStatus::Stopped;
+        self.cancel_idle_stop();
+    }
 }
 
 /// Manages the shared local X server for one termiHub instance.
 pub struct XServerManager {
-    inner: Mutex<Inner>,
+    /// Shared (not just owned) so a grace timer can reach the state through a
+    /// [`Weak`] without keeping the manager alive past app exit.
+    inner: Arc<Mutex<Inner>>,
     probe: Box<dyn PortProbe>,
     launcher: Box<dyn XServerLauncher>,
     resolver: Box<dyn Fn() -> Result<PathBuf> + Send + Sync>,
@@ -166,6 +230,8 @@ pub struct XServerManager {
     /// `true` on platforms that provide a managed server (Windows); `false`
     /// elsewhere, where the manager only adopts/report an existing server.
     provides_managed: bool,
+    /// Clock for the idle-stop grace period ([`IDLE_STOP_GRACE`]).
+    idle_timer: Box<dyn IdleTimer>,
 }
 
 impl XServerManager {
@@ -180,19 +246,52 @@ impl XServerManager {
         stop_when_idle: bool,
     ) -> Self {
         Self {
-            inner: Mutex::new(Inner {
+            inner: Arc::new(Mutex::new(Inner {
                 status: XServerStatus::Stopped,
                 child: None,
                 cookie: None,
                 auth_file: None,
                 refcount: 0,
                 stop_when_idle,
-            }),
+                idle_generation: 0,
+            })),
             probe,
             launcher,
             resolver,
             auth,
             provides_managed,
+            idle_timer: Box::new(ThreadIdleTimer),
+        }
+    }
+
+    /// Replace the idle-stop grace-period clock (tests inject a fake one).
+    #[cfg(test)]
+    pub fn with_idle_timer(mut self, timer: Box<dyn IdleTimer>) -> Self {
+        self.idle_timer = timer;
+        self
+    }
+
+    /// Apply the "Stop X Server When Idle" setting at runtime (#4326).
+    ///
+    /// Turning it off cancels a pending idle stop, so the server keeps running
+    /// until app exit. Turning it on while the managed server is already idle
+    /// (no sessions) arms the same grace-period stop a closing session would.
+    pub fn set_stop_when_idle(&self, enabled: bool) {
+        let armed = {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if inner.stop_when_idle == enabled {
+                return;
+            }
+            inner.stop_when_idle = enabled;
+            if enabled {
+                Self::arm_idle_stop_locked(&mut inner)
+            } else {
+                inner.cancel_idle_stop();
+                None
+            }
+        };
+        if let Some(generation) = armed {
+            self.schedule_idle_stop(generation);
         }
     }
 
@@ -228,8 +327,12 @@ impl XServerManager {
     }
 
     /// Ensure a server exists and register a session against it (refcount + 1).
+    ///
+    /// A session opened during the idle-stop grace period cancels the pending
+    /// stop and reuses the running server.
     pub fn acquire_session(&self) -> Result<DisplayInfo> {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.cancel_idle_stop();
         let info = self.ensure_running_locked(&mut inner)?;
         inner.refcount += 1;
         Ok(info)
@@ -251,17 +354,21 @@ impl XServerManager {
     }
 
     /// Release a previously acquired session (refcount - 1). When the count
-    /// reaches zero and idle-shutdown is enabled, the managed server is stopped.
-    /// Adopted external servers are never terminated.
+    /// reaches zero and idle-shutdown is enabled, the managed server is stopped
+    /// once [`IDLE_STOP_GRACE`] passes without a new session. Adopted external
+    /// servers are never terminated.
     pub fn release_session(&self) {
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.refcount = inner.refcount.saturating_sub(1);
-        if inner.refcount == 0 && inner.stop_when_idle {
-            // Only stop a server we manage; an adopted external server (no child
-            // held) must keep running.
-            if inner.child.is_some() {
-                self.stop_locked(&mut inner);
+        let armed = {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner.refcount = inner.refcount.saturating_sub(1);
+            if inner.refcount == 0 {
+                Self::arm_idle_stop_locked(&mut inner)
+            } else {
+                None
             }
+        };
+        if let Some(generation) = armed {
+            self.schedule_idle_stop(generation);
         }
     }
 
@@ -269,7 +376,43 @@ impl XServerManager {
     /// servers are left running.
     pub fn stop(&self) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        self.stop_locked(&mut inner);
+        inner.stop();
+    }
+
+    /// If the managed server is idle and idle-stop is on, start a new grace
+    /// period (cancelling any earlier one) and return its generation for
+    /// [`schedule_idle_stop`](Self::schedule_idle_stop).
+    fn arm_idle_stop_locked(inner: &mut Inner) -> Option<u64> {
+        // Only stop a server we manage; an adopted external server (no child
+        // held) must keep running.
+        if !inner.stop_when_idle || inner.refcount != 0 || inner.child.is_none() {
+            return None;
+        }
+        inner.cancel_idle_stop();
+        Some(inner.idle_generation)
+    }
+
+    /// Schedule the idle stop for `generation` after [`IDLE_STOP_GRACE`]. Called
+    /// without the lock held. When the timer fires the stop only happens if
+    /// nothing changed in between: same generation (no new session, setting not
+    /// toggled), still no sessions and idle-stop still on.
+    fn schedule_idle_stop(&self, generation: u64) {
+        let state: Weak<Mutex<Inner>> = Arc::downgrade(&self.inner);
+        self.idle_timer.schedule(
+            IDLE_STOP_GRACE,
+            Box::new(move || {
+                let Some(state) = state.upgrade() else {
+                    return; // manager gone; app exit already reaped the server
+                };
+                let mut inner = state.lock().unwrap_or_else(|e| e.into_inner());
+                if inner.idle_generation == generation
+                    && inner.refcount == 0
+                    && inner.stop_when_idle
+                {
+                    inner.stop();
+                }
+            }),
+        );
     }
 
     /// Core adopt/reuse/spawn decision, run under the held lock.
@@ -347,19 +490,6 @@ impl XServerManager {
             }
         }
     }
-
-    /// Terminate the managed child (if any) and reset to `Stopped`.
-    fn stop_locked(&self, inner: &mut Inner) {
-        if let Some(child) = inner.child.as_mut() {
-            child.terminate();
-        }
-        remove_auth_file(&inner.auth_file);
-        inner.child = None;
-        inner.cookie = None;
-        inner.auth_file = None;
-        inner.refcount = 0;
-        inner.status = XServerStatus::Stopped;
-    }
 }
 
 /// RAII guard for one acquired X11 session (#1107).
@@ -409,7 +539,7 @@ impl XServerManager {
 impl Drop for XServerManager {
     fn drop(&mut self) {
         if let Ok(mut inner) = self.inner.lock() {
-            self.stop_locked(&mut inner);
+            inner.stop();
         }
     }
 }
@@ -566,6 +696,46 @@ mod tests {
         }
     }
 
+    /// Fake clock for the idle-stop grace period: records each scheduled
+    /// callback with its delay instead of sleeping, so a test "advances time
+    /// past the grace period" by calling [`FakeIdleTimer::elapse`].
+    type TimerCallback = Box<dyn FnOnce() + Send>;
+
+    #[derive(Default)]
+    struct FakeIdleTimer {
+        pending: Mutex<Vec<(Duration, TimerCallback)>>,
+    }
+
+    impl FakeIdleTimer {
+        fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        /// Delays of every callback scheduled so far that has not yet fired.
+        fn pending_delays(&self) -> Vec<Duration> {
+            self.pending
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(d, _)| *d)
+                .collect()
+        }
+
+        /// Let the grace period elapse: fire every scheduled callback.
+        fn elapse(&self) {
+            let fired: Vec<_> = std::mem::take(&mut *self.pending.lock().unwrap());
+            for (_, fire) in fired {
+                fire();
+            }
+        }
+    }
+
+    impl IdleTimer for Arc<FakeIdleTimer> {
+        fn schedule(&self, delay: Duration, fire: TimerCallback) {
+            self.pending.lock().unwrap().push((delay, fire));
+        }
+    }
+
     fn resolver_ok() -> Box<dyn Fn() -> Result<PathBuf> + Send + Sync> {
         Box::new(|| Ok(PathBuf::from("vcxsrv.exe")))
     }
@@ -623,6 +793,28 @@ mod tests {
             provides_managed,
             stop_when_idle,
         )
+        // Never sleep a real thread in unit tests; idle-stop tests that need to
+        // drive the grace period use `manager_with_timer`.
+        .with_idle_timer(Box::new(FakeIdleTimer::new()))
+    }
+
+    /// Managed-platform manager (no external server) whose idle-stop grace
+    /// period is driven by the returned [`FakeIdleTimer`].
+    fn manager_with_timer(
+        launcher: Arc<FakeLauncher>,
+        stop_when_idle: bool,
+    ) -> (XServerManager, Arc<FakeIdleTimer>) {
+        let timer = FakeIdleTimer::new();
+        let mgr = manager_with(&[], launcher, true, stop_when_idle)
+            .with_idle_timer(Box::new(timer.clone()));
+        (mgr, timer)
+    }
+
+    fn terminated(launcher: &FakeLauncher, index: usize) -> bool {
+        launcher.spawned.lock().unwrap()[index]
+            .lock()
+            .unwrap()
+            .terminated
     }
 
     // -- pure helpers -------------------------------------------------------
@@ -757,19 +949,162 @@ mod tests {
     // -- idle policy --------------------------------------------------------
 
     #[test]
-    fn idle_stop_terminates_managed_when_last_session_closes() {
+    fn idle_stop_terminates_managed_after_grace_period() {
         let launcher = FakeLauncher::new();
-        let mgr = manager_with(&[], launcher.clone(), true, true);
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
 
         mgr.acquire_session().unwrap();
         mgr.release_session();
 
-        let state = launcher.spawned.lock().unwrap()[0].clone();
+        // Not yet: the stop waits out the grace period.
         assert!(
-            state.lock().unwrap().terminated,
+            !terminated(&launcher, 0),
+            "must not stop before the grace period"
+        );
+        assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
+        assert_eq!(timer.pending_delays(), vec![IDLE_STOP_GRACE]);
+
+        timer.elapse();
+
+        assert!(
+            terminated(&launcher, 0),
             "managed server must stop when idle"
         );
         assert_eq!(mgr.status(), XServerStatus::Stopped);
+    }
+
+    #[test]
+    fn new_session_during_grace_period_cancels_idle_stop() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        // A new X11 session opens inside the grace window.
+        mgr.acquire_session().unwrap();
+        timer.elapse();
+
+        assert!(!terminated(&launcher, 0), "pending stop must be cancelled");
+        assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
+        assert_eq!(launcher.count(), 1, "the same server is reused");
+        assert_eq!(mgr.session_count(), 1);
+    }
+
+    #[test]
+    fn stale_grace_timer_does_not_stop_a_later_idle_period_early() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session(); // arms timer #1
+        mgr.acquire_session().unwrap(); // cancels #1
+        mgr.release_session(); // arms timer #2
+
+        // Fire only the first (stale) timer: the server must survive it.
+        let first = timer.pending.lock().unwrap().remove(0);
+        (first.1)();
+        assert!(
+            !terminated(&launcher, 0),
+            "a cancelled timer must be a no-op"
+        );
+
+        timer.elapse();
+        assert!(terminated(&launcher, 0), "the current timer still stops it");
+    }
+
+    #[test]
+    fn idle_stop_disabled_never_stops_the_server() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), false);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        timer.elapse();
+
+        assert!(
+            !terminated(&launcher, 0),
+            "must stay up when idle-stop is off"
+        );
+        assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
+    }
+
+    #[test]
+    fn turning_idle_stop_off_at_runtime_cancels_a_pending_stop() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        mgr.set_stop_when_idle(false);
+        timer.elapse();
+
+        assert!(
+            !terminated(&launcher, 0),
+            "setting off must cancel the stop"
+        );
+        assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
+    }
+
+    #[test]
+    fn turning_idle_stop_off_at_runtime_keeps_server_after_last_session() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
+
+        mgr.set_stop_when_idle(false);
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        timer.elapse();
+
+        assert!(timer.pending_delays().is_empty());
+        assert!(!terminated(&launcher, 0));
+        assert_eq!(mgr.status(), XServerStatus::Running { display: 0 });
+    }
+
+    #[test]
+    fn turning_idle_stop_on_at_runtime_stops_an_idle_server_after_grace() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), false);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        assert!(timer.pending_delays().is_empty(), "off: nothing scheduled");
+
+        // Already idle when the user switches the setting on.
+        mgr.set_stop_when_idle(true);
+        assert_eq!(timer.pending_delays(), vec![IDLE_STOP_GRACE]);
+        assert!(!terminated(&launcher, 0));
+
+        timer.elapse();
+        assert!(terminated(&launcher, 0));
+        assert_eq!(mgr.status(), XServerStatus::Stopped);
+    }
+
+    #[test]
+    fn turning_idle_stop_on_with_live_sessions_does_not_stop() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), false);
+
+        mgr.acquire_session().unwrap();
+        mgr.set_stop_when_idle(true);
+        timer.elapse();
+        assert!(!terminated(&launcher, 0), "a session still uses the server");
+
+        // ...and it now takes effect when that session ends.
+        mgr.release_session();
+        timer.elapse();
+        assert!(terminated(&launcher, 0));
+    }
+
+    #[test]
+    fn grace_timer_after_manager_dropped_is_harmless() {
+        let launcher = FakeLauncher::new();
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
+
+        mgr.acquire_session().unwrap();
+        mgr.release_session();
+        drop(mgr); // app exit reaps the server immediately
+        assert!(terminated(&launcher, 0));
+        timer.elapse(); // must not panic or touch freed state
     }
 
     #[test]
@@ -828,12 +1163,14 @@ mod tests {
     #[test]
     fn session_count_is_zero_after_idle_shutdown() {
         let launcher = FakeLauncher::new();
-        let mgr = manager_with(&[], launcher.clone(), true, true);
+        let (mgr, timer) = manager_with_timer(launcher.clone(), true);
 
         mgr.acquire_session().unwrap();
         assert_eq!(mgr.session_count(), 1);
-        // Last release with idle-stop on tears the server down and resets state.
+        // Last release with idle-stop on tears the server down (after the
+        // grace period) and resets state.
         mgr.release_session();
+        timer.elapse();
         assert_eq!(mgr.session_count(), 0);
         assert_eq!(mgr.status(), XServerStatus::Stopped);
     }

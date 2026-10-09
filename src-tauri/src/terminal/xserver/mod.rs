@@ -31,6 +31,7 @@ use termihub_core::backends::ssh::x11::{XServerLease, XServerProvisioner};
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::manager::ConnectionManager;
+use crate::connection::settings::AppSettings;
 
 use consent::{await_consent, connect_consent_required, ConsentOutcome};
 
@@ -93,6 +94,14 @@ pub fn resolve_provide_automatically(app: &AppHandle) -> bool {
                 .unwrap_or(default)
         })
         .unwrap_or(default)
+}
+
+/// Push the X-server-related app settings into the running manager so a change
+/// takes effect without a restart (#4326). Called from the settings-save path.
+pub fn apply_settings<R: tauri::Runtime>(app: &AppHandle<R>, settings: &AppSettings) {
+    if let Some(manager) = app.try_state::<Arc<XServerManager>>() {
+        manager.set_stop_when_idle(settings.stop_x_server_when_idle);
+    }
 }
 
 /// The desktop-side [`XServerProvisioner`] registered into core at startup.
@@ -319,6 +328,11 @@ pub fn init(
     manager: Arc<XServerManager>,
     consent_registry: Arc<ConnectConsentRegistry>,
 ) {
+    // Seed the idle-stop policy from the persisted "Stop X Server When Idle"
+    // setting (#4326); later changes arrive via `apply_settings`.
+    if let Some(connections) = app.try_state::<ConnectionManager>() {
+        manager.set_stop_when_idle(connections.get_settings().stop_x_server_when_idle);
+    }
     let provisioner = Arc::new(XServerProvisionerImpl::new(
         app.clone(),
         manager,

@@ -325,9 +325,14 @@ pub fn save_settings<R: Runtime>(
     // The fold reflects the persisted `AppSettings` document into the
     // authoritative `settings` region (#2386). (`AppHandle` is Tauri-injected —
     // no JS invoke change.)
+    // Keep a copy for the live consumers that react to a saved setting.
+    let applied = settings.clone();
     commit(&app, &[Fold::Settings], || {
         manager.save_settings(settings).map_err(config_error)
-    })
+    })?;
+    // "Stop X Server When Idle" takes effect immediately (#4326).
+    crate::terminal::xserver::apply_settings(&app, &applied);
+    Ok(())
 }
 
 /// Save an external connection file to disk.

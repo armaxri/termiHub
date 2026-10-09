@@ -16,8 +16,8 @@ evidence:
   - src/components/Settings/XServerSettings.tsx:44
   - src/components/Settings/XServerSettings.tsx:50
   - src/components/Settings/settingsRegistry.ts:814
-status: open
-resolution: ""
+status: fixed
+resolution: "#4326 — the manager now reads the setting (seeded at boot, updated on save); stops 30 s after the last session"
 audit: 2026-10
 commit: 663465d52
 relation: new
