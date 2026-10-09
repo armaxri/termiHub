@@ -37,7 +37,7 @@ use super::{
     fold_evicted_hosted_sessions, handle_agent_forward_notification, hosted_sessions_for_agent,
     list_recovered_session_ids_bounded, reattach_after_reconnect, reconcile_output_senders,
     reconnect_agent, resolve_hosted_sessions_after_reconnect, route_tool_run_notification,
-    AgentIoCommand, AgentRpcFailure, MonitoringRoute, ToolRunSender, WeakAgentMap,
+    AgentIoCommand, AgentReaper, AgentRpcFailure, MonitoringRoute, ToolRunSender,
 };
 use super::{reap_agent, serialize_ki_respond, serialize_request};
 use crate::connection::config::AgentSettings;
@@ -140,6 +140,35 @@ pub(super) fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
     error!(agent_id = %agent_id, error, "reconnection failed");
 }
 
+/// Settle an agent whose in-task reconnect budget is exhausted.
+///
+/// Order matters (CONC2-005, #4304): `alive` goes `false` **first**, so no
+/// observer of the hosted tabs' `Failed` fold or of the `disconnected` event can
+/// still read the agent as connected, nor route new work to it. Then:
+///
+/// * #2612/#2564: every hosted session's `session-lifecycle` region entry folds
+///   `Reconnecting → Failed` at the backend source with the reconnect error, the
+///   same authority the "Reconnect failed" overlay reads, rather than leaving it
+///   stuck `Reconnecting` for the frontend `disconnected` handler to resolve.
+///   Folded before the agent-state event so the overlay / tab-dot readers see
+///   the failed region.
+/// * the agent-state event announces `disconnected` with the error;
+/// * G6 (#1239): the task self-reaps its own map entry — and only its own, see
+///   [`reap_agent`] — instead of leaving a zombie for lazy eviction on the next
+///   `connect_agent`.
+pub(super) async fn give_up_after_exhausted_reconnect<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    alive: &Arc<AtomicBool>,
+    reaper: &AgentReaper,
+    error: &str,
+) {
+    alive.store(false, Ordering::SeqCst);
+    fold_agent_hosted_reconnect_failed(app_handle, agent_id, error).await;
+    emit_agent_state_with_error(app_handle, agent_id, "disconnected", Some(error));
+    reap_agent(reaper, agent_id, alive);
+}
+
 /// Drive one agent's live I/O and reconnect loop.
 ///
 /// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
@@ -166,7 +195,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
     config: RemoteAgentConfig,
     agent_settings: AgentSettings,
     mut request_id: u64,
-    agents: WeakAgentMap,
+    reaper: AgentReaper,
     pending_notifications: Vec<(String, Value)>,
     ki_activity: Arc<AgentPromptActivity>,
     update_auth_token_path: Option<String>,
@@ -729,20 +758,8 @@ pub(super) async fn agent_io_task<R: Runtime>(
             }
             Err(e) => {
                 log_agent_reconnect_failed(&agent_id, &e);
-                // #2612/#2564: the in-task reconnect budget is exhausted — fold every
-                // hosted session's `session-lifecycle` region entry `Reconnecting →
-                // Failed` at the backend source with the reconnect error, the same
-                // authority the "Reconnect failed" overlay reads, rather than leaving it
-                // stuck `Reconnecting` for the frontend `disconnected` handler to resolve
-                // (whose `session.connectFailed` mirror was a no-op while the region read
-                // `reconnecting`). Folded before the agent-state event so the overlay /
-                // tab-dot readers see the failed region.
-                fold_agent_hosted_reconnect_failed(&app_handle, &agent_id, &e).await;
-                emit_agent_state_with_error(&app_handle, &agent_id, "disconnected", Some(&e));
-                alive.store(false, Ordering::SeqCst);
-                // G6 (#1239): self-reap our own map entry instead of leaving a
-                // zombie for lazy eviction on the next `connect_agent`.
-                reap_agent(&agents, &agent_id);
+                give_up_after_exhausted_reconnect(&app_handle, &agent_id, &alive, &reaper, &e)
+                    .await;
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err(AgentRpcFailure::transport_closed("Agent disconnected")));

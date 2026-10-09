@@ -63,6 +63,15 @@ use crate::utils::ssh_auth::connect_and_authenticate_cancellable;
 /// than minutes.
 const AGENT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Bound on the post-auth agent handshake — channel open, agent exec, the
+/// `initialize` write and the wait for its answer — of a connect or of one
+/// reconnect attempt (CONC2-004, #4304). Matches the SSH connect timeout
+/// ([`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`]) that already bounds the step before
+/// it, so an agent that execs but never answers fails the attempt instead of
+/// parking it in `connecting` / `reconnecting` forever.
+const AGENT_HANDSHAKE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(termihub_core::config::DEFAULT_SSH_CONNECT_TIMEOUT_SECS);
+
 /// Wait bound for `agent.forward.connect` (#3241): the agent's own target
 /// connect gives up after 10 s, so this only adds headroom for the round trip.
 const FORWARD_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -395,7 +404,8 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// connecting agent was found (G1, #1235).
     fn cancel_connect(&self, agent_id: &str) -> bool;
 
-    /// Disconnect an agent.
+    /// Disconnect an agent; for an agent that is still connecting, cancel the
+    /// connect (#4304).
     fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError>;
 
     /// Check if an agent is connected.
@@ -805,14 +815,25 @@ impl From<MonitoringSender> for MonitoringRoute {
 }
 
 /// Register a cancellation token for an in-flight agent connect.
+///
+/// The registration doubles as the per-agent "connecting" reservation
+/// (CONC2-001, #4304): it succeeds only when no connect for `agent_id` is in
+/// flight, so the check and the insert are one atomic step and two concurrent
+/// connects to the same agent can never both run their handshake. Returns
+/// `false` (registering nothing) when a connect is already in flight. A
+/// poisoned registry is recovered rather than treated as "busy", so a panic
+/// elsewhere cannot lock an agent out of connecting for good.
 fn register_connecting_token(
     registry: &ConnectingRegistry,
     agent_id: &str,
     token: CancellationToken,
-) {
-    if let Ok(mut map) = registry.lock() {
-        map.insert(agent_id.to_string(), token);
+) -> bool {
+    let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if map.contains_key(agent_id) {
+        return false;
     }
+    map.insert(agent_id.to_string(), token);
+    true
 }
 
 /// Fire the cancellation token for an in-flight agent connect, if one is
@@ -863,9 +884,13 @@ struct ConnectingGuard {
 
 impl Drop for ConnectingGuard {
     fn drop(&mut self) {
-        if let Ok(mut map) = self.map.lock() {
-            map.remove(&self.id);
-        }
+        // Recover a poisoned registry: a reservation that is never released
+        // would refuse every later connect to this agent as "already
+        // connecting" (#4304).
+        self.map
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
     }
 }
 
@@ -880,16 +905,52 @@ type AgentMap = Arc<Mutex<HashMap<String, AgentConnection>>>;
 /// self-reap its own entry without keeping the manager alive (G6, #1239).
 type WeakAgentMap = std::sync::Weak<Mutex<HashMap<String, AgentConnection>>>;
 
+/// Weak back-reference to the [`IoBudgetMap`], held by the I/O task beside the
+/// [`WeakAgentMap`] so a self-reap clears its budget entry too (#4304).
+type WeakIoBudgetMap = std::sync::Weak<Mutex<HashMap<String, Arc<IoBudget>>>>;
+
+/// What an I/O task needs to self-reap its own manager entry (G6 #1239,
+/// CONC2-005 #4304): weak references to the agent map and to the paired
+/// per-agent I/O budgets, so the task never keeps the manager alive.
+#[derive(Clone)]
+struct AgentReaper {
+    agents: WeakAgentMap,
+    io_budgets: WeakIoBudgetMap,
+}
+
 /// Reap an agent's own entry from the manager map via a weak back-reference.
 ///
-/// Called by the I/O task when its reconnect budget is exhausted. A dropped
-/// manager (dead `Weak`) or poisoned lock is treated as a no-op — there is
-/// nothing left to clean up.
-fn reap_agent(agents: &WeakAgentMap, agent_id: &str) {
+/// Called by the I/O task when its reconnect budget is exhausted. The entry is
+/// removed **only if it is the one this task owns** — identified by its `alive`
+/// flag ([`Arc::ptr_eq`] against `own_alive`) — so a late reap from an old
+/// connection's task can never evict a newer connection that a concurrent
+/// `connect_agent` has since published under the same id (CONC2-005, #4304).
+/// The matching I/O budget is cleared under the same condition and the same
+/// `agents` lock (lock order `agents` → `io_budgets`). A dropped manager (dead
+/// `Weak`) or poisoned lock is treated as a no-op — there is nothing left to
+/// clean up.
+fn reap_agent(reaper: &AgentReaper, agent_id: &str, own_alive: &Arc<AtomicBool>) {
     // `upgrade()` must be bound so the strong `Arc` outlives the guard it lends.
-    if let Some(agents) = agents.upgrade() {
-        if let Ok(mut guard) = agents.lock() {
-            guard.remove(agent_id);
+    let Some(agents) = reaper.agents.upgrade() else {
+        return;
+    };
+    let Ok(mut guard) = agents.lock() else {
+        return;
+    };
+    let owns_entry = guard
+        .get(agent_id)
+        .is_some_and(|conn| Arc::ptr_eq(&conn.alive, own_alive));
+    if !owns_entry {
+        return;
+    }
+    guard.remove(agent_id);
+    if let Some(budgets) = reaper.io_budgets.upgrade() {
+        if let Some(budget) = budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(agent_id)
+        {
+            budget.close();
         }
     }
 }
@@ -942,6 +1003,9 @@ pub struct AgentConnectionManager<R: Runtime = Wry> {
     /// producer always pairs a connection's sender with that connection's own
     /// budget. See [`io_lanes`].
     io_budgets: IoBudgetMap,
+    /// Bound on the post-auth connect handshake ([`AGENT_HANDSHAKE_TIMEOUT`];
+    /// shortened only by tests).
+    handshake_timeout: std::time::Duration,
     app_handle: AppHandle<R>,
 }
 
@@ -955,8 +1019,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
             connecting: Arc::new(Mutex::new(HashMap::new())),
             agent_configs: AgentConfigStore::new(),
             io_budgets: Arc::new(Mutex::new(HashMap::new())),
+            handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
             app_handle,
         }
+    }
+
+    /// TEST-ONLY: shorten the post-auth connect handshake bound so a
+    /// never-answering agent times out within a test's budget (#4304).
+    #[cfg(test)]
+    pub(crate) fn set_handshake_timeout_for_test(&mut self, timeout: std::time::Duration) {
+        self.handshake_timeout = timeout;
     }
 
     /// Prune every agent whose I/O task has already died (`alive == false`),
@@ -1002,35 +1074,63 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let expanded = config.clone().expand();
         let config = &expanded;
 
-        let mut agents = self
-            .agents
-            .lock()
-            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        // CONC2-001 (#4304): the `agents` lock is held only for this short
+        // check-evict-reserve step and again to publish the finished connection
+        // — never across the SSH connect, its auth prompts or the `initialize`
+        // handshake, so connecting one agent no longer freezes every other
+        // agent operation (and the main-thread commands and session writes that
+        // read the map).
+        let cancel_token = CancellationToken::new();
+        {
+            let mut agents = self
+                .agents
+                .lock()
+                .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
-        // Evict a dead entry left behind when the I/O task exits without
-        // removing itself (e.g. reconnection failed after a dropped connection).
-        if let Some(existing) = agents.get(agent_id) {
-            if existing.alive.load(Ordering::SeqCst) {
+            // Evict a dead entry left behind when the I/O task exits without
+            // removing itself (e.g. reconnection failed after a dropped connection).
+            if let Some(existing) = agents.get(agent_id) {
+                if existing.alive.load(Ordering::SeqCst) {
+                    return Err(TerminalError::already_connected(format!(
+                        "Agent {} is already connected",
+                        agent_id
+                    )));
+                }
+            }
+
+            // Reserve the agent for this connect (#4304) and register the
+            // cancellation token a Cancel fires (G1, #1235) in one atomic step.
+            // A second connect to the same agent while this one is in flight is
+            // refused as already connected instead of running a duplicate
+            // handshake. Reserved under the `agents` lock (lock order `agents` →
+            // `connecting`, as in `disconnect_agent`) so a Disconnect either sees
+            // the reservation and cancels it, or runs before it exists.
+            if !register_connecting_token(&self.connecting, agent_id, cancel_token.clone()) {
                 return Err(TerminalError::already_connected(format!(
-                    "Agent {} is already connected",
+                    "Agent {} is already connecting",
                     agent_id
                 )));
             }
+
             // CONC-009: force-stop the outgoing task as a fallback. A "dead" entry
             // usually means the task already returned (abort is then a harmless
             // no-op), but a task wedged in a blocking op would otherwise leak its
-            // SSH session behind the fresh connection replacing it here.
+            // SSH session behind the fresh connection replacing it here. Its
+            // budget goes with it, under the same lock that pairs them (#3018).
             if let Some(old) = agents.remove(agent_id) {
                 old.io_task.abort();
+                if let Some(budget) = self
+                    .io_budgets
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(agent_id)
+                {
+                    budget.close();
+                }
             }
         }
-
-        // Register a cancellation token so a Cancel while connecting can abort
-        // the in-flight handshake (G1, #1235). The guard clears the entry when
-        // this connect finishes, even on an early `?` return. The token is held
-        // in a registry keyed by agent id, so `cancel_connect` can fire it.
-        let cancel_token = CancellationToken::new();
-        register_connecting_token(&self.connecting, agent_id, cancel_token.clone());
+        // The guard releases the reservation when this connect finishes
+        // (success, failure or cancellation), even on an early `?` return.
         let _connecting_guard = ConnectingGuard {
             map: self.connecting.clone(),
             id: agent_id.to_string(),
@@ -1053,9 +1153,14 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let agent_id_str = agent_id.to_string();
         let config_clone = config.clone();
         let settings_clone = settings_ref.clone();
-        // Weak back-reference so the spawned I/O task can self-reap its own map
-        // entry on an exhausted reconnect without keeping the manager alive (G6).
-        let agents_weak = Arc::downgrade(&self.agents);
+        // Weak back-references so the spawned I/O task can self-reap its own map
+        // entry (and budget) on an exhausted reconnect without keeping the
+        // manager alive (G6, #4304).
+        let reaper = AgentReaper {
+            agents: Arc::downgrade(&self.agents),
+            io_budgets: Arc::downgrade(&self.io_budgets),
+        };
+        let handshake_timeout = self.handshake_timeout;
 
         // Run the async connect+handshake on the current tokio runtime, wrapped
         // in a `tokio::select!` against the cancellation token so a Cancel aborts
@@ -1071,160 +1176,195 @@ impl<R: Runtime> AgentConnectionManager<R> {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
                     })?;
 
-            // 2. Open exec channel and launch agent
-            let mut channel = session.channel_open_session().await.map_err(|e| {
-                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                TerminalError::RemoteError(format!("Channel open failed: {}", e))
-            })?;
-            let exec_cmd = config_clone.agent_exec_command();
-            channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
-                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                TerminalError::agent_missing(format!("Exec failed: {}", e))
-            })?;
-
-            // 3. Blocking handshake: initialize
-            let enabled_external_files: Vec<&str> = config_clone
-                .external_connection_files
-                .iter()
-                .filter(|f| f.enabled)
-                .map(|f| f.path.as_str())
-                .collect();
-
+            // 2-3. The post-auth handshake, bounded as one step (CONC2-004,
+            // #4304): an agent that opens, execs and then never answers
+            // `initialize` fails the connect after `handshake_timeout` instead of
+            // leaving it in `connecting` forever. A Cancel still aborts it at
+            // once through the enclosing `run_connect_cancellable`.
             let request_id: u64 = 1;
-            let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
-            let req_line = serialize_request(
-                request_id,
-                termihub_core::protocol::methods::INITIALIZE,
-                init_params,
-            )
-            .map_err(|e| {
+            let handshake = tokio::time::timeout(handshake_timeout, async {
+                // 2. Open exec channel and launch agent
+                let mut channel = session.channel_open_session().await.map_err(|e| {
                     emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
+                    TerminalError::RemoteError(format!("Channel open failed: {}", e))
+                })?;
+                let exec_cmd = config_clone.agent_exec_command();
+                channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::agent_missing(format!("Exec failed: {}", e))
                 })?;
 
-            // Diagnostic for #2480: bookend the handshake at INFO so a full-app
-            // display run can see whether the stall is before the `initialize`
-            // write, or while awaiting the response line from the agent. Pairs
-            // with the "initialize response received" log after the loop below.
-            info!(
-                "Agent {}: exec launched, sending initialize over the SSH channel",
-                agent_id_str
-            );
-            channel.data(req_line.as_bytes()).await.map_err(|e| {
-                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                TerminalError::agent_missing(format!("Write initialize failed: {}", e))
-            })?;
-            info!(
-                "Agent {}: initialize written, awaiting response line from agent",
-                agent_id_str
-            );
+                // 3. Blocking handshake: initialize
+                let enabled_external_files: Vec<&str> = config_clone
+                    .external_connection_files
+                    .iter()
+                    .filter(|f| f.enabled)
+                    .map(|f| f.path.as_str())
+                    .collect();
 
-            // Read the initialize response from the channel. The agent may emit
-            // notifications before it answers (e.g. output from a session it
-            // recovered on startup, or a staged `agent.update_available` notice
-            // sent on attach). We loop until we see the message whose id matches
-            // our initialize request; otherwise a pre-initialize notification
-            // would be misread as the response ("Unexpected response to
-            // initialize"). Those notifications are buffered here and replayed
-            // once init completes (#1660) rather than dropped, so an on-attach
-            // notification is delivered to the desktop handlers. A generous cap
-            // guards against a runaway agent that never sends the response.
-            const MAX_PRE_INIT_MESSAGES: u32 = 1000;
-            let mut skipped: u32 = 0;
-            let mut pending_notifications: Vec<(String, Value)> = Vec::new();
-            let mut line_buf = String::new();
-            let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
-                let resp_line =
-                    match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
-                        Some(line) => line,
-                        None => {
-                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            return Err(TerminalError::RemoteError(
-                                "Channel closed before initialize response".into(),
-                            ));
-                        }
-                    };
-
-                let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
-                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::RemoteError(format!("Parse initialize response: {}", e))
-                })?;
-
-                match jsonrpc::classify_handshake_message(msg, request_id) {
-                    jsonrpc::HandshakeOutcome::Response(result) => {
-                        // Parse into the shared `InitializeResult` DTO (DUP-001,
-                        // #3226), with the desktop's own capabilities type so
-                        // `connectionTypes` stays pass-through JSON for the
-                        // frontend. Missing versions read as "unknown" and a
-                        // missing `client_id` (pre-0.3.0 agent) as empty.
-                        let init = parse_initialize_result(result).map_err(|e| {
-                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            TerminalError::RemoteError(e)
-                        })?;
-                        // AGT-003 (#3213): where this instance's update auth token
-                        // lives (protocol 0.13.0+; absent on older agents).
-                        let update_auth_token_path = token_path_from_initialize(&init);
-                        let InitializeResult {
-                            protocol_version,
-                            agent_version,
-                            client_id,
-                            mut capabilities,
-                            ..
-                        } = init;
-                        // Copy agent_version into capabilities so the UI can read it.
-                        capabilities.agent_version = agent_version.clone();
-                        // Diagnostic for #2480: the handshake completed — the
-                        // agent's initialize response reached the desktop. If a
-                        // display run reaches this line the transport round-trip
-                        // is healthy and any remaining stall is downstream.
-                        info!(
-                            "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
-                            agent_id_str, agent_version, protocol_version
-                        );
-                        break (
-                            capabilities,
-                            agent_version,
-                            protocol_version,
-                            client_id,
-                            update_auth_token_path,
-                        );
-                    }
-                    jsonrpc::HandshakeOutcome::Rejected(message) => {
+                let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
+                let req_line = serialize_request(
+                    request_id,
+                    termihub_core::protocol::methods::INITIALIZE,
+                    init_params,
+                )
+                .map_err(|e| {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        return Err(TerminalError::agent_outdated(format!(
-                            "Initialize rejected: {}",
-                            message
-                        )));
-                    }
-                    jsonrpc::HandshakeOutcome::Buffer { method, params } => {
-                        skipped += 1;
-                        if skipped > MAX_PRE_INIT_MESSAGES {
-                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            return Err(TerminalError::RemoteError(
-                                "Agent sent too many messages before the initialize response"
-                                    .into(),
-                            ));
+                        TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
+                    })?;
+
+                // Diagnostic for #2480: bookend the handshake at INFO so a full-app
+                // display run can see whether the stall is before the `initialize`
+                // write, or while awaiting the response line from the agent. Pairs
+                // with the "initialize response received" log after the loop below.
+                info!(
+                    "Agent {}: exec launched, sending initialize over the SSH channel",
+                    agent_id_str
+                );
+                channel.data(req_line.as_bytes()).await.map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::agent_missing(format!("Write initialize failed: {}", e))
+                })?;
+                info!(
+                    "Agent {}: initialize written, awaiting response line from agent",
+                    agent_id_str
+                );
+
+                // Read the initialize response from the channel. The agent may emit
+                // notifications before it answers (e.g. output from a session it
+                // recovered on startup, or a staged `agent.update_available` notice
+                // sent on attach). We loop until we see the message whose id matches
+                // our initialize request; otherwise a pre-initialize notification
+                // would be misread as the response ("Unexpected response to
+                // initialize"). Those notifications are buffered here and replayed
+                // once init completes (#1660) rather than dropped, so an on-attach
+                // notification is delivered to the desktop handlers. A generous cap
+                // guards against a runaway agent that never sends the response.
+                const MAX_PRE_INIT_MESSAGES: u32 = 1000;
+                let mut skipped: u32 = 0;
+                let mut pending_notifications: Vec<(String, Value)> = Vec::new();
+                let mut line_buf = String::new();
+                let (capabilities, agent_version, protocol_version, client_id, update_auth_token_path) = loop {
+                    let resp_line =
+                        match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
+                            Some(line) => line,
+                            None => {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                return Err(TerminalError::RemoteError(
+                                    "Channel closed before initialize response".into(),
+                                ));
+                            }
+                        };
+
+                    let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        TerminalError::RemoteError(format!("Parse initialize response: {}", e))
+                    })?;
+
+                    match jsonrpc::classify_handshake_message(msg, request_id) {
+                        jsonrpc::HandshakeOutcome::Response(result) => {
+                            // Parse into the shared `InitializeResult` DTO (DUP-001,
+                            // #3226), with the desktop's own capabilities type so
+                            // `connectionTypes` stays pass-through JSON for the
+                            // frontend. Missing versions read as "unknown" and a
+                            // missing `client_id` (pre-0.3.0 agent) as empty.
+                            let init = parse_initialize_result(result).map_err(|e| {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                TerminalError::RemoteError(e)
+                            })?;
+                            // AGT-003 (#3213): where this instance's update auth token
+                            // lives (protocol 0.13.0+; absent on older agents).
+                            let update_auth_token_path = token_path_from_initialize(&init);
+                            let InitializeResult {
+                                protocol_version,
+                                agent_version,
+                                client_id,
+                                mut capabilities,
+                                ..
+                            } = init;
+                            // Copy agent_version into capabilities so the UI can read it.
+                            capabilities.agent_version = agent_version.clone();
+                            // Diagnostic for #2480: the handshake completed — the
+                            // agent's initialize response reached the desktop. If a
+                            // display run reaches this line the transport round-trip
+                            // is healthy and any remaining stall is downstream.
+                            info!(
+                                "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
+                                agent_id_str, agent_version, protocol_version
+                            );
+                            break (
+                                capabilities,
+                                agent_version,
+                                protocol_version,
+                                client_id,
+                                update_auth_token_path,
+                            );
                         }
-                        // Retain the notification and replay it after init so an
-                        // on-attach notice is not dropped (#1660).
-                        pending_notifications.push((method, params));
-                        continue;
-                    }
-                    jsonrpc::HandshakeOutcome::Skip => {
-                        skipped += 1;
-                        if skipped > MAX_PRE_INIT_MESSAGES {
+                        jsonrpc::HandshakeOutcome::Rejected(message) => {
                             emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            return Err(TerminalError::RemoteError(
-                                "Agent sent too many messages before the initialize response"
-                                    .into(),
-                            ));
+                            return Err(TerminalError::agent_outdated(format!(
+                                "Initialize rejected: {}",
+                                message
+                            )));
                         }
-                        warn!(
-                            "Agent {}: skipping pre-initialize message during handshake",
-                            agent_id_str
-                        );
-                        continue;
+                        jsonrpc::HandshakeOutcome::Buffer { method, params } => {
+                            skipped += 1;
+                            if skipped > MAX_PRE_INIT_MESSAGES {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                return Err(TerminalError::RemoteError(
+                                    "Agent sent too many messages before the initialize response"
+                                        .into(),
+                                ));
+                            }
+                            // Retain the notification and replay it after init so an
+                            // on-attach notice is not dropped (#1660).
+                            pending_notifications.push((method, params));
+                            continue;
+                        }
+                        jsonrpc::HandshakeOutcome::Skip => {
+                            skipped += 1;
+                            if skipped > MAX_PRE_INIT_MESSAGES {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                return Err(TerminalError::RemoteError(
+                                    "Agent sent too many messages before the initialize response"
+                                        .into(),
+                                ));
+                            }
+                            warn!(
+                                "Agent {}: skipping pre-initialize message during handshake",
+                                agent_id_str
+                            );
+                            continue;
+                        }
                     }
+                };
+                Ok::<_, TerminalError>((
+                    channel,
+                    capabilities,
+                    agent_version,
+                    protocol_version,
+                    client_id,
+                    update_auth_token_path,
+                    pending_notifications,
+                ))
+            })
+            .await;
+            let (
+                channel,
+                capabilities,
+                agent_version,
+                protocol_version,
+                client_id,
+                update_auth_token_path,
+                pending_notifications,
+            ) = match handshake {
+                Ok(done) => done?,
+                Err(_elapsed) => {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    return Err(TerminalError::RemoteError(format!(
+                        "Agent handshake timed out: no initialize response within {}s",
+                        handshake_timeout.as_secs_f32()
+                    )));
                 }
             };
 
@@ -1246,7 +1386,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let agent_id_task = agent_id_str.clone();
             let config_task = config_clone.clone();
             let settings_task = settings_clone.clone();
-            let agents_weak_task = agents_weak.clone();
+            let reaper_task = reaper.clone();
             let ki_activity = AgentPromptActivity::new();
             let ki_activity_task = ki_activity.clone();
 
@@ -1274,7 +1414,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     config_task,
                     settings_task,
                     request_id,
-                    agents_weak_task,
+                    reaper_task,
                     pending_notifications,
                     ki_activity_task,
                     update_auth_token_path,
@@ -1322,36 +1462,54 @@ impl<R: Runtime> AgentConnectionManager<R> {
             }
         };
 
-        emit_agent_state(&self.app_handle, agent_id, "connected");
-
         let result = AgentConnectResult {
             capabilities: capabilities.clone(),
             agent_version: agent_version.clone(),
             protocol_version: protocol_version.clone(),
         };
 
-        // Paired with the map entry under the same `agents` lock (#3018).
-        self.io_budgets
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(agent_id.to_string(), io_budget);
-        agents.insert(
-            agent_id.to_string(),
-            AgentConnection {
-                command_tx,
-                alive,
-                reconnecting,
-                io_task,
-                capabilities,
-                ki_activity,
-                client_id,
-                reattach_config: RetainedAgentConfig {
-                    config: config.clone(),
-                    settings: settings_ref.clone(),
+        // Publish under a short re-acquire of the `agents` lock (#4304). The
+        // cancellation check sits under the same lock `disconnect_agent` fires
+        // the token under, so a Disconnect / Cancel that landed while the
+        // handshake ran off-lock is honoured: the fresh connection is torn down
+        // rather than published behind the user's back.
+        {
+            let mut agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+            if cancel_token.is_cancelled() {
+                drop(agents);
+                let _ = command_tx.send(AgentIoCommand::Disconnect);
+                alive.store(false, Ordering::SeqCst);
+                io_task.abort();
+                io_budget.close();
+                emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                return Err(TerminalError::RemoteError("Connect cancelled".to_string()));
+            }
+            // Paired with the map entry under the same `agents` lock (#3018).
+            self.io_budgets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(agent_id.to_string(), io_budget);
+            agents.insert(
+                agent_id.to_string(),
+                AgentConnection {
+                    command_tx,
+                    alive,
+                    reconnecting,
+                    io_task,
+                    capabilities,
+                    ki_activity,
+                    client_id,
+                    reattach_config: RetainedAgentConfig {
+                        config: config.clone(),
+                        settings: settings_ref.clone(),
+                    },
                 },
-            },
-        );
-        drop(agents);
+            );
+        }
+
+        // Announced only once the entry is published, so an observer reacting to
+        // `connected` finds the agent in the map.
+        emit_agent_state(&self.app_handle, agent_id, "connected");
 
         // An agent a resilient tab already opted into reattach (#3661) — e.g. the
         // user re-connecting a reaped agent with a changed password — refreshes
@@ -1367,7 +1525,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
         Ok(result)
     }
 
-    /// Disconnect an agent, closing all sessions.
+    /// Disconnect an agent, closing all sessions. An agent that is still
+    /// connecting has its connect cancelled instead (#4304).
     pub fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
         let mut agents = self
             .agents
@@ -1375,6 +1534,12 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
         let live = agents.remove(agent_id);
+        // #4304: the connect handshake runs off the `agents` lock, so a
+        // Disconnect can now arrive while the agent is still connecting. Cancel
+        // that connect — under the `agents` lock, which its publish step checks
+        // the token under — so it aborts (or tears down a connection it just
+        // finished) and emits `disconnected` instead of publishing it.
+        let cancelled_connect = cancel_connect_token(&self.connecting, agent_id);
         // #3018: drop the budget with its entry, under the same lock that pairs
         // them, and close it now: a producer waiting for queue credit fails at
         // once instead of waiting on the ending I/O task (whose own drop guard
@@ -1408,6 +1573,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // framing we still care about. A no-op if the task already exited.
             conn.io_task.abort();
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
+            Ok(())
+        } else if cancelled_connect {
+            // The in-flight connect emits `disconnected` itself once it unwinds.
             Ok(())
         } else {
             Err(TerminalError::RemoteError(format!(
@@ -1537,9 +1705,10 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ///   or mid in-task reconnect (the entry is still `alive`), so it never
     ///   double-drives against that loop;
     /// - otherwise cold-re-establishes from the retained config via
-    ///   [`Self::connect_agent`], which locks the agent map for the whole connect,
-    ///   so two concurrent redrives serialize and the loser observes the winner's
-    ///   entry as "already connected" (mapped back to `Ok` here);
+    ///   [`Self::connect_agent`], which reserves the agent for the whole connect
+    ///   (#4304), so of two concurrent redrives the loser is refused as "already
+    ///   connected" (mapped back to `Ok` here) while the winner's connect owns the
+    ///   outcome;
     /// - returns `Err` when nothing is retained (the connect did not opt in, or
     ///   the config was already scrubbed) so the redrive folds a reconnect
     ///   failure and arms the next backoff / gives up.
@@ -3117,6 +3286,13 @@ pub(crate) mod tracing_capture;
 
 #[cfg(test)]
 mod tests;
+
+// #4304: connect / handshake / reap regressions against an in-process fake
+// agent endpoint — no `sshd` binary and no agent build, so they run everywhere.
+#[cfg(test)]
+mod connect_off_lock_tests;
+#[cfg(test)]
+mod fake_agent_sshd;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //

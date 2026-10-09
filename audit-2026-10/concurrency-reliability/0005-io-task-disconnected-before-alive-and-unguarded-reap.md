@@ -9,8 +9,8 @@ subsystem: src-tauri/terminal/agent_manager
 audit: 2026-10
 commit: 663465d52
 relation: new
-status: open
-resolution: ""
+status: fixed
+resolution: "#4304 — give-up clears alive before the Failed fold and disconnected emit; reap_agent removes the entry and its io_budget only when Arc::ptr_eq matches the task's own alive"
 evidence:
   - src-tauri/src/terminal/agent_manager/io_task.rs:740
   - src-tauri/src/terminal/agent_manager/io_task.rs:741
