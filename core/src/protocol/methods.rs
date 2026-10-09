@@ -125,6 +125,12 @@ pub const AGENT_FORWARD_CLOSE: &str = "agent.forward.close";
 /// (a VNC/RDP connection routed through the agent). An older agent answers
 /// "method not found".
 pub const AGENT_FORWARD_CONNECT: &str = "agent.forward.connect";
+/// Both directions (protocol 0.28.0, #4284): the receiver of a flow-controlled
+/// port-forward stream handed `bytes` more of it to their consumer, returning
+/// that much window credit to the sender. Desktop → agent as a request, agent →
+/// desktop as a notification. Used only on a stream whose
+/// `agent.forward.connect` granted a window ([`AgentForwardConnectResult`]).
+pub const AGENT_FORWARD_ACK: &str = "agent.forward.ack";
 
 // Agent-hosted tunnel forwarding (#2185).
 pub const TUNNEL_START: &str = "tunnel.start";
@@ -336,6 +342,11 @@ pub struct Capabilities {
     /// agent host is backpressured (protocol 0.27.0, #4416). Absent (read as
     /// `false`) on older agents, which the desktop never pauses.
     pub output_flow: bool,
+    /// Whether the agent flow-controls desktop port-forward streams: it grants
+    /// the window an `agent.forward.connect` requests and honors
+    /// [`AGENT_FORWARD_ACK`] (protocol 0.28.0, #4284). Absent (read as
+    /// `false`) on older agents, whose streams are relayed unbounded.
+    pub forward_flow: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -847,6 +858,32 @@ pub struct AgentForwardConnectParams {
     pub host: String,
     /// Target TCP port.
     pub port: u16,
+    /// Requested flow-control window in bytes (protocol 0.28.0, #4284). An
+    /// agent that supports it answers with the window it grants
+    /// ([`AgentForwardConnectResult::window`]) and from then on keeps at most
+    /// that many unacknowledged bytes in flight toward the desktop. Absent from
+    /// older desktops, whose streams stay unbounded; an older agent ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<u64>,
+}
+
+/// Result of `agent.forward.connect` (#3241, #4284).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentForwardConnectResult {
+    /// The flow-control window the agent granted, present only when the
+    /// desktop requested one and the agent supports `agent.forward.ack`. Both
+    /// directions of the stream are then bounded by it; absent (an older
+    /// agent), the stream is relayed without flow control.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<u64>,
+}
+
+/// Params of [`AGENT_FORWARD_ACK`] (#4284): the receiver consumed `bytes` more
+/// of the stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentForwardAckParams {
+    pub stream_id: String,
+    pub bytes: u64,
 }
 
 // ── session.resize ─────────────────────────────────────────────────
@@ -2604,6 +2641,7 @@ mod tests {
                 unattended_connect: true,
                 file_ranges: true,
                 output_flow: true,
+                forward_flow: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2630,6 +2668,8 @@ mod tests {
         assert_eq!(v["capabilities"]["fileRanges"], true);
         // #4416: per-session output flow control.
         assert_eq!(v["capabilities"]["outputFlow"], true);
+        // #4284: flow-controlled port-forward streams.
+        assert_eq!(v["capabilities"]["forwardFlow"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3790,6 +3830,53 @@ mod tests {
         assert!(dbg.contains("redacted"));
     }
 
+    // #4284: the window is optional on the wire in both directions, so an
+    // older desktop's connect (no window) and an older agent's answer (`{}`)
+    // keep parsing, and a desktop without flow control sends the old shape.
+    #[test]
+    fn agent_forward_connect_window_is_optional_both_ways() {
+        let old = AgentForwardConnectParams {
+            stream_id: "pf-1".into(),
+            host: "h".into(),
+            port: 5900,
+            window: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::json!({ "stream_id": "pf-1", "host": "h", "port": 5900 })
+        );
+        let parsed: AgentForwardConnectParams = serde_json::from_value(
+            serde_json::json!({ "stream_id": "pf-1", "host": "h", "port": 5900, "window": 4096 }),
+        )
+        .unwrap();
+        assert_eq!(parsed.window, Some(4096));
+
+        let legacy: AgentForwardConnectResult =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(legacy.window, None);
+        assert_eq!(
+            serde_json::to_value(AgentForwardConnectResult { window: Some(8) }).unwrap(),
+            serde_json::json!({ "window": 8 })
+        );
+        assert_eq!(
+            serde_json::to_value(AgentForwardConnectResult::default()).unwrap(),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn agent_forward_ack_params_wire_shape() {
+        let v = serde_json::to_value(AgentForwardAckParams {
+            stream_id: "pf-1".into(),
+            bytes: 65536,
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "stream_id": "pf-1", "bytes": 65536 })
+        );
+    }
+
     // #4416: the `connection.output_flow` params keep their snake_case keys.
     #[test]
     fn session_output_flow_params_wire_shape() {
@@ -3879,6 +3966,7 @@ mod tests {
         assert_eq!(AGENT_FORWARD_DATA, "agent.forward.data");
         assert_eq!(AGENT_FORWARD_CLOSE, "agent.forward.close");
         assert_eq!(AGENT_FORWARD_CONNECT, "agent.forward.connect");
+        assert_eq!(AGENT_FORWARD_ACK, "agent.forward.ack");
         assert_eq!(TUNNEL_START, "tunnel.start");
         assert_eq!(TUNNEL_STOP, "tunnel.stop");
         assert_eq!(TUNNEL_STATUS, "tunnel.status");

@@ -22,7 +22,10 @@
 //! [`register_stream`](DesktopAgentForward::register_stream) before asking the
 //! agent to `agent.forward.connect` to its target, so the agent's `data` /
 //! `close` notifications for that stream reach the local loopback socket the
-//! graphical backend dialled (see `session::agent_port_forward`).
+//! graphical backend dialled (see `session::agent_port_forward`). Such a stream
+//! also receives the agent's `agent.forward.ack` credit (#4284) as
+//! [`ForwardEvent::Ack`], so the port forward can keep its own bytes within the
+//! window the agent granted.
 //!
 //! No local agent is a graceful no-op: the connect fails, we answer with an
 //! immediate `agent.forward.close`, and the agent drops the forwarded channel —
@@ -41,6 +44,26 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::debug;
 
 use super::agent_manager::{AgentIoCommand, AgentIoSender};
+
+/// What the agent sends for one forwarded stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForwardEvent {
+    /// Stream bytes (`agent.forward.data`).
+    Data(Vec<u8>),
+    /// The agent wrote this many of the desktop's bytes to the target
+    /// (`agent.forward.ack`, #4284), returning that much window credit.
+    Ack(u64),
+}
+
+/// Where the agent's events for one stream are delivered. Dropped (the receiver
+/// sees the channel close) when the stream ends.
+///
+/// Unbounded, and bounded in practice by the protocol: an ssh-agent stream is
+/// request/response (TAURI-014), and a flow-controlled port-forward stream
+/// carries at most the granted window of data before the desktop acks it
+/// (#4284). Only a port forward to an agent older than #4284 is unbounded, as
+/// it always was.
+pub type ForwardSink = UnboundedSender<ForwardEvent>;
 
 /// A one-shot factory that connects to the operator's local ssh-agent, yielding
 /// a duplex byte stream (or a `NotFound`-style error when no agent is
@@ -66,9 +89,9 @@ fn default_connector() -> LocalAgentConnector {
 /// Cloneable (shares one stream table) so pump tasks can deregister themselves.
 #[derive(Clone, Default)]
 pub struct DesktopAgentForward {
-    /// `stream_id` → sink feeding agent→desktop bytes into the local-agent
-    /// writer for that stream.
-    streams: Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>,
+    /// `stream_id` → sink feeding agent→desktop events into the local-agent
+    /// writer (or the port forward) for that stream.
+    streams: Arc<Mutex<HashMap<String, ForwardSink>>>,
 }
 
 impl DesktopAgentForward {
@@ -106,7 +129,7 @@ impl DesktopAgentForward {
         // no memory safety and risks stalling the agent's I/O loop, so it stays
         // unbounded by design (contrast the process-output path in local_process.rs,
         // which is genuinely unbounded and uses a bounded, backpressured channel).
-        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (tx, rx) = mpsc::unbounded_channel::<ForwardEvent>();
         self.streams
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -128,15 +151,28 @@ impl DesktopAgentForward {
             .unwrap_or_else(|e| e.into_inner())
             .get(stream_id)
         {
-            let _ = tx.send(data);
+            let _ = tx.send(ForwardEvent::Data(data));
+        }
+    }
+
+    /// Handle `agent.forward.ack` from the agent (#4284): hand the credit to
+    /// the stream's owner. Unknown/closed streams are ignored.
+    pub fn on_ack(&self, stream_id: &str, bytes: u64) {
+        if let Some(tx) = self
+            .streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(stream_id)
+        {
+            let _ = tx.send(ForwardEvent::Ack(bytes));
         }
     }
 
     /// Register a desktop-initiated port-forward stream (#3241): the agent's
-    /// `data` for `stream_id` is fed into `sink`, and its `close` (or
+    /// `data` and `ack` for `stream_id` are fed into `sink`, and its `close` (or
     /// [`clear`](Self::clear)) drops `sink`, which the owner reads as the stream
     /// ending.
-    pub fn register_stream(&self, stream_id: String, sink: UnboundedSender<Vec<u8>>) {
+    pub fn register_stream(&self, stream_id: String, sink: ForwardSink) {
         self.streams
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -166,9 +202,9 @@ impl DesktopAgentForward {
 /// ways until either end closes.
 async fn pump_local_agent(
     stream_id: String,
-    rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    rx: mpsc::UnboundedReceiver<ForwardEvent>,
     command_tx: AgentIoSender,
-    streams: Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>,
+    streams: Arc<Mutex<HashMap<String, ForwardSink>>>,
     connect: LocalAgentConnector,
 ) {
     let agent = match connect().await {
@@ -196,7 +232,11 @@ async fn pump_local_agent(
     // Not app-owned (#3105): stream-scoped writer; ends when the stream's channel closes.
     let writer = tokio::spawn(async move {
         let mut rx = rx;
-        while let Some(bytes) = rx.recv().await {
+        while let Some(event) = rx.recv().await {
+            // An ssh-agent stream is never windowed, so no ack arrives here.
+            let ForwardEvent::Data(bytes) = event else {
+                continue;
+            };
             if write_half.write_all(&bytes).await.is_err() {
                 break;
             }
@@ -261,14 +301,18 @@ mod tests {
     #[tokio::test]
     async fn registered_stream_receives_data_until_closed_or_cleared() {
         let relay = DesktopAgentForward::new();
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<ForwardEvent>();
         relay.register_stream("gfx-1".to_string(), tx);
         relay.on_data("gfx-1", b"frame".to_vec());
-        assert_eq!(rx.recv().await.as_deref(), Some(&b"frame"[..]));
+        assert_eq!(rx.recv().await, Some(ForwardEvent::Data(b"frame".to_vec())));
+        // #4284: the agent's window credit reaches the stream's owner.
+        relay.on_ack("gfx-1", 4096);
+        assert_eq!(rx.recv().await, Some(ForwardEvent::Ack(4096)));
         relay.on_close("gfx-1");
         assert_eq!(rx.recv().await, None);
+        relay.on_ack("gfx-1", 1);
 
-        let (tx2, mut rx2) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<ForwardEvent>();
         relay.register_stream("gfx-2".to_string(), tx2);
         relay.clear();
         assert_eq!(rx2.recv().await, None);

@@ -15,8 +15,8 @@ evidence:
   - core/src/backends/rdp_sidecar/config.rs:30
   - core/src/backends/rdp_sidecar/config.rs:211-217
   - core/src/backends/ssh/agent_forward.rs:30
-status: open
-resolution: ""
+status: fixed
+resolution: "#4284 — agent_route resolves the port via core VncConfig/RdpConfig::effective_port and the forward reads in AGENT_FORWARD_CHUNK_SIZE"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -33,6 +33,8 @@
 //! decides "a window owns whole tab groups", that layer can be added on top
 //! without reshaping this map.
 
+pub mod quit;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -139,22 +141,14 @@ fn recover<T>(result: Result<T, PoisonError<T>>) -> T {
 ///
 /// - **Windows/Linux**: closing the last window quits the app, so tear down now.
 /// - **macOS**: the app stays alive in the Dock (WKWebView convention), so
-///   teardown is deferred to an actual quit ([`should_prevent_exit`] returns
-///   `false` for an explicit exit) rather than run on window close.
+///   teardown is deferred to an actual quit (see [`quit::decide_exit_request`])
+///   rather than run on window close.
 pub fn should_teardown_on_last_window() -> bool {
     cfg!(not(target_os = "macos"))
 }
 
-/// Whether an `ExitRequested` should be prevented to keep the app running.
-///
-/// - **macOS**: a user-triggered exit (last window closed → `code == None`)
-///   keeps the app alive in the Dock; an explicit programmatic quit
-///   (`code == Some`, e.g. the app menu's Quit / `AppHandle::exit`) always
-///   proceeds.
-/// - **Windows/Linux**: never stays alive — the exit always proceeds.
-pub fn should_prevent_exit(code: Option<i32>) -> bool {
-    cfg!(target_os = "macos") && code.is_none()
-}
+// The `ExitRequested` decision (Dock keep-alive, explicit-quit prompt) lives in
+// [`quit::decide_exit_request`] (#4296).
 
 // ── Superseded-owner signal (SM-026) ─────────────────────────────────────────
 //
@@ -887,20 +881,6 @@ mod tests {
             assert!(!should_teardown_on_last_window());
         } else {
             assert!(should_teardown_on_last_window());
-        }
-    }
-
-    #[test]
-    fn prevent_exit_only_on_macos_user_triggered_close() {
-        if cfg!(target_os = "macos") {
-            // Last window closed (no explicit code) → stay alive in the Dock.
-            assert!(should_prevent_exit(None));
-            // Explicit quit (menu Quit / AppHandle::exit) → proceed.
-            assert!(!should_prevent_exit(Some(0)));
-        } else {
-            // Windows/Linux never stay alive.
-            assert!(!should_prevent_exit(None));
-            assert!(!should_prevent_exit(Some(0)));
         }
     }
 

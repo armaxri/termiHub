@@ -32,12 +32,13 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentForwardCloseParams, AgentForwardConnectParams, AgentForwardDataParams,
-    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
-    AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
-    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
-    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
-    CrashReportSummary, CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
+    AgentForwardAckParams, AgentForwardCloseParams, AgentForwardConnectParams,
+    AgentForwardConnectResult, AgentForwardDataParams, AgentRequestDeferredUpdateParams,
+    AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
+    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, CrashReportSummary,
+    CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
     FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
@@ -172,7 +173,12 @@ use termihub_core::monitoring::{
 /// stops reading that session's output so the program is backpressured. The
 /// desktop sends it only to an agent that advertises the flag; an older
 /// desktop never sends it.
-const AGENT_PROTOCOL_VERSION: &str = "0.27.0";
+/// Bumped to 0.28.0 for the additive `agent.forward.ack` method, the optional
+/// `window` of `agent.forward.connect` and the matching
+/// `capabilities.forwardFlow` flag (#4284): a desktop port forward (VNC/RDP)
+/// is credit-windowed in both directions. An older desktop requests no window
+/// and keeps an unbounded stream.
+const AGENT_PROTOCOL_VERSION: &str = "0.28.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -783,6 +789,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_forward_data(module)?;
     register_agent_forward_close(module)?;
     register_agent_forward_connect(module)?;
+    register_agent_forward_ack(module)?;
     register_connection_types(module)?;
     register_session_get_buffer(module)?;
     register_connections_list(module)?;
@@ -1005,6 +1012,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 unattended_connect: true,
                 file_ranges: true,
                 output_flow: true,
+                forward_flow: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -1415,11 +1423,33 @@ fn register_agent_forward_connect(
             ));
         }
 
-        session_manager
-            .agent_forward_connect(&p.stream_id, &p.host, p.port)
+        let window = session_manager
+            .agent_forward_connect_windowed(&p.stream_id, &p.host, p.port, p.window)
             .await
             .map_err(|msg| rpc_err(errors::FORWARD_CONNECT_FAILED, msg))?;
         forward_streams.track(&p.stream_id);
+
+        // An unwindowed stream answers `{}`, byte-identical to before #4284.
+        serde_json::to_value(AgentForwardConnectResult { window })
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+/// `agent.forward.ack` (#4284): the desktop consumed `bytes` of a windowed
+/// port-forward stream, returning that much credit to the stream's target
+/// reader. A stray ack (closed or unwindowed stream) is a benign no-op.
+fn register_agent_forward_ack(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::AGENT_FORWARD_ACK, |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: AgentForwardAckParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.forward.ack", e))?;
+
+        session_manager
+            .agent_forward_ack(&p.stream_id, p.bytes)
+            .await;
 
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
@@ -3836,10 +3866,11 @@ mod tests {
     /// 0.25.0 added the `connection.filesOnly` notification (#4081), and
     /// 0.26.0 the ranged `connection.files.*` methods with their `fileRanges`
     /// capability (#3587), and 0.27.0 `connection.output_flow` with its
-    /// `outputFlow` capability (#4416).
+    /// `outputFlow` capability (#4416), and 0.28.0 `agent.forward.ack` with
+    /// the connect window and its `forwardFlow` capability (#4284).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.27.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.28.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -3962,6 +3993,76 @@ mod tests {
             errors::INVALID_PARAMS,
             "{invalid}"
         );
+    }
+
+    /// #4284: a desktop that requests a window gets the one the agent grants
+    /// (capped at the agent's maximum); one that does not (an older desktop)
+    /// gets the old empty answer and an unbounded stream.
+    #[tokio::test]
+    async fn agent_forward_connect_grants_a_requested_window() {
+        use termihub_core::session::forward_window::AGENT_FORWARD_WINDOW;
+
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let windowed = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#w1", "host": "127.0.0.1", "port": port,
+                    "window": u64::MAX }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            windowed["result"],
+            json!({ "window": AGENT_FORWARD_WINDOW }),
+            "{windowed}"
+        );
+
+        let legacy = dispatch(
+            &handler,
+            "agent.forward.connect",
+            json!({ "stream_id": "gfx#w2", "host": "127.0.0.1", "port": port }),
+            3,
+        )
+        .await;
+        assert_eq!(legacy["result"], json!({}), "{legacy}");
+    }
+
+    /// #4284: `agent.forward.ack` is accepted for any stream (a stray ack for a
+    /// closed stream is a no-op) and rejects malformed params.
+    #[tokio::test]
+    async fn agent_forward_ack_succeeds_and_validates() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let ok = dispatch(
+            &handler,
+            "agent.forward.ack",
+            json!({ "stream_id": "gfx#gone", "bytes": 4096 }),
+            2,
+        )
+        .await;
+        assert!(ok.get("result").is_some(), "{ok}");
+
+        let bad = dispatch(
+            &handler,
+            "agent.forward.ack",
+            json!({ "stream_id": "gfx#gone" }),
+            3,
+        )
+        .await;
+        assert_eq!(bad["error"]["code"], errors::INVALID_PARAMS, "{bad}");
+    }
+
+    /// #4284: the agent advertises flow-controlled port forwards.
+    #[tokio::test]
+    async fn initialize_advertises_forward_flow() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(result["result"]["capabilities"]["forwardFlow"], true);
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────

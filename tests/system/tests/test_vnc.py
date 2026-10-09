@@ -42,6 +42,7 @@ from termihub_harness import (
     VNC_VENCRYPT_PORT,
     ConnectionsUi,
     ContainerControl,
+    ComposeFixtureFailed,
     ContainerRuntimeUnavailable,
     PasswordPromptUi,
     RemoteDesktopUi,
@@ -264,7 +265,7 @@ class TestVncDynamicResolution(_VncSuite):
             try:
                 control.restart()
                 wait_for_banner(VNC_HOST, VNC_VENCRYPT_PORT, b"RFB ", timeout=SERVER_READY_TIMEOUT)
-            except ContainerRuntimeUnavailable as exc:
+            except (ContainerRuntimeUnavailable, ComposeFixtureFailed) as exc:
                 print(f"[vnc] could not restore {control.container}: {exc}")
 
 

@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.27.0
+**Version**: 0.28.0
 **Status**: Draft
 **Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416
 
@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.24.0          | 0.28.0        | Yes (the desktop requests 0.24.0; `forwardFlow` credit-windows VNC/RDP streams carried by the agent)                                 |
 | 0.24.0          | 0.27.0        | Yes (the desktop requests 0.24.0; `outputFlow` lets a lagging terminal pause the agent-hosted session's output)                      |
 | 0.24.0          | 0.26.0        | Yes (the desktop requests 0.24.0; `fileRanges` puts agent-hosted transfers in the Transfer Queue)                                    |
 | 0.24.0          | 0.25.0        | Yes (the desktop requests 0.24.0; `connection.filesOnly` is routed)                                                                  |
@@ -409,6 +410,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.28.0 (additive, minor)** — adds flow control to desktop port forwards (#4284): [`agent.forward.connect`](#agentforwardconnect) takes an optional `window` and answers with the window the agent grants, [`agent.forward.ack`](#agentforwardack) returns window credit in both directions, and the `initialize` result gains `capabilities.forwardFlow: true` to say so. On a windowed stream each direction may have at most the granted window (at most 512 KiB) of bytes sent and not yet acknowledged; the receiver acknowledges bytes only once it has written them to their socket. A slow desktop canvas therefore stops the desktop's acks, the agent stops reading the VNC/RDP server, and TCP slows the server down — instead of `agent.forward.data` notifications queuing without bound on the agent, ahead of every terminal session's output. A desktop that overruns the window it was granted has its stream closed. Negotiation is **per stream**: the desktop always requests a window, and an older agent ignores the unknown `window` field and answers `{}`, so the desktop relays that stream unbounded as before and never sends it an ack. An older desktop requests no window and gets the old unbounded stream and the old `{}` answer. The ssh-agent relay is unchanged. The desktop still requests `0.24.0`.
 
 **0.27.0 (additive, minor)** — adds [`connection.output_flow`](#connectionoutput_flow) (#4416), and the `initialize` result gains `capabilities.outputFlow: true` to say so. When the desktop terminal falls behind rendering an agent-hosted session's output (more than 2 MiB not yet parsed by xterm.js) it sends `paused: true`, and once it has caught up (below 512 KiB) `paused: false`. While paused the agent stops reading that session's output, so the program on the agent host is backpressured through its PTY — the same flow control a local or direct session gets — instead of output piling up in the agent, the desktop or the terminal. Input (Ctrl+C included) and every other session on the connection keep flowing. A persistent session forwards the pause to its session daemon, which stops reading its backend's output in turn; a daemon started by an older agent does not support it and keeps streaming. The pause belongs to the desktop that sent it: a detach, a dropped transport or another desktop's attach resumes the session. Negotiation is by **capability**: the desktop sends the method only to an agent that advertises the flag; for an older agent the session is never paused and the terminal's 32 MiB staged-output cap applies as before. An older desktop ignores the flag. The desktop still requests `0.24.0`.
 
@@ -549,6 +552,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.unattendedConnect`          | `boolean`              | [`connection.create`](#connectioncreate) honors `unattended: true` — it never prompts and refuses with a typed `connect_failure` instead (0.23.0+; absent = `false`)                     |
 | `capabilities.fileRanges`                 | `boolean`              | [`connection.files.read_range`](#connectionfilesread_range) / [`write_range`](#connectionfileswrite_range) move offset-addressed slices for queued transfers (0.26.0+; absent = `false`) |
 | `capabilities.outputFlow`                 | `boolean`              | [`connection.output_flow`](#connectionoutput_flow) pauses / resumes a session's output, backpressuring the program (0.27.0+; absent = `false`)                                           |
+| `capabilities.forwardFlow`                | `boolean`              | [`agent.forward.connect`](#agentforwardconnect) grants a requested `window` and [`agent.forward.ack`](#agentforwardack) is honored (0.28.0+; absent = `false`)                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
 > params (`protocolVersion`, `clientVersion`; a field sent in `snake_case` is silently ignored),
@@ -1046,19 +1050,42 @@ Desktop → agent (#3241). Opens a TCP connection **from the agent host** to `ho
   "jsonrpc": "2.0",
   "id": 42,
   "method": "agent.forward.connect",
-  "params": { "stream_id": "pf-7f3c...", "host": "10.0.0.5", "port": 5901 }
+  "params": { "stream_id": "pf-7f3c...", "host": "10.0.0.5", "port": 5901, "window": 524288 }
 }
 ```
 
-| Param       | Type     | Description                                                 |
-| ----------- | -------- | ----------------------------------------------------------- |
-| `stream_id` | `string` | Desktop-chosen stream id (unique among the agent's streams) |
-| `host`      | `string` | Target host, resolved on the agent host                     |
-| `port`      | `number` | Target TCP port (non-zero)                                  |
+| Param       | Type      | Description                                                                       |
+| ----------- | --------- | --------------------------------------------------------------------------------- |
+| `stream_id` | `string`  | Desktop-chosen stream id (unique among the agent's streams)                       |
+| `host`      | `string`  | Target host, resolved on the agent host                                           |
+| `port`      | `number`  | Target TCP port (non-zero)                                                        |
+| `window`    | `number?` | Requested flow-control window in bytes (0.28.0+, #4284); absent = no flow control |
 
-**Response**: `{}` once the TCP connection is established. From then on the stream uses the ordinary relay messages in both directions: the desktop sends target-bound bytes with the [`agent.forward.data`](#agentforwarddata) method and ends the stream with [`agent.forward.close`](#agentforwardclose) (which also drops the agent's target connection); the agent sends the target's bytes as [`agent.forward.data` notifications](#agentforwarddata-notification) and an [`agent.forward.close` notification](#agentforwardclose-notification) when the target hangs up. There is no `agent.forward.open` for these streams. The agent closes every stream a client opened when that client disconnects.
+**Response**: `{}` once the TCP connection is established — or, when the desktop requested a `window` and the agent supports flow control (0.28.0+), `{ "window": <granted> }`: the requested window capped at 512 KiB (and at least 1). With a granted window the stream is flow-controlled in both directions, like an SSH channel window: neither side sends more than the window of bytes the other has not yet acknowledged with [`agent.forward.ack`](#agentforwardack), and each side acknowledges bytes only after writing them to its socket. The agent reads the target only while it has credit; a desktop that sends past the window has the stream closed (an `agent.forward.close` notification follows). Without a granted window (no `window` requested, or an older agent that answers `{}`) the stream is relayed unbounded and no acks are sent. From then on the stream uses the ordinary relay messages in both directions: the desktop sends target-bound bytes with the [`agent.forward.data`](#agentforwarddata) method and ends the stream with [`agent.forward.close`](#agentforwardclose) (which also drops the agent's target connection); the agent sends the target's bytes as [`agent.forward.data` notifications](#agentforwarddata-notification) and an [`agent.forward.close` notification](#agentforwardclose-notification) when the target hangs up. There is no `agent.forward.open` for these streams. The agent closes every stream a client opened when that client disconnects.
 
 **Errors**: `-32602` for a missing host or port `0`; `-32028` when the target is refused, unresolvable, or does not answer within 10 seconds — the message names the target and says it could not be reached from the agent host. An agent older than 0.17.0 answers `-32601`.
+
+### `agent.forward.ack`
+
+Desktop → agent (0.28.0+, #4284). Returns window credit on a flow-controlled [`agent.forward.connect`](#agentforwardconnect) stream: the desktop wrote `bytes` more of the agent's data to the graphical backend's socket. The desktop accumulates consumed bytes and acks once a quarter of the window has built up, so the agent's credit never runs dry while data is flowing. Sent only on a stream whose connect granted a window, fire-and-forget like `connection.resize`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 43,
+  "method": "agent.forward.ack",
+  "params": { "stream_id": "pf-7f3c...", "bytes": 131072 }
+}
+```
+
+| Param       | Type     | Description                                     |
+| ----------- | -------- | ----------------------------------------------- |
+| `stream_id` | `string` | The flow-controlled stream                      |
+| `bytes`     | `number` | Bytes of the stream consumed since the last ack |
+
+**Response**: `{}`. An ack for an unknown, closed or unwindowed stream is a no-op; credit never grows past the granted window. **Errors**: `-32602` for missing params. An agent older than 0.28.0 never grants a window, so it is never sent this method.
+
+The agent sends the same name as a **notification** (`{ "stream_id", "bytes" }`) for the other direction: it wrote `bytes` of the desktop's `agent.forward.data` to the target, so the desktop may send that much more.
 
 ---
 
@@ -3459,6 +3486,23 @@ Agent → desktop. A forwarded ssh-agent stream ended on the agent host (the tar
 | Param       | Type     | Description                   |
 | ----------- | -------- | ----------------------------- |
 | `stream_id` | `string` | Forwarded ssh-agent stream id |
+
+### `agent.forward.ack` (notification)
+
+Agent → desktop (0.28.0+, #4284). On a flow-controlled [`agent.forward.connect`](#agentforwardconnect) stream, the agent wrote `bytes` more of the desktop's data to the target, returning that much window credit to the desktop. Sent once per written chunk; never sent on an unwindowed stream.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.ack",
+  "params": { "stream_id": "pf-7f3c...", "bytes": 65536 }
+}
+```
+
+| Param       | Type     | Description                         |
+| ----------- | -------- | ----------------------------------- |
+| `stream_id` | `string` | The flow-controlled stream          |
+| `bytes`     | `number` | Desktop bytes written to the target |
 
 ### `connection.monitoring.data`
 

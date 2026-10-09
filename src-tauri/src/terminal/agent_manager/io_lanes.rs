@@ -118,9 +118,12 @@ pub(crate) fn lane_of(cmd: &AgentIoCommand) -> Lane {
         }
         // A pause must never wait behind a queued paste, and a resume never
         // behind anything: flow control rides the control lane, FIFO with the
-        // other control commands so pause/resume keep their order (#4416).
+        // other control commands so pause/resume keep their order (#4416). A
+        // forward ack (#4284) likewise: it frees the agent's side of a stream,
+        // so it must not wait behind data that may itself be waiting on it.
         AgentIoCommand::Request { .. }
         | AgentIoCommand::SessionOutputFlow { .. }
+        | AgentIoCommand::AgentForwardAck { .. }
         | AgentIoCommand::RegisterSession { .. }
         | AgentIoCommand::UnregisterSession { .. }
         | AgentIoCommand::RegisterFilesOnly { .. }

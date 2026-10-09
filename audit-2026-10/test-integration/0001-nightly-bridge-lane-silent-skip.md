@@ -21,8 +21,8 @@ evidence:
   - scripts/internal/build-system-test-app.sh:4
   - .github/workflows/system-integration.yml:411
   - .github/workflows/system-integration.yml:298
-status: open
-resolution: ""
+status: fixed
+resolution: "#4315 — CI strict mode fails fixture timeouts and a missing RDP sidecar; nightly lanes enforce a committed skip allowlist and baseline (agent image pre-build: #4479)"
 audit: 2026-10
 commit: 663465d52
 relation: new
