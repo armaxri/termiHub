@@ -1857,10 +1857,10 @@ mod tests {
 
     // ── Corrupt-file backup + salvage, unknown-field round-trip (#3931) ──
 
-    /// Every `connections.json.corrupt-*` backup next to `path`, sorted.
+    /// Every `connections.json.bak*` backup next to `path`, sorted.
     fn corrupt_backups(path: &Path) -> Vec<PathBuf> {
         let dir = path.parent().unwrap();
-        let prefix = format!("{}.corrupt-", path.file_name().unwrap().to_str().unwrap());
+        let prefix = format!("{}.bak", path.file_name().unwrap().to_str().unwrap());
         let mut found: Vec<PathBuf> = fs::read_dir(dir)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))

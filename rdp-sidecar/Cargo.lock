@@ -3936,6 +3936,7 @@ dependencies = [
  "socket2 0.5.10",
  "surge-ping",
  "sys-locale",
+ "tempfile",
  "termihub-win-security",
  "thiserror 2.0.19",
  "tokio",

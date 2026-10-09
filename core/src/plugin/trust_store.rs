@@ -30,6 +30,7 @@ use thiserror::Error;
 
 use super::signature::{key_id_from_public_key, now_rfc3339};
 use crate::ed25519_pem::parse_public_keys_pem;
+use crate::util::persist::{self, OverwriteError};
 
 /// The trust-store file name, alongside the manager's other plugin state files.
 pub const TRUST_STORE_FILE_NAME: &str = "trust-store.json";
@@ -77,6 +78,11 @@ pub enum TrustStoreError {
     #[error("trust-store serialization error: {0}")]
     Serde(String),
 
+    /// The file on disk may not be overwritten: a newer schema wrote it, or it
+    /// is corrupt and could not be backed up (#4334).
+    #[error(transparent)]
+    Refused(#[from] OverwriteError),
+
     /// An attempt to revoke a bundled first-party key, which is immutable.
     #[error("bundled first-party key `{0}` cannot be revoked")]
     BundledKeyImmutable(String),
@@ -92,10 +98,56 @@ pub enum TrustStoreError {
 
 /// The persisted `trust-store.json` document: only user-pinned keys are written
 /// (bundled keys are re-seeded on every load).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TrustStoreDoc {
+    /// Schema version, gated by [`crate::util::persist`]; absent → v1.
+    #[serde(default = "trust_store_version")]
+    version: u32,
     #[serde(default)]
     publishers: Vec<TrustedPublisher>,
+    /// Unknown top-level fields, carried forward unchanged.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The schema version of `trust-store.json` this build reads and writes
+/// (#4334). An unversioned file is the original v1 shape.
+const TRUST_STORE_VERSION: u32 = 1;
+
+fn trust_store_version() -> u32 {
+    TRUST_STORE_VERSION
+}
+
+impl Default for TrustStoreDoc {
+    fn default() -> Self {
+        Self {
+            version: TRUST_STORE_VERSION,
+            publishers: Vec::new(),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
+/// Parse a `trust-store.json`, **failing closed** to no pinned keys for
+/// anything this build must not act on: unparseable, the wrong shape, or
+/// written by a newer schema. Saves over such a file are gated by
+/// [`persist::prepare_overwrite`]: a newer file is never overwritten and a
+/// corrupt one is backed up first (#4334).
+fn parse_trust_store_doc(raw: &str) -> TrustStoreDoc {
+    let parsed = serde_json::from_str::<serde_json::Value>(raw)
+        .map_err(|e| e.to_string())
+        .and_then(|value| {
+            persist::check_version(&value, TRUST_STORE_FILE_NAME, TRUST_STORE_VERSION)
+                .map_err(|e| e.to_string())?;
+            serde_json::from_value(value).map_err(|e| e.to_string())
+        });
+    parsed.unwrap_or_else(|e| {
+        tracing::warn!(
+            target: super::PLUGIN_LOG_TARGET,
+            "{TRUST_STORE_FILE_NAME} cannot be used ({e}); trusting only the bundled keys"
+        );
+        TrustStoreDoc::default()
+    })
 }
 
 /// Marker line of the committed placeholder first-party key file.
@@ -210,12 +262,16 @@ impl BundledKey {
 pub struct TrustStore {
     path: PathBuf,
     publishers: BTreeMap<String, TrustedPublisher>,
+    /// The file's unknown top-level fields, carried forward on save.
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl TrustStore {
     /// Load the trust store rooted at `plugins_root` (its file is
     /// `plugins_root/trust-store.json`), seeding the bundled first-party keys. A
-    /// missing file yields a store with only the bundled keys.
+    /// missing file yields a store with only the bundled keys — and so, failing
+    /// closed, does a corrupt file or one written by a newer schema (#4334); the
+    /// next save backs a corrupt file up and refuses to overwrite a newer one.
     pub fn load(plugins_root: &Path) -> Result<Self, TrustStoreError> {
         report_anchor_posture_once(&BUNDLED_PUBLISHERS);
         Self::load_with_bundled(plugins_root, &BUNDLED_PUBLISHERS)
@@ -239,7 +295,7 @@ impl TrustStore {
     ) -> Result<Self, TrustStoreError> {
         let path = plugins_root.join(TRUST_STORE_FILE_NAME);
         let doc: TrustStoreDoc = match std::fs::read_to_string(&path) {
-            Ok(s) => serde_json::from_str(&s).map_err(|e| TrustStoreError::Serde(e.to_string()))?,
+            Ok(s) => parse_trust_store_doc(&s),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => TrustStoreDoc::default(),
             Err(e) => return Err(TrustStoreError::Io(e)),
         };
@@ -262,7 +318,11 @@ impl TrustStore {
                 });
         }
 
-        Ok(Self { path, publishers })
+        Ok(Self {
+            path,
+            publishers,
+            extra: doc.extra,
+        })
     }
 
     /// A store with only the bundled first-party keys, without reading any file —
@@ -277,6 +337,7 @@ impl TrustStore {
         Self {
             path: plugins_root.join(TRUST_STORE_FILE_NAME),
             publishers,
+            extra: serde_json::Map::new(),
         }
     }
 
@@ -351,24 +412,31 @@ impl TrustStore {
     }
 
     /// Persist the user-pinned keys to disk (bundled keys are not written; they
-    /// are re-seeded on load). Written atomically via a temp-file rename.
+    /// are re-seeded on load) through the shared layer (#4334): refused over a
+    /// file a newer schema wrote, a corrupt file is backed up first, and the
+    /// bytes land via a unique fsynced temp file renamed over the target.
     fn save(&self) -> Result<(), TrustStoreError> {
+        persist::prepare_overwrite::<TrustStoreDoc>(
+            &self.path,
+            TRUST_STORE_FILE_NAME,
+            TRUST_STORE_VERSION,
+        )?;
         let doc = TrustStoreDoc {
+            version: TRUST_STORE_VERSION,
             publishers: self
                 .publishers
                 .values()
                 .filter(|p| p.source == TrustSource::UserPinned)
                 .cloned()
                 .collect(),
+            extra: self.extra.clone(),
         };
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(&doc)
             .map_err(|e| TrustStoreError::Serde(e.to_string()))?;
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, &self.path)?;
+        persist::write_atomic(&self.path, json)?;
         Ok(())
     }
 }
