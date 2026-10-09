@@ -155,6 +155,24 @@ export default tseslint.config(
     },
   },
   {
+    // Clipboard policy (#4327, LIBFE2-004): navigator.clipboard rejects on
+    // macOS/WKWebView when the window is not focused and silently drops the copy.
+    // Use the Tauri clipboard plugin, which every copy action in the app shares.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "navigator",
+          property: "clipboard",
+          message:
+            'Use readText/writeText from "@tauri-apps/plugin-clipboard-manager" — navigator.clipboard fails in an unfocused WKWebView (#4327).',
+        },
+      ],
+    },
+  },
+  {
     // Tests, test harnesses, and the vitest setup are dev-only code that never
     // ships to users, so console.* is fine there — turn the ratchet back off.
     files: ["src/**/*.test.{ts,tsx}", "src/test/**"],

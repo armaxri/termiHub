@@ -3,16 +3,39 @@ import { Trash2, Pause, Play, Save, ClipboardCopy, FileDown } from "lucide-react
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { LogEntry } from "@/types/terminal";
 import { Button, SearchInput, toast } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
-import { fireAndForget, frontendWarn, onFrontendLog } from "@/utils/frontendLog";
+import {
+  clearFrontendLogHistory,
+  fireAndForget,
+  frontendError,
+  frontendWarn,
+  onFrontendLog,
+} from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
+
+/**
+ * Target the backend re-emits forwarded frontend WARN/ERROR entries under
+ * (`record_frontend_log`, OBS-001). The viewer already shows the direct
+ * `frontend::<module>` copy from the frontend log history, so it drops this
+ * echo instead of listing every frontend warning twice (#4327, OBS2-004).
+ */
+const BACKEND_FRONTEND_ECHO_TARGET = "frontend";
+
+function isFrontendEcho(entry: LogEntry): boolean {
+  return entry.target === BACKEND_FRONTEND_ECHO_TARGET;
+}
+
+function capEntries(entries: LogEntry[]): LogEntry[] {
+  return entries.length > MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES) : entries;
+}
 
 const LEVELS = ["ERROR", "WARN", "INFO", "DEBUG"] as const;
 type LogLevel = (typeof LEVELS)[number];
@@ -35,17 +58,29 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   useEffect(() => {
     let cancelled = false;
 
+    const addEntry = (entry: LogEntry) => {
+      if (!cancelled) {
+        setEntries((prev) => capEntries([...prev, entry]));
+      }
+    };
+
+    // Seed from the frontend log history, replacing (not appending to) state so
+    // StrictMode's second effect run cannot list the replayed entries twice.
+    const replayed: LogEntry[] = [];
+    let replaying = true;
+    const unsubFrontend = onFrontendLog(
+      (entry) => (replaying ? replayed.push(entry) : addEntry(entry)),
+      { replayHistory: true }
+    );
+    replaying = false;
+    setEntries(capEntries(replayed));
+
     getLogs(MAX_ENTRIES)
       .then((buffered) => {
         if (!cancelled) {
-          // Prepend backend-buffered entries to any frontend log entries that
-          // may have already been added by the startup buffer flush.
-          setEntries((prev) => {
-            const combined = [...buffered, ...prev];
-            return combined.length > MAX_ENTRIES
-              ? combined.slice(combined.length - MAX_ENTRIES)
-              : combined;
-          });
+          // Prepend the backend backlog to the frontend entries already shown.
+          const backend = buffered.filter((entry) => !isFrontendEcho(entry));
+          setEntries((prev) => capEntries([...backend, ...prev]));
         }
       })
       .catch((err: unknown) => {
@@ -54,20 +89,9 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         frontendWarn("log_viewer", `loading buffered backend logs failed: ${errorMessage(err)}`);
       });
 
-    const addEntry = (entry: LogEntry) => {
-      if (!cancelled) {
-        setEntries((prev) => {
-          const next = [...prev, entry];
-          if (next.length > MAX_ENTRIES) {
-            return next.slice(next.length - MAX_ENTRIES);
-          }
-          return next;
-        });
-      }
-    };
-
-    const unlistenPromise = onLogEntry(addEntry);
-    const unsubFrontend = onFrontendLog(addEntry);
+    const unlistenPromise = onLogEntry((entry) => {
+      if (!isFrontendEcho(entry)) addEntry(entry);
+    });
 
     return () => {
       cancelled = true;
@@ -101,6 +125,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   const handleClear = useCallback(async () => {
     try {
       await clearLogs();
+      clearFrontendLogHistory();
       setEntries([]);
     } catch (err) {
       toast.error("Could not clear logs", { description: errorMessage(err) });
@@ -122,16 +147,19 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       toast.success("Logs saved", { description: filePath });
     } catch (err) {
       // A cancelled dialog resolves to null above; reaching here is a real failure.
-      toast.error("Could not save logs", { description: errorMessage(err) });
+      reportFailure("Could not save logs", "save logs", err);
     }
   }, []);
 
   const handleCopyEntry = useCallback(async (entry: LogEntry) => {
     try {
-      // Redact secrets before copying to the clipboard (OBS-008).
-      await navigator.clipboard.writeText(redactLogText(formatEntry(entry)));
+      // Redact secrets before copying to the clipboard (OBS-008). The Tauri
+      // clipboard plugin, not navigator.clipboard, which rejects on
+      // macOS/WKWebView when the window is not focused (#4327).
+      await writeText(redactLogText(formatEntry(entry)));
+      toast.success("Log entry copied");
     } catch (err) {
-      toast.error("Could not copy log entry", { description: errorMessage(err) });
+      reportFailure("Could not copy log entry", "copy log entry", err);
     }
   }, []);
 
@@ -139,9 +167,13 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     try {
       // Redact secrets before copying to the clipboard (OBS-008).
       const content = redactLogText(entriesToCopy.map(formatEntry).join("\n"));
-      await navigator.clipboard.writeText(content);
+      await writeText(content);
+      const count = entriesToCopy.length;
+      toast.success("Logs copied", {
+        description: `${count} ${count === 1 ? "entry" : "entries"}`,
+      });
     } catch (err) {
-      toast.error("Could not copy logs", { description: errorMessage(err) });
+      reportFailure("Could not copy logs", "copy logs", err);
     }
   }, []);
 
@@ -255,6 +287,13 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       </div>
     </div>
   );
+}
+
+/** Surface a failed export action as a toast and an ERROR entry in this log (OBS2-006). */
+function reportFailure(title: string, action: string, err: unknown): void {
+  const message = errorMessage(err);
+  frontendError("log_viewer", `${action} failed: ${message}`);
+  toast.error(title, { description: message });
 }
 
 function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
