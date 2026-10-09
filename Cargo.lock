@@ -7821,6 +7821,7 @@ dependencies = [
  "tempfile",
  "termihub-plugin-api",
  "termihub-plugin-runner",
+ "termihub-win-security",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
