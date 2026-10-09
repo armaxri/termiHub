@@ -15,21 +15,19 @@ name: Release Linux arm64 Smoke
 # arm64 *GUI* smoke stays a manual session on real Raspberry-Pi hardware (#479),
 # and is deliberately NOT attempted here.
 #
-# This is a SEPARATE workflow (not a job inside release.yml, and separate from
-# release-linux-smoke.yml) on purpose: it is fully decoupled and cannot collide
-# with concurrent edits to those files. Like release-linux-smoke.yml it triggers
-# on the completion of the "Release" run rather than the `release: published`
-# event, because release.yml publishes the (non-draft) release BEFORE its build
-# matrix uploads the assets — a `release: published` job would run too early and
-# find no arm64 .deb to test.
+# Like release-linux-smoke.yml, release.yml calls this as a reusable workflow
+# (workflow_call) after verify-release and before mark-latest (#4281), so a
+# failing smoke keeps the release from becoming GitHub's "Latest release".
 
 on:
-  # Fire after the Release workflow completes. workflow_run runs the copy of this
-  # file on the default branch, which is the correct behavior for release
-  # automation (releases are cut from the default branch's tags).
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
+  # Called by release.yml after verify-release and before mark-latest (#4281),
+  # so a failing smoke keeps the release from becoming GitHub's "Latest release".
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
   # Manual re-run against any already-published release, for verification without
   # cutting a new release.
   workflow_dispatch:
@@ -45,12 +43,6 @@ permissions:
 jobs:
   linux-arm64-install-smoke:
     name: Linux arm64 install + headless --version (.deb)
-    # Only run for a manual dispatch, or for a Release run that was triggered by a
-    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
 
@@ -58,32 +50,12 @@ jobs:
       - name: Resolve release tag
         id: tag
         env:
-          GH_EVENT: ${{ github.event_name }}
-          DISPATCH_TAG: ${{ github.event.inputs.tag }}
-          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
-            TAG="${DISPATCH_TAG:-}"
-          else
-            # For a tag-triggered upstream run, head_branch is the tag name.
-            TAG="${RUN_TAG:-}"
-            case "$TAG" in
-              v*.*.*) ;;
-              *)
-                # Fallback: resolve the version tag pointing at the release commit.
-                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
-                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
-                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
-                        | grep -E '^v[0-9]' | head -n1 || true)"
-                ;;
-            esac
-          fi
           case "$TAG" in
             v*.*.*) ;;
-            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+            *) echo "::error::not a version tag: '$TAG'"; exit 1 ;;
           esac
           echo "Resolved release tag: $TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
