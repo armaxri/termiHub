@@ -36,6 +36,7 @@ use unftp_core::storage::{ErrorKind as StorageErrorKind, Fileinfo, StorageBacken
 use unftp_sbe_fs::Filesystem;
 
 use super::activity::{AccessRecord, ServerActivity, TransferGuard};
+use super::auth_guard::{secret_eq, LoginThrottle};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
 use super::ftp_relay::{BackendDialer, RelaySession};
 use super::service::BindSignal;
@@ -88,6 +89,26 @@ const BACKEND_GRACE: Duration = Duration::from_secs(2);
 /// drops whatever is left.
 const SESSION_DRAIN: Duration = Duration::from_secs(3);
 
+/// Default cap on concurrent FTP sessions when the config sets none
+/// (CORE2-002, #4292). Each session holds a libunftp server, a loopback
+/// listener and the relay's sockets, so the cap bounds what unauthenticated
+/// connections can make the server hold. In line with the TFTP transfer cap.
+pub(super) const DEFAULT_MAX_CONCURRENT_FTP_SESSIONS: usize = 32;
+
+/// Reply sent to a connection refused because every session slot is taken.
+const REPLY_TOO_MANY_SESSIONS: &[u8] = b"421 Too many connections, try again later.\r\n";
+
+/// Reply sent to a connection from a client locked out after failed logins.
+const REPLY_THROTTLED: &[u8] = b"421 Too many failed logins, try again later.\r\n";
+
+/// The effective session cap for `config` (at least one session).
+pub(super) fn session_cap(config: &EmbeddedServerConfig) -> usize {
+    config
+        .max_concurrent_sessions
+        .map_or(DEFAULT_MAX_CONCURRENT_FTP_SESSIONS, |cap| cap as usize)
+        .max(1)
+}
+
 /// Configure a libunftp server for `config`. `client` is the session's real
 /// client address, which the authenticator and the session user carry for the
 /// access log (PROD-034): behind the relay, libunftp's own view of the peer
@@ -95,6 +116,7 @@ const SESSION_DRAIN: Duration = Duration::from_secs(3);
 fn server_builder(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
+    throttle: &Arc<LoginThrottle>,
     client: IpAddr,
 ) -> FtpServerBuilder {
     let root: PathBuf = config.root_directory.clone().into();
@@ -113,6 +135,7 @@ fn server_builder(
         config.ftp_auth.clone(),
         activity,
         client,
+        Arc::clone(throttle),
     )))
     .greeting("termiHub FTP Server ready.")
     .notify_data(StatsTracker {
@@ -148,7 +171,10 @@ async fn run_ftp_server(
 
     // Validate the server configuration before binding, so a bad config fails
     // the start instead of every later connection.
-    if let Err(e) = server_builder(config, &stats, IpAddr::from([0, 0, 0, 0]))
+    // One throttle for the whole run, shared by every session's libunftp
+    // server, so failed logins add up across reconnects (CORE2-003).
+    let throttle = Arc::new(LoginThrottle::new());
+    if let Err(e) = server_builder(config, &stats, &throttle, IpAddr::from([0, 0, 0, 0]))
         .build()
         .context("Failed to build libunftp server")
     {
@@ -174,20 +200,31 @@ async fn run_ftp_server(
 
     tracing::info!(?local_addr, "FTP server listening (relay + libunftp)");
 
+    let slots = Arc::new(tokio::sync::Semaphore::new(session_cap(config)));
     let config = Arc::new(config.clone());
     let mut sessions = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) => {
-                    sessions.spawn(serve_session(
+                    let Some((stream, slot)) = admit(stream, peer, &slots, &throttle, &stats)
+                    else {
+                        continue;
+                    };
+                    let session = serve_session(
                         Arc::clone(&config),
                         Arc::clone(&stats),
+                        Arc::clone(&throttle),
                         stream,
                         peer,
                         public_port,
                         shutdown.clone(),
-                    ));
+                    );
+                    sessions.spawn(async move {
+                        // The slot is held for the session's whole lifetime.
+                        let _slot = slot;
+                        session.await;
+                    });
                 }
                 Err(e) => tracing::warn!(error = %e, "FTP accept failed"),
             },
@@ -213,6 +250,48 @@ async fn run_ftp_server(
         tracing::warn!("FTP sessions did not close in time; aborting them");
     }
     Ok(())
+}
+
+/// Decide whether an accepted connection may start a session.
+///
+/// A client locked out after failed logins, or a connection arriving while
+/// every session slot is taken, is answered with `421`, recorded in the access
+/// log and dropped (closing it). Otherwise the stream comes back with the
+/// session's slot. The reply is a non-blocking write on a freshly accepted
+/// socket, whose empty send buffer takes it whole, so a refusal never holds up
+/// the accept loop or spawns a task.
+fn admit(
+    stream: tokio::net::TcpStream,
+    peer: std::net::SocketAddr,
+    slots: &Arc<tokio::sync::Semaphore>,
+    throttle: &LoginThrottle,
+    stats: &AtomicServerStats,
+) -> Option<(tokio::net::TcpStream, tokio::sync::OwnedSemaphorePermit)> {
+    let (reply, status, detail) = if throttle.is_locked(peer.ip()) {
+        (REPLY_THROTTLED, "throttled", "too many failed logins")
+    } else {
+        match Arc::clone(slots).try_acquire_owned() {
+            Ok(slot) => return Some((stream, slot)),
+            Err(_) => (
+                REPLY_TOO_MANY_SESSIONS,
+                "busy",
+                "too many concurrent sessions",
+            ),
+        }
+    };
+    // tokio's `try_write` would report `WouldBlock` until the reactor has
+    // seen the socket writable; the plain (still non-blocking) socket writes
+    // straight away.
+    if let Ok(std_stream) = stream.into_std() {
+        let _ = io::Write::write(&mut &std_stream, reply);
+    }
+    tracing::debug!(%peer, detail, "FTP connection refused");
+    stats.activity.record(
+        AccessRecord::new("CONNECT", status, false)
+            .client(peer.ip())
+            .detail(detail),
+    );
+    None
 }
 
 /// A session's loopback libunftp server and the relay's connection to it.
@@ -248,6 +327,7 @@ async fn shutdown_indicator(
 pub(super) async fn start_backend(
     config: &EmbeddedServerConfig,
     stats: &Arc<AtomicServerStats>,
+    throttle: &Arc<LoginThrottle>,
     client: IpAddr,
     public_port: u16,
     shutdown: &ShutdownSignal,
@@ -260,7 +340,7 @@ pub(super) async fn start_backend(
         .context("Failed to read the libunftp listener address")?;
     let dialer = BackendDialer::new(addr, Arc::clone(&stats.activity));
     let stop = CancellationToken::new();
-    let server = server_builder(config, stats, client)
+    let server = server_builder(config, stats, throttle, client)
         .passive_ports(reserved_passive_range(public_port))
         .proxy_protocol_mode(public_port)
         .proxy_protocol_peer_filter(dialer.peer_filter())
@@ -288,12 +368,22 @@ pub(super) async fn start_backend(
 pub(super) async fn serve_session(
     config: Arc<EmbeddedServerConfig>,
     stats: Arc<AtomicServerStats>,
+    throttle: Arc<LoginThrottle>,
     client: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
     public_port: u16,
     shutdown: ShutdownSignal,
 ) {
-    let backend = match start_backend(&config, &stats, peer.ip(), public_port, &shutdown).await {
+    let backend = match start_backend(
+        &config,
+        &stats,
+        &throttle,
+        peer.ip(),
+        public_port,
+        &shutdown,
+    )
+    .await
+    {
         Ok(backend) => backend,
         Err(e) => {
             tracing::warn!(%peer, error = %e, "FTP session backend failed; dropping connection");
@@ -686,34 +776,80 @@ struct FtpAuthenticator {
     /// session: behind the relay, `Credentials::source_ip` is the relay's
     /// loopback address, not the client's (#3996).
     client: IpAddr,
+    /// The server-wide failed-login throttle, shared by every session
+    /// (CORE2-003, #4292).
+    throttle: Arc<LoginThrottle>,
+}
+
+/// The outcome of one login attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoginOutcome {
+    Accepted,
+    Denied,
+    /// The client is locked out; its credentials were not checked.
+    Throttled,
 }
 
 impl FtpAuthenticator {
-    fn new(auth: Option<FtpAuth>, activity: Arc<ServerActivity>, client: IpAddr) -> Self {
+    fn new(
+        auth: Option<FtpAuth>,
+        activity: Arc<ServerActivity>,
+        client: IpAddr,
+        throttle: Arc<LoginThrottle>,
+    ) -> Self {
         Self {
             auth,
             activity,
             client,
+            throttle,
         }
     }
 
-    /// Decide whether `username` / `creds` may log in.
-    fn accepts(&self, username: &str, creds: &Credentials) -> bool {
-        match &self.auth {
-            None | Some(FtpAuth::Anonymous) => true,
-            Some(FtpAuth::Credentials {
-                username: expected_user,
-                password: expected_pass,
-            }) => {
-                let pass_ok = creds
-                    .password
-                    .as_deref()
-                    .map(|pw| pw == expected_pass.as_str())
-                    .unwrap_or(false);
-                username == expected_user.as_str() && pass_ok
-            }
+    /// Decide whether `username` / `creds` may log in, and update the throttle.
+    fn check(&self, username: &str, creds: &Credentials) -> LoginOutcome {
+        let Some(FtpAuth::Credentials {
+            username: expected_user,
+            password: expected_pass,
+        }) = &self.auth
+        else {
+            return LoginOutcome::Accepted;
+        };
+        if self.throttle.is_locked(self.client) {
+            return LoginOutcome::Throttled;
+        }
+        let ok = credentials_match(
+            username,
+            creds.password.as_deref(),
+            expected_user,
+            expected_pass,
+        );
+        if bool::from(ok) {
+            self.throttle.record_success(self.client);
+            LoginOutcome::Accepted
+        } else {
+            self.throttle.record_failure(self.client);
+            LoginOutcome::Denied
         }
     }
+}
+
+/// Constant-time check of a login against the configured credentials.
+///
+/// Both the username and the password go through [`secret_eq`], and the two
+/// results are combined with `&` rather than `&&`, so neither a wrong username
+/// nor a wrong password (nor a missing one) is distinguishable by timing.
+fn credentials_match(
+    username: &str,
+    password: Option<&str>,
+    expected_user: &str,
+    expected_pass: &str,
+) -> subtle::Choice {
+    let user_ok = secret_eq(username.as_bytes(), expected_user.as_bytes());
+    let pass_ok = secret_eq(
+        password.unwrap_or_default().as_bytes(),
+        expected_pass.as_bytes(),
+    );
+    user_ok & pass_ok & subtle::Choice::from(u8::from(password.is_some()))
 }
 
 #[async_trait]
@@ -723,13 +859,14 @@ impl Authenticator for FtpAuthenticator {
         username: &str,
         creds: &Credentials,
     ) -> Result<Principal, AuthenticationError> {
-        let ok = self.accepts(username, creds);
+        let outcome = self.check(username, creds);
+        let ok = outcome == LoginOutcome::Accepted;
         // Only the login name and client address are logged — the password in
         // `creds` is never copied into the record.
-        let (status, detail) = if ok {
-            ("ok", None)
-        } else {
-            ("denied", Some("bad username or password"))
+        let (status, detail) = match outcome {
+            LoginOutcome::Accepted => ("ok", None),
+            LoginOutcome::Denied => ("denied", Some("bad username or password")),
+            LoginOutcome::Throttled => ("throttled", Some("too many failed logins")),
         };
         let mut record = AccessRecord::new("LOGIN", status, ok)
             .client(self.client)

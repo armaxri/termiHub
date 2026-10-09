@@ -70,7 +70,8 @@ fn connections_beyond_the_session_cap_get_421() {
     assert!(second.cmd("NOOP").starts_with("200"));
 
     let log = wait_for_log(&server.stats, |log| {
-        log.iter().any(|e| e.method == "CONNECT" && e.status == "busy")
+        log.iter()
+            .any(|e| e.method == "CONNECT" && e.status == "busy")
     });
     let busy = log
         .iter()

@@ -58,14 +58,20 @@ async fn correct_password_is_accepted_and_clears_earlier_failures() {
     let activity = ServerActivity::new();
     let auth = session(&throttle, &activity, "198.51.100.7");
     for _ in 0..MAX_FAILED_LOGINS - 1 {
-        assert!(auth.authenticate("alice", &creds(Some("nope"))).await.is_err());
+        assert!(auth
+            .authenticate("alice", &creds(Some("nope")))
+            .await
+            .is_err());
     }
     assert!(auth
         .authenticate("alice", &creds(Some("secret")))
         .await
         .is_ok());
     // The success reset the count: one more failure does not lock out.
-    assert!(auth.authenticate("alice", &creds(Some("nope"))).await.is_err());
+    assert!(auth
+        .authenticate("alice", &creds(Some("nope")))
+        .await
+        .is_err());
     assert!(auth
         .authenticate("alice", &creds(Some("secret")))
         .await
@@ -80,7 +86,10 @@ async fn failed_logins_are_throttled_across_sessions() {
     // (one libunftp server per session, #3996).
     for _ in 0..MAX_FAILED_LOGINS {
         let auth = session(&throttle, &activity, "198.51.100.7");
-        assert!(auth.authenticate("alice", &creds(Some("nope"))).await.is_err());
+        assert!(auth
+            .authenticate("alice", &creds(Some("nope")))
+            .await
+            .is_err());
     }
 
     // Now even the correct password is refused for that client …
