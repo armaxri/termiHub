@@ -12,11 +12,13 @@ export type HttpMonitorConfig = { id: string, url: string, intervalMs: number, m
  * Opt-in escape hatch for monitoring an internal host (SEC-008).
  *
  * When `true`, the monitor is allowed to reach loopback (`127/8`, `::1`),
- * RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), and IPv6
- * unique-local (`fc00::/7`) addresses — e.g. a local dev server on
- * `localhost` or an internal host. Link-local (including the cloud-metadata
- * endpoint `169.254.169.254`) and the unspecified address stay blocked
- * regardless, as no legitimate monitor targets them. Defaults to `false`
+ * RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), shared address
+ * space (`100.64/10`), and IPv6 unique-local (`fc00::/7`) addresses — e.g. a
+ * local dev server on `localhost` or an internal host. Link-local, the
+ * unspecified address, broadcast and the cloud-metadata endpoints
+ * (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`) stay blocked
+ * regardless, as no legitimate monitor targets them (see
+ * [`crate::network::address_guard`]). Defaults to `false`
  * (deny-internal) so the SSRF guard is safe by default; `#[serde(default)]`
  * keeps configs stored before this field deserializing.
  */
