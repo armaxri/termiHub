@@ -9,8 +9,8 @@ subsystem: src-tauri/terminal/agent_manager
 audit: 2026-10
 commit: 663465d52
 relation: new
-status: open
-resolution: ""
+status: fixed
+resolution: "#4304 — connect reserves the agent and releases the agents lock; SSH connect, prompts and initialize run off-lock, lock re-taken only to publish (cancel-checked); fake-sshd tests prove agent B stays responsive"
 evidence:
   - src-tauri/src/terminal/agent_manager.rs:1005
   - src-tauri/src/terminal/agent_manager.rs:1065

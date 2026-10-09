@@ -13,20 +13,25 @@ use super::*;
 use crate::embedded_servers::config::AtomicServerStats;
 use crate::embedded_servers::service::BindSignal;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A real FTP server thread on an ephemeral loopback port.
-struct RunningServer {
-    addr: SocketAddr,
-    stats: Arc<AtomicServerStats>,
+pub(super) struct RunningServer {
+    pub(super) addr: SocketAddr,
+    pub(super) stats: Arc<AtomicServerStats>,
     shutdown: ShutdownSignal,
     handle: Option<JoinHandle<Result<()>>>,
 }
 
 impl RunningServer {
-    fn start(root: &Path, auth: Option<FtpAuth>) -> Self {
+    pub(super) fn start(root: &Path, auth: Option<FtpAuth>) -> Self {
         let mut config = super::tests::ftp_test_config(root);
         config.ftp_auth = auth;
+        Self::start_config(config)
+    }
+
+    /// Start a server for an explicit `config`.
+    pub(super) fn start_config(config: EmbeddedServerConfig) -> Self {
         let stats = AtomicServerStats::new();
         let shutdown = ShutdownSignal::new();
         let (ready, ready_rx) = BindSignal::for_test();
@@ -48,7 +53,7 @@ impl RunningServer {
     }
 
     /// Trigger shutdown and join the server thread, returning how long it took.
-    fn stop(mut self) -> Duration {
+    pub(super) fn stop(mut self) -> Duration {
         let start = Instant::now();
         self.shutdown.trigger();
         if let Some(handle) = self.handle.take() {
@@ -65,13 +70,13 @@ impl Drop for RunningServer {
 }
 
 /// Minimal blocking FTP control-channel client.
-struct Control {
-    writer: TcpStream,
-    reader: BufReader<TcpStream>,
+pub(super) struct Control {
+    pub(super) writer: TcpStream,
+    pub(super) reader: BufReader<TcpStream>,
 }
 
 impl Control {
-    fn connect(addr: SocketAddr) -> Self {
+    pub(super) fn connect(addr: SocketAddr) -> Self {
         let stream = TcpStream::connect(addr).expect("connect control");
         stream.set_read_timeout(Some(IO_TIMEOUT)).expect("timeout");
         let writer = stream.try_clone().expect("clone");
@@ -85,11 +90,11 @@ impl Control {
     }
 
     /// Read one (possibly multi-line) reply; returns its first line.
-    fn reply(&mut self) -> String {
+    pub(super) fn reply(&mut self) -> String {
         super::tests::read_reply(&mut self.reader)
     }
 
-    fn cmd(&mut self, line: &str) -> String {
+    pub(super) fn cmd(&mut self, line: &str) -> String {
         self.writer
             .write_all(format!("{line}\r\n").as_bytes())
             .expect("send command");
@@ -133,7 +138,7 @@ fn connect_data(addr: SocketAddr) -> TcpStream {
     data
 }
 
-fn wait_for_log(
+pub(super) fn wait_for_log(
     stats: &AtomicServerStats,
     pred: impl Fn(&[crate::embedded_servers::activity::AccessLogEntry]) -> bool,
 ) -> Vec<crate::embedded_servers::activity::AccessLogEntry> {
@@ -354,6 +359,7 @@ fn relay_attributes_the_client_ip_and_refuses_data_from_another_ip() {
         serve_session(
             config,
             session_stats,
+            Arc::new(LoginThrottle::new()),
             stream,
             claimed,
             addr.port(),
@@ -415,6 +421,7 @@ impl DirectBackend {
             let backend = start_backend(
                 &config,
                 &backend_stats,
+                &Arc::new(LoginThrottle::new()),
                 client.ip(),
                 public_port,
                 &backend_shutdown,

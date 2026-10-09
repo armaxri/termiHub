@@ -307,7 +307,8 @@ pub struct PluginManifest {
     /// the [`Filesystem`](PluginPermission::Filesystem) permission: the host
     /// confines the plugin's filesystem access to these roots (concept §13, "must
     /// declare which paths they need"). Absent/empty for plugins that request no
-    /// filesystem access.
+    /// filesystem access. Each entry must be an absolute, normalised path below
+    /// a filesystem root ([`validate`](Self::validate), #4293).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub filesystem_paths: Vec<String>,
@@ -355,6 +356,14 @@ impl PluginManifest {
         if let Some(backend) = &self.extensions.terminal_backend {
             validate_connection_type(&backend.connection_type)?;
             validate_libraries(&backend.libraries)?;
+        }
+        for path in &self.filesystem_paths {
+            super::security::check_declared_filesystem_path(path).map_err(|reason| {
+                ManifestValidationError::InvalidFilesystemPath {
+                    path: path.clone(),
+                    reason,
+                }
+            })?;
         }
         if let Some(url) = &self.update_url {
             super::update_check::validate_https_url(url)
@@ -460,6 +469,17 @@ pub enum ManifestValidationError {
         triple: String,
         /// The offending path.
         path: String,
+    },
+    /// A `filesystemPaths` entry is not an absolute, normalised path below a
+    /// filesystem root (#4293): empty, relative, `.`/`..`-carrying, a root, a
+    /// network share root, or a Windows verbatim/device path. See
+    /// [`check_declared_filesystem_path`](super::check_declared_filesystem_path).
+    #[error("plugin manifest `filesystemPaths` entry `{path}` is invalid: it {reason}")]
+    InvalidFilesystemPath {
+        /// The offending entry, verbatim.
+        path: String,
+        /// What is wrong with it.
+        reason: &'static str,
     },
     /// Two `terminalBackend.libraries` entries point at the same file (PLG-011):
     /// each platform must carry its own library.
@@ -944,6 +964,73 @@ mod tests {
                 ),
                 "apiVersion {bad:?} should be rejected"
             );
+        }
+    }
+
+    /// The valid manifest with `filesystemPaths` set to the single entry `path`.
+    fn with_filesystem_path(path: &str) -> PluginManifest {
+        let json = valid_manifest_json().replace(
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],",
+            &format!(
+                "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],\n            \
+                 \"filesystemPaths\": [{}],",
+                serde_json::to_string(path).unwrap()
+            ),
+        );
+        parse_manifest(&json).expect("filesystemPaths is a valid shape")
+    }
+
+    /// PLG2-001 / SEC2-001: an empty, `.`, relative, root or traversing
+    /// `filesystemPaths` entry is refused when the manifest is validated, so a
+    /// package declaring one never installs.
+    #[test]
+    fn validate_rejects_unsafe_filesystem_paths() {
+        for bad in [
+            "",
+            ".",
+            "./",
+            "..",
+            "relative",
+            "docs/sub",
+            "~/captures",
+            "/",
+            "//",
+            "/data/..",
+            "/data/../etc",
+            "/data/./sub",
+            "/data\0nul",
+            "C:",
+            "C:relative",
+            "C:\\",
+            "C:/",
+            "C:\\Windows\\..",
+            "\\\\server\\share",
+            "\\\\?\\C:\\Windows",
+            "\\Windows",
+        ] {
+            assert!(
+                matches!(
+                    with_filesystem_path(bad).validate(),
+                    Err(ManifestValidationError::InvalidFilesystemPath { .. })
+                ),
+                "filesystemPaths entry {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_absolute_normalised_filesystem_paths() {
+        for good in [
+            "/var/log/app",
+            "/Users/someone/captures",
+            "/data/plugin/",
+            "C:\\Logs\\app",
+            "D:/captures",
+            "\\\\server\\share\\captures",
+        ] {
+            with_filesystem_path(good)
+                .validate()
+                .unwrap_or_else(|e| panic!("filesystemPaths entry {good:?} is valid: {e}"));
         }
     }
 

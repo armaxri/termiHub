@@ -21,6 +21,7 @@ pub mod config;
 pub mod service;
 pub mod shutdown;
 
+mod auth_guard;
 mod ftp_relay;
 mod ftp_server;
 mod http_server;

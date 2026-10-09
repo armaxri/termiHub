@@ -171,6 +171,38 @@ fn invalid_paths_are_refused() {
     assert!(policy().validate().is_ok());
 }
 
+/// A `.` or `..` segment makes a policy path name something other than what
+/// it reads as: landlock opens `/a/..` as `/`, and Windows normalises
+/// `C:\a\..` to `C:\`, so such a path could grant the whole disk (#4293).
+#[test]
+fn dot_segments_are_refused_on_every_policy_path() {
+    for path in [
+        abs("/plugins/.."),
+        abs("/plugins/acme/../.."),
+        abs("/plugins/./acme"),
+        abs("/plugins/acme/."),
+    ] {
+        let install = SandboxPolicy {
+            install_dir: path.clone(),
+            ..policy()
+        };
+        let data = SandboxPolicy {
+            data_dir: Some(path.clone()),
+            ..policy()
+        };
+        let denied = SandboxPolicy {
+            denied_dirs: vec![path.clone()],
+            ..policy()
+        };
+        for candidate in [install, data, denied] {
+            assert!(
+                matches!(candidate.validate(), Err(SandboxError::InvalidPath { .. })),
+                "{path:?} must be refused"
+            );
+        }
+    }
+}
+
 #[test]
 fn reports_classify_isolation() {
     assert_eq!(SandboxReport::default().isolation(), Isolation::Unconfined);

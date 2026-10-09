@@ -15,11 +15,10 @@ use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::{middleware, Router};
 use base64::Engine as _;
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 use tower_http::services::ServeDir;
 
 use super::activity::{AccessRecord, TransferGuard};
+use super::auth_guard::secret_eq;
 use super::config::{AtomicServerStats, EmbeddedServerConfig, HttpBasicAuth};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
@@ -268,19 +267,6 @@ fn decode_basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
     let decoded = String::from_utf8(decoded).ok()?;
     let (username, password) = decoded.split_once(':')?;
     Some((username.to_string(), password.to_string()))
-}
-
-/// Constant-time equality of two secrets.
-///
-/// Each side is first reduced to a fixed-length SHA-256 digest, then the two
-/// digests are compared in constant time. Hashing first makes the comparison
-/// constant-time regardless of input length, so the secret's length cannot leak
-/// through the early-exit on a length mismatch that a direct slice comparison
-/// would expose.
-fn secret_eq(a: &[u8], b: &[u8]) -> subtle::Choice {
-    let da = Sha256::digest(a);
-    let db = Sha256::digest(b);
-    da.as_slice().ct_eq(db.as_slice())
 }
 
 /// Escape a string for safe interpolation into HTML text and double-quoted
@@ -875,6 +861,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            max_concurrent_sessions: None,
             extra: Default::default(),
         };
         let shutdown = ShutdownSignal::new();
@@ -992,6 +979,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            max_concurrent_sessions: None,
             extra: Default::default(),
         };
 

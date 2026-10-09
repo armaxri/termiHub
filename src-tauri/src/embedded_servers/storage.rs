@@ -249,6 +249,7 @@ mod tests {
                 password: "s3cret".to_string(),
             }),
             max_transfer_bytes: None,
+            max_concurrent_sessions: None,
             extra: Default::default(),
         };
         let store = EmbeddedServerStore {
@@ -323,6 +324,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                max_concurrent_sessions: None,
                 extra: Default::default(),
             }],
         };
@@ -397,6 +399,7 @@ mod tests {
                 ftp_auth: None,
                 http_auth: None,
                 max_transfer_bytes: None,
+                max_concurrent_sessions: None,
                 extra: Default::default(),
             }],
         };

@@ -27,7 +27,7 @@ use plugin_runner_support::{host_for, install_plugin, new_connection, runner_bin
 
 use termihub_core::connection::ConnectionTypeRegistry;
 use termihub_core::plugin::sandbox::{DenialReason, PluginRunnerConfig, SandboxedPlugin};
-use termihub_core::plugin::PluginHost;
+use termihub_core::plugin::{HostError, PermissionError, PluginHost};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -229,10 +229,13 @@ async fn the_manifest_connection_ceiling_is_enforced_out_of_process() {
 #[tokio::test(flavor = "multi_thread")]
 async fn filesystem_access_is_confined_to_the_declared_paths() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    // Outside `work`, which holds the plugins root and so counts as termiHub's
+    // config folder: a declared root may not overlap it (#4293).
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     std::fs::write(scoped.join("data.txt"), b"in-scope contents").unwrap();
-    let secret = work.path().join("secret.txt");
+    let secret = outside.path().join("secret.txt");
     std::fs::write(&secret, b"top secret").unwrap();
     let plugin = load(
         work.path(),
@@ -263,7 +266,7 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
     let write = |p: &Path| serde_json::json!({ "probe": "writefile", "probePath": path(p), "probeData": "hello" });
     assert_eq!(plugin.probe(write(&written)).await, "WRITE_OK");
     assert_eq!(std::fs::read(&written).unwrap(), b"hello");
-    let escape = work.path().join("escape.txt");
+    let escape = outside.path().join("escape.txt");
     assert_eq!(plugin.probe(write(&escape)).await, "WRITE_DENIED");
     assert!(!escape.exists(), "nothing was written outside the scope");
 
@@ -282,7 +285,7 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
         "LIST_OK:data.txt,out.txt"
     );
     assert_eq!(
-        plugin.probe(probe("listdir", work.path())).await,
+        plugin.probe(probe("listdir", outside.path())).await,
         "LIST_DENIED"
     );
 
@@ -304,7 +307,8 @@ async fn filesystem_access_is_confined_to_the_declared_paths() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_file_larger_than_one_frame_round_trips_through_the_bridge() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     let plugin = load(
         work.path(),
@@ -338,7 +342,8 @@ async fn a_file_larger_than_one_frame_round_trips_through_the_bridge() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_directory_larger_than_one_frame_lists_every_entry() {
     let work = tempfile::TempDir::new().unwrap();
-    let scoped = work.path().join("scoped");
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
     std::fs::create_dir_all(&scoped).unwrap();
     // 50k names of 24 bytes: ~1.5 MiB charged, several `list_dir` pages
     // (#4220).
@@ -366,4 +371,72 @@ async fn a_directory_larger_than_one_frame_lists_every_entry() {
     assert_eq!(summary, format!("LIST_SUMMARY:50000:{hash:016x}"));
     // Paging is not a refusal.
     assert!(plugin.runner().bridge_denials().is_empty());
+}
+
+/// Escape probe for PLG2-001 / SEC2-001: a manifest whose `filesystemPaths`
+/// reached the loader unvalidated (a pre-fix install, a hand-edited plugin
+/// folder) with an empty, `.` or relative root must not load. Before the fix
+/// such a root normalised to the empty path, which `Path::starts_with` treats
+/// as containing every path, so the plugin could read any file on the disk
+/// through the bridge.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_empty_dot_or_relative_root_never_opens_the_disk() {
+    let work = tempfile::TempDir::new().unwrap();
+    let outside = tempfile::TempDir::new().unwrap();
+    let scoped = outside.path().join("scoped");
+    std::fs::create_dir_all(&scoped).unwrap();
+    let secret = outside.path().join("secret.txt");
+    std::fs::write(&secret, b"top secret").unwrap();
+
+    let lib = fixture_library(Variant::Default, work.path());
+    let manifest = serde_json::json!({
+        "id": "test-echo",
+        "name": "Test Echo",
+        "version": "0.1.0",
+        "author": "termiHub tests",
+        "description": "Bridge-over-IPC fixture",
+        "license": "MIT",
+        "apiVersion": "1.1",
+        "platforms": ["windows", "linux", "macos"],
+        "permissions": ["terminal", "filesystem"],
+        "filesystemPaths": [scoped.to_str().unwrap()],
+        "extensions": {
+            "terminalBackend": {
+                "connectionType": "probe",
+                "displayName": "Probe",
+                "configSchema": { "type": "object", "properties": {} }
+            }
+        }
+    });
+    let installed = install_plugin(work.path(), &lib, &manifest.to_string());
+
+    for root in ["", ".", "./", "relative"] {
+        let mut tampered = installed.plugin.clone();
+        tampered.manifest.filesystem_paths = vec![root.to_owned()];
+        let (host, registry) = host_for(&installed);
+        let host = host.with_runner(PluginRunnerConfig::new(runner_binary()));
+        if let Err(err) = host.load(&tampered) {
+            assert!(
+                matches!(
+                    err,
+                    HostError::Permission(PermissionError::InvalidFilesystemPath { .. })
+                ),
+                "root {root:?}: {err:?}"
+            );
+            assert!(!host.is_loaded(&tampered.manifest.id));
+            continue;
+        }
+        let loaded = Loaded {
+            host,
+            registry,
+            type_id: installed.type_id.clone(),
+            id: tampered.manifest.id.clone(),
+        };
+        let line = loaded
+            .probe(
+                serde_json::json!({ "probe": "readfile", "probePath": secret.to_str().unwrap() }),
+            )
+            .await;
+        panic!("root {root:?} loaded and the plugin read outside its scope: {line}");
+    }
 }

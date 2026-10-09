@@ -137,6 +137,16 @@ pub struct EmbeddedServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_transfer_bytes: Option<u64>,
+    /// Maximum number of concurrent sessions (FTP only, CORE2-002 / #4292).
+    ///
+    /// Each FTP control connection runs its own libunftp server behind the
+    /// relay, so the cap bounds the sockets and tasks an unauthenticated client
+    /// can make the server hold. A connection beyond the cap is answered with
+    /// `421` and closed. `None` falls back to the server's built-in default of
+    /// 32; `0` is treated as 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub max_concurrent_sessions: Option<u32>,
     /// Unknown fields of this entry in `embedded_servers.json`, kept verbatim
     /// so an older build's save does not erase them (#3951). Not part of the
     /// generated TS type; see [`crate::util::entry_extra`].
@@ -338,6 +348,7 @@ mod tests {
             ftp_auth: None,
             http_auth: None,
             max_transfer_bytes: None,
+            max_concurrent_sessions: None,
             extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
