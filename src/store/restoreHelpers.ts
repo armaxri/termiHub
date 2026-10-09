@@ -150,7 +150,11 @@ export function collectRestoreCohort(groups: TabGroup[]): {
   preFailedCount: number;
 } {
   const tabs = groups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
-  const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
+  // A tab held for confirming an imported inline config (#4434) does not
+  // connect until the user confirms it, so it is not waited on.
+  const pendingTabIds = tabs
+    .filter((t) => t.contentType === "terminal" && !t.pendingImportedConnection)
+    .map((t) => t.id);
   const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
   return { pendingTabIds, preFailedCount };
 }

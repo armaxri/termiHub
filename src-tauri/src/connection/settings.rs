@@ -627,6 +627,15 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub workflow_script_source_allowlist: Vec<String>,
+    /// Imported workspace commands and inline connection configs the user has
+    /// confirmed on this machine (#4434). Each entry is `cmd:<sha256>` of a
+    /// command's exact text or `conn:<sha256>` of an inline config's canonical
+    /// JSON, so changing the text needs a new confirmation. Owned by the
+    /// frontend `AppSettings.workspaceImportAllowlist`; independent of workspace
+    /// data, so no import file can add an entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
+    pub workspace_import_allowlist: Vec<String>,
     /// Durable log file verbosity chosen in Settings (OBS-009).
     ///
     /// One of `"off"`/`"error"`/`"warn"`/`"info"`/`"debug"`/`"trace"` (see
@@ -758,6 +767,7 @@ impl Default for AppSettings {
             workflow_local_process_enabled: false,
             workflow_local_process_allowlist: Vec::new(),
             workflow_script_source_allowlist: Vec::new(),
+            workspace_import_allowlist: Vec::new(),
             file_log_level: None,
             show_crash_report_notice: None,
             broadcast_groups: None,
@@ -1551,6 +1561,27 @@ mod tests {
         assert_eq!(
             deserialized.workflow_local_process_allowlist,
             vec!["/usr/bin/notify-send".to_string()]
+        );
+    }
+
+    #[test]
+    fn workspace_import_allowlist_defaults_empty_omitted_and_round_trips() {
+        // #4434: empty by default, left out of the file, kept across a restart.
+        let defaults = AppSettings::default();
+        assert!(defaults.workspace_import_allowlist.is_empty());
+        let default_json = serde_json::to_string(&defaults).unwrap();
+        assert!(!default_json.contains("workspaceImportAllowlist"));
+
+        let settings = AppSettings {
+            workspace_import_allowlist: vec!["cmd:abc".to_string()],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"workspaceImportAllowlist\":[\"cmd:abc\"]"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.workspace_import_allowlist,
+            vec!["cmd:abc".to_string()]
         );
     }
 

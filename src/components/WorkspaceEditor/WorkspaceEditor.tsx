@@ -16,6 +16,7 @@ import { Button, Input, Field, Tooltip, UnsavedChangesDialog } from "@/component
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
 import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
+import { ImportedItemsSection } from "./ImportedItemsSection";
 import { normalizeWorkspaceSettings } from "@/services/workspaceSettings";
 import { newId } from "@/services/transport/ids";
 import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
@@ -377,6 +378,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
           <LayoutDesigner layout={activeGroup.layout} onChange={updateActiveGroupLayout} />
         </div>
+
+        <ImportedItemsSection tabGroupDefs={tabGroupDefs} />
 
         <WorkspaceSettingsSection value={settings} onChange={setSettings} />
       </div>
