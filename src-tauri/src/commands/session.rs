@@ -916,6 +916,21 @@ pub async fn session_write_file_elevated(
         .await
 }
 
+/// Report which attribute operations — chmod, chown and symlink creation — a
+/// session's file browser performs (#4353).
+///
+/// Resolved per session from its file browser: all three for an SSH (SFTP)
+/// session, a Unix local filesystem, and an agent-hosted SSH or local session;
+/// none for Docker, FTP or WSL. The file browser shows its permission, owner
+/// and symlink actions only for what this reports.
+#[tauri::command]
+pub async fn session_file_capabilities(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<termihub_core::files::FileAttributeOps, TerminalError> {
+    manager.session_file_capabilities(&session_id).await
+}
+
 /// Report whether a session's SFTP connection can open an exec channel (i.e. run
 /// remote commands such as `sudo`).
 ///

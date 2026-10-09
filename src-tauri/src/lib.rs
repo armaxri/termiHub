@@ -699,6 +699,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_check_writable,
             commands::session::session_write_file_elevated,
             commands::session::session_has_exec_capability,
+            commands::session::session_file_capabilities,
             commands::session::session_download,
             commands::session::session_upload,
             commands::session::session_supports_transfer_queue,

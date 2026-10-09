@@ -14,6 +14,7 @@ import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFileChannel";
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
 import type { RemoteDesktopFileBrowser } from "@/types/generated/RemoteDesktopFileBrowser";
+import type { FileAttributeOps } from "@/types/generated/FileAttributeOps";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
@@ -2195,6 +2196,16 @@ export async function sessionWriteFileElevated(
  */
 export async function sessionHasExecCapability(sessionId: string): Promise<boolean> {
   return await invoke<boolean>("session_has_exec_capability", { sessionId });
+}
+
+/**
+ * Report which attribute operations — chmod, chown and symlink creation — a
+ * session's file browser performs (#4353). Resolved per session: all three for
+ * SSH (SFTP), a Unix local filesystem and an agent-hosted SSH or local session;
+ * none for Docker, FTP or WSL.
+ */
+export async function sessionFileCapabilities(sessionId: string): Promise<FileAttributeOps> {
+  return await invoke<FileAttributeOps>("session_file_capabilities", { sessionId });
 }
 
 /**

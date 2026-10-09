@@ -648,6 +648,11 @@ impl FileBrowser for SftpFileBrowser {
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         Some(self)
     }
+
+    /// SFTP `setstat` / `symlink` back chmod, chown and symlink creation.
+    fn attribute_ops(&self) -> crate::files::FileAttributeOps {
+        crate::files::FileAttributeOps::ALL
+    }
 }
 
 /// Offset-addressed SFTP reads and writes (#3587): what an agent-hosted SSH
@@ -954,6 +959,14 @@ mod tests {
             Arc::ptr_eq(&browser.state, &cloned.state),
             "a clone must share the same connection state Arc"
         );
+    }
+
+    /// An SFTP session supports chmod, chown and symlink creation (#4353).
+    #[test]
+    fn attribute_ops_reports_all_for_sftp() {
+        let browser = SftpFileBrowser::new(test_config());
+        let dynamic: &dyn FileBrowser = &browser;
+        assert_eq!(dynamic.attribute_ops(), crate::files::FileAttributeOps::ALL);
     }
 
     /// `as_any` returns the concrete browser so a `&dyn FileBrowser` can be

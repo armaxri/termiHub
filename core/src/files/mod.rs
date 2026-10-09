@@ -47,6 +47,53 @@ pub fn check_read_size(size: u64) -> Result<(), FileError> {
     }
 }
 
+/// Which attribute-changing operations a [`FileBrowser`] actually performs —
+/// chmod ([`set_permissions`](FileBrowser::set_permissions)), chown
+/// ([`set_owner`](FileBrowser::set_owner)) and symlink creation
+/// ([`create_symlink`](FileBrowser::create_symlink)).
+///
+/// Every backend implements those three trait methods, but most only return
+/// [`FileError::NotSupported`]; this is the per-browser answer the file-browser
+/// UI gates its permission, owner and symlink actions on (#4353). Reported by
+/// [`FileBrowser::attribute_ops`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct FileAttributeOps {
+    /// Whether `set_permissions` (chmod) is performed.
+    pub permissions: bool,
+    /// Whether `set_owner` (chown) is performed.
+    pub owner: bool,
+    /// Whether `create_symlink` is performed.
+    pub symlink: bool,
+}
+
+impl FileAttributeOps {
+    /// No attribute operation is supported (the default).
+    pub const NONE: Self = Self {
+        permissions: false,
+        owner: false,
+        symlink: false,
+    };
+
+    /// chmod, chown and symlink are all supported.
+    pub const ALL: Self = Self {
+        permissions: true,
+        owner: true,
+        symlink: true,
+    };
+
+    /// [`ALL`](Self::ALL) when `supported`, else [`NONE`](Self::NONE).
+    pub const fn all_if(supported: bool) -> Self {
+        if supported {
+            Self::ALL
+        } else {
+            Self::NONE
+        }
+    }
+}
+
 /// A file or directory entry returned by file browsing operations.
 ///
 /// This is the unified structure used by both the desktop and agent crates.
@@ -89,7 +136,19 @@ pub struct FileEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::FileEntry;
+    use super::{FileAttributeOps, FileEntry};
+
+    #[test]
+    fn file_attribute_ops_default_is_none_and_serializes_camel_case() {
+        assert_eq!(FileAttributeOps::default(), FileAttributeOps::NONE);
+        assert_eq!(FileAttributeOps::all_if(true), FileAttributeOps::ALL);
+        assert_eq!(FileAttributeOps::all_if(false), FileAttributeOps::NONE);
+        let json = serde_json::to_value(FileAttributeOps::ALL).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"permissions": true, "owner": true, "symlink": true})
+        );
+    }
 
     #[test]
     fn symlink_fields_serialize_camel_case() {

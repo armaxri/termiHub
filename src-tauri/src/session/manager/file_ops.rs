@@ -220,6 +220,15 @@ impl SessionManager {
             .await
     }
 
+    /// Report which attribute operations (chmod / chown / symlink) a session's
+    /// file browser performs (#4353).
+    pub async fn session_file_capabilities(
+        &self,
+        session_id: &str,
+    ) -> Result<termihub_core::files::FileAttributeOps, TerminalError> {
+        self.file_ops().attribute_ops(session_id).await
+    }
+
     /// Report whether a session's SFTP connection can open an exec channel
     /// (session-path mirror of `sftp_has_exec_capability`, #2312).
     pub async fn session_has_exec_capability(

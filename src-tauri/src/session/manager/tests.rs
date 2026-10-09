@@ -3713,6 +3713,32 @@ async fn session_sftp_ops_error_when_browser_not_sftp_backed() {
     ));
 }
 
+/// `session_file_capabilities` reports the session browser's own attribute
+/// ops (#4353): a browser that does not override `attribute_ops` offers none
+/// of chmod / chown / symlink, and an unknown session is `SessionNotFound`.
+#[tokio::test]
+async fn session_file_capabilities_reports_the_browser_attribute_ops() {
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+    manager
+        .insert_test_session(
+            "fs-plain",
+            Box::new(FileConnection {
+                browser: MockFileBrowser {
+                    listed: Arc::new(std::sync::Mutex::new(Vec::new())),
+                },
+            }),
+        )
+        .await;
+    assert_eq!(
+        manager.session_file_capabilities("fs-plain").await.unwrap(),
+        termihub_core::files::FileAttributeOps::NONE
+    );
+    assert!(matches!(
+        manager.session_file_capabilities("ghost").await,
+        Err(TerminalError::SessionNotFound(_))
+    ));
+}
+
 /// The session-scoped SFTP ops surface `SessionNotFound` for an unknown
 /// session, exactly like the rest of the file-ops facade (#2312).
 #[tokio::test]

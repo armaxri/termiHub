@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use termihub_core::errors::FileError;
-use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
+use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry, RangedFileAccess};
 use termihub_core::protocol::methods::{
     FilesCopyParams, FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams, FilesListResult,
     FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams, FilesSetOwnerParams,
@@ -316,6 +316,12 @@ impl FileBrowser for AgentHostFiles {
 
     fn ranged(&self) -> Option<&dyn RangedFileAccess> {
         Some(self)
+    }
+
+    /// The agent forwards chmod / chown / symlink to its host's filesystem,
+    /// exactly as for an agent-hosted local session (#4353).
+    fn attribute_ops(&self) -> FileAttributeOps {
+        crate::session::remote_proxy::hosted_attribute_ops("local", false)
     }
 }
 
