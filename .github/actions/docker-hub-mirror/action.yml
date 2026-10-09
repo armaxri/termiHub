@@ -1,0 +1,61 @@
+name: "Docker Hub resilience (mirror + retried pulls)"
+description: >-
+  Keep the container-fixture jobs off unauthenticated Docker Hub pulls (#4614).
+  Points the runner's Docker daemon (registry-mirrors) and rootless Podman (a
+  registries.conf.d drop-in) at the mirror.gcr.io Docker Hub mirror, then
+  optionally pre-pulls images with retry and exponential backoff so a transient
+  registry error retries before it reds the job. A mirror miss falls back to
+  Docker Hub inside the daemon. Needs no secret. Linux runners only; every step
+  is a no-op elsewhere. Run it right after checkout, before any container is
+  started: it restarts the Docker daemon. The recipe lives in
+  scripts/internal/registry-mirror.sh; docs/testing.md -> "Docker Hub
+  resilience in CI" explains it, including the optional authenticated-pull
+  step a maintainer can add.
+
+inputs:
+  images:
+    description: "Whitespace-separated images to pre-pull into Docker (retried with backoff)"
+    required: false
+    default: ""
+  fixture-images:
+    description: 'Set to "true" to also pre-pull every base image the tests/docker fixtures build FROM'
+    required: false
+    default: "false"
+  podman-images:
+    description: "Whitespace-separated images to pre-pull into rootless Podman (retried with backoff)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Pull Docker Hub images through mirror.gcr.io (Docker + Podman)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: '"$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh" configure'
+
+    - name: Pre-pull Docker images (retried with backoff)
+      if: runner.os == 'Linux' && (inputs.images != '' || inputs.fixture-images == 'true')
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        FIXTURE_IMAGES: ${{ inputs.fixture-images }}
+      run: |
+        set -euo pipefail
+        helper="$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh"
+        read -r -a images <<<"$IMAGES" || true
+        if [ "$FIXTURE_IMAGES" = "true" ]; then
+          mapfile -t -O "${#images[@]}" images < <("$helper" fixture-images)
+        fi
+        "$helper" pull "${images[@]}"
+
+    - name: Pre-pull Podman images (retried with backoff)
+      if: runner.os == 'Linux' && inputs.podman-images != ''
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.podman-images }}
+        CONTAINER_CMD: podman
+      run: |
+        set -euo pipefail
+        read -r -a images <<<"$IMAGES" || true
+        "$GITHUB_WORKSPACE/scripts/internal/registry-mirror.sh" pull "${images[@]}"
