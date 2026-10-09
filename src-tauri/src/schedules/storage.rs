@@ -192,4 +192,33 @@ mod tests {
         assert_eq!(loaded.data.schedules.len(), 1);
         assert_eq!(loaded.data.schedules[0].id, "ok");
     }
+    /// PER2-007: salvaging a corrupt v1 file runs on the MIGRATED document, so
+    /// the surviving schedules get their history seeded exactly as a clean v1
+    /// load would (salvage used to rebuild from the un-migrated raw JSON).
+    #[test]
+    fn salvage_of_a_v1_file_seeds_the_survivors_history() {
+        let dir = TempDir::new().unwrap();
+        let storage = ScheduleStorage::new_test(dir.path());
+        let raw = r#"{"version":"1","schedules":[
+            {"id":"ok","name":"n","action":{"kind":"macro","macroId":"m"},
+             "targets":{"kind":"connections","connectionIds":["c"]},
+             "rule":{"kind":"interval","everyMinutes":5},
+             "lastResult":{"at":"t","outcome":"completed"}},
+            {"id":"bad","rule":"nope"}]}"#;
+        fs::write(dir.path().join(FILE_NAME), raw).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert_eq!(loaded.data.schedules.len(), 1);
+        assert_eq!(
+            loaded.data.schedules[0].history.len(),
+            1,
+            "the survivor's history is seeded from its lastResult"
+        );
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.path().join(FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(on_disk["version"], "2");
+        assert_eq!(
+            on_disk["schedules"][0]["history"][0]["outcome"],
+            "completed"
+        );
+    }
 }

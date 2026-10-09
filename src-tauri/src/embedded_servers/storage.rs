@@ -373,6 +373,22 @@ mod tests {
         assert!(backup.exists());
     }
 
+    /// ERR2-002: a second corruption never overwrites the first backup.
+    #[test]
+    fn second_corruption_keeps_earlier_backup() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let backup = storage.file_path.with_extension("json.bak");
+        fs::write(&backup, "earlier backup").unwrap();
+        fs::write(&storage.file_path, "corrupt again!!!").unwrap();
+
+        storage.load_with_recovery().unwrap();
+
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "earlier backup");
+        let second = dir.path().join("embedded_servers.json.bak.1");
+        assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
+    }
+
     /// PER-004 granular salvage: a file with one valid server and one corrupt
     /// entry keeps the valid server and drops only the corrupt one (rather than
     /// resetting every embedded server the user configured).

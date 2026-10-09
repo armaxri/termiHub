@@ -451,6 +451,10 @@ mod tests {
     impl VersionedStore for V1Store {
         const STORE_NAME: &'static str = "v1-store.json";
         const CURRENT_VERSION: u32 = 1;
+
+        fn salvage(value: Value, file_name: &str) -> Salvage<Self> {
+            salvage_list_store::<Self, String>(value, file_name, "items")
+        }
     }
 
     /// A v2 store with a real v1 -> v2 migration (renames `oldName` -> `name`
@@ -485,6 +489,204 @@ mod tests {
             }
             Ok(value)
         }
+    }
+
+    fn parse(raw: &str) -> Value {
+        serde_json::from_str(raw).unwrap()
+    }
+
+    /// A v2 list store whose v1 -> v2 migration adds a required `seeded` field
+    /// to every entry — so an entry only validates against the current shape
+    /// *after* the migration ran (PER2-007).
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct V2Item {
+        name: String,
+        seeded: bool,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct V2List {
+        version: String,
+        items: Vec<V2Item>,
+    }
+
+    impl Default for V2List {
+        fn default() -> Self {
+            Self {
+                version: "2".to_string(),
+                items: Vec::new(),
+            }
+        }
+    }
+
+    impl VersionedStore for V2List {
+        const STORE_NAME: &'static str = "v2-list.json";
+        const CURRENT_VERSION: u32 = 2;
+
+        fn migrate(mut value: Value, from_version: u32) -> Result<Value> {
+            if from_version < 2 {
+                if let Some(items) = value.get_mut("items").and_then(Value::as_array_mut) {
+                    for item in items.iter_mut().filter_map(Value::as_object_mut) {
+                        item.entry("seeded").or_insert(json!(true));
+                    }
+                }
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("version".to_string(), json!("2"));
+                }
+            }
+            Ok(value)
+        }
+
+        fn salvage(value: Value, file_name: &str) -> Salvage<Self> {
+            salvage_list_store::<Self, V2Item>(value, file_name, "items")
+        }
+    }
+
+    /// PER2-007: salvage of an older-version file runs on the MIGRATED value,
+    /// so a valid entry is not dropped merely for lacking a field the
+    /// migration would have added.
+    #[test]
+    fn salvage_runs_on_migrated_value() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("v2-list.json");
+        fs::write(
+            &path,
+            r#"{"version":"1","items":[{"name":"keep"},{"name":7}]}"#,
+        )
+        .unwrap();
+
+        let result = load_store_with_recovery::<V2List>(&path, "v2-list.json").unwrap();
+        assert_eq!(
+            result.data.items,
+            vec![V2Item {
+                name: "keep".to_string(),
+                seeded: true
+            }],
+            "the valid v1 entry survives, migrated"
+        );
+        assert_eq!(
+            result.warnings.len(),
+            1,
+            "only the corrupt entry is dropped"
+        );
+        let on_disk: V2List = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(on_disk.version, "2");
+    }
+
+    /// ERR2-002: each corruption gets its own backup — a later one never
+    /// overwrites an earlier `.bak`, which may hold entries salvage dropped.
+    #[test]
+    fn corruption_backup_never_overwrites_an_earlier_backup() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("v1-store.json");
+        fs::write(path.with_extension("json.bak"), "first backup").unwrap();
+        fs::write(&path, "corrupt #2 {{{").unwrap();
+
+        let result = load_store_with_recovery::<V1Store>(&path, "v1-store.json").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(path.with_extension("json.bak")).unwrap(),
+            "first backup"
+        );
+        let second = dir.path().join("v1-store.json.bak.1");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "corrupt #2 {{{");
+        assert!(
+            result.warnings[0].message.contains("v1-store.json.bak.1"),
+            "the warning names the backup: {}",
+            result.warnings[0].message
+        );
+    }
+
+    #[test]
+    fn backup_corrupt_file_picks_first_free_slot() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("s.json");
+        fs::write(&path, "x").unwrap();
+        assert_eq!(
+            backup_corrupt_file(&path).unwrap(),
+            dir.path().join("s.json.bak")
+        );
+        assert_eq!(
+            backup_corrupt_file(&path).unwrap(),
+            dir.path().join("s.json.bak.1")
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("s.json.bak.1")).unwrap(),
+            "x"
+        );
+    }
+
+    /// ERR2-002: when the backup cannot be made, the live file is NOT
+    /// rewritten — recovery runs in memory only, says so honestly, and arms the
+    /// save guard so a later save cannot clobber the only copy either.
+    #[test]
+    fn failed_backup_leaves_original_untouched_and_blocks_saves() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("v1-store.json");
+        let corrupt = r#"{"version":"1","items":["ok",42]}"#;
+        fs::write(&path, corrupt).unwrap();
+
+        let result = recover_corrupt_store_with::<V1Store>(
+            &path,
+            "v1-store.json",
+            corrupt,
+            "bad entry".to_string(),
+            |_| Err(std::io::Error::other("disk full")),
+            |data| write_atomic(&path, &serde_json::to_string_pretty(data)?),
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.data.items,
+            vec!["ok".to_string()],
+            "salvaged in memory"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            corrupt,
+            "original untouched"
+        );
+        assert!(
+            result.warnings[0]
+                .message
+                .contains("could not be backed up"),
+            "honest warning: {}",
+            result.warnings[0].message
+        );
+        assert!(!path.with_extension("json.bak").exists());
+        assert!(
+            guard_not_newer(&path, V1Store::STORE_NAME, V1Store::CURRENT_VERSION).is_err(),
+            "the save guard is armed for the un-backed-up file"
+        );
+
+        // Once the file loads cleanly again the guard releases.
+        fs::write(&path, r#"{"version":"1","items":[]}"#).unwrap();
+        load_store_with_recovery::<V1Store>(&path, "v1-store.json").unwrap();
+        assert!(guard_not_newer(&path, V1Store::STORE_NAME, V1Store::CURRENT_VERSION).is_ok());
+    }
+
+    /// ERR2-002: an unsalvageable file whose backup failed is not reset on disk.
+    #[test]
+    fn failed_backup_never_resets_the_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("v1-store.json");
+        fs::write(&path, "garbage {{{").unwrap();
+
+        let result = recover_corrupt_store_with::<V1Store>(
+            &path,
+            "v1-store.json",
+            "garbage {{{",
+            "unparseable".to_string(),
+            |_| Err(std::io::Error::other("read-only")),
+            |data| write_atomic(&path, &serde_json::to_string_pretty(data)?),
+        )
+        .unwrap();
+
+        assert!(result.data.items.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "garbage {{{");
+        assert!(result.warnings[0]
+            .message
+            .contains("could not be backed up"));
     }
 
     #[test]
@@ -681,7 +883,7 @@ mod tests {
         // `items` is `Vec<String>`; the object element cannot deserialize to a
         // String, the two string elements can.
         let raw = r#"{"version":"1","items":["a",{"not":"a string"},"b"]}"#;
-        match salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items") {
+        match salvage_list_store::<V1Store, String>(parse(raw), "v1-store.json", "items") {
             Salvage::Recovered { data, warnings } => {
                 assert_eq!(data.items, vec!["a".to_string(), "b".to_string()]);
                 assert_eq!(warnings.len(), 1);
@@ -697,20 +899,25 @@ mod tests {
     fn salvage_list_store_all_valid_is_unsalvageable() {
         let raw = r#"{"version":"1","items":["a","b"]}"#;
         assert!(matches!(
-            salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items"),
+            salvage_list_store::<V1Store, String>(parse(raw), "v1-store.json", "items"),
             Salvage::Unsalvageable
         ));
     }
 
-    /// Unparseable JSON and a missing collection field are both unsalvageable.
+    /// A non-object document and a missing collection field are both
+    /// unsalvageable.
     #[test]
-    fn salvage_list_store_unparseable_or_missing_field_is_unsalvageable() {
+    fn salvage_list_store_non_object_or_missing_field_is_unsalvageable() {
         assert!(matches!(
-            salvage_list_store::<V1Store, String>("not json {{{", "v1-store.json", "items"),
+            salvage_list_store::<V1Store, String>(json!(["a"]), "v1-store.json", "items"),
             Salvage::Unsalvageable
         ));
         assert!(matches!(
-            salvage_list_store::<V1Store, String>(r#"{"version":"1"}"#, "v1-store.json", "items"),
+            salvage_list_store::<V1Store, String>(
+                json!({"version": "1"}),
+                "v1-store.json",
+                "items"
+            ),
             Salvage::Unsalvageable
         ));
     }
@@ -720,7 +927,7 @@ mod tests {
     #[test]
     fn salvage_list_store_preserves_unknown_top_level_fields() {
         let raw = r#"{"version":"1","items":["ok",42],"futureFlag":{"on":true}}"#;
-        match salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items") {
+        match salvage_list_store::<V1Store, String>(parse(raw), "v1-store.json", "items") {
             Salvage::Recovered { data, warnings } => {
                 assert_eq!(data.items, vec!["ok".to_string()]);
                 assert_eq!(warnings.len(), 1);

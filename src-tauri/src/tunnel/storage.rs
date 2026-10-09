@@ -277,4 +277,65 @@ mod tests {
         );
         serde_json::from_str::<TunnelStore>(&after).expect("preserved store still parses");
     }
+    /// PER2-002: a tunnels.json written by a NEWER schema is refused, not
+    /// treated as corrupt: load runs on defaults with a warning, leaves the file
+    /// byte-for-byte intact (no backup), and a later save refuses to clobber it.
+    #[test]
+    fn newer_version_file_is_left_intact() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = r#"{"version":"99","tunnels":{"restructured":true}}"#;
+        fs::write(&storage.file_path, newer).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].message.contains("newer version"));
+        assert!(result.data.tunnels.is_empty());
+
+        let err = storage.save(&TunnelStore::default()).unwrap_err();
+        assert!(err.to_string().contains("newer version"), "{err}");
+
+        assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), newer);
+        assert!(!storage.file_path.with_extension("json.bak").exists());
+    }
+
+    /// PER2-002: unknown top-level fields survive a load → save round-trip.
+    #[test]
+    fn unknown_top_level_fields_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"1","tunnels":[],"futureField":{"nested":true}}"#,
+        )
+        .unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        storage.save(&loaded.data).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(
+            on_disk["futureField"],
+            serde_json::json!({"nested": true}),
+            "unknown field must be written back out"
+        );
+    }
+
+    /// ERR2-002: a second corruption never overwrites the first backup.
+    #[test]
+    fn second_corruption_keeps_earlier_backup() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let backup = storage.file_path.with_extension("json.bak");
+        fs::write(&backup, "earlier backup").unwrap();
+        fs::write(&storage.file_path, "corrupt again!!!").unwrap();
+
+        storage.load_with_recovery().unwrap();
+
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "earlier backup");
+        let second = dir.path().join("tunnels.json.bak.1");
+        assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
+    }
 }

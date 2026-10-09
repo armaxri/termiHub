@@ -187,3 +187,75 @@ fn moving_a_connection_to_another_file_keeps_its_unknown_fields() {
         "{text}"
     );
 }
+
+fn ssh_node_with_password() -> serde_json::Value {
+    serde_json::json!({
+        "type": "connection",
+        "name": "s",
+        "config": { "type": "ssh", "config": {
+            "host": "h", "port": 22, "username": "u",
+            "authMethod": "password", "password": "secret"
+        } }
+    })
+}
+
+/// PER2-005: an external file written by a newer termiHub is refused on load
+/// and by every write path, and is left byte-for-byte intact.
+#[test]
+fn a_newer_external_file_is_refused_and_left_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("shared.json");
+    let newer = serde_json::json!({
+        "version": "99",
+        "children": [ssh_node_with_password()],
+        "futureTop": 1
+    })
+    .to_string();
+    std::fs::write(&file, &newer).unwrap();
+    let path = file.to_str().unwrap();
+
+    let err = try_load_external_file(path, "scope", &HashSet::new(), &NullStore, None)
+        .err()
+        .expect("a newer external file must be refused");
+    assert!(err.to_string().contains("newer version"), "{err:#}");
+    assert!(read_external_store(path).is_err());
+    assert!(remove_from_external_file(path, "s").is_err());
+
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), newer);
+}
+
+/// PER2-005: the load-time rewrite (password strip) keeps the file's unknown
+/// top-level fields and its own version instead of hard-coding "2".
+#[test]
+fn external_rewrite_keeps_unknown_top_level_fields_and_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("shared.json");
+    write_json(
+        &file,
+        &serde_json::json!({
+            "version": "5",
+            "children": [ssh_node_with_password()],
+            "futureTop": { "a": 1 }
+        }),
+    );
+    let path = file.to_str().unwrap();
+
+    try_load_external_file(path, "scope", &HashSet::new(), &NullStore, None).unwrap();
+
+    let on_disk = read_json(&file);
+    assert_eq!(
+        on_disk["futureTop"],
+        serde_json::json!({ "a": 1 }),
+        "{on_disk}"
+    );
+    assert_eq!(on_disk["version"], "5", "{on_disk}");
+    assert!(
+        on_disk["children"][0]["config"]["config"]
+            .get("password")
+            .is_none(),
+        "{on_disk}"
+    );
+
+    remove_from_external_file(path, "nothing").unwrap();
+    assert_eq!(read_json(&file)["futureTop"], serde_json::json!({ "a": 1 }));
+}

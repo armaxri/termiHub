@@ -507,7 +507,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert_eq!(result.warnings.len(), 1);
-        assert!(result.warnings[0].message.contains("completely corrupt"));
+        assert!(result.warnings[0].message.contains("corrupt"));
         assert!(result.data.connections.is_empty());
 
         // Backup file should exist
@@ -1160,5 +1160,70 @@ mod tests {
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
         assert_unknown_node_fields_on_disk(&on_disk);
+    }
+    fn empty_flat() -> FlatConnectionStore {
+        FlatConnectionStore {
+            connections: Vec::new(),
+            folders: Vec::new(),
+            agents: Vec::new(),
+        }
+    }
+
+    /// PER2-005: unknown top-level fields of connections.json survive a
+    /// load → `save_flat` round-trip (save_flat used to rebuild the top level
+    /// from scratch and drop them).
+    #[test]
+    fn unknown_top_level_fields_survive_save_flat() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"5","children":[],"agents":[],"futureTop":{"keep":true}}"#,
+        )
+        .unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        storage.save_flat(&loaded.data).unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(on_disk["futureTop"], serde_json::json!({"keep": true}));
+    }
+
+    /// PER2-005: granular recovery keeps the unknown top-level fields too.
+    #[test]
+    fn granular_recovery_keeps_unknown_top_level_fields() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"5","children":[{"type":"connection","broken":true}],
+                "futureTop":7}"#,
+        )
+        .unwrap();
+
+        storage.load_with_recovery().unwrap();
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(on_disk["futureTop"], 7, "{on_disk}");
+    }
+
+    /// ERR2-002: a second corruption never overwrites the first backup.
+    #[test]
+    fn second_corruption_keeps_earlier_backup() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let backup = storage.file_path.with_extension("json.bak");
+        fs::write(&backup, "earlier backup").unwrap();
+        fs::write(&storage.file_path, "corrupt again!!!").unwrap();
+
+        storage.load_with_recovery().unwrap();
+
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "earlier backup");
+        let second = dir.path().join("connections.json.bak.1");
+        assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
+        storage.save_flat(&empty_flat()).unwrap();
     }
 }
