@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListener } from "@/hooks/useTauriListener";
 import { listTrustedPublishers, revokeTrustedPublisher } from "@/services/api";
 import type { TrustedPublisher } from "@/types/plugin";
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
@@ -34,13 +34,11 @@ export function TrustedPublishersSettings() {
 
   useEffect(() => {
     void load();
-    // A pin/revoke elsewhere (e.g. a trust-on-first-use install) emits the
-    // plugin-changed event; re-fetch so the list stays current.
-    const unlisten = listen("plugin-changed", () => void load());
-    return () => {
-      void unlisten.then((off) => off());
-    };
   }, [load]);
+
+  // A pin/revoke elsewhere (e.g. a trust-on-first-use install) emits the
+  // plugin-changed event; re-fetch so the list stays current.
+  useTauriListener<void>("plugin-changed", () => void load(), "trusted_publishers");
 
   const handleRevoke = useCallback(async (publisher: TrustedPublisher) => {
     try {

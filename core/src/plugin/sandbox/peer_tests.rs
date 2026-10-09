@@ -558,3 +558,39 @@ fn the_default_cap_lets_a_large_burst_through() {
         let _ = rx.try_recv();
     }
 }
+
+/// #4366: with no forwarder there is nothing to drain, so the wait is
+/// immediate; an expected forwarder that never finishes times out (`false`).
+#[test]
+fn stderr_drain_wait_is_immediate_without_a_forwarder_and_bounded_with_one() {
+    let drain = StderrDrain::new();
+    assert!(drain.wait(Duration::ZERO), "no forwarder: already drained");
+    drain.expect();
+    assert!(
+        !drain.wait(Duration::from_millis(20)),
+        "a forwarder that never finishes must time out"
+    );
+    drain.finish();
+    assert!(drain.wait(Duration::ZERO));
+}
+
+/// #4366: a waiter blocked on the drain is woken by the forwarder's end of
+/// stream (a condition variable), not by a spin that re-checks a flag — so
+/// even a very long timeout ends as soon as the forwarder is done.
+#[test]
+fn stderr_drain_wakes_the_waiter_when_the_forwarder_finishes() {
+    let drain = Arc::new(StderrDrain::new());
+    drain.expect();
+    let forwarder = Arc::clone(&drain);
+    let thread = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        forwarder.finish();
+    });
+    let start = Instant::now();
+    assert!(drain.wait(Duration::from_secs(600)));
+    assert!(
+        start.elapsed() < Duration::from_secs(300),
+        "the waiter must wake on finish, not at the timeout"
+    );
+    thread.join().unwrap();
+}

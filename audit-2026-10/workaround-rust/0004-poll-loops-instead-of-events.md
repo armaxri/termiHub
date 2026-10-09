@@ -17,8 +17,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager/reconnect.rs:43
   - src-tauri/src/terminal/agent_manager/reconnect.rs:111
   - core/src/plugin/sandbox/peer.rs:445
-status: open
-resolution: ""
+status: fixed
+resolution: "#4366 — cancellation token is the single stop signal (shared cancellable_sleep, watch-based pause), agent reconnect awaits AgentAlive, plugin stderr drain waits on a Condvar"
 audit: 2026-10
 commit: 663465d52
 relation: new

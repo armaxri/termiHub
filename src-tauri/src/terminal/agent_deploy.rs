@@ -26,7 +26,7 @@ use crate::utils::remote_exec::{
     run_remote_command, upload_bytes_via_sftp_cancellable,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
-use crate::utils::version;
+use termihub_core::util::version;
 
 /// Default install path on the remote host.
 const DEFAULT_REMOTE_PATH: &str = agent_install::POSIX_DEFAULT_INSTALL_PATH;
@@ -49,6 +49,21 @@ pub struct AgentProbeResult {
     pub remote_os: String,
     /// Whether the found version is compatible with the desktop.
     pub compatible: bool,
+}
+
+/// The version token of `termihub-agent --version` output.
+///
+/// Expected format: `termihub-agent 0.1.0`, optionally followed by a branch
+/// annotation (`termihub-agent 0.1.0 (branch: foo)`) or carrying a pre-release
+/// suffix (`termihub-agent 0.2.0-beta.1`). Only the version token is returned so
+/// annotations are ignored.
+fn agent_version_token(output: &str) -> &str {
+    output
+        .strip_prefix("termihub-agent ")
+        .unwrap_or(output)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
 }
 
 /// Probe a remote host for the agent binary via SSH.
@@ -80,16 +95,8 @@ pub fn probe_remote_agent(
 
     let (found, version, compatible) = match version_output {
         Ok(output) if !output.is_empty() => {
-            // Expected format: "termihub-agent 0.1.0" or "termihub-agent 0.1.0 (branch: foo)"
-            // Take only the version token so branch annotations are ignored.
-            let ver = output
-                .strip_prefix("termihub-agent ")
-                .unwrap_or(&output)
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
-            let compat = version::is_version_compatible(&ver, expected_version);
+            let ver = agent_version_token(&output).to_string();
+            let compat = version::is_agent_compatible(&ver, expected_version);
             debug!(
                 version = %ver,
                 compatible = compat,
@@ -977,39 +984,35 @@ mod tests {
     #[test]
     fn version_parsing_from_agent_output() {
         let output = "termihub-agent 0.1.0";
-        let ver = output
-            .strip_prefix("termihub-agent ")
-            .unwrap_or(output)
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let ver = agent_version_token(output);
         assert_eq!(ver, "0.1.0");
-        assert!(version::is_version_compatible(ver, "0.1.0"));
+        assert!(version::is_agent_compatible(ver, "0.1.0"));
     }
 
     #[test]
     fn version_parsing_with_branch_annotation() {
         // Branch builds append "(branch: foo)" — parser must ignore it.
         let output = "termihub-agent 0.1.0 (branch: feature/666-persistent-connection-ux)";
-        let ver = output
-            .strip_prefix("termihub-agent ")
-            .unwrap_or(output)
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let ver = agent_version_token(output);
         assert_eq!(ver, "0.1.0");
-        assert!(version::is_version_compatible(ver, "0.1.0"));
+        assert!(version::is_agent_compatible(ver, "0.1.0"));
     }
 
     #[test]
     fn version_parsing_bare() {
         let output = "0.2.0";
-        let ver = output
-            .strip_prefix("termihub-agent ")
-            .unwrap_or(output)
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
+        let ver = agent_version_token(output);
         assert_eq!(ver, "0.2.0");
+    }
+
+    /// Regression (DUP2-010): a pre-release agent (`vX.Y.Z-beta.N` release) was
+    /// reported incompatible because the old parser rejected the suffix.
+    #[test]
+    fn pre_release_agent_output_is_compatible() {
+        let ver = agent_version_token("termihub-agent 0.2.0-beta.1");
+        assert_eq!(ver, "0.2.0-beta.1");
+        assert!(version::is_agent_compatible(ver, "0.2.0"));
+        assert!(version::is_agent_compatible(ver, "0.2.0-beta.1"));
+        assert!(!version::is_agent_compatible(ver, "0.3.0"));
     }
 }

@@ -74,6 +74,10 @@ export function useNetworkTask({
 
   const taskIdRef = useRef<string | null>(null);
   const unlistenersRef = useRef<UnlistenFn[]>([]);
+  // Run token (FES2-006): bumped by every run and by unmount, so a run resuming
+  // after an await can tell it was superseded or orphaned.
+  const runTokenRef = useRef(0);
+  const mountedRef = useRef(true);
   // Hold the latest cancel fn for the unmount cleanup without re-running it.
   const cancelRef = useRef(cancel);
   cancelRef.current = cancel;
@@ -90,10 +94,23 @@ export function useNetworkTask({
     onReset?.();
     teardown();
 
+    const token = ++runTokenRef.current;
+    let finished = false;
+    const isCurrent = () => mountedRef.current && runTokenRef.current === token;
+
     const ctx: NetworkTaskContext = {
       matchesTask: (id) => taskIdRef.current === null || id === taskIdRef.current,
-      register: (un) => unlistenersRef.current.push(un),
+      register: (un) => {
+        // Registered after the run was abandoned: nothing will tear it down later.
+        if (!isCurrent() || finished) {
+          un();
+          return;
+        }
+        unlistenersRef.current.push(un);
+      },
       finish: (next, message) => {
+        if (!isCurrent()) return;
+        finished = true;
         if (message != null) setError(message);
         setStatus(next);
         teardown();
@@ -102,8 +119,27 @@ export function useNetworkTask({
 
     try {
       await subscribe(ctx);
-      taskIdRef.current = await start();
+      if (!isCurrent()) {
+        // Unmounted or superseded before start: never launch the task. The
+        // listeners it registered were already torn down by the unmount or by
+        // the newer run's teardown(); later ones are dropped by register().
+        return;
+      }
+      const id = await start();
+      if (!isCurrent()) {
+        // Nobody is left to cancel this task (FES2-006): cancel it here.
+        void cancelRef
+          .current(id)
+          .catch((err: unknown) =>
+            frontendLog(logScope, `cancel abandoned task ${id} failed: ${errorMessage(err)}`)
+          );
+        return;
+      }
+      // A run that already finished (an immediate complete/error event) must
+      // not re-arm the id of its ended task.
+      if (!finished) taskIdRef.current = id;
     } catch (err) {
+      if (!isCurrent()) return;
       setError(errorMessage(err));
       setStatus("error");
       teardown();
@@ -125,7 +161,9 @@ export function useNetworkTask({
 
   // Cancel any in-flight task and drop listeners on unmount.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (taskIdRef.current) {
         const taskId = taskIdRef.current;
         // Best-effort: the panel is gone, so there is no UI left to report to.

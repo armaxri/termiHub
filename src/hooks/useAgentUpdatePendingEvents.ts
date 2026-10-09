@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onRemoteAgentUpdatePending } from "@/services/events";
 import { cancelAllAgentUpdateReconnects } from "@/store/agentUpdateReconnect";
+import { useTauriSubscription } from "./useTauriListener";
 
 /**
  * Hook that bridges backend `remote-agent-update-pending` events (#1602) to the
@@ -16,24 +17,17 @@ import { cancelAllAgentUpdateReconnects } from "@/store/agentUpdateReconnect";
 export function useAgentUpdatePendingEvents(): void {
   const handleAgentUpdatePending = useAppStore((s) => s.handleAgentUpdatePending);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
+  useTauriSubscription(
+    onRemoteAgentUpdatePending,
+    (pending) => {
+      handleAgentUpdatePending(
+        pending.agentId,
+        pending.requestedByVersion,
+        pending.estimatedRestartSecs
+      );
+    },
+    "agent_update"
+  );
 
-    const setup = async () => {
-      unlisten = await onRemoteAgentUpdatePending((pending) => {
-        handleAgentUpdatePending(
-          pending.agentId,
-          pending.requestedByVersion,
-          pending.estimatedRestartSecs
-        );
-      });
-    };
-
-    void setup();
-
-    return () => {
-      unlisten?.();
-      cancelAllAgentUpdateReconnects();
-    };
-  }, [handleAgentUpdatePending]);
+  useEffect(() => cancelAllAgentUpdateReconnects, []);
 }

@@ -32,7 +32,6 @@
 //! engine's stats API instead, tagged [`StatsSource::DockerStats`](crate::monitoring::StatsSource)
 //! with the metrics that API lacks listed as unavailable.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -40,6 +39,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::errors::CoreError;
+use crate::monitoring::loop_control::{cancellable_sleep, LoopControls};
 use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, ContainerStatsSource, ContainerStatsTrackers,
     CpuDeltaTracker, MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
@@ -52,9 +52,6 @@ use crate::monitoring::{
 /// Live-overridable per subscription via [`MonitoringProvider::set_interval`];
 /// this is only the starting value.
 const MONITORING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MONITORING_INTERVAL_MS);
-
-/// How often a paused loop wakes to re-check whether it should resume.
-const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Channel capacity for monitoring stats updates.
 const MONITORING_CHANNEL_CAPACITY: usize = 16;
@@ -87,53 +84,15 @@ pub trait ProcStatsSource: Send + Sync + 'static {
     async fn collect_proc(&self) -> Result<String, CoreError>;
 }
 
-/// Shared, live-updatable controls for a running collect loop.
-///
-/// The loop reads these every tick so `set_interval` / `set_paused` steer a
-/// running subscription without tearing it down. `interval_ms` is atomic so
-/// updates are lock-free.
-struct LoopControls {
-    interval_ms: AtomicU64,
-    paused: AtomicBool,
-}
-
-impl LoopControls {
-    fn new(interval: Duration) -> Self {
-        Self {
-            interval_ms: AtomicU64::new(interval.as_millis() as u64),
-            paused: AtomicBool::new(false),
-        }
-    }
-
-    fn interval(&self) -> Duration {
-        Duration::from_millis(self.interval_ms.load(Ordering::SeqCst).max(1))
-    }
-
-    fn set_interval(&self, interval: Duration) {
-        self.interval_ms
-            .store(interval.as_millis().max(1) as u64, Ordering::SeqCst);
-    }
-
-    fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::SeqCst)
-    }
-
-    fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::SeqCst);
-    }
-}
-
 /// Background monitoring task state, cancelled and marked dead on drop so a
 /// torn-down subscription stops promptly.
 struct MonitoringTask {
-    alive: Arc<AtomicBool>,
     cancel: CancellationToken,
     controls: Arc<LoopControls>,
 }
 
 impl Drop for MonitoringTask {
     fn drop(&mut self) {
-        self.alive.store(false, Ordering::SeqCst);
         self.cancel.cancel();
     }
 }
@@ -352,27 +311,6 @@ async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopSt
     let _ = status_tx.send(loop_state.update()).await;
 }
 
-/// Sleep `delay` in small increments, returning early if the loop is asked to
-/// stop (either `alive` cleared or `cancel` fired).
-///
-/// Returns `true` if the full delay elapsed, `false` if interrupted.
-async fn interruptible_sleep(
-    mut delay: Duration,
-    alive: &AtomicBool,
-    cancel: &CancellationToken,
-) -> bool {
-    let tick = Duration::from_millis(100);
-    while delay > Duration::ZERO {
-        if !alive.load(Ordering::SeqCst) || cancel.is_cancelled() {
-            return false;
-        }
-        let step = tick.min(delay);
-        tokio::time::sleep(step).await;
-        delay = delay.saturating_sub(step);
-    }
-    true
-}
-
 /// Re-probe the source under a bounded exponential backoff once the loop has
 /// gone `Stale`.
 ///
@@ -387,7 +325,6 @@ async fn reconnect_with_backoff(
     collect_timeout: Duration,
     loop_state: &mut CollectLoopState,
     status_tx: &MonitorStatusSender,
-    alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> bool {
     if loop_state.begin_reconnect().is_some() {
@@ -395,7 +332,7 @@ async fn reconnect_with_backoff(
     }
 
     while let Some(delay) = backoff.next_delay() {
-        if !interruptible_sleep(delay, alive, cancel).await {
+        if !cancellable_sleep(delay, cancel).await {
             return false;
         }
         // A probe collect that parses proves the target is reachable again. The
@@ -425,19 +362,21 @@ async fn run_collect_loop(
     reconnect_backoff: BackoffSchedule,
     tx: MonitoringSender,
     status_tx: MonitorStatusSender,
-    alive: Arc<AtomicBool>,
     cancel: CancellationToken,
 ) {
     let mut trackers = Trackers::new();
     let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
-    while alive.load(Ordering::SeqCst) {
+    while !cancel.is_cancelled() {
         // Paused: keep the loop alive but skip collection.
         if controls.is_paused() {
             if loop_state.pause().is_some() {
                 emit_status(&status_tx, &loop_state).await;
             }
-            interruptible_sleep(PAUSE_POLL_INTERVAL, &alive, &cancel).await;
+            // Await the resume event (or teardown) instead of polling.
+            if !controls.wait_until_resumed(&cancel).await {
+                break;
+            }
             continue;
         }
         if loop_state.resume().is_some() {
@@ -476,7 +415,6 @@ async fn run_collect_loop(
                 collect_timeout,
                 &mut loop_state,
                 &status_tx,
-                &alive,
                 &cancel,
             )
             .await;
@@ -491,7 +429,9 @@ async fn run_collect_loop(
             break;
         }
 
-        interruptible_sleep(controls.interval(), &alive, &cancel).await;
+        if !cancellable_sleep(controls.interval(), &cancel).await {
+            break;
+        }
     }
     debug!("Exec monitoring task stopped");
 }
@@ -520,7 +460,6 @@ impl MonitoringProvider for ExecMonitoringProvider {
             tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
         let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
 
-        let alive = Arc::new(AtomicBool::new(true));
         let controls = Arc::new(LoopControls::new(self.interval));
 
         tokio::spawn(run_collect_loop(
@@ -531,16 +470,11 @@ impl MonitoringProvider for ExecMonitoringProvider {
             self.reconnect_backoff.clone(),
             tx,
             status_tx,
-            alive.clone(),
             cancel.clone(),
         ));
 
         if let Ok(mut guard) = self.task.lock() {
-            *guard = Some(MonitoringTask {
-                alive,
-                cancel,
-                controls,
-            });
+            *guard = Some(MonitoringTask { cancel, controls });
         }
 
         Ok(MonitoringSubscription {
@@ -581,7 +515,7 @@ impl MonitoringProvider for ExecMonitoringProvider {
 mod tests {
     use super::*;
     use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     /// A captured `MONITORING_COMMAND` sample as a container/distro would emit it:
     /// hostname, loadavg, aggregate + per-core `/proc/stat`, `/proc/meminfo`
@@ -1006,6 +940,79 @@ Inter-|   Receive                                                |  Transmit
         );
 
         provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// Regression (#4366): tearing down a subscription whose loop is parked in
+    /// a long interval wait ends the loop at the teardown instant — the
+    /// cancellation token wakes it, with no 100 ms poll tick to wait out.
+    #[tokio::test(start_paused = true)]
+    async fn unsubscribe_ends_a_sleeping_loop_without_a_poll_tick() {
+        let mut provider =
+            ExecMonitoringProvider::new(Arc::new(FakeSource::with_outputs(&[SAMPLE_1])));
+        provider.interval = Duration::from_secs(60);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        let _first = next_sample(&mut sub.stats).await;
+        // Let the loop settle into its 60 s interval wait.
+        tokio::task::yield_now().await;
+
+        let start = tokio::time::Instant::now();
+        provider.unsubscribe().await.expect("unsubscribe");
+        assert!(
+            sub.stats.recv().await.is_none(),
+            "the loop must end and close its stats channel"
+        );
+        assert!(
+            start.elapsed() < Duration::from_millis(100),
+            "teardown must not wait for a poll tick (took {:?})",
+            start.elapsed()
+        );
+    }
+
+    /// Regression (#4366): a paused loop resumes at the resume instant — it
+    /// awaits the resume event instead of re-checking the flag every 200 ms.
+    #[tokio::test(start_paused = true)]
+    async fn resume_wakes_a_paused_loop_without_a_poll_tick() {
+        let provider = fast_provider(&[SAMPLE_1, SAMPLE_2]);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        provider.set_paused(true).await;
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Paused);
+        // Idle a while (virtual time) so the loop is parked on the event; the
+        // odd offset keeps the old 200 ms poll from landing on the resume.
+        tokio::time::sleep(Duration::from_millis(5_010)).await;
+
+        let start = tokio::time::Instant::now();
+        provider.set_paused(false).await;
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "resume must not wait for a pause-poll tick (took {:?})",
+            start.elapsed()
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A cancelled token is the single stop signal (#4366): `cancel_connect`
+    /// ends the loop instead of leaving it running with every wait
+    /// short-circuited.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_connect_ends_the_loop() {
+        let mut provider =
+            ExecMonitoringProvider::new(Arc::new(FakeSource::with_outputs(&[SAMPLE_1])));
+        provider.interval = Duration::from_secs(60);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        let _first = next_sample(&mut sub.stats).await;
+
+        provider.cancel_connect().await;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), sub.stats.recv())
+                .await
+                .expect("the loop must stop after cancel")
+                .is_none(),
+            "a cancelled loop closes its stats channel"
+        );
     }
 
     /// `cancel_connect` fires the loop's cancellation token so an in-flight
