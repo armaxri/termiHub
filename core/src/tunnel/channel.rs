@@ -63,8 +63,36 @@ impl ChannelOpener for SshChannelOpener {
             .session
             .channel_open_direct_tcpip(host, port as u32, "localhost", 0)
             .await
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+            .map_err(open_error_to_io)?;
         Ok(channel.into_stream())
+    }
+}
+
+/// Convert a russh channel-open error into an [`std::io::Error`] whose
+/// [`ErrorKind`](std::io::ErrorKind) carries the SSH failure reason, so the
+/// SOCKS5 forwarder can answer the client with a matching RFC 1928 reply code
+/// instead of a blanket "general failure" (#4337).
+pub(crate) fn open_error_to_io(err: russh::Error) -> std::io::Error {
+    let kind = match &err {
+        russh::Error::ChannelOpenFailure(reason) => open_failure_kind(*reason),
+        _ => std::io::ErrorKind::Other,
+    };
+    std::io::Error::new(kind, err.to_string())
+}
+
+/// Classify an SSH `SSH_MSG_CHANNEL_OPEN_FAILURE` reason code (RFC 4254 §5.1).
+///
+/// The SSH server reports only these four coarse reasons. Its free-text
+/// description (e.g. "Connection refused") is not part of russh's error, so
+/// `SSH_OPEN_CONNECT_FAILED` — which covers refused, unreachable and DNS
+/// failures alike — maps to the generic "host unreachable".
+pub(crate) fn open_failure_kind(reason: russh::ChannelOpenFailure) -> std::io::ErrorKind {
+    use russh::ChannelOpenFailure as F;
+    match reason {
+        F::AdministrativelyProhibited => std::io::ErrorKind::PermissionDenied,
+        F::ConnectFailed => std::io::ErrorKind::HostUnreachable,
+        F::UnknownChannelType => std::io::ErrorKind::Unsupported,
+        F::ResourceShortage | F::Unknown => std::io::ErrorKind::Other,
     }
 }
 
@@ -84,7 +112,7 @@ pub(crate) mod test_support {
     /// sockets — fully deterministic.
     pub(crate) struct EchoChannelOpener {
         targets: Arc<Mutex<Vec<(String, u16)>>>,
-        fail: bool,
+        fail: Option<std::io::ErrorKind>,
     }
 
     impl EchoChannelOpener {
@@ -92,16 +120,23 @@ pub(crate) mod test_support {
         pub(crate) fn new() -> Self {
             Self {
                 targets: Arc::new(Mutex::new(Vec::new())),
-                fail: false,
+                fail: None,
             }
         }
 
         /// An opener that always fails to open the channel (exercises the
         /// error branch: SOCKS5 general-failure reply / local relay bail-out).
         pub(crate) fn failing() -> Self {
+            Self::failing_with(std::io::ErrorKind::Other)
+        }
+
+        /// An opener whose channel open always fails with an error of `kind`,
+        /// mimicking how [`super::SshChannelOpener`] classifies an SSH
+        /// channel-open failure (#4337).
+        pub(crate) fn failing_with(kind: std::io::ErrorKind) -> Self {
             Self {
                 targets: Arc::new(Mutex::new(Vec::new())),
-                fail: true,
+                fail: Some(kind),
             }
         }
 
@@ -125,8 +160,8 @@ pub(crate) mod test_support {
                 .expect("targets mutex poisoned")
                 .push((host, port));
 
-            if self.fail {
-                return Err(std::io::Error::other("simulated channel open failure"));
+            if let Some(kind) = self.fail {
+                return Err(std::io::Error::new(kind, "simulated channel open failure"));
             }
 
             // `near` is handed to the forwarder as the "channel"; `far` is
@@ -198,5 +233,64 @@ pub(crate) mod test_support {
             self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(near)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::ErrorKind;
+
+    use russh::ChannelOpenFailure;
+
+    use super::{open_error_to_io, open_failure_kind};
+
+    #[test]
+    fn administratively_prohibited_maps_to_permission_denied() {
+        assert_eq!(
+            open_failure_kind(ChannelOpenFailure::AdministrativelyProhibited),
+            ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn connect_failed_maps_to_host_unreachable() {
+        assert_eq!(
+            open_failure_kind(ChannelOpenFailure::ConnectFailed),
+            ErrorKind::HostUnreachable
+        );
+    }
+
+    #[test]
+    fn unknown_channel_type_maps_to_unsupported() {
+        assert_eq!(
+            open_failure_kind(ChannelOpenFailure::UnknownChannelType),
+            ErrorKind::Unsupported
+        );
+    }
+
+    #[test]
+    fn resource_shortage_and_unknown_map_to_other() {
+        assert_eq!(
+            open_failure_kind(ChannelOpenFailure::ResourceShortage),
+            ErrorKind::Other
+        );
+        assert_eq!(
+            open_failure_kind(ChannelOpenFailure::Unknown),
+            ErrorKind::Other
+        );
+    }
+
+    #[test]
+    fn russh_open_failure_error_keeps_its_reason() {
+        let err = open_error_to_io(russh::Error::ChannelOpenFailure(
+            ChannelOpenFailure::AdministrativelyProhibited,
+        ));
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn other_russh_errors_are_general_failures() {
+        let err = open_error_to_io(russh::Error::Disconnect);
+        assert_eq!(err.kind(), ErrorKind::Other);
     }
 }

@@ -70,7 +70,11 @@ pub struct PingResult {
     /// Round-trip time in milliseconds. `None` when the packet timed out.
     #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
     pub latency_ms: Option<u64>,
-    /// IP time-to-live from the reply. `None` on timeout or TCP fallback.
+    /// IP time-to-live (IPv4) or hop limit (IPv6) from the echo reply.
+    ///
+    /// `None` on timeout, on TCP fallback (a TCP connect exposes no TTL), and
+    /// when the platform's ICMP socket strips the IP header (Linux unprivileged
+    /// datagram sockets, and IPv6 everywhere).
     #[cfg_attr(test, ts(optional = nullable))]
     pub ttl: Option<u8>,
     /// `true` when no reply was received within the timeout window.

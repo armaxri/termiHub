@@ -17,8 +17,8 @@ evidence:
   - core/src/tunnel/dynamic_forward.rs:505
   - core/src/tunnel/dynamic_forward.rs:511
   - src-tauri/src/tunnel/dynamic_forward.rs:11
-status: open
-resolution: ""
+status: fixed
+resolution: "#4337 — SOCKS5 accepts IPv6 (ATYP 0x04), replies 0x08 for unknown ATYP and maps SSH open failures to RFC 1928 codes; SOCKS4/4a deferred to #4541"
 audit: 2026-10
 commit: 663465d52
 relation: new

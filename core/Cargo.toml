@@ -319,6 +319,10 @@ serial_test = "3"
 # (`cargo build`). Generation = running the emitted `export_bindings_*` tests; a
 # CI gate then fails on stale output. Matches the version wired for `src-tauri`.
 ts-rs = "12"
+# The socket type surge-ping's `Icmpv4Packet::decode` takes, so the ping tests can
+# decode a real raw echo reply and assert its TTL is reported (#4337). Same 0.6 line
+# surge-ping already pulls in — no new crate in the lockfile.
+socket2-surge = { package = "socket2", version = "0.6" }
 
 [target.'cfg(windows)'.dev-dependencies]
 # `tests/sideloaded_conpty.rs` (#4130): preload the staged `conpty.dll` by full

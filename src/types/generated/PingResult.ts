@@ -13,7 +13,11 @@ seq: number,
  */
 latencyMs?: number | null, 
 /**
- * IP time-to-live from the reply. `None` on timeout or TCP fallback.
+ * IP time-to-live (IPv4) or hop limit (IPv6) from the echo reply.
+ *
+ * `None` on timeout, on TCP fallback (a TCP connect exposes no TTL), and
+ * when the platform's ICMP socket strips the IP header (Linux unprivileged
+ * datagram sockets, and IPv6 everywhere).
  */
 ttl?: number | null, 
 /**
