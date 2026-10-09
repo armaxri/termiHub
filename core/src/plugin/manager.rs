@@ -43,6 +43,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
+use crate::util::persist;
+
 use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
     check_entry_count, check_host_platform, check_package_size, read_entry_bounded,
@@ -274,12 +276,36 @@ pub struct InstallOptions {
     pub confirm_signer_change: bool,
 }
 
+/// The schema version of `plugin-settings.json` this build reads and writes
+/// (#4334). An unversioned file is the original v1 shape.
+const SETTINGS_VERSION: u32 = 1;
+
 /// The whole `plugin-settings.json` document: per-plugin free-form settings.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SettingsStore {
+    /// Schema version, gated by [`crate::util::persist`]; absent → v1.
+    #[serde(default = "settings_version")]
+    version: u32,
     /// Settings objects keyed by plugin id.
     #[serde(default)]
     plugins: BTreeMap<String, Map<String, Value>>,
+    /// Unknown top-level fields, carried forward unchanged.
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+fn settings_version() -> u32 {
+    SETTINGS_VERSION
+}
+
+impl Default for SettingsStore {
+    fn default() -> Self {
+        Self {
+            version: SETTINGS_VERSION,
+            plugins: BTreeMap::new(),
+            extra: Map::new(),
+        }
+    }
 }
 
 /// Owns the installed-plugin directory and its state; the entry point for the
@@ -639,20 +665,20 @@ impl PluginManager {
         let verified_backend = installed_backend_binding(&dest, &manifest, signer_trusted)?;
 
         // Record enabled state with the install timestamp.
-        let mut state = self.read_state_store()?;
-        state.plugins.insert(
-            id.clone(),
-            PluginStateRecord {
-                enabled: true,
-                installed_at: now_millis(),
-                package_sha256: Some(package_sha256),
-                signer: Some(incoming_signer),
-                verified_backend,
-                auto_disabled_reason: None,
-                extra: Map::new(),
-            },
-        );
-        self.write_state_store(&state)?;
+        let ((), state) = plugin_state::update(&self.root, |state| {
+            state.plugins.insert(
+                id.clone(),
+                PluginStateRecord {
+                    enabled: true,
+                    installed_at: now_millis(),
+                    package_sha256: Some(package_sha256),
+                    signer: Some(incoming_signer),
+                    verified_backend,
+                    auto_disabled_reason: None,
+                    extra: Map::new(),
+                },
+            );
+        })?;
 
         let mut plugin = self.installed_plugin_from(manifest, &state, &dest);
         match self.hook.on_enable(&plugin) {
@@ -689,13 +715,19 @@ impl PluginManager {
         #[cfg(windows)]
         super::sandbox::remove_app_container_profile(id);
 
-        let mut state = self.read_state_store()?;
-        state.plugins.remove(id);
-        self.write_state_store(&state)?;
-
-        let mut settings = self.read_settings_store()?;
-        settings.plugins.remove(id);
-        self.write_settings_store(&settings)?;
+        // The directory is gone, so the plugin is uninstalled; a record left
+        // behind by a refused write (a newer or unbackable file) is harmless —
+        // a scan only lists directories — so these never fail the uninstall.
+        if let Err(e) = plugin_state::update(&self.root, |state| state.plugins.remove(id)) {
+            tracing::warn!(plugin_id = %id, "could not drop the plugin's state record: {e}");
+        }
+        let settings = self.read_settings_store().and_then(|mut settings| {
+            settings.plugins.remove(id);
+            self.write_settings_store(&settings)
+        });
+        if let Err(e) = settings {
+            tracing::warn!(plugin_id = %id, "could not drop the plugin's settings: {e}");
+        }
 
         // Its native-plugin trust acknowledgment (PLG2-005, #4294): a later
         // reinstall under the same id must be trusted again, never inherit it.
@@ -737,29 +769,26 @@ impl PluginManager {
         if !self.root.exists() {
             return Ok(Vec::new());
         }
-        let mut state = self.read_state_store()?;
-        let mut disabled = Vec::new();
-        for entry in std::fs::read_dir(&self.root)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let Some(manifest) = read_manifest(&entry.path()) else {
-                continue;
-            };
-            if manifest.api_compatibility() != ApiCompatibility::Incompatible {
-                continue;
-            }
-            if let Some(record) = state.plugins.get_mut(&manifest.id) {
-                if record.enabled {
-                    record.enabled = false;
-                    disabled.push(manifest.id.clone());
+        let incompatible: Vec<String> = installed_manifests(&self.root)
+            .into_iter()
+            .filter(|(_, m)| m.api_compatibility() == ApiCompatibility::Incompatible)
+            .map(|(_, m)| m.id)
+            .collect();
+        if incompatible.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (mut disabled, _) = plugin_state::update(&self.root, |state| {
+            let mut disabled = Vec::new();
+            for id in &incompatible {
+                if let Some(record) = state.plugins.get_mut(id) {
+                    if record.enabled {
+                        record.enabled = false;
+                        disabled.push(id.clone());
+                    }
                 }
             }
-        }
-        if !disabled.is_empty() {
-            self.write_state_store(&state)?;
-        }
+            disabled
+        })?;
         disabled.sort();
         Ok(disabled)
     }
@@ -820,22 +849,22 @@ impl PluginManager {
         let manifest =
             read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
 
-        let mut state = self.read_state_store()?;
-        let record = state
-            .plugins
-            .entry(id.to_string())
-            .or_insert_with(|| PluginStateRecord {
-                enabled,
-                installed_at: now_millis(),
-                ..PluginStateRecord::default()
-            });
-        record.enabled = enabled;
-        if enabled {
-            // Re-enabling clears an auto-disable (#4184); the host starts the
-            // plugin with a fresh crash budget.
-            record.auto_disabled_reason = None;
-        }
-        self.write_state_store(&state)?;
+        let ((), state) = plugin_state::update(&self.root, |state| {
+            let record = state
+                .plugins
+                .entry(id.to_string())
+                .or_insert_with(|| PluginStateRecord {
+                    enabled,
+                    installed_at: now_millis(),
+                    ..PluginStateRecord::default()
+                });
+            record.enabled = enabled;
+            if enabled {
+                // Re-enabling clears an auto-disable (#4184); the host starts
+                // the plugin with a fresh crash budget.
+                record.auto_disabled_reason = None;
+            }
+        })?;
 
         let mut plugin = self.installed_plugin_from(manifest, &state, &dir);
 
@@ -1086,16 +1115,29 @@ impl PluginManager {
         Ok(plugin_state::read(&self.root)?)
     }
 
+    #[cfg(test)]
     fn write_state_store(&self, store: &StateStore) -> Result<(), PluginManagerError> {
         Ok(plugin_state::write(&self.root, store)?)
     }
 
     fn read_settings_store(&self) -> Result<SettingsStore, PluginManagerError> {
-        read_json_or_default(&self.settings_path())
+        read_settings_file(&self.settings_path())
     }
 
+    /// Persist the settings store through the shared layer (#4334): refused
+    /// over a newer file, a corrupt file is backed up first, then a unique
+    /// fsynced temp file is renamed over the target.
     fn write_settings_store(&self, store: &SettingsStore) -> Result<(), PluginManagerError> {
-        write_json_atomic(&self.root, &self.settings_path(), store)
+        let path = self.settings_path();
+        persist::prepare_overwrite::<SettingsStore>(&path, SETTINGS_FILE_NAME, SETTINGS_VERSION)
+            .map_err(|e| PluginManagerError::Store(e.to_string()))?;
+        std::fs::create_dir_all(&self.root)?;
+        let mut out = store.clone();
+        out.version = SETTINGS_VERSION;
+        let json = serde_json::to_string_pretty(&out)
+            .map_err(|e| PluginManagerError::Store(e.to_string()))?;
+        persist::write_atomic(&path, json)?;
+        Ok(())
     }
 }
 
@@ -1109,7 +1151,7 @@ impl PluginManager {
 /// at session creation (PLG-008) without coupling to a manager.
 #[must_use]
 pub fn read_stored_settings(plugins_root: &Path, id: &str) -> Map<String, Value> {
-    read_json_or_default::<SettingsStore>(&plugins_root.join(SETTINGS_FILE_NAME))
+    read_settings_file(&plugins_root.join(SETTINGS_FILE_NAME))
         .ok()
         .and_then(|mut store| store.plugins.remove(id))
         .unwrap_or_default()
@@ -1152,7 +1194,7 @@ pub fn resolve_plugin_settings_json(plugins_root: &Path, manifest: &PluginManife
 
 /// Current time as milliseconds since the Unix epoch (0 if the clock predates
 /// the epoch, which cannot happen in practice).
-fn now_millis() -> u64 {
+pub(crate) fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -1162,7 +1204,7 @@ fn now_millis() -> u64 {
 /// Best-effort install time for a plugin directory that has no state record
 /// (e.g. dropped in by hand): its created time, falling back to modified, then
 /// to now.
-fn dir_install_time(dir: &Path) -> u64 {
+pub(crate) fn dir_install_time(dir: &Path) -> u64 {
     let meta = match std::fs::metadata(dir) {
         Ok(m) => m,
         Err(_) => return now_millis(),
@@ -1187,20 +1229,32 @@ fn dir_install_time(dir: &Path) -> u64 {
 /// root or an unreadable entry yields fewer pairs, never an error. The result is
 /// sorted by plugin id.
 pub fn installed_backend_types(plugins_root: &Path) -> Vec<(String, String)> {
-    let Ok(entries) = std::fs::read_dir(plugins_root) else {
-        return Vec::new();
-    };
-    let mut out: Vec<(String, String)> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
-        .filter_map(|entry| read_manifest(&entry.path()))
-        .filter_map(|manifest| {
+    let mut out: Vec<(String, String)> = installed_manifests(plugins_root)
+        .into_iter()
+        .filter_map(|(_, manifest)| {
             let backend = manifest.extensions.terminal_backend?;
             Some((manifest.id, backend.connection_type))
         })
         .collect();
     out.sort();
     out
+}
+
+/// Every installed plugin under `plugins_root` with a valid manifest, as
+/// `(plugin dir, manifest)`. A missing root or an unreadable entry yields
+/// fewer plugins, never an error.
+pub(crate) fn installed_manifests(plugins_root: &Path) -> Vec<(PathBuf, PluginManifest)> {
+    let Ok(entries) = std::fs::read_dir(plugins_root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|entry| {
+            let dir = entry.path();
+            read_manifest(&dir).map(|manifest| (dir, manifest))
+        })
+        .collect()
 }
 
 fn read_manifest(dir: &Path) -> Option<PluginManifest> {
@@ -1413,14 +1467,20 @@ fn extract_package_with_limits(
     Ok(())
 }
 
-/// Read a JSON document, returning `T::default()` when the file does not exist.
-fn read_json_or_default<T>(path: &Path) -> Result<T, PluginManagerError>
-where
-    T: serde::de::DeserializeOwned + Default,
-{
+/// Read the settings store at `path` (#4334). A missing file is empty; a file
+/// written by a newer schema is read leniently (saves over it are refused); a
+/// corrupt file reads as empty — never a hard error — and is backed up before
+/// the next save replaces it ([`persist::prepare_overwrite`]).
+fn read_settings_file(path: &Path) -> Result<SettingsStore, PluginManagerError> {
     match std::fs::read_to_string(path) {
-        Ok(s) => serde_json::from_str(&s).map_err(|e| PluginManagerError::Store(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+        Ok(s) => Ok(serde_json::from_str(&s).unwrap_or_else(|e| {
+            tracing::warn!(
+                "{} is corrupt ({e}); reading it as empty until the next save backs it up",
+                path.display()
+            );
+            SettingsStore::default()
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsStore::default()),
         Err(e) => Err(PluginManagerError::Io(e)),
     }
 }
@@ -1459,22 +1519,6 @@ impl From<StateError> for PluginManagerError {
             other => Self::Store(other.to_string()),
         }
     }
-}
-
-/// Serialize `value` to `path` atomically: write a sibling temp file, then
-/// rename it over the target so a crash mid-write cannot corrupt the store.
-fn write_json_atomic<T: Serialize>(
-    root: &Path,
-    path: &Path,
-    value: &T,
-) -> Result<(), PluginManagerError> {
-    std::fs::create_dir_all(root)?;
-    let json = serde_json::to_string_pretty(value)
-        .map_err(|e| PluginManagerError::Store(e.to_string()))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 #[cfg(test)]

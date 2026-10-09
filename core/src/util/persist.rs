@@ -369,7 +369,10 @@ mod tests {
             }
         });
         let last = std::fs::read_to_string(&path).unwrap();
-        assert!(docs.contains(&last), "the file is one writer's whole document");
+        assert!(
+            docs.contains(&last),
+            "the file is one writer's whole document"
+        );
         assert_eq!(names_in(tmp.path()), vec!["state.json".to_owned()]);
     }
 
@@ -423,7 +426,10 @@ mod tests {
             }
         );
         let msg = err.to_string();
-        assert!(msg.contains("s.json") && msg.contains("newer version"), "{msg}");
+        assert!(
+            msg.contains("s.json") && msg.contains("newer version"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -490,7 +496,10 @@ mod tests {
         let path = tmp.path().join("d.json");
         std::fs::write(&path, r#"{"version":5,"items":7}"#).unwrap();
         let err = prepare_overwrite::<Doc>(&path, "d", 1).unwrap_err();
-        assert!(matches!(err, OverwriteError::Newer(ref e) if e.found == 5), "{err}");
+        assert!(
+            matches!(err, OverwriteError::Newer(ref e) if e.found == 5),
+            "{err}"
+        );
         assert_eq!(names_in(tmp.path()), vec!["d.json".to_owned()]);
     }
 

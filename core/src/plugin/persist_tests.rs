@@ -226,7 +226,10 @@ fn a_newer_native_trust_file_fails_closed_and_is_refused() {
     std::fs::write(&path, newer).unwrap();
 
     let mut trust = NativeTrustStore::load(tmp.path());
-    assert!(!trust.is_native_enabled(), "a newer file authorizes nothing");
+    assert!(
+        !trust.is_native_enabled(),
+        "a newer file authorizes nothing"
+    );
     assert!(trust.set_native_enabled(true).is_err());
     assert_eq!(read(&path), newer);
 }
@@ -249,9 +252,7 @@ fn a_corrupt_publisher_store_is_backed_up_before_overwrite() {
         read(&tmp.path().join(format!("{TRUST_STORE_FILE_NAME}.bak"))),
         "{ torn"
     );
-    assert!(TrustStore::load(tmp.path())
-        .unwrap()
-        .is_trusted("sha256:k"));
+    assert!(TrustStore::load(tmp.path()).unwrap().is_trusted("sha256:k"));
 }
 
 /// A publisher trust store written by a newer schema trusts no pinned key and

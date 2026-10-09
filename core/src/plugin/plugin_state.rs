@@ -23,14 +23,27 @@
 //! written by a **newer** schema is still read — every field this build knows is
 //! optional — but never overwritten ([`write`] refuses); and unknown top-level
 //! and per-record fields round-trip unchanged.
+//!
+//! # Durability and recovery (#4334)
+//!
+//! Writes go through the shared [`crate::util::persist`] layer: a unique,
+//! fsynced temp file renamed over the target, after the version gate. Every
+//! read-modify-write — the manager's and the host's crash-handler
+//! [`record_auto_disable`] — runs under one lock ([`update`]), so no update is
+//! lost. A **corrupt** file is never a hard error: it is backed up to
+//! `plugin-state.json.bak[.N]` and the records are rebuilt from the installed
+//! plugin directories, every plugin **disabled** and every native plugin's
+//! trust acknowledgment revoked, so the recovery fails safe.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::signer_change::PackageSigner;
+use crate::util::persist::{self, OverwriteError};
 
 /// The state file name under the plugins root.
 pub(crate) const STATE_FILE_NAME: &str = "plugin-state.json";
@@ -43,7 +56,13 @@ pub(crate) const STATE_FILE_NAME: &str = "plugin-state.json";
 pub(crate) const CURRENT_VERSION: u32 = 2;
 
 /// The version an unversioned file is assumed to carry.
-const ASSUMED_VERSION: u32 = 1;
+const ASSUMED_VERSION: u32 = persist::ASSUMED_VERSION;
+
+/// Why a plugin is disabled after its record was rebuilt from a corrupt
+/// `plugin-state.json`.
+pub(crate) const RECOVERED_REASON: &str =
+    "Disabled because the plugin state file was damaged and has been rebuilt; \
+     re-enable it to use it again";
 
 /// What the manager verified about a plugin's **backend library** at install
 /// time, persisted so the host can bind a load to it (#2796).
@@ -149,21 +168,87 @@ pub(crate) fn state_path(plugins_root: &Path) -> PathBuf {
     plugins_root.join(STATE_FILE_NAME)
 }
 
+/// Serializes every read-modify-write of a `plugin-state.json` in this
+/// process: the manager's updates and the host's crash-handler auto-disable
+/// (PER2-004). One lock for all roots keeps it simple; the critical sections
+/// are short file operations.
+static STATE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_state() -> MutexGuard<'static, ()> {
+    STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Read the state store under `plugins_root`. A missing file is an empty store.
 ///
 /// A file written by a newer schema is still read (for display and the load
-/// binding); [`write`] refuses to overwrite it.
+/// binding); [`write`] refuses to overwrite it. A corrupt file is recovered
+/// (see the module docs), never a hard error.
 pub(crate) fn read(plugins_root: &Path) -> Result<StateStore, StateError> {
-    match std::fs::read_to_string(state_path(plugins_root)) {
-        Ok(raw) => parse(&raw),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StateStore::default()),
-        Err(e) => Err(StateError::Io(e)),
+    let _guard = lock_state();
+    read_unlocked(plugins_root)
+}
+
+fn read_unlocked(plugins_root: &Path) -> Result<StateStore, StateError> {
+    let path = state_path(plugins_root);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(StateStore::default()),
+        Err(e) => return Err(StateError::Io(e)),
+    };
+    match serde_json::from_str::<StateStore>(&raw) {
+        Ok(store) => {
+            persist::release_unbacked_corrupt(&path);
+            Ok(store)
+        }
+        Err(e) => Ok(recover_corrupt(plugins_root, &e.to_string())),
     }
 }
 
-/// Parse a state document. v1 → v2 is additive, so no migration step runs.
-fn parse(raw: &str) -> Result<StateStore, StateError> {
-    serde_json::from_str(raw).map_err(|e| StateError::Invalid(e.to_string()))
+/// Rebuild a corrupt `plugin-state.json` from the installed plugin
+/// directories (PER2-004): every plugin disabled with [`RECOVERED_REASON`],
+/// every native plugin's trust acknowledgment revoked, the original backed up
+/// before the rebuilt store replaces it. When the backup fails the rebuilt
+/// store is used in memory only and saves stay refused.
+fn recover_corrupt(plugins_root: &Path, detail: &str) -> StateStore {
+    let mut store = StateStore::default();
+    let mut native = Vec::new();
+    for (dir, manifest) in super::manager::installed_manifests(plugins_root) {
+        if manifest.extensions.terminal_backend.is_some() {
+            native.push(manifest.id.clone());
+        }
+        store.plugins.insert(
+            manifest.id,
+            PluginStateRecord {
+                enabled: false,
+                installed_at: super::manager::dir_install_time(&dir),
+                auto_disabled_reason: Some(RECOVERED_REASON.to_owned()),
+                ..PluginStateRecord::default()
+            },
+        );
+    }
+    // Revoke first: re-enabling a native plugin must ask for trust again even
+    // if the rebuilt file cannot be written.
+    let mut trust = super::native_trust::NativeTrustStore::load(plugins_root);
+    for id in &native {
+        if let Err(e) = trust.revoke(id) {
+            tracing::warn!(
+                target: super::PLUGIN_LOG_TARGET,
+                "[{id}] could not revoke native trust after rebuilding plugin state: {e}"
+            );
+        }
+    }
+    let written = write_unlocked(plugins_root, &store);
+    tracing::error!(
+        target: super::PLUGIN_LOG_TARGET,
+        "{STATE_FILE_NAME} was corrupt ({detail}); rebuilt {} record(s) from the installed \
+         plugins, all disabled: {}",
+        store.plugins.len(),
+        match &written {
+            Ok(()) => "the original was backed up".to_owned(),
+            Err(e) => format!("not saved ({e})"),
+        }
+    );
+    store
 }
 
 /// Read one plugin's record, or `None` when the store or the record is absent.
@@ -174,63 +259,72 @@ pub(crate) fn read_record(
     Ok(read(plugins_root)?.plugins.remove(id))
 }
 
-/// Write `store` atomically (temp file + rename), stamped with the current
-/// schema version. Refuses to overwrite a file written by a newer schema.
+/// Write `store` atomically, stamped with the current schema version. Refuses
+/// to overwrite a file written by a newer schema; backs up a corrupt one first.
+/// Production code goes through [`update`].
+#[cfg(test)]
 pub(crate) fn write(plugins_root: &Path, store: &StateStore) -> Result<(), StateError> {
+    let _guard = lock_state();
+    write_unlocked(plugins_root, store)
+}
+
+fn write_unlocked(plugins_root: &Path, store: &StateStore) -> Result<(), StateError> {
     let path = state_path(plugins_root);
-    if let Some(found) = on_disk_version(&path) {
-        if found > CURRENT_VERSION {
-            return Err(StateError::Newer { found });
-        }
-    }
+    persist::prepare_overwrite::<StateStore>(&path, STATE_FILE_NAME, CURRENT_VERSION).map_err(
+        |e| match e {
+            OverwriteError::Newer(newer) => StateError::Newer { found: newer.found },
+            other => StateError::Invalid(other.to_string()),
+        },
+    )?;
     std::fs::create_dir_all(plugins_root)?;
     let mut out = store.clone();
     out.version = CURRENT_VERSION;
     let json =
         serde_json::to_string_pretty(&out).map_err(|e| StateError::Invalid(e.to_string()))?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, &path)?;
+    persist::write_atomic(&path, json)?;
+    persist::release_unbacked_corrupt(&path);
     Ok(())
 }
 
+/// Read-modify-write the state store under the state lock, so concurrent
+/// updates (the manager's, the host's auto-disable) never lose one another.
+/// Returns `f`'s result and the store as written.
+pub(crate) fn update<R>(
+    plugins_root: &Path,
+    f: impl FnOnce(&mut StateStore) -> R,
+) -> Result<(R, StateStore), StateError> {
+    let _guard = lock_state();
+    let mut store = read_unlocked(plugins_root)?;
+    let out = f(&mut store);
+    write_unlocked(plugins_root, &store)?;
+    Ok((out, store))
+}
+
 /// Persist that the host auto-disabled plugin `id` for `reason` (#4184):
-/// `enabled = false` plus the reason, read-modify-written atomically. A plugin
-/// without a record (installed before records existed) gets one.
+/// `enabled = false` plus the reason. A plugin without a record (installed
+/// before records existed) gets one.
 ///
 /// The host calls this from its crash handling, outside the manager's lock;
-/// the manager's own updates are short read-modify-writes too, so the window
-/// for a lost update is a few milliseconds around a fourth crash.
+/// [`update`]'s lock serializes it with the manager's own updates (PER2-004).
 pub(crate) fn record_auto_disable(
     plugins_root: &Path,
     id: &str,
     reason: &str,
 ) -> Result<(), StateError> {
-    let mut store = read(plugins_root)?;
-    let record = store.plugins.entry(id.to_owned()).or_insert_with(|| {
-        let installed_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-        PluginStateRecord {
-            installed_at,
-            ..PluginStateRecord::default()
-        }
-    });
-    record.enabled = false;
-    record.auto_disabled_reason = Some(reason.to_owned());
-    write(plugins_root, &store)
-}
-
-/// The `version` of the file at `path`, when it exists and parses. Accepts a
-/// number or a numeric string, like the desktop stores.
-fn on_disk_version(path: &Path) -> Option<u32> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(&raw).ok()?;
-    match value.get("version")? {
-        Value::Number(n) => u32::try_from(n.as_u64()?).ok(),
-        Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    }
+    update(plugins_root, |store| {
+        let record = store.plugins.entry(id.to_owned()).or_insert_with(|| {
+            let installed_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+            PluginStateRecord {
+                installed_at,
+                ..PluginStateRecord::default()
+            }
+        });
+        record.enabled = false;
+        record.auto_disabled_reason = Some(reason.to_owned());
+    })
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -371,10 +465,16 @@ mod tests {
         assert_eq!(raw["plugins"]["p"]["later"], "x");
     }
 
+    /// PER2-004: a corrupt file is recovered (backed up, rebuilt from the
+    /// installed plugins — none here), never a hard error.
     #[test]
-    fn a_corrupt_file_is_an_error_not_an_empty_store() {
+    fn a_corrupt_file_is_recovered_not_an_error() {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(state_path(tmp.path()), "{not json").unwrap();
-        assert!(matches!(read(tmp.path()), Err(StateError::Invalid(_))));
+        assert!(read(tmp.path()).unwrap().plugins.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("plugin-state.json.bak")).unwrap(),
+            "{not json"
+        );
     }
 }
