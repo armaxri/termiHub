@@ -66,6 +66,10 @@ pub struct SshShellHandle {
     /// integration, #4143) or because it typed env / X11 setup lines (#4147);
     /// [`RemoteShell::Unknown`] otherwise.
     pub remote_shell: RemoteShell,
+    /// Whether the connector already typed the shell-integration line, as
+    /// part of its sequenced session setup (#4604). The backend types it
+    /// itself otherwise.
+    pub integration_typed: bool,
 }
 
 // ── Shell-refusal detection (#4078) ───────────────────────────────
@@ -132,9 +136,12 @@ pub trait SshConnector: Send + Sync + 'static {
     ) -> Result<SshShellHandle, SessionError>;
 
     /// Like [`open_shell`](Self::open_shell), but when `detect_remote_shell` is
-    /// set, also probe the remote login shell (#4143) — before the shell
-    /// channel opens — and report it in [`SshShellHandle::remote_shell`]. Shell
-    /// integration needs it to pick a setup line the shell can parse.
+    /// set — shell integration is on — also probe the remote login shell
+    /// (#4143) — before the shell channel opens — and report it in
+    /// [`SshShellHandle::remote_shell`]. Shell integration needs it to pick a
+    /// setup line the shell can parse. A connector may also type that line
+    /// itself, sequenced with its other setup (#4604), and say so in
+    /// [`SshShellHandle::integration_typed`].
     ///
     /// The default ignores the flag (the handle reports whatever `open_shell`
     /// set), which keeps test doubles simple.
@@ -418,15 +425,28 @@ impl SshConnector for RusshSshConnector {
 
         // Type the setup lines into the shell, in its own syntax and line
         // ending (#4147): the env-var fallback — covering names the server's
-        // `AcceptEnv` rejected above — then the X11 `DISPLAY` / `xauth` lines.
-        // Never log these lines: they embed env values and the
-        // MIT-MAGIC-COOKIE-1 secret. A PowerShell login shell on Linux/macOS
-        // gets them only once its first prompt is up (#4148): the gate holds
-        // them, and every later write, until then.
+        // `AcceptEnv` rejected above — then the X11 `DISPLAY` / `xauth` lines,
+        // then the shell-integration line (#4143). Never log these lines: they
+        // embed env values and the MIT-MAGIC-COOKIE-1 secret. A PowerShell
+        // login shell gets them only once its first prompt is up (#4148,
+        // #4604), and the user's input only once they have run: the gate holds
+        // both until then.
+        let integration_line = if detect_remote_shell {
+            remote_shell::integration_setup_line(remote_shell)
+        } else {
+            None
+        };
+        let setup_done = if integration_line.is_some() {
+            remote_shell::SetupDone::PromptMark
+        } else {
+            remote_shell::SetupDone::OutputSettled
+        };
         let mut gate = SetupGate::new(
             remote_shell::defers_setup_until_prompt(remote_shell),
+            setup_done,
             shell_requested_at,
         );
+        let integration_typed = integration_line.is_some();
         let mut setup: Vec<(&str, String)> = Vec::new();
         if let Some(line) = remote_shell::env_setup_line(remote_shell, &config.env) {
             setup.push(("env", line));
@@ -438,8 +458,11 @@ impl SshConnector for RusshSshConnector {
                 setup.push(("x11", line));
             }
         }
+        if let Some(line) = integration_line {
+            setup.push(("shell integration", line));
+        }
         for (what, line) in setup {
-            if let Some(data) = gate.write(line.into_bytes()) {
+            if let Some(data) = gate.setup(line.into_bytes()) {
                 if let Err(e) = channel.data(&data[..]).await {
                     tracing::warn!(
                         setup = what,
@@ -471,9 +494,11 @@ impl SshConnector for RusshSshConnector {
             // Success / Failure answers it.
             let mut awaiting_shell_reply = true;
             loop {
-                // Release the held setup once the prompt is up (#4148).
-                if let Some(burst) = gate.poll(std::time::Instant::now()) {
-                    tracing::debug!(writes = burst.len(), "releasing the held session setup");
+                // Type the held setup once the prompt is up (#4148), then
+                // release the user's held input once the setup has run (#4604).
+                let burst = gate.poll(std::time::Instant::now());
+                if !burst.is_empty() {
+                    tracing::debug!(writes = burst.len(), "releasing held session writes");
                     let mut ok = true;
                     for data in burst {
                         ok = should_continue_after_send(channel.data(&data[..]).await, "write");
@@ -495,7 +520,7 @@ impl SshConnector for RusshSshConnector {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(ChannelCmd::Write(data)) => {
-                                // Held (in order) until the prompt, or sent now.
+                                // Held (in order) until the setup has run, or sent now.
                                 let Some(data) = gate.write(data) else { continue };
                                 if !should_continue_after_send(
                                     channel.data(&data[..]).await,
@@ -522,7 +547,7 @@ impl SshConnector for RusshSshConnector {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
-                                gate.on_output(std::time::Instant::now());
+                                gate.on_output(std::time::Instant::now(), data);
                                 capture_early_output(&mut early_output, data);
                                 if data_tx.send(data.to_vec()).is_err() {
                                     break;
@@ -542,7 +567,7 @@ impl SshConnector for RusshSshConnector {
                             _ => {}
                         }
                     }
-                    // The held setup's settle / cap deadline (#4148).
+                    // The gate's settle / retype / cap deadline (#4148, #4604).
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(gate_check)),
                         if gate.is_holding() => {}
                 }
@@ -596,6 +621,7 @@ impl SshConnector for RusshSshConnector {
             extensions,
             shell_refused,
             remote_shell,
+            integration_typed,
         })
     }
 }

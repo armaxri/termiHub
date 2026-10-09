@@ -39,11 +39,14 @@
 //! in the detected shell's syntax and line ending, or skipped (with a log
 //! line) when the shell has no safe equivalent.
 //!
-//! A PowerShell login shell on Linux/macOS needs one more thing (#4148): its
-//! setup is held back until the first prompt has printed ([`SetupGate`]).
-//! Typed earlier, it lands in the tty while it is still in cooked mode, whose
-//! `ICRNL` turns the CR into LF — a continuation for PSReadLine, which then
-//! merges the user's first command into the setup line.
+//! A PowerShell login shell needs one more thing (#4148, #4604): its setup is
+//! held back until the first prompt has printed, and the user's input until
+//! the setup has run ([`SetupGate`]). Typed earlier on Linux/macOS, the setup
+//! lands in the tty while it is still in cooked mode, whose `ICRNL` turns the
+//! CR into LF — a continuation for PSReadLine, which then merges the user's
+//! first command into the setup line. On Windows, input that arrives while
+//! `powershell.exe` is still starting can be dropped, so the first command ran
+//! without the configured environment.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -52,6 +55,7 @@ use tracing::{debug, warn};
 
 use super::exec::ssh_exec_with_stdin_timeout;
 use super::handler::SshSession;
+use crate::output::prompt_mark::PromptMarkDetector;
 use crate::session::shell::osc7_setup_command;
 
 /// Opening marker of the probe's output.
@@ -145,9 +149,10 @@ pub async fn detect_remote_shell(session: &SshSession) -> RemoteShell {
 ///   detection existed.
 /// - PowerShell (Windows or Unix): the PowerShell OSC 7 / OSC 133 prompt
 ///   override, ended with CR, which is Enter for PSReadLine (an LF would leave
-///   the line unsubmitted and merge it with the user's first command). On a
-///   Unix host the connector holds it back until the first prompt
-///   ([`SetupGate`]), so the tty no longer maps that CR to LF.
+///   the line unsubmitted and merge it with the user's first command). The
+///   connector holds it back until the first prompt ([`SetupGate`]), so a
+///   Unix tty no longer maps that CR to LF and a starting Windows shell
+///   cannot drop it.
 /// - cmd.exe and unknown shells: nothing.
 pub fn integration_setup_line(shell: RemoteShell) -> Option<String> {
     match shell {
@@ -170,12 +175,15 @@ pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
     }
 }
 
-/// Whether the setup lines for `shell` must wait for its first prompt (see
-/// [`SetupGate`]): only a PowerShell login shell on Linux/macOS (#4148). On
-/// Windows, ConPTY delivers the CR as Enter whenever it arrives, and POSIX
-/// shells read the LF-ended lines fine from the cooked tty.
+/// Whether the setup lines for `shell` must wait for its first prompt, and the
+/// user's input for the setup (see [`SetupGate`]): every PowerShell login
+/// shell. On Linux/macOS the cooked tty turns the setup's CR into LF until
+/// PSReadLine is up (#4148); on Windows input typed while `powershell.exe` is
+/// still starting can be dropped, so the first command ran without the
+/// configured environment (#4604). POSIX shells read the LF-ended lines fine
+/// from the cooked tty, and cmd.exe gets no integration line to sequence.
 pub fn defers_setup_until_prompt(shell: RemoteShell) -> bool {
-    shell == RemoteShell::UnixPowerShell
+    matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell)
 }
 
 /// Whether `name` is safe to type as an environment variable name in every
@@ -378,86 +386,226 @@ pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str
 }
 
 /// How long the shell's output must stay quiet after it printed something
-/// before a held-back setup is released ([`SetupGate`]).
+/// before its first prompt counts as up ([`SetupGate`]).
 pub const SETUP_GATE_SETTLE: Duration = Duration::from_millis(300);
 
-/// Upper bound on holding the setup back, from the shell request on: a shell
-/// that prints nothing (or never stops printing) still gets its setup.
+/// Upper bound on each of the gate's two waits — for the first prompt, then
+/// for the setup to finish: a shell that prints nothing (or never stops
+/// printing) still gets its setup, and the user's input still flows.
 pub const SETUP_GATE_CAP: Duration = Duration::from_secs(8);
 
-/// Holds the session's typed input back until the remote shell's first prompt
-/// has printed, for a PowerShell login shell on Linux/macOS (#4148).
+/// How long after typing the setup the gate waits for it to report back before
+/// typing it again (#4604), until [`SETUP_GATE_CAP`]. The setup lines run in
+/// milliseconds once the prompt is up, so silence this long means the shell
+/// never received them. Every setup line is idempotent, so a second copy is
+/// harmless.
+pub const SETUP_GATE_RETYPE: Duration = Duration::from_secs(3);
+
+/// How a held-back setup proves it has run ([`SetupGate`], #4604).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupDone {
+    /// The setup includes the shell-integration line, whose prompt prints the
+    /// OSC 133 prompt-start mark: the first mark after the setup was typed
+    /// means every setup line (typed before it) has run.
+    PromptMark,
+    /// No integration line: the setup has run once the shell answered it (the
+    /// echo and the next prompt) and then went quiet for [`SETUP_GATE_SETTLE`].
+    OutputSettled,
+}
+
+/// The gate's phase.
+#[derive(Debug)]
+enum Phase {
+    /// Every write passes straight through.
+    Open,
+    /// Waiting for the shell's first prompt; nothing has been typed yet.
+    AwaitPrompt {
+        deadline: Instant,
+        last_output: Option<Instant>,
+    },
+    /// The setup has been typed; the user's input waits until it has run.
+    AwaitSetup {
+        deadline: Instant,
+        retype_at: Instant,
+        last_output: Option<Instant>,
+        marks: PromptMarkDetector,
+    },
+}
+
+/// Sequences a PowerShell session's typed setup against the shell's startup
+/// and the user's input (#4148, #4604).
 ///
-/// Until PSReadLine owns the terminal the tty is in cooked mode, and its
-/// `ICRNL` turns the setup line's CR (Enter) into LF on arrival — a
-/// continuation for PSReadLine. Once the prompt is up the tty is raw and the
-/// CR reaches PSReadLine as Enter. "Prompt is up" is approximated as: output
-/// has arrived and then stayed quiet for [`SETUP_GATE_SETTLE`] (a login shell
-/// is idle exactly when it waits at its prompt), bounded by
-/// [`SETUP_GATE_CAP`].
+/// Two races it closes:
 ///
-/// Everything written while holding — the connector's own setup lines, the
-/// shell-integration line and any typeahead — is released in its original
-/// order, in one burst, so nothing can overtake the setup.
+/// - **Typed too early, the setup is mangled or lost.** On a Linux/macOS
+///   PowerShell host the tty is still in cooked mode until PSReadLine owns it,
+///   and its `ICRNL` turns the setup line's CR (Enter) into LF — a
+///   continuation for PSReadLine (#4148). On a Windows host, input that arrives
+///   while `powershell.exe` is still starting is sometimes dropped outright, so
+///   the env setup never ran and the first command saw an empty variable
+///   (#4604). So the setup is held until the first prompt is up — approximated
+///   as: output has arrived and then stayed quiet for [`SETUP_GATE_SETTLE`] (a
+///   login shell is idle exactly when it waits at its prompt), bounded by
+///   [`SETUP_GATE_CAP`].
+/// - **The user's input must run after the setup.** Releasing the setup does
+///   not prove the shell ran it, so the user's input (typeahead, the first
+///   command, a connection's initial command) stays held until the setup
+///   reports back ([`SetupDone`]) — a readiness signal from the shell itself,
+///   not a timer. Each time it does not report within [`SETUP_GATE_RETYPE`]
+///   the setup is typed again; [`SETUP_GATE_CAP`] bounds the wait.
+///
+/// Held user input is released in its original order, after the setup.
 #[derive(Debug)]
 pub struct SetupGate {
-    /// `Some` while holding: the writes queued so far, in order.
-    held: Option<Vec<Vec<u8>>>,
-    deadline: Instant,
-    last_output: Option<Instant>,
+    phase: Phase,
+    done: SetupDone,
+    /// The setup writes, in order — kept to type them (again).
+    setup: Vec<Vec<u8>>,
+    /// The user's writes held so far, in order.
+    held: Vec<Vec<u8>>,
 }
 
 impl SetupGate {
     /// A gate that holds when `hold` is set (see [`defers_setup_until_prompt`])
-    /// and is open — passing every write straight through — otherwise.
-    pub fn new(hold: bool, now: Instant) -> Self {
+    /// and is open — passing every write straight through — otherwise. `done`
+    /// says how the setup reports that it has run.
+    pub fn new(hold: bool, done: SetupDone, now: Instant) -> Self {
+        let phase = if hold {
+            Phase::AwaitPrompt {
+                deadline: now + SETUP_GATE_CAP,
+                last_output: None,
+            }
+        } else {
+            Phase::Open
+        };
         Self {
-            held: hold.then(Vec::new),
-            deadline: now + SETUP_GATE_CAP,
-            last_output: None,
+            phase,
+            done,
+            setup: Vec::new(),
+            held: Vec::new(),
         }
     }
 
-    /// Whether writes are still being held back.
+    /// Whether anything is still being held back.
     pub fn is_holding(&self) -> bool {
-        self.held.is_some()
+        !matches!(self.phase, Phase::Open)
     }
 
-    /// Queue `data` while holding, or hand it back to be sent right away.
-    pub fn write(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
-        match self.held.as_mut() {
-            Some(held) => {
-                held.push(data);
+    /// Add a setup line: held until the first prompt, or handed back to be
+    /// sent right away when the gate is open. Setup is only added before the
+    /// session's first write.
+    pub fn setup(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
+        match self.phase {
+            Phase::Open => Some(data),
+            _ => {
+                self.setup.push(data);
                 None
             }
-            None => Some(data),
         }
     }
 
-    /// Note that the shell printed something at `now`.
-    pub fn on_output(&mut self, now: Instant) {
-        if self.held.is_some() {
-            self.last_output = Some(now);
+    /// Queue the user's `data` while holding, or hand it back to be sent now.
+    pub fn write(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
+        match self.phase {
+            Phase::Open => Some(data),
+            _ => {
+                self.held.push(data);
+                None
+            }
+        }
+    }
+
+    /// Note that the shell printed `data` at `now`.
+    pub fn on_output(&mut self, now: Instant, data: &[u8]) {
+        match &mut self.phase {
+            Phase::Open => {}
+            Phase::AwaitPrompt { last_output, .. } => *last_output = Some(now),
+            Phase::AwaitSetup {
+                last_output, marks, ..
+            } => {
+                *last_output = Some(now);
+                if marks.feed(data) && self.done == SetupDone::PromptMark {
+                    // The setup's own prompt is up: it has run.
+                    self.phase = Phase::Open;
+                }
+            }
         }
     }
 
     /// When the gate should next be polled, while holding.
     pub fn next_check(&self) -> Option<Instant> {
-        self.held.as_ref()?;
-        Some(match self.last_output {
-            Some(last) => (last + SETUP_GATE_SETTLE).min(self.deadline),
-            None => self.deadline,
-        })
+        match &self.phase {
+            Phase::Open => None,
+            Phase::AwaitPrompt {
+                deadline,
+                last_output,
+            } => Some(match last_output {
+                Some(last) => (*last + SETUP_GATE_SETTLE).min(*deadline),
+                None => *deadline,
+            }),
+            Phase::AwaitSetup {
+                deadline,
+                retype_at,
+                last_output,
+                ..
+            } => {
+                let mut due = (*deadline).min(*retype_at);
+                if let (SetupDone::OutputSettled, Some(last)) = (self.done, last_output) {
+                    due = due.min(*last + SETUP_GATE_SETTLE);
+                }
+                Some(due)
+            }
+        }
     }
 
-    /// Release the held writes (in order) once the prompt has settled or the
-    /// cap has passed; `None` while still holding or when already open.
-    pub fn poll(&mut self, now: Instant) -> Option<Vec<Vec<u8>>> {
-        let due = self.next_check()?;
-        if now >= due {
-            self.held.take()
-        } else {
-            None
+    /// The writes to send now, in order — empty while nothing is due. Moves
+    /// the gate on: the first prompt is up (type the setup), the setup has not
+    /// reported back (type it again), or the setup has run or the cap passed
+    /// (open, releasing the user's held input).
+    pub fn poll(&mut self, now: Instant) -> Vec<Vec<u8>> {
+        let Some(due) = self.next_check() else {
+            // Open — possibly just opened by a prompt mark in `on_output`.
+            return std::mem::take(&mut self.held);
+        };
+        if now < due {
+            return Vec::new();
+        }
+        match &mut self.phase {
+            Phase::Open => std::mem::take(&mut self.held),
+            Phase::AwaitPrompt { .. } => {
+                if self.setup.is_empty() {
+                    self.phase = Phase::Open;
+                    return std::mem::take(&mut self.held);
+                }
+                self.phase = Phase::AwaitSetup {
+                    deadline: now + SETUP_GATE_CAP,
+                    retype_at: now + SETUP_GATE_RETYPE,
+                    last_output: None,
+                    marks: PromptMarkDetector::new(),
+                };
+                self.setup.clone()
+            }
+            Phase::AwaitSetup {
+                deadline,
+                retype_at,
+                last_output,
+                ..
+            } => {
+                let settled = self.done == SetupDone::OutputSettled
+                    && last_output.is_some_and(|last| now >= last + SETUP_GATE_SETTLE);
+                if settled || now >= *deadline {
+                    if !settled {
+                        warn!("the session setup did not report back; releasing input anyway");
+                    }
+                    self.phase = Phase::Open;
+                    return std::mem::take(&mut self.held);
+                }
+                // The retype is due: the shell has not answered the setup.
+                *retype_at = now + SETUP_GATE_RETYPE;
+                *last_output = None;
+                debug!("the session setup did not report back; typing it again");
+                self.setup.clone()
+            }
         }
     }
 }
@@ -875,11 +1023,11 @@ mod tests {
     }
 
     #[test]
-    fn only_unix_powershell_defers_its_setup() {
+    fn every_powershell_defers_its_setup() {
         for shell in ALL_SHELLS {
             assert_eq!(
                 defers_setup_until_prompt(shell),
-                shell == RemoteShell::UnixPowerShell,
+                matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell),
                 "{shell:?}"
             );
         }
@@ -893,62 +1041,182 @@ mod tests {
         );
     }
 
+    /// The prompt the integration line installs prints this first (#4345).
+    const MARKED_PROMPT: &[u8] =
+        b"\x1b]133;D;0\x07\x1b]7;file://H/C:/x\x07\x1b]133;A\x07PS C:\\x> ";
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    /// Feed the gate one output chunk at `at`, then poll it there.
+    fn output(gate: &mut SetupGate, at: Instant, data: &[u8]) -> Vec<Vec<u8>> {
+        gate.on_output(at, data);
+        gate.poll(at)
+    }
+
     #[test]
     fn open_gate_passes_writes_through() {
         let now = Instant::now();
-        let mut gate = SetupGate::new(false, now);
+        let mut gate = SetupGate::new(false, SetupDone::PromptMark, now);
         assert!(!gate.is_holding());
+        assert_eq!(gate.setup(b"env".to_vec()), Some(b"env".to_vec()));
         assert_eq!(gate.write(b"x".to_vec()), Some(b"x".to_vec()));
         assert_eq!(gate.next_check(), None);
-        assert_eq!(gate.poll(now + SETUP_GATE_CAP * 2), None);
+        assert!(gate.poll(now + SETUP_GATE_CAP * 2).is_empty());
     }
 
+    /// #4604: the Windows PowerShell race. The env + integration setup and the
+    /// user's first command are all written while `powershell.exe` is still
+    /// starting. Nothing may reach the shell before its first prompt, and the
+    /// first command only after the setup's own prompt mark — in that order.
     #[test]
-    fn gate_holds_until_output_settles_then_releases_in_order() {
+    fn first_command_waits_for_the_setups_prompt_mark() {
         let t0 = Instant::now();
-        let mut gate = SetupGate::new(true, t0);
-        assert_eq!(gate.write(b"env".to_vec()), None);
-        assert_eq!(gate.write(b"integration".to_vec()), None);
-        // No output yet: the next check is the cap.
+        let mut gate = SetupGate::new(true, SetupDone::PromptMark, t0);
+        assert_eq!(gate.setup(b"$env:V='x'\r".to_vec()), None);
+        assert_eq!(gate.setup(b"<integration>\r".to_vec()), None);
+        assert_eq!(gate.write(b"'FIRST-' + $env:V\r".to_vec()), None);
         assert_eq!(gate.next_check(), Some(t0 + SETUP_GATE_CAP));
-        assert_eq!(gate.poll(t0 + Duration::from_secs(1)), None);
-        // The banner prints, then (still busy) the prompt.
-        let banner = t0 + Duration::from_millis(500);
-        gate.on_output(banner);
-        assert_eq!(gate.poll(banner + Duration::from_millis(100)), None);
-        let prompt = banner + Duration::from_millis(200);
-        gate.on_output(prompt);
-        assert_eq!(gate.next_check(), Some(prompt + SETUP_GATE_SETTLE));
-        assert_eq!(gate.poll(prompt + SETUP_GATE_SETTLE / 2), None);
-        // Typeahead queues behind the setup.
-        assert_eq!(gate.write(b"ls".to_vec()), None);
+
+        // The banner prints; the shell is still loading.
+        assert!(output(&mut gate, t0 + ms(400), b"Windows PowerShell\r\n").is_empty());
+        assert!(gate.poll(t0 + ms(600)).is_empty());
+        // The plain first prompt, then quiet: the setup — only — is typed.
+        assert!(output(&mut gate, t0 + ms(650), b"PS C:\\x> ").is_empty());
+        let typed = gate.poll(t0 + ms(650) + SETUP_GATE_SETTLE);
         assert_eq!(
-            gate.poll(prompt + SETUP_GATE_SETTLE),
-            Some(vec![
-                b"env".to_vec(),
-                b"integration".to_vec(),
-                b"ls".to_vec()
-            ])
+            typed,
+            vec![b"$env:V='x'\r".to_vec(), b"<integration>\r".to_vec()]
+        );
+        assert!(gate.is_holding(), "the first command still waits");
+
+        // The setup's echo and quiet do not release the first command…
+        let t1 = t0 + ms(650) + SETUP_GATE_SETTLE;
+        assert!(output(&mut gate, t1 + ms(20), b"$env:V='x'\r\n").is_empty());
+        assert!(gate.poll(t1 + ms(20) + SETUP_GATE_SETTLE * 2).is_empty());
+        // …more typeahead queues behind it…
+        assert_eq!(gate.write(b"ls\r".to_vec()), None);
+        // …and the integration prompt's mark does, in order.
+        assert_eq!(
+            output(&mut gate, t1 + ms(900), MARKED_PROMPT),
+            vec![b"'FIRST-' + $env:V\r".to_vec(), b"ls\r".to_vec()]
         );
         assert!(!gate.is_holding());
-        assert_eq!(gate.write(b"pwd".to_vec()), Some(b"pwd".to_vec()));
+        assert_eq!(gate.write(b"pwd\r".to_vec()), Some(b"pwd\r".to_vec()));
     }
 
     #[test]
-    fn gate_releases_at_the_cap_for_a_silent_or_chatty_shell() {
+    fn a_prompt_mark_before_the_setup_is_typed_does_not_count() {
+        // A profile prompt that prints its own OSC 133 (oh-my-posh) proves
+        // the shell is up, not that the setup ran.
         let t0 = Instant::now();
-        let mut silent = SetupGate::new(true, t0);
-        silent.write(b"a".to_vec());
-        assert_eq!(silent.poll(t0 + SETUP_GATE_CAP), Some(vec![b"a".to_vec()]));
+        let mut gate = SetupGate::new(true, SetupDone::PromptMark, t0);
+        gate.setup(b"setup\r".to_vec());
+        gate.write(b"first\r".to_vec());
+        assert!(output(&mut gate, t0 + ms(100), MARKED_PROMPT).is_empty());
+        assert_eq!(
+            gate.poll(t0 + ms(100) + SETUP_GATE_SETTLE),
+            vec![b"setup\r".to_vec()]
+        );
+        assert!(gate.is_holding());
+    }
 
-        let mut chatty = SetupGate::new(true, t0);
-        chatty.write(b"b".to_vec());
+    #[test]
+    fn a_mark_split_over_chunks_releases_the_input() {
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, SetupDone::PromptMark, t0);
+        gate.setup(b"setup\r".to_vec());
+        gate.write(b"first\r".to_vec());
+        output(&mut gate, t0, b"PS> ");
+        let t1 = t0 + SETUP_GATE_SETTLE;
+        assert_eq!(gate.poll(t1), vec![b"setup\r".to_vec()]);
+        assert!(output(&mut gate, t1 + ms(5), b"\x1b]13").is_empty());
+        assert_eq!(
+            output(&mut gate, t1 + ms(6), b"3;A\x07PS> "),
+            vec![b"first\r".to_vec()]
+        );
+    }
+
+    #[test]
+    fn a_setup_the_shell_never_answered_is_typed_again() {
+        // #4604: the starting shell dropped the first copy (no echo, no mark).
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, SetupDone::PromptMark, t0);
+        gate.setup(b"setup\r".to_vec());
+        gate.write(b"first\r".to_vec());
+        output(&mut gate, t0, b"PS> ");
+        let t1 = t0 + SETUP_GATE_SETTLE;
+        assert_eq!(gate.poll(t1), vec![b"setup\r".to_vec()]);
+        assert_eq!(gate.next_check(), Some(t1 + SETUP_GATE_RETYPE));
+        assert!(gate.poll(t1 + SETUP_GATE_RETYPE - ms(1)).is_empty());
+        assert_eq!(
+            gate.poll(t1 + SETUP_GATE_RETYPE),
+            vec![b"setup\r".to_vec()],
+            "the setup is typed again, still ahead of the first command"
+        );
+        // Again after another silent stretch, but never past the cap.
+        assert_eq!(gate.next_check(), Some(t1 + SETUP_GATE_RETYPE * 2));
+        assert_eq!(
+            output(&mut gate, t1 + SETUP_GATE_RETYPE + ms(50), MARKED_PROMPT),
+            vec![b"first\r".to_vec()]
+        );
+    }
+
+    #[test]
+    fn without_integration_the_setups_answer_settling_releases_the_input() {
+        // Env only (integration off): no mark to wait for, so the shell's
+        // answer to the setup — its echo and next prompt — then quiet.
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, SetupDone::OutputSettled, t0);
+        gate.setup(b"env\r".to_vec());
+        gate.write(b"first\r".to_vec());
+        output(&mut gate, t0, b"PS> ");
+        let t1 = t0 + SETUP_GATE_SETTLE;
+        assert_eq!(gate.poll(t1), vec![b"env\r".to_vec()]);
+        // Typed but not yet answered: still holding.
+        assert!(gate.poll(t1 + SETUP_GATE_SETTLE * 2).is_empty());
+        let answered = t1 + ms(40);
+        assert!(output(&mut gate, answered, b"env\r\nPS> ").is_empty());
+        assert!(gate.poll(answered + SETUP_GATE_SETTLE - ms(1)).is_empty());
+        assert_eq!(
+            gate.poll(answered + SETUP_GATE_SETTLE),
+            vec![b"first\r".to_vec()]
+        );
+        assert!(!gate.is_holding());
+    }
+
+    #[test]
+    fn both_waits_are_capped_for_a_silent_or_chatty_shell() {
+        let t0 = Instant::now();
+        let mut silent = SetupGate::new(true, SetupDone::PromptMark, t0);
+        silent.setup(b"a".to_vec());
+        silent.write(b"user".to_vec());
+        assert_eq!(silent.poll(t0 + SETUP_GATE_CAP), vec![b"a".to_vec()]);
+        let t1 = t0 + SETUP_GATE_CAP;
+        assert_eq!(silent.poll(t1 + SETUP_GATE_RETYPE), vec![b"a".to_vec()]);
+        assert_eq!(silent.poll(t1 + SETUP_GATE_RETYPE * 2), vec![b"a".to_vec()]);
+        assert_eq!(silent.poll(t1 + SETUP_GATE_CAP), vec![b"user".to_vec()]);
+        assert!(!silent.is_holding());
+
+        let mut chatty = SetupGate::new(true, SetupDone::PromptMark, t0);
+        chatty.setup(b"b".to_vec());
         let mut t = t0;
         while t < t0 + SETUP_GATE_CAP {
-            chatty.on_output(t);
+            chatty.on_output(t, b"noise");
             assert!(chatty.next_check().unwrap() <= t0 + SETUP_GATE_CAP);
-            t += Duration::from_millis(100);
+            t += ms(100);
         }
-        assert_eq!(chatty.poll(t0 + SETUP_GATE_CAP), Some(vec![b"b".to_vec()]));
+        assert_eq!(chatty.poll(t0 + SETUP_GATE_CAP), vec![b"b".to_vec()]);
+    }
+
+    #[test]
+    fn a_holding_gate_without_setup_opens_at_the_first_prompt() {
+        let t0 = Instant::now();
+        let mut gate = SetupGate::new(true, SetupDone::OutputSettled, t0);
+        gate.write(b"first\r".to_vec());
+        output(&mut gate, t0, b"PS> ");
+        assert_eq!(gate.poll(t0 + SETUP_GATE_SETTLE), vec![b"first\r".to_vec()]);
+        assert!(!gate.is_holding());
     }
 }

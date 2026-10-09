@@ -738,8 +738,9 @@ impl ConnectionType for Ssh {
 
         // Inject the shell-integration (OSC 7 CWD tracking) setup when enabled,
         // in the detected shell's own syntax and line ending — nothing for
-        // cmd.exe or an undetected shell (#4143).
-        if shell_integration {
+        // cmd.exe or an undetected shell (#4143). Skipped when the connector
+        // already typed it, sequenced with its other setup (#4604).
+        if shell_integration && !handle.integration_typed {
             match remote_shell::integration_setup_line(handle.remote_shell) {
                 Some(cmd) => {
                     if let Err(e) = (handle.write)(cmd.as_bytes()) {
@@ -1009,6 +1010,8 @@ mod tests {
         remote_shell: remote_shell::RemoteShell,
         /// The `detect_remote_shell` flag of the last `open_shell_detecting`.
         detect_requested: Arc<Mutex<Option<bool>>>,
+        /// Reported as [`SshShellHandle::integration_typed`] (#4604).
+        integration_typed: bool,
     }
 
     impl MockSshConnector {
@@ -1022,6 +1025,7 @@ mod tests {
                 opened_size: Arc::new(Mutex::new(None)),
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
+                integration_typed: false,
             }
         }
 
@@ -1035,6 +1039,7 @@ mod tests {
                 opened_size: Arc::new(Mutex::new(None)),
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
+                integration_typed: false,
             }
         }
 
@@ -1049,6 +1054,7 @@ mod tests {
                 opened_size: Arc::new(Mutex::new(None)),
                 remote_shell: remote_shell::RemoteShell::Posix,
                 detect_requested: Arc::new(Mutex::new(None)),
+                integration_typed: false,
             }
         }
 
@@ -1142,6 +1148,7 @@ mod tests {
                 extensions: Vec::new(),
                 shell_refused,
                 remote_shell: self.remote_shell,
+                integration_typed: self.integration_typed,
             })
         }
     }
@@ -2463,6 +2470,24 @@ mod tests {
         let (writes, _) = writes_for_shell(remote_shell::RemoteShell::UnixPowerShell).await;
         let (windows, _) = writes_for_shell(remote_shell::RemoteShell::PowerShell).await;
         assert_eq!(writes, windows);
+    }
+
+    #[tokio::test]
+    async fn integration_line_typed_by_the_connector_is_not_typed_again() {
+        // #4604: the russh connector types the line itself, sequenced behind
+        // the shell's first prompt and ahead of the user's input; the backend
+        // must not add a second, unsequenced copy.
+        let connector = MockSshConnector {
+            integration_typed: true,
+            ..MockSshConnector::with_shell(remote_shell::RemoteShell::PowerShell)
+        };
+        let write_log = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(integration_settings()).await.unwrap();
+        ssh.write(b"first\r").unwrap();
+        let writes = write_log.lock().unwrap().clone();
+        ssh.disconnect().await.unwrap();
+        assert_eq!(writes, vec![b"first\r".to_vec()]);
     }
 
     #[tokio::test]
