@@ -11,8 +11,8 @@ evidence:
   - src/components/Sidebar/FileBrowser.tsx:639-674
   - src/components/Sidebar/FileBrowser.tsx:2066-2070
   - src/components/Sidebar/FileBrowser.tsx:462-470
-status: open
-resolution: ""
+status: fixed
+resolution: "#4349 — rows name their type and expose aria-pressed in a named list; sort state is in the header name"
 audit: 2026-10
 commit: 663465d52
 relation: new

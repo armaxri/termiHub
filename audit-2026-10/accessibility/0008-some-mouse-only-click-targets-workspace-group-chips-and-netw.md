@@ -10,8 +10,8 @@ evidence:
   - src/components/WorkspaceEditor/WorkspaceEditor.tsx:238-243
   - src/components/WorkspaceEditor/WorkspaceEditor.tsx:261-270
   - src/components/NetworkTools/NetworkToolsSidebar.tsx:84
-status: open
-resolution: ""
+status: fixed
+resolution: "#4349 — group chips are a roving tablist (F2/Enter rename, Rename button, Delete); monitor info is a button"
 audit: 2026-10
 commit: 663465d52
 relation: new
