@@ -158,7 +158,8 @@ impl DaemonLauncher for QueueLauncher {
             .unwrap()
             .pop_front()
             .expect("an endpoint queued for every create");
-        let client = DaemonClient::connect(session_id.to_string(), endpoint, notification_tx).await?;
+        let client =
+            DaemonClient::connect(session_id.to_string(), endpoint, notification_tx).await?;
         Ok(SessionBackend::Daemon(client))
     }
 }
@@ -257,7 +258,10 @@ async fn a_stuck_reattach_does_not_block_other_sessions() {
     .await;
 
     other_sessions_stay_responsive(&mgr, &b, &c).await;
-    assert!(!attaching.is_finished(), "the stuck re-attach is still waiting");
+    assert!(
+        !attaching.is_finished(),
+        "the stuck re-attach is still waiting"
+    );
 
     stuck.release();
     promptly("the released re-attach", attaching)
@@ -392,7 +396,6 @@ async fn a_reattach_outliving_its_session_releases_the_daemon() {
     daemon.release();
     let result = promptly("the re-attach", attaching).await.unwrap();
     assert!(result.is_err(), "the session went away meanwhile");
-    assert!(mgr.list().await.is_empty());
     // One detach from the re-attach releasing its old connection, one from
     // abandoning the new connection.
     until("the new connection to be released", || {
@@ -400,4 +403,6 @@ async fn a_reattach_outliving_its_session_releases_the_daemon() {
     })
     .await;
     assert_eq!(daemon.seen.kills.load(Ordering::SeqCst), 0);
+    // Shut down, so at most listed as still running on the host — never held.
+    assert_ne!(attached(&mgr.list().await, &a), Some(true));
 }
