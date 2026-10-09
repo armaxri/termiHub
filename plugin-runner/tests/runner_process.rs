@@ -295,6 +295,10 @@ fn linux_applies_landlock_and_seccomp_before_the_load() {
 #[test]
 fn linux_reports_reduced_isolation_without_landlock() {
     let report = linux_report_for(vec!["landlock".to_owned()], true);
+    if !reduced_isolation_possible() {
+        assert_reduced_isolation_refused(&report);
+        return;
+    }
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
     assert_eq!(report.enforced, with_netns(&["seccomp"]));
     assert_eq!(report.missing, vec!["landlock".to_owned()]);
@@ -306,7 +310,53 @@ fn linux_reports_reduced_isolation_without_landlock() {
 #[test]
 fn linux_refuses_reduced_isolation_without_the_acknowledgement() {
     let report = linux_report_for(vec!["landlock".to_owned()], false);
+    if !reduced_isolation_possible() {
+        assert_reduced_isolation_refused(&report);
+        return;
+    }
     assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+}
+
+/// Linux (#4342): without landlock **and** the namespace layer, reduced
+/// isolation needs Yama `ptrace_scope` ≥ 1; otherwise the setup fails and the
+/// runner exits before any load. Both outcomes are asserted, whichever this
+/// system gives.
+#[cfg(all(target_os = "linux", debug_assertions))]
+#[test]
+fn linux_reduced_isolation_without_namespaces_depends_on_yama() {
+    let report = linux_report_for(vec!["landlock".to_owned(), "netns".to_owned()], true);
+    if yama_ptrace_scope().is_some_and(|s| s >= 1) {
+        assert_eq!(report.isolation(), Isolation::Reduced, "{report:?}");
+        assert_eq!(report.enforced, vec!["seccomp".to_owned()]);
+    } else {
+        assert_reduced_isolation_refused(&report);
+    }
+}
+
+/// Yama's `ptrace_scope`, `None` without Yama.
+#[cfg(target_os = "linux")]
+fn yama_ptrace_scope() -> Option<u32> {
+    std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// Whether reduced isolation can load here at all (#4342): the namespace
+/// layer or Yama must keep a plugin out of other processes' memory.
+#[cfg(target_os = "linux")]
+fn reduced_isolation_possible() -> bool {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    if termihub_plugin_runner::sandbox::linux::namespaces::available() {
+        return true;
+    }
+    yama_ptrace_scope().is_some_and(|s| s >= 1)
+}
+
+#[cfg(target_os = "linux")]
+fn assert_reduced_isolation_refused(report: &termihub_plugin_runner::ipc::SandboxReport) {
+    assert_eq!(report.isolation(), Isolation::Failed, "{report:?}");
+    let failed = report.failed.as_deref().unwrap_or_default();
+    assert!(failed.contains("ptrace_scope"), "{failed}");
 }
 
 /// Linux: the namespace layer is optional (#4237). Without it — simulated
@@ -339,7 +389,7 @@ fn with_netns(layers: &[&str]) -> Vec<String> {
 /// Run the handshake with a valid Linux policy and return the sandbox report.
 /// Asserts the load then fails cleanly (`LoadFailed`, exit code 3) — or, for
 /// reduced isolation without `accept_reduced`, that the runner exits with
-/// code 5 before any load.
+/// code 5 before any load, and for a failed setup with code 4.
 #[cfg(target_os = "linux")]
 fn linux_report_for(
     simulate_missing: Vec<String>,
@@ -370,7 +420,9 @@ fn linux_report_for(
         Message::SandboxReport(report) => report,
         other => panic!("expected SandboxReport, got {other:?}"),
     };
-    if report.isolation() == Isolation::Reduced && !accept_reduced {
+    if report.isolation() == Isolation::Failed {
+        assert_eq!(wait_exit(&mut child).code(), Some(4));
+    } else if report.isolation() == Isolation::Reduced && !accept_reduced {
         assert_eq!(wait_exit(&mut child).code(), Some(5));
     } else {
         assert!(matches!(next(&host), Message::LoadFailed(_)));

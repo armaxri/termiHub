@@ -96,6 +96,14 @@ fn yama_ptrace_scope() -> Option<u32> {
         .and_then(|s| s.trim().parse().ok())
 }
 
+/// Linux: whether this system can run a plugin with reduced isolation at all
+/// (#4342): the namespace layer or Yama `ptrace_scope` ≥ 1 must keep it out of
+/// other processes' memory.
+#[cfg(target_os = "linux")]
+fn reduced_isolation_possible() -> bool {
+    netns_available() || yama_ptrace_scope().is_some_and(|s| s >= 1)
+}
+
 /// The CA bundle files and folders of the common distributions, as
 /// `openssl-probe` / `rustls-native-certs` look for them (#4342).
 #[cfg(target_os = "linux")]
@@ -754,6 +762,18 @@ async fn without_landlock_the_runner_reports_reduced_isolation() {
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
     let host =
         PluginHost::new(&installed.root, Arc::clone(&registry)).with_runner(config_for(&policy));
+    if !reduced_isolation_possible() {
+        // Nothing would protect /proc here: the setup itself fails (#4342),
+        // see `without_landlock_or_namespaces_host_memory_stays_out_of_reach`.
+        assert!(
+            matches!(
+                host.load(&installed.plugin),
+                Err(HostError::SandboxSetupFailed(_))
+            ),
+            "reduced isolation without /proc protection must not load"
+        );
+        return;
+    }
     match host.load(&installed.plugin) {
         Err(HostError::ReducedIsolationNotAccepted { missing }) => {
             assert_eq!(missing, vec![layer::LANDLOCK.to_owned()]);
