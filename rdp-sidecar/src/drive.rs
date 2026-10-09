@@ -459,7 +459,10 @@ impl DriveRedirectBackend {
             return query_directory_error(io, NtStatus::UNSUCCESSFUL);
         };
 
-        if req.initial_query != 0 || open.listing.is_none() {
+        if req.initial_query != 0 {
+            open.listing = None;
+        }
+        let listing = open.listing.get_or_insert_with(|| {
             // The request path is the search path relative to the share root;
             // the actual wildcard is its final component (e.g. `\*` → `*`,
             // `\sub\*.txt` → `*.txt`). Matching against the whole path — as the
@@ -468,10 +471,8 @@ impl DriveRedirectBackend {
             let pattern = req.path.rsplit(['\\', '/']).next().unwrap_or("*");
             let pattern = if pattern.is_empty() { "*" } else { pattern };
             let entries = build_listing(&open.path, pattern);
-            open.listing = Some(DirListing { entries, cursor: 0 });
-        }
-
-        let listing = open.listing.as_mut().expect("listing set above");
+            DirListing { entries, cursor: 0 }
+        });
         let Some(entry) = listing.entries.get(listing.cursor).cloned() else {
             return RdpdrPdu::ClientDriveQueryDirectoryResponse(
                 ClientDriveQueryDirectoryResponse {
@@ -663,14 +664,18 @@ impl RdpdrBackend for DriveRedirectBackend {
 }
 
 /// Convert an optional [`SystemTime`] to a Windows FILETIME (100-ns ticks since
-/// 1601-01-01). Times before the Unix epoch or unavailable collapse to 0.
+/// 1601-01-01). Times before the Unix epoch or unavailable collapse to 0; a time
+/// too far in the future to fit an `i64` FILETIME saturates to `i64::MAX` rather
+/// than wrapping (ERR2-005) or panicking under release `overflow-checks`.
 fn to_filetime(time: Option<SystemTime>) -> i64 {
     let Some(time) = time else { return 0 };
     match time.duration_since(UNIX_EPOCH) {
-        Ok(delta) => {
-            (delta.as_secs() as i64 + FILETIME_UNIX_EPOCH_DIFF_SECS) * 10_000_000
-                + i64::from(delta.subsec_nanos() / 100)
-        }
+        Ok(delta) => i64::try_from(delta.as_secs())
+            .ok()
+            .and_then(|secs| secs.checked_add(FILETIME_UNIX_EPOCH_DIFF_SECS))
+            .and_then(|secs| secs.checked_mul(10_000_000))
+            .and_then(|ticks| ticks.checked_add(i64::from(delta.subsec_nanos() / 100)))
+            .unwrap_or(i64::MAX),
         Err(_) => 0,
     }
 }
@@ -1222,6 +1227,69 @@ mod tests {
             }
         }
         assert_eq!(names, vec!["keep.txt".to_string()]);
+    }
+
+    #[test]
+    fn query_directory_without_initial_query_still_builds_the_listing() {
+        // A server whose first query omits `initial_query` must still get the
+        // directory listed (the listing is built lazily, never `expect`ed).
+        let (mut backend, dir) = backend_with_root();
+        fs::write(dir.path().join("only.txt"), b"1").unwrap();
+        let file_id = create_ok_id(
+            &mut backend,
+            "\\",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::FILE_DIRECTORY_FILE,
+        );
+        let pdu = backend.handle_query_directory(ServerDriveQueryDirectoryRequest {
+            device_io_request: io_request(file_id, MajorFunction::DirectoryControl),
+            file_info_class_lvl: FileInformationClassLevel::FILE_DIRECTORY_INFORMATION,
+            initial_query: 0,
+            path: "\\only.txt".to_string(),
+        });
+        match pdu {
+            RdpdrPdu::ClientDriveQueryDirectoryResponse(r) => {
+                assert_eq!(r.device_io_reply.io_status, NtStatus::SUCCESS);
+                match r.buffer {
+                    Some(FileInformationClass::Directory(info)) => {
+                        assert_eq!(info.file_name, "only.txt");
+                    }
+                    other => panic!("expected directory info, got {other:?}"),
+                }
+            }
+            other => panic!("expected query-directory response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_filetime_converts_the_unix_epoch() {
+        assert_eq!(to_filetime(None), 0);
+        assert_eq!(
+            to_filetime(Some(UNIX_EPOCH)),
+            FILETIME_UNIX_EPOCH_DIFF_SECS * 10_000_000
+        );
+        let later = UNIX_EPOCH + std::time::Duration::new(1, 500);
+        assert_eq!(
+            to_filetime(Some(later)),
+            (FILETIME_UNIX_EPOCH_DIFF_SECS + 1) * 10_000_000 + 5
+        );
+    }
+
+    #[test]
+    fn to_filetime_collapses_pre_epoch_times_to_zero() {
+        let before = UNIX_EPOCH - std::time::Duration::from_secs(1);
+        assert_eq!(to_filetime(Some(before)), 0);
+    }
+
+    #[test]
+    fn to_filetime_saturates_instead_of_overflowing() {
+        // ~year 33,700: 10^12 s * 10^7 ticks/s exceeds i64::MAX. Before ERR2-005
+        // this wrapped to a garbage (negative) FILETIME in release builds and
+        // panicked under overflow-checks; it must now saturate.
+        let far = UNIX_EPOCH.checked_add(std::time::Duration::from_secs(1_000_000_000_000));
+        if let Some(far) = far {
+            assert_eq!(to_filetime(Some(far)), i64::MAX);
+        }
     }
 
     #[test]

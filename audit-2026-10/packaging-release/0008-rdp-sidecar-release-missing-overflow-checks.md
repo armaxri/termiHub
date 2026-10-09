@@ -9,8 +9,8 @@ subsystem: "rdp-sidecar/Cargo.toml"
 evidence:
   - rdp-sidecar/Cargo.toml:17-21
   - Cargo.toml:73-89
-status: open
-resolution: ""
+status: fixed
+resolution: "#4343 — sidecar release overflow-checks; no-panic lint on all crate roots; check-crate-policy.mjs CI gate"
 audit: 2026-10
 commit: 663465d52
 relation: new

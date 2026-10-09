@@ -17,8 +17,8 @@ evidence:
   - "rdp-sidecar/src/cert.rs:65"
   - "rdp-sidecar/src/drive.rs:474"
   - "Cargo.toml:workspace.members (plugin-runner)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4343 — sidecar release overflow-checks; no-panic lint on all crate roots; check-crate-policy.mjs CI gate"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

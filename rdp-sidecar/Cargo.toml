@@ -14,11 +14,17 @@ publish = false
 # per lockfile (#1725). Resolving IronRDP in its own graph — with no russh —
 # dissolves the conflict.
 
-# Strip debug info but keep the symbol table in the release sidecar binary, so a
-# panic backtrace still names functions (#4316) — matching the root workspace's
-# release profile. This crate has its own Cargo.lock and profile
-# (workspace-excluded), so it needs the setting declared here too.
+# Release profile. This crate is workspace-excluded, so the root Cargo.toml's
+# `[profile.release]` does NOT apply here — every setting must be restated, and
+# scripts/internal/check-crate-policy.mjs fails CI if these drift from the root:
+#
+# - `overflow-checks = true` (ERR-010 / PKG2-008): the sidecar parses untrusted
+#   RDP server traffic, and a silent integer wrap to a corrupt value is strictly
+#   worse than a fail-fast panic in a safety-critical build.
+# - `strip = "debuginfo"` (#4316): strip debug info but keep the symbol table,
+#   so a panic backtrace still names functions.
 [profile.release]
+overflow-checks = true
 strip = "debuginfo"
 
 [[bin]]
