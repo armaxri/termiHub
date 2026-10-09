@@ -10,8 +10,8 @@ evidence:
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:393-410
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:415-431
   - src/components/RemoteDesktop/RemoteDesktopTab.css:38-41
-status: open
-resolution: ""
+status: fixed
+resolution: "#4328 — canvas is a named role=application with the release chord in its description, a focus ring, on-focus hint, toolbar hint and live-region announcements"
 audit: 2026-10
 commit: 663465d52
 relation: new
