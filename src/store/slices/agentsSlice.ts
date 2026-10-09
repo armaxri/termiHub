@@ -32,7 +32,13 @@ import {
   markAgentDisconnectIntent,
 } from "@/store/agentDisconnectIntent";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
-import { toast } from "@/components/ui";
+import {
+  cancelAgentUpdateReconnect as stopAgentUpdateReconnectLoop,
+  isAgentUpdateAutoAttempt,
+  isAgentUpdateReconnectActive,
+  startAgentUpdateReconnect,
+} from "@/store/agentUpdateReconnect";
+import { toast, type ToastOptions } from "@/components/ui";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { errorMessage } from "@/utils/errorMessage";
@@ -74,17 +80,27 @@ export interface AgentsSlice {
   /**
    * Handle an incoming `agent.update_pending` (#1602): record the notice,
    * suspend the affected agent connection (the disconnect *is* the ack the
-   * updating host waits for), and queue an auto-reconnect to the new version
-   * once the agent's restart window has elapsed. Sessions survive in detached
-   * daemons and are recovered on reconnect, so only the connection is suspended.
+   * updating host waits for), and reconnect to the new version once the agent's
+   * restart window has elapsed, retrying with backoff until a deadline (#4311).
+   * Sessions survive in detached daemons and are recovered on reconnect, so only
+   * the connection is suspended. A newer notice restarts the loop; a duplicate of
+   * the running one is ignored.
    */
   handleAgentUpdatePending: (
     agentId: string,
     requestedByVersion: string,
     estimatedRestartSecs: number
   ) => void;
-  /** Clear a recorded coordinated-update-pending notice for an agent. */
+  /**
+   * Clear a recorded coordinated-update-pending notice for an agent. This also
+   * stops its reconnect loop, without any notice.
+   */
   clearAgentUpdatePending: (agentId: string) => void;
+  /**
+   * The user stops the coordinated-update reconnect loop for an agent (#4311).
+   * The hosted tabs stay resumable, and a notice offers a manual Reconnect.
+   */
+  cancelAgentUpdateReconnect: (agentId: string) => void;
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
@@ -133,13 +149,75 @@ export interface AgentsSlice {
 }
 
 /**
- * Extra seconds added to the agent's own restart estimate before the queued
- * auto-reconnect fires (#1602). The agent only begins its restart once every
- * host has disconnected (or a 10 s window closes), so reconnecting exactly at
- * the estimate would race the process still coming up; a small buffer avoids a
- * wasted failing attempt.
+ * Extra seconds added to the agent's own restart estimate before the first
+ * reconnect attempt (#1602). The agent only begins its restart once every host
+ * has disconnected (or a 10 s window closes), so reconnecting exactly at the
+ * estimate would race the process still coming up; a small buffer avoids a
+ * wasted failing attempt. Later attempts back off (#4311), so a slow restart is
+ * no longer fatal.
  */
 const AGENT_UPDATE_RECONNECT_BUFFER_SECS = 3;
+
+/** The toast id for an agent's coordinated-update notice. */
+function agentUpdateToastId(agentId: string): string {
+  return `agent-update-pending-${agentId}`;
+}
+
+/** The agent's display name, for the coordinated-update notices. */
+function agentDisplayName(agentId: string): string {
+  return currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
+}
+
+/** Drop the coordinated-update notice record for an agent from the state. */
+function withoutPending(
+  pending: Record<string, AgentUpdatePending>,
+  agentId: string
+): Partial<AppState> {
+  if (!(agentId in pending)) return {};
+  const next = { ...pending };
+  delete next[agentId];
+  return { agentUpdatePending: next };
+}
+
+type SliceSet = Parameters<StateCreator<AppState, [], [], AgentsSlice>>[0];
+type SliceGet = Parameters<StateCreator<AppState, [], [], AgentsSlice>>[1];
+
+/**
+ * A manual connect, disconnect or shutdown supersedes a running
+ * coordinated-update reconnect loop (#4311): stop it quietly and drop its
+ * notice. The newer action drives the agent from here on.
+ */
+function supersedeAgentUpdateReconnect(set: SliceSet, agentId: string): void {
+  if (!stopAgentUpdateReconnectLoop(agentId)) return;
+  set((s) => withoutPending(s.agentUpdatePending, agentId));
+  toast.dismiss(agentUpdateToastId(agentId));
+}
+
+/** A manual Reconnect for the coordinated-update failure and stopped notices. */
+function manualReconnectAction(
+  get: SliceGet,
+  agentId: string
+): NonNullable<ToastOptions["action"]> {
+  return {
+    label: "Reconnect",
+    onClick: () => {
+      get()
+        .connectRemoteAgent(agentId)
+        .then(() => {
+          toast.success(`${agentDisplayName(agentId)} reconnected.`, {
+            id: agentUpdateToastId(agentId),
+          });
+        })
+        .catch((err: unknown) => {
+          toast.error(`Couldn't reconnect to ${agentDisplayName(agentId)}.`, {
+            id: agentUpdateToastId(agentId),
+            description: backendErrorMessage(err),
+            action: manualReconnectAction(get, agentId),
+          });
+        });
+    },
+  };
+}
 
 export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (set, get) => ({
   agentUpdates: {},
@@ -163,13 +241,20 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
   agentUpdatePending: {},
 
   handleAgentUpdatePending: (agentId, requestedByVersion, estimatedRestartSecs) => {
-    // Ignore a duplicate notice for an agent already suspended for this
-    // coordinated update — its reconnect is already queued.
-    if (get().agentUpdatePending[agentId]) return;
+    // Ignore a duplicate notice for the update this agent is already suspended
+    // for — its reconnect loop is already running. A notice for a different
+    // (newer) update restarts the loop below.
+    const existing = get().agentUpdatePending[agentId];
+    if (
+      existing &&
+      existing.requestedByVersion === requestedByVersion &&
+      isAgentUpdateReconnectActive(agentId)
+    ) {
+      return;
+    }
 
-    const agentName =
-      currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
-    const toastId = `agent-update-pending-${agentId}`;
+    const agentName = agentDisplayName(agentId);
+    const toastId = agentUpdateToastId(agentId);
 
     set((s) => ({
       agentUpdatePending: {
@@ -181,46 +266,84 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // Surface the "being updated by another host" notice. A loading toast is
     // the design system's long-running-work affordance (the "reactive"
     // pillar): it shows the suspend/restart is in progress and resolves in
-    // place to success/error when the reconnect settles.
+    // place to success/error when the reconnect settles. Cancel stops the
+    // automatic reconnect (#4311).
     toast.loading(`${agentName} is being updated by another host…`, {
       id: toastId,
       description: "Sessions are paused briefly and reconnect automatically.",
+      action: {
+        label: "Cancel",
+        onClick: () => get().cancelAgentUpdateReconnect(agentId),
+      },
     });
 
     // Suspend the connection: disconnecting is the ack the updating host waits
     // for (there is no reply frame — see docs/remote-protocol.md
     // `agent.update_pending`). Sessions live on in detached daemons and are
-    // recovered on reconnect, so only the transport goes away here.
+    // recovered on reconnect, so only the transport goes away here — the hosted
+    // tabs stay resumable for the whole loop, and after it (#4447).
     void get().disconnectRemoteAgent(agentId, { endHostedSessions: false });
 
-    // Queue the auto-reconnect once the agent has had its restart window.
-    const delayMs = (Math.max(estimatedRestartSecs, 1) + AGENT_UPDATE_RECONNECT_BUFFER_SECS) * 1000;
-    setTimeout(() => {
-      // Skip if the notice was cleared meanwhile (e.g. a manual reconnect).
-      if (!get().agentUpdatePending[agentId]) return;
-      get().clearAgentUpdatePending(agentId);
-      get()
-        .connectRemoteAgent(agentId)
-        .then(() => {
+    // Reconnect once the agent has had its restart window, then retry with
+    // backoff until the deadline (#4311). The agent's estimate is a fixed
+    // guess, so a single attempt left the user disconnected whenever the new
+    // binary took longer to come up.
+    startAgentUpdateReconnect(agentId, {
+      initialDelayMs:
+        (Math.max(estimatedRestartSecs, 1) + AGENT_UPDATE_RECONNECT_BUFFER_SECS) * 1000,
+      attempt: () => get().connectRemoteAgent(agentId),
+      isConnected: () =>
+        currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.connectionState ===
+        "connected",
+      onSuccess: () => {
+        set((s) => withoutPending(s.agentUpdatePending, agentId));
+        // Only claim the updated version when the agent reports it: a deferred
+        // update may not have been applied yet.
+        const version = currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.capabilities
+          ?.agentVersion;
+        if (version && version === requestedByVersion) {
           toast.success(`${agentName} reconnected to the updated version.`, {
             id: toastId,
+            description: `Agent version ${version}.`,
           });
-        })
-        .catch(() => {
-          toast.error(`Couldn't reconnect to ${agentName} after the update.`, {
+        } else {
+          toast.success(`${agentName} reconnected.`, {
             id: toastId,
+            description: version
+              ? `The agent still reports version ${version}; the update may not be applied yet.`
+              : undefined,
           });
+        }
+      },
+      onGiveUp: (_attempts, lastError) => {
+        set((s) => withoutPending(s.agentUpdatePending, agentId));
+        frontendError(
+          "app_store",
+          `Gave up reconnecting agent ${agentId} after the update: ${backendErrorMessage(lastError)}`
+        );
+        toast.error(`Couldn't reconnect to ${agentName} after the update.`, {
+          id: toastId,
+          description:
+            "The agent did not come back in time. Its sessions are kept and resume when you reconnect.",
+          action: manualReconnectAction(get, agentId),
         });
-    }, delayMs);
+      },
+    });
+  },
+
+  cancelAgentUpdateReconnect: (agentId) => {
+    if (!stopAgentUpdateReconnectLoop(agentId)) return;
+    set((s) => withoutPending(s.agentUpdatePending, agentId));
+    toast.info(`Stopped reconnecting to ${agentDisplayName(agentId)}.`, {
+      id: agentUpdateToastId(agentId),
+      description: "Its sessions are kept and resume when you reconnect.",
+      action: manualReconnectAction(get, agentId),
+    });
   },
 
   clearAgentUpdatePending: (agentId) => {
-    set((s) => {
-      if (!(agentId in s.agentUpdatePending)) return {};
-      const next = { ...s.agentUpdatePending };
-      delete next[agentId];
-      return { agentUpdatePending: next };
-    });
+    stopAgentUpdateReconnectLoop(agentId);
+    set((s) => withoutPending(s.agentUpdatePending, agentId));
   },
 
   addRemoteAgent: (agent) => {
@@ -277,6 +400,8 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
   },
 
   deleteRemoteAgent: (agentId) => {
+    // A deleted agent has nothing to reconnect to (#4311).
+    supersedeAgentUpdateReconnect(set, agentId);
     // Disconnect first if connected
     const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
     if (agent && agent.connectionState !== "disconnected") {
@@ -315,6 +440,9 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
   connectRemoteAgent: async (agentId, password) => {
     const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
     if (!agent) return;
+    // A manual connect wins over a running coordinated-update reconnect loop
+    // (#4311); the loop's own attempts pass through here unchanged.
+    if (!isAgentUpdateAutoAttempt(agentId)) supersedeAgentUpdateReconnect(set, agentId);
 
     // Single-writer rule (G4/#1234): `connectionState` is written ONLY by the
     // backend `agent-state-change` event (via `setAgentConnectionState`). This
@@ -361,6 +489,8 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // land before this call resolves, and the handler must see a user end, not a
     // drop that arms a reconnect loop which can never succeed (#4309).
     const endHostedSessions = options?.endHostedSessions ?? true;
+    // A user Disconnect also stops a coordinated-update reconnect loop (#4311).
+    if (endHostedSessions) supersedeAgentUpdateReconnect(set, agentId);
     if (endHostedSessions) markAgentDisconnectIntent(agentId);
     try {
       // The backend carries the same choice on its "disconnected" event, so every
@@ -383,6 +513,7 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // detached/killed so the UI can report the impact.
     // As with disconnect, the hosted tabs end cleanly rather than reconnecting
     // to an agent that was stopped on purpose (#4309).
+    supersedeAgentUpdateReconnect(set, agentId);
     markAgentDisconnectIntent(agentId);
     let detached: number;
     try {

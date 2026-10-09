@@ -15,8 +15,8 @@ evidence:
   - src/store/slices/agentsSlice.ts:196
   - agent/src/handler/dispatch.rs:2705
   - agent/src/handler/dispatch.rs:2766
-status: open
-resolution: ""
+status: fixed
+resolution: "#4311 — update reconnect retries with jittered backoff to a 120s deadline, cancellable, with a manual Reconnect on failure"
 audit: 2026-10
 commit: 663465d52
 relation: new

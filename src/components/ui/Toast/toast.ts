@@ -123,6 +123,7 @@ export const toast: ToastApi = {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
+      action: opts?.action,
       testId: opts?.testId,
     });
   },
