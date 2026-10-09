@@ -306,7 +306,135 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
 ///   `TERM=xterm-256color` and `COLORTERM=truecolor`.
 /// - Resolves the working directory from `config.starting_directory` or
 ///   [`home_directory()`].
+/// - On Unix, adds a UTF-8 locale when neither the inherited environment nor
+///   `config.env` provides one (see [`utf8_locale_overrides`]). An app
+///   launched from Finder/Dock gets no `LANG` from a login shell, so without
+///   this the shell would run in the C locale (#4336).
 pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
+    if cfg!(windows) {
+        // Windows shells do not use POSIX locale variables.
+        build_shell_command_with(config, |_| None, "")
+    } else {
+        build_shell_command_with(
+            config,
+            |key| std::env::var(key).ok(),
+            preferred_utf8_locale(),
+        )
+    }
+}
+
+/// The POSIX locale variables that decide the character encoding, most
+/// specific first.
+const LOCALE_KEYS: [&str; 3] = ["LC_ALL", "LC_CTYPE", "LANG"];
+
+/// Fallback UTF-8 locale when the system locale cannot be determined or is
+/// not installed.
+const FALLBACK_UTF8_LOCALE: &str = "en_US.UTF-8";
+
+/// Compute the locale variables to add to a local shell's environment.
+///
+/// `config_env` is the connection's own env settings, `parent` looks up a
+/// variable in the environment the child would inherit, and `utf8_locale` is
+/// the UTF-8 locale to inject (e.g. `de_DE.UTF-8`).
+///
+/// Rules (an explicitly set locale is never overridden):
+/// - any of `LC_ALL` / `LC_CTYPE` / `LANG` in `config_env` → nothing;
+/// - inherited `LC_ALL` or `LC_CTYPE` set → nothing;
+/// - inherited `LANG` unset → `LANG=<utf8_locale>`;
+/// - inherited `LANG` is the non-UTF-8 `C` / `POSIX` locale →
+///   `LC_CTYPE=<utf8_locale>` (only the encoding is upgraded; messages,
+///   collation etc. keep following `LANG`);
+/// - otherwise → nothing.
+///
+/// Empty values count as unset, matching libc's `setlocale` behaviour.
+pub fn utf8_locale_overrides(
+    config_env: &HashMap<String, String>,
+    parent: impl Fn(&str) -> Option<String>,
+    utf8_locale: &str,
+) -> Vec<(String, String)> {
+    let is_set = |v: Option<&str>| v.is_some_and(|v| !v.is_empty());
+
+    if utf8_locale.is_empty()
+        || LOCALE_KEYS
+            .iter()
+            .any(|k| is_set(config_env.get(*k).map(String::as_str)))
+    {
+        return Vec::new();
+    }
+    if is_set(parent("LC_ALL").as_deref()) || is_set(parent("LC_CTYPE").as_deref()) {
+        return Vec::new();
+    }
+    match parent("LANG").filter(|v| !v.is_empty()) {
+        None => vec![("LANG".to_string(), utf8_locale.to_string())],
+        Some(lang) if lang == "C" || lang == "POSIX" => {
+            vec![("LC_CTYPE".to_string(), utf8_locale.to_string())]
+        }
+        Some(_) => Vec::new(),
+    }
+}
+
+/// Whether a locale name selects UTF-8 encoding (`xx_YY.UTF-8`, `C.utf8`,
+/// macOS's bare `UTF-8`, ...).
+pub fn is_utf8_locale(locale: &str) -> bool {
+    let lower = locale.to_ascii_lowercase();
+    lower.contains("utf-8") || lower.contains("utf8")
+}
+
+/// Normalize a BCP 47 / POSIX-ish locale tag (`de-DE`, `zh-Hans-CN`,
+/// `en_US@rg=...`) to a POSIX UTF-8 locale name (`de_DE.UTF-8`).
+///
+/// Returns `None` when the tag has no two-letter region, since a bare
+/// language such as `en` does not name an installable locale.
+pub fn posix_utf8_locale_from_tag(tag: &str) -> Option<String> {
+    let tag = tag.split(['@', '.']).next().unwrap_or_default();
+    let mut parts = tag.split(['-', '_']);
+    let language = parts.next()?;
+    if !(2..=3).contains(&language.len()) || !language.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    // Subtags after a singleton (`u`, `x`, ...) are extensions, not a region.
+    let region = parts
+        .take_while(|p| p.len() > 1)
+        .find(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic()))?;
+    Some(format!(
+        "{}_{}.UTF-8",
+        language.to_ascii_lowercase(),
+        region.to_ascii_uppercase()
+    ))
+}
+
+/// The UTF-8 locale to give local shells that inherit none, computed once.
+///
+/// On macOS this follows the user's preferred locale (System Settings →
+/// Language & Region, via CoreFoundation), normalized to `xx_YY.UTF-8` and
+/// checked against the installed locales in `/usr/share/locale`, like
+/// WezTerm's `set_lang_from_locale`. Elsewhere, and whenever that fails, it is
+/// [`FALLBACK_UTF8_LOCALE`].
+pub fn preferred_utf8_locale() -> &'static str {
+    static LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LOCALE.get_or_init(|| system_utf8_locale().unwrap_or_else(|| FALLBACK_UTF8_LOCALE.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn system_utf8_locale() -> Option<String> {
+    sys_locale::get_locales()
+        .filter_map(|tag| posix_utf8_locale_from_tag(&tag))
+        .find(|locale| Path::new("/usr/share/locale").join(locale).is_dir())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_utf8_locale() -> Option<String> {
+    None
+}
+
+/// [`build_shell_command`] with the inherited environment and the UTF-8
+/// locale injected, so the locale defaulting is testable without mutating the
+/// process environment.
+fn build_shell_command_with(
+    config: &ShellConfig,
+    parent: impl Fn(&str) -> Option<String>,
+    utf8_locale: &str,
+) -> ShellCommand {
     let shell = config
         .shell
         .clone()
@@ -318,6 +446,9 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
     let mut env = config.env.clone();
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
+    for (key, value) in utf8_locale_overrides(&config.env, parent, utf8_locale) {
+        env.insert(key, value);
+    }
 
     let cwd = config
         .starting_directory
@@ -1333,6 +1464,190 @@ mod tests {
             Some("truecolor"),
             "COLORTERM should be injected"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // UTF-8 locale defaulting (#4336, I18N2-002)
+    // -----------------------------------------------------------------------
+
+    fn no_parent(_: &str) -> Option<String> {
+        None
+    }
+
+    fn parent_with(
+        vars: &'static [(&'static str, &'static str)],
+    ) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            vars.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_string())
+        }
+    }
+
+    #[test]
+    fn locale_empty_env_gets_utf8_lang() {
+        let overrides = utf8_locale_overrides(&HashMap::new(), no_parent, "de_DE.UTF-8");
+        assert_eq!(
+            overrides,
+            vec![("LANG".to_string(), "de_DE.UTF-8".to_string())]
+        );
+    }
+
+    #[test]
+    fn locale_empty_string_values_count_as_unset() {
+        let overrides = utf8_locale_overrides(
+            &HashMap::new(),
+            parent_with(&[("LANG", ""), ("LC_ALL", ""), ("LC_CTYPE", "")]),
+            "en_US.UTF-8",
+        );
+        assert_eq!(
+            overrides,
+            vec![("LANG".to_string(), "en_US.UTF-8".to_string())]
+        );
+    }
+
+    #[test]
+    fn locale_explicit_utf8_lang_is_kept() {
+        let overrides = utf8_locale_overrides(
+            &HashMap::new(),
+            parent_with(&[("LANG", "de_DE.UTF-8")]),
+            "en_US.UTF-8",
+        );
+        assert!(overrides.is_empty(), "got {overrides:?}");
+    }
+
+    #[test]
+    fn locale_explicit_non_utf8_lang_is_kept() {
+        let overrides = utf8_locale_overrides(
+            &HashMap::new(),
+            parent_with(&[("LANG", "de_DE.ISO8859-1")]),
+            "en_US.UTF-8",
+        );
+        assert!(overrides.is_empty(), "got {overrides:?}");
+    }
+
+    #[test]
+    fn locale_c_lang_gets_utf8_lc_ctype() {
+        for c in ["C", "POSIX"] {
+            let vars: &'static [(&'static str, &'static str)] = if c == "C" {
+                &[("LANG", "C")]
+            } else {
+                &[("LANG", "POSIX")]
+            };
+            let overrides =
+                utf8_locale_overrides(&HashMap::new(), parent_with(vars), "en_US.UTF-8");
+            assert_eq!(
+                overrides,
+                vec![("LC_CTYPE".to_string(), "en_US.UTF-8".to_string())],
+                "LANG={c}"
+            );
+        }
+    }
+
+    #[test]
+    fn locale_explicit_lc_all_or_lc_ctype_is_kept() {
+        for vars in [
+            &[("LC_ALL", "C")][..],
+            &[("LC_ALL", "fr_FR.UTF-8")][..],
+            &[("LC_CTYPE", "UTF-8")][..],
+            &[("LANG", "C"), ("LC_CTYPE", "C")][..],
+        ] {
+            let overrides =
+                utf8_locale_overrides(&HashMap::new(), parent_with(vars), "en_US.UTF-8");
+            assert!(overrides.is_empty(), "{vars:?} -> {overrides:?}");
+        }
+    }
+
+    #[test]
+    fn locale_connection_env_wins() {
+        for key in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            let mut env = HashMap::new();
+            env.insert(key.to_string(), "C".to_string());
+            let overrides = utf8_locale_overrides(&env, no_parent, "en_US.UTF-8");
+            assert!(overrides.is_empty(), "{key}=C -> {overrides:?}");
+        }
+        // A connection-level UTF-8 LANG also suppresses the C-locale fix-up
+        // of an inherited LANG=C.
+        let mut env = HashMap::new();
+        env.insert("LANG".to_string(), "ja_JP.UTF-8".to_string());
+        let overrides = utf8_locale_overrides(&env, parent_with(&[("LANG", "C")]), "en_US.UTF-8");
+        assert!(overrides.is_empty(), "got {overrides:?}");
+    }
+
+    #[test]
+    fn build_shell_command_injects_utf8_locale_into_empty_env() {
+        let cmd = build_shell_command_with(&ShellConfig::default(), no_parent, "de_DE.UTF-8");
+        assert_eq!(cmd.env.get("LANG").map(String::as_str), Some("de_DE.UTF-8"));
+        assert!(!cmd.env.contains_key("LC_CTYPE"));
+    }
+
+    #[test]
+    fn build_shell_command_connection_locale_wins() {
+        let mut env = HashMap::new();
+        env.insert("LANG".to_string(), "C".to_string());
+        let config = ShellConfig {
+            env,
+            ..Default::default()
+        };
+        let cmd = build_shell_command_with(&config, no_parent, "de_DE.UTF-8");
+        assert_eq!(cmd.env.get("LANG").map(String::as_str), Some("C"));
+        assert!(!cmd.env.contains_key("LC_CTYPE"));
+        assert!(!cmd.env.contains_key("LC_ALL"));
+    }
+
+    #[test]
+    fn build_shell_command_c_parent_gets_lc_ctype() {
+        let cmd = build_shell_command_with(
+            &ShellConfig::default(),
+            parent_with(&[("LANG", "C")]),
+            "en_US.UTF-8",
+        );
+        assert!(
+            !cmd.env.contains_key("LANG"),
+            "inherited LANG must not be overridden"
+        );
+        assert_eq!(
+            cmd.env.get("LC_CTYPE").map(String::as_str),
+            Some("en_US.UTF-8")
+        );
+    }
+
+    #[test]
+    fn bcp47_tags_normalize_to_posix_utf8() {
+        assert_eq!(
+            posix_utf8_locale_from_tag("de-DE").as_deref(),
+            Some("de_DE.UTF-8")
+        );
+        assert_eq!(
+            posix_utf8_locale_from_tag("en_GB").as_deref(),
+            Some("en_GB.UTF-8")
+        );
+        assert_eq!(
+            posix_utf8_locale_from_tag("zh-Hans-CN").as_deref(),
+            Some("zh_CN.UTF-8")
+        );
+        assert_eq!(
+            posix_utf8_locale_from_tag("en-US-u-ca-gregory").as_deref(),
+            Some("en_US.UTF-8")
+        );
+        assert_eq!(
+            posix_utf8_locale_from_tag("fr-fr").as_deref(),
+            Some("fr_FR.UTF-8")
+        );
+        assert_eq!(
+            posix_utf8_locale_from_tag("en_US@rg=dezzzz").as_deref(),
+            Some("en_US.UTF-8")
+        );
+        assert_eq!(posix_utf8_locale_from_tag("en"), None);
+        assert_eq!(posix_utf8_locale_from_tag("es-419"), None);
+        assert_eq!(posix_utf8_locale_from_tag(""), None);
+        assert_eq!(posix_utf8_locale_from_tag("1x-DE"), None);
+    }
+
+    #[test]
+    fn preferred_utf8_locale_is_utf8() {
+        let locale = preferred_utf8_locale();
+        assert!(is_utf8_locale(locale), "got {locale}");
     }
 
     #[test]

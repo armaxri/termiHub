@@ -228,6 +228,11 @@ reqwest = { version = "0.12", default-features = false, features = [
 # `/tmp/termihub` — see `ipc::ensure_private_dir` (AGT-020).
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# The user's preferred locale (CoreFoundation), used to give local shells a
+# UTF-8 LANG when the app is launched from Finder/Dock without one (#4336).
+sys-locale = "0.3"
+
 [target.'cfg(windows)'.dependencies]
 # The shared current-user SID / protected-DACL helper (#4322): the per-user DACL
 # of a security-hardened local-IPC listener (the security analog of the Unix
