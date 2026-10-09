@@ -207,6 +207,14 @@ pub const fn host_supports_clipboard_delayed_render() -> bool {
 }
 
 impl RdpConfig {
+    /// Parse connection settings, treating an explicit `null` member like a
+    /// missing one (#4017) — the same rule as the VNC config's
+    /// `from_settings`. Shared by the direct connect and the agent-routed
+    /// forward (#4284), so both resolve the same target.
+    pub fn from_settings(settings: serde_json::Value) -> Result<Self, serde_json::Error> {
+        serde_json::from_value(crate::backends::without_null_fields(settings))
+    }
+
     /// The effective TCP port to reach the RDP server on.
     pub fn effective_port(&self) -> u16 {
         if self.port == 0 {

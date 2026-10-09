@@ -154,15 +154,15 @@ mod tests {
     fn grant_clamps_into_one_to_the_window() {
         assert_eq!(grant_window(0), 1);
         assert_eq!(grant_window(4096), 4096);
-        assert_eq!(
-            grant_window(u64::from(u32::MAX) * 4),
-            AGENT_FORWARD_WINDOW
-        );
+        assert_eq!(grant_window(u64::from(u32::MAX) * 4), AGENT_FORWARD_WINDOW);
     }
 
     #[test]
     fn ack_threshold_is_a_quarter_and_never_zero() {
-        assert_eq!(ack_threshold(AGENT_FORWARD_WINDOW), AGENT_FORWARD_WINDOW / 4);
+        assert_eq!(
+            ack_threshold(AGENT_FORWARD_WINDOW),
+            AGENT_FORWARD_WINDOW / 4
+        );
         assert_eq!(ack_threshold(3), 1);
         assert_eq!(ack_threshold(1), 1);
     }

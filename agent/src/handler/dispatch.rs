@@ -1005,6 +1005,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 unattended_connect: true,
                 file_ranges: true,
                 output_flow: true,
+                forward_flow: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
