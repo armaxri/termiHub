@@ -4325,6 +4325,9 @@ mod output_flow;
 /// Session → saved-connection bindings for relaunched transfers (#3876).
 mod saved_connections;
 
+/// A connection's initial command never hides terminal output (#4345).
+mod initial_command;
+
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
 
