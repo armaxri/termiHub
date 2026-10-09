@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Modal, Button, Input } from "@/components/ui";
 import type { FileEntry } from "@/types/connection";
-import { describeEntries, joinDirPath, type FileTransferOperation } from "@/utils/fileDragMove";
+import { describeEntries, type FileTransferOperation } from "@/utils/fileDragMove";
 import { isImeComposing } from "@/utils/imeComposition";
+import { joinPath } from "@/utils/paths";
 
 /** Resolve a typed destination: absolute (`/`, `~`, `C:`) as-is, else relative to `base`. */
 function resolveDestination(typed: string, base: string): string {
-  return /^([/~]|[A-Za-z]:)/.test(typed) ? typed : joinDirPath(base, typed);
+  return /^([/~]|[A-Za-z]:)/.test(typed) ? typed : joinPath(base, typed);
 }
 
 /** What the dialog is moving/copying, or `null` when closed. */

@@ -4,8 +4,6 @@ import {
   describeEntries,
   findNameConflicts,
   isSameOrDescendant,
-  joinDirPath,
-  parentDirPath,
   planFileDrop,
 } from "./fileDragMove";
 
@@ -22,16 +20,6 @@ function entry(path: string, isDirectory = false, writable: boolean | null = nul
 }
 
 describe("path helpers", () => {
-  it("joins and splits paths on POSIX and Windows-style roots", () => {
-    expect(joinDirPath("/", "a")).toBe("/a");
-    expect(joinDirPath("/home/u/", "a")).toBe("/home/u/a");
-    expect(joinDirPath("C:/", "a")).toBe("C:/a");
-    expect(parentDirPath("/a")).toBe("/");
-    expect(parentDirPath("/home/u/a.txt")).toBe("/home/u");
-    expect(parentDirPath("C:/a.txt")).toBe("C:/");
-    expect(parentDirPath("C:\\Users\\a.txt")).toBe("C:/Users");
-  });
-
   it("detects self and descendant destinations without prefix false-positives", () => {
     expect(isSameOrDescendant("/a/src", "/a/src")).toBe(true);
     expect(isSameOrDescendant("/a/src", "/a/src/deep/er")).toBe(true);

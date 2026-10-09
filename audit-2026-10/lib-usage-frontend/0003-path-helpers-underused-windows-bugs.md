@@ -6,8 +6,8 @@ severity: low
 category: correctness
 is_workaround: false
 subsystem: "src (path handling)"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4372 — one shared src/utils/paths.ts (getBasename/parentDir/joinPath, drive and UNC roots); private copies and inline splits removed"
 audit: 2026-10
 commit: "663465d52"
 relation: new

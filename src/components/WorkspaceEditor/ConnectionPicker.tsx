@@ -5,6 +5,7 @@ import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { WorkspaceTabDef } from "@/types/workspace";
 import { isImeComposing } from "@/utils/imeComposition";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 
 interface ConnectionPickerProps {
   onSelect: (tab: WorkspaceTabDef) => void;
@@ -47,10 +48,8 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
   const optionId = (key: string) => `${baseId}-option-${idPart(key)}`;
 
   const filtered = useMemo(() => {
-    const term = search.toLowerCase();
-    return connections.filter(
-      (c) => c.name.toLowerCase().includes(term) || c.config.type.toLowerCase().includes(term)
-    );
+    const term = search.trim();
+    return connections.filter((c) => itemMatchesQuery(c, (x) => [x.name, x.config.type], term));
   }, [connections, search]);
 
   const grouped = useMemo(() => {
@@ -72,9 +71,9 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
   }, [filtered, folders]);
 
   const filteredAgents = useMemo(() => {
-    if (!search) return remoteAgents;
-    const term = search.toLowerCase();
-    return remoteAgents.filter((a) => a.name.toLowerCase().includes(term));
+    const term = search.trim();
+    if (!term) return remoteAgents;
+    return remoteAgents.filter((a) => itemMatchesQuery(a, (x) => [x.name], term));
   }, [remoteAgents, search]);
 
   // Every selectable option in display order. The agent notices (offline / no

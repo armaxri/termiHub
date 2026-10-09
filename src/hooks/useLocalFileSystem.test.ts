@@ -89,20 +89,12 @@ import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRe
 
 setupFileBrowsersRegion();
 
-// Test the navigateUp path-logic which is pure string manipulation.
-// We extract and test the logic directly rather than through the hook
-// to avoid complex React rendering for essentially pure functions.
+// Test the navigateUp path-logic through the shared helpers it delegates to
+// (#4372), rather than through the hook, to avoid complex React rendering for
+// essentially pure functions.
 function navigateUpLogic(currentPath: string): string | null {
-  if (currentPath === "/") return null; // no-op
-  if (/^[A-Za-z]:\/?$/.test(currentPath)) return null; // Windows drive root
-  const noTrailing = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-  const parts = noTrailing.split("/");
-  parts.pop();
-  let parentPath = parts.join("/") || "/";
-  if (/^[A-Za-z]:$/.test(parentPath)) {
-    parentPath = parentPath + "/";
-  }
-  return parentPath;
+  const parentPath = parentDir(currentPath);
+  return parentPath === normalizeDirPath(currentPath) ? null : parentPath;
 }
 
 describe("useLocalFileSystem — navigateUp path logic", () => {
@@ -151,8 +143,7 @@ describe("useLocalFileSystem — navigateUp path logic", () => {
 describe("useLocalFileSystem — createDirectory path construction", () => {
   // Test the path construction logic inline to avoid complex hook rendering.
   function buildNewDirPath(currentPath: string, name: string): string {
-    const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
-    return base ? `${base}/${name}` : `/${name}`;
+    return joinPath(currentPath, name);
   }
 
   it("constructs path correctly from /home/user", () => {
@@ -324,6 +315,7 @@ import {
   sessionSupportsTransferQueue,
   vscodeOpenLocal,
 } from "@/services/api";
+import { joinPath, normalizeDirPath, parentDir } from "@/utils/paths";
 
 describe("useLocalFileSystem — action wiring", () => {
   let container: HTMLDivElement;

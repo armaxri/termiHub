@@ -7,9 +7,15 @@ import { parseQuickConnect, quickConnectConfig } from "@/utils/quickConnect";
 import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
 import { formatRelativeTime } from "@/utils/formatters";
 import { isImeComposing } from "@/utils/imeComposition";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 
 /** Maximum autocomplete suggestions shown below the quick-connect input. */
 const MAX_SUGGESTIONS = 6;
+
+/** Searchable text of a suggestion: the session title and its `user@host` key. */
+function suggestionFields(entry: SessionHistoryEntry): string[] {
+  return [entry.title, entry.dedupKey];
+}
 
 interface QuickConnectBarProps {
   /** History used to drive the autocomplete dropdown. */
@@ -51,14 +57,10 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
   );
 
   const suggestions = useMemo(() => {
-    const q = value.trim().toLowerCase();
+    const q = value.trim();
     if (!q) return [];
     return history
-      .filter(
-        (e) =>
-          e.connectionType === "ssh" &&
-          (e.title.toLowerCase().includes(q) || e.dedupKey.toLowerCase().includes(q))
-      )
+      .filter((e) => e.connectionType === "ssh" && itemMatchesQuery(e, suggestionFields, q))
       .slice(0, MAX_SUGGESTIONS);
   }, [history, value]);
 

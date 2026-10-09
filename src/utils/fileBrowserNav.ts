@@ -1,5 +1,6 @@
 import type { FileEntry } from "@/types/connection";
 import { compareNames } from "@/utils/locale";
+import { parentDir } from "@/utils/paths";
 
 /** Column a file list can be sorted by. */
 export type FileSortKey = "name" | "size" | "modified";
@@ -139,17 +140,6 @@ export function findTypeAheadIndex<T>(
     if (getLabel(entries[idx]).toLowerCase().startsWith(needle)) return idx;
   }
   return -1;
-}
-
-/**
- * Parent directory of a POSIX-style path (`/a/b/c` → `/a/b`, `/a` → `/`).
- * A trailing slash is ignored. Returns `/` when there is no parent.
- */
-function parentDir(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const idx = trimmed.lastIndexOf("/");
-  if (idx <= 0) return "/";
-  return trimmed.slice(0, idx);
 }
 
 /**

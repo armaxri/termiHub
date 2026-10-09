@@ -1,7 +1,7 @@
 import { Pencil } from "lucide-react";
 import { Modal, Button, SearchInput } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
-import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings";
 import {
   getDefaultBindings,
@@ -13,18 +13,14 @@ import { isMac } from "@/utils/platform";
 import "./ShortcutsOverlay.css";
 
 /**
- * Case-insensitive match of a keybinding against the (already normalized) query
- * on its label, action id, or category. Module-level so the {@link useListFilter}
- * memo stays stable across renders.
+ * Searchable text of a keybinding: its label, action id, and category.
+ * Module-level so the {@link useListFilter} memo stays stable across renders.
  */
-const shortcutMatches: ListFilterMatcher<KeyBinding> = (binding, query) => {
-  if (!query) return true;
-  return (
-    binding.label.toLowerCase().includes(query) ||
-    binding.action.toLowerCase().includes(query) ||
-    binding.category.toLowerCase().includes(query)
-  );
-};
+const shortcutFields: ListFilterFields<KeyBinding> = (binding) => [
+  binding.label,
+  binding.action,
+  binding.category,
+];
 
 /** Human-readable "Active in" hint derived from an action's scope. */
 const SCOPE_HINTS: Record<ShortcutScope, string> = {
@@ -59,7 +55,7 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const bindings = getDefaultBindings();
-  const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, shortcutMatches);
+  const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, shortcutFields);
 
   /**
    * Close the read-only overlay and deep-link to Settings → Keyboard, where the

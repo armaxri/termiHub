@@ -35,7 +35,7 @@ import {
 } from "@/services/api";
 import { runMaybeTrackedTransfer, seedTransferQueueRow } from "@/hooks/transferFeedback";
 import type { FileEntry } from "@/types/connection";
-import { joinDirPath } from "@/utils/fileDragMove";
+import { joinPath } from "@/utils/paths";
 
 /** Which pane of the transfer view. */
 export type PaneSide = "local" | "remote";
@@ -231,7 +231,7 @@ export async function copyPaneFolder(
   const children = await listSide(from, srcDir, remote);
   let tracked = false;
   for (const child of children) {
-    const childDest = joinDirPath(destPath, child.name);
+    const childDest = joinPath(destPath, child.name);
     if (child.isDirectory) {
       tracked = (await copyPaneFolder(from, child.path, childDest, remote, options)) || tracked;
     } else if (!(options.continueExisting && alreadyCopied(child, existing))) {
@@ -254,7 +254,7 @@ export async function copyPaneEntry(
   remote: PaneRemote,
   options: PaneCopyOptions = {}
 ): Promise<boolean> {
-  const dest = joinDirPath(destDir, entry.name);
+  const dest = joinPath(destDir, entry.name);
   if (!entry.isDirectory) return copyFile(from, entry.path, dest, remote, options.onRegistered);
   return copyPaneFolder(from, entry.path, dest, remote, options);
 }

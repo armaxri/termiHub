@@ -11,7 +11,7 @@ import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
-import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
+import { useListFilter, nameDescriptionTagsFields } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeWorkflows } from "@/services/workflowIo";
@@ -90,7 +90,7 @@ export function WorkflowSidebar() {
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
   const [runTargets, setRunTargets] = useState<RunTargetsState | null>(null);
-  const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsMatcher);
+  const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsFields);
   const exportWorkflowsToFile = useJsonFileExport("workflows");
   const importWorkflowsFromFile = useJsonFileImport("workflows");
   const workflowDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {

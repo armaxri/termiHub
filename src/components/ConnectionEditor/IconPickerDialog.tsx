@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Modal, Button, SearchInput, EmptyState } from "@/components/ui";
-import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { getIconCatalog, IconByName, type IconCatalogEntry } from "@/utils/connectionIcons";
 import "./IconPickerDialog.css";
 
@@ -12,17 +12,13 @@ interface IconPickerDialogProps {
 }
 
 /**
- * Case-insensitive match of an icon catalog entry against the (already
- * normalized) query on its display name or any tag. Module-level so the
- * {@link useListFilter} memo stays stable across renders.
+ * Searchable text of an icon catalog entry: its display name and every tag.
+ * Module-level so the {@link useListFilter} memo stays stable across renders.
  */
-const iconMatches: ListFilterMatcher<IconCatalogEntry> = (entry, query) => {
-  if (!query) return true;
-  return (
-    entry.displayName.toLowerCase().includes(query) ||
-    entry.tags.some((tag) => tag.toLowerCase().includes(query))
-  );
-};
+const iconFields: ListFilterFields<IconCatalogEntry> = (entry) => [
+  entry.displayName,
+  ...entry.tags,
+];
 
 /**
  * Dialog for picking a connection icon with text search and scrollable grid.
@@ -36,7 +32,7 @@ export function IconPickerDialog({
   const [selected, setSelected] = useState<string | null>(currentIcon ?? null);
 
   const catalog = useMemo(() => getIconCatalog(), []);
-  const { query, setQuery, filtered } = useListFilter(catalog, iconMatches);
+  const { query, setQuery, filtered } = useListFilter(catalog, iconFields);
 
   useEffect(() => {
     if (open) {

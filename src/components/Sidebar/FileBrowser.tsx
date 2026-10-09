@@ -96,6 +96,7 @@ import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
+import { parentDir } from "@/utils/paths";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -936,9 +937,8 @@ function useFileBrowserSync() {
     // is session-backed and navigates through the session-mode effects below; only
     // a local editor tab drives the local pane here.
     if (activeTabContentType === "editor" && activeTabEditorMeta) {
-      const parentDir = activeTabEditorMeta.filePath.replace(/\/[^/]+$/, "") || "/";
       if (!activeTabEditorMeta.isRemote) {
-        navigateLocal(parentDir);
+        navigateLocal(parentDir(activeTabEditorMeta.filePath));
       }
       return;
     }
