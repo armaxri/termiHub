@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use chrono::Utc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
 use crate::io::transport::NotificationSender;
@@ -25,7 +25,8 @@ use crate::ki_prompt::relay::{
 use crate::ki_prompt::{KiPromptHub, PromptActivity};
 use crate::session::agent_forward::AgentForwardRelay;
 use crate::session::types::{
-    HostSessionSnapshot, SessionBackend, SessionHolder, SessionInfo, SessionSnapshot, SessionStatus,
+    HostSessionSnapshot, SessionBackend, SessionHolder, SessionInfo, SessionSnapshot,
+    SessionStatus, SessionTurn,
 };
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
@@ -37,7 +38,7 @@ use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{
-    evicted_notification, DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture,
+    evicted_notification, DaemonClient, DaemonWriterHandle, DetachJob, ExitHook, ExitHookFuture,
     OwnedByLivePeer, ProbeOutcome, EVICTED_REASON_HELD_BY_PEER,
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
@@ -1073,6 +1074,7 @@ impl SessionManager {
             attached: false,
             backend,
             definition_id: definition_id.clone(),
+            turn: SessionTurn::default(),
         };
 
         let snapshot = info.snapshot();
@@ -1266,17 +1268,44 @@ impl SessionManager {
     }
 
     /// Return the current scrollback buffer for a session (daemon-backed only).
+    ///
+    /// The daemon round trip runs outside the sessions lock (#4286), in this
+    /// session's turn, so a daemon slow to answer holds up only this session.
     pub async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
-        let mut sessions = self.sessions.lock().await;
-        let info = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        match info.backend {
-            SessionBackend::Daemon(ref mut client) => {
-                client.query_buffer().await.map_err(|e| e.to_string())
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
+        let query = {
+            let mut sessions = self.sessions.lock().await;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
+            match &info.backend {
+                SessionBackend::Daemon(client) => client.buffer_query(),
+                _ => return Ok(Vec::new()),
             }
-            _ => Ok(Vec::new()),
+        };
+        query.run().await.map_err(|e| e.to_string())
+    }
+
+    /// Wait for `session_id`'s turn (see [`SessionInfo::turn`]) **without**
+    /// holding the sessions lock while waiting, so operations on other sessions
+    /// proceed (#4286). `None` when the session is not in the map.
+    ///
+    /// The caller re-takes the sessions lock and reaches the entry through
+    /// [`turn_entry`], which also catches the session having been removed (agent
+    /// shutdown) or replaced (a concurrent adoption) in between.
+    async fn take_turn(&self, session_id: &str) -> Option<OwnedMutexGuard<()>> {
+        loop {
+            let turn = self.sessions.lock().await.get(session_id)?.turn.clone();
+            // No await point between releasing the map lock above and queueing
+            // here, so turns are queued in the order the map lock was taken.
+            let guard = turn.lock_owned().await;
+            let sessions = self.sessions.lock().await;
+            match sessions.get(session_id) {
+                Some(info) if Arc::ptr_eq(&info.turn, OwnedMutexGuard::mutex(&guard)) => {
+                    return Some(guard)
+                }
+                // Replaced while we waited: queue for the new entry's turn.
+                Some(_) => continue,
+                None => return None,
+            }
         }
     }
 
@@ -1617,13 +1646,24 @@ impl SessionManager {
         if !held && self.adopt_persisted(session_id, false).await.is_err() {
             return false;
         }
-        {
+        // In the session's turn, so a close never cuts into a re-attach or a
+        // buffer query in flight (#4286); the kill and disconnect run after the
+        // entry left the map, outside the sessions lock.
+        let Some(turn) = self.take_turn(session_id).await else {
+            return false;
+        };
+        let removed = {
             let mut sessions = self.sessions.lock().await;
-            match sessions.remove(session_id) {
-                Some(mut info) => close_backend(&mut info.backend).await,
-                None => return false,
+            match turn_entry(&mut sessions, session_id, &turn) {
+                Some(_) => sessions.remove(session_id),
+                None => None,
             }
-        }
+        };
+        let Some(mut info) = removed else {
+            return false;
+        };
+        close_backend(&mut info.backend).await;
+        drop(turn);
 
         // Tear down any ssh-agent relay this session held (#1727).
         self.agent_forward.stop_listener(session_id).await;
@@ -1698,12 +1738,28 @@ impl SessionManager {
     ///
     /// Called when a TCP client disconnects so sessions remain alive
     /// for the next client to re-attach.
+    ///
+    /// Each session is detached in its own turn, outside the sessions lock
+    /// (#4286): a re-attach still in flight finishes first and is then
+    /// detached, rather than attaching after the client left.
     pub async fn detach_all(&self) {
-        let mut sessions = self.sessions.lock().await;
-        for info in sessions.values_mut() {
-            if info.attached {
-                info.attached = false;
-                detach_backend(&mut info.backend).await;
+        let ids: Vec<String> = self.sessions.lock().await.keys().cloned().collect();
+        for id in ids {
+            let Some(turn) = self.take_turn(&id).await else {
+                continue;
+            };
+            let job = {
+                let mut sessions = self.sessions.lock().await;
+                match turn_entry(&mut sessions, &id, &turn) {
+                    Some(info) if info.attached => {
+                        info.attached = false;
+                        begin_detach_backend(&mut info.backend)
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(job) = job {
+                job.run().await;
             }
         }
     }
@@ -1774,24 +1830,63 @@ impl SessionManager {
     /// [`SESSION_HELD_BY_OTHER`] plus a `heldByPeer` eviction notice, leaving the
     /// holder undisturbed (#3395). `takeover == true` (explicit Reclaim only): a
     /// takeover reconnect that evicts the holder.
+    ///
+    /// The daemon I/O (release the old connection, connect, handshake) runs
+    /// outside the sessions lock, in this session's turn (#4286): a slow or
+    /// wedged daemon holds up operations on this session only, which queue
+    /// behind the re-attach in order. If the session is removed or replaced
+    /// meanwhile, the new connection is released again and the attach fails.
     async fn reattach_held(&self, session_id: &str, takeover: bool) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().await;
-        let info = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        if info.status != SessionStatus::Running {
-            return Err("Session not running".to_string());
-        }
-
-        info.last_activity = Utc::now();
-        match attach_backend(&mut info.backend, takeover).await {
-            Ok(()) => {
-                info.attached = true;
-                Ok(())
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
+        let job = {
+            let mut sessions = self.sessions.lock().await;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
+            if info.status != SessionStatus::Running {
+                return Err("Session not running".to_string());
             }
-            Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
-                info.attached = false;
+            info.last_activity = Utc::now();
+            match &mut info.backend {
+                SessionBackend::Daemon(client) => client.begin_reconnect(takeover),
+                SessionBackend::InProcess { flow, .. } => {
+                    // In-process connections always forward output; a pause left
+                    // by the previous desktop does not carry over (#4416).
+                    flow.resume();
+                    info.attached = true;
+                    return Ok(());
+                }
+                #[cfg(test)]
+                SessionBackend::Stub { .. } => {
+                    info.attached = true;
+                    return Ok(());
+                }
+            }
+        };
+
+        let result = job.run().await;
+
+        let mut sessions = self.sessions.lock().await;
+        let info = turn_entry(&mut sessions, session_id, &turn);
+        match (result, info) {
+            (Ok(reconnected), Some(info)) => {
+                if let SessionBackend::Daemon(client) = &mut info.backend {
+                    client.finish_reconnect(reconnected);
+                    info.attached = true;
+                    return Ok(());
+                }
+                drop(sessions);
+                reconnected.abandon().await;
+                Err(not_found())
+            }
+            (Ok(reconnected), None) => {
+                drop(sessions);
+                info!("Session {session_id} went away while re-attaching; releasing it again");
+                reconnected.abandon().await;
+                Err(not_found())
+            }
+            (Err(e), info) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                if let Some(info) = info {
+                    info.attached = false;
+                }
                 drop(sessions);
                 info!(
                     "Plain attach of session {session_id} refused: another desktop holds it \
@@ -1805,7 +1900,7 @@ impl SessionManager {
                 ));
                 Err(SESSION_HELD_BY_OTHER.to_string())
             }
-            Err(e) => Err(e.to_string()),
+            (Err(e), _) => Err(e.to_string()),
         }
     }
 
@@ -1870,6 +1965,7 @@ impl SessionManager {
             attached: true,
             backend: SessionBackend::Daemon(client),
             definition_id: persisted.definition_id.clone(),
+            turn: SessionTurn::default(),
         };
         let replaced = {
             let mut sessions = self.sessions.lock().await;
@@ -1937,11 +2033,12 @@ impl SessionManager {
     /// before #4416 does not support it and keeps streaming. Input is never
     /// held back. The sessions lock is released before the daemon write.
     pub async fn set_output_paused(&self, session_id: &str, paused: bool) -> Result<(), String> {
+        // In the session's turn, so a pause sent during a re-attach reaches the
+        // new connection (#4286).
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         let daemon_handle = {
-            let sessions = self.sessions.lock().await;
-            let info = sessions
-                .get(session_id)
-                .ok_or_else(|| "Session not found".to_string())?;
+            let mut sessions = self.sessions.lock().await;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             match &info.backend {
                 // An evicted client no longer holds the daemon: nothing to pause.
                 SessionBackend::Daemon(client)
@@ -1967,16 +2064,21 @@ impl SessionManager {
     }
 
     /// Detach the client from a session.
+    ///
+    /// The daemon detach runs outside the sessions lock, in this session's
+    /// turn (#4286).
     pub async fn detach(&self, session_id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().await;
-        let info = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        info.attached = false;
-        info.last_activity = Utc::now();
-
-        detach_backend(&mut info.backend).await;
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
+        let job = {
+            let mut sessions = self.sessions.lock().await;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
+            info.attached = false;
+            info.last_activity = Utc::now();
+            begin_detach_backend(&mut info.backend)
+        };
+        if let Some(job) = job {
+            job.run().await;
+        }
         Ok(())
     }
 
@@ -2466,41 +2568,42 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
     }
 }
 
-/// Re-attach `backend`. A daemon session reconnects with takeover intent only
-/// when `takeover` is set (explicit Reclaim); otherwise it is a plain,
-/// never-evicting re-attach (#3395).
-async fn attach_backend(backend: &mut SessionBackend, takeover: bool) -> Result<(), anyhow::Error> {
-    match backend {
-        SessionBackend::Daemon(ref mut client) => {
-            if takeover {
-                client.take_over().await?;
-            } else {
-                client.attach().await?;
-            }
-        }
-        SessionBackend::InProcess { flow, .. } => {
-            // In-process connections always forward output; a pause left by the
-            // previous desktop does not carry over (#4416).
-            flow.resume();
-        }
-        #[cfg(test)]
-        SessionBackend::Stub { .. } => {}
-    }
-    Ok(())
+/// The "Session not found" error of the session operations.
+fn not_found() -> String {
+    "Session not found".to_string()
 }
 
-async fn detach_backend(backend: &mut SessionBackend) {
+/// The entry of `session_id` if it is still the one whose turn the caller
+/// holds — not removed or replaced since the turn was taken (#4286).
+fn turn_entry<'a>(
+    sessions: &'a mut Sessions<SessionInfo>,
+    session_id: &str,
+    turn: &OwnedMutexGuard<()>,
+) -> Option<&'a mut SessionInfo> {
+    sessions
+        .get_mut(session_id)
+        .filter(|info| Arc::ptr_eq(&info.turn, OwnedMutexGuard::mutex(turn)))
+}
+
+/// Start detaching `backend`: the daemon I/O is returned as a job for the
+/// caller to run once it released the sessions lock (#4286).
+fn begin_detach_backend(backend: &mut SessionBackend) -> Option<DetachJob> {
     match backend {
-        SessionBackend::Daemon(ref mut client) => {
-            client.detach().await;
-        }
+        SessionBackend::Daemon(client) => Some(client.begin_detach()),
         SessionBackend::InProcess { flow, .. } => {
             // In-process connections keep forwarding. The desktop that paused
             // the output is gone, so never leave the program blocked (#4416).
             flow.resume();
+            None
         }
         #[cfg(test)]
-        SessionBackend::Stub { .. } => {}
+        SessionBackend::Stub { .. } => None,
+    }
+}
+
+async fn detach_backend(backend: &mut SessionBackend) {
+    if let Some(job) = begin_detach_backend(backend) {
+        job.run().await;
     }
 }
 
@@ -2726,11 +2829,13 @@ impl SessionManagerApi for SessionManager {
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
         let sync_result: Option<Result<(), String>>;
 
+        // In the session's turn, so input and resizes keep their order and
+        // wait for a re-attach in flight instead of failing (#4286). The turn
+        // is held across the daemon write below.
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         {
             let mut sessions = self.sessions.lock().await;
-            let info = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| "Session not found".to_string())?;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             info.last_activity = Utc::now();
             match &info.backend {
                 // SM-003: never write to a session another desktop took over — its
@@ -2773,11 +2878,13 @@ impl SessionManagerApi for SessionManager {
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
         let sync_result: Option<Result<(), String>>;
 
+        // In the session's turn, so input and resizes keep their order and
+        // wait for a re-attach in flight instead of failing (#4286). The turn
+        // is held across the daemon write below.
+        let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         {
             let mut sessions = self.sessions.lock().await;
-            let info = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| "Session not found".to_string())?;
+            let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             info.last_activity = Utc::now();
             match &info.backend {
                 // SM-003: never write to a session another desktop took over — its
@@ -2873,9 +2980,13 @@ mod tests {
     #[test]
     fn takeover_intent_originates_only_from_explicit_reclaim() {
         let manager = production_source(include_str!("manager.rs"));
-        // A takeover re-attach of an in-map session: only via `attach_backend`
-        // with `takeover`, which only `reclaim` requests.
-        assert_eq!(call_sites(manager, ".take_over()"), vec!["attach_backend"]);
+        // A takeover re-attach of an in-map session: only via `reattach_held`
+        // starting a reconnect with its `takeover`, which only `reclaim` sets.
+        assert_eq!(
+            call_sites(manager, ".begin_reconnect("),
+            vec!["reattach_held"]
+        );
+        assert!(!manager.contains(".take_over()"));
         assert_eq!(
             call_sites(manager, "reattach_held(session_id, true)"),
             vec!["reclaim"]
@@ -2898,18 +3009,15 @@ mod tests {
             vec!["launch", "adopt_persisted"]
         );
 
-        // The daemon client: a plain `attach` never declares takeover intent.
+        // The daemon client: a plain re-attach never declares takeover intent.
         let client = production_source(include_str!("../daemon/client.rs"));
-        let plain = client
-            .split("pub async fn attach(&mut self)")
-            .nth(1)
-            .and_then(|rest| rest.split("pub async fn take_over").next())
-            .expect("DaemonClient::attach present");
-        assert!(plain.contains("self.reconnect(false)"));
         assert_eq!(
             call_sites(client, "self.reconnect(true)"),
             vec!["take_over"]
         );
+        // The job that runs a re-attach declares recovery intent unless asked
+        // to take over.
+        assert!(client.contains("recovery_intent: !takeover"));
 
         // The RPC: only `takeover: true` routes to `reclaim`.
         let dispatch = production_source(include_str!("../handler/dispatch.rs"));
@@ -3718,6 +3826,7 @@ mod tests {
                     alive: Arc::new(AtomicBool::new(true)),
                 },
                 definition_id: None,
+                turn: SessionTurn::default(),
             };
 
             let snapshot = info.snapshot();

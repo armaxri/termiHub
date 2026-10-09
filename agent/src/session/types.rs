@@ -97,7 +97,17 @@ pub struct SessionInfo {
     /// Lets clients re-link an active session to its source definition
     /// (e.g. to derive the persistent connection ID for reattach).
     pub definition_id: Option<String>,
+    /// This session's operation turn (#4286): held across the session's
+    /// daemon I/O, which runs **outside** the manager's `sessions` lock, so
+    /// operations on this session still run one at a time and in arrival
+    /// order while other sessions are not held up. Also identifies the entry:
+    /// a session replaced under the same id gets a new turn.
+    pub turn: SessionTurn,
 }
+
+/// The per-session operation turn (see [`SessionInfo::turn`]). Tokio's mutex
+/// queues waiters fairly, so turns are taken in the order they were requested.
+pub type SessionTurn = Arc<tokio::sync::Mutex<()>>;
 
 /// Read-only snapshot of session state, returned from list/create.
 #[derive(Debug, Clone)]
