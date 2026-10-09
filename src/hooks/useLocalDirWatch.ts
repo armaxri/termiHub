@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef } from "react";
 import { watchLocalDir, unwatchLocalDir } from "@/services/api";
 import { onLocalDirChanged } from "@/services/events";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -65,9 +65,8 @@ export function useLocalDirWatch(
     const closeWatch = () => {
       if (watchClosed || !registered) return;
       watchClosed = true;
-      void unwatchLocalDir(runWatchId).catch(() => {
-        // best-effort teardown
-      });
+      // Best-effort teardown: the view is gone, a leaked watch is only logged.
+      fireAndForget(unwatchLocalDir(runWatchId), `unwatch local dir ${runWatchId}`);
     };
 
     const start = async () => {

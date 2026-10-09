@@ -116,8 +116,9 @@ export async function restoreWindowedLayout(
 export function bestEffortOwnership(op: () => Promise<unknown>): void {
   try {
     fireAndForget(op(), "advisory multi-window session ownership");
-  } catch {
-    // api layer unavailable (unit tests stub @/services/api).
+  } catch (err) {
+    // A synchronous throw means the api layer itself is unavailable; advisory, so log only.
+    frontendLog("window_ownership", `ownership call threw: ${errorMessage(err)}`);
   }
 }
 

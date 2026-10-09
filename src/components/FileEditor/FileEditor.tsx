@@ -56,7 +56,7 @@ import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog"
 import { SaveCopyDialog } from "./SaveCopyDialog";
 import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
-import { frontendLog, frontendError } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog, frontendError } from "@/utils/frontendLog";
 import { registerEditorBuffer, takeCarriedBuffer } from "@/utils/editorBufferRegistry";
 import "./FileEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
@@ -979,9 +979,8 @@ export function FileEditor({
     const closeWatch = () => {
       if (watchClosed || !registered) return;
       watchClosed = true;
-      void unwatchLocalFile(runWatchId).catch(() => {
-        // best-effort teardown
-      });
+      // Best-effort teardown: the editor is gone, a leaked watch is only logged.
+      fireAndForget(unwatchLocalFile(runWatchId), `unwatch local file ${runWatchId}`);
     };
 
     const start = async () => {

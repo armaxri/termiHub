@@ -74,11 +74,16 @@ export function OpenPortsPanel() {
 
   // Auto-load listening ports on mount so the panel opens populated; Refresh
   // remains for an explicit re-fetch. The handler throws to keep the Refresh
-  // Button's error path, so swallow that here (the error is already surfaced
-  // inline via setError).
-  useEffect(() => {
-    void handleRefresh().catch(() => {});
+  // Button's error path; the error is already surfaced inline via setError, so
+  // only log it here.
+  const refreshSurfacedInline = useCallback(() => {
+    void handleRefresh().catch((err: unknown) =>
+      frontendLog("open_ports", `refresh failed (shown inline): ${errorMessage(err)}`)
+    );
   }, [handleRefresh]);
+  useEffect(() => {
+    refreshSurfacedInline();
+  }, [refreshSurfacedInline]);
 
   // The list belongs to one vantage (this computer or an agent host, PROD-033).
   // When "Run on" changes, drop the stale list rather than show one host's
@@ -187,7 +192,7 @@ export function OpenPortsPanel() {
 
       <NetworkToolHistory
         tool="open-ports"
-        onRerun={() => void handleRefresh().catch(() => {})}
+        onRerun={refreshSurfacedInline}
         rerunDisabled={loading}
       />
     </div>

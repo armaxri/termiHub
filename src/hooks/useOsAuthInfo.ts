@@ -56,9 +56,10 @@ export function useOsAuthInfo(): { info: OsAuthInfo | null; refresh: () => Promi
         if (disposed) fn();
         else unlisten = fn;
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         // Event bridge unavailable (tests / teardown) — the mode/status
         // dependency above still refreshes the info.
+        frontendLog("os_auth_info", `status-change listener unavailable: ${errorMessage(err)}`);
       });
     return () => {
       disposed = true;

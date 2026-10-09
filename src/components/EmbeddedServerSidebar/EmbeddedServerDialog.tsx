@@ -13,6 +13,8 @@ import {
 } from "@/types/embeddedServer";
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
+import { frontendWarn } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface Props {
   open: boolean;
@@ -131,8 +133,12 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
       setLanWarning(false);
       listNetworkInterfaces()
         .then(setInterfaces)
-        .catch(() => {
-          /* keep defaults on error */
+        .catch((err: unknown) => {
+          // Keep the default bind choices; the form still works without the list.
+          frontendWarn(
+            "embedded_server",
+            `listing network interfaces failed: ${errorMessage(err)}`
+          );
         });
     }
   }, [open, config, reset]);
