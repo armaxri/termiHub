@@ -5279,4 +5279,8 @@ mod tests {
     /// One-time sweep of pre-existing orphan session files (#2807).
     #[cfg(unix)]
     mod orphan_sweep_tests;
+
+    /// Daemon reattach / buffer I/O runs outside the sessions lock (#4286).
+    #[cfg(unix)]
+    mod lock_scope_tests;
 }
