@@ -1,9 +1,8 @@
 /**
- * Tests for the real `agent-state-change` and `remote-state-change` handlers
- * (TFE2-001, #4309).
+ * Tests for the real `agent-state-change` handler (TFE2-001, #4309).
  *
- * These call {@link handleAgentStateChange} / {@link handleRemoteStateChange} —
- * the exact functions `TerminalView` registers with `listen` — rather than a
+ * These call {@link handleAgentStateChange} — the exact function
+ * `TerminalView` registers with `listen` — rather than a
  * copy of their loops, so the tests cannot drift from the shipped code.
  *
  * SM2-001 regression: a user Disconnect/Shutdown of an agent used to fold every
@@ -34,11 +33,7 @@ import {
   resetAgentDisconnectIntentsForTest,
 } from "@/store/agentDisconnectIntent";
 import { disconnectAgent, shutdownAgent } from "@/services/api";
-import {
-  handleAgentStateChange,
-  handleRemoteStateChange,
-  type AgentEndReason,
-} from "./agentStateHandlers";
+import { handleAgentStateChange, type AgentEndReason } from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -76,7 +71,6 @@ vi.mock("@/services/api", () => ({
   shutdownAgent: vi.fn(() => Promise.resolve(2)),
   closeTerminal: vi.fn(() => Promise.resolve()),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
-  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
   saveAgentDefinition: vi.fn(),
   updateAgentDefinition: vi.fn(),
@@ -131,7 +125,7 @@ function sessions(...ids: string[]): AgentSessionInfo[] {
 
 setupAgentsRegion();
 
-describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309)", () => {
+describe("handleAgentStateChange (real handler, #4309)", () => {
   const harness = installSessionLifecycleHarness();
 
   let listAgentSessions: ReturnType<typeof vi.fn<(agentId: string) => Promise<AgentSessionInfo[]>>>;
@@ -625,52 +619,6 @@ describe("handleAgentStateChange / handleRemoteStateChange (real handlers, #4309
       await disconnectedWith("lost");
 
       expect(intents("session.reconnect", tab.id)).toHaveLength(1);
-    });
-  });
-
-  // ── remote-state-change ───────────────────────────────────────────────────
-
-  describe("handleRemoteStateChange", () => {
-    it("marks the owning tab dropped on 'disconnected'", () => {
-      const tab = openAgentTab("session-123");
-      harness.transport.setSession(tab.id, connected());
-
-      handleRemoteStateChange(
-        { session_id: "session-123", state: "disconnected" },
-        { getAllTabs: allTabs }
-      );
-
-      expect(intents("session.exited", tab.id)).toHaveLength(1);
-      expect(intents("session.reconnect", tab.id)).toHaveLength(1);
-    });
-
-    it("does not reconnect a tab the user stopped", () => {
-      const tab = openAgentTab("session-123");
-      harness.transport.setSession(tab.id, disconnected("user"));
-
-      handleRemoteStateChange(
-        { session_id: "session-123", state: "disconnected" },
-        { getAllTabs: allTabs }
-      );
-
-      expect(intents("session.reconnect", tab.id)).toHaveLength(0);
-    });
-
-    it("ignores other states and unknown sessions", () => {
-      const tab = openAgentTab("session-123");
-      harness.transport.setSession(tab.id, connected());
-
-      handleRemoteStateChange(
-        { session_id: "session-123", state: "connected" },
-        { getAllTabs: allTabs }
-      );
-      handleRemoteStateChange(
-        { session_id: "nope", state: "disconnected" },
-        { getAllTabs: allTabs }
-      );
-
-      expect(intents("session.exited", tab.id)).toEqual([]);
-      expect(intents("session.reconnect", tab.id)).toEqual([]);
     });
   });
 });
