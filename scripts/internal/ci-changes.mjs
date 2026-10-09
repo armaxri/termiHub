@@ -110,7 +110,12 @@ const RUST_FILES = new Set(["Cargo.toml", "Cargo.lock", "deny.toml", "Cross.toml
 // agent itself, core (a path dependency) and core's own path dependencies, plus
 // the workspace-wide manifests/toolchain. src-tauri/ and examples/ are NOT here —
 // the agent does not build from them.
-const AGENT_ROOTS = [
+//
+// Exported because .github/workflows/agent.yml's workflow-level `paths` filter
+// must cover every one of them, or the workflow never starts and the job-level
+// `agent` gate never gets a say (#4358, CI2-008). ci-changes.test.mjs pins the
+// two lists together.
+export const AGENT_ROOTS = [
   "agent/",
   "core/",
   "plugin-api/",
@@ -119,7 +124,7 @@ const AGENT_ROOTS = [
   "vendor/",
   ".cargo/",
 ];
-const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
+export const AGENT_FILES = new Set(["Cargo.toml", "Cargo.lock"]);
 
 // What the workspace-excluded plugin-runner/fuzz crate compiles from (#4257): the
 // fuzz crate itself (under plugin-runner/), the plugin-runner crate whose IPC
@@ -168,6 +173,24 @@ const INERT_FILES = new Set([
   "commitlint.config.js",
 ]);
 
+// Files outside tests/system/ that the per-PR machinery suite reads (#4358,
+// TIN2-003). test_dev_local.py is the only gate for the per-checkout port
+// isolation invariants (#4004, #4007, #4094, #4339) and parses the compose files
+// and the shell resolver; test_native_sshd_fixture.py, test_test_script.py,
+// test_runner_script.py and test_build_system_test_agent.py read or run the
+// scripts below. Without `harness` a compose-only PR skipped all of that.
+const HARNESS_READ_ROOTS = ["tests/docker/", "examples/docker/"];
+const HARNESS_READ_FILES = new Set([
+  "default.dev.local.json",
+  "scripts/internal/dev-local-env.sh",
+  "scripts/internal/native-sshd-fixture.sh",
+  "scripts/internal/native-sshd-fixture.ps1",
+  "scripts/internal/build-system-test-agent.sh",
+  "scripts/test.sh",
+  "scripts/test-system-py.sh",
+]);
+const HARNESS_READ_PATTERN = /^examples\/dev\d+\.dev\.local\.json$/;
+
 const DEP_FILES = new Set([
   "Cargo.lock",
   "Cargo.toml",
@@ -200,7 +223,9 @@ function locationAreas(path) {
   // Python harness by the machinery suite (test_bridge_protocol_contract.py).
   if (path.startsWith("src/testbridge/")) return ["frontend", "harness"];
   // Container fixtures run in integration-fixtures.yml (own path trigger); the
-  // only per-PR check that reads them is ShellCheck over their scripts.
+  // per-PR checks that read them are ShellCheck over their scripts and the
+  // machinery suite's compose-port isolation tests (`harness`, added by the
+  // HARNESS_READ_* rule in classify(), #4358).
   if (path.startsWith("tests/docker/")) return ["scripts"];
 
   if (path.startsWith("docs/") || path.endsWith(".md") || path.startsWith(".markdownlint")) {
@@ -290,6 +315,13 @@ export function classify(paths, { commentOnly = new Set() } = {}) {
     // computed paths inside the checked modules, so a list derived from the
     // tests would drift; the whole tree (incl. its .md) is the safe set.
     if (path.startsWith("scripts/")) flags.frontend = true;
+    if (
+      startsWithAny(path, HARNESS_READ_ROOTS) ||
+      HARNESS_READ_FILES.has(path) ||
+      HARNESS_READ_PATTERN.test(path)
+    ) {
+      flags.harness = true;
+    }
     if (DEP_FILES.has(basename(path)) && !path.startsWith("rdp-sidecar/")) flags.deps = true;
     if (
       startsWithAny(path, AGENT_ROOTS) ||

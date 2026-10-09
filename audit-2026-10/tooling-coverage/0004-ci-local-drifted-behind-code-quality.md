@@ -19,8 +19,8 @@ evidence:
   - ".github/workflows/code-quality.yml:664-760"
   - ".github/workflows/code-quality.yml:1418-1437"
   - "core/Cargo.toml:[features]"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4358 — ci-local.sh/.cmd derive core features from cargo metadata, add the missing per-PR gates, list what they skip; a drift test maps every code-quality.yml job"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

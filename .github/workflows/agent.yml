@@ -11,10 +11,25 @@ name: Agent
 on:
   pull_request:
     branches: [ main, develop ]
+    # Every real input of the agent build (#4358, CI2-008): the agent and core,
+    # core's path dependencies (plugin-api, plugin-runner, win-security, vendor/
+    # vnc-rs), the cargo config, the workspace manifest + lockfile and the pinned
+    # toolchain. Must cover AGENT_ROOTS/AGENT_FILES in
+    # scripts/internal/ci-changes.mjs (pinned by ci-changes.test.mjs), and the
+    # push list below must match this one.
     paths:
       - 'agent/**'
       - 'core/**'
+      - 'plugin-api/**'
+      - 'plugin-runner/**'
+      - 'win-security/**'
+      - 'vendor/**'
+      - '.cargo/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - '.github/rust-version'
+      - '.github/actions/setup-rust/**'
       # Re-run the cross-compile legs when the build workflow itself changes, so
       # edits to the musl build (e.g. the cross-image hardening in #2056) are
       # exercised on their own PR instead of shipping unvalidated.
@@ -29,7 +44,16 @@ on:
     paths:
       - 'agent/**'
       - 'core/**'
+      - 'plugin-api/**'
+      - 'plugin-runner/**'
+      - 'win-security/**'
+      - 'vendor/**'
+      - '.cargo/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain*'
+      - '.github/rust-version'
+      - '.github/actions/setup-rust/**'
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
       - 'scripts/internal/assert-no-agent-test-hooks.sh'
