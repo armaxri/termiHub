@@ -52,8 +52,8 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         # A workflow with no steps cannot be saved.
         assert self.driver.exists("workflow-editor-no-steps")
         assert self.save_disabled()
-        self.driver.click("workflow-editor-cancel")
-        self.wait(lambda: not self.editor_open(), what="the editor to close")
+        # Nothing was edited, so Cancel closes without the unsaved prompt.
+        self.cancel_clean_editor()
 
     def test_add_step_menu_adds_every_kind(self):
         # The #1868 surface: each kind must be genuinely clickable in the real
@@ -63,8 +63,20 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
             self.add_step(kind)
             assert self.step_kind(index) == kind
         assert self.step_count() == len(STEP_KINDS)
+
+        # The added steps make the editor dirty, so Cancel raises the shared
+        # unsaved-changes prompt instead of closing (#4314). "Keep editing"
+        # returns to the editor with every step intact...
         self.driver.click("workflow-editor-cancel")
-        self.wait(lambda: not self.editor_open(), what="the editor to close")
+        self.wait(self.unsaved_prompt_open, what="the unsaved-changes prompt")
+        assert self.editor_open()
+        self.driver.click("unsaved-changes-cancel")
+        self.wait(lambda: not self.unsaved_prompt_open(), what="the prompt to close")
+        assert self.editor_open()
+        assert self.step_count() == len(STEP_KINDS)
+
+        # ...and Discard closes it without saving.
+        self.cancel_dirty_editor()
 
     def test_edit_reorder_remove_and_save(self):
         name = unique_name("wf-edit")

@@ -23,6 +23,12 @@ from .base import HarnessMixin
 
 WORKFLOW_SIDEBAR = "workflow-sidebar"
 WORKFLOW_EDITOR_DIALOG = "workflow-editor-dialog"
+WORKFLOW_EDITOR_CANCEL = "workflow-editor-cancel"
+# The shared unsaved-changes prompt the Modal raises when a dirty editor is
+# dismissed (#4314). "Just close" renders as "Discard changes" in this variant.
+UNSAVED_DIALOG = "unsaved-changes-dialog"
+UNSAVED_KEEP_EDITING = "unsaved-changes-cancel"
+UNSAVED_DISCARD = "unsaved-changes-just-close"
 
 
 class WorkflowUi(HarnessMixin):
@@ -166,6 +172,31 @@ class WorkflowUi(HarnessMixin):
         """Save the workflow and wait for the editor dialog to close."""
         self.driver.click("workflow-editor-save")
         self.wait(lambda: not self.editor_open(), what="the workflow editor to close")
+
+    def unsaved_prompt_open(self) -> bool:
+        """Whether the shared unsaved-changes prompt is currently raised."""
+        return self.driver.exists(UNSAVED_DIALOG)
+
+    def cancel_clean_editor(self) -> None:
+        """Cancel an editor with no edits; it must close without a prompt."""
+        self.driver.click(WORKFLOW_EDITOR_CANCEL)
+        self.wait(lambda: not self.editor_open(), what="the workflow editor to close")
+        assert not self.unsaved_prompt_open(), "a clean editor raised the unsaved prompt"
+
+    def cancel_dirty_editor(self) -> None:
+        """Cancel an edited editor, assert the unsaved prompt, then Discard.
+
+        Since #4314 a dismiss on a dirty editor dialog raises the shared
+        unsaved-changes prompt instead of closing. This asserts the prompt
+        appears while the editor stays mounted behind it, then answers it with
+        Discard and waits for the editor to close.
+        """
+        self.driver.click(WORKFLOW_EDITOR_CANCEL)
+        self.wait(self.unsaved_prompt_open, what="the unsaved-changes prompt")
+        assert self.editor_open(), "the dirty editor closed instead of prompting"
+        self.driver.click(UNSAVED_DISCARD)
+        self.wait(lambda: not self.editor_open(), what="the workflow editor to close")
+        assert not self.unsaved_prompt_open(), "the unsaved prompt outlived the editor"
 
     def save_disabled(self) -> bool:
         """Whether the Save button is disabled (no name / no steps)."""
