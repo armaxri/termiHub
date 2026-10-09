@@ -30,6 +30,9 @@ name: Windows SSH Host
 on:
   schedule:
     # 04:17 UTC daily (off the top of the hour to dodge scheduler congestion).
+    # GitHub fires this only from main (the default branch). Until this file
+    # is on main, scheduled-dispatch.yml dispatches it on develop (#4277); see
+    # scripts/internal/scheduled-lanes.mjs.
     - cron: "17 4 * * *"
   workflow_dispatch:
   pull_request:

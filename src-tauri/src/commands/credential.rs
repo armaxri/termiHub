@@ -13,6 +13,7 @@ use crate::credential::{
     CredentialKey, CredentialManager, CredentialStore, CredentialType, LockedEventPayload,
     MasterPasswordStore, StorageMode, UnlockFailure,
 };
+use termihub_core::connection::secrets::TakenSecrets;
 
 /// Event emitted when the credential store is locked.
 const EVENT_STORE_LOCKED: &str = "credential-store-locked";
@@ -870,6 +871,47 @@ pub fn remove_credential(
         "Removing credential"
     );
     manager.remove(&key).map_err(|e| e.to_string())
+}
+
+/// Resolve the schema secrets other than `password` stored for a saved
+/// connection — e.g. a VNC SSH-tunnel password or an inline jump-host hop's
+/// password (#4289) — for the connect flow to splice into its in-memory config
+/// and to prompt for what is missing (#4429).
+///
+/// Returns `null` when the store cannot be read (locked or unavailable); the
+/// caller unlocks first. Secrets are never logged.
+#[tauri::command]
+pub fn resolve_field_secrets(
+    connection_id: String,
+    source_file: Option<String>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<Option<TakenSecrets>, String> {
+    debug!(connection_id = %connection_id, "Resolving stored field secrets");
+    match connection_manager.stored_field_secrets(&connection_id, source_file.as_deref()) {
+        Ok(secrets) => Ok(Some(secrets)),
+        Err(e) => {
+            warn!(
+                "Failed to resolve field secrets for {}: {}",
+                connection_id, e
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Store field secrets entered in the connect prompt with its Save box
+/// checked, merged over the ones already stored for the connection (#4429).
+#[tauri::command]
+pub fn store_field_secrets(
+    connection_id: String,
+    source_file: Option<String>,
+    secrets: TakenSecrets,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    debug!(connection_id = %connection_id, "Storing field secrets");
+    connection_manager
+        .save_field_secrets(&connection_id, source_file.as_deref(), secrets)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -998,6 +998,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::credential::store_credential,
             commands::credential::resolve_credential,
             commands::credential::remove_credential,
+            commands::credential::resolve_field_secrets,
+            commands::credential::store_field_secrets,
             commands::credential::set_auto_lock_timeout,
             commands::named_credential::list_named_credentials,
             commands::named_credential::create_named_credential,

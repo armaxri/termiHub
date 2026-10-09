@@ -3081,6 +3081,47 @@ export async function resolveCredential(
 }
 
 /**
+ * A saved connection's schema secrets other than `password` (#4289): the
+ * top-level secret fields by settings key (e.g. the VNC `sshPassword`) and
+ * inline jump-host hop passwords by hop identity (`user@host:port`).
+ */
+export interface FieldSecrets {
+  fields?: Record<string, string>;
+  hops?: Record<string, string>;
+}
+
+/**
+ * Resolve the field secrets stored for a saved connection (#4429). Returns
+ * `null` when the store cannot be read (locked or unavailable).
+ * `sourceFile` scopes the lookup as in {@link storeCredential}.
+ */
+export async function resolveFieldSecrets(
+  connectionId: string,
+  sourceFile?: string | null
+): Promise<FieldSecrets | null> {
+  return await invoke<FieldSecrets | null>("resolve_field_secrets", {
+    connectionId,
+    sourceFile: sourceFile ?? null,
+  });
+}
+
+/**
+ * Store field secrets a connect prompt collected, merged over the ones
+ * already stored for the connection (#4429).
+ */
+export async function storeFieldSecrets(
+  connectionId: string,
+  secrets: FieldSecrets,
+  sourceFile?: string | null
+): Promise<void> {
+  await invoke("store_field_secrets", {
+    connectionId,
+    sourceFile: sourceFile ?? null,
+    secrets,
+  });
+}
+
+/**
  * Remove a stored credential for a connection (e.g., after auth failure).
  * `sourceFile` scopes the key as in {@link storeCredential}.
  */

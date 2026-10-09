@@ -329,7 +329,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], loadWorkspaces });
     dialogOpen.mockResolvedValue("/tmp/workspaces.json");
     fsReadTextFile.mockResolvedValue("{}");
-    apiImportWorkspaces.mockResolvedValue({ importedCount: 3, warnings: [] });
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 3, warnings: [], untrustedTabs: [] });
 
     act(() => {
       root.render(withTooltip(<WorkspaceSidebar />));
@@ -350,7 +350,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], loadWorkspaces });
     dialogOpen.mockResolvedValue("/tmp/workspaces.json");
     fsReadTextFile.mockResolvedValue("{}");
-    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings: [] });
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings: [], untrustedTabs: [] });
 
     act(() => {
       root.render(withTooltip(<WorkspaceSidebar />));
@@ -373,7 +373,7 @@ describe("WorkspaceSidebar", () => {
       'Workspace "Broken Setup" references connection "Old Router", which no longer exists. ' +
         "The tab was kept but will not connect until the connection is restored.",
     ];
-    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings });
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings, untrustedTabs: [] });
 
     act(() => {
       root.render(withTooltip(<WorkspaceSidebar />));
@@ -389,6 +389,49 @@ describe("WorkspaceSidebar", () => {
     expect(toastError).toHaveBeenCalledTimes(2);
     expect(toastError).toHaveBeenNthCalledWith(1, warnings[0]);
     expect(toastError).toHaveBeenNthCalledWith(2, warnings[1]);
+  });
+
+  it("flags imported commands and connections as untrusted in a persistent notice (#4434)", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue("/tmp/workspaces.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    apiImportWorkspaces.mockResolvedValue({
+      importedCount: 1,
+      warnings: [],
+      untrustedTabs: [
+        {
+          workspaceName: "Ops",
+          tabTitle: "Build",
+          command: "curl x | sh",
+          spawnsLocalProcess: false,
+        },
+        {
+          workspaceName: "Ops",
+          connectionType: "ssh",
+          connectionTarget: "root@evil.example:22",
+          spawnsLocalProcess: false,
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    const [summary, options] = toastSuccess.mock.calls[0] as [
+      string,
+      { description: string; duration: number },
+    ];
+    expect(summary).toBe("Imported 1 workspace");
+    expect(options.duration).toBe(Infinity);
+    expect(options.description).toContain("untrusted");
+    expect(options.description).toContain('runs "curl x | sh"');
+    expect(options.description).toContain("opens ssh root@evil.example:22");
   });
 
   it("surfaces an error toast when import fails", async () => {
@@ -429,7 +472,7 @@ describe("WorkspaceSidebar", () => {
 
   it("surfaces a success toast when export succeeds", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [], untrustedTabs: [] });
     dialogSave.mockResolvedValue("/tmp/out.json");
     fsWriteTextFile.mockResolvedValue(undefined);
 
@@ -485,7 +528,7 @@ describe("WorkspaceSidebar", () => {
 
   it("surfaces an error toast when export fails", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [], untrustedTabs: [] });
     dialogSave.mockResolvedValue("/tmp/out.json");
     fsWriteTextFile.mockRejectedValue(new Error("permission denied"));
 
@@ -502,7 +545,7 @@ describe("WorkspaceSidebar", () => {
 
   it("shows no toast when the export file dialog is cancelled", async () => {
     useAppStore.setState({ workspaces: [] });
-    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [] });
+    apiExportWorkspaces.mockResolvedValue({ json: "{}", warnings: [], untrustedTabs: [] });
     dialogSave.mockResolvedValue(null);
 
     act(() => {

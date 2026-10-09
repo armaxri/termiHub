@@ -11,6 +11,7 @@ use crate::workspace::config::{
     WorkspaceSummary,
 };
 use crate::workspace::connection_refs::ConnectionRefMap;
+use crate::workspace::import_trust::mark_groups_untrusted;
 use crate::workspace::last_session::{LastSession, LastSessionManager};
 use crate::workspace::manager::WorkspaceManager;
 use crate::workspace::settings::{ActiveWorkspaceInfo, ACTIVE_WORKSPACE_CHANGED_EVENT};
@@ -154,6 +155,9 @@ pub fn get_cli_workspace(
 /// Read a `--workspace-file` JSON definition, save it as a workspace, and return
 /// its name. Shared by the startup CLI path ([`get_cli_workspace`]) and the
 /// second-launch forwarding path (`utils::single_instance`, #3101).
+///
+/// The file is outside input like an import, so its commands and inline
+/// connection configs are held until confirmed on this machine (#4434).
 pub fn load_workspace_file(
     path: &Path,
     manager: &WorkspaceManager,
@@ -162,9 +166,10 @@ pub fn load_workspace_file(
     let content = std::fs::read_to_string(path).map_err(|e| {
         TerminalError::WorkspaceError(format!("Cannot read workspace file '{shown}': {e}"))
     })?;
-    let definition: WorkspaceDefinition = serde_json::from_str(&content).map_err(|e| {
+    let mut definition: WorkspaceDefinition = serde_json::from_str(&content).map_err(|e| {
         TerminalError::WorkspaceError(format!("Invalid workspace file '{shown}': {e}"))
     })?;
+    mark_groups_untrusted(&mut definition.tab_groups);
     let name = definition.name.clone();
     manager.save_workspace(definition)?;
     Ok(name)
@@ -247,4 +252,45 @@ pub fn clear_last_session(manager: State<'_, LastSessionManager>) -> Result<(), 
     manager
         .clear()
         .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::config::WorkspaceLayoutNode;
+
+    /// #4434: a `--workspace-file` is outside input like an import, so its
+    /// command and inline config wait for confirmation on this machine.
+    #[test]
+    fn workspace_file_commands_are_held_until_confirmed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = WorkspaceManager::new_test(dir.path());
+        let file = dir.path().join("ws.json");
+        std::fs::write(
+            &file,
+            r#"{
+                "id": "ws-file",
+                "name": "From file",
+                "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [
+                    { "initialCommand": "make deploy",
+                      "inlineConfig": { "type": "local", "config": {} } }
+                ] } }]
+            }"#,
+        )
+        .unwrap();
+
+        let name = load_workspace_file(&file, &manager).unwrap();
+        assert_eq!(name, "From file");
+
+        let ws = manager.load_workspace("ws-file").unwrap();
+        let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout else {
+            panic!("expected leaf");
+        };
+        assert_eq!(tabs[0].initial_command, None);
+        assert_eq!(
+            tabs[0].pending_initial_command.as_deref(),
+            Some("make deploy")
+        );
+        assert!(tabs[0].inline_config_unconfirmed);
+    }
 }

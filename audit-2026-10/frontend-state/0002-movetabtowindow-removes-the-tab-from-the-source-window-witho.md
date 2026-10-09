@@ -16,8 +16,8 @@ evidence:
   - src/store/slices/layoutSlice.ts:552
   - src/store/slices/layoutSlice.ts:629
   - src/components/Sidebar/PersistentStateDot.tsx:64
-status: open
-resolution: ""
+status: fixed
+resolution: "#4313 — closeTab and moveTabToWindow share one teardown helper; a moved tab leaves no per-tab, lifecycle, broadcast or persistent state"
 audit: 2026-10
 commit: 663465d52
 relation: new

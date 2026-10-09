@@ -270,9 +270,11 @@ dependencies; unified coverage; bundle size; the rustdoc intra-doc link gate
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
-Audit (also daily on both branches), Bundle Size, Rustdoc, the full Agent matrix
+Audit (also daily), Bundle Size, Rustdoc, the full Agent matrix
 and Dev Build. **Coverage** (the blocking unit-coverage ratchet) runs nightly on
-`develop`, on every push to `main` and on demand — not per merge (#4119; see
+`develop` (dispatched, see
+[Scheduled lanes](#scheduled-lanes-stay-dark-until-they-reach-main)), on every
+push to `main` and on demand — not per merge (#4119; see
 [Coverage Goals](testing.md#coverage-goals)). On `develop` a newer push cancels the
 in-progress run of an older one (see the concurrency rule below), so **a develop
 run grades a batch of merges**: the newest commit's run is the one to read (it
@@ -309,6 +311,42 @@ is for:
 
 A new workflow that gates correctness post-merge must use the correctness-gate
 form above (never cancel on `main`, tags, schedules or dispatch).
+
+### Scheduled lanes stay dark until they reach main
+
+GitHub fires `schedule:` and `workflow_run:` triggers **only from the workflow
+file on the default branch** (`main`). `main` trails `develop` between releases,
+so **a new scheduled lane does not run on its cron until its file reaches
+`main`**. A schedule-only file that has never run is not even registered with
+GitHub, so `gh workflow run <file> --ref develop` answers 404 until its first run.
+After #4119 removed develop push triggers, the coverage ratchet, the cargo
+lockfile chore and most nightlies sat dark this way for days (#4277).
+
+How the lanes that grade `develop` fire anyway:
+
+- [`scheduled-dispatch.yml`](../.github/workflows/scheduled-dispatch.yml) owns
+  their crons. Once it is on `main`, each cron dispatches its lanes on `develop`
+  (`gh workflow run <file> --ref develop`). A lane whose own file is already on
+  `main` with a `schedule:` keeps its own cron, and the dispatcher skips it.
+- Until the dispatcher is on `main`, **every push to `develop`** runs it too. It
+  dispatches each lane whose newest `develop` run is older than 28 h (daily) or
+  7 d + 4 h (weekly). A day with no merges dispatches nothing.
+- Its **heartbeat** (`scripts/internal/scheduled-lanes-heartbeat.mjs`) fails the
+  run when a lane has no successful `develop` run within 36 h (daily) or 8 days
+  (weekly). A red "Scheduled Lanes" run means a nightly gate is dark or failing.
+- The **drift guard** (`scripts/internal/check-scheduled-lane-drift.mjs`)
+  annotates every scheduled workflow that is missing from `main` or whose `on:`
+  block differs there.
+
+**Adding a scheduled lane:** register it in
+[`scripts/internal/scheduled-lanes.mjs`](../scripts/internal/scheduled-lanes.mjs)
+(cadence, cron, which runs count) and add its cron to `scheduled-dispatch.yml`
+if it is new. Give it `workflow_dispatch`. If it has no other trigger, also give
+it a self-path `push: develop` trigger so its first merge registers it. The
+per-PR vitest suite fails when a workflow with `schedule:`/`workflow_run:` is not
+registered. A `workflow_run:` lane can only be dispatched, so add a cron for it.
+Getting the whole set onto `main` takes either the next develop→main release
+merge or a one-file PR that adds `scheduled-dispatch.yml` to `main`.
 
 ### Required checks per branch
 

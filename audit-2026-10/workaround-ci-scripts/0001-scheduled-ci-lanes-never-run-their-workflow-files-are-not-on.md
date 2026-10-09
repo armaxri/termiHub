@@ -21,8 +21,8 @@ evidence:
   - .github/workflows/vendored-forks.yml:40-42
   - .github/workflows/windows-ssh-host.yml:31-33
   - .github/workflows/wsl-live.yml:25-27
-status: open
-resolution: ""
+status: partial
+resolution: "#4277 — single dispatcher plus develop-push catch-up, drift guard against main and per-PR registry test; dispatcher crons fire once it is on main (#4448)"
 ---
 
 ## What
