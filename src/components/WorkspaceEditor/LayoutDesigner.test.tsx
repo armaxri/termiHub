@@ -281,4 +281,62 @@ describe("LayoutDesigner", () => {
 
     expect(onChange).not.toHaveBeenCalled();
   });
+  describe("Add Connection picker (A11Y2-005 / UISF2-001, #4332)", () => {
+    function openPicker(): HTMLButtonElement {
+      const onChange = vi.fn();
+      act(() => {
+        root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
+      });
+      const trigger = query("layout-leaf-add-tab-0") as HTMLButtonElement;
+      act(() => trigger.focus());
+      act(() => trigger.click());
+      return trigger;
+    }
+
+    function picker(): HTMLElement | null {
+      return document.querySelector('[data-testid="connection-picker"]');
+    }
+
+    function pressOnSearch(key: string): void {
+      const input = document.querySelector<HTMLInputElement>(
+        '[data-testid="connection-picker-search"]'
+      )!;
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    }
+
+    it("opens the picker as a dialog from the panel's Add Connection button", () => {
+      openPicker();
+      expect(picker()?.getAttribute("role")).toBe("dialog");
+    });
+
+    it("closes on Escape and returns focus to the Add Connection button", async () => {
+      const trigger = openPicker();
+      expect(picker()?.contains(document.activeElement)).toBe(true);
+      pressOnSearch("Escape");
+      expect(picker()).toBeNull();
+      // Radix restores focus on the next task once the focus scope unmounts.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it("adds the keyboard-selected connection to the panel and closes", () => {
+      const onChange = vi.fn();
+      act(() => {
+        root.render(withTooltip(<LayoutDesigner layout={leaf(tab("a"))} onChange={onChange} />));
+      });
+      act(() => (query("layout-leaf-add-tab-0") as HTMLButtonElement).click());
+      // The always-offered Local Shell is the first (active) option.
+      pressOnSearch("Enter");
+      expect(onChange).toHaveBeenCalledTimes(1);
+      const next = onChange.mock.calls[0][0] as WorkspaceLayoutNode;
+      const tabs = getWorkspaceLeaves(next)[0].tabs;
+      expect(tabs).toHaveLength(2);
+      expect(tabs[1]).toMatchObject({ title: "Local Shell", inlineConfig: { type: "local" } });
+      expect(picker()).toBeNull();
+    });
+  });
 });

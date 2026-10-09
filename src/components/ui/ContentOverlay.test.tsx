@@ -87,4 +87,135 @@ describe("ContentOverlay", () => {
     });
     expect(await checkA11y()).toHaveNoViolations();
   });
+
+  describe("announcement + focus (#4331)", () => {
+    function liveRegion(): HTMLElement | null {
+      return container.querySelector("[data-testid='content-overlay-live']");
+    }
+
+    it("renders no live region unless asked to announce", () => {
+      act(() => root.render(<ContentOverlay icon={<span />} heading="Session ended" />));
+      expect(liveRegion()).toBeNull();
+    });
+
+    it("announces assertive overlays in an alert region with heading and description", () => {
+      act(() =>
+        root.render(
+          <ContentOverlay
+            icon={<span />}
+            heading="Connection failed"
+            subheading="my-server"
+            announce="assertive"
+            announcement="Connection failed. Host unreachable"
+          />
+        )
+      );
+      expect(liveRegion()?.getAttribute("role")).toBe("alert");
+      expect(liveRegion()?.textContent).toBe("Connection failed. Host unreachable");
+    });
+
+    it("defaults the announcement to the heading plus a string subheading", () => {
+      act(() =>
+        root.render(
+          <ContentOverlay
+            icon={<span />}
+            heading="Session disconnected"
+            subheading="The connection was lost."
+            announce="polite"
+          />
+        )
+      );
+      expect(liveRegion()?.getAttribute("role")).toBe("status");
+      expect(liveRegion()?.textContent).toBe("Session disconnected. The connection was lost.");
+    });
+
+    it("labels the body by its heading and describes it by the message", () => {
+      act(() =>
+        root.render(
+          <ContentOverlay
+            icon={<span />}
+            heading="Reconnect failed"
+            subheading="All attempts exhausted."
+            describedBy="extra-message"
+          >
+            <span id="extra-message">timeout</span>
+          </ContentOverlay>
+        )
+      );
+      const body = container.querySelector(".ui-content-overlay") as HTMLElement;
+      expect(body.getAttribute("role")).toBe("group");
+      const labelId = body.getAttribute("aria-labelledby") ?? "";
+      expect(document.getElementById(labelId)?.textContent).toBe("Reconnect failed");
+      const describedIds = (body.getAttribute("aria-describedby") ?? "").split(" ");
+      const description = describedIds
+        .map((id) => document.getElementById(id)?.textContent)
+        .join(" ");
+      expect(description).toBe("All attempts exhausted. timeout");
+    });
+
+    function renderFocusable(autoFocus: boolean, heading = "Connection failed") {
+      act(() =>
+        root.render(
+          <ContentOverlay
+            icon={<span />}
+            heading={heading}
+            announce="assertive"
+            autoFocusPrimaryAction={autoFocus}
+            actions={
+              <>
+                <button type="button" data-testid="primary">
+                  Retry
+                </button>
+                <button type="button" data-testid="secondary">
+                  Cancel
+                </button>
+              </>
+            }
+          />
+        )
+      );
+    }
+
+    it("moves focus to the first action when autoFocusPrimaryAction is set", () => {
+      renderFocusable(true);
+      expect(document.activeElement).toBe(container.querySelector("[data-testid='primary']"));
+    });
+
+    it("leaves focus alone when autoFocusPrimaryAction is not set", () => {
+      renderFocusable(false);
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("moves focus once the overlay becomes active", () => {
+      renderFocusable(false);
+      expect(document.activeElement).toBe(document.body);
+      renderFocusable(true);
+      expect(document.activeElement).toBe(container.querySelector("[data-testid='primary']"));
+    });
+
+    it("does not steal focus from a control outside the overlay's host", () => {
+      const outside = document.createElement("input");
+      document.body.appendChild(outside);
+      outside.focus();
+      try {
+        renderFocusable(true);
+        expect(document.activeElement).toBe(outside);
+      } finally {
+        outside.remove();
+      }
+    });
+
+    it("does not re-focus on a re-render with the same content", () => {
+      renderFocusable(true);
+      const secondary = container.querySelector("[data-testid='secondary']") as HTMLElement;
+      secondary.focus();
+      renderFocusable(true);
+      expect(document.activeElement).toBe(secondary);
+    });
+
+    it("has no accessibility violations when announcing", async () => {
+      renderFocusable(true);
+      expect(await checkA11y()).toHaveNoViolations();
+    });
+  });
 });

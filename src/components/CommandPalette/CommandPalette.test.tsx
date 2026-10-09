@@ -396,4 +396,50 @@ describe("CommandPalette", () => {
       expect(runWorkflow).not.toHaveBeenCalled();
     });
   });
+
+  describe("WAI-ARIA combobox pattern (#4330 / A11Y2-004)", () => {
+    function listbox(): HTMLElement {
+      const el = document.querySelector<HTMLElement>('[role="listbox"]');
+      if (!el) throw new Error("listbox not found");
+      return el;
+    }
+    function selectedOption(): HTMLElement | null {
+      return document.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+    }
+
+    it("points aria-controls at the listbox and reports it expanded while results show", () => {
+      const input = getInput();
+      expect(input.getAttribute("role")).toBe("combobox");
+      expect(input.getAttribute("aria-autocomplete")).toBe("list");
+      expect(input.getAttribute("aria-controls")).toBe(listbox().id);
+      expect(input.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("reports collapsed (not a hard-coded true) when nothing matches", () => {
+      typeInto("zzzznomatch");
+      expect(getInput().getAttribute("aria-expanded")).toBe("false");
+      expect(getInput().hasAttribute("aria-activedescendant")).toBe(false);
+    });
+
+    it("gives every option a unique, stable id", () => {
+      const ids = Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.id);
+      expect(ids.every((id) => id.length > 0)).toBe(true);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("points aria-activedescendant at the highlighted option and follows the arrow keys", () => {
+      const first = selectedOption();
+      expect(first).not.toBeNull();
+      expect(getInput().getAttribute("aria-activedescendant")).toBe(first!.id);
+
+      keydown("ArrowDown");
+      const second = selectedOption();
+      expect(second).not.toBeNull();
+      expect(second!.id).not.toBe(first!.id);
+      expect(getInput().getAttribute("aria-activedescendant")).toBe(second!.id);
+
+      keydown("ArrowUp");
+      expect(getInput().getAttribute("aria-activedescendant")).toBe(first!.id);
+    });
+  });
 });

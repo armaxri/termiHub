@@ -149,7 +149,8 @@ The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
 binding, use its **Edit shortcuts…** button, which opens
 **Settings → Keyboard Shortcuts** — the panel with the interactive editor.
 
-In that editor, click a binding cell to **record** a new shortcut:
+In that editor, click a binding — or <kbd>Tab</kbd> to it and press
+<kbd>Enter</kbd> or <kbd>Space</kbd> — to **record** a new shortcut:
 
 - Press a single combination (e.g. <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>)
   and it is captured after a brief pause.
@@ -160,6 +161,16 @@ In that editor, click a binding cell to **record** a new shortcut:
   second combination is pressed.
 - <kbd>Backspace</kbd> before any key unbinds the action; during a chord it
   removes the last captured combo. <kbd>Esc</kbd> cancels recording.
+- A bare <kbd>Tab</kbd> or <kbd>Shift</kbd>+<kbd>Tab</kbd> is reserved for
+  moving focus: pressing it leaves recording without changing the shortcut, so
+  the recorder never traps the keyboard. Combined with <kbd>Ctrl</kbd>,
+  <kbd>Alt</kbd> or <kbd>Cmd</kbd> (e.g. <kbd>Ctrl</kbd>+<kbd>Tab</kbd>), Tab is
+  recorded like any other key.
+- Each row's **Clear shortcut** button (×) unbinds the action;
+  **Reset to default** restores the built-in binding.
+- Screen readers hear when recording starts and what the binding became
+  (set, cleared, reset or cancelled); a conflict with another action is
+  announced as an alert and leaves the binding unchanged.
 
 Recorded chords fire through the same chord matcher the built-in defaults use.
 

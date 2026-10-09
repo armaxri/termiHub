@@ -211,6 +211,12 @@ pub enum SidecarFailureKind {
     /// The session could not be established for any other reason (TCP / TLS /
     /// X.224 negotiation, a refused certificate, an unsupported desktop size).
     Connect,
+    /// The TCP connect or the X.224 / TLS / CredSSP negotiation did not finish
+    /// within the connect timeout (#4320, #4401): the host is firewalled, or a
+    /// peer accepted TCP but never spoke RDP. Retryable, like
+    /// [`Connect`](Self::Connect). Appended (never reordered) for wire
+    /// compatibility.
+    Timeout,
 }
 
 /// Serialize `msg` and write it as one length-prefixed MessagePack frame.
@@ -463,7 +469,11 @@ mod tests {
 
     #[tokio::test]
     async fn typed_failure_round_trips() {
-        for kind in [SidecarFailureKind::Auth, SidecarFailureKind::Connect] {
+        for kind in [
+            SidecarFailureKind::Auth,
+            SidecarFailureKind::Connect,
+            SidecarFailureKind::Timeout,
+        ] {
             let msg = SidecarMessage::Failure {
                 kind,
                 message: "logon failure".to_string(),

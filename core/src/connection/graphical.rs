@@ -1012,6 +1012,24 @@ pub trait GraphicalBackend: Send + Sync {
         Ok(())
     }
 
+    /// Wait until the session reaches a **definitive connect outcome**: `Ok(())`
+    /// once it is established (connected and authenticated), or the typed
+    /// reason it failed (#4320).
+    ///
+    /// Backends that establish (and authenticate) inside `connect()` — VNC, the
+    /// mock — are already established when `connect()` returns, so the default
+    /// resolves immediately. The RDP sidecar negotiates TCP, TLS and CredSSP/NLA
+    /// asynchronously *after* `connect()` returns; it resolves once the sidecar
+    /// reports the session active, or fails with the sidecar's typed failure
+    /// ([`fatal_error`](Self::fatal_error)) once it gives up. Test connection
+    /// awaits this, bounded by its own timeout and cancel, so it reports a real
+    /// verdict instead of "the helper started". A pending certificate prompt
+    /// ([`subscribe_cert_prompts`](Self::subscribe_cert_prompts)) blocks it
+    /// until a decision is sent.
+    async fn wait_until_established(&self) -> Result<(), SessionError> {
+        Ok(())
+    }
+
     /// The typed reason this backend's session ended fatally, when the backend
     /// learned one **after** `connect()` returned (#3390).
     ///

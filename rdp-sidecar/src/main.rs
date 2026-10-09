@@ -30,6 +30,7 @@ mod input;
 mod keymap;
 mod monitors;
 mod nla;
+mod panic_report;
 mod rdp;
 #[cfg(test)]
 mod rdpsnd_fork_tests;
@@ -43,18 +44,27 @@ use termihub_core::connection::GraphicalState;
 #[tokio::main]
 async fn main() {
     // Logs go to stderr; stdout is the binary IPC channel and must stay clean.
+    // The desktop pipes stderr into its own log one line at a time (#4320), so
+    // each record is one plain line: no colour codes, no timestamp (the
+    // desktop stamps it), the level first so the desktop keeps it.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .without_time()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    // A panic becomes one ERROR line the desktop records with its message.
+    panic_report::install();
 
     let code = match run().await {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("Error: {e:?}");
+            // One line (`{:#}` joins the context chain), so the desktop log
+            // records the whole reason as a single error entry.
+            tracing::error!("rdp sidecar exiting: {e:#}");
             1
         }
     };

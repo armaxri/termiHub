@@ -16,8 +16,8 @@ evidence:
   - rdp-sidecar/src/rdp.rs:167
   - src/components/ConnectionEditor/ConnectionEditor.tsx:1853
   - src/components/ConnectionEditor/ConnectionEditor.tsx:1362
-status: open
-resolution: ""
+status: fixed
+resolution: "#4320 — Test connection awaits the RDP sidecar's first definitive outcome (active, typed failure, timeout, untrusted certificate)"
 audit: 2026-10
 commit: 663465d52
 relation: new

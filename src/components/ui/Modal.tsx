@@ -70,6 +70,14 @@ export interface ModalProps {
    * that close the modal themselves (e.g. Save) are unaffected.
    */
   dirty?: boolean;
+  /**
+   * The element to focus when the modal opens, instead of Radix's default (the
+   * first tabbable, usually the X). Use it for a search or name field rather
+   * than `autoFocus`: `autoFocus` moves focus before the focus scope mounts, so
+   * the scope records the field — not the opener — as the element to restore
+   * focus to on close, and focus falls to `<body>` instead (#4332).
+   */
+  initialFocusRef?: React.RefObject<HTMLElement | null>;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
 }
@@ -99,6 +107,7 @@ export function Modal({
   size = "md",
   onKeyDown,
   dirty = false,
+  initialFocusRef,
   ...rest
 }: ModalProps): React.ReactElement {
   // Track the content node so descendants can portal into it (#1868). A callback
@@ -108,6 +117,18 @@ export function Modal({
   // The discard prompt raised by a dismiss while `dirty` (UX2-004).
   const [confirmDiscard, setConfirmDiscard] = React.useState(false);
   if (!open && confirmDiscard) setConfirmDiscard(false);
+  // The element that had focus when the modal opened, so focus can return to it
+  // on close (#4332). Radix only restores focus to a `Dialog.Trigger`, which no
+  // caller uses, and its focus scope records the wrong element when a child
+  // `autoFocus`es first. Captured while rendering the open transition, i.e.
+  // before any child effect or `autoFocus` moves focus.
+  const [opener, setOpener] = React.useState(() => ({
+    open,
+    element: open ? document.activeElement : null,
+  }));
+  if (opener.open !== open) {
+    setOpener({ open, element: open ? document.activeElement : null });
+  }
 
   const handleOpenChange = (next: boolean) => {
     if (!next && dirty) {
@@ -135,6 +156,23 @@ export function Modal({
           // Description element that is never rendered, which also makes
           // Radix log a missing-Description warning on every open (#3356).
           {...(description ? {} : { "aria-describedby": undefined })}
+          onCloseAutoFocus={(e) => {
+            // Only rescue focus that was lost with the dialog: never pull it
+            // back from something that claimed it on close (a new terminal tab,
+            // a follow-on dialog).
+            const active = document.activeElement;
+            const lost = !active || active === document.body;
+            const back = opener.element;
+            if (!lost || !(back instanceof HTMLElement) || !back.isConnected) return;
+            e.preventDefault();
+            back.focus();
+          }}
+          onOpenAutoFocus={(e) => {
+            const target = initialFocusRef?.current;
+            if (!target) return;
+            e.preventDefault();
+            target.focus();
+          }}
           onKeyDown={
             onKeyDown
               ? (e) => {

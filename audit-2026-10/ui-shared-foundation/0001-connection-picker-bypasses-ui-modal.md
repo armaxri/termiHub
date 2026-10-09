@@ -6,8 +6,8 @@ severity: medium
 category: a11y
 is_workaround: false
 subsystem: "src/components/WorkspaceEditor"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4332 — ConnectionPicker now composes ui/Modal; bespoke overlay/header/close CSS removed"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

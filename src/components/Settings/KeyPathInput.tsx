@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useId, useMemo } from "react";
 import { open } from "@/services/nativeDialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
@@ -40,6 +40,13 @@ export function KeyPathInput({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Stable ids for the WAI-ARIA combobox wiring (#4330): the input controls the
+  // listbox, points aria-activedescendant at the highlighted option, and is
+  // described by the validation live region.
+  const baseId = useId();
+  const listId = `${baseId}-listbox`;
+  const validationId = `${baseId}-validation`;
+  const optionId = (index: number) => `${listId}-opt-${index}`;
 
   // Inline key-file validation (PR #204): debounce a backend check of the typed
   // path and surface a hint (public key / PuTTY PPK / unrecognized / not found /
@@ -158,6 +165,15 @@ export function KeyPathInput({
   }, [sshDirPath, onChange]);
 
   const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
+  const listVisible = isOpen && filtered.length > 0;
+  const activeDescendant =
+    listVisible && highlightIndex >= 0 && highlightIndex < filtered.length
+      ? optionId(highlightIndex)
+      : undefined;
+  const validationMessage = validation?.message ? validation.message : null;
+  const describedBy =
+    [ariaDescribedBy, validationMessage ? validationId : null].filter(Boolean).join(" ") ||
+    undefined;
 
   return (
     <>
@@ -175,9 +191,11 @@ export function KeyPathInput({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           role="combobox"
-          aria-expanded={isOpen}
+          aria-expanded={listVisible}
+          aria-controls={listId}
+          aria-activedescendant={activeDescendant}
           aria-autocomplete="list"
-          aria-describedby={ariaDescribedBy}
+          aria-describedby={describedBy}
           aria-invalid={ariaInvalid || undefined}
           data-testid={`${prefix}key-path-input`}
         />
@@ -192,8 +210,9 @@ export function KeyPathInput({
             ...
           </button>
         </Tooltip>
-        {isOpen && filtered.length > 0 && (
+        {listVisible && (
           <ul
+            id={listId}
             className="key-path-input__dropdown"
             ref={listRef}
             role="listbox"
@@ -202,6 +221,7 @@ export function KeyPathInput({
             {filtered.map((file, i) => (
               <li
                 key={file.path}
+                id={optionId(i)}
                 className={`key-path-input__option${i === highlightIndex ? " key-path-input__option--highlighted" : ""}`}
                 role="option"
                 aria-selected={i === highlightIndex}
@@ -219,14 +239,21 @@ export function KeyPathInput({
           </ul>
         )}
       </div>
-      {validation && validation.message && (
+      {validation && validationMessage && (
         <p
+          id={validationId}
           className={`settings-form__hint settings-form__hint--${validation.status}`}
           data-testid={`${prefix}key-path-validation`}
         >
-          {validation.message}
+          {validationMessage}
         </p>
       )}
+      {/* Always-mounted, visually hidden polite live region so a newly arriving
+          validation result (key not found / unreadable / valid) is announced
+          (#4330). Kept out of layout so it adds no gap to the field. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {validationMessage ?? ""}
+      </span>
     </>
   );
 }

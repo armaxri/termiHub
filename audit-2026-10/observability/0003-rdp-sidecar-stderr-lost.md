@@ -14,8 +14,8 @@ evidence:
   - rdp-sidecar/src/rdp.rs:850
   - rdp-sidecar/src/rdp.rs:879
   - rdp-sidecar/src/rdp.rs:942
-status: open
-resolution: ""
+status: fixed
+resolution: "#4320 — sidecar stderr piped and forwarded under termihub_rdp_sidecar (bounded, sanitized); panics logged as one error line; clipboard break sends a typed Failure"
 audit: 2026-10
 commit: "663465d52"
 relation: new

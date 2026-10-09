@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button } from "@/components/ui";
+import { Button, LiveRegion } from "@/components/ui";
 import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
@@ -24,14 +24,17 @@ export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
     reconnectTerminal(tabId);
   }, [tabId, reconnectTerminal]);
 
+  const label = agentDisconnected
+    ? "Agent disconnected — press Enter or click Reconnect to reconnect it and start a new session"
+    : "Session ended — press Enter or click Reconnect to start a new session";
+
   return (
     <div className="terminal-view-mode-banner" data-testid="terminal-view-mode-banner">
+      {/* The banner can appear without the disconnect overlay (the user ended
+          the agent, #4309), so announce its state politely (#4331). */}
+      <LiveRegion message={label} />
       <WifiOff size={12} className="terminal-view-mode-banner__icon" />
-      <span className="terminal-view-mode-banner__label">
-        {agentDisconnected
-          ? "Agent disconnected — press Enter or click Reconnect to reconnect it and start a new session"
-          : "Session ended — press Enter or click Reconnect to start a new session"}
-      </span>
+      <span className="terminal-view-mode-banner__label">{label}</span>
       <Button
         variant="primary"
         size="sm"
