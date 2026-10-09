@@ -19,13 +19,29 @@ name: Cargo Update Lockfile
 # fast manual fix path for anything that still slips through is documented in
 # docs/ci-yanked-crate-runbook.md.
 #
-# Gate before merge (#3755, CI-012): the refreshed lockfile is run through the
-# same cargo-deny gate Security Audit uses (advisories incl. yanked, bans,
-# licenses, sources). If it FAILS, the PR is still opened/updated so the change
-# and its failure are visible in one place, but as a DRAFT with the cargo-deny
-# output in its body, with auto-merge off — and the job itself then fails, so
-# the scheduled run goes red instead of silently proposing a lockfile that reds
-# the gate. When a later run passes, the PR is marked ready again.
+# Gate before merge (#3755 CI-012, #4465): the refreshed lockfile must pass, in
+# this job, before the PR is opened ready or armed for auto-merge:
+#   1. `cargo check --workspace --all-targets --all-features --locked` — it
+#      compiles. #4460 moved primefield 0.14.0-rc.9 -> 0.14.0, which the -rc
+#      p256/p384/p521 stack does not build against, and auto-merged a lockfile
+#      that broke every Rust build of develop (#4465);
+#   2. the pre-release tripwire (scripts/internal/check-prerelease-crates.mjs
+#      against .github/prerelease-allowlist.json) — the same per-PR check Code
+#      Quality runs, which #4460 also failed (aead/argon2/blake2 left their -rc);
+#   3. the cargo-deny gate Security Audit uses (advisories incl. yanked, bans,
+#      licenses, sources).
+# The job has to gate itself: this PR is pushed with GITHUB_TOKEN, and pushes
+# made with GITHUB_TOKEN trigger NO workflows, so the PR carries no check runs
+# and "auto-merge once CI is green" has nothing to wait for — it merges at once.
+# If any check FAILS, the PR is still opened/updated so the change and its
+# failure are visible in one place, but as a DRAFT with the failing output in
+# its body, with auto-merge off — and the job itself then fails, so the
+# scheduled run goes red instead of silently proposing a broken lockfile. When a
+# later run passes, the PR is marked ready again.
+#
+# The gate compiles freshly-bumped, unreviewed crates (build scripts and proc
+# macros run), so no step before the PR step can reach a write token: checkout
+# does not persist credentials and GH_TOKEN is scoped to the PR step only.
 #
 # Daily (not weekly) because an advisory or yank is published upstream at an
 # arbitrary time: a weekly cadence left every open PR's Security Audit red for
@@ -65,7 +81,6 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Fixed automation branch: reused every run so repeated runs update the
       # same PR instead of opening a new one each day.
       UPDATE_BRANCH: chore/cargo-update-lockfile
@@ -75,6 +90,10 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: develop
+          # The gate below runs build scripts of unreviewed crate versions; keep
+          # the write token out of .git/config while it does (#4465). The PR
+          # step pushes with an explicit, step-scoped credential instead.
+          persist-credentials: false
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -111,32 +130,88 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Pre-PR gate: the refreshed lockfile must pass the same cargo-deny check
-      # Security Audit runs. No continue-on-error — the outcome is captured as an
-      # output instead, so the next step can open the PR as a draft carrying the
-      # failure, and the final step fails the job (#3755, CI-012).
-      - name: Check refreshed lockfile against the cargo-deny gate
+      # `cargo check` below builds src-tauri, which links the Linux webview stack
+      # (same packages as Code Quality's Rust job).
+      - name: Install system dependencies
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # Restore develop's cache (read-only) so the gate's `cargo check` starts
+      # warm; this chore never writes the shared cache.
+      - name: Cache Rust dependencies
+        if: steps.diff.outputs.changed == 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: false
+
+      # Pre-PR gate (#3755 CI-012, #4465): the refreshed lockfile must compile,
+      # pass the pre-release tripwire and pass cargo-deny. Every check runs even
+      # after an earlier one fails, so one run reports everything that is wrong.
+      # No continue-on-error — the outcome is captured as an output instead, so
+      # the next step can open the PR as a draft carrying the failures, and the
+      # final step fails the job.
+      - name: Gate the refreshed lockfile (cargo check, pre-release tripwire, cargo-deny)
         id: gate
         if: steps.diff.outputs.changed == 'true'
         run: |
-          set +e
-          cargo deny --color never check advisories bans licenses sources \
-            > "$RUNNER_TEMP/cargo-deny.log" 2>&1
-          rc=$?
-          set -e
-          cat "$RUNNER_TEMP/cargo-deny.log"
-          if [ "$rc" -eq 0 ]; then
+          set -uo pipefail
+          log="$RUNNER_TEMP/lockfile-gate.log"
+          : > "$log"
+          failed=()
+
+          # Run one check; on failure append its output to the gate log. Cargo's
+          # progress lines are dropped so the PR body shows the actual errors.
+          gate() {
+            local label="$1"
+            shift
+            local part="$RUNNER_TEMP/lockfile-gate-part.log"
+            echo "::group::$label"
+            "$@" > "$part" 2>&1
+            local rc=$?
+            cat "$part"
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              failed+=("$label")
+              echo "::error::Lockfile gate: $label failed (exit $rc); PR opened as draft."
+              {
+                echo "=== $label: FAILED (exit $rc) ==="
+                grep -Ev '^ *(Compiling|Checking|Downloaded|Downloading|Updating|Locking|Fresh|Blocking) ' \
+                  "$part" | head -n 80
+                echo
+              } >> "$log"
+            fi
+          }
+
+          gate "cargo check" cargo check --workspace --all-targets --all-features --locked
+          gate "pre-release tripwire" node scripts/internal/check-prerelease-crates.mjs
+          gate "cargo deny" cargo deny --color never check advisories bans licenses sources
+
+          if [ "${#failed[@]}" -eq 0 ]; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo "Lockfile gate passed: cargo check, pre-release tripwire, cargo deny." \
+              >> "$GITHUB_STEP_SUMMARY"
           else
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            echo "::error::The refreshed Cargo.lock fails cargo deny (exit $rc); PR opened as draft."
+            echo "failed=${failed[*]}" >> "$GITHUB_OUTPUT"
+            echo "Lockfile gate FAILED: ${failed[*]}." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Open or update pull request
         if: steps.diff.outputs.changed == 'true'
         env:
+          # The only step that holds a write token (#4465).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GATE_PASSED: ${{ steps.gate.outputs.passed }}
-          GATE_LOG: ${{ runner.temp }}/cargo-deny.log
+          GATE_FAILED: ${{ steps.gate.outputs.failed }}
+          GATE_LOG: ${{ runner.temp }}/lockfile-gate.log
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -149,7 +224,12 @@ jobs:
           git checkout -B "$UPDATE_BRANCH"
           git add Cargo.lock
           git commit -m "chore(deps): update cargo lockfile"
-          git push --force origin "$UPDATE_BRANCH"
+          # Checkout did not persist credentials (see above); authenticate this
+          # one push the way actions/checkout does, without writing .git/config.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force origin "$UPDATE_BRANCH"
 
           # commitlint-safe body: conventional lowercase subject above, body
           # lines wrapped to <=100 chars. Deliberately no "Closes #" keyword —
@@ -162,6 +242,11 @@ jobs:
           yanked transitive crate — or a freshly-published RUSTSEC advisory fix
           — does not red every open PR's Security Audit before anyone notices.
           Compatible updates only — no `Cargo.toml` constraint is changed.
+
+          Before this PR was marked ready, the chore job itself ran the lockfile
+          gate on it: `cargo check --workspace --all-targets --all-features --locked`,
+          the pre-release tripwire and `cargo deny` (#4465). This PR is pushed
+          with `GITHUB_TOKEN`, so no other workflow runs on it by itself.
 
           This PR best-effort enables auto-merge, so it lands on its own once
           CI is green **if the repo has auto-merge enabled**
@@ -177,26 +262,24 @@ jobs:
           EOF
           )
 
-          # Gate failed: say so at the top of the body, with the cargo-deny
+          # Gate failed: say so at the top of the body, with each failing check's
           # output, so a reviewer sees why the PR is a draft without opening the
-          # run. cargo-deny prints errors first and its verdict last; keep the
-          # first 100 lines plus the verdict (the PR body limit is 65k chars).
+          # run. Keep the first 250 lines (the PR body limit is 65k chars).
           if [ "$GATE_PASSED" != "true" ]; then
             BODY="$(
               printf '%s\n' '> [!WARNING]'
-              printf '%s\n' '> **This lockfile fails the cargo-deny gate** (yanked crate, advisory,'
-              printf '%s\n\n' '> ban, license or source), so this PR is a draft with auto-merge off.'
+              printf '%s\n' "> **This lockfile fails the lockfile gate (${GATE_FAILED:-unknown})**,"
+              printf '%s\n\n' '> so this PR is a draft with auto-merge off. Do not merge it as is.'
               printf '%s\n\n' 'Run: '"$RUN_URL"
-              printf '%s\n' '<details><summary>cargo deny output</summary>'
+              printf '%s\n' '<details><summary>Failing gate output</summary>'
               printf '\n%s\n' '```'
               if [ -s "$GATE_LOG" ]; then
-                head -n 100 "$GATE_LOG"
-                if [ "$(wc -l < "$GATE_LOG")" -gt 100 ]; then
+                head -n 250 "$GATE_LOG"
+                if [ "$(wc -l < "$GATE_LOG")" -gt 250 ]; then
                   printf '%s\n' '[... truncated; full output in the run ...]'
-                  tail -n 1 "$GATE_LOG"
                 fi
               else
-                echo "(no cargo-deny log captured)"
+                echo "(no gate log captured)"
               fi
               printf '%s\n\n%s\n\n' '```' '</details>'
               printf '%s\n' "$BODY"
@@ -227,7 +310,7 @@ jobs:
           # a previous passing run enabled.
           if [ "$GATE_PASSED" != "true" ]; then
             gh pr merge "$UPDATE_BRANCH" --disable-auto 2>/dev/null || true
-            echo "Draft PR: the refreshed lockfile fails cargo deny; auto-merge left off." \
+            echo "Draft PR: the refreshed lockfile fails the gate ($GATE_FAILED); auto-merge off." \
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -253,7 +336,10 @@ jobs:
       # the failed scheduled run is noticed (#3755, CI-012).
       - name: Fail when the refreshed lockfile fails the gate
         if: steps.diff.outputs.changed == 'true' && steps.gate.outputs.passed != 'true'
+        env:
+          GATE_FAILED: ${{ steps.gate.outputs.failed }}
         run: |
-          echo "::error::The refreshed Cargo.lock fails cargo deny; see the draft PR and the gate step."
+          echo "::error::The refreshed Cargo.lock fails the lockfile gate ($GATE_FAILED);" \
+            "see the draft PR and the gate step."
           echo "Fix path: docs/ci-yanked-crate-runbook.md"
           exit 1
