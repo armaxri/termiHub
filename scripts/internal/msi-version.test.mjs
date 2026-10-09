@@ -81,9 +81,7 @@ describe("msiVersion mapping", () => {
     ];
     const mapped = order.map(msiVersion);
     for (let i = 1; i < mapped.length; i += 1) {
-      expect(compareMsi(mapped[i - 1], mapped[i]), `${order[i - 1]} < ${order[i]}`).toBeLessThan(
-        0
-      );
+      expect(compareMsi(mapped[i - 1], mapped[i]), `${order[i - 1]} < ${order[i]}`).toBeLessThan(0);
     }
     expect(new Set(mapped).size).toBe(mapped.length);
   });
