@@ -11,13 +11,15 @@ interface RemoteDesktopOverlayProps {
   message: string | null;
   /** Cancel an in-progress auto-reconnect (tears the session down). */
   onCancel: () => void;
+  /** Abort the initial connect while connecting / authenticating (#4298). */
+  onCancelConnect: () => void;
   /** Manually (re)connect from a failed / dropped state. */
   onReconnect: () => void;
 }
 
 /**
  * The one shared set of connection-state overlays for graphical remote-desktop
- * sessions (#1680): connecting, reconnecting (with attempt counter + Cancel)
+ * sessions (#1680): connecting (with Cancel, #4298), reconnecting (with attempt counter + Cancel)
  * while the backend auto-reconnect loop is retrying (#3364) — worded like a
  * terminal tab's reconnect (#3730: "Connection lost — reconnecting…",
  * "Attempt n of N") — and the
@@ -32,6 +34,7 @@ export function RemoteDesktopOverlay({
   reconnectAttempt,
   message,
   onCancel,
+  onCancelConnect,
   onReconnect,
 }: RemoteDesktopOverlayProps) {
   if (state === "active" || state === "resizing") return null;
@@ -44,6 +47,16 @@ export function RemoteDesktopOverlay({
           busy
           heading={`Connecting to ${host}…`}
           subheading={state === "authenticating" ? "Authenticating" : "Establishing connection"}
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onCancelConnect}
+              data-testid="remote-desktop-cancel-connect"
+            >
+              Cancel
+            </Button>
+          }
         />
       </div>
     );

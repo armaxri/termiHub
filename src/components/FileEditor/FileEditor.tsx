@@ -17,7 +17,7 @@ import {
   FileWarning,
   Info,
 } from "lucide-react";
-import { Button, Spinner, toast } from "@/components/ui";
+import { Button, Spinner, UnsavedChangesDialog, toast } from "@/components/ui";
 import { save } from "@/services/nativeDialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
@@ -52,7 +52,6 @@ import {
 } from "@/services/api";
 import type { Writability } from "@/types/connection";
 import { onLocalFileChanged } from "@/services/events";
-import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
 import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
@@ -1612,6 +1611,8 @@ export function FileEditor({
     <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
       <UnsavedChangesDialog
         open={pendingCloseRequest?.tabId === tabId}
+        subject="file"
+        name={meta.scratch ? undefined : fileName}
         onCancel={handleDialogCancel}
         onJustClose={handleDialogJustClose}
         onSaveAndClose={handleDialogSaveAndClose}

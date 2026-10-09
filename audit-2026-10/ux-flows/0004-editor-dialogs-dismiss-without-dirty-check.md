@@ -15,8 +15,8 @@ evidence:
   - src/components/TunnelEditor/TunnelEditor.tsx:330-336
   - src/components/TunnelEditor/TunnelEditor.tsx:446-450
   - src/components/WorkspaceEditor/WorkspaceEditor.tsx:170-176
-status: open
-resolution: ""
+status: fixed
+resolution: "#4314 — Modal gains a dirty guard on Escape, scrim, X and Cancel; tunnel and workspace editors report dirty and guard Cancel/Escape"
 audit: 2026-10
 commit: 663465d52
 relation: new

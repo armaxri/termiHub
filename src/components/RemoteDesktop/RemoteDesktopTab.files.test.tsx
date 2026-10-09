@@ -95,6 +95,7 @@ function fakeSession(state: GraphicalSessionState, viewOnly = false): RemoteDesk
     remoteClipboardFiles: vi.fn(async () => []),
     bindClipboardFiles: vi.fn(async () => 0),
     reconnect: vi.fn(),
+    cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
     awaitingFirstFrame: false,
     noteFirstFrame: vi.fn(),

@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowRight, Network, Plug, Power, Terminal, TriangleAlert } from "lucide-react";
+import {
+  ArrowRight,
+  FileWarning,
+  Network,
+  Plug,
+  Power,
+  Terminal,
+  TriangleAlert,
+  Trash2,
+} from "lucide-react";
 import { Button, Modal, Select } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { windowDisplayName } from "@/types/window";
@@ -25,6 +34,11 @@ import "./CloseWindowDecisionDialog.css";
  *
  * All-persistent and empty windows never reach this dialog; they close with a
  * toast (or silently) from {@link AppState.prepareWindowClose}.
+ *
+ * A window holding an editor with unsaved changes always reaches it (UX2-003):
+ * each such editor is listed as discarded, so the close is never silent. Moving
+ * re-parents only live sessions, so it is offered only when there are some; a
+ * window with nothing but unsaved editors offers Cancel or "Discard & close".
  */
 export function CloseWindowDecisionDialog() {
   const request = useAppStore((s) => s.pendingWindowClose);
@@ -55,6 +69,8 @@ export function CloseWindowDecisionDialog() {
   };
 
   const count = request.sessions.length;
+  const dirtyEditors = request.dirtyEditors ?? [];
+  const dirtyCount = dirtyEditors.length;
   const moveLabel =
     others.length === 1 && selected ? `Move tabs to ${windowDisplayName(selected)}` : "Move tabs";
 
@@ -63,7 +79,11 @@ export function CloseWindowDecisionDialog() {
       open
       onOpenChange={(isOpen) => !isOpen && handleCancel()}
       title="Close this window?"
-      description="Choose what happens to this window's live sessions before it closes."
+      description={
+        count > 0
+          ? "Choose what happens to this window's live sessions before it closes."
+          : "This window has unsaved editors that closing it would discard."
+      }
       data-testid="close-window-decision-dialog"
       footer={
         <>
@@ -75,9 +95,17 @@ export function CloseWindowDecisionDialog() {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleEnd} data-testid="close-window-decision-end">
-            <Power className="li" aria-hidden="true" /> Close &amp; end sessions
+            {count > 0 ? (
+              <>
+                <Power className="li" aria-hidden="true" /> Close &amp; end sessions
+              </>
+            ) : (
+              <>
+                <Trash2 className="li" aria-hidden="true" /> Discard &amp; close
+              </>
+            )}
           </Button>
-          {canMove && (
+          {canMove && count > 0 && (
             <Button variant="primary" onClick={handleMove} data-testid="close-window-decision-move">
               <ArrowRight className="li" aria-hidden="true" /> {moveLabel}
             </Button>
@@ -88,12 +116,22 @@ export function CloseWindowDecisionDialog() {
       <div className="close-window-decision__lead">
         <TriangleAlert className="li close-window-decision__lead-icon" aria-hidden="true" />
         <p>
-          This window owns {count} open session{count === 1 ? "" : "s"}. Choose what happens to{" "}
-          {count === 1 ? "it" : "them"} before it closes.
+          {count > 0 && (
+            <>
+              This window owns {count} open session{count === 1 ? "" : "s"}. Choose what happens to{" "}
+              {count === 1 ? "it" : "them"} before it closes.
+            </>
+          )}
+          {count > 0 && dirtyCount > 0 && " "}
+          {dirtyCount > 0 && (
+            <>
+              {dirtyCount} unsaved editor{dirtyCount === 1 ? "" : "s"} will be discarded.
+            </>
+          )}
         </p>
       </div>
 
-      {others.length > 1 && (
+      {others.length > 1 && count > 0 && (
         <div className="close-window-decision__target">
           <span className="close-window-decision__target-label">Move to</span>
           <Select
@@ -109,6 +147,23 @@ export function CloseWindowDecisionDialog() {
       <div className="close-window-decision__rows">
         {request.sessions.map((session) => (
           <SessionRow key={session.tabId} session={session} />
+        ))}
+        {dirtyEditors.map((editor) => (
+          <div
+            key={editor.tabId}
+            className="close-window-decision__row"
+            data-testid="close-window-decision-dirty-row"
+          >
+            <FileWarning className="li close-window-decision__row-icon" aria-hidden="true" />
+            <span className="close-window-decision__row-name">{editor.title}</span>
+            <span className="close-window-decision__row-type">editor</span>
+            <span
+              className="close-window-decision__pill close-window-decision__pill--terminate"
+              data-testid="close-window-decision-outcome-discard"
+            >
+              <Trash2 className="li" aria-hidden="true" /> Unsaved — discarded
+            </span>
+          </div>
         ))}
       </div>
     </Modal>

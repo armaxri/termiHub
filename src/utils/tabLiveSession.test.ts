@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { tabHasLiveSession, countLiveSessions, LiveSessionMaps } from "./tabLiveSession";
+import {
+  tabHasLiveSession,
+  countLiveSessions,
+  dirtyEditorTabs,
+  LiveSessionMaps,
+} from "./tabLiveSession";
 import { TerminalTab } from "@/types/terminal";
 
 function makeTab(overrides: Partial<TerminalTab> = {}): TerminalTab {
@@ -59,5 +64,22 @@ describe("countLiveSessions", () => {
 
   it("returns 0 for an empty list", () => {
     expect(countLiveSessions([], emptyMaps)).toBe(0);
+  });
+});
+
+describe("dirtyEditorTabs (UX2-003)", () => {
+  it("keeps only tabs flagged in editorDirtyTabs, whatever their content type", () => {
+    const tabs = [
+      makeTab({ id: "a", contentType: "editor", sessionId: null }),
+      makeTab({ id: "b", contentType: "connection-editor", sessionId: null }),
+      makeTab({ id: "c" }),
+      makeTab({ id: "d", contentType: "editor", sessionId: null }),
+    ];
+    const dirty = dirtyEditorTabs(tabs, { a: true, b: true, d: false });
+    expect(dirty.map((t) => t.id)).toEqual(["a", "b"]);
+  });
+
+  it("returns nothing when no tab is dirty", () => {
+    expect(dirtyEditorTabs([makeTab()], {})).toEqual([]);
   });
 });

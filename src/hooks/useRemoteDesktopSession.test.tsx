@@ -13,6 +13,7 @@ import { toast } from "@/components/ui";
 import { useRemoteDesktopSession, type RemoteDesktopSession } from "./useRemoteDesktopSession";
 import {
   remoteDesktopConnect,
+  remoteDesktopCancelConnect,
   remoteDesktopDisconnect,
   remoteDesktopResize,
   remoteDesktopSendInput,
@@ -40,6 +41,7 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock("@/services/api", () => ({
   remoteDesktopConnect: vi.fn(() => Promise.resolve("rd-1")),
+  remoteDesktopCancelConnect: vi.fn(() => Promise.resolve(true)),
   remoteDesktopDisconnect: vi.fn(() => Promise.resolve()),
   remoteDesktopResize: vi.fn(() => Promise.resolve()),
   remoteDesktopSendInput: vi.fn(() => Promise.resolve()),
@@ -83,6 +85,7 @@ vi.mock("@/utils/frontendLog", async (importOriginal) => ({
 }));
 
 const mockedConnect = vi.mocked(remoteDesktopConnect);
+const mockedCancelConnect = vi.mocked(remoteDesktopCancelConnect);
 const mockedDisconnect = vi.mocked(remoteDesktopDisconnect);
 const mockedResize = vi.mocked(remoteDesktopResize);
 const mockedSendInput = vi.mocked(remoteDesktopSendInput);
@@ -212,7 +215,8 @@ describe("useRemoteDesktopSession", () => {
         viewOnly: false,
         scaleMode: "fit",
       },
-      undefined
+      undefined,
+      expect.stringMatching(new RegExp(`^${tabId}:`))
     );
     expect(h.get().sessionId).toBe("rd-1");
   });
@@ -233,8 +237,129 @@ describe("useRemoteDesktopSession", () => {
     expect(mockedConnect).toHaveBeenCalledWith(
       "mock-remote-desktop",
       { host: "mock.local" },
-      "Lab/pi-desktop"
+      "Lab/pi-desktop",
+      expect.any(String)
     );
+  });
+
+  describe("connect cancellation (#4298)", () => {
+    /** Make the next connect hang until the test settles it. */
+    function pendingConnect() {
+      let resolve!: (id: string) => void;
+      let reject!: (err: unknown) => void;
+      mockedConnect.mockImplementationOnce(
+        () =>
+          new Promise<string>((res, rej) => {
+            resolve = res;
+            reject = rej;
+          })
+      );
+      return {
+        resolve: (id: string) => resolve(id),
+        reject: (err: unknown) => reject(err),
+      };
+    }
+
+    function connectIdOfCall(n = 0): string {
+      const id = mockedConnect.mock.calls[n][3];
+      if (typeof id !== "string") throw new Error("connect carried no connect id");
+      return id;
+    }
+
+    it("gives every connect attempt its own connect id", async () => {
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+      act(() => h.get().reconnect());
+      await flush();
+
+      expect(mockedConnect).toHaveBeenCalledTimes(2);
+      expect(connectIdOfCall(0)).not.toBe(connectIdOfCall(1));
+    });
+
+    it("Cancel while connecting aborts the backend connect and rests on closed", async () => {
+      const pending = pendingConnect();
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+      expect(h.get().state).toBe("connecting");
+
+      act(() => h.get().cancelConnect());
+      expect(mockedCancelConnect).toHaveBeenCalledWith(connectIdOfCall());
+      expect(h.get().state).toBe("closed");
+      expect(h.get().message).toBeNull();
+
+      // The aborted connect rejects; the user's cancel is not a failure.
+      pending.reject("Connection failed: Connection cancelled");
+      await flush();
+      expect(h.get().state).toBe("closed");
+      expect(h.get().message).toBeNull();
+      expect(h.get().sessionId).toBeNull();
+    });
+
+    it("disconnects a session whose connect finished just as it was cancelled", async () => {
+      const pending = pendingConnect();
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+
+      act(() => h.get().cancelConnect());
+      pending.resolve("rd-late");
+      await flush();
+
+      expect(mockedDisconnect).toHaveBeenCalledWith("rd-late");
+      expect(h.get().state).toBe("closed");
+      expect(h.get().sessionId).toBeNull();
+    });
+
+    it("Reconnect after a cancel connects fresh", async () => {
+      pendingConnect();
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+      act(() => h.get().cancelConnect());
+
+      act(() => h.get().reconnect());
+      await flush();
+
+      expect(mockedConnect).toHaveBeenCalledTimes(2);
+      expect(h.get().state).toBe("active");
+      expect(h.get().sessionId).toBe("rd-1");
+    });
+
+    it("closing the tab while connecting cancels the connect", async () => {
+      pendingConnect();
+      const tabId = addTab();
+      renderSession(tabId);
+      await flush();
+
+      act(() => root.render(<></>));
+      expect(mockedCancelConnect).toHaveBeenCalledWith(connectIdOfCall());
+    });
+
+    it("a timed-out connect shows connectFailed with the backend message", async () => {
+      mockedConnect.mockRejectedValueOnce(
+        "Connection failed: Connection to 10.0.0.5 timed out after 30s."
+      );
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+
+      expect(h.get().state).toBe("connectFailed");
+      expect(h.get().message).toContain("timed out after 30s");
+      expect(mockedCancelConnect).not.toHaveBeenCalled();
+    });
+
+    it("Cancel after the connect resolved does nothing", async () => {
+      const tabId = addTab();
+      const h = renderSession(tabId);
+      await flush();
+      expect(h.get().state).toBe("active");
+
+      act(() => h.get().cancelConnect());
+      expect(mockedCancelConnect).not.toHaveBeenCalled();
+      expect(h.get().state).toBe("active");
+    });
   });
 
   it("keeps authFailed when the first connect is rejected as an auth failure (#3390)", async () => {
@@ -750,7 +875,8 @@ describe("useRemoteDesktopSession — fixed resolution (PROD-026)", () => {
     expect(mockedConnect).toHaveBeenLastCalledWith(
       "mock-remote-desktop",
       expect.objectContaining(FIXED),
-      undefined
+      undefined,
+      expect.any(String)
     );
     act(() => h.get().resize(1024, 768));
     expect(mockedResize).not.toHaveBeenCalled();

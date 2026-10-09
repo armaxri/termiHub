@@ -8,9 +8,9 @@ import type { SessionCloseConfirmRequest } from "@/types/terminal";
 /**
  * Confirmation dialog shown before tearing down a live session by closing a tab
  * (via the tab X or middle-click), a split panel, or a whole tab group, while
- * `settings.confirmCloseLiveSession` is enabled. A group close also prompts when
- * it would discard unsaved editors; the "Don't ask again" opt-out is then hidden,
- * since it only covers live sessions.
+ * `settings.confirmCloseLiveSession` is enabled. A panel or group close also
+ * prompts when it would discard unsaved editors (UX2-001, UX2-003); the "Don't
+ * ask again" opt-out is then hidden, since it only covers live sessions.
  *
  * Reads `pendingSessionCloseConfirm` from the store; renders nothing when no
  * request is pending. Confirming performs the close (and, for a tab with a known
@@ -58,7 +58,7 @@ export function ConfirmSessionCloseDialog() {
   const { title, message, confirmLabel } = dialogCopy(request);
   // The opt-out only suppresses live-session prompts, so it is not offered when
   // the close would also discard unsaved editors.
-  const offerDontAsk = !(request.kind === "group" && request.dirtyCount > 0);
+  const offerDontAsk = request.kind === "tab" || request.dirtyCount === 0;
 
   return (
     <ConfirmDialog
@@ -94,7 +94,7 @@ function dialogCopy(request: SessionCloseConfirmRequest): {
     case "panel":
       return {
         title: "Close panel?",
-        message: panelMessage(request.tabCount, request.liveCount),
+        message: panelMessage(request.tabCount, request.liveCount, request.dirtyCount),
         confirmLabel: "Close panel",
       };
     case "group":
@@ -106,8 +106,8 @@ function dialogCopy(request: SessionCloseConfirmRequest): {
   }
 }
 
-/** Count-aware body for a group close: live sessions ending and unsaved editors lost. */
-function groupMessage(label: string, liveCount: number, dirtyCount: number): string {
+/** "end N live sessions and discard M unsaved editors", omitting a zero count. */
+function lossPhrase(liveCount: number, dirtyCount: number): string {
   const parts: string[] = [];
   if (liveCount > 0) {
     parts.push(`end ${liveCount} live session${liveCount === 1 ? "" : "s"}`);
@@ -115,12 +115,16 @@ function groupMessage(label: string, liveCount: number, dirtyCount: number): str
   if (dirtyCount > 0) {
     parts.push(`discard ${dirtyCount} unsaved editor${dirtyCount === 1 ? "" : "s"}`);
   }
-  return `Closing group “${label}” will ${parts.join(" and ")}.`;
+  return parts.join(" and ");
 }
 
-/** Count-aware body for a panel close: N tabs total, of which M hold live sessions. */
-function panelMessage(tabCount: number, liveCount: number): string {
+/** Count-aware body for a group close: live sessions ending and unsaved editors lost. */
+function groupMessage(label: string, liveCount: number, dirtyCount: number): string {
+  return `Closing group “${label}” will ${lossPhrase(liveCount, dirtyCount)}.`;
+}
+
+/** Count-aware body for a panel close: N tabs total, the live sessions and unsaved editors lost. */
+function panelMessage(tabCount: number, liveCount: number, dirtyCount: number): string {
   const tabs = `${tabCount} tab${tabCount === 1 ? "" : "s"}`;
-  const sessions = `${liveCount} live session${liveCount === 1 ? "" : "s"}`;
-  return `Closing this panel will close ${tabs} and end ${sessions}.`;
+  return `Closing this panel will close ${tabs}, ${lossPhrase(liveCount, dirtyCount)}.`;
 }

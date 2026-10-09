@@ -33,6 +33,7 @@ import {
   listSpawnOptions,
   // remote-desktop
   remoteDesktopConnect,
+  remoteDesktopCancelConnect,
   remoteDesktopResize,
   remoteDesktopRequestFullFrame,
   remoteDesktopPendingCertPrompt,
@@ -351,6 +352,29 @@ describe("api pass-through wrappers (#2975)", () => {
         settings: { host: "10.0.0.5" },
       });
       expect(result).toBe("rd-session-1");
+    });
+
+    it("remoteDesktopConnect carries a connect id only when set (#4298)", async () => {
+      mockedInvoke.mockResolvedValue("rd-session-3");
+
+      await remoteDesktopConnect("vnc", { host: "10.0.0.5" }, undefined, "tab-1:rd:1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_connect", {
+        typeId: "vnc",
+        settings: { host: "10.0.0.5" },
+        connectId: "tab-1:rd:1",
+      });
+    });
+
+    it("remoteDesktopCancelConnect forwards the connect id (#4298)", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const found = await remoteDesktopCancelConnect("tab-1:rd:1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_cancel_connect", {
+        connectId: "tab-1:rd:1",
+      });
+      expect(found).toBe(true);
     });
 
     it("remoteDesktopConnect names the saved connection only when set (#4205)", async () => {
