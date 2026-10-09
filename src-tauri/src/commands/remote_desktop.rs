@@ -232,6 +232,10 @@ pub(crate) async fn gated_remote_clipboard_files(
 /// The connect is bounded by the connection's connect timeout (#4298). When
 /// `connect_id` is given, [`remote_desktop_cancel_connect`] with the same id
 /// aborts it while it is still connecting.
+// Tauri command: the argument list is the IPC surface (typed params + injected
+// State), so it cannot be collapsed into a struct without losing the command
+// binding — the arity lint does not apply here.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn remote_desktop_connect(
     type_id: String,
