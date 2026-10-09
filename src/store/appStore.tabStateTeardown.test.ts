@@ -94,6 +94,7 @@ const PER_TAB_MAPS = [
   "terminalRetryCounters",
   "terminalConnectDeadline",
   "terminalViewMode",
+  "terminalAgentDisconnected",
   "terminalReattaching",
   "terminalReconnectPrompt",
   "terminalAutoRetryCount",

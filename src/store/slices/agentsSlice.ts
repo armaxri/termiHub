@@ -27,6 +27,10 @@ import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateP
 import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type { RemoteAgentConfig } from "@/types/terminal";
 import { currentAgentsView, mirrorAgentIntent } from "@/store/agentsBridge";
+import {
+  clearAgentDisconnectIntent,
+  markAgentDisconnectIntent,
+} from "@/store/agentDisconnectIntent";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { toast } from "@/components/ui";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
@@ -87,7 +91,17 @@ export interface AgentsSlice {
   reorderRemoteAgents: (oldIndex: number, newIndex: number) => void;
   toggleRemoteAgent: (agentId: string) => void;
   connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
-  disconnectRemoteAgent: (agentId: string) => Promise<void>;
+  /**
+   * Disconnect (detach) a remote agent. By default this is a user Disconnect:
+   * the hosted tabs end cleanly with a manual Reconnect (#4309). Pass
+   * `{ endHostedSessions: false }` for a suspend-style disconnect that is
+   * followed by a reconnect (agent update, Force reconnect), so the hosted tabs
+   * keep waiting to resume their sessions.
+   */
+  disconnectRemoteAgent: (
+    agentId: string,
+    options?: { endHostedSessions?: boolean }
+  ) => Promise<void>;
   /**
    * Gracefully shut down a remote agent (stop remote sessions) and disconnect.
    * Resolves to the number of sessions the agent reported as detached/killed.
@@ -177,7 +191,7 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // for (there is no reply frame — see docs/remote-protocol.md
     // `agent.update_pending`). Sessions live on in detached daemons and are
     // recovered on reconnect, so only the transport goes away here.
-    void get().disconnectRemoteAgent(agentId);
+    void get().disconnectRemoteAgent(agentId, { endHostedSessions: false });
 
     // Queue the auto-reconnect once the agent has had its restart window.
     const delayMs = (Math.max(estimatedRestartSecs, 1) + AGENT_UPDATE_RECONNECT_BUFFER_SECS) * 1000;
@@ -342,10 +356,16 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     }
   },
 
-  disconnectRemoteAgent: async (agentId) => {
+  disconnectRemoteAgent: async (agentId, options) => {
+    // Record the intent before asking the backend: its "disconnected" event can
+    // land before this call resolves, and the handler must see a user end, not a
+    // drop that arms a reconnect loop which can never succeed (#4309).
+    const endHostedSessions = options?.endHostedSessions ?? true;
+    if (endHostedSessions) markAgentDisconnectIntent(agentId);
     try {
       await apiDisconnectAgent(agentId);
     } catch (err) {
+      if (endHostedSessions) clearAgentDisconnectIntent(agentId);
       frontendLog("app_store", `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`);
       toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
     }
@@ -358,7 +378,16 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     // Unlike disconnect (detach), shutdown stops the remote sessions and then
     // drops the transport. The backend returns how many sessions were
     // detached/killed so the UI can report the impact.
-    const detached = await apiShutdownAgent(agentId);
+    // As with disconnect, the hosted tabs end cleanly rather than reconnecting
+    // to an agent that was stopped on purpose (#4309).
+    markAgentDisconnectIntent(agentId);
+    let detached: number;
+    try {
+      detached = await apiShutdownAgent(agentId);
+    } catch (err) {
+      clearAgentDisconnectIntent(agentId);
+      throw err;
+    }
     // As with disconnect, optimistically force the region entry to disconnected
     // and clear its live sessions/folders (#2409).
     mirrorAgentIntent("agent.disconnect", { id: agentId });

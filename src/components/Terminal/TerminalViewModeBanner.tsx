@@ -16,6 +16,9 @@ interface TerminalViewModeBannerProps {
  */
 export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
+  // The user disconnected or shut down this tab's agent (#4309): say so, since
+  // Reconnect will bring the agent back before starting a new session.
+  const agentDisconnected = useAppStore((s) => s.terminalAgentDisconnected[tabId] ?? false);
 
   const handleReconnect = useCallback(() => {
     reconnectTerminal(tabId);
@@ -25,7 +28,9 @@ export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
     <div className="terminal-view-mode-banner" data-testid="terminal-view-mode-banner">
       <WifiOff size={12} className="terminal-view-mode-banner__icon" />
       <span className="terminal-view-mode-banner__label">
-        Session ended — press Enter or click Reconnect to start a new session
+        {agentDisconnected
+          ? "Agent disconnected — press Enter or click Reconnect to reconnect it and start a new session"
+          : "Session ended — press Enter or click Reconnect to start a new session"}
       </span>
       <Button
         variant="primary"

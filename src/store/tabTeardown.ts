@@ -33,6 +33,7 @@ export const PER_TAB_STATE_KEYS = [
   "terminalRetryCounters",
   "terminalConnectDeadline",
   "terminalViewMode",
+  "terminalAgentDisconnected",
   "terminalReattaching",
   "terminalReconnectPrompt",
   "terminalAutoRetryCount",

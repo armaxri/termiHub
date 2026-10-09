@@ -5,8 +5,13 @@ import { TerminalViewModeBanner } from "./TerminalViewModeBanner";
 
 const reconnectTerminal = vi.fn();
 
+const agentDisconnected: Record<string, boolean> = vi.hoisted(() => ({}));
+
 vi.mock("@/store/appStore", () => {
-  const state = { reconnectTerminal: (...args: unknown[]) => reconnectTerminal(...args) };
+  const state = {
+    reconnectTerminal: (...args: unknown[]) => reconnectTerminal(...args),
+    terminalAgentDisconnected: agentDisconnected,
+  };
   const useAppStore = (selector: (s: typeof state) => unknown) => selector(state);
   return { useAppStore };
 });
@@ -30,6 +35,7 @@ describe("TerminalViewModeBanner", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     vi.clearAllMocks();
+    for (const key of Object.keys(agentDisconnected)) delete agentDisconnected[key];
   });
 
   afterEach(() => {
@@ -41,6 +47,14 @@ describe("TerminalViewModeBanner", () => {
     render("tab-1");
     expect(query("terminal-view-mode-banner")).not.toBeNull();
     expect(container.textContent).toContain("Session ended");
+    expect(query("terminal-view-mode-reconnect-btn")).not.toBeNull();
+  });
+
+  it("says the agent was disconnected when the user ended the agent (#4309)", () => {
+    agentDisconnected["tab-7"] = true;
+    render("tab-7");
+    expect(container.textContent).toContain("Agent disconnected");
+    expect(container.textContent).not.toContain("Session ended");
     expect(query("terminal-view-mode-reconnect-btn")).not.toBeNull();
   });
 
