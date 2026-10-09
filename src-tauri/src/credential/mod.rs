@@ -65,6 +65,15 @@ pub trait CredentialStore: Send + Sync {
     /// Return the current status of the credential store.
     fn status(&self) -> CredentialStoreStatus;
 
+    /// The single on-disk file that holds every credential, for backends that
+    /// keep one (the master-password vault). A backup restore copies it before
+    /// importing, so a restore that is rolled back at the next start can put
+    /// the credentials back too (#4295). The default is `None`: the backend
+    /// has no such file and its imported credentials cannot be reverted then.
+    fn vault_file(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Store several credentials as one all-or-nothing operation.
     ///
     /// Either every entry is written, or — when any write fails — the entries

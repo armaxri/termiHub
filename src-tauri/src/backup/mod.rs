@@ -71,6 +71,8 @@ pub mod trust_map;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_credential_rollback;
+#[cfg(test)]
 mod tests_embedded_servers;
 #[cfg(test)]
 mod tests_named_credentials;

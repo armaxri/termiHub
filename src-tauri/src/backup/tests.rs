@@ -159,7 +159,7 @@ pub(super) fn write_doc(dir: &Path, file: &str, doc: &Value) {
     std::fs::write(dir.join(file), serde_json::to_string_pretty(doc).unwrap()).unwrap();
 }
 
-fn populate(dir: &Path) {
+pub(super) fn populate(dir: &Path) {
     for (file, doc) in fixture_docs() {
         write_doc(dir, file, &at_current(file, doc));
     }
@@ -185,7 +185,11 @@ pub(super) fn options(
     }
 }
 
-fn build(dir: &Path, opts: &BackupExportOptions, creds: Option<vault::VaultExportFile>) -> String {
+pub(super) fn build(
+    dir: &Path,
+    opts: &BackupExportOptions,
+    creds: Option<vault::VaultExportFile>,
+) -> String {
     export::build(
         dir,
         opts,
@@ -232,7 +236,7 @@ pub(super) fn restore_and_boot(
     result
 }
 
-fn sealed_vault(entries: &[(&str, &str)]) -> vault::VaultExportFile {
+pub(super) fn sealed_vault(entries: &[(&str, &str)]) -> vault::VaultExportFile {
     let secrets: Vec<VaultSecret> = entries
         .iter()
         .map(|(id, v)| {
