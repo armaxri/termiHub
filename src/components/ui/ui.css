@@ -665,6 +665,39 @@
   width: 640px;
 }
 
+/* Fills the window (minus a gutter) to host a whole surface, e.g. a zoomed tab
+   (#4329). The body is unpadded and lays its single child out to fill. */
+.ui-modal--full {
+  width: calc(100vw - var(--spacing-lg) * 2);
+  height: calc(100vh - var(--spacing-lg) * 2);
+  max-width: none;
+  max-height: none;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+}
+.ui-modal--full .ui-modal__head {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  gap: var(--spacing-sm);
+  background: var(--tab-bg);
+  border-bottom-color: var(--panel-border);
+}
+.ui-modal--full .ui-modal__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+  letter-spacing: normal;
+}
+.ui-modal--full .ui-modal__body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .ui-modal__head {
   display: flex;
   align-items: center;

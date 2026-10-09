@@ -1,7 +1,7 @@
 /**
- * Hook for horizontal drag-to-resize of the sidebar.
+ * Hook for horizontal resizing of the sidebar, by pointer drag or keyboard.
  *
- * Returns the current sidebar width, a ref for the resize handle,
+ * Returns the current sidebar width, the props for the resize handle,
  * and whether a drag is in progress.
  */
 
@@ -10,13 +10,28 @@ import { useAppStore } from "@/store/appStore";
 
 const MIN_WIDTH = 170;
 const MAX_WIDTH = 600;
+/** Pixels one arrow-key press moves the sidebar edge (A11Y2-003, #4329). */
+export const SIDEBAR_KEYBOARD_STEP = 16;
+
+const clampWidth = (width: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
 
 interface UseSidebarResizeResult {
   /** Current sidebar width in pixels. */
   sidebarWidth: number;
-  /** Props to spread on the resize handle element. */
+  /**
+   * Props to spread on the resize handle element: pointer drag plus a focusable
+   * `role="separator"` that ArrowLeft/ArrowRight/Home/End resize (#4329).
+   */
   handleProps: {
     onMouseDown: React.MouseEventHandler;
+    onKeyDown: React.KeyboardEventHandler;
+    role: "separator";
+    tabIndex: 0;
+    "aria-orientation": "vertical";
+    "aria-label": string;
+    "aria-valuenow": number;
+    "aria-valuemin": number;
+    "aria-valuemax": number;
   };
   /** Whether a resize drag is currently active. */
   isResizing: boolean;
@@ -45,11 +60,7 @@ export function useSidebarResize(sidebarPosition: "left" | "right"): UseSidebarR
       const deltaX = e.clientX - state.startX;
       // When sidebar is on the right, dragging left (negative delta) should widen it.
       const direction = sidebarPosition === "left" ? 1 : -1;
-      const newWidth = Math.min(
-        MAX_WIDTH,
-        Math.max(MIN_WIDTH, state.startWidth + deltaX * direction)
-      );
-      setSidebarWidth(newWidth);
+      setSidebarWidth(clampWidth(state.startWidth + deltaX * direction));
     },
     [sidebarPosition, setSidebarWidth]
   );
@@ -79,6 +90,23 @@ export function useSidebarResize(sidebarPosition: "left" | "right"): UseSidebarR
     [sidebarWidth, handleMouseMove, handleMouseUp]
   );
 
+  // Keyboard resizing (A11Y2-003, #4329). Arrows move the handle the way they
+  // point, so with the sidebar on the right ArrowLeft widens it.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const direction = sidebarPosition === "left" ? 1 : -1;
+      let next: number;
+      if (e.key === "ArrowRight") next = sidebarWidth + SIDEBAR_KEYBOARD_STEP * direction;
+      else if (e.key === "ArrowLeft") next = sidebarWidth - SIDEBAR_KEYBOARD_STEP * direction;
+      else if (e.key === "Home") next = MIN_WIDTH;
+      else if (e.key === "End") next = MAX_WIDTH;
+      else return;
+      e.preventDefault();
+      setSidebarWidth(clampWidth(next));
+    },
+    [sidebarPosition, sidebarWidth, setSidebarWidth]
+  );
+
   // Cleanup listeners on unmount.
   useEffect(() => {
     return () => {
@@ -89,7 +117,17 @@ export function useSidebarResize(sidebarPosition: "left" | "right"): UseSidebarR
 
   return {
     sidebarWidth,
-    handleProps: { onMouseDown: handleMouseDown },
+    handleProps: {
+      onMouseDown: handleMouseDown,
+      onKeyDown: handleKeyDown,
+      role: "separator",
+      tabIndex: 0,
+      "aria-orientation": "vertical",
+      "aria-label": "Resize sidebar",
+      "aria-valuenow": clampWidth(sidebarWidth),
+      "aria-valuemin": MIN_WIDTH,
+      "aria-valuemax": MAX_WIDTH,
+    },
     isResizing,
   };
 }

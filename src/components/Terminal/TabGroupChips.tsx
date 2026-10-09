@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Plus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -59,7 +59,7 @@ export function TabGroupChips() {
           items={tabGroups.map((g) => g.id)}
           strategy={horizontalListSortingStrategy}
         >
-          {tabGroups.map((group) => (
+          {tabGroups.map((group, index) => (
             <TabGroupChip
               key={group.id}
               group={group}
@@ -69,6 +69,10 @@ export function TabGroupChips() {
               onClick={() => setActiveTabGroup(group.id)}
               onClose={(e) => handleClose(group.id, e)}
               onRename={() => setRenameGroupId(group.id)}
+              onMoveLeft={index > 0 ? () => reorderTabGroups(index, index - 1) : undefined}
+              onMoveRight={
+                index < tabGroups.length - 1 ? () => reorderTabGroups(index, index + 1) : undefined
+              }
             />
           ))}
         </SortableContext>
@@ -107,6 +111,13 @@ interface TabGroupChipProps {
   onClick: () => void;
   onClose: (e: React.MouseEvent) => void;
   onRename: () => void;
+  /**
+   * Move the group one place left — the keyboard/menu alternative to dragging
+   * its chip (#4329). Omitted on the first group, which disables the item.
+   */
+  onMoveLeft?: () => void;
+  /** Move the group one place right (#4329). Omitted on the last group. */
+  onMoveRight?: () => void;
 }
 
 function TabGroupChip({
@@ -117,6 +128,8 @@ function TabGroupChip({
   onClick,
   onClose,
   onRename,
+  onMoveLeft,
+  onMoveRight,
 }: TabGroupChipProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: group.id,
@@ -168,6 +181,23 @@ function TabGroupChip({
             data-testid="tab-group-ctx-rename"
           >
             Rename
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item"
+            disabled={!onMoveLeft}
+            onSelect={() => onMoveLeft?.()}
+            data-testid="tab-group-ctx-move-left"
+          >
+            <ArrowLeft size={14} /> Move Left
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            disabled={!onMoveRight}
+            onSelect={() => onMoveRight?.()}
+            data-testid="tab-group-ctx-move-right"
+          >
+            <ArrowRight size={14} /> Move Right
           </ContextMenu.Item>
           {canClose && (
             <>

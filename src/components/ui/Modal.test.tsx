@@ -83,6 +83,75 @@ describe("Modal", () => {
     ).toBe(true);
   });
 
+  describe("full-size variant and head slots (#4329)", () => {
+    it("applies the full size class when size='full'", () => {
+      render(
+        <Modal data-testid="modal" open onOpenChange={() => {}} title="Zoom" size="full">
+          <p>Body</p>
+        </Modal>
+      );
+      const content = document.querySelector('[data-testid="modal"]')!;
+      expect(content.classList.contains("ui-modal--full")).toBe(true);
+      expect(content.classList.contains("ui-modal--lg")).toBe(false);
+    });
+
+    it("renders headExtra in the head, before the close button", () => {
+      render(
+        <Modal
+          data-testid="modal"
+          open
+          onOpenChange={() => {}}
+          title="Zoom"
+          headExtra={<span data-testid="head-extra">hint</span>}
+        >
+          <p>Body</p>
+        </Modal>
+      );
+      const extra = document.querySelector('[data-testid="head-extra"]')!;
+      const close = document.querySelector('[data-testid="modal-close"]')!;
+      expect(extra.closest(".ui-modal__head")).not.toBeNull();
+      expect(extra.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("lets the title portal into the dialog too", () => {
+      let received: HTMLElement | null = null;
+      function Probe() {
+        received = useModalPortalContainer();
+        return <>Title</>;
+      }
+      render(
+        <Modal data-testid="modal" open onOpenChange={() => {}} title={<Probe />}>
+          <p>Body</p>
+        </Modal>
+      );
+      expect(received).toBe(document.querySelector('[data-testid="modal"]'));
+    });
+
+    it("forwards Escape to onEscapeKeyDown, which can keep the modal open", () => {
+      const onOpenChange = vi.fn();
+      const onEscapeKeyDown = vi.fn((e: KeyboardEvent) => e.preventDefault());
+      render(
+        <Modal
+          data-testid="modal"
+          open
+          onOpenChange={onOpenChange}
+          title="Zoom"
+          onEscapeKeyDown={onEscapeKeyDown}
+        >
+          <input data-testid="modal-input" />
+        </Modal>
+      );
+      const input = document.querySelector('[data-testid="modal-input"]') as HTMLElement;
+      act(() => {
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+        );
+      });
+      expect(onEscapeKeyDown).toHaveBeenCalledOnce();
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+  });
+
   it("exposes its content node as a portal container to descendants (#1868)", () => {
     let received: HTMLElement | null = null;
     function Probe() {

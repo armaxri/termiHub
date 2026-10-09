@@ -10,8 +10,8 @@ evidence:
   - src/components/SplitView/SplitView.tsx:327-414
   - src/components/SplitView/SplitView.tsx:378-385
   - src/components/SplitView/SplitView.tsx:313-325
-status: open
-resolution: ""
+status: fixed
+resolution: "#4329 — drop routing extracted to a pure resolveTabDrop with table tests"
 audit: 2026-10
 commit: 663465d52
 relation: new

@@ -1,8 +1,8 @@
 /**
  * Hook for resizable sidebar sections.
  *
- * Manages flex ratios between expandable sections and provides
- * mouse-event handlers for drag-to-resize handles between them.
+ * Manages flex ratios between expandable sections and provides the
+ * pointer-drag and keyboard handlers for the resize handles between them.
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
@@ -20,11 +20,25 @@ interface ResizeState {
   startFlexBelow: number;
 }
 
+/** Props for one section resize handle: pointer drag plus a keyboard separator (#4329). */
+export interface SectionHandleProps {
+  onMouseDown: React.MouseEventHandler;
+  onKeyDown: React.KeyboardEventHandler;
+  role: "separator";
+  tabIndex: 0;
+  "aria-orientation": "horizontal";
+  "aria-label": string;
+  /** The upper section's share of the pair, in percent. */
+  "aria-valuenow": number;
+  "aria-valuemin": number;
+  "aria-valuemax": number;
+}
+
 interface UseSectionResizeResult {
   /** Flex-grow value for each expanded section. */
   flexValues: number[];
   /** Props to spread on the resize handle div at the given index. */
-  handleProps: (index: number) => { onMouseDown: React.MouseEventHandler };
+  handleProps: (index: number) => SectionHandleProps;
   /** Whether a resize drag is currently active. */
   isResizing: boolean;
   /** Refs to attach to each expanded section's DOM element. */
@@ -32,6 +46,22 @@ interface UseSectionResizeResult {
 }
 
 const MIN_FLEX = 0.1;
+/** Percent of the pair's height one arrow-key press moves the separator (#4329). */
+export const SECTION_KEYBOARD_STEP_PERCENT = 5;
+
+/**
+ * Move `flexDelta` from the section below a handle to the one above it (a
+ * negative delta moves it the other way), keeping both at least `MIN_FLEX`.
+ */
+function shiftFlex(above: number, below: number, flexDelta: number): [number, number] {
+  const totalFlex = above + below;
+  const newFlexAbove = Math.max(MIN_FLEX, above + flexDelta);
+  const newFlexBelow = Math.max(MIN_FLEX, below - flexDelta);
+  // Re-clamp: if one hit the minimum, the other absorbs the remainder.
+  const clampedAbove = newFlexBelow <= MIN_FLEX ? totalFlex - MIN_FLEX : newFlexAbove;
+  const clampedBelow = newFlexAbove <= MIN_FLEX ? totalFlex - MIN_FLEX : newFlexBelow;
+  return [clampedAbove, clampedBelow];
+}
 
 /**
  * Manages drag-to-resize between sidebar sections.
@@ -62,12 +92,11 @@ export function useSectionResize(expandedCount: number): UseSectionResizeResult 
     // Convert pixel delta to flex delta.
     const flexDelta = (deltaY / totalHeight) * totalFlex;
 
-    const newFlexAbove = Math.max(MIN_FLEX, state.startFlexAbove + flexDelta);
-    const newFlexBelow = Math.max(MIN_FLEX, state.startFlexBelow - flexDelta);
-
-    // Re-clamp: if one hit the minimum, the other absorbs the remainder.
-    const clampedAbove = newFlexBelow <= MIN_FLEX ? totalFlex - MIN_FLEX : newFlexAbove;
-    const clampedBelow = newFlexAbove <= MIN_FLEX ? totalFlex - MIN_FLEX : newFlexBelow;
+    const [clampedAbove, clampedBelow] = shiftFlex(
+      state.startFlexAbove,
+      state.startFlexBelow,
+      flexDelta
+    );
 
     setFlexValues((prev) => {
       const next = [...prev];
@@ -112,11 +141,41 @@ export function useSectionResize(expandedCount: number): UseSectionResizeResult 
     [flexValues, handleMouseMove, handleMouseUp]
   );
 
+  // Keyboard resizing (A11Y2-003, #4329): ArrowDown grows the section above
+  // the handle, ArrowUp shrinks it, one step at a time.
+  const resizeByKey = useCallback((e: React.KeyboardEvent, handleIndex: number) => {
+    let sign: number;
+    if (e.key === "ArrowDown") sign = 1;
+    else if (e.key === "ArrowUp") sign = -1;
+    else return;
+    e.preventDefault();
+    setFlexValues((prev) => {
+      const above = prev[handleIndex] ?? 1;
+      const below = prev[handleIndex + 1] ?? 1;
+      const flexDelta = sign * (SECTION_KEYBOARD_STEP_PERCENT / 100) * (above + below);
+      const next = [...prev];
+      [next[handleIndex], next[handleIndex + 1]] = shiftFlex(above, below, flexDelta);
+      return next;
+    });
+  }, []);
+
   const handleProps = useCallback(
-    (index: number) => ({
-      onMouseDown: (e: React.MouseEvent) => startResize(e, index),
-    }),
-    [startResize]
+    (index: number): SectionHandleProps => {
+      const above = flexValues[index] ?? 1;
+      const below = flexValues[index + 1] ?? 1;
+      return {
+        onMouseDown: (e: React.MouseEvent) => startResize(e, index),
+        onKeyDown: (e: React.KeyboardEvent) => resizeByKey(e, index),
+        role: "separator",
+        tabIndex: 0,
+        "aria-orientation": "horizontal",
+        "aria-label": "Resize sidebar sections",
+        "aria-valuenow": Math.round((above / (above + below)) * 100),
+        "aria-valuemin": 0,
+        "aria-valuemax": 100,
+      };
+    },
+    [flexValues, startResize, resizeByKey]
   );
 
   // Cleanup on unmount: if the component unmounts mid-drag (before `mouseup`

@@ -6999,4 +6999,7 @@ mod tests {
 
     /// `connections.*` mutations over a newer definitions store (#3920).
     mod definitions_store_tests;
+
+    /// `docs/remote-protocol.md` documents every dispatcher method (#4325).
+    mod protocol_doc_tests;
 }
