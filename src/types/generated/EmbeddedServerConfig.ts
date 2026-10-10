@@ -64,12 +64,15 @@ httpAuth?: HttpBasicAuth,
  */
 maxTransferBytes?: number, 
 /**
- * Maximum number of concurrent sessions (FTP only, CORE2-002 / #4292).
+ * Maximum number of concurrent sessions (FTP and HTTP, CORE2-002 / #4292,
+ * #4399).
  *
- * Each FTP control connection runs its own libunftp server behind the
- * relay, so the cap bounds the sockets and tasks an unauthenticated client
- * can make the server hold. A connection beyond the cap is answered with
- * `421` and closed. `None` falls back to the server's built-in default of
- * 32; `0` is treated as 1.
+ * For FTP a session is a control connection, which runs its own libunftp
+ * server behind the relay; a connection beyond the cap is answered with
+ * `421` and closed. For HTTP a session is a TCP connection; a connection
+ * beyond the cap is answered with `503` and closed. Either way the cap
+ * bounds the sockets and tasks an unauthenticated client can make the
+ * server hold. `None` falls back to the server's built-in default of 32;
+ * `0` is treated as 1. Not used by TFTP, which caps its transfers itself.
  */
 maxConcurrentSessions?: number, };

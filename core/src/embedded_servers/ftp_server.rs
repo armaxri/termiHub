@@ -96,12 +96,6 @@ const BACKEND_GRACE: Duration = Duration::from_secs(2);
 /// drops whatever is left.
 const SESSION_DRAIN: Duration = Duration::from_secs(3);
 
-/// Default cap on concurrent FTP sessions when the config sets none
-/// (CORE2-002, #4292). Each session holds a libunftp server, a loopback
-/// listener and the relay's sockets, so the cap bounds what unauthenticated
-/// connections can make the server hold. In line with the TFTP transfer cap.
-pub(super) const DEFAULT_MAX_CONCURRENT_FTP_SESSIONS: usize = 32;
-
 /// Reply sent to a connection refused because every session slot is taken.
 const REPLY_TOO_MANY_SESSIONS: &[u8] = b"421 Too many connections, try again later.\r\n";
 
@@ -117,12 +111,12 @@ pub(super) const MIN_SESSIONS_PER_CLIENT: usize = 2;
 /// Reply sent to a connection from a client locked out after failed logins.
 const REPLY_THROTTLED: &[u8] = b"421 Too many failed logins, try again later.\r\n";
 
-/// The effective session cap for `config` (at least one session).
+/// The effective session cap for `config` (at least one session; the shared
+/// default when unset, CORE2-002 / #4292). Each session holds a libunftp
+/// server, a loopback listener and the relay's sockets, so the cap bounds what
+/// unauthenticated connections can make the server hold.
 pub(super) fn session_cap(config: &EmbeddedServerConfig) -> usize {
-    config
-        .max_concurrent_sessions
-        .map_or(DEFAULT_MAX_CONCURRENT_FTP_SESSIONS, |cap| cap as usize)
-        .max(1)
+    config.session_cap()
 }
 
 /// The per-client-IP session sub-cap for a server-wide cap of `session_cap`

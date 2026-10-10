@@ -18,10 +18,17 @@ use base64::Engine as _;
 use tower_http::services::ServeDir;
 
 use super::activity::{AccessRecord, TransferGuard};
-use super::auth_guard::secret_eq;
+use super::auth_guard::{secret_eq, LoginThrottle, LOCKOUT};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, HttpBasicAuth};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
+
+mod serve;
+
+#[cfg(test)]
+mod limits_tests;
+
+use serve::HttpLimits;
 
 /// State shared with middleware for connection tracking.
 #[derive(Clone)]
@@ -75,8 +82,9 @@ async fn track_connections(
         .fetch_sub(1, Ordering::Relaxed);
 
     let status = resp.status();
-    // A rejected (401) attempt's username is not recorded as a user.
-    let user = user.filter(|_| status != StatusCode::UNAUTHORIZED);
+    let throttled = resp.extensions().get::<AuthThrottled>().is_some();
+    // A rejected (401) or throttled attempt's username is not recorded as a user.
+    let user = user.filter(|_| status != StatusCode::UNAUTHORIZED && !throttled);
     let transfer = state
         .stats
         .activity
@@ -90,6 +98,7 @@ async fn track_connections(
         method,
         path,
         status,
+        throttled,
     };
     resp.map(|inner| {
         Body::new(LoggedBody {
@@ -111,6 +120,8 @@ struct PendingAccess {
     method: String,
     path: String,
     status: StatusCode,
+    /// The request was refused by the failed-login throttle (#4399).
+    throttled: bool,
 }
 
 impl PendingAccess {
@@ -119,7 +130,11 @@ impl PendingAccess {
     fn finish(self, completed: bool) {
         // A HEAD response carries no body, so hyper may drop it unpolled.
         let completed = completed || self.method == "HEAD";
-        let code = self.status.as_u16().to_string();
+        let code = if self.throttled {
+            "throttled".to_string()
+        } else {
+            self.status.as_u16().to_string()
+        };
         let ok = completed && !(self.status.is_client_error() || self.status.is_server_error());
         let status = if completed {
             code
@@ -130,6 +145,9 @@ impl PendingAccess {
             .path(self.path)
             .bytes(self.transfer.bytes())
             .elapsed_since(self.started);
+        if self.throttled {
+            record = record.detail("too many failed logins");
+        }
         if let Some(ip) = self.client {
             record = record.client(ip);
         }
@@ -198,7 +216,15 @@ struct AuthState {
     auth: Arc<HttpBasicAuth>,
     /// Pre-rendered `WWW-Authenticate` header value naming the server's realm.
     challenge: HeaderValue,
+    /// Failed-login throttle shared by every connection of this server run
+    /// (#4399), keyed by client IP like the FTP server's (CORE2-003).
+    throttle: Arc<LoginThrottle>,
 }
+
+/// Response extension marking a request refused by the failed-login throttle,
+/// so the access log records it as `throttled` rather than by status code.
+#[derive(Clone, Copy)]
+struct AuthThrottled;
 
 /// Tower middleware enforcing optional HTTP Basic authentication (PROD-0035).
 ///
@@ -207,19 +233,55 @@ struct AuthState {
 /// answered with `401 Unauthorized` plus a `WWW-Authenticate: Basic` challenge
 /// so a browser re-prompts. This layer is only mounted when a server has
 /// `http_auth` configured — an unauthenticated server never sees it.
+///
+/// Failed attempts are throttled per client IP (#4399): a request that
+/// presented an `Authorization` header and failed counts as a failed login
+/// (a request without one is a browser's first, credential-less request, not a
+/// guess). After [`MAX_FAILED_LOGINS`](super::auth_guard::MAX_FAILED_LOGINS)
+/// failures within the window, the client is answered `429 Too Many Requests`
+/// for the lockout period without its credentials being checked. A successful
+/// login clears the client's failures.
 async fn require_basic_auth(
     State(state): State<AuthState>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    let client = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip().to_canonical());
+    if client.is_some_and(|ip| state.throttle.is_locked(ip)) {
+        return throttled_response();
+    }
     if credentials_match(&state.auth, req.headers()) {
+        if let Some(ip) = client {
+            state.throttle.record_success(ip);
+        }
         next.run(req).await
     } else {
+        if let Some(ip) = client.filter(|_| req.headers().contains_key(header::AUTHORIZATION)) {
+            state.throttle.record_failure(ip);
+        }
         let mut resp = (StatusCode::UNAUTHORIZED, "401 Unauthorized\n").into_response();
         resp.headers_mut()
             .insert(header::WWW_AUTHENTICATE, state.challenge.clone());
         resp
     }
+}
+
+/// The `429` answer to a client locked out after failed logins. It carries no
+/// `WWW-Authenticate` challenge, so a browser does not re-prompt during the
+/// lockout, and a `Retry-After` naming the lockout period.
+fn throttled_response() -> Response {
+    let mut resp = (
+        StatusCode::TOO_MANY_REQUESTS,
+        "429 Too many failed logins, try again later\n",
+    )
+        .into_response();
+    resp.headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(LOCKOUT.as_secs()));
+    resp.extensions_mut().insert(AuthThrottled);
+    resp
 }
 
 /// Build the `Basic realm="<name>"` challenge value for a server.
@@ -406,7 +468,8 @@ async fn dir_listing_handler(
 /// the file service, challenging every request with the `realm`-named
 /// `WWW-Authenticate` header until valid credentials are supplied; `None` leaves
 /// the server unauthenticated exactly as before. The auth gate sits *inside* the
-/// connection tracker so challenged (401) requests are still counted.
+/// connection tracker so challenged (401) and throttled (429) requests are still
+/// counted.
 fn build_router(
     root: PathBuf,
     directory_listing: bool,
@@ -428,6 +491,9 @@ fn build_router(
             AuthState {
                 auth: Arc::new(auth),
                 challenge: basic_auth_challenge(realm),
+                // One throttle per server run: the router is built once and
+                // shared by every connection.
+                throttle: Arc::new(LoginThrottle::new()),
             },
             require_basic_auth,
         ));
@@ -472,6 +538,7 @@ pub fn start_http_server(
         stats: stats.clone(),
         auth_enabled: auth.is_some(),
     };
+    let limits = HttpLimits::for_config(config);
 
     // Build a tokio current-thread runtime in this thread.
     let rt = match tokio::runtime::Builder::new_current_thread()
@@ -504,25 +571,14 @@ pub fn start_http_server(
 
         let router = build_router(root, directory_listing, tracking_state, auth, &realm);
 
-        tracing::info!(addr = %addr, "HTTP server listening");
+        tracing::info!(addr = %addr, cap = limits.connection_cap, "HTTP server listening");
 
-        // Connect info exposes each request's peer address to the access log.
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        // Event-driven shutdown: park until the signal fires, then stop
-        // immediately — no busy-poll and no fixed latency (WA-RS-001).
-        .with_graceful_shutdown(async move {
-            shutdown.wait().await;
-        })
-        .await
-        .context("HTTP server error")?;
-
-        Ok::<(), anyhow::Error>(())
-    })?;
-
-    Ok(())
+        // The capped accept loop (#4399) attaches each request's peer address
+        // as connect info for the access log and the login throttle, and stops
+        // on the shutdown signal without polling (WA-RS-001).
+        serve::serve(listener, router, limits, stats, shutdown).await;
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -738,6 +794,82 @@ mod tests {
         let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "a:b:c")));
         let (status, _headers, _) =
             get_full(router, "/hello.txt", Some(&basic_header("admin", "a:b:c"))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    // ─── Failed-login throttle (#4399) ──────────────────────────────────────
+
+    /// GET `/hello.txt` as `client`, with optional Basic credentials, returning
+    /// the status and the response headers.
+    async fn get_as(
+        router: Router,
+        client: [u8; 4],
+        auth: Option<(&str, &str)>,
+    ) -> (StatusCode, axum::http::HeaderMap) {
+        let mut builder = Request::builder().uri("/hello.txt");
+        if let Some((user, pass)) = auth {
+            builder = builder.header(axum::http::header::AUTHORIZATION, basic_header(user, pass));
+        }
+        let mut req = builder.body(Body::empty()).expect("build request");
+        req.extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from((client, 40000))));
+        let resp = router.oneshot(req).await.expect("router response");
+        let (status, headers) = (resp.status(), resp.headers().clone());
+        // Stream the body to its end so the access-log entry is finalised as
+        // completed (a body dropped unread is logged as aborted).
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        (status, headers)
+    }
+
+    /// After the failure limit, the client gets `429` (with `Retry-After` and
+    /// no challenge) even for correct credentials; another client is unaffected.
+    #[tokio::test]
+    async fn throttle_locks_out_one_client_after_failed_logins() {
+        use crate::embedded_servers::auth_guard::MAX_FAILED_LOGINS;
+        let (_dir, router, stats) = router_with_stats(false, Some(creds("admin", "s3cret")));
+        let attacker = [10, 0, 0, 1];
+        for _ in 0..MAX_FAILED_LOGINS {
+            let (status, _) = get_as(router.clone(), attacker, Some(("admin", "guess"))).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        let (status, headers) = get_as(router.clone(), attacker, Some(("admin", "s3cret"))).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            headers
+                .get(axum::http::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok()),
+            Some(LOCKOUT.as_secs().to_string().as_str())
+        );
+        assert!(headers.get(axum::http::header::WWW_AUTHENTICATE).is_none());
+
+        let (status, _) = get_as(router, [10, 0, 0, 2], Some(("admin", "s3cret"))).await;
+        assert_eq!(status, StatusCode::OK, "another client is not locked out");
+
+        let entries = log_entries(&stats);
+        let throttled: Vec<_> = entries.iter().filter(|e| e.status == "throttled").collect();
+        assert_eq!(throttled.len(), 1);
+        assert_eq!(throttled[0].client.as_deref(), Some("10.0.0.1"));
+        assert_eq!(
+            throttled[0].detail.as_deref(),
+            Some("too many failed logins")
+        );
+        assert!(!throttled[0].success);
+    }
+
+    /// A request without an `Authorization` header (a browser's first request)
+    /// is challenged but does not count as a failed login.
+    #[tokio::test]
+    async fn throttle_ignores_requests_without_credentials() {
+        use crate::embedded_servers::auth_guard::MAX_FAILED_LOGINS;
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let client = [10, 0, 0, 3];
+        for _ in 0..MAX_FAILED_LOGINS * 2 {
+            let (status, _) = get_as(router.clone(), client, None).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+        let (status, _) = get_as(router, client, Some(("admin", "s3cret"))).await;
         assert_eq!(status, StatusCode::OK);
     }
 

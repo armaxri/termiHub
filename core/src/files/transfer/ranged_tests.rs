@@ -35,6 +35,11 @@ struct MemTarget {
     /// Fail the call with this (1-based) index once.
     fail_read_call: AtomicUsize,
     fail_write_call: AtomicUsize,
+    /// Number of `stat` calls so far.
+    stat_calls: AtomicUsize,
+    /// Park every `stat` call from this (1-based) index on forever — a dead
+    /// connection (#4672). `0` never parks.
+    park_stat_from: AtomicUsize,
 }
 
 impl MemTarget {
@@ -107,6 +112,11 @@ impl RangedFileAccess for MemTarget {
 #[async_trait::async_trait]
 impl RangedTransferTarget for MemTarget {
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let call = self.stat_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let park_from = self.park_stat_from.load(Ordering::SeqCst);
+        if park_from != 0 && call >= park_from {
+            std::future::pending::<()>().await;
+        }
         let files = self.files.lock().unwrap();
         let data = files
             .get(path)
@@ -440,4 +450,71 @@ async fn cancelling_a_download_removes_the_local_partial() {
 
     assert_eq!(handle.state().tag(), TransferStateTag::Cancelled);
     assert!(!local.exists(), "local partial removed on cancel");
+}
+
+// ── a cancel while a probe is parked settles promptly (#4672) ───────────────
+
+/// Run a download whose `park_stat_from`-th `stat` never resolves, cancel it
+/// once that call is parked, and assert it settles as cancelled promptly,
+/// exactly once, with its slot handed to a queued peer.
+async fn cancel_during_parked_stat(park_stat_from: usize) {
+    let target = MemTarget::with_file(content(CHUNK_SIZE * 2));
+    target
+        .park_stat_from
+        .store(park_stat_from, Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("out.bin");
+    let reg = TransferRegistry::with_max_concurrent(1);
+    let handle = enqueue(&reg, "parked", TransferDirection::Download);
+    let peer = enqueue(&reg, "peer", TransferDirection::Download);
+    let (sink, phases) = recording_sink();
+    let task = tokio::spawn(run(
+        &target,
+        TransferDirection::Download,
+        &local,
+        &handle,
+        &reg,
+        sink,
+    ));
+    wait_for(|| target.stat_calls.load(Ordering::SeqCst) >= park_stat_from).await;
+    // Parked inside the stint, the transfer holds the session's only slot.
+    if park_stat_from > 1 {
+        use crate::files::transfer::scheduler::Admission;
+        assert_eq!(reg.request_slot(&peer), Admission::Queue);
+    }
+    assert!(reg.cancel("parked"));
+    tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("a cancel during a parked probe settles promptly")
+        .unwrap();
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Cancelled);
+    let phases = phases.lock().unwrap();
+    let cancelled = phases
+        .iter()
+        .filter(|p| **p == TransferPhase::Cancelled)
+        .count();
+    assert_eq!(cancelled, 1, "exactly one terminal emit: {phases:?}");
+    assert_eq!(phases.last(), Some(&TransferPhase::Cancelled));
+    assert!(reg.get("parked").is_none(), "registry entry dropped");
+    assert!(
+        target.reads.lock().unwrap().is_empty(),
+        "no bytes were read"
+    );
+    if park_stat_from > 1 {
+        assert!(peer.state().is_active(), "the slot passed to the peer");
+    } else {
+        use crate::files::transfer::scheduler::Admission;
+        assert_eq!(reg.request_slot(&peer), Admission::Run, "no slot was held");
+    }
+}
+
+#[tokio::test]
+async fn cancel_during_the_up_front_probe_settles_promptly() {
+    cancel_during_parked_stat(1).await;
+}
+
+#[tokio::test]
+async fn cancel_during_the_per_attempt_resume_probe_settles_promptly() {
+    cancel_during_parked_stat(2).await;
 }
