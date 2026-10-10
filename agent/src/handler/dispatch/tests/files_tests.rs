@@ -731,6 +731,106 @@ async fn oversized_slices_are_invalid() {
     assert!(ssh.range_calls.lock().unwrap().is_empty());
 }
 
+// ── write_range exclusive create (#4433) ────────────────────────────
+
+/// A host-level `create_new` write creates a missing file with its data, and
+/// the upload then continues with ordinary slices.
+#[tokio::test]
+async fn an_exclusive_create_claims_a_missing_host_file() {
+    let handler = make_handler();
+    init_handler(&handler).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("new.bin");
+    let p = path.to_str().unwrap();
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"path": p, "offset": 0, "data": b64(b"ab"), "create_new": true}),
+        2,
+    )
+    .await;
+    assert!(r.get("error").is_none(), "{r}");
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"path": p, "offset": 2, "data": b64(b"cd")}),
+        3,
+    )
+    .await;
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"abcd");
+}
+
+/// The agent refuses an exclusive create over an existing file with the typed
+/// `-32030` and leaves the file untouched — where a plain offset-0 write
+/// would truncate it.
+#[tokio::test]
+async fn an_exclusive_create_refuses_an_existing_host_file() {
+    let handler = make_handler();
+    init_handler(&handler).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("taken.bin");
+    std::fs::write(&path, b"precious").unwrap();
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"path": path.to_str().unwrap(), "offset": 0, "data": "",
+               "create_new": true}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::FILE_ALREADY_EXISTS, "{r}");
+    assert_eq!(std::fs::read(&path).unwrap(), b"precious");
+}
+
+/// `create_new` only means something at offset 0; anywhere else it is
+/// refused as invalid params before any backend is touched.
+#[tokio::test]
+async fn an_exclusive_create_past_offset_zero_is_invalid() {
+    let sessions = FilesSessionManager::new();
+    let ssh = FakeBrowser::new("ssh");
+    sessions.script("ssh-session", Ok(ssh.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"connection_id": "ssh-session", "path": "/f", "offset": 3,
+               "data": b64(b"X"), "create_new": true}),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::INVALID_PARAMS, "{r}");
+    assert!(ssh.range_calls.lock().unwrap().is_empty());
+}
+
+/// A target without an atomic exclusive create answers `-32013` and is never
+/// written: the agent does not emulate one with a check-then-create race.
+#[tokio::test]
+async fn an_exclusive_create_on_a_backend_without_one_is_not_supported() {
+    let sessions = FilesSessionManager::new();
+    let ssh = FakeBrowser::new("ssh");
+    sessions.script("ssh-session", Ok(ssh.clone()));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_FILES_WRITE_RANGE,
+        json!({"connection_id": "ssh-session", "path": "/f", "offset": 0,
+               "data": b64(b"X"), "create_new": true}),
+        2,
+    )
+    .await;
+    assert_eq!(
+        r["error"]["code"],
+        errors::FILE_BROWSING_NOT_SUPPORTED,
+        "{r}"
+    );
+    assert!(ssh.files.lock().unwrap().is_empty());
+}
+
 /// Ownership applies to ranged slices exactly as to every file operation.
 #[tokio::test]
 async fn ranged_slices_of_a_session_held_elsewhere_are_refused() {

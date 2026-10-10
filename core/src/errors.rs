@@ -280,6 +280,11 @@ pub enum FileError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
+    /// An exclusive create was refused because the path already exists
+    /// (#4433). Nothing was written.
+    #[error("File already exists: {0}")]
+    AlreadyExists(String),
+
     /// A file operation failed (I/O error, command failure, etc.).
     #[error("Operation failed: {0}")]
     OperationFailed(String),

@@ -130,6 +130,11 @@ pub const FORWARD_CONNECT_FAILED: i64 = -32028;
 /// sending it (AGT-002, #3745).
 pub const LISTEN_AUTH_REJECTED: i64 = -32029;
 
+/// An exclusive create (`connection.files.write_range` with `create_new`,
+/// protocol 0.30.0, #4433) was refused because something already holds the
+/// path. Nothing was written: the existing entry is untouched.
+pub const FILE_ALREADY_EXISTS: i64 = -32030;
+
 /// Optional structured `data` of a [`SESSION_CREATION_FAILED`] error from
 /// `connection.create` (protocol 0.18.0, #3751).
 ///
@@ -205,6 +210,7 @@ mod tests {
             UPDATE_DOWNGRADE_REFUSED,
             FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
+            FILE_ALREADY_EXISTS,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -245,6 +251,7 @@ mod tests {
             UPDATE_DOWNGRADE_REFUSED,
             FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
+            FILE_ALREADY_EXISTS,
         ];
         let n = codes.len();
         codes.sort_unstable();
@@ -300,6 +307,7 @@ mod tests {
             UPDATE_DOWNGRADE_REFUSED,
             FORWARD_CONNECT_FAILED,
             LISTEN_AUTH_REJECTED,
+            FILE_ALREADY_EXISTS,
         ];
         for code in app_codes {
             assert!(

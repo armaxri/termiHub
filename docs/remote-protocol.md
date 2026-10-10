@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.29.0
+**Version**: 0.30.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416, #4433
 
 ---
 
@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                          |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.24.0          | 0.30.0        | Yes (the desktop requests 0.24.0; `fileCreateNew` lets a remote-desktop upload claim its name without truncating a file)             |
 | 0.24.0          | 0.29.0        | Yes (the desktop requests 0.24.0; `hostFileAttributeOps` hides chmod / chown / symlink a Windows agent host cannot perform)          |
 | 0.24.0          | 0.28.0        | Yes (the desktop requests 0.24.0; `forwardFlow` credit-windows VNC/RDP streams carried by the agent)                                 |
 | 0.24.0          | 0.27.0        | Yes (the desktop requests 0.24.0; `outputFlow` lets a lagging terminal pause the agent-hosted session's output)                      |
@@ -411,6 +412,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                           |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                 |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                  |
+
+**0.30.0 (additive, minor)** — [`connection.files.write_range`](#connectionfileswrite_range) takes an optional `create_new` flag (#4433): with `offset: 0` it is an exclusive create, which creates the file only if nothing holds the path yet (`O_CREAT | O_EXCL`; an existing file, directory or symlink is never followed or truncated) and otherwise answers the new [`-32030` File already exists](#application-errors) without writing. The `initialize` result gains `capabilities.fileCreateNew: true` to say the agent host's **own** file system performs it — the requests without a `connection_id` that the remote-desktop file channel uses. A target without an atomic exclusive create answers `-32013` instead of emulating one. The desktop claims a remote-desktop upload's name with an empty `create_new` write before the upload starts, so a file that appears on the agent host after the name check is never truncated; a clash moves on to the next "keep both" name. Negotiation is by **capability**, not by method-not-found: an older agent would ignore the unknown field and truncate, so the desktop sends `create_new` only to an agent that advertises the flag, and for an older agent keeps relying on the name check alone. An older desktop never sends the flag. The desktop still requests `0.24.0`.
 
 **0.29.0 (additive, minor)** — the `initialize` result gains `capabilities.hostFileAttributeOps` (#4601): which of chmod ([`connection.files.set_permissions`](#connectionfilesset_permissions)), chown ([`set_owner`](#connectionfilesset_owner)) and symlink creation ([`create_symlink`](#connectionfilescreate_symlink)) the agent host's **own** file system performs, as `{ "permissions": boolean, "owner": boolean, "symlink": boolean }`. It covers the requests the agent serves from that file system: those of an agent-hosted **local** session and host-level requests without a `connection_id` (the remote-desktop file channel). A Unix agent host reports all three; a Windows agent host reports none, so the desktop hides Permissions, Owner and New symlink there instead of offering actions that fail with `NotSupported`. Other session types are unaffected: an SSH session's SFTP server is not the agent host, and the desktop keeps offering all three for it (Docker, FTP and WSL sessions none). Negotiation is by **capability**: for an older agent, which omits the field, the desktop keeps its session-type answer (a local session offers all three). An older desktop ignores the field. The desktop still requests `0.24.0`.
 
@@ -559,6 +562,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.outputFlow`                 | `boolean`              | [`connection.output_flow`](#connectionoutput_flow) pauses / resumes a session's output, backpressuring the program (0.27.0+; absent = `false`)                                                         |
 | `capabilities.forwardFlow`                | `boolean`              | [`agent.forward.connect`](#agentforwardconnect) grants a requested `window` and [`agent.forward.ack`](#agentforwardack) is honored (0.28.0+; absent = `false`)                                         |
 | `capabilities.hostFileAttributeOps`       | `object`               | `{ permissions, owner, symlink }` booleans: the chmod / chown / symlink the agent host's own file system performs, for local sessions and host-level file requests (0.29.0+; absent = by session type) |
+| `capabilities.fileCreateNew`              | `boolean`              | [`write_range`](#connectionfileswrite_range) honors `create_new` as an exclusive create on the agent host's own file system (0.30.0+; absent = `false`, never send the flag)                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
 > params (`protocolVersion`, `clientVersion`; a field sent in `snake_case` is silently ignored),
@@ -2782,6 +2786,8 @@ Write a slice of a file at an offset (0.26.0+, #3587). The desktop's queued tran
 
 `offset: 0` creates or truncates the file. A larger `offset` appends, and is refused without writing unless the file already holds exactly `offset` bytes, so a retried or resumed upload can never overwrite earlier bytes or leave a gap.
 
+With `create_new: true` (0.30.0+, #4433) an `offset: 0` write is an **exclusive create** instead: the file is created only if nothing holds `path` yet, and an existing file, directory or symlink (dangling or not) is refused with `-32030` and left untouched. The agent host's own file system (no `connection_id`) performs it atomically, as `capabilities.fileCreateNew` advertises; a target without an atomic exclusive create answers `-32013`. Send the flag only to an agent that advertises the capability — an older agent ignores the unknown field and truncates. The desktop claims a remote-desktop upload's name with an empty `create_new` write, then uploads into that file with ordinary slices.
+
 **Request:**
 
 ```json
@@ -2814,14 +2820,16 @@ Write a slice of a file at an offset (0.26.0+, #3587). The desktop's queued tran
 | `path`          | `string`  | File to write                                                             |
 | `offset`        | `integer` | Byte offset the slice starts at (must equal the file's size when not `0`) |
 | `data`          | `string`  | Base64-encoded bytes, at most 262144 once decoded                         |
+| `create_new`    | `bool?`   | Exclusive create, only with `offset: 0` (0.30.0+; omitted = `false`)      |
 
 **Errors:**
 
-- `-32602` Invalid base64, or data above the limit
+- `-32602` Invalid base64, data above the limit, or `create_new` with an `offset` above `0`
 - `-32010` File not found (`offset` above `0` on a missing file)
 - `-32011` Permission denied
 - `-32012` File operation failed (including an `offset` that is not the file's size)
-- `-32013` File browsing (or ranged access) not supported for this session
+- `-32013` File browsing (or ranged access) not supported for this session, or no atomic exclusive create for `create_new`
+- `-32030` File already exists (`create_new` over an existing path; nothing was written)
 
 ---
 
@@ -4352,6 +4360,7 @@ For serial sessions:
 | `-32027` | Update downgrade refused    | An agent update was refused by the downgrade policy: an unpinned downgrade, a mismatched pin, or an unknown version          |
 | `-32028` | Forward connect failed      | `agent.forward.connect` could not reach its target from the agent host (refused, unresolvable, timed out)                    |
 | `-32029` | Listen auth rejected        | The `--listen` pre-RPC `auth` handshake was refused (missing, malformed, or wrong token); the agent closes the connection    |
+| `-32030` | File already exists         | A `write_range` exclusive create (`create_new`) was refused because the path exists; nothing was written (0.30.0+)           |
 
 ---
 

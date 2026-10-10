@@ -333,6 +333,7 @@ fn capabilities_round_trip_serialization() {
         file_ranges: false,
         output_flow: false,
         host_file_attribute_ops: None,
+        file_create_new: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -905,6 +906,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             file_ranges: false,
             output_flow: false,
             host_file_attribute_ops: None,
+            file_create_new: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1109,6 +1111,7 @@ pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::J
             file_ranges: false,
             output_flow: false,
             host_file_attribute_ops: None,
+            file_create_new: false,
             agent_version: String::new(),
         }
         .into(),
@@ -2771,6 +2774,21 @@ fn only_an_agent_file_not_found_maps_to_a_missing_file() {
         agent(errors::FILE_NOT_FOUND).into_file_error(),
         FileError::NotFound(p) if p == "/d/a.txt"
     ));
+    // #4433: the typed answer to a refused exclusive create.
+    assert!(matches!(
+        agent(errors::FILE_ALREADY_EXISTS).into_file_error(),
+        FileError::AlreadyExists(p) if p == "/d/a.txt"
+    ));
+    // An agent that does not know or cannot serve the request (#4433).
+    for code in [
+        errors::METHOD_NOT_FOUND,
+        errors::FILE_BROWSING_NOT_SUPPORTED,
+    ] {
+        assert!(matches!(
+            agent(code).into_file_error(),
+            FileError::NotSupported
+        ));
+    }
     for failure in [
         agent(errors::PERMISSION_DENIED),
         agent(errors::FILE_OPERATION_FAILED),

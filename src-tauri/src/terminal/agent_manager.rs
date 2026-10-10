@@ -188,16 +188,37 @@ impl AgentRequestFailure {
     }
 
     /// The file-level error: only the agent's own `FILE_NOT_FOUND` answer is
-    /// [`FileError::NotFound`](termihub_core::errors::FileError::NotFound);
+    /// [`FileError::NotFound`](termihub_core::errors::FileError::NotFound), and
+    /// only its `FILE_ALREADY_EXISTS` answer (#4433) is
+    /// [`FileError::AlreadyExists`](termihub_core::errors::FileError::AlreadyExists);
+    /// an agent that does not know the method or cannot serve it
+    /// (`METHOD_NOT_FOUND`, `FILE_BROWSING_NOT_SUPPORTED`) is
+    /// [`FileError::NotSupported`](termihub_core::errors::FileError::NotSupported);
     /// everything else keeps the desktop error's text as an operation failure.
     pub(crate) fn into_file_error(self) -> termihub_core::errors::FileError {
         use termihub_core::errors::FileError;
+        use termihub_core::protocol::errors::{
+            FILE_ALREADY_EXISTS, FILE_BROWSING_NOT_SUPPORTED, FILE_NOT_FOUND, METHOD_NOT_FOUND,
+        };
         match self {
             Self::Agent(failure)
                 if !failure.transport_closed
-                    && failure.code == Some(termihub_core::protocol::errors::FILE_NOT_FOUND) =>
+                    && matches!(
+                        failure.code,
+                        Some(METHOD_NOT_FOUND | FILE_BROWSING_NOT_SUPPORTED)
+                    ) =>
+            {
+                FileError::NotSupported
+            }
+            Self::Agent(failure)
+                if !failure.transport_closed && failure.code == Some(FILE_NOT_FOUND) =>
             {
                 FileError::NotFound(failure.message)
+            }
+            Self::Agent(failure)
+                if !failure.transport_closed && failure.code == Some(FILE_ALREADY_EXISTS) =>
+            {
+                FileError::AlreadyExists(failure.message)
             }
             other => FileError::OperationFailed(other.into_terminal_error().to_string()),
         }

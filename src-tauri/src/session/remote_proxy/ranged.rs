@@ -70,6 +70,7 @@ impl RangedFileAccess for RemoteFileBrowserProxy {
                 path: path.to_string(),
                 offset,
                 data: base64::engine::general_purpose::STANDARD.encode(data),
+                create_new: false,
             },
         )
         .await?;

@@ -209,6 +209,7 @@ fn file_errors_cross_the_socket_typed() {
     let cases = [
         FileError::NotFound("/x".into()),
         FileError::PermissionDenied("nope".into()),
+        FileError::AlreadyExists("/taken".into()),
         FileError::OperationFailed("boom".into()),
         FileError::TooLarge { size: 2, limit: 1 },
         FileError::NotSupported,
