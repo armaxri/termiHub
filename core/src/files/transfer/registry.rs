@@ -149,6 +149,25 @@ impl TransferHandle {
         }
     }
 
+    /// Settle a transfer whose executor task crashed (panicked) before it
+    /// reached a terminal state (#4671), returning the resulting tag.
+    ///
+    /// A state the executor already settled (`completed`/`cancelled`, e.g. a
+    /// panic in the partial-file cleanup after the cancel transition) is kept.
+    /// Anything else is forced to a non-retryable `failed`: the state machine
+    /// only allows `Fail` from `Active`, but a crash can strike while queued,
+    /// paused or backing off, and the task that would retry is gone.
+    pub(super) fn settle_crashed(&self) -> TransferStateTag {
+        let mut c = self.lock();
+        if !c.state.is_terminal() {
+            c.state = TransferState::Failed {
+                attempt: c.attempt.max(1),
+                retryable: false,
+            };
+        }
+        c.state.tag()
+    }
+
     /// Whether hard cancellation has been signalled.
     pub fn is_cancelled(&self) -> bool {
         self.token.is_cancelled()
@@ -692,7 +711,10 @@ mod tests {
         let other = TransferRegistry::new();
         assert!(!reg.is_queue_teardown());
         reg.cancel_all();
-        assert!(reg.is_queue_teardown(), "the sweeping registry is in teardown");
+        assert!(
+            reg.is_queue_teardown(),
+            "the sweeping registry is in teardown"
+        );
         assert!(clone.is_queue_teardown(), "clones share the teardown flag");
         assert!(
             !other.is_queue_teardown(),
