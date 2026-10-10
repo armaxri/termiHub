@@ -119,6 +119,15 @@ else
 fi
 
 echo ""
+echo "=== ADR-14 projection region list ==="
+# Every registered projection region is named in ADR-14's status paragraph (#4586).
+if node scripts/internal/check-adr14-regions.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1
