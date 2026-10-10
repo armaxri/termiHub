@@ -6,8 +6,8 @@ import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { parseQuickConnect, quickConnectConfig } from "@/utils/quickConnect";
 import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
 import { formatRelativeTime } from "@/utils/formatters";
-import { isImeComposing } from "@/utils/imeComposition";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
 /** Maximum autocomplete suggestions shown below the quick-connect input. */
 const MAX_SUGGESTIONS = 6;
@@ -35,11 +35,7 @@ interface QuickConnectBarProps {
 export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnectBarProps) {
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
-  // Index of the suggestion highlighted by the arrow keys; -1 = none, so Enter
-  // submits the typed text. Exposed via aria-activedescendant (#4330).
-  const [activeIndex, setActiveIndex] = useState(-1);
   const listId = `${useId()}-suggestions`;
-  const optionId = (index: number) => `${listId}-opt-${index}`;
   const inputRef = useRef<HTMLInputElement>(null);
   // Tracks the pending blur timer so it can be cancelled on re-blur or unmount.
   const blurTimerRef = useRef<number | null>(null);
@@ -64,11 +60,6 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
       .slice(0, MAX_SUGGESTIONS);
   }, [history, value]);
 
-  // A changed suggestion list invalidates the highlighted index.
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [suggestions]);
-
   const submit = () => {
     const target = parseQuickConnect(value, defaultUser);
     if (!target) {
@@ -90,7 +81,26 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
   };
 
   const showDropdown = focused && suggestions.length > 0;
-  const activeSuggestion = showDropdown ? suggestions[activeIndex] : undefined;
+
+  // Shared combobox keyboard navigation (#4646). Nothing is highlighted until the
+  // arrow keys move into the list (exposed via aria-activedescendant, #4330), so
+  // Enter submits the typed text; a changed suggestion list clears the highlight.
+  const nav = useComboboxListNav({
+    items: suggestions,
+    onSelect: connectSuggestion,
+    resetKey: suggestions,
+    listId,
+    autocomplete: true,
+    open: showDropdown,
+    onUnhandledKeyDown: (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      } else if (e.key === "Escape") {
+        setValue("");
+      }
+    },
+  });
 
   return (
     <div className="recent-sessions__quick-connect">
@@ -111,32 +121,10 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
               setFocused(false);
             }, 120);
           }}
-          onKeyDown={(e) => {
-            if (isImeComposing(e)) return;
-            if (e.key === "ArrowDown" && showDropdown) {
-              e.preventDefault();
-              setActiveIndex((i) => (i < suggestions.length - 1 ? i + 1 : 0));
-            } else if (e.key === "ArrowUp" && showDropdown) {
-              e.preventDefault();
-              setActiveIndex((i) => (i > 0 ? i - 1 : suggestions.length - 1));
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              if (activeSuggestion) {
-                connectSuggestion(activeSuggestion);
-              } else {
-                submit();
-              }
-            } else if (e.key === "Escape") {
-              setValue("");
-            }
-          }}
           placeholder="user@host[:port]"
           aria-label="Quick connect"
-          role="combobox"
-          aria-autocomplete="list"
+          {...nav.inputProps}
           aria-expanded={showDropdown}
-          aria-controls={listId}
-          aria-activedescendant={activeSuggestion ? optionId(activeIndex) : undefined}
           data-testid="quick-connect-input"
         />
         <Tooltip content="Connect" side="top">
@@ -153,35 +141,35 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
       </div>
       {showDropdown && (
         <ul
-          id={listId}
+          {...nav.listboxProps}
           className="recent-sessions__autocomplete"
-          role="listbox"
           aria-label="Matching sessions"
           data-testid="quick-connect-suggestions"
         >
-          {suggestions.map((entry, index) => (
-            <li
-              key={entry.dedupKey}
-              id={optionId(index)}
-              role="option"
-              aria-selected={index === activeIndex}
-              className={`recent-sessions__autocomplete-item${
-                index === activeIndex ? " recent-sessions__autocomplete-item--active" : ""
-              }`}
-              // Use mousedown so the connect fires before the input's blur handler.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                connectSuggestion(entry);
-              }}
-              onMouseMove={() => setActiveIndex(index)}
-              data-testid={`quick-connect-suggestion-${entry.dedupKey}`}
-            >
-              <span className="recent-sessions__autocomplete-title">{entry.title}</span>
-              <span className="recent-sessions__autocomplete-time">
-                {formatRelativeTime(new Date(entry.lastUsed).toISOString())}
-              </span>
-            </li>
-          ))}
+          {suggestions.map((entry, index) => {
+            // Connecting happens on mousedown (before the input's blur handler),
+            // so the hook's click handler is not used here.
+            const { onClick: _onClick, ...optionProps } = nav.getOptionProps(index);
+            return (
+              <li
+                key={entry.dedupKey}
+                {...optionProps}
+                className={`recent-sessions__autocomplete-item${
+                  index === nav.activeIndex ? " recent-sessions__autocomplete-item--active" : ""
+                }`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  connectSuggestion(entry);
+                }}
+                data-testid={`quick-connect-suggestion-${entry.dedupKey}`}
+              >
+                <span className="recent-sessions__autocomplete-title">{entry.title}</span>
+                <span className="recent-sessions__autocomplete-time">
+                  {formatRelativeTime(new Date(entry.lastUsed).toISOString())}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
