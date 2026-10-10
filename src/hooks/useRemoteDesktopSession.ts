@@ -15,11 +15,7 @@ import {
   remoteDesktopPendingCertPrompt,
   remoteDesktopRequestFullFrame,
 } from "@/services/api";
-import {
-  onRemoteDesktopState,
-  onRemoteDesktopClipboard,
-  onRemoteDesktopCertPrompt,
-} from "@/services/events";
+import { remoteDesktopDispatcher } from "@/services/remoteDesktopDispatcher";
 import type {
   GraphicalSessionState,
   RemoteDesktopStatePayload,
@@ -375,11 +371,12 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   // Subscribe to lifecycle state for the tab's whole life, not per session
   // (#4017): a connect's own events fire before it returns the session id, so
   // events for a not-yet-known session are buffered while a connect is pending.
+  // Routed through the window's one shared listener (FEC2-002, #4378).
   useEffect(() => {
     let disposed = false;
     const dispose = subscribeGuarded(
       () =>
-        onRemoteDesktopState((payload) => {
+        remoteDesktopDispatcher.subscribeAllStates((payload) => {
           if (disposed) return;
           if (payload.session_id === sessionIdRef.current) {
             applyState(payload);
@@ -396,7 +393,9 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     };
   }, [applyState]);
 
-  // Subscribe to clipboard + cert-prompt events for this session.
+  // Subscribe to clipboard + cert-prompt events for this session, routed by
+  // session id through the window's one shared listener per event type
+  // (FEC2-002, #4378) instead of a global listener per tab.
   useEffect(() => {
     if (!sessionId) return;
     let disposed = false;
@@ -405,8 +404,8 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     unlisteners.push(
       subscribeGuarded(
         () =>
-          onRemoteDesktopClipboard((payload) => {
-            if (disposed || payload.session_id !== sessionId) return;
+          remoteDesktopDispatcher.subscribeClipboard(sessionId, (payload) => {
+            if (disposed) return;
             setRemoteClipboard(payload.text);
           }),
         "remote_desktop",
@@ -414,11 +413,15 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       )
     );
 
-    void onRemoteDesktopCertPrompt((payload) => {
-      if (disposed || payload.session_id !== sessionId) return;
-      setCertPrompt(payload);
-      frontendLog("remote_desktop", `cert prompt for ${payload.host} (changed=${payload.changed})`);
-    })
+    void remoteDesktopDispatcher
+      .subscribeCertPrompt(sessionId, (payload) => {
+        if (disposed) return;
+        setCertPrompt(payload);
+        frontendLog(
+          "remote_desktop",
+          `cert prompt for ${payload.host} (changed=${payload.changed})`
+        );
+      })
       .then((un) => {
         if (disposed) {
           un();
