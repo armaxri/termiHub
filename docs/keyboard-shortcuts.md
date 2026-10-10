@@ -156,6 +156,25 @@ To give the keyboard back to termiHub, press
 the remote machine; any keys still held there are released. The chord is also
 shown in the remote-desktop toolbar.
 
+## File browser list keys
+
+The file list in the Files sidebar is a multi-selectable list. When a row has focus:
+
+| Key                                                           | Action                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Move to another row (add <kbd>Shift</kbd> to extend the selection) |
+| <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>A</kbd>                   | Select all rows                                                    |
+| <kbd>Enter</kbd>                                              | Open the folder, or open the file for editing                      |
+| <kbd>F2</kbd>                                                 | Rename the row                                                     |
+| <kbd>Backspace</kbd>                                          | Go up one folder                                                   |
+| <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key               | Open the row's actions menu (the right-click menu)                 |
+| <kbd>Escape</kbd>                                             | Clear the selection                                                |
+
+<kbd>Shift</kbd>+<kbd>F10</kbd> works on every platform, including macOS keyboards
+without a Menu key. When the focused row is part of a multi-selection, the menu offers
+the actions for the whole selection. With the mouse, the **⋯** button that appears when
+you hover over a row opens the same actions; it is not a Tab stop.
+
 ## Customizing shortcuts: the overlay and the recorder
 
 The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
