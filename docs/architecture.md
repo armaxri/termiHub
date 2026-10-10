@@ -1329,7 +1329,10 @@ See [Remote Protocol](remote-protocol.md) for the full protocol specification an
   (#4416) the pause is forwarded to the agent as `connection.output_flow`, whose own session pump
   (or session daemon) then stops reading, so the remote PTY backpressures the program. The agent
   I/O task hands agent output to each session over an unbounded route, so it never blocks or
-  drops a chunk; the agent's pause bounds that backlog. An agent older than protocol 0.27.0 is
+  drops a chunk; the agent's pause bounds that backlog. The agent itself caps each session's
+  output queued for its transport at 512 KiB (#4439): over that the session pauses itself the
+  same way, so the backlog read before a pause lands is bounded in bytes, not by latency. An
+  agent older than protocol 0.27.0 is
   never paused, and its sessions fall back to the terminal's 32 MiB staged-output cap
 - **Task cancellation**: each terminal session owns its async tasks, cleaned up on close
 

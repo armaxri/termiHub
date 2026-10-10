@@ -69,7 +69,8 @@ pub const MSG_FILE_REQUEST: u8 = 0x09;
 pub const MSG_FILE_WRITE_DATA: u8 = 0x0A;
 
 /// Agent → Daemon: the optional features this worker understands (#3140), sent
-/// right after [`MSG_ATTACH_INTENT`]. Payload: one flag byte ([`CAP_HEARTBEAT`]).
+/// right after [`MSG_ATTACH_INTENT`]. Payload: one flag byte ([`CAP_HEARTBEAT`],
+/// [`CAP_OUTPUT_CREDIT`]).
 /// The mirror of [`MSG_CAPABILITIES`]: a pre-#3140 daemon ignores the unknown
 /// frame, and a pre-#3140 worker never sends it, so the daemon reads "no
 /// optional features" and never heartbeat-reaps that worker.
@@ -93,6 +94,21 @@ pub const MSG_AGENT_PONG: u8 = 0x0D;
 /// advertised [`CAP_OUTPUT_FLOW`]; a daemon from before it logs and skips the
 /// unknown frame.
 pub const MSG_OUTPUT_FLOW: u8 = 0x0E;
+
+/// Agent → Daemon: output credit returned (#4439). Payload: `u32` BE, the
+/// number of [`MSG_OUTPUT`] / [`MSG_BUFFER_REPLAY`] payload bytes the worker has
+/// written to its transport (or discarded) since its last ack. Sent only when
+/// both sides advertised [`CAP_OUTPUT_CREDIT`]; the daemon then keeps at most
+/// [`OUTPUT_CREDIT_WINDOW`] output bytes sent but unacknowledged, and stops
+/// reading its backend's output while the window is used up.
+pub const MSG_OUTPUT_ACK: u8 = 0x0F;
+
+/// Output bytes a daemon keeps sent but unacknowledged to a worker that
+/// returns credit with [`MSG_OUTPUT_ACK`] (#4439). Matches the worker's
+/// per-session transport budget, so the bytes queued on the worker's transport
+/// for one session stay bounded by it (plus one backend chunk) however late
+/// any pause lands.
+pub const OUTPUT_CREDIT_WINDOW: usize = 512 * 1024;
 
 /// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
 /// historical accept behavior. Used by the spawn-path connect and explicit
@@ -200,6 +216,12 @@ pub const CAP_FILE_RANGES: u8 = 0x10;
 /// daemon from before it (it survives agent upgrades) does not set it, so the
 /// worker knows that pausing it would have no effect.
 pub const CAP_OUTPUT_FLOW: u8 = 0x20;
+
+/// [`MSG_CAPABILITIES`] / [`MSG_AGENT_CAPABILITIES`] flag: this side takes part
+/// in output credit ([`MSG_OUTPUT_ACK`], #4439). Credit applies only when both
+/// sides set it: a daemon from before it never limits output, and a worker
+/// from before it is never limited (it would never return credit).
+pub const CAP_OUTPUT_CREDIT: u8 = 0x40;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
@@ -468,6 +490,12 @@ pub fn decode_resize(payload: &[u8]) -> Option<(u16, u16)> {
     Some((cols, rows))
 }
 
+/// Decode a [`MSG_OUTPUT_ACK`] payload: the credited byte count.
+pub fn decode_output_ack(payload: &[u8]) -> Option<u32> {
+    let bytes: [u8; 4] = payload.get(..4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
+}
+
 /// Encode an exit code into a 4-byte payload.
 pub fn encode_exit_code(code: i32) -> [u8; 4] {
     code.to_be_bytes()
@@ -626,6 +654,12 @@ mod tests {
         let frame = read_frame(&mut cursor).unwrap().unwrap();
         assert_eq!(frame.msg_type, MSG_QUERY_BUFFER);
         assert!(frame.payload.is_empty());
+    }
+
+    #[test]
+    fn output_ack_round_trips() {
+        assert_eq!(decode_output_ack(&65_536u32.to_be_bytes()), Some(65_536));
+        assert_eq!(decode_output_ack(&[0, 1]), None);
     }
 
     #[test]

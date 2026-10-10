@@ -307,6 +307,10 @@ enum AgentCommand {
     QueryBuffer,
     /// Agent paused (`true`) or resumed (`false`) the session's output (#4416).
     OutputFlow(bool),
+    /// The agent returns output credit ([`CAP_OUTPUT_CREDIT`], #4439).
+    OutputCredit,
+    /// The agent wrote this many output bytes to its transport (#4439).
+    OutputAck(u32),
     /// Agent requested a process list / kill in this session's backend (#3210).
     Process(ProcessRequest),
     /// Agent sent a monitoring request for this session's backend (#3871).
@@ -437,6 +441,12 @@ async fn daemon_loop(
     // Whether the attached worker paused the session's output (#4416).
     let mut output_paused = false;
 
+    // Output credit (#4439): once the attached worker advertised
+    // `CAP_OUTPUT_CREDIT`, at most `OUTPUT_CREDIT_WINDOW` output bytes are kept
+    // sent to it but not acknowledged as written to its transport.
+    let mut output_credit = false;
+    let mut unacked: usize = 0;
+
     // Newcomers that connected while a worker held the session, each on its
     // own task reading the attach intent (#3928): a slow newcomer never stalls
     // this loop, and its intent is decided here against the session as it is
@@ -466,7 +476,9 @@ async fn daemon_loop(
         // behind, so stop reading the backend's output — its bounded channel
         // fills and the PTY backpressures the program. Unattached, output always
         // flows into the ring buffer.
-        let reading_output = forwarding && !(output_paused && agent_writer.is_some());
+        let reading_output = forwarding
+            && !(output_paused && agent_writer.is_some())
+            && credit_available(output_credit && agent_writer.is_some(), unacked);
 
         tokio::select! {
             // No worker has been attached for the whole `detached_timeout`
@@ -512,6 +524,7 @@ async fn daemon_loop(
                         // Forward to agent if connected
                         if let Some(ref sink) = agent_writer {
                             sink.send(MSG_OUTPUT, &data);
+                            unacked = unacked.saturating_add(data.len());
                         }
                     }
                     None => {
@@ -646,6 +659,15 @@ async fn daemon_loop(
                     Some(AgentCommand::OutputFlow(paused)) => {
                         debug!(session_id, paused, "Agent set output flow");
                         output_paused = paused;
+                    }
+                    Some(AgentCommand::OutputCredit) => {
+                        debug!(session_id, "Agent returns output credit");
+                        output_credit = true;
+                    }
+                    Some(AgentCommand::OutputAck(bytes)) => {
+                        // Saturating: credit for output sent over a previous
+                        // connection may still arrive on this one.
+                        unacked = unacked.saturating_sub(bytes as usize);
                     }
                     Some(AgentCommand::QueryBuffer) => {
                         if let Some(ref sink) = agent_writer {
@@ -799,6 +821,9 @@ async fn daemon_loop(
         // The pause belonged to the previous worker (#4416); the newcomer
         // starts flowing and pauses again if its own terminal falls behind.
         output_paused = false;
+        // Credit is per connection: the newcomer opts in with its capabilities.
+        output_credit = false;
+        unacked = 0;
         let gen = connection_gen;
 
         // Drop the old connection (its writer task is aborted)
@@ -818,6 +843,8 @@ async fn daemon_loop(
         let buffered = ring_buffer.read_all();
         if !buffered.is_empty() {
             sink.send(MSG_BUFFER_REPLAY, &buffered);
+            // The worker charges the replay as output, and acks it (#4439).
+            unacked = buffered.len();
         }
 
         // Advertise optional features before Ready (#3210). A
@@ -876,7 +903,14 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges:
     }
     // Every daemon answers heartbeat probes (#3140) and honors output flow
     // control (#4416), whatever its backend.
-    flags | CAP_HEARTBEAT | CAP_OUTPUT_FLOW
+    flags | CAP_HEARTBEAT | CAP_OUTPUT_FLOW | CAP_OUTPUT_CREDIT
+}
+
+/// Whether the daemon may read (and forward) more output (#4439): always, unless
+/// the attached worker takes part in output credit and has
+/// [`OUTPUT_CREDIT_WINDOW`] bytes or more unacknowledged.
+fn credit_available(credit_applies: bool, unacked: usize) -> bool {
+    !credit_applies || unacked < OUTPUT_CREDIT_WINDOW
 }
 
 /// Queue an empty heartbeat frame (#3140) — a pong for the agent's ping, or a
@@ -1128,8 +1162,15 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                         if heartbeat::negotiated(flags) && watchdog.is_none() {
                             watchdog = Some(Heartbeat::new());
                         }
-                        continue;
+                        if flags & CAP_OUTPUT_CREDIT == 0 {
+                            continue;
+                        }
+                        AgentCommand::OutputCredit
                     }
+                    MSG_OUTPUT_ACK => match protocol::decode_output_ack(&frame.payload) {
+                        Some(bytes) => AgentCommand::OutputAck(bytes),
+                        None => continue,
+                    },
                     MSG_PING => AgentCommand::Ping,
                     // A pong only proves liveness, which its arrival recorded.
                     MSG_AGENT_PONG => continue,
@@ -1311,6 +1352,20 @@ pub(crate) mod tests {
 
     /// Env var tests mutate the process environment and must run serially.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // ── output credit (#4439) ─────────────────────────────────────────
+
+    #[test]
+    fn output_credit_limits_only_a_worker_that_takes_part() {
+        assert!(credit_available(false, usize::MAX), "no credit, no limit");
+        assert!(credit_available(true, OUTPUT_CREDIT_WINDOW - 1));
+        assert!(!credit_available(true, OUTPUT_CREDIT_WINDOW));
+        assert_ne!(
+            capability_flags(false, false, false, false) & CAP_OUTPUT_CREDIT,
+            0,
+            "every daemon advertises output credit"
+        );
+    }
 
     // ── detached-lifetime bound (#3636) ───────────────────────────────
 

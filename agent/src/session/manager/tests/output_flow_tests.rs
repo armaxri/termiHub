@@ -205,3 +205,134 @@ async fn output_flow_for_an_unknown_session_is_an_error() {
     let (mgr, _rx, _producer) = manager();
     assert!(mgr.set_output_paused("missing", true).await.is_err());
 }
+
+/// Bytes of one flood chunk in the budget tests.
+const BUDGET_CHUNK: usize = 64 * 1024;
+
+/// Send `chunk`s until a send stays blocked for a while (the producer is
+/// backpressured), or `max` were accepted. Returns how many were accepted.
+async fn flood_until_blocked(
+    out: &tokio::sync::mpsc::Sender<Vec<u8>>,
+    chunk: &[u8],
+    max: usize,
+) -> usize {
+    for accepted in 0..max {
+        let send = out.send(chunk.to_vec());
+        if tokio::time::timeout(Duration::from_millis(300), send)
+            .await
+            .is_err()
+        {
+            return accepted;
+        }
+    }
+    max
+}
+
+/// `connection.output` bytes per session in `held` (notifications still queued).
+fn queued_bytes(held: &[crate::protocol::messages::JsonRpcNotification], sid: &str) -> usize {
+    let b64 = base64::engine::general_purpose::STANDARD;
+    held.iter()
+        .filter(|n| n.method == CONNECTION_OUTPUT && n.params["session_id"] == sid)
+        .map(|n| {
+            b64.decode(n.params["data"].as_str().unwrap_or_default())
+                .map(|d| d.len())
+                .unwrap_or_default()
+        })
+        .sum()
+}
+
+/// #4439: with the transport stalled (nothing is written, so every queued
+/// notification keeps its credit), a flooding session queues at most its byte
+/// budget — plus the one chunk the pump read before pausing — and then stops
+/// reading, so its producer is backpressured. Another session and control
+/// notifications still get through, and draining the queue resumes the flood.
+#[tokio::test]
+async fn a_stalled_transport_bounds_one_sessions_queued_output() {
+    use crate::session::output_budget::OUTPUT_BUDGET_BYTES;
+
+    let (mgr, mut rx, producer) = manager();
+    let (flood_sid, flood) = create_flood_session(&mgr, &producer).await;
+
+    let chunk = vec![b'y'; BUDGET_CHUNK];
+    let max = 4 * OUTPUT_BUDGET_BYTES / BUDGET_CHUNK;
+    let accepted = flood_until_blocked(&flood, &chunk, max).await;
+    assert!(
+        accepted < max,
+        "the flooding producer must be backpressured once the budget is used"
+    );
+
+    // Hold every queued notification: the transport has written none of them.
+    let mut held = Vec::new();
+    while let Ok(n) = rx.try_recv() {
+        held.push(n);
+    }
+    let queued = queued_bytes(&held, &flood_sid);
+    assert!(
+        queued <= OUTPUT_BUDGET_BYTES + BUDGET_CHUNK,
+        "{queued} bytes queued for one session exceed the budget"
+    );
+    assert!(
+        queued >= OUTPUT_BUDGET_BYTES,
+        "the pump paused before using its budget ({queued} bytes queued)"
+    );
+    assert_eq!(
+        accepted * BUDGET_CHUNK,
+        queued + OUTPUT_CAPACITY * BUDGET_CHUNK,
+        "everything accepted is either queued or held in the backend channel"
+    );
+
+    // Another session on the same connection is not held up by the flood.
+    let (other_sid, other) = create_flood_session(&mgr, &producer).await;
+    other.send(b"other".to_vec()).await.unwrap();
+    let got = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let n = rx.recv().await.expect("channel open");
+            let is_other = n.method == CONNECTION_OUTPUT && n.params["session_id"] == other_sid;
+            held.push(n);
+            if is_other {
+                return true;
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    assert!(got, "the other session's output must still be forwarded");
+
+    // Control traffic shares the channel uncharged.
+    mgr.notification_tx
+        .send(crate::protocol::messages::JsonRpcNotification::new(
+            "test.control",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+    assert_eq!(
+        rx.try_recv().expect("control queued").method,
+        "test.control"
+    );
+
+    // The transport catches up: the flood resumes and its producer drains.
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), flood.send(chunk.clone()))
+            .await
+            .is_err(),
+        "still paused while the queue is full"
+    );
+    drop(held);
+    let mut resumed = 0;
+    let delivered = tokio::time::timeout(Duration::from_secs(5), async {
+        flood.send(chunk.clone()).await.unwrap();
+        while let Some(n) = rx.recv().await {
+            if n.method == CONNECTION_OUTPUT && n.params["session_id"] == flood_sid {
+                resumed += 1;
+                // The held channel contents plus the chunk sent above.
+                if resumed == OUTPUT_CAPACITY + 1 {
+                    return true;
+                }
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(delivered, "draining the queue must resume the session");
+}

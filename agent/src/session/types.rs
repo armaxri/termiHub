@@ -7,8 +7,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::daemon::client::DaemonClient;
+use crate::session::output_budget::OutputBudget;
 use termihub_core::connection::ConnectionType;
-use termihub_core::session::pump::OutputFlowGate;
 
 /// Current status of a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -55,11 +55,11 @@ pub enum SessionBackend {
         /// closes (the backend process exited / hit EOF on its own), so the
         /// manager can settle the session to [`SessionStatus::Exited`] (#2369).
         alive: Arc<AtomicBool>,
-        /// The desktop's output pause/resume switch (#4416), shared with the
-        /// output-forwarder's pump: while paused it stops reading the
-        /// connection's bounded output channel, so the PTY backpressures the
-        /// program.
-        flow: OutputFlowGate,
+        /// The desktop's output pause/resume switch (#4416) combined with the
+        /// transport byte budget (#4439), shared with the output-forwarder's
+        /// pump: while paused it stops reading the connection's bounded output
+        /// channel, so the PTY backpressures the program.
+        flow: OutputBudget,
     },
 
     /// No-op stub backend for testing. All operations succeed silently.
