@@ -12,4 +12,13 @@ connectionsImported: number,
  * Connections in the file skipped because the store already holds them
  * (#3689, #4210).
  */
-connectionsSkipped: number, credentialsImported: number, };
+connectionsSkipped: number, credentialsImported: number, 
+/**
+ * Remote agents actually added to the store (#4380).
+ */
+agentsImported: number, 
+/**
+ * Remote agents in the file skipped because the store already holds them
+ * (#4380).
+ */
+agentsSkipped: number, };
