@@ -244,7 +244,7 @@ describe("pluginSandboxWorker message loop", () => {
     it("passes a chunk through (changed:false) when no parser is registered", () => {
       send({ t: "transform", seq: 7, sessionId: "s1", bytes: enc.encode("hello") });
 
-      expect(g.posted.at(-1)).toEqual({
+      expect(g.posted[g.posted.length - 1]).toEqual({
         message: { t: "transformResult", seq: 7, changed: false },
         transfer: undefined,
       });
@@ -258,7 +258,7 @@ describe("pluginSandboxWorker message loop", () => {
 
       send({ t: "transform", seq: 3, sessionId: "s1", bytes: enc.encode("hello") });
 
-      const last = g.posted.at(-1)!;
+      const last = g.posted[g.posted.length - 1]!;
       expect(last.message).toMatchObject({ t: "transformResult", seq: 3, changed: true });
       const reply = last.message as Extract<WorkerToHostMessage, { t: "transformResult" }>;
       expect(dec.decode(reply.bytes)).toBe("HELLO");
