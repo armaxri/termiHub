@@ -66,7 +66,11 @@ describe("TerminalFilesOnlyPanel (#4078)", () => {
     await render("tab-1");
 
     expect(panel()).not.toBeNull();
-    expect(panel()?.getAttribute("role")).toBe("status");
+    // Announced once through the overlay's live region (#4514), not the wrapper.
+    expect(panel()?.getAttribute("role")).toBeNull();
+    expect(
+      panel()?.querySelector("[data-testid='content-overlay-live']")?.getAttribute("role")
+    ).toBe("status");
     expect(panel()?.textContent).toContain("This host doesn't allow a shell.");
     expect(panel()?.textContent).toContain("Files are available in the sidebar.");
     const button = openFiles();
