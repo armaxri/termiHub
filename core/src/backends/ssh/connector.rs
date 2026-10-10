@@ -302,7 +302,22 @@ impl SshConnector for RusshSshConnector {
         // env-var fallback and the X11 lines (#4147).
         let types_setup = !config.env.is_empty() || config.enable_x11_forwarding;
         let remote_shell = if detect_remote_shell || types_setup {
-            super::remote_shell::detect_remote_shell(&session).await
+            // Bounded generously (a cold PowerShell start is slow, #4670), so
+            // keep the wait abortable by the connect's cancel token.
+            let probe = super::remote_shell::detect_remote_shell(&session);
+            match cancel {
+                Some(token) => tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        return Err(SessionError::SpawnFailed(
+                            "SSH connection cancelled while detecting the remote shell"
+                                .to_string(),
+                        ));
+                    }
+                    shell = probe => shell,
+                },
+                None => probe.await,
+            }
         } else {
             RemoteShell::Unknown
         };
