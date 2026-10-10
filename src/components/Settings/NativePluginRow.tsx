@@ -41,6 +41,11 @@ export function staleAckReason(ack: NativeAckInfo | undefined): string | undefin
   }
 }
 
+/** "1 open session" / "3 open sessions" — for the session-ending confirmations (#4379). */
+export function openSessionsLabel(count: number): string {
+  return `${count} open session${count === 1 ? "" : "s"}`;
+}
+
 /** Props for {@link NativePluginRow}. */
 export interface NativePluginRowProps {
   plugin: InstalledPlugin;
@@ -80,6 +85,9 @@ export function NativePluginRow({
 }: NativePluginRowProps) {
   const [confirmReduced, setConfirmReduced] = useState(false);
   const [reviewAccess, setReviewAccess] = useState(false);
+  // Restart and Revoke end the plugin's open sessions; with any open, the
+  // action waits for this confirmation first (#4379).
+  const [confirmEnd, setConfirmEnd] = useState<"restart" | "revoke" | null>(null);
   const id = plugin.manifest.id;
   const name = plugin.manifest.name;
   const legacyAbi = predatesToolchainRecord(plugin);
@@ -94,6 +102,7 @@ export function NativePluginRow({
   const status: PluginSandboxStatus | undefined = sandbox.plugins[id];
   const badge = isolationBadge(plugin, status, isTrusted);
   const missing = status?.missing ?? [];
+  const sessions = status?.process?.sessions ?? 0;
 
   const handleConfirmReduced = useCallback(async () => {
     await onAcceptReducedIsolation(plugin, legacyAbi);
@@ -104,6 +113,12 @@ export function NativePluginRow({
     await onTrust(plugin, legacyAbi);
     setReviewAccess(false);
   }, [onTrust, plugin, legacyAbi]);
+
+  const handleConfirmEnd = useCallback(async () => {
+    if (confirmEnd === "restart") await onRestart(plugin, false);
+    else if (confirmEnd === "revoke") await onRevoke(plugin);
+    setConfirmEnd(null);
+  }, [confirmEnd, onRestart, onRevoke, plugin]);
 
   const trustAction = !isTrusted && ack?.state !== "unavailable" && (
     <Button
@@ -141,7 +156,10 @@ export function NativePluginRow({
       variant="secondary"
       size="sm"
       icon={<RotateCcw size={14} />}
-      onClick={() => onRestart(plugin, reenable)}
+      onClick={() =>
+        // Re-enable has no sessions to end: a disabled plugin is not running.
+        !reenable && sessions > 0 ? setConfirmEnd("restart") : onRestart(plugin, reenable)
+      }
       errorToast={false}
       aria-label={`${reenable ? "Re-enable" : "Restart"} ${name}`}
       data-testid={`native-plugin-restart-${id}`}
@@ -154,7 +172,7 @@ export function NativePluginRow({
       variant="ghost"
       size="sm"
       icon={<ShieldX size={14} />}
-      onClick={() => onRevoke(plugin)}
+      onClick={() => (sessions > 0 ? setConfirmEnd("revoke") : onRevoke(plugin))}
       errorToast={false}
       aria-label={`Revoke trust for ${name}`}
       data-testid={`native-plugin-revoke-${id}`}
@@ -220,6 +238,20 @@ export function NativePluginRow({
         onCancel={() => setConfirmReduced(false)}
         testIdBase={`native-plugin-reduced-${id}`}
         data-testid={`native-plugin-reduced-dialog-${id}`}
+      />
+      <ConfirmDialog
+        open={confirmEnd !== null}
+        variant="warn"
+        title={confirmEnd === "revoke" ? `Revoke trust for ${name}?` : `Restart ${name}?`}
+        message={`This ends its ${openSessionsLabel(sessions)}.`}
+        confirmLabel={confirmEnd === "revoke" ? "Revoke" : "Restart"}
+        confirmVariant="danger"
+        confirmIcon={confirmEnd === "revoke" ? <ShieldX size={14} /> : <RotateCcw size={14} />}
+        confirmErrorToast={false}
+        onConfirm={handleConfirmEnd}
+        onCancel={() => setConfirmEnd(null)}
+        testIdBase={`native-plugin-end-sessions-${id}`}
+        data-testid={`native-plugin-end-sessions-dialog-${id}`}
       />
       <ConfirmDialog
         open={reviewAccess}
