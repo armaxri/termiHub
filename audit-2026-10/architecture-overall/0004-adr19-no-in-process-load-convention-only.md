@@ -15,8 +15,8 @@ evidence:
   - core/Cargo.toml:153
   - core/Cargo.toml:363
   - core/tests/plugin_host_roundtrip.rs:28
-status: open
-resolution: ""
+status: fixed
+resolution: "#4373 — dlopen + self-confinement gated behind plugin-runner's runner feature; core uses default-features = false, no libloading; crate-policy check guards it"
 audit: 2026-10
 commit: 663465d52
 relation: new
