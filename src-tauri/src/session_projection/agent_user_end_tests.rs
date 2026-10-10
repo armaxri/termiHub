@@ -35,6 +35,16 @@ impl Rig {
     /// timer driver, one Connected resilient session per tab in `tabs` hosted
     /// by `agent-1`, and `agent-1` live in the agent manager.
     fn new(tabs: &[&str]) -> Self {
+        let rig = Self::without_agent(tabs);
+        tauri::async_runtime::block_on(async {
+            rig.agents.insert_wedged_agent_for_test("agent-1")
+        });
+        rig
+    }
+
+    /// [`Rig::new`] with `agent-1` not (yet) live in the agent manager — the
+    /// shape of an agent whose (re)connect is still in flight.
+    fn without_agent(tabs: &[&str]) -> Self {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
@@ -83,7 +93,6 @@ impl Rig {
         }
 
         let agents = AgentConnectionManager::new(handle.clone());
-        tauri::async_runtime::block_on(async { agents.insert_wedged_agent_for_test("agent-1") });
 
         Self {
             _app: app,
@@ -112,6 +121,15 @@ impl Rig {
     /// End `agent-1` with `reason`, returning every `agent-state-change`
     /// payload emitted while it ran.
     fn end_agent(&self, reason: AgentEndReason) -> Vec<Value> {
+        self.capture_agent_events(|| {
+            self.agents
+                .disconnect_agent_with_reason("agent-1", reason)
+                .expect("the live agent disconnects");
+        })
+    }
+
+    /// Run `f`, returning every `agent-state-change` payload emitted meanwhile.
+    fn capture_agent_events(&self, f: impl FnOnce()) -> Vec<Value> {
         use tauri::Listener;
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
@@ -120,9 +138,7 @@ impl Rig {
                 .unwrap()
                 .push(serde_json::from_str::<Value>(event.payload()).unwrap());
         });
-        self.agents
-            .disconnect_agent_with_reason("agent-1", reason)
-            .expect("the live agent disconnects");
+        f();
         self.handle.unlisten(id);
         let out = seen.lock().unwrap().clone();
         out
@@ -209,4 +225,58 @@ fn suspend_and_lost_do_not_fold_hosted_tabs() {
             "{reason:?}: no ended tabs on a resumable end: {events:?}"
         );
     }
+}
+
+/// #4678: a user Disconnect/Shutdown while the agent is still connecting
+/// cancels the connect and ends the hosted tabs — and the one "disconnected"
+/// event that follows lists them, exactly as for a connected agent, so every
+/// window presents the "Agent disconnected" banner. The cancelled connect
+/// unwinding afterwards emits no second event (no double banner or trigger).
+#[test]
+fn user_end_mid_connect_lists_the_ended_tabs_once() {
+    for (reason, wire) in [
+        (AgentEndReason::User, "user"),
+        (AgentEndReason::Shutdown, "shutdown"),
+    ] {
+        let rig = Rig::without_agent(&["tab-a", "tab-b"]);
+        let connect = rig.agents.begin_connect_for_test("agent-1");
+
+        let events = rig.capture_agent_events(|| {
+            rig.agents
+                .disconnect_agent_with_reason("agent-1", reason)
+                .expect("a connecting agent disconnects");
+            rig.agents
+                .unwind_cancelled_connect_for_test("agent-1", connect);
+        });
+
+        rig.assert_user_ended("tab-a");
+        rig.assert_user_ended("tab-b");
+        assert_eq!(events.len(), 1, "{reason:?}: one event: {events:?}");
+        assert_eq!(events[0]["state"], "disconnected");
+        assert_eq!(events[0]["reason"], wire, "{reason:?}");
+        assert_eq!(
+            events[0]["ended_tabs"],
+            serde_json::json!(["tab-a", "tab-b"]),
+            "{reason:?}: the mid-connect end lists the tabs it folded"
+        );
+    }
+}
+
+/// A plain Cancel of a connect (no user end) folds nothing and leaves the event
+/// to the unwinding connect, as before #4678: one "disconnected", no ended tabs.
+#[test]
+fn plain_connect_cancel_leaves_the_event_to_the_connect() {
+    let rig = Rig::without_agent(&["tab-a"]);
+    let connect = rig.agents.begin_connect_for_test("agent-1");
+
+    let events = rig.capture_agent_events(|| {
+        assert!(rig.agents.cancel_connect("agent-1"));
+        rig.agents
+            .unwind_cancelled_connect_for_test("agent-1", connect);
+    });
+
+    assert_eq!(rig.store.status("tab-a"), Some(SessionStatus::Connected));
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["state"], "disconnected");
+    assert!(events[0].get("ended_tabs").is_none(), "{events:?}");
 }

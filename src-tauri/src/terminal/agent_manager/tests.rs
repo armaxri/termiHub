@@ -1564,6 +1564,7 @@ fn connecting_guard_clears_registry_entry() {
         let _guard = ConnectingGuard {
             map: registry.clone(),
             id: "agent-1".to_string(),
+            end_claimed: Arc::new(AtomicBool::new(false)),
         };
         assert!(registry.lock().unwrap().contains_key("agent-1"));
     }
