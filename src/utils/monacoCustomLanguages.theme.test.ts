@@ -135,7 +135,7 @@ describe("Monaco theme background from theme tokens (#4599)", () => {
     expect(data.colors["editor.foreground"]).toBe("#d4d4d4");
     expect(data.base).toBe("vs-dark");
     // The patched theme is the one Monaco ends up on.
-    expect(rec.setThemeCalls.at(-1)).toBe("dark-plus");
+    expect(rec.setThemeCalls[rec.setThemeCalls.length - 1]).toBe("dark-plus");
   });
 
   it("patches light-plus with the light theme's token", async () => {
@@ -146,7 +146,7 @@ describe("Monaco theme background from theme tokens (#4599)", () => {
     const token = terminalBgToken();
     expect(token).toBe(lightTheme.colors.terminalBg);
     expectBackgrounds(lastDefinition("light-plus"), token);
-    expect(rec.setThemeCalls.at(-1)).toBe("light-plus");
+    expect(rec.setThemeCalls[rec.setThemeCalls.length - 1]).toBe("light-plus");
   });
 
   it("patches with a custom theme's own token", async () => {
