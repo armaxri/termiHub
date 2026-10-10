@@ -227,9 +227,9 @@ impl AgentState {
     ///   original bytes are copied aside to a `state.json.bak[.N]` backup, then
     ///   every well-formed session, the update record and unknown keys are
     ///   salvaged.
-    /// * **Unparseable JSON**: the bytes are quarantined to a
-    ///   `state.json.corrupt-<n>` sibling and a loud `error!` names the backup,
-    ///   before continuing with empty state.
+    /// * **Unparseable JSON**: the bytes are copied to the same shared
+    ///   `state.json.bak[.N]` backup scheme, the live file is cleared, and a loud
+    ///   `error!` names the backup before continuing with empty state.
     ///
     /// If a backup is impossible, the returned state is write-blocked so the
     /// only copy of the data is never overwritten.
@@ -302,11 +302,12 @@ impl AgentState {
         }
     }
 
-    /// Unparseable file: rename it aside and start empty; if that fails, start
-    /// empty but write-blocked so the corrupt bytes are never overwritten.
+    /// Unparseable file: back it up to `state.json.bak[.N]` and start empty; if
+    /// that fails, start empty but write-blocked so the corrupt bytes are never
+    /// overwritten.
     fn quarantine(path: &Path, reason: &str) -> Self {
         match backup_corrupt_state(path) {
-            Some(backup) => {
+            Ok(backup) => {
                 error!(
                     "Agent state at {} is corrupt ({}); backed up to {} and started with \
                      empty state — recoverable sessions are preserved in the backup",
@@ -316,12 +317,13 @@ impl AgentState {
                 );
                 Self::default()
             }
-            None => {
+            Err(e) => {
                 error!(
-                    "Agent state at {} is corrupt ({}) and could NOT be backed up; \
+                    "Agent state at {} is corrupt ({}) and could NOT be backed up ({}); \
                      starting with empty state and leaving the file untouched",
                     path.display(),
-                    reason
+                    reason,
+                    e
                 );
                 Self::blocked()
             }
@@ -521,39 +523,47 @@ fn restrict_state_permissions(path: &Path) {
 #[cfg(not(unix))]
 fn restrict_state_permissions(_path: &Path) {}
 
-/// Quarantine a corrupt `state.json` by renaming it aside, preserving its bytes.
+/// Quarantine an unparseable `state.json`: copy its bytes to the first free
+/// `state.json.bak[.N]` slot (fsynced, via the shared
+/// [`termihub_core::util::persist::backup_corrupt_file`]), then clear the live
+/// path.
 ///
-/// Picks the lowest free `state.json.corrupt-<n>` sibling (starting at 1) so
-/// repeated corruptions never clobber an earlier backup, and uses a plain
-/// rename — no timestamp — so the operation is deterministic and needs no clock.
-/// The rename also clears the live path, letting the next [`AgentState::save_to`]
-/// write a fresh file. Returns the backup path on success, or `None` if no free
-/// slot was found or the rename failed (the caller then logs and proceeds with
-/// empty state).
-fn backup_corrupt_state(path: &Path) -> Option<PathBuf> {
-    let file_name = path.file_name()?.to_string_lossy().into_owned();
-    // Cap the search so a directory already littered with backups cannot loop
-    // unboundedly; 1000 quarantined copies is far past any realistic case.
-    for n in 1..=1000u32 {
-        let candidate = path.with_file_name(format!("{file_name}.corrupt-{n}"));
-        if candidate.exists() {
-            continue;
-        }
-        match std::fs::rename(path, &candidate) {
-            Ok(()) => return Some(candidate),
-            Err(e) => {
-                warn!(
-                    "Failed to quarantine corrupt agent state {} to {}: {}",
-                    path.display(),
-                    candidate.display(),
-                    e
-                );
-                return None;
-            }
+/// Clearing the live file keeps a later read-only load from backing the same
+/// bytes up again (and so from exhausting the bounded slots). It happens only
+/// once the backup is durable, so the corrupt bytes always exist on disk in at
+/// least one place. Returns the backup path, or the error when no backup could
+/// be made — the caller then write-blocks the state so nothing overwrites the
+/// only copy.
+fn backup_corrupt_state(path: &Path) -> std::io::Result<PathBuf> {
+    let backup = termihub_core::util::persist::backup_corrupt_file(path)?;
+    sync_parent_dir(&backup);
+    if let Err(e) = std::fs::remove_file(path) {
+        // The backup exists, so the live file may still be overwritten by the
+        // next save; it is only left in place.
+        warn!(
+            "Backed up corrupt agent state {} to {} but could not remove it: {}",
+            path.display(),
+            backup.display(),
+            e
+        );
+    }
+    Ok(backup)
+}
+
+/// Best-effort fsync of `path`'s directory, so a new backup's directory entry
+/// is durable before the original it copies is removed.
+#[cfg(unix)]
+fn sync_parent_dir(path: &Path) {
+    if let Some(dir) = path.parent() {
+        if let Err(e) = std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+            debug!("Could not fsync directory {}: {}", dir.display(), e);
         }
     }
-    None
 }
+
+/// No-op on non-unix: directories cannot be opened for an fsync there.
+#[cfg(not(unix))]
+fn sync_parent_dir(_path: &Path) {}
 
 /// Platform config directory for the agent.
 ///
@@ -716,9 +726,9 @@ mod tests {
     #[test]
     fn corrupt_file_is_backed_up_not_discarded() {
         // A corrupt state.json must never be silently dropped: its bytes are
-        // quarantined to a `.corrupt-<n>` sibling so recoverable sessions can be
-        // salvaged (AGT-017, PER-006). Regression test — without the backup this
-        // fails (no sibling file, original gone).
+        // copied to the shared `state.json.bak` slot so recoverable sessions can
+        // be salvaged (AGT-017, PER-006, #4548). Regression test — without the
+        // backup this fails (no sibling file, original gone).
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
         let bad = r#"{ "sessions": { truncated..."#;
@@ -728,18 +738,31 @@ mod tests {
         assert!(state.sessions.is_empty(), "corrupt load must be empty");
 
         // The bytes were preserved verbatim in the backup, not lost.
-        let backup = tmp.path().join("state.json.corrupt-1");
+        let backup = tmp.path().join("state.json.bak");
         assert!(
             backup.exists(),
             "corrupt file must be backed up, not discarded"
         );
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), bad);
+        // The live path is cleared once the backup is durable, and the legacy
+        // `.corrupt-<n>` scheme is gone.
+        assert!(!path.exists(), "live corrupt file is cleared after backup");
+        assert!(!tmp.path().join("state.json.corrupt-1").exists());
+
+        // A later load (read-only or not) does not back the same bytes up again.
+        AgentState::load_from(&path);
+        assert!(!tmp.path().join("state.json.bak.1").exists());
+
+        // The fresh state saves cleanly over the cleared path.
+        state.save_to(&path);
+        assert!(AgentState::load_from(&path).sessions.is_empty());
+        assert!(!tmp.path().join("state.json.bak.1").exists());
     }
 
     #[test]
     fn repeated_corruption_keeps_earlier_backups() {
-        // A second corruption must not clobber the first quarantined copy — the
-        // counter advances so both sets of bytes survive.
+        // A second corruption must not clobber the first backup — it takes the
+        // next free `.bak.N` slot so both sets of bytes survive.
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
 
@@ -748,10 +771,15 @@ mod tests {
         std::fs::write(&path, "second-corrupt").unwrap();
         AgentState::load_from(&path);
 
-        let b1 = tmp.path().join("state.json.corrupt-1");
-        let b2 = tmp.path().join("state.json.corrupt-2");
-        assert_eq!(std::fs::read_to_string(&b1).unwrap(), "first-corrupt");
-        assert_eq!(std::fs::read_to_string(&b2).unwrap(), "second-corrupt");
+        std::fs::write(&path, "third-corrupt").unwrap();
+        AgentState::load_from(&path);
+
+        let b0 = tmp.path().join("state.json.bak");
+        let b1 = tmp.path().join("state.json.bak.1");
+        let b2 = tmp.path().join("state.json.bak.2");
+        assert_eq!(std::fs::read_to_string(&b0).unwrap(), "first-corrupt");
+        assert_eq!(std::fs::read_to_string(&b1).unwrap(), "second-corrupt");
+        assert_eq!(std::fs::read_to_string(&b2).unwrap(), "third-corrupt");
     }
 
     #[test]
@@ -1353,7 +1381,7 @@ mod tests {
 
         let state = AgentState::load_from(&path);
         assert!(state.sessions.is_empty());
-        assert!(!tmp.path().join("state.json.corrupt-1").exists());
+        assert!(!tmp.path().join("state.json.bak").exists());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), NEWER_STATE);
     }
 
@@ -1400,7 +1428,7 @@ mod tests {
 
         let state = AgentState::load_from(&path);
         assert_eq!(state.sessions.len(), 1);
-        assert!(!tmp.path().join("state.json.corrupt-1").exists());
+        assert!(!tmp.path().join("state.json.bak").exists());
     }
 
     #[test]
@@ -1455,9 +1483,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
         std::fs::write(&path, "{ this is not json").unwrap();
-        // Exhaust every quarantine slot so the backup is impossible.
-        for n in 1..=1000u32 {
-            std::fs::write(tmp.path().join(format!("state.json.corrupt-{n}")), "x").unwrap();
+        // Exhaust every shared `.bak[.N]` slot so the backup is impossible.
+        for _ in 0..termihub_core::util::persist::MAX_CORRUPT_BACKUPS {
+            termihub_core::util::persist::backup_corrupt(&path, b"x").unwrap();
         }
 
         let mut state = AgentState::load_from(&path);
@@ -1474,6 +1502,11 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "{ this is not json",
             "corrupt bytes with no backup must stay on disk"
+        );
+        // No backup slot was clobbered either.
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("state.json.bak")).unwrap(),
+            "x"
         );
     }
 }
