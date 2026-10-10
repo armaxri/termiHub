@@ -13,6 +13,11 @@ interface TerminalEvictedOverlayProps {
    * appending a duplicate of the scrollback.
    */
   onBeforeReclaim?: () => void;
+  /**
+   * Whether this tab is the active (visible) one. Moves focus to **Reclaim**
+   * when the overlay appears (#4514); background tabs never steal focus.
+   */
+  isActive?: boolean;
 }
 
 /**
@@ -23,7 +28,11 @@ interface TerminalEvictedOverlayProps {
  * would ping-pong control). The only way back is the explicit **Reclaim** action,
  * which takes control (evicting the other side in turn).
  */
-export function TerminalEvictedOverlay({ tabId, onBeforeReclaim }: TerminalEvictedOverlayProps) {
+export function TerminalEvictedOverlay({
+  tabId,
+  onBeforeReclaim,
+  isActive = false,
+}: TerminalEvictedOverlayProps) {
   const reclaimSession = useAppStore((s) => s.reclaimSession);
   const lifecycle = useProjectedSessionLifecycle(tabId);
   // An async handler opts the Button into its pending lifecycle (disabled +
@@ -42,6 +51,7 @@ export function TerminalEvictedOverlay({ tabId, onBeforeReclaim }: TerminalEvict
       heading="Taken over by another desktop"
       subheading="This session is still running, but another desktop or window is now controlling it. Input is paused here until you reclaim it."
       onReclaim={handleReclaim}
+      isActive={isActive}
     />
   );
 }
@@ -53,6 +63,8 @@ interface TerminalWindowEvictedOverlayProps {
   controllingWindowName: string;
   /** Called right before the claim is sent (see {@link TerminalEvictedOverlayProps}). */
   onBeforeReclaim?: () => void;
+  /** Whether this tab is the active one (see {@link TerminalEvictedOverlayProps}). */
+  isActive?: boolean;
 }
 
 /**
@@ -67,6 +79,7 @@ export function TerminalWindowEvictedOverlay({
   sessionId,
   controllingWindowName,
   onBeforeReclaim,
+  isActive = false,
 }: TerminalWindowEvictedOverlayProps) {
   const reclaimWindowSession = useAppStore((s) => s.reclaimWindowSession);
   const handleReclaim = useCallback(async () => {
@@ -80,6 +93,7 @@ export function TerminalWindowEvictedOverlay({
       heading="Taken over by another window"
       subheading={`This session is still running, but ${controllingWindowName} is now controlling it. Input and resize are paused here until you reclaim it.`}
       onReclaim={handleReclaim}
+      isActive={isActive}
     />
   );
 }
@@ -90,11 +104,13 @@ function EvictedOverlayView({
   heading,
   subheading,
   onReclaim,
+  isActive,
 }: {
   evictedBy: "desktop" | "window";
   heading: string;
   subheading: string;
   onReclaim: () => Promise<void>;
+  isActive: boolean;
 }) {
   // An async handler opts the Button into its pending lifecycle (disabled +
   // spinner while the reclaim is in flight), so a double click can never fire
@@ -110,6 +126,9 @@ function EvictedOverlayView({
         icon={<MonitorX size={32} className="terminal-disconnect-overlay__icon" />}
         heading={heading}
         subheading={subheading}
+        // A state change, not a failure: the session is alive elsewhere (#4514).
+        announce="polite"
+        autoFocusPrimaryAction={isActive}
         actions={
           <Button
             variant="primary"

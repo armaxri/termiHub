@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { RefreshCw, AlertCircle, Power } from "lucide-react";
 import { Button, Spinner, ContentOverlay } from "@/components/ui";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
@@ -15,6 +16,28 @@ interface RemoteDesktopOverlayProps {
   onCancelConnect: () => void;
   /** Manually (re)connect from a failed / dropped state. */
   onReconnect: () => void;
+  /**
+   * Whether this tab is the active (visible) one. Moves focus to **Reconnect**
+   * when a resting failure / closed state appears (#4514); background tabs
+   * never steal focus.
+   */
+  isActive?: boolean;
+}
+
+/** The resting-state heading for each non-busy state. */
+function restingHeading(state: GraphicalSessionState): string {
+  switch (state) {
+    case "authFailed":
+      return "Authentication failed";
+    case "connectFailed":
+      return "Could not connect";
+    case "serverClosed":
+      return "Session ended by the server";
+    case "disconnected":
+      return "Connection lost";
+    default:
+      return "Disconnected";
+  }
 }
 
 /**
@@ -38,7 +61,10 @@ export function RemoteDesktopOverlay({
   onCancel,
   onCancelConnect,
   onReconnect,
+  isActive = false,
 }: RemoteDesktopOverlayProps) {
+  const messageId = useId();
+  const hintId = useId();
   if (state === "active" || state === "resizing") return null;
 
   if (state === "connecting" || state === "authenticating") {
@@ -90,6 +116,8 @@ export function RemoteDesktopOverlay({
   // Resting states: dropped (no retry running), auth failed, connect failed,
   // server closed, closed.
   const closed = state === "serverClosed" || state === "closed";
+  const heading = restingHeading(state);
+  const authHint = state === "authFailed" ? "Check the credentials and try again." : null;
   return (
     <div className="rd-overlay" data-testid="remote-desktop-overlay-error">
       <ContentOverlay
@@ -100,17 +128,15 @@ export function RemoteDesktopOverlay({
             <AlertCircle size={30} className="rd-overlay__icon rd-overlay__icon--error" />
           )
         }
-        heading={
-          state === "authFailed"
-            ? "Authentication failed"
-            : state === "connectFailed"
-              ? "Could not connect"
-              : state === "serverClosed"
-                ? "Session ended by the server"
-                : state === "disconnected"
-                  ? "Connection lost"
-                  : "Disconnected"
+        heading={heading}
+        // Failures the user must act on interrupt; an intentional close
+        // (server logoff, closed) is a polite state change (#4514).
+        announce={closed ? "polite" : "assertive"}
+        announcement={[`${heading}.`, message, authHint].filter(Boolean).join(" ")}
+        describedBy={
+          [message ? messageId : "", authHint ? hintId : ""].filter(Boolean).join(" ") || undefined
         }
+        autoFocusPrimaryAction={isActive}
         actions={
           <Button
             variant="secondary"
@@ -122,9 +148,15 @@ export function RemoteDesktopOverlay({
           </Button>
         }
       >
-        {message && <div className="rd-overlay__sub rd-overlay__error">{message}</div>}
-        {state === "authFailed" && (
-          <div className="rd-overlay__sub">Check the credentials and try again.</div>
+        {message && (
+          <div id={messageId} className="rd-overlay__sub rd-overlay__error">
+            {message}
+          </div>
+        )}
+        {authHint && (
+          <div id={hintId} className="rd-overlay__sub">
+            {authHint}
+          </div>
         )}
       </ContentOverlay>
     </div>

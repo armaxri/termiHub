@@ -9,6 +9,12 @@ import "./TerminalDisconnectOverlay.css";
 
 interface TerminalFilesOnlyPanelProps {
   tabId: string;
+  /**
+   * Whether this tab is the active (visible) one. Moves focus to **Open Files**
+   * when the panel appears (#4514) — there is no shell to type into; background
+   * tabs never steal focus.
+   */
+  isActive?: boolean;
 }
 
 /**
@@ -21,7 +27,7 @@ interface TerminalFilesOnlyPanelProps {
  * Renders nothing unless the tab's projected lifecycle is files-only — the
  * verdict comes from the backend, never from terminal output.
  */
-export function TerminalFilesOnlyPanel({ tabId }: TerminalFilesOnlyPanelProps) {
+export function TerminalFilesOnlyPanel({ tabId, isActive = false }: TerminalFilesOnlyPanelProps) {
   const lifecycle = useProjectedSessionLifecycle(tabId);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
@@ -47,14 +53,16 @@ export function TerminalFilesOnlyPanel({ tabId }: TerminalFilesOnlyPanelProps) {
     <div
       className="terminal-disconnect-overlay terminal-disconnect-overlay--files-only"
       data-testid="terminal-files-only-panel"
-      role="status"
-      aria-live="polite"
     >
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
         icon={<FolderOpen size={32} className="terminal-files-only-panel__icon" />}
         heading="This host doesn't allow a shell."
         subheading="Files are available in the sidebar."
+        // A state change, announced once through the overlay's live region
+        // (#4514) — the wrapper is no longer a live region of its own.
+        announce="polite"
+        autoFocusPrimaryAction={isActive}
         actions={
           <Button
             variant="primary"
