@@ -5,6 +5,8 @@
  * Covers: F2 and the context-menu Rename action both start an inline edit;
  * the base name is pre-selected with the extension preserved; Enter commits
  * the rename via the backend; Escape cancels; and no native prompt is used.
+ * Also (#4637): focus returns to the renamed row when the edit ends, and the
+ * editor's keys never drive the listbox's navigation, type-ahead or activation.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -218,5 +220,103 @@ describe("FileBrowser — inline rename (#1348)", () => {
     await flushAsync();
 
     expect(mockedInvoke).not.toHaveBeenCalledWith("local_rename", expect.anything());
+  });
+
+  function renameInput(): HTMLInputElement {
+    return container.querySelector('[data-testid="file-row-rename-input"]') as HTMLInputElement;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("focuses the rename input when the edit starts", async () => {
+    await renderLocal();
+    await startRenameOnReport();
+    expect(document.activeElement).toBe(renameInput());
+  });
+
+  it("returns focus to the row after committing with Enter", async () => {
+    await renderLocal();
+    await startRenameOnReport();
+    const input = renameInput();
+    await act(async () => {
+      setInputValue(input, "renamed.pdf");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+
+    expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
+      oldPath: "/home/report.pdf",
+      newPath: "/home/renamed.pdf",
+    });
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-testid="file-row-report.pdf"]')
+    );
+  });
+
+  it("returns focus to the row after cancelling with Escape", async () => {
+    await renderLocal();
+    await startRenameOnReport();
+    const input = renameInput();
+    await act(async () => {
+      setInputValue(input, "nope.pdf");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await flushAsync();
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_rename", expect.anything());
+    const row = container.querySelector('[data-testid="file-row-report.pdf"]') as HTMLElement;
+    expect(document.activeElement).toBe(row);
+    // The row is back as an option of the listbox, still the roving Tab stop.
+    expect(row.getAttribute("role")).toBe("option");
+    expect(row.getAttribute("tabindex")).toBe("0");
+  });
+
+  it("keeps typed keys inside the editor instead of driving list type-ahead", async () => {
+    await renderLocal();
+    await startRenameOnReport();
+    const input = renameInput();
+    // "m" would type-ahead to the "mydir" row if the key reached the list.
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "m", bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    await flushAsync();
+    expect(renameInput()).toBe(input);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not navigate into or open the entry when Enter commits", async () => {
+    await renderLocal();
+    // Rename the folder: an Enter that leaked to the list would navigate into it.
+    const dirRow = container.querySelector('[data-testid="file-row-mydir"]') as HTMLElement;
+    await act(async () => {
+      dirRow.click();
+    });
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true }));
+    });
+    await flushAsync();
+    mockedInvoke.mockClear();
+
+    const input = renameInput();
+    await act(async () => {
+      setInputValue(input, "otherdir");
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flushAsync();
+
+    expect(mockedInvoke).toHaveBeenCalledWith("local_rename", {
+      oldPath: "/home/mydir",
+      newPath: "/home/otherdir",
+    });
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_list_dir", { path: "/home/mydir" });
   });
 });
