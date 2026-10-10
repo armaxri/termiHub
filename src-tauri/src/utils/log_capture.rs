@@ -45,6 +45,10 @@ pub fn default_env_filter() -> EnvFilter {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct LogEntry {
+    /// Capture time as an ISO-8601 UTC string with millisecond precision
+    /// (e.g. `2026-10-10T12:34:56.789Z`) — the same shape the frontend log
+    /// channel uses, so exports read uniformly (#4536). Payloads from before
+    /// #4536 carry a local `HH:MM:SS.mmm` here instead.
     pub timestamp: String,
     pub level: String,
     pub target: String,
@@ -55,6 +59,37 @@ pub struct LogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub window: Option<String>,
+    /// Capture time as Unix epoch milliseconds: the Log Viewer's chronological
+    /// sort key and the source of its locale-formatted display time (#4536).
+    /// Optional so payloads from before it existed still parse.
+    #[serde(
+        default,
+        rename = "timestampMs",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub timestamp_ms: Option<i64>,
+}
+
+impl LogEntry {
+    /// Build an entry stamped with `now`: an ISO-8601 UTC [`LogEntry::timestamp`]
+    /// and the matching epoch-ms [`LogEntry::timestamp_ms`] sort key.
+    fn stamped(
+        now: chrono::DateTime<chrono::Utc>,
+        level: String,
+        target: String,
+        message: String,
+        window: Option<String>,
+    ) -> Self {
+        Self {
+            timestamp: now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            level,
+            target,
+            message,
+            window,
+            timestamp_ms: Some(now.timestamp_millis()),
+        }
+    }
 }
 
 /// Ring buffer holding recent log entries.
@@ -239,13 +274,13 @@ where
             )
         };
 
-        let entry = LogEntry {
-            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-            level: level_to_string(level),
+        let entry = LogEntry::stamped(
+            chrono::Utc::now(),
+            level_to_string(level),
             target,
             message,
             window,
-        };
+        );
 
         // Buffer the entry
         if let Ok(mut buf) = self.buffer.lock() {
@@ -351,6 +386,7 @@ mod tests {
                 target: "test".to_string(),
                 message: format!("msg {}", i),
                 window: None,
+                timestamp_ms: None,
             });
         }
         // Only the last 3 should remain
@@ -372,6 +408,7 @@ mod tests {
                 target: "test".to_string(),
                 message: format!("msg {}", i),
                 window: None,
+                timestamp_ms: None,
             });
         }
         let recent = buffer.get_recent(2);
@@ -390,6 +427,7 @@ mod tests {
                 target: "test".to_string(),
                 message: format!("msg {}", i),
                 window: None,
+                timestamp_ms: None,
             });
         }
         let recent = buffer.get_recent(100);
@@ -406,6 +444,7 @@ mod tests {
                 target: "test".to_string(),
                 message: format!("msg {}", i),
                 window: None,
+                timestamp_ms: None,
             });
         }
         assert_eq!(buffer.entries.len(), 5);
@@ -477,5 +516,57 @@ mod tests {
         assert_eq!(entries[0].window.as_deref(), Some("main"));
         assert_eq!(entries[0].message, "forwarded");
         assert_eq!(entries[1].window, None);
+    }
+
+    #[test]
+    fn captured_entry_carries_iso_utc_timestamp_and_epoch_ms_sort_key() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let buffer = create_log_buffer();
+        let layer = LogCaptureLayer::new(buffer.clone());
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let _guard = test_support::set_scoped_subscriber(subscriber);
+
+        let before = chrono::Utc::now().timestamp_millis();
+        tracing::info!(target: "test_target", "stamped");
+        let after = chrono::Utc::now().timestamp_millis();
+
+        let entries = buffer.lock().unwrap().get_recent(10);
+        assert_eq!(entries.len(), 1);
+        let ms = entries[0]
+            .timestamp_ms
+            .expect("new entries carry timestampMs");
+        assert!(
+            (before..=after).contains(&ms),
+            "{ms} not in {before}..={after}"
+        );
+        let parsed = chrono::DateTime::parse_from_rfc3339(&entries[0].timestamp)
+            .expect("timestamp is RFC 3339");
+        assert_eq!(parsed.timestamp_millis(), ms);
+        assert!(
+            entries[0].timestamp.ends_with('Z'),
+            "UTC: {}",
+            entries[0].timestamp
+        );
+    }
+
+    #[test]
+    fn timestamp_ms_serializes_camel_case_and_is_optional_on_input() {
+        let now = chrono::DateTime::from_timestamp_millis(1_760_000_000_123).unwrap();
+        let entry = LogEntry::stamped(now, "INFO".into(), "t".into(), "m".into(), None);
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["timestampMs"], 1_760_000_000_123_i64);
+        assert_eq!(json["timestamp"], "2025-10-09T08:53:20.123Z");
+
+        // A pre-#4536 payload (no `timestampMs`, local clock string) still parses.
+        let old: LogEntry = serde_json::from_str(
+            r#"{"timestamp":"12:34:56.789","level":"WARN","target":"t","message":"m"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.timestamp_ms, None);
+        assert_eq!(old.timestamp, "12:34:56.789");
+        // ...and an entry without the key does not emit it.
+        let json = serde_json::to_value(&old).unwrap();
+        assert!(json.get("timestampMs").is_none());
     }
 }
