@@ -171,6 +171,7 @@ export async function connectSavedConnection(
       sourceFile: connection.sourceFile ?? null,
       requestPassword,
       unattended,
+      label: connection.name,
     });
     if (fieldSecrets.status === "canceled") {
       toast.info(fieldSecrets.reason);
@@ -281,6 +282,7 @@ export async function connectSavedConnection(
       sourceFile: connection.sourceFile ?? null,
       settings: cfg as Record<string, unknown>,
       requestPassword,
+      label: connection.name,
     });
     if (resolved.status === "canceled") {
       toast.info("Connect canceled");
@@ -495,19 +497,20 @@ export async function connectSavedConnection(
       dismissConnecting();
       // The label names the connection in the prompt title, so a queued
       // prompt says which connect it belongs to (#4312).
-      const password = await requestPassword(host, username, rejectedCredentialNotice, "password", {
+      const answer = await requestPassword(host, username, rejectedCredentialNotice, "password", {
         allowSave: !sharedCredential,
         label: connection.name,
       });
-      if (password === null) {
+      if (answer === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
         toast.info("Connect canceled");
         return { status: "canceled" };
       }
+      const password = answer.password;
       config = { ...config, config: { ...cfg, password } } as typeof config;
       // Persist the entered password if the user opted in via the prompt checkbox
-      if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
+      if (!sharedCredential && answer.shouldSave) {
         await storeCredential(connection.id, "password", password, connection.sourceFile).catch(
           (err) => {
             frontendLog("connection_list", `Failed to store credential: ${errorMessage(err)}`);
@@ -524,20 +527,21 @@ export async function connectSavedConnection(
       // The prompt modal is now the feedback surface — clear the pre-connect
       // indicator before it appears (UX-011).
       dismissConnecting();
-      const passphrase = await requestPassword(
+      const answer = await requestPassword(
         host,
         username,
         rejectedCredentialNotice,
         "key_passphrase",
         { allowSave: !sharedCredential, label: connection.name }
       );
-      if (passphrase === null) {
+      if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
         toast.info("Connect canceled");
         return { status: "canceled" };
       }
+      const passphrase = answer.password;
       config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
-      if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
+      if (!sharedCredential && answer.shouldSave) {
         await storeCredential(
           connection.id,
           "key_passphrase",

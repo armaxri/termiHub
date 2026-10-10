@@ -61,7 +61,14 @@ vi.mock("@/components/ui", () => ({
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { applySpawnChoice, useSpawnChoiceHandler, useSpawnRequests } from "./useSpawnRequests";
+import {
+  applySpawnChoice,
+  resolveSpawnSecret,
+  useSpawnChoiceHandler,
+  useSpawnRequests,
+} from "./useSpawnRequests";
+import { setConnectionsViewForTest } from "@/store/connectionsBridge";
+import type { SavedConnection } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -684,6 +691,52 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
 
       const tab = allTabs().find((t) => t.spawned);
       expect(tab?.config.config).toEqual(PASSWORD_SPAWN.settings);
+    });
+
+    describe("with a matching saved connection", () => {
+      beforeEach(() => {
+        setConnectionsViewForTest({
+          folders: [],
+          connections: [
+            {
+              id: "conn-1",
+              name: "App server",
+              config: { type: "ssh", config: {} },
+              folderId: null,
+              sourceFile: null,
+            } as unknown as SavedConnection,
+          ],
+        });
+      });
+      afterEach(() => setConnectionsViewForTest({ folders: [], connections: [] }));
+
+      const prompted = (shouldSave: boolean) => ({
+        status: "resolved" as const,
+        passwordKey: "password",
+        secret: "s3cret",
+        source: "prompt" as const,
+        credentialType: "password" as const,
+        shouldSave,
+      });
+
+      it("names the connection in the prompt and stores a secret whose Save box was ticked (#4474)", async () => {
+        resolveConnectSecret.mockResolvedValue(prompted(true));
+        storeCredential.mockResolvedValue(undefined);
+        await resolveSpawnSecret(PASSWORD_SPAWN, "conn-1");
+
+        expect(resolveConnectSecret.mock.calls[0][0]).toMatchObject({
+          connectionId: "conn-1",
+          label: "App server",
+        });
+        expect(storeCredential).toHaveBeenCalledWith("conn-1", "password", "s3cret", null);
+      });
+
+      it("stores nothing when that prompt's Save box was left unticked (#4474)", async () => {
+        resolveConnectSecret.mockResolvedValue(prompted(false));
+        await resolveSpawnSecret(PASSWORD_SPAWN, "conn-1");
+
+        expect(storeCredential).not.toHaveBeenCalled();
+      });
     });
   });
 

@@ -108,6 +108,8 @@ describe("startSavedPersistentSession", () => {
         connectionId: "target",
         sourceFile: "/shared/team.json",
         unattended: false,
+        // The connection's name titles each prompt (#4475).
+        label: "Target",
       })
     );
     expect(mockStartPersistentSession).toHaveBeenCalledWith("target", "ssh", resolved);

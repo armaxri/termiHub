@@ -231,7 +231,8 @@ describe("ConnectionEditor — schema field secrets (#4429)", () => {
     await clickTest();
 
     expect(requestPassword).toHaveBeenCalledTimes(1);
-    expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: false });
+    // The connection's name titles the prompt (#4475).
+    expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: false, label: "Token Server" });
     expect(commandCalls("test_connection")).toHaveLength(0);
     expect(toastInfo).toHaveBeenCalledWith("Connect canceled — API Token is required.");
     expect(toastError).not.toHaveBeenCalled();

@@ -1202,6 +1202,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           definitionId: existingAgentDef?.id ?? null,
           settings: connSettings,
           requestPassword,
+          // The connection's name titles the prompt (#4475).
+          label: name.trim(),
         });
         if (resolved.status === "canceled") {
           toast.info("Connect canceled — your changes were saved.");
@@ -1249,6 +1251,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       connectionId: saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
+      // The connection's name titles each prompt (#4475).
+      label: saved.name,
     });
     if (fieldSecrets.status !== "resolved") {
       toast.info(`${fieldSecrets.reason} Your changes were saved.`);
@@ -1267,6 +1271,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       connectionId: saved.id,
       sourceFile: savedSourceFile,
       requestPassword,
+      label: saved.name,
     });
     if (secret.status === "canceled") {
       // The connection was saved; only the connect step was aborted. Surface a
@@ -1281,7 +1286,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // connection's optimistic conn-<ts> id has been reconciled by now (#863),
       // and the editor enforces unique names per folder, so name + folderId
       // identifies the stored entry.
-      if (secret.source === "prompt" && useAppStore.getState().passwordPromptShouldSave) {
+      if (secret.source === "prompt" && secret.shouldSave) {
         // The file matters too: a same-named connection in another file has
         // its own secret (#3591).
         const storeConn = currentConnectionsView().connections.find(
@@ -1371,6 +1376,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // has no persisted id to key the vault, so no stored credential can exist
     // (names are unique per folder) and the user is prompted directly.
     if (!isAgentDefinitionMode) {
+      // The form's name titles each prompt, so a queued prompt says which
+      // connection it is for (#4475).
+      const testLabel = name.trim();
       // The saved connection's stored schema secrets other than `password`
       // (#4289) — Test uses them and prompts for missing ones, saving nothing
       // (#4429).
@@ -1381,6 +1389,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         sourceFile: existingConnection?.sourceFile ?? null,
         requestPassword,
         allowSave: false,
+        label: testLabel,
       });
       if (fieldSecrets.status !== "resolved") {
         toast.info(fieldSecrets.reason);
@@ -1397,6 +1406,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         requestPassword,
         // Test never persists the secret, so the prompt offers no Save box (#3316).
         allowSave: false,
+        label: testLabel,
       });
       if (secret.status === "canceled") {
         // Cancel cleanly: no probe ran, so no auth-failure toast. Rethrow so the
