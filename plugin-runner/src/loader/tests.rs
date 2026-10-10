@@ -88,8 +88,7 @@ fn last_field(source: &str, name: &str) -> String {
         .map(|l| l.trim().trim_start_matches("pub ").trim_start())
         .filter(|l| !l.starts_with("//") && !l.starts_with('#') && !l.starts_with(')'))
         .filter_map(|l| l.split_once(':').map(|(field, _)| field.trim().to_owned()))
-        .filter(|f| f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-        .last()
+        .rfind(|f| f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
         .expect("a field")
 }
 
