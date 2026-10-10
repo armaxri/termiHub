@@ -32,7 +32,7 @@ use std::sync::Arc;
 use super::local::{run_local_transfer, should_queue_local_copy};
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferStateTag;
-use super::{is_queue_teardown, ProgressSink};
+use super::ProgressSink;
 
 /// Most entries (files, folders, symlinks, skipped items) one folder copy may
 /// hold. Planning keeps one small record per entry, so this bounds its memory.
@@ -321,7 +321,7 @@ pub async fn run_local_transfer_in_group(
         start_offset,
     )
     .await;
-    if handle.state().tag() != TransferStateTag::Cancelled || is_queue_teardown() {
+    if handle.state().tag() != TransferStateTag::Cancelled || registry.is_queue_teardown() {
         return;
     }
     for id in group.iter().filter(|id| **id != handle.transfer_id) {
