@@ -179,6 +179,15 @@ impl PermissionSet {
         self.filesystem.check(requested)
     }
 
+    /// [`check_path`](Self::check_path), also returning the canonical root the
+    /// path lies under, for opening it through a root-anchored handle (#4391).
+    pub(crate) fn check_path_anchored(
+        &self,
+        requested: &Path,
+    ) -> Result<ScopedPath, PermissionError> {
+        self.filesystem.check_anchored(requested)
+    }
+
     /// Validate that the plugin's declared permissions are consistent with the
     /// extensions it provides, before it is loaded.
     ///
@@ -410,6 +419,16 @@ impl FilesystemScope {
     /// absent components are appended to the canonical existing prefix; a dangling
     /// symlink is refused, since its target cannot be proven in-scope.
     pub fn check(&self, requested: &Path) -> Result<PathBuf, PermissionError> {
+        self.check_anchored(requested).map(|scoped| scoped.resolved)
+    }
+
+    /// [`check`](Self::check), also returning the **canonical root** the
+    /// resolved path was found under.
+    ///
+    /// The guarded bridge operations open the path through a handle anchored at
+    /// that root (`plugin::anchored_fs`, #4391), so a component swapped for a
+    /// symlink *after* this check cannot carry the open out of scope.
+    pub(crate) fn check_anchored(&self, requested: &Path) -> Result<ScopedPath, PermissionError> {
         if !self.granted {
             return Err(PermissionError::Denied(PluginPermission::Filesystem));
         }
@@ -442,11 +461,24 @@ impl FilesystemScope {
                 continue;
             }
             if resolved == canonical_root || resolved.starts_with(&canonical_root) {
-                return Ok(resolved);
+                return Ok(ScopedPath {
+                    root: canonical_root,
+                    resolved,
+                });
             }
         }
         Err(outside())
     }
+}
+
+/// A path authorized by [`FilesystemScope::check_anchored`]: the canonical
+/// resolved path and the canonical declared root it lies under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScopedPath {
+    /// The canonical (symlink-resolved) root that contains [`resolved`](Self::resolved).
+    pub(crate) root: PathBuf,
+    /// The canonical requested path; equal to or below [`root`](Self::root).
+    pub(crate) resolved: PathBuf,
 }
 
 /// Resolve the longest existing prefix of an (already lexically normalized) path

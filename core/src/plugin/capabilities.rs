@@ -26,7 +26,7 @@
 
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,8 +36,9 @@ use termihub_plugin_runner::ipc::{
     LIST_DIR_ENTRY_OVERHEAD, MAX_LIST_DIR_BYTES, MAX_LIST_DIR_ENTRIES,
 };
 
+use super::anchored_fs::{self, AnchoredError};
 use super::manifest::ConnectionPolicyManifest;
-use super::security::{PermissionError, PermissionSet};
+use super::security::{PermissionError, PermissionSet, ScopedPath};
 use super::PluginPermission;
 use crate::network::address_guard::is_blocked_ip;
 
@@ -276,10 +277,25 @@ fn scope_error_status(err: &PermissionError) -> PluginStatus {
 // ---------------------------------------------------------------------------
 
 /// Resolve `requested` inside the plugin's declared filesystem scope.
-fn scoped(permissions: &PermissionSet, requested: &str) -> Result<PathBuf, PluginStatus> {
+///
+/// The result carries the canonical root as well as the resolved path: every
+/// guarded operation opens the path through a handle anchored at that root
+/// ([`anchored_fs`], #4391), never by name, so a component swapped for a
+/// symlink after this check cannot carry the open out of scope.
+fn scoped(permissions: &PermissionSet, requested: &str) -> Result<ScopedPath, PluginStatus> {
     permissions
-        .check_path(Path::new(requested))
+        .check_path_anchored(Path::new(requested))
         .map_err(|e| scope_error_status(&e))
+}
+
+/// Map an anchored-open failure to the status the ABI reports: a path that
+/// escaped the root after the scope check is a permission denial, like any
+/// other out-of-scope path.
+fn anchored_status(err: AnchoredError) -> PluginStatus {
+    match err {
+        AnchoredError::Escape => PluginStatus::PermissionDenied,
+        AnchoredError::NotFound | AnchoredError::Io => PluginStatus::Io,
+    }
 }
 
 /// `open_connection`: require `network`, reserve a connection slot, then
@@ -326,8 +342,9 @@ pub(crate) fn guarded_read_chunk(
     max: usize,
 ) -> Result<(Vec<u8>, bool), PluginStatus> {
     use std::io::{Read, Seek, SeekFrom};
-    let resolved = scoped(permissions, path)?;
-    let mut file = std::fs::File::open(resolved).map_err(|_| PluginStatus::Io)?;
+    let scoped = scoped(permissions, path)?;
+    let mut file =
+        anchored_fs::open_read(&scoped.root, &scoped.resolved).map_err(anchored_status)?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|_| PluginStatus::Io)?;
     let mut buf = Vec::with_capacity(max.min(64 * 1024));
@@ -350,17 +367,15 @@ pub(crate) fn guarded_write(
     data: &[u8],
     mode: PluginWriteMode,
 ) -> Result<(), PluginStatus> {
-    let resolved = scoped(permissions, path)?;
-    let mut options = std::fs::OpenOptions::new();
-    match mode {
-        PluginWriteMode::Truncate => options.create(true).write(true).truncate(true),
-        PluginWriteMode::Append => options.create(true).append(true),
-        PluginWriteMode::CreateNew => options.create_new(true).write(true),
+    let scoped = scoped(permissions, path)?;
+    let mode = match mode {
+        PluginWriteMode::Truncate => anchored_fs::WriteMode::Truncate,
+        PluginWriteMode::Append => anchored_fs::WriteMode::Append,
+        PluginWriteMode::CreateNew => anchored_fs::WriteMode::CreateNew,
     };
-    options
-        .open(&resolved)
-        .and_then(|mut f| f.write_all(data))
-        .map_err(|_| PluginStatus::Io)
+    let mut file =
+        anchored_fs::open_write(&scoped.root, &scoped.resolved, mode).map_err(anchored_status)?;
+    file.write_all(data).map_err(|_| PluginStatus::Io)
 }
 
 /// `stat_path`: metadata of an in-scope path; a missing one is
@@ -369,15 +384,14 @@ pub(crate) fn guarded_stat(
     permissions: &PermissionSet,
     path: &str,
 ) -> Result<PluginFileMetadata, PluginStatus> {
-    let resolved = scoped(permissions, path)?;
-    match std::fs::metadata(&resolved) {
-        Ok(m) => Ok(PluginFileMetadata {
+    let scoped = scoped(permissions, path)?;
+    match anchored_fs::stat(&scoped.root, &scoped.resolved).map_err(anchored_status)? {
+        Some(m) => Ok(PluginFileMetadata {
             exists: true,
-            is_dir: m.is_dir(),
-            len: m.len(),
+            is_dir: m.is_dir,
+            len: m.len,
         }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PluginFileMetadata::absent()),
-        Err(_) => Err(PluginStatus::Io),
+        None => Ok(PluginFileMetadata::absent()),
     }
 }
 
@@ -393,12 +407,10 @@ pub(crate) fn guarded_list_dir(
     permissions: &PermissionSet,
     path: &str,
 ) -> Result<Vec<String>, PluginStatus> {
-    let resolved = scoped(permissions, path)?;
-    let read_dir = std::fs::read_dir(&resolved).map_err(|_| PluginStatus::Io)?;
+    let scoped = scoped(permissions, path)?;
+    let entries = anchored_fs::list_dir(&scoped.root, &scoped.resolved).map_err(anchored_status)?;
     collect_bounded(
-        read_dir
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned()),
+        entries.map(|name| name.to_string_lossy().into_owned()),
         MAX_LIST_DIR_ENTRIES,
         MAX_LIST_DIR_BYTES,
     )
