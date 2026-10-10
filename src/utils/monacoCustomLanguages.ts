@@ -36,7 +36,7 @@ import type {
 } from "shiki";
 import { shikiToMonaco } from "@shikijs/monaco";
 import type { CustomLanguageGrammar } from "@/types/connection";
-import { getCurrentTheme } from "@/themes";
+import { getCurrentTheme, onThemeChange } from "@/themes";
 import type { ThemeDefinition } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
 import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
@@ -56,6 +56,102 @@ export const MONACO_LIGHT_THEME = "light-plus";
  */
 export function getMonacoTheme(theme: Pick<ThemeDefinition, "colorScheme">): string {
   return theme.colorScheme === "light" ? MONACO_LIGHT_THEME : MONACO_DARK_THEME;
+}
+
+/**
+ * CSS custom property the editor surface resolves its background from (#4599).
+ *
+ * The file editor is a content pane in the split view, alongside terminal panes
+ * and the file-browser tab — and those paint `--terminal-bg` (`Terminal.css`,
+ * `FileBrowserTab.css`). `--bg-primary` is the app chrome around the panes. Using
+ * the same token as its sibling panes keeps the editor seamless next to a
+ * terminal in every theme, including custom themes that set the two apart.
+ */
+export const MONACO_BACKGROUND_TOKEN = "--terminal-bg";
+
+/** Monaco colour keys repainted from {@link MONACO_BACKGROUND_TOKEN}. */
+export const MONACO_BACKGROUND_COLOR_KEYS = [
+  "editor.background",
+  "editorGutter.background",
+  "minimap.background",
+] as const;
+
+/** Monaco only parses hex colours (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`). */
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/**
+ * The Monaco theme data Shiki defined for each theme id, captured during
+ * {@link wireShikiToMonaco} so the background patch keeps Shiki's token rules
+ * and every other colour untouched.
+ */
+const shikiThemeData = new Map<string, monaco.editor.IStandaloneThemeData>();
+let unsubscribeThemeChange: (() => void) | null = null;
+
+/** Read {@link MONACO_BACKGROUND_TOKEN} from the document root, or null if unset. */
+function readBackgroundToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(MONACO_BACKGROUND_TOKEN)
+    .trim();
+  return value === "" ? null : value;
+}
+
+/**
+ * Re-define the Monaco theme for the active colour scheme with its editor,
+ * gutter and minimap backgrounds resolved from the active theme's
+ * {@link MONACO_BACKGROUND_TOKEN}, keeping Shiki's token colours (#4599).
+ *
+ * The theme keeps its Shiki id (`dark-plus` / `light-plus`) because
+ * `shikiToMonaco`'s `setTheme` wrapper looks the name up in the highlighter.
+ * Monaco refreshes open editors when the active theme is re-defined, so a live
+ * theme switch or custom-theme edit repaints them in place. A token that is
+ * missing or not a hex colour leaves Shiki's background in place.
+ */
+export function applyMonacoThemeBackground(): void {
+  const themeId = getMonacoTheme(getCurrentTheme());
+  const base = shikiThemeData.get(themeId);
+  if (!base) return;
+  const background = readBackgroundToken();
+  if (!background || !HEX_COLOR.test(background)) {
+    if (background) {
+      frontendLog(
+        "monaco_theme",
+        `${MONACO_BACKGROUND_TOKEN} "${background}" is not a hex colour; keeping ${themeId}'s background`
+      );
+    }
+    return;
+  }
+  const colors = { ...base.colors };
+  for (const key of MONACO_BACKGROUND_COLOR_KEYS) colors[key] = background;
+  monaco.editor.defineTheme(themeId, { ...base, colors });
+}
+
+/**
+ * Run `shikiToMonaco`, capturing the theme data it defines, then patch the
+ * active theme's background from the theme tokens and re-apply the user's
+ * Monaco theme. `shikiToMonaco` re-defines every Shiki theme (dropping any
+ * earlier patch) and resets the active theme to `themeIds[0]`, so every call
+ * site goes through here.
+ */
+function wireShikiToMonaco(highlighter: HighlighterGeneric<BundledLanguage, BundledTheme>): void {
+  const originalDefineTheme = monaco.editor.defineTheme;
+  monaco.editor.defineTheme = (name, data) => {
+    shikiThemeData.set(name, data);
+    originalDefineTheme(name, data);
+  };
+  try {
+    shikiToMonaco(highlighter, monaco);
+  } finally {
+    monaco.editor.defineTheme = originalDefineTheme;
+  }
+  applyMonacoThemeBackground();
+  // Set the Monaco theme to match the current app theme so Shiki's colour map is
+  // correct and open models re-tokenize.
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
+  // Re-patch on every theme apply (switch, custom-theme save/preview, OS
+  // scheme change). Synchronous, so it runs before React re-renders editors
+  // with the new theme name.
+  unsubscribeThemeChange ??= onThemeChange(applyMonacoThemeBackground);
 }
 
 /**
@@ -189,12 +285,9 @@ async function doRegister(): Promise<void> {
 
   for (const id of langs) loadedLanguageIds.add(id);
 
-  // Wire Shiki's TextMate tokenisers into Monaco.
-  shikiToMonaco(shikiHighlighter, monaco);
-
-  // Set the initial Monaco theme to match the current app theme so Shiki's
-  // colour map is initialised correctly before any editor is created.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
+  // Wire Shiki's TextMate tokenisers into Monaco, patch the background from
+  // the theme tokens, and set the initial Monaco theme before any editor exists.
+  wireShikiToMonaco(shikiHighlighter);
 
   // Invalidate the language list cache so the new IDs appear in the picker.
   resetLanguageCache();
@@ -236,10 +329,7 @@ export async function registerAdditionalLanguagePackages(langIds: string[]): Pro
   for (const id of toLoad) loadedLanguageIds.add(id);
 
   // Re-wire all token providers (including newly added languages).
-  shikiToMonaco(shikiHighlighter, monaco);
-  // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
-  // user's actual theme so the colorMap is correct and open models re-tokenize.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
+  wireShikiToMonaco(shikiHighlighter);
 
   resetLanguageCache();
 }
@@ -326,10 +416,7 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
     );
   }
 
-  shikiToMonaco(shikiHighlighter, monaco);
-  // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
-  // user's actual theme so the colorMap is correct and open models re-tokenize.
-  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme()));
+  wireShikiToMonaco(shikiHighlighter);
   frontendLog("custom_grammars", `Token providers registered for ${toLoad.length} grammar(s)`);
   resetLanguageCache();
 }

@@ -8,6 +8,7 @@ import {
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
+import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { getCommandMarkTracker } from "@/services/commandMarks";
 
@@ -57,21 +58,37 @@ function activeTerminalHasCommandMarks(): boolean {
   return !!tab && (getCommandMarkTracker(tab.id)?.hasMarks() ?? false);
 }
 
-/** Close the active tab, honouring the confirm-on-shortcut setting. */
+/**
+ * Close the active tab, first routing a dirty tab through the shared
+ * unsaved-changes guard (#4410) exactly as the tab X does, then honouring the
+ * confirm-on-shortcut setting for a clean tab.
+ */
 function closeActiveTab(): void {
   const panel = activeLeaf();
   if (!panel?.activeTabId) return;
   const tabId = panel.activeTabId;
+  const activeTab = panel.tabs.find((t) => t.id === tabId);
   const state = useAppStore.getState();
+  const label = activeTab?.title ?? "this tab";
+  if (activeTab) {
+    // Unsaved edits always prompt, whatever confirmCloseTabOnShortcut says:
+    // the setting only gates the plain "close this tab?" confirm.
+    const route = routeDirtyTabClose(activeTab, panel.id);
+    if (route === "self-prompt") return;
+    if (route === "generic-prompt") {
+      state.setPendingShortcutCloseConfirm({
+        kind: "tab",
+        tabId,
+        panelId: panel.id,
+        label,
+        unsaved: true,
+      });
+      return;
+    }
+  }
   const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
   if (confirmEnabled) {
-    const activeTab = panel.tabs.find((t) => t.id === tabId);
-    state.setPendingShortcutCloseConfirm({
-      kind: "tab",
-      tabId,
-      panelId: panel.id,
-      label: activeTab?.title ?? "this tab",
-    });
+    state.setPendingShortcutCloseConfirm({ kind: "tab", tabId, panelId: panel.id, label });
   } else {
     state.closeTab(tabId, panel.id);
   }

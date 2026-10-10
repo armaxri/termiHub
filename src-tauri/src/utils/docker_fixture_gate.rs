@@ -14,18 +14,14 @@
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// Env var that flips a missing fixture from a silent skip to a hard failure.
-pub const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
+use termihub_core::test_fixtures;
 
-/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (truthy: `1`,
-/// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey).
-pub fn parse_required(val: Option<&str>) -> bool {
-    termihub_core::test_fixtures::parse_flag(val)
-}
+/// Env var that flips a missing fixture from a silent skip to a hard failure.
+pub const REQUIRE_DOCKER_ENV: &str = test_fixtures::REQUIRE_DOCKER_ENV;
 
 /// Whether this process requires the Docker fixtures to be present.
 pub fn docker_required() -> bool {
-    parse_required(std::env::var(REQUIRE_DOCKER_ENV).ok().as_deref())
+    test_fixtures::flag_set(REQUIRE_DOCKER_ENV)
 }
 
 /// Returns `true` if a TCP connection to `127.0.0.1:port` succeeds quickly.
@@ -37,66 +33,28 @@ pub fn port_reachable(port: u16) -> bool {
         .is_some()
 }
 
-/// Resolve whether a fixture-gated test body should run. Returns `true` to run;
-/// `false` after a visible `SKIPPED:` line when the fixture is absent and not
+/// Resolve whether a fixture-gated test body should run: a thin wrapper over
+/// [`test_fixtures::require_reported`] (#4544). Returns `true` to run; `false`
+/// after a visible `SKIPPED:` line when the fixture is absent and not
 /// required; **panics** when it is absent but required.
 pub fn require_fixture(service: &str, port: u16, reachable: bool, required: bool) -> bool {
-    match (reachable, required) {
-        (true, _) => true,
-        (false, false) => {
-            eprintln!(
-                "SKIPPED: {service} container not reachable on port {port} \
-                 (start with: docker compose -f tests/docker/docker-compose.yml up -d {service})"
-            );
-            false
-        }
-        (false, true) => panic!(
-            "REQUIRED fixture unavailable: {service} container not reachable on port \
+    test_fixtures::require_reported(
+        reachable,
+        required,
+        format_args!(
+            "{service} container not reachable on port {port} \
+             (start with: docker compose -f tests/docker/docker-compose.yml up -d {service})"
+        ),
+        format_args!(
+            "fixture unavailable: {service} container not reachable on port \
              {port} but {REQUIRE_DOCKER_ENV} is set — a missing/broken fixture is a \
              hard failure here, not a skip (TBE-006)"
         ),
-    }
+    )
 }
 
 /// Probe `service` on `port` and apply [`require_fixture`] with the process's
 /// `TERMIHUB_REQUIRE_DOCKER` setting.
 pub fn fixture_ready(service: &str, port: u16) -> bool {
     require_fixture(service, port, port_reachable(port), docker_required())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_required_recognizes_truthy_values() {
-        for v in ["1", "true", "TRUE", "yes", "on", " 1 "] {
-            assert!(parse_required(Some(v)), "{v:?} should be truthy");
-        }
-    }
-
-    #[test]
-    fn parse_required_treats_unset_and_falsey_as_not_required() {
-        assert!(!parse_required(None), "unset should be falsey");
-        for v in ["", "0", "false", "no", "off"] {
-            assert!(!parse_required(Some(v)), "{v:?} should be falsey");
-        }
-    }
-
-    #[test]
-    fn require_fixture_runs_when_reachable() {
-        assert!(require_fixture("ssh-sudo", 2212, true, false));
-        assert!(require_fixture("ssh-sudo", 2212, true, true));
-    }
-
-    #[test]
-    fn require_fixture_skips_when_absent_and_not_required() {
-        assert!(!require_fixture("ssh-sudo", 2212, false, false));
-    }
-
-    #[test]
-    #[should_panic(expected = "REQUIRED fixture unavailable: ssh-password")]
-    fn require_fixture_panics_when_absent_but_required() {
-        require_fixture("ssh-password", 2201, false, true);
-    }
 }

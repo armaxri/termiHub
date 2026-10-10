@@ -213,16 +213,39 @@ pub fn require_with(
     what: &str,
     hint: &str,
 ) -> bool {
+    require_reported(
+        available,
+        required,
+        format_args!("{what} ({hint})"),
+        format_args!(
+            "dependency unavailable: {what}, but {require_env} is set, so a \
+             missing dependency is a failure here, not a skip ({hint})"
+        ),
+    )
+}
+
+/// Gate a test on a dependency with caller-worded messages: the one place the
+/// skip-or-fail decision is acted on (#4544). Every gate helper in the Rust
+/// test code ([`require_with`] and the per-crate `require_fixture`-style
+/// wrappers) delegates here, so the `SKIPPED:` / `REQUIRED` prefixes CI and
+/// humans look for are spelled once.
+///
+/// Returns `true` to run the test body. Prints `SKIPPED: <skip>` and returns
+/// `false` when the dependency is missing and not `required`. Panics with
+/// `REQUIRED <fail>` when it is missing and `required`.
+pub fn require_reported(
+    available: bool,
+    required: bool,
+    skip: std::fmt::Arguments<'_>,
+    fail: std::fmt::Arguments<'_>,
+) -> bool {
     match gate(available, required) {
         Gate::Run => true,
         Gate::Skip => {
-            eprintln!("SKIPPED: {what} ({hint})");
+            eprintln!("SKIPPED: {skip}");
             false
         }
-        Gate::Fail => panic!(
-            "REQUIRED dependency unavailable: {what}, but {require_env} is set, so a \
-             missing dependency is a failure here, not a skip ({hint})"
-        ),
+        Gate::Fail => panic!("REQUIRED {fail}"),
     }
 }
 

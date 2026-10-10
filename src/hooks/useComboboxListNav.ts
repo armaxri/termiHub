@@ -30,6 +30,28 @@ export interface UseComboboxListNavOptions<T> {
    * guard), e.g. a picker's Backspace-to-go-back.
    */
   onUnhandledKeyDown?: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  /**
+   * Autocomplete mode (#4646). Default `false` (an always-open search picker
+   * that always highlights an option). When `true`, "no option highlighted"
+   * (index `-1`) is a valid state: the list starts and resets to `-1`,
+   * ArrowDown from `-1` goes to the first option and ArrowUp to the last, and
+   * Enter with nothing highlighted is forwarded to `onUnhandledKeyDown` (so
+   * the caller can submit the typed text).
+   */
+  autocomplete?: boolean;
+  /**
+   * Whether the listbox is currently shown. Default `true`. While `false`, the
+   * hook navigates nothing — every key goes to `onUnhandledKeyDown` — and there
+   * is no active option (`activeIndex` is `-1`). The highlighted position is
+   * kept, so reopening the list restores it.
+   */
+  open?: boolean;
+  /**
+   * Called when Escape is pressed while the list is open. When provided, the
+   * hook handles Escape itself (prevents the default and clears the highlight
+   * in autocomplete mode); otherwise Escape is forwarded to `onUnhandledKeyDown`.
+   */
+  onClose?: () => void;
 }
 
 /** Props to spread onto an option row. */
@@ -43,11 +65,14 @@ export interface ComboboxOptionProps {
 
 /** What {@link useComboboxListNav} returns. */
 export interface ComboboxListNav<T> {
-  /** Index of the active option, clamped into range; `-1` when there are none. */
+  /**
+   * Index of the active option, clamped into range; `-1` when there are none,
+   * when the list is closed, or (autocomplete mode) when none is highlighted.
+   */
   activeIndex: number;
   /** Move the active option (e.g. to reset it when switching sub-pickers). */
   setActiveIndex: (index: number) => void;
-  /** The active option, or `undefined` when there are none. */
+  /** The active option, or `undefined` when there is none (see `activeIndex`). */
   activeItem: T | undefined;
   /** DOM id of the active option, for `aria-activedescendant`. */
   activeId: string | undefined;
@@ -89,6 +114,10 @@ function idPart(value: string): string {
  * (#3767), reset-to-top whenever `resetKey` changes, scrolling the active option
  * into view, and the listbox / option DOM ids. Hovering an option makes it
  * active and clicking it picks it.
+ *
+ * With `autocomplete`, `open` and `onClose` it also drives autocomplete
+ * comboboxes whose dropdown opens and closes and where "nothing highlighted"
+ * is valid (#4646).
  */
 export function useComboboxListNav<T>({
   items,
@@ -98,13 +127,18 @@ export function useComboboxListNav<T>({
   getItemKey,
   homeEnd = false,
   onUnhandledKeyDown,
+  autocomplete = false,
+  open = true,
+  onClose,
 }: UseComboboxListNavOptions<T>): ComboboxListNav<T> {
   const generatedId = useId();
   const listId = listIdOption ?? `${generatedId}-listbox`;
-  const [rawIndex, setActiveIndex] = useState(0);
+  // The index a reset returns to: the top option, or none in autocomplete mode.
+  const restIndex = autocomplete ? -1 : 0;
+  const [rawIndex, setActiveIndex] = useState(restIndex);
 
   const count = items.length;
-  const activeIndex = count === 0 ? -1 : Math.min(rawIndex, count - 1);
+  const activeIndex = !open || count === 0 ? -1 : Math.min(rawIndex, count - 1);
   const activeItem = activeIndex >= 0 ? items[activeIndex] : undefined;
 
   const optionId = useCallback(
@@ -117,10 +151,11 @@ export function useComboboxListNav<T>({
   );
   const activeId = activeIndex >= 0 ? optionId(activeIndex) : undefined;
 
-  // A new query (or other reset trigger) re-targets the top option.
+  // A new query (or other reset trigger) re-targets the top option (or, in
+  // autocomplete mode, clears the highlight).
   useEffect(() => {
-    setActiveIndex(0);
-  }, [resetKey]);
+    setActiveIndex(restIndex);
+  }, [resetKey, restIndex]);
 
   // Keep the active option scrolled into view while navigating by keyboard,
   // and when the results under it change.
@@ -133,26 +168,46 @@ export function useComboboxListNav<T>({
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLElement>) => {
       if (isImeComposing(event)) return;
+      if (!open) {
+        onUnhandledKeyDown?.(event);
+        return;
+      }
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveIndex((i) => (count === 0 ? 0 : (Math.min(i, count - 1) + 1) % count));
+        setActiveIndex((i) => (count === 0 ? restIndex : (Math.min(i, count - 1) + 1) % count));
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveIndex((i) => (count === 0 ? 0 : (Math.min(i, count - 1) - 1 + count) % count));
+        setActiveIndex((i) =>
+          count === 0 ? restIndex : i < 0 ? count - 1 : (Math.min(i, count - 1) - 1 + count) % count
+        );
       } else if (homeEnd && event.key === "Home") {
         event.preventDefault();
         setActiveIndex(0);
       } else if (homeEnd && event.key === "End") {
         event.preventDefault();
         setActiveIndex(Math.max(0, count - 1));
-      } else if (event.key === "Enter") {
+      } else if (event.key === "Enter" && (!autocomplete || activeItem !== undefined)) {
         event.preventDefault();
         if (activeItem !== undefined) onSelect(activeItem);
+      } else if (event.key === "Escape" && onClose) {
+        event.preventDefault();
+        if (autocomplete) setActiveIndex(-1);
+        onClose();
       } else {
         onUnhandledKeyDown?.(event);
       }
     },
-    [count, homeEnd, activeItem, onSelect, onUnhandledKeyDown]
+    [
+      open,
+      count,
+      restIndex,
+      homeEnd,
+      autocomplete,
+      activeItem,
+      onSelect,
+      onClose,
+      onUnhandledKeyDown,
+    ]
   );
 
   const getOptionProps = useCallback(

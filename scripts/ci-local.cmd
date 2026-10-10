@@ -245,9 +245,27 @@ if errorlevel 1 (
     exit /b 1
 )
 call cargo doc --no-deps --all-features -p termihub -p termihub-core -p termihub-agent
-set "RC=!errorlevel!"
+if errorlevel 1 (
+    set "RUSTDOCFLAGS="
+    exit /b 1
+)
+rem Each opt-in core feature alone (#4561): a link to an item gated behind
+rem another feature resolves under --all-features but breaks in isolation.
+set "DOC_FEATURES="
+for /f "delims=" %%F in ('node scripts\internal\ci-local.mjs core-features') do set "DOC_FEATURES=!DOC_FEATURES! %%F"
+if not defined DOC_FEATURES (
+    set "RUSTDOCFLAGS="
+    exit /b 1
+)
+for %%F in (!DOC_FEATURES!) do (
+  call cargo doc --no-deps -p termihub-core --features %%F
+  if errorlevel 1 (
+      set "RUSTDOCFLAGS="
+      exit /b 1
+  )
+)
 set "RUSTDOCFLAGS="
-exit /b !RC!
+exit /b 0
 
 :g_plugin_fuzz
 rem The workspace-excluded fuzz crate, seeded from the workspace lockfile like

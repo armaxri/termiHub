@@ -74,6 +74,19 @@ pub trait CredentialStore: Send + Sync {
         None
     }
 
+    /// A slot in the OS credential store, named by `id`, for the key that
+    /// seals a backup restore's deferred credential import (#4414).
+    ///
+    /// A backend with no [`Self::vault_file`] cannot revert an import, so a
+    /// restore that is applied at the next start seals its credentials with a
+    /// random key kept in this slot and imports them only after the stores
+    /// were swapped in successfully. The slot is not a credential: it is never
+    /// listed, exported or migrated. The default is `None`: the backend keeps
+    /// no such slot, and a restore imports its credentials right away.
+    fn restore_seal_slot(&self, _id: &str) -> Option<Box<dyn biometric_slot::SecretSlot>> {
+        None
+    }
+
     /// Store several credentials as one all-or-nothing operation.
     ///
     /// Either every entry is written, or — when any write fails — the entries

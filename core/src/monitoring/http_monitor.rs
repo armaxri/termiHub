@@ -71,7 +71,7 @@ pub const MIN_INTERVAL_MS: u64 = 1_000;
 /// Shared by the desktop host ([`NetworkManager`]) and the agent so both offer
 /// the monitor with an identical id, schema, capabilities, and icon — the single
 /// source of truth for what "an HTTP monitor" is (mirroring
-/// [`crate::embedded_servers::build_service_registry`]).
+/// `crate::embedded_servers::build_service_registry`).
 ///
 /// [`NetworkManager`]: https://docs.rs/termihub
 pub fn register_http_monitor(registry: &mut ServiceRegistry) {

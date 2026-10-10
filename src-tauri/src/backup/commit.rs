@@ -9,6 +9,11 @@
 //! the import if the swap fails (#4295): a copy of the credential vault taken
 //! just before the import ([`CREDENTIALS_COPY_FILE`]) and a record of the
 //! import ([`CREDENTIALS_RECORD_FILE`]).
+//!
+//! A store without such a vault file (the OS keychain) cannot be reverted, so
+//! its import is deferred instead (#4414): the credentials are sealed into the
+//! staging directory and imported only after a successful swap (see
+//! [`super::deferred`]).
 
 use std::path::{Path, PathBuf};
 
@@ -17,8 +22,10 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 use zeroize::{Zeroize, Zeroizing};
 
+use super::deferred;
 use super::restore::{prepare, OpenedBackup, PendingSecret, PreparedRestore};
 use super::{BackupRestoreRequest, BackupRestoreResult};
+use crate::credential::biometric_slot::SecretSlot;
 use crate::credential::types::CredentialKey;
 use crate::credential::vault::{self, VaultError};
 use crate::credential::{CredentialStore, CredentialStoreStatus};
@@ -98,10 +105,14 @@ impl Staged {
     }
 
     /// Atomically commit the staged restore (a single directory rename). An
-    /// earlier committed-but-unapplied restore is superseded.
-    fn commit(self) -> Result<(), VaultError> {
+    /// earlier committed-but-unapplied restore is superseded (and the key of
+    /// its sealed credential import deleted through `store`).
+    fn commit(self, store: Option<&dyn CredentialStore>) -> Result<(), VaultError> {
         let outcome = (|| {
             if self.pending.exists() {
+                if let Some(store) = store {
+                    deferred::discard_with_store(&self.pending, store);
+                }
                 std::fs::remove_dir_all(&self.pending)
                     .map_err(|e| format!("could not replace an earlier pending restore: {e}"))?;
             }
@@ -222,7 +233,8 @@ impl CredentialSnapshot {
 ///
 /// Keys the credentials section already restores are left to it. With an
 /// unlocked store they are written as one batch (a snapshot of the values they
-/// replace is pushed to `snapshots` first); a locked store refuses the restore
+/// replace is pushed to `snapshots` first) — or, when the import is deferred,
+/// appended to `deferred` and not written yet; a locked store refuses the restore
 /// with an "unlock first" error; with credential storage off they cannot be
 /// kept and are dropped (the restore preview says so).
 fn import_legacy_secrets(
@@ -230,6 +242,7 @@ fn import_legacy_secrets(
     covered: &[&CredentialKey],
     store: Option<&dyn CredentialStore>,
     snapshots: &mut Vec<CredentialSnapshot>,
+    deferred: Option<&mut Vec<(CredentialKey, String)>>,
 ) -> Result<(), VaultError> {
     let secrets: Vec<&PendingSecret> = secrets
         .iter()
@@ -272,6 +285,10 @@ fn import_legacy_secrets(
     if entries.is_empty() {
         return Ok(());
     }
+    if let Some(deferred) = deferred {
+        deferred.append(&mut entries);
+        return Ok(());
+    }
     let snapshot = CredentialSnapshot::take(entries.iter().map(|(key, _)| key), store);
     let result = snapshot.and_then(|snapshot| {
         snapshots.push(snapshot);
@@ -291,6 +308,30 @@ fn import_legacy_secrets(
         );
     }
     result
+}
+
+/// Credentials a deferred import will write; zeroized on drop.
+#[derive(Default)]
+struct DeferredEntries(Vec<(CredentialKey, String)>);
+
+impl Drop for DeferredEntries {
+    fn drop(&mut self) {
+        for (_, value) in self.0.iter_mut() {
+            value.zeroize();
+        }
+    }
+}
+
+/// The seal-key id and slot for a deferred import into `store`, when `store`
+/// keeps no vault file a failed swap could put back but can hold a seal key
+/// in the OS credential store (#4414). `None`: import right away.
+fn deferral_slot(store: &dyn CredentialStore) -> Option<(String, Box<dyn SecretSlot>)> {
+    if store.vault_file().is_some() || store.status() != CredentialStoreStatus::Unlocked {
+        return None;
+    }
+    let key_id = deferred::new_key_id();
+    let slot = store.restore_seal_slot(&key_id)?;
+    Some((key_id, slot))
 }
 
 /// The store's vault file name when it is a plain file directly in
@@ -387,6 +428,13 @@ pub fn apply(
             }
         }
     };
+    // A restart-applied restore into a store that cannot be reverted defers
+    // its import until the swap succeeded (#4414).
+    let seal = match (store, &staged) {
+        (Some(store), Some(_)) => deferral_slot(store),
+        _ => None,
+    };
+    let mut sealed = false;
     let outcome = (|| {
         // A restart-applied restore keeps a copy of the vault from before the
         // import, so a swap that fails at the next start can revert it.
@@ -394,6 +442,7 @@ pub fn apply(
             (Some(store), Some(staged)) => copy_vault(store, config_dir, &staged.staging)?,
             _ => None,
         };
+        let mut deferred_entries = DeferredEntries::default();
         let mut credentials_result = None;
         let mut covered: Vec<&CredentialKey> = Vec::new();
         if let (Some(strategy), Some(vault)) = (request.credentials, opened.credentials.as_ref()) {
@@ -401,23 +450,53 @@ pub fn apply(
                 message: "There is no credential store to restore the credentials into."
                     .to_string(),
             })?;
-            snapshots.push(CredentialSnapshot::take(
-                vault.entries.iter().map(|(key, _)| key),
-                store,
-            )?);
-            credentials_result = Some(vault::apply_import(vault, store, strategy)?);
+            if seal.is_some() {
+                let (result, mut entries) = vault::select_import(vault, store, strategy)?;
+                deferred_entries.0.append(&mut entries);
+                credentials_result = Some(result);
+            } else {
+                snapshots.push(CredentialSnapshot::take(
+                    vault.entries.iter().map(|(key, _)| key),
+                    store,
+                )?);
+                credentials_result = Some(vault::apply_import(vault, store, strategy)?);
+            }
             covered.extend(vault.entries.iter().map(|(key, _)| key));
         }
-        import_legacy_secrets(&prepared.secrets, &covered, store, &mut snapshots)?;
+        import_legacy_secrets(
+            &prepared.secrets,
+            &covered,
+            store,
+            &mut snapshots,
+            seal.as_ref().map(|_| &mut deferred_entries.0),
+        )?;
+        if let (Some(store), Some((key_id, slot)), Some(staged)) = (store, &seal, &staged) {
+            if !deferred_entries.0.is_empty() {
+                deferred::seal(
+                    store,
+                    slot.as_ref(),
+                    key_id,
+                    &staged.staging,
+                    &deferred_entries.0,
+                )?;
+                sealed = true;
+            }
+        }
         if let (Some(staged), false) = (&staged, snapshots.is_empty()) {
             record_import(config_dir, &staged.staging, vault_copy)?;
         }
         Ok::<_, VaultError>(credentials_result)
     })();
+    let discard_seal = |sealed: bool| {
+        if let (true, Some((key_id, slot))) = (sealed, &seal) {
+            deferred::delete_key(slot.as_ref(), key_id);
+        }
+    };
     let credentials_result = match outcome {
         Ok(result) => result,
         Err(e) => {
             roll_back(&snapshots);
+            discard_seal(sealed);
             if let Some(staged) = staged {
                 staged.discard();
             }
@@ -427,8 +506,9 @@ pub fn apply(
 
     let restart_required = staged.is_some();
     if let Some(staged) = staged {
-        if let Err(e) = staged.commit() {
+        if let Err(e) = staged.commit(store) {
             roll_back(&snapshots);
+            discard_seal(sealed);
             return Err(e);
         }
     }
