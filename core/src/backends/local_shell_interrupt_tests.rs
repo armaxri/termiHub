@@ -139,7 +139,6 @@ async fn interrupt_io_unparks_a_stalled_pty_write_and_ends_the_child() {
         done_rx.try_recv().is_err(),
         "the writer must be parked inside write(), not finished"
     );
-    eprintln!("parked after {last} bytes");
 
     shell.interrupt_io();
 
