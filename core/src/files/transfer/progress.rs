@@ -10,7 +10,6 @@
 //! emission, on-disk persistence) — the side-effecting sink is injected by the
 //! caller.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,20 +27,6 @@ pub const CHUNK_SIZE: usize = crate::files::copy::CHUNK_SIZE;
 /// Minimum interval between two `transfer-progress` emits, to avoid flooding
 /// the event bus (~10 Hz).
 pub const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
-
-/// Set while the app-quit teardown's cancel-all sweep is running (PROD-0011).
-///
-/// [`crate::files::transfer::TransferRegistry::cancel_all`] flips this on entry
-/// so the persistence layer can tell a *teardown-induced* cancellation (which
-/// must leave in-flight records intact, to rehydrate as paused next launch) from
-/// a *genuine user cancel* (which prunes the record). It is only ever set — the
-/// process is exiting.
-pub static QUEUE_TEARDOWN: AtomicBool = AtomicBool::new(false);
-
-/// Whether the app-quit teardown cancel-all sweep has begun.
-pub fn is_queue_teardown() -> bool {
-    QUEUE_TEARDOWN.load(Ordering::SeqCst)
-}
 
 /// Direction of a transfer, driving the icon / verb in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

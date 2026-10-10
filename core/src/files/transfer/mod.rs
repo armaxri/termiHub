@@ -63,8 +63,7 @@ pub mod remote_copy;
 pub mod sftp;
 
 pub use progress::{
-    is_queue_teardown, ProgressSink, TransferDirection, TransferPhase, TransferProgress,
-    CHUNK_SIZE, PROGRESS_THROTTLE, QUEUE_TEARDOWN,
+    ProgressSink, TransferDirection, TransferPhase, TransferProgress, CHUNK_SIZE, PROGRESS_THROTTLE,
 };
 pub use registry::{TransferHandle, TransferRegistry, TransferSnapshot};
 pub use retry::{

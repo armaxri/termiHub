@@ -799,7 +799,7 @@ async fn run_local_relaunch(
         offset,
     )
     .await;
-    if handle.state().tag() == TransferStateTag::Cancelled && !super::is_queue_teardown() {
+    if handle.state().tag() == TransferStateTag::Cancelled && !registry.is_queue_teardown() {
         cancel_rest(&registry, &group, &handle.transfer_id);
     }
 }
