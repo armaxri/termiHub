@@ -5,23 +5,23 @@ import type { FileSideChannel } from "@/types/generated/FileSideChannel";
 
 const hoisted = vi.hoisted(() => ({
   open: vi.fn(),
-  close: vi.fn(),
+  source: vi.fn(),
   list: vi.fn(),
   error: vi.fn(),
 }));
 
 vi.mock("@/services/api", () => ({
   remoteDesktopOpenFileBrowser: hoisted.open,
-  remoteDesktopCloseFileBrowser: hoisted.close,
+  remoteDesktopFileBrowserSource: hoisted.source,
   sessionListFiles: hoisted.list,
 }));
 vi.mock("@/components/ui", () => ({ toast: { error: hoisted.error } }));
 
 import {
-  closeRemoteDesktopBrowser,
+  forgetRemoteDesktopBrowser,
   listRemoteFolders,
   openRemoteDesktopBrowser,
-  reattachRemoteDesktopBrowser,
+  syncRemoteDesktopBrowser,
 } from "./browseRemoteFiles";
 
 const AGENT: FileSideChannel = { kind: "agent", host: "lab-pi", user: "pi", sameHost: true };
@@ -34,7 +34,7 @@ describe("browseRemoteFiles (#4193)", () => {
     hoisted.open.mockImplementation((_id: string, dir?: string) =>
       Promise.resolve({ channel: AGENT, startDir: dir ?? "/home/pi/Desktop" })
     );
-    hoisted.close.mockResolvedValue(undefined);
+    hoisted.source.mockResolvedValue(null);
   });
 
   it("opens the side channel as the tab's browser source and shows the Files sidebar", async () => {
@@ -65,20 +65,44 @@ describe("browseRemoteFiles (#4193)", () => {
     expect(useRemoteDesktopBrowseStore.getState().sources["tab-1"]).toBeUndefined();
   });
 
-  it("re-attaches without moving the folder, and closes with the backend", async () => {
+  it("refreshes the route of a shown source without moving the folder (#4384)", async () => {
     await openRemoteDesktopBrowser("tab-1", "rd-1", "/home/pi/in");
-    hoisted.open.mockResolvedValue({ channel: { ...AGENT, user: "root" }, startDir: "/x" });
-    await reattachRemoteDesktopBrowser("tab-1");
+    hoisted.source.mockResolvedValue({ channel: { ...AGENT, user: "root" }, startDir: "/x" });
+    await syncRemoteDesktopBrowser("tab-1", "rd-1");
     const source = useRemoteDesktopBrowseStore.getState().sources["tab-1"];
     expect(source.channel.user).toBe("root");
     expect(source.dir).toBe("/home/pi/in");
     expect(source.openCount).toBe(1);
+    // The backend re-opens on reconnect itself: syncing never re-registers.
+    expect(hoisted.open).toHaveBeenCalledTimes(1);
+  });
 
-    closeRemoteDesktopBrowser("tab-1");
-    expect(hoisted.close).toHaveBeenCalledWith("rd-1");
+  it("adopts the backend's open source in a tab that has none (moved in / reload)", async () => {
+    useAppStore.setState({ sidebarView: "connections" });
+    hoisted.source.mockResolvedValue({ channel: AGENT, startDir: "/home/pi/in" });
+    await syncRemoteDesktopBrowser("tab-moved", "rd-1");
+    expect(hoisted.source).toHaveBeenCalledWith("rd-1");
+    expect(useRemoteDesktopBrowseStore.getState().sources["tab-moved"]).toEqual({
+      sessionId: "rd-1",
+      channel: AGENT,
+      dir: "/home/pi/in",
+      openCount: 1,
+    });
+    // Rendered, not revealed: the sidebar is not switched on its own.
+    expect(useAppStore.getState().sidebarView).toBe("connections");
+    expect(hoisted.open).not.toHaveBeenCalled();
+  });
+
+  it("leaves a tab without a source when the backend has none open", async () => {
+    await syncRemoteDesktopBrowser("tab-1", "rd-1");
     expect(useRemoteDesktopBrowseStore.getState().sources["tab-1"]).toBeUndefined();
-    closeRemoteDesktopBrowser("tab-1");
-    expect(hoisted.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets the tab's source locally without closing anything on the backend", async () => {
+    await openRemoteDesktopBrowser("tab-1", "rd-1");
+    forgetRemoteDesktopBrowser("tab-1");
+    expect(useRemoteDesktopBrowseStore.getState().sources["tab-1"]).toBeUndefined();
+    forgetRemoteDesktopBrowser("tab-1");
   });
 
   it("lists only the folders of a resolved path for the folder picker (#4204)", async () => {

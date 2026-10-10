@@ -214,12 +214,15 @@ fn default_connection_cap_is_the_shared_session_default() {
     let limits = HttpLimits::for_config(&test_config(dir));
     assert_eq!(limits.connection_cap, DEFAULT_MAX_CONCURRENT_SESSIONS);
     assert_eq!(DEFAULT_MAX_CONCURRENT_SESSIONS, 32);
+    assert_eq!(limits.per_client_cap, 8, "a quarter of the cap (#4686)");
     let mut zero = test_config(dir);
     zero.max_concurrent_sessions = Some(0);
     assert_eq!(HttpLimits::for_config(&zero).connection_cap, 1);
     let mut custom = test_config(dir);
     custom.max_concurrent_sessions = Some(5);
     assert_eq!(HttpLimits::for_config(&custom).connection_cap, 5);
+    assert_eq!(HttpLimits::for_config(&custom).per_client_cap, 2);
+    assert_eq!(HttpLimits::for_config(&zero).per_client_cap, 1);
 }
 
 /// A connection beyond the cap gets `503` and is closed without being served,
@@ -266,6 +269,94 @@ fn connections_beyond_the_cap_are_refused() {
         std::thread::sleep(Duration::from_millis(50));
     }
     drop(second);
+}
+
+/// Connect to `addr` from the source address `source` (port chosen by the
+/// OS), or `None` when this host cannot bind it (only Linux routes all of
+/// `127.0.0.0/8` to loopback by default).
+fn connect_from(source: &str, addr: SocketAddr) -> Option<BufReader<TcpStream>> {
+    let source: SocketAddr = format!("{source}:0").parse().expect("source address");
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )
+    .expect("socket");
+    socket.bind(&source.into()).ok()?;
+    socket.connect(&addr.into()).ok()?;
+    let stream: TcpStream = socket.into();
+    stream
+        .set_read_timeout(Some(SAFETY_TIMEOUT))
+        .expect("read timeout");
+    Some(BufReader::new(stream))
+}
+
+/// Regression for #4686: one client IP opening sub-cap + 1 connections gets
+/// `503` on the last one while the server-wide cap still has room; its
+/// admitted connections and other clients are still served, and a slot frees
+/// up again once one of its connections ends.
+#[test]
+fn connections_beyond_the_per_client_cap_are_refused() {
+    let server = RunningServer::start(|c| c.max_concurrent_sessions = Some(8));
+    let mut config = test_config(Path::new("."));
+    config.max_concurrent_sessions = Some(8);
+    let per_client = HttpLimits::for_config(&config).per_client_cap;
+    assert_eq!(per_client, 2);
+
+    // A completed keep-alive request proves the server admitted the connection
+    // (and so holds its slot) before the next one connects.
+    let mut held: Vec<_> = (0..per_client)
+        .map(|_| {
+            let mut conn = connect(server.addr);
+            assert_eq!(request(&mut conn, None).status, 200);
+            conn
+        })
+        .collect();
+
+    // The connection over the sub-cap is answered before it sends anything,
+    // although the server-wide cap (8) still has room.
+    let mut extra = connect(server.addr);
+    let refused = read_reply(&mut extra);
+    assert_eq!(refused.status, 503);
+    assert_eq!(refused.header("Connection"), Some("close"));
+    assert!(
+        closed(&mut extra),
+        "the over-sub-cap connection must be closed"
+    );
+
+    // The client's admitted connections are unaffected.
+    for conn in &mut held {
+        assert_eq!(request(conn, None).body, "hello world");
+    }
+
+    // Another client IP is still served while this one is at its sub-cap.
+    match connect_from("127.0.0.2", server.addr) {
+        Some(mut other) => assert_eq!(request(&mut other, None).status, 200),
+        None => eprintln!("127.0.0.2 is not bindable here; skipping the other-client check"),
+    }
+
+    let detail = "too many concurrent connections from this client";
+    let log = server.wait_for_log(|log| {
+        log.iter()
+            .any(|e| e.method == "CONNECT" && e.detail.as_deref() == Some(detail))
+    });
+    let busy = log
+        .iter()
+        .find(|e| e.method == "CONNECT" && e.detail.as_deref() == Some(detail))
+        .expect("a per-client CONNECT refusal");
+    assert_eq!(busy.status, "busy");
+    assert!(!busy.success);
+    assert_eq!(busy.client.as_deref(), Some("127.0.0.1"));
+
+    // Ending a connection releases the client's slot (asynchronously, so
+    // retry).
+    drop(held.pop());
+    let deadline = Instant::now() + SAFETY_TIMEOUT;
+    while try_get_status(server.addr) != Some(200) {
+        assert!(Instant::now() < deadline, "per-client slot never freed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(held);
 }
 
 /// Repeated failed Basic-auth attempts from one IP lock it out: further

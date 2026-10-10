@@ -111,6 +111,8 @@ async fn a_ready_agent_route_opens_at_the_default_folder() {
     assert_eq!(opened.start_dir, "/home/pi/Desktop");
     assert_eq!(opened.channel, side_channel(FileSideChannelKind::Agent));
     assert!(side.get("rd-1").and_then(|c| c.agent()).is_some());
+    // What it opened is kept for a moved-in tab or a reloaded window (#4384).
+    assert_eq!(side.source("rd-1"), Some(opened));
 }
 
 /// Opened for a session of a saved connection, the side channel carries the

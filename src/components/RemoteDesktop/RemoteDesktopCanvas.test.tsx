@@ -134,10 +134,48 @@ function makeFrame(width: number, height: number, sessionId = SESSION): TestFram
   };
 }
 
-/** Deliver a frame on `session_id`'s channel (only the subscribed one is open). */
-function emitFrame({ session_id, ...frame }: TestFrame): void {
+// Repaints are coalesced into one requestAnimationFrame (PERF2-005, #4378);
+// a manual queue lets each test decide when the animation frame runs.
+let rafQueue = new Map<number, FrameRequestCallback>();
+let rafSeq = 0;
+
+/** Run every pending animation-frame callback. */
+function flushRaf(): void {
+  const callbacks = [...rafQueue.values()];
+  rafQueue.clear();
+  act(() => callbacks.forEach((cb) => cb(performance.now())));
+}
+
+/** Deliver a frame without running the animation frame it schedules. */
+function deliverFrame({ session_id, ...frame }: TestFrame): void {
   if (session_id !== subscribedSession) return;
   act(() => handlers?.onFrame({ kind: "frame", ...frame }));
+}
+
+/**
+ * Deliver a frame on `session_id`'s channel (only the subscribed one is open)
+ * and run the animation frame it scheduled, so the visible canvas is painted.
+ */
+function emitFrame(frame: TestFrame): void {
+  deliverFrame(frame);
+  flushRaf();
+}
+
+/** Count assignments to the canvas's `width` / `height` (each one resets it). */
+function trackCanvasResizes(canvas: HTMLCanvasElement): { count: () => number } {
+  let sets = 0;
+  for (const prop of ["width", "height"] as const) {
+    let value = canvas[prop];
+    Object.defineProperty(canvas, prop, {
+      configurable: true,
+      get: () => value,
+      set: (v: number) => {
+        sets++;
+        value = v;
+      },
+    });
+  }
+  return { count: () => sets };
 }
 
 /** Deliver a cursor update on `session_id`'s channel. */
@@ -150,6 +188,15 @@ describe("RemoteDesktopCanvas", () => {
   beforeEach(() => {
     subscribedSession = null;
     handlers = null;
+    rafQueue = new Map();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      rafSeq += 1;
+      rafQueue.set(rafSeq, cb);
+      return rafSeq;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      rafQueue.delete(id);
+    });
     canvasStub = installCanvas2DStub();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -161,6 +208,72 @@ describe("RemoteDesktopCanvas", () => {
     act(() => root.unmount());
     container.remove();
     canvasStub.restore();
+    vi.unstubAllGlobals();
+  });
+
+  describe("RAF-batched drawing (PERF2-005, #4378)", () => {
+    it("coalesces several frames in one tick into one draw with every rect in order", () => {
+      render({ scaleMode: "pixel" });
+      emitFrame(makeFrame(100, 50));
+      const ctx = canvasStub.contextFor(canvasEl());
+      ctx.drawImage.mockClear();
+
+      const rect = (x: number) => ({
+        x,
+        y: 0,
+        width: 1,
+        height: 1,
+        data: new Uint8ClampedArray(4),
+      });
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [rect(1), rect(2)] });
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [rect(3)] });
+      deliverFrame({ session_id: SESSION, width: 100, height: 50, rects: [rect(4)] });
+      // Nothing is blitted until the animation frame runs.
+      expect(ctx.drawImage).not.toHaveBeenCalled();
+
+      flushRaf();
+      expect(ctx.drawImage).toHaveBeenCalledOnce();
+      // Every dirty rect reached the framebuffer, in arrival order.
+      const framebuffer = ctx.drawImage.mock.calls[0][0] as HTMLCanvasElement;
+      const xs = canvasStub
+        .contextFor(framebuffer)
+        .putImageData.mock.calls.slice(1)
+        .map((call) => call[1]);
+      expect(xs).toEqual([1, 2, 3, 4]);
+    });
+
+    it("does not resize the visible canvas on a plain repaint", () => {
+      render({ scaleMode: "fit" });
+      setContainerSize(200, 100);
+      emitFrame(makeFrame(100, 50));
+      expect(canvasEl().width).toBe(200);
+
+      const resizes = trackCanvasResizes(canvasEl());
+      emitFrame(makeFrame(100, 50));
+      emitFrame(makeFrame(100, 50));
+      expect(resizes.count()).toBe(0);
+      expect(canvasStub.contextFor(canvasEl()).drawImage).toHaveBeenCalledTimes(3);
+    });
+
+    it("resizes the visible canvas when the framebuffer size changes", () => {
+      render({ scaleMode: "pixel" });
+      emitFrame(makeFrame(100, 50));
+      const resizes = trackCanvasResizes(canvasEl());
+      emitFrame(makeFrame(120, 60));
+      expect(resizes.count()).toBeGreaterThan(0);
+      expect([canvasEl().width, canvasEl().height]).toEqual([120, 60]);
+    });
+
+    it("cancels a pending draw on unmount", () => {
+      render({ scaleMode: "pixel" });
+      deliverFrame(makeFrame(100, 50));
+      const canvas = canvasEl();
+      expect(rafQueue.size).toBe(1);
+      act(() => root.unmount());
+      expect(rafQueue.size).toBe(0);
+      expect(canvasStub.contextFor(canvas).drawImage).not.toHaveBeenCalled();
+      root = createRoot(container);
+    });
   });
 
   it("renders the canvas surface with its testid and scale-mode class", () => {

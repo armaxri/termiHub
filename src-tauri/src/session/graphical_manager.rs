@@ -378,6 +378,10 @@ pub struct GraphicalSessionManager {
     /// `connect_id`, so closing or cancelling a connecting tab aborts it
     /// (#4298).
     connecting: ConnectingMap,
+    /// The file side channels open for browsing and how to re-open one
+    /// (#4384): the session's own lifecycle re-opens a registration after an
+    /// automatic reconnect and drops it when the session ends.
+    side_channels: Option<side_channels::SideChannelLifecycle>,
 }
 
 impl GraphicalSessionManager {
@@ -392,6 +396,7 @@ impl GraphicalSessionManager {
             reactivated: None,
             linked_ssh: None,
             connecting: Arc::default(),
+            side_channels: None,
         }
     }
 
@@ -452,31 +457,32 @@ impl GraphicalSessionManager {
     }
 
     /// The callback a session's supervisor runs when an automatic reconnect
-    /// lifts `session_id` back to `Active` (#4230): it looks up the saved
-    /// connection the session is bound to and tells the hook. `None` when no
-    /// hook is installed.
+    /// lifts `session_id` back to `Active`: it tells the hook the saved
+    /// connection the session is bound to (#4230), and re-opens the session's
+    /// file side channel on the new tunnel / agent link when one is open
+    /// (#4384). `None` when neither is installed.
     fn on_reactivated(&self, session_id: &str) -> Option<OnReactivated> {
-        let hook = self.reactivated.clone()?;
+        if self.reactivated.is_none() && self.side_channels.is_none() {
+            return None;
+        }
         // Weak: the supervisor task must not keep the session map alive.
-        let sessions = Arc::downgrade(&self.sessions);
+        let weak = side_channels::WeakManager::new(self);
         let session_id = session_id.to_string();
         Some(Arc::new(move || {
-            let (Some(sessions), hook, session_id) =
-                (sessions.upgrade(), hook.clone(), session_id.clone())
-            else {
+            let Some(manager) = weak.upgrade() else {
                 return;
             };
+            let session_id = session_id.clone();
             // Not app-owned (#3105): a one-shot lookup that ends on its own.
             tokio::spawn(async move {
-                let saved = sessions
-                    .lock()
-                    .await
-                    .get(&session_id)
-                    .and_then(|s| s.saved_connection_id.clone());
-                if let Some(connection_id) = saved {
-                    debug!(session_id, connection_id, "graphical session reconnected");
-                    hook(&connection_id);
+                if let Some(hook) = manager.reactivated.clone() {
+                    let saved = manager.saved_connection_of(&session_id).await;
+                    if let Some(connection_id) = saved {
+                        debug!(session_id, connection_id, "graphical session reconnected");
+                        hook(&connection_id);
+                    }
                 }
+                manager.reopen_side_channel(&session_id).await;
             });
         }))
     }
@@ -753,8 +759,15 @@ impl GraphicalSessionManager {
             on_reactivated: self.on_reactivated(&session_id),
             sink,
         };
+        // Once the session ends for good (it rests in a terminal or manual-
+        // reconnect state), its open side channel is dropped (#4384); a user
+        // disconnect aborts this task and drops it in `disconnect`.
+        let on_ended = self.on_session_ended(&session_id);
         // Not app-owned (#3105): session-scoped; aborted with the session on close.
-        let tasks = vec![tokio::spawn(supervisor.run(generation))];
+        let tasks = vec![tokio::spawn(async move {
+            supervisor.run(generation).await;
+            on_ended();
+        })];
 
         let session = GraphicalSession {
             connection,
@@ -1292,6 +1305,8 @@ impl GraphicalSessionManager {
         let Some(session) = session else {
             return Err(TerminalError::SessionNotFound(session_id.to_string()));
         };
+        // The side channel open for browsing closes with the session (#4384).
+        self.drop_side_channel(session_id);
         for task in &session.tasks {
             task.abort();
         }
@@ -2170,3 +2185,7 @@ mod tests {
 #[cfg(test)]
 #[path = "graphical_connect_timeout_tests.rs"]
 mod connect_timeout_tests;
+
+/// The file side channel's place in the session lifecycle (#4384).
+#[path = "graphical_manager_side_channels.rs"]
+mod side_channels;
