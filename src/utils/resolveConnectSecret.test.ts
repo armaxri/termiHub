@@ -119,12 +119,13 @@ describe("resolveConnectSecret", () => {
       secret: "stored",
       source: "stored",
       credentialType: "password",
+      shouldSave: false,
     });
   });
 
   it("prompts for a passphrase-protected key when nothing is stored", async () => {
     mockedKeyEncrypted.mockResolvedValue(true);
-    requestPassword.mockResolvedValue("pass");
+    requestPassword.mockResolvedValue({ password: "pass", shouldSave: false });
     const r = await resolveConnectSecret({
       schema: SCHEMA,
       settings: KEY_SETTINGS,
@@ -138,12 +139,24 @@ describe("resolveConnectSecret", () => {
       secret: "pass",
       source: "prompt",
       credentialType: "key_passphrase",
+      shouldSave: false,
     });
+  });
+
+  it("returns the prompt's own Save choice with the secret (#4474)", async () => {
+    requestPassword.mockResolvedValue({ password: "pw", shouldSave: true });
+    const r = await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: "c1",
+      requestPassword,
+    });
+    expect(r).toMatchObject({ status: "resolved", source: "prompt", shouldSave: true });
   });
 
   it("treats an unreadable key file as encrypted (prompts)", async () => {
     mockedKeyEncrypted.mockRejectedValue(new Error("unreadable"));
-    requestPassword.mockResolvedValue("pass");
+    requestPassword.mockResolvedValue({ password: "pass", shouldSave: false });
     const r = await resolveConnectSecret({
       schema: SCHEMA,
       settings: KEY_SETTINGS,
@@ -154,7 +167,7 @@ describe("resolveConnectSecret", () => {
   });
 
   it("skips the store entirely when there is no connection id (unsaved)", async () => {
-    requestPassword.mockResolvedValue("typed-in-prompt");
+    requestPassword.mockResolvedValue({ password: "typed-in-prompt", shouldSave: false });
     const r = await resolveConnectSecret({
       schema: SCHEMA,
       settings: PASSWORD_SETTINGS,
@@ -191,7 +204,7 @@ describe("resolveConnectSecret", () => {
   });
 
   it("asks the prompt to hide its Save control when allowSave is false (#3316)", async () => {
-    requestPassword.mockResolvedValue("pw");
+    requestPassword.mockResolvedValue({ password: "pw", shouldSave: false });
     const r = await resolveConnectSecret({
       schema: SCHEMA,
       settings: PASSWORD_SETTINGS,
@@ -206,7 +219,7 @@ describe("resolveConnectSecret", () => {
   });
 
   it("leaves the prompt's Save control available by default (#3316)", async () => {
-    requestPassword.mockResolvedValue("pw");
+    requestPassword.mockResolvedValue({ password: "pw", shouldSave: false });
     await resolveConnectSecret({
       schema: SCHEMA,
       settings: PASSWORD_SETTINGS,
@@ -217,7 +230,7 @@ describe("resolveConnectSecret", () => {
   });
 
   it("names the connection in the prompt when given a label (#4312)", async () => {
-    requestPassword.mockResolvedValue("pw");
+    requestPassword.mockResolvedValue({ password: "pw", shouldSave: false });
     await resolveConnectSecret({
       schema: SCHEMA,
       settings: PASSWORD_SETTINGS,
@@ -321,6 +334,7 @@ describe("resolveConnectSecret — telnet auto-login schema", () => {
       secret: "stored-pw",
       source: "stored",
       credentialType: "password",
+      shouldSave: false,
     });
   });
 });

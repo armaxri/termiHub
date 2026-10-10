@@ -104,7 +104,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   addTabSpy = vi.fn(() => "tab-new");
   requestUnlockSpy = vi.fn(() => Promise.resolve(true));
-  requestPasswordSpy = vi.fn(() => Promise.resolve("typed-gateway"));
+  requestPasswordSpy = vi.fn(() =>
+    Promise.resolve({ password: "typed-gateway", shouldSave: false })
+  );
   mockedResolveFieldSecrets.mockResolvedValue({});
   vi.spyOn(toast, "loading").mockReturnValue("toast");
   vi.spyOn(toast, "dismiss").mockImplementation(() => {});
@@ -125,7 +127,8 @@ describe("connectSavedConnection — schema field secrets (#4429)", () => {
       "ops",
       expect.stringContaining("SSH Password"),
       "password",
-      { allowSave: false }
+      // The connection's name titles the prompt (#4475).
+      { allowSave: false, label: "Desk" }
     );
     expect(openedSettings().sshPassword).toBe("typed-gateway");
     expect(mockedResolveFieldSecrets).not.toHaveBeenCalled();

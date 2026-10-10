@@ -88,7 +88,6 @@ const TUNNEL = {
 function setStore(mode: "none" | "master_password" | "os_keychain", status: string) {
   useAppStore.setState({
     credentialStoreStatus: { mode, status } as never,
-    passwordPromptShouldSave: false,
   });
 }
 
@@ -174,7 +173,7 @@ describe("resolveFieldSecrets", () => {
 
   it("in none mode prompts without a Save box, never touches the store, and connects", async () => {
     setStore("none", "unavailable");
-    requestPassword.mockResolvedValue("entered");
+    requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
     const r = await resolveFieldSecrets(opts());
     expect(r).toEqual({ status: "resolved", settings: { ...TUNNEL, sshPassword: "entered" } });
     expect(requestPassword).toHaveBeenCalledWith(
@@ -218,17 +217,37 @@ describe("resolveFieldSecrets", () => {
 
   it("saves a prompted secret when the Save box is checked", async () => {
     setStore("os_keychain", "unlocked");
-    requestPassword.mockImplementation(async () => {
-      useAppStore.setState({ passwordPromptShouldSave: true });
-      return "entered";
-    });
+    requestPassword.mockResolvedValue({ password: "entered", shouldSave: true });
     await resolveFieldSecrets(opts());
     expect(mockedStore).toHaveBeenCalledWith("Desk", { fields: { sshPassword: "entered" } }, null);
   });
 
+  it("saves only the prompts whose own Save box was checked (#4474)", async () => {
+    setStore("os_keychain", "unlocked");
+    mockedResolve.mockResolvedValue(null);
+    requestPassword
+      .mockResolvedValueOnce({ password: "field-pw", shouldSave: false })
+      .mockResolvedValueOnce({ password: "hop-pw", shouldSave: true });
+    const settings = {
+      ...TUNNEL,
+      proxyJump: [{ host: "b", username: "ops", authMethod: "password" }],
+    };
+    await resolveFieldSecrets(opts({ settings }));
+    expect(requestPassword).toHaveBeenCalledTimes(2);
+    expect(mockedStore).toHaveBeenCalledWith("Desk", { hops: { "ops@b:22": "hop-pw" } }, null);
+  });
+
+  it("names the connection in every prompt when given a label (#4475)", async () => {
+    setStore("os_keychain", "unlocked");
+    mockedResolve.mockResolvedValue(null);
+    requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
+    await resolveFieldSecrets(opts({ label: "Desk" }));
+    expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: true, label: "Desk" });
+  });
+
   it("prompts for and splices an inline hop password", async () => {
     setStore("os_keychain", "unlocked");
-    requestPassword.mockResolvedValue("hop-pw");
+    requestPassword.mockResolvedValue({ password: "hop-pw", shouldSave: false });
     const settings = {
       host: "t",
       proxyJump: [{ host: "b", username: "ops", authMethod: "password" }],
@@ -242,7 +261,7 @@ describe("resolveFieldSecrets", () => {
 
   it("without a saved id (create flow) prompts directly and offers no Save box", async () => {
     setStore("os_keychain", "unlocked");
-    requestPassword.mockResolvedValue("entered");
+    requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
     await resolveFieldSecrets(opts({ connectionId: null }));
     expect(mockedResolve).not.toHaveBeenCalled();
     expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: false });
@@ -274,7 +293,7 @@ describe("resolveFieldSecrets", () => {
 
     it("logs a WARN and still prompts, saying the saved secret could not be read", async () => {
       setStore("os_keychain", "unlocked");
-      requestPassword.mockResolvedValue("entered");
+      requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
       const r = await resolveFieldSecrets(opts());
       expect(r).toEqual({ status: "resolved", settings: { ...TUNNEL, sshPassword: "entered" } });
       const warn = entries.find((e) => e.level === "WARN");
@@ -293,7 +312,7 @@ describe("resolveFieldSecrets", () => {
     it("an empty store (no read failure) keeps the plain prompt", async () => {
       setStore("os_keychain", "unlocked");
       mockedResolve.mockResolvedValue(null);
-      requestPassword.mockResolvedValue("entered");
+      requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
       await resolveFieldSecrets(opts());
       expect(requestPassword.mock.calls[0][2]).toBe("Enter the SSH Password for this connection.");
       expect(entries.some((e) => e.level === "WARN")).toBe(false);

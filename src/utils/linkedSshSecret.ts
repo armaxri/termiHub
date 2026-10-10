@@ -14,7 +14,7 @@
  * secret is never logged.
  */
 import { storeCredential } from "@/services/api";
-import { useAppStore } from "@/store/appStore";
+import { currentConnectionsView } from "@/store/connectionsBridge";
 import type { LinkedSecretRequest } from "@/types/generated/LinkedSecretRequest";
 import type { RequestPassword } from "@/utils/graphicalSecret";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -56,17 +56,24 @@ export async function askLinkedSshSecret(
   // by a per-connection secret, so its prompt offers no Save box.
   // `signal` drops a queued prompt when its tab closes (#4312); the promise
   // then rejects with an AbortError.
+  // The linked connection's name titles the prompt, so a queued prompt says
+  // which connection it is for (#4475).
+  const label = currentConnectionsView().connections.find(
+    (c) => c.id === request.connectionId
+  )?.name;
   const options = {
     ...(request.canSave ? {} : { allowSave: false }),
+    ...(label ? { label } : {}),
     ...(signal ? { signal } : {}),
   };
-  const entered =
+  const answer =
     Object.keys(options).length === 0
       ? await requestPassword(request.host, request.username, notice, request.kind)
       : await requestPassword(request.host, request.username, notice, request.kind, options);
-  if (entered === null) return { status: "canceled" };
+  if (answer === null) return { status: "canceled" };
+  const entered = answer.password;
 
-  if (request.canSave && useAppStore.getState().passwordPromptShouldSave) {
+  if (request.canSave && answer.shouldSave) {
     await storeCredential(request.connectionId, request.kind, entered, request.sourceFile).catch(
       (err) =>
         frontendLog(

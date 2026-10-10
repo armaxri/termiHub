@@ -11,9 +11,10 @@ import { AgentSetupDialog } from "./AgentSetupDialog";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import type { RemoteAgentConfig } from "@/types/terminal";
+import type { RequestPassword } from "@/store/slices/passwordPromptSlice";
 
 const detectAgentArch = vi.fn(async (_config: unknown): Promise<RemoteArchInfo> => archInfo());
-const requestPassword = vi.fn(async (_host: string, _user: string): Promise<string | null> => "pw");
+const requestPassword = vi.fn<RequestPassword>(async () => ({ password: "pw", shouldSave: false }));
 
 vi.mock("@/services/api", () => ({
   detectAgentArch: (config: unknown) => detectAgentArch(config),
@@ -26,7 +27,7 @@ vi.mock("@/store/appStore", () => ({
   useAppStore: (selector: (s: unknown) => unknown) =>
     selector({
       addTab: vi.fn(),
-      requestPassword: (host: string, user: string) => requestPassword(host, user),
+      requestPassword: (...args: Parameters<RequestPassword>) => requestPassword(...args),
     }),
 }));
 
@@ -104,7 +105,10 @@ describe("AgentSetupDialog keyboard-interactive auth (#3377)", () => {
   it("still prompts for a missing password with password auth", async () => {
     await renderAndDetect(makeAgent("password"));
 
-    expect(requestPassword).toHaveBeenCalledWith("bastion.example.com", "ops");
+    // The agent's name titles the prompt (#4475).
+    expect(requestPassword).toHaveBeenCalledWith("bastion.example.com", "ops", "", "password", {
+      label: "Bastion Host",
+    });
     const config = detectAgentArch.mock.calls[0][0] as RemoteAgentConfig;
     expect(config.password).toBe("pw");
   });

@@ -23,7 +23,7 @@
 import { resolveFieldSecrets as fetchStoredFieldSecrets, storeFieldSecrets } from "@/services/api";
 import type { FieldSecrets } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
-import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
+import type { PasswordPromptAnswer, RequestPassword } from "@/store/slices/passwordPromptSlice";
 import type { SettingsField, SettingsSchema } from "@/types/schema";
 import {
   credentialStoreNeedsUnlock,
@@ -43,14 +43,7 @@ export type FieldSecretSlot =
   | { kind: "field"; key: string; label: string }
   | { kind: "hop"; id: string; host: string; username: string };
 
-/** The store's promise-based prompt (`useAppStore().requestPassword`). */
-export type RequestPassword = (
-  host: string,
-  username: string,
-  notice?: string,
-  kind?: PasswordPromptKind,
-  options?: PasswordPromptOptions
-) => Promise<string | null>;
+export type { RequestPassword };
 
 export interface ResolveFieldSecretsOptions {
   /** The connection type's schema (`undefined` when unknown: hops only). */
@@ -66,6 +59,11 @@ export interface ResolveFieldSecretsOptions {
   allowSave?: boolean;
   /** Never ask anything; refuse instead (#3527). */
   unattended?: boolean;
+  /**
+   * Connection name for the prompt title, so a queued prompt says which
+   * connect it belongs to (#4312, #4475). Omitted keeps the generic title.
+   */
+  label?: string;
 }
 
 /** Outcome of {@link resolveFieldSecrets}. */
@@ -199,8 +197,9 @@ async function promptFor(
   settings: Record<string, unknown>,
   requestPassword: RequestPassword,
   allowSave: boolean,
-  readFailed = false
-): Promise<string | null> {
+  readFailed: boolean,
+  label: string | undefined
+): Promise<PasswordPromptAnswer | null> {
   const host =
     slot.kind === "hop"
       ? slot.host
@@ -212,7 +211,10 @@ async function promptFor(
   const notice = readFailed
     ? `The saved secrets could not be read — enter the ${slotLabel(slot)} for this connection.`
     : `Enter the ${slotLabel(slot)} for this connection.`;
-  return await requestPassword(host, username, notice, "password", { allowSave });
+  return await requestPassword(host, username, notice, "password", {
+    allowSave,
+    ...(label ? { label } : {}),
+  });
 }
 
 /** The stored field secrets, and whether reading them failed (vs. none stored). */
@@ -279,15 +281,22 @@ export async function resolveFieldSecrets(
   const entered: Required<FieldSecrets> = { fields: {}, hops: {} };
   const toSave: Required<FieldSecrets> = { fields: {}, hops: {} };
   for (const slot of missing) {
-    const value = await promptFor(slot, settings, opts.requestPassword, allowSave, readFailed);
-    if (value === null) {
+    const answer = await promptFor(
+      slot,
+      settings,
+      opts.requestPassword,
+      allowSave,
+      readFailed,
+      opts.label
+    );
+    if (answer === null) {
       return { status: "canceled", reason: `Connect canceled — ${slotLabel(slot)} is required.` };
     }
     const target = slot.kind === "field" ? "fields" : "hops";
     const slotKey = slot.kind === "field" ? slot.key : slot.id;
-    entered[target][slotKey] = value;
-    if (allowSave && useAppStore.getState().passwordPromptShouldSave) {
-      toSave[target][slotKey] = value;
+    entered[target][slotKey] = answer.password;
+    if (allowSave && answer.shouldSave) {
+      toSave[target][slotKey] = answer.password;
     }
   }
   settings = splice(settings, entered);

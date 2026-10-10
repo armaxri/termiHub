@@ -31,6 +31,7 @@ export async function startSavedPersistentSession(connectionId: string): Promise
     sourceFile: conn.sourceFile ?? null,
     requestPassword: state.requestPassword,
     unattended: false,
+    label: conn.name,
   });
   if (fieldSecrets.status !== "resolved") {
     toast.info(fieldSecrets.reason);

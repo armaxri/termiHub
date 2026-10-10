@@ -55,6 +55,7 @@ import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
 import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
@@ -1010,29 +1011,36 @@ export function AgentNode({
       // by a per-agent secret.
       const sharedCredential = resolution.namedCredentialId !== undefined;
 
-      let promptedPassword: string | undefined;
+      // The agent's name titles each prompt, so a queued prompt says which
+      // agent it is for (#4475).
+      const promptLabel = { label: agent.name };
+      // The prompt's own answer carries its Save choice (#4474), so the
+      // connect awaited in between can never pick up another prompt's choice.
+      let prompted: PasswordPromptAnswer | null = null;
 
       if (resolution.usedStoredCredential && resolution.password) {
         password = resolution.password;
       } else if (agent.config.authMethod === "password" && !agent.config.password) {
-        const result = await requestPassword(agent.config.host, agent.config.username);
-        if (!result) {
+        const answer = await requestPassword(
+          agent.config.host,
+          agent.config.username,
+          "",
+          "password",
+          promptLabel
+        );
+        if (!answer || !answer.password) {
           setConnecting(false);
           return;
         }
-        password = result;
-        promptedPassword = result;
+        password = answer.password;
+        prompted = answer;
       }
 
       try {
         await connectRemoteAgent(agent.id, password);
         // Persist the entered password if the user opted in via the prompt checkbox
-        if (
-          promptedPassword &&
-          !sharedCredential &&
-          useAppStore.getState().passwordPromptShouldSave
-        ) {
-          await storeCredential(agent.id, "password", promptedPassword).catch((err) => {
+        if (prompted && !sharedCredential && prompted.shouldSave) {
+          await storeCredential(agent.id, "password", prompted.password).catch((err) => {
             frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
           });
         }
@@ -1054,23 +1062,29 @@ export function AgentNode({
               );
             });
           }
-          const retryPassword = sharedCredential
+          const retry = sharedCredential
             ? await requestPassword(
                 agent.config.host,
                 agent.config.username,
                 "The shared credential was rejected — enter it for this connect, or rotate it in Settings → Security.",
                 "password",
-                { allowSave: false }
+                { allowSave: false, ...promptLabel }
               )
-            : await requestPassword(agent.config.host, agent.config.username);
-          if (!retryPassword) {
+            : await requestPassword(
+                agent.config.host,
+                agent.config.username,
+                "",
+                "password",
+                promptLabel
+              );
+          if (!retry || !retry.password) {
             setConnecting(false);
             return;
           }
-          await connectRemoteAgent(agent.id, retryPassword);
+          await connectRemoteAgent(agent.id, retry.password);
           // Persist the retry password if the user opted in
-          if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
-            await storeCredential(agent.id, "password", retryPassword).catch((err) => {
+          if (!sharedCredential && retry.shouldSave) {
+            await storeCredential(agent.id, "password", retry.password).catch((err) => {
               frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
             });
           }
@@ -1140,9 +1154,11 @@ export function AgentNode({
         if (resolution.usedStoredCredential && resolution.password) {
           config.password = resolution.password;
         } else {
-          const pw = await requestPassword(config.host, config.username);
-          if (!pw) return;
-          config.password = pw;
+          const answer = await requestPassword(config.host, config.username, "", "password", {
+            label: agent.name,
+          });
+          if (!answer || !answer.password) return;
+          config.password = answer.password;
         }
       }
       const otherHosts = await listAgentHosts(agent.id);
@@ -1225,6 +1241,7 @@ export function AgentNode({
           definitionId: def.id,
           settings: def.config,
           requestPassword,
+          label: def.name,
         }).then((resolved) => {
           if (resolved.status === "canceled") {
             toast.info("Connect canceled");
