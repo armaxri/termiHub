@@ -1,7 +1,19 @@
 //! The native plugin **library loader** of `termihub-plugin-runner` (#4182).
 //! termiHub itself never loads a plugin library (ADR-19); the host's
-//! `termihub_core::plugin::PluginHost` maps this loader's errors and tests use
-//! it as a direct in-process baseline.
+//! `termihub_core::plugin::PluginHost` maps this loader's errors and runs its
+//! pure gates, and tests use it as a direct in-process baseline.
+//!
+//! # Two halves (ADR-19, #4373)
+//!
+//! * The **pure gates** — [`PinnedLibrary`], [`check_library_abi`],
+//!   [`check_library_toolchain`], [`LoadError`], [`LoadedPluginInfo`],
+//!   [`BackendLoadOptions`] — are always built; the host shares them.
+//! * The **load path** — `load_plugin_library`, `prepare_plugin_library`,
+//!   `PreparedLibrary::load` and `PluginLibrary`, i.e. everything that maps a
+//!   library and calls into it — exists only with the crate's `runner`
+//!   feature, which only the runner binary (and test-only dev-dependencies)
+//!   enable. termihub-core builds this crate without it, so an in-process load
+//!   from the desktop is a compile error, not a convention.
 //!
 //! It owns everything between "a path to a plugin's backend library" and "a
 //! library whose entry points may be called": the verify-then-load digest pin
@@ -16,18 +28,23 @@
 
 mod pin;
 
-use std::path::{Path, PathBuf};
+#[cfg(feature = "runner")]
+use std::path::Path;
+use std::path::PathBuf;
 
+#[cfg(feature = "runner")]
 use libloading::{Library, Symbol};
+#[cfg(feature = "runner")]
 use termihub_plugin_api::symbols::{
     PluginAbiVersionFn, PluginCreateBackendFn, PluginInitFn, PluginShutdownFn,
     SYMBOL_PLUGIN_ABI_VERSION, SYMBOL_PLUGIN_CREATE_BACKEND, SYMBOL_PLUGIN_INIT,
     SYMBOL_PLUGIN_SHUTDOWN,
 };
+use termihub_plugin_api::{AbiIncompatibility, AbiVersion, Toolchain, ToolchainIncompatibility};
+#[cfg(feature = "runner")]
 use termihub_plugin_api::{
-    AbiIncompatibility, AbiVersion, LoadedBackend, PluginBackend, PluginError, PluginHostBridge,
-    PluginHostContext, PluginInfo, PluginOutputSender, PluginSessionConfig, Toolchain,
-    ToolchainIncompatibility, ABI_1_1, CURRENT_PLUGIN_ABI_VERSION,
+    LoadedBackend, PluginBackend, PluginError, PluginHostBridge, PluginHostContext, PluginInfo,
+    PluginOutputSender, PluginSessionConfig, ABI_1_1, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 pub use pin::{PinnedLibrary, DIGEST_ALGORITHM};
@@ -60,12 +77,16 @@ pub enum LoadError {
     },
 
     /// The dynamic library could not be opened.
-    #[error("failed to open plugin library `{path}`: {source}")]
+    ///
+    /// The cause is carried as text so this error type, which the host shares,
+    /// does not drag the `dlopen` wrapper into builds without the `runner`
+    /// feature (#4373).
+    #[error("failed to open plugin library `{path}`: {detail}")]
     Open {
         /// The library path that failed to open.
         path: PathBuf,
-        /// The underlying `libloading` error.
-        source: libloading::Error,
+        /// The platform loader's error message.
+        detail: String,
     },
 
     /// A required exported symbol was missing from the library.
@@ -155,6 +176,7 @@ pub struct LoadedPluginInfo {
     pub toolchain: Option<Toolchain>,
 }
 
+#[cfg(feature = "runner")]
 impl LoadedPluginInfo {
     fn from_ffi(info: &PluginInfo) -> Self {
         let abi_version = info.abi_version();
@@ -169,7 +191,7 @@ impl LoadedPluginInfo {
     }
 }
 
-/// Options for [`load_plugin_library`]. The default is the strictest load: no
+/// Options for `load_plugin_library`. The default is the strictest load: no
 /// digest binding, no manifest mirror check, and **no** acceptance of an
 /// unverifiable toolchain.
 #[derive(Debug, Clone, Copy, Default)]
@@ -190,6 +212,7 @@ pub struct BackendLoadOptions<'a> {
 /// Dropping it calls the plugin's `termihub_plugin_shutdown` (panic-contained)
 /// while the library is still mapped, then unmaps it. The `library` field is
 /// declared **last** so it drops last.
+#[cfg(feature = "runner")]
 pub struct PluginLibrary {
     info: LoadedPluginInfo,
     /// Resolved `plugin_create_backend`. Valid as long as `library` is loaded.
@@ -209,9 +232,12 @@ pub struct PluginLibrary {
 // are plain `extern "C"` pointers into that library. The plugin ABI requires
 // backends and their entry points to be callable from any thread (see
 // `termihub_plugin_api`), so sharing a `PluginLibrary` across threads is sound.
+#[cfg(feature = "runner")]
 unsafe impl Send for PluginLibrary {}
+#[cfg(feature = "runner")]
 unsafe impl Sync for PluginLibrary {}
 
+#[cfg(feature = "runner")]
 impl PluginLibrary {
     /// Metadata this plugin reported at load time.
     #[must_use]
@@ -263,6 +289,7 @@ impl PluginLibrary {
     }
 }
 
+#[cfg(feature = "runner")]
 impl Drop for PluginLibrary {
     fn drop(&mut self) {
         // Give the plugin a chance to release process-wide resources before the
@@ -332,7 +359,8 @@ pub fn symbol_name(sym: &[u8]) -> String {
 /// On any failure the (partially) opened library is dropped, so a rejected
 /// plugin leaves nothing loaded. This is [`prepare_plugin_library`] followed by
 /// [`PreparedLibrary::load`]; the runner splits the two to confine itself in
-/// between (#4186).
+/// between (#4186). Runner-only (`runner` feature, ADR-19).
+#[cfg(feature = "runner")]
 pub fn load_plugin_library(
     library_path: &Path,
     options: &BackendLoadOptions<'_>,
@@ -344,6 +372,7 @@ pub fn load_plugin_library(
 /// [`load_plugin_library`]) but which is not mapped yet: no plugin code has
 /// run. The runner applies its OS sandbox at this point, then calls
 /// [`load`](Self::load).
+#[cfg(feature = "runner")]
 #[derive(Debug)]
 pub struct PreparedLibrary {
     library_path: PathBuf,
@@ -354,6 +383,7 @@ pub struct PreparedLibrary {
 
 /// Pin and verify `library_path` against `options.expected_digest` (when set),
 /// without mapping it. Fails closed like [`load_plugin_library`].
+#[cfg(feature = "runner")]
 pub fn prepare_plugin_library(
     library_path: &Path,
     options: &BackendLoadOptions<'_>,
@@ -376,6 +406,7 @@ pub fn prepare_plugin_library(
     })
 }
 
+#[cfg(feature = "runner")]
 impl PreparedLibrary {
     /// Map the pinned library and run steps 2–4 of [`load_plugin_library`].
     pub fn load(self) -> Result<PluginLibrary, LoadError> {
@@ -394,6 +425,7 @@ impl PreparedLibrary {
     }
 }
 
+#[cfg(feature = "runner")]
 fn load_prepared(
     library_path: &Path,
     pinned: Option<PinnedLibrary>,
@@ -409,7 +441,7 @@ fn load_prepared(
     // irreducible unsafety of a plugin host. Failures are returned, not panicked.
     let library = unsafe { Library::new(&open_path) }.map_err(|source| LoadError::Open {
         path: library_path.to_owned(),
-        source,
+        detail: source.to_string(),
     })?;
     if let Some(pin) = pinned {
         // On failure `library` is dropped here (unloaded) before anything in it

@@ -171,20 +171,18 @@ shellexpand = "3.1"
 # Behind the optional `plugin` feature so it is only compiled when the plugin
 # system is built.
 zip = { version = "2", optional = true }
-# Native plugin host loader (#1995): opens a plugin's backend dynamic library
-# (`.dll`/`.so`/`.dylib`) and resolves its stable-ABI entry symbols. The de-facto
-# cross-platform `dlopen`/`LoadLibrary` wrapper — library-first over hand-rolled
-# FFI. Behind the optional `plugin` feature.
-libloading = { version = "0.8", optional = true }
-# The stable ABI contract shared by the host and every plugin (#1990). The host
-# loader resolves the plugin's exported symbols to the type aliases this crate
-# defines and drives the backend through its safe wrappers. Behind `plugin`.
+# The stable ABI contract shared by the host and every plugin (#1990): the ABI
+# and toolchain types the host's load gates check. Behind `plugin`.
 termihub-plugin-api = { path = "../plugin-api", optional = true }
-# The library half of the out-of-process plugin runner (#4182): the native-library
-# loader (digest pin, ABI gate, toolchain rule — shared so the in-process host and
-# the runner enforce the identical sequence) and the host<->runner IPC protocol.
-# Pulls no tokio/Tauri; only the binary target is the sidecar. Behind `plugin`.
-termihub-plugin-runner = { path = "../plugin-runner", optional = true }
+# The library half of the out-of-process plugin runner (#4182): the pure load
+# gates (digest pin, ABI gate, toolchain rule — shared so the host and the runner
+# enforce the identical sequence), the sandbox policy types and the host<->runner
+# IPC protocol. Pulls no tokio/Tauri; only the binary target is the sidecar.
+# Behind `plugin`. `default-features = false` keeps the runner-only `runner`
+# feature (dlopen + self-confinement) OFF: termiHub never loads a plugin
+# in-process (ADR-19, #4373), and that is a compile-time fact, not a convention.
+# scripts/internal/check-crate-policy.mjs fails CI if this ever enables it.
+termihub-plugin-runner = { path = "../plugin-runner", optional = true, default-features = false }
 # Embedded HTTP/FTP/TFTP file servers (#2192), so the same server implementations
 # run on the desktop or a remote agent. Behind the optional `embedded-servers`
 # feature so non-hosting core consumers do not pull the web-server stack.
@@ -341,6 +339,10 @@ ts-rs = "12"
 # decode a real raw echo reply and assert its TTL is reported (#4337). Same 0.6 line
 # surge-ping already pulls in — no new crate in the lockfile.
 socket2-surge = { package = "socket2", version = "0.6" }
+# Test-only: the in-process loader baseline (plugin_host_roundtrip, plugin_abi_1_1,
+# plugin_runner_perf) and the Linux namespace probe need the runner half of the
+# library (#4373). A dev-dependency never reaches a shipping build.
+termihub-plugin-runner = { path = "../plugin-runner", features = ["runner"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 # `tests/sideloaded_conpty.rs` (#4130): preload the staged `conpty.dll` by full
@@ -421,12 +423,12 @@ embedded-servers = [
     "dep:http-body",
 ]
 # Plugin package format + manifest schema/validation (#1989), plus the native
-# host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,
-# `libloading` to open a plugin's backend dynamic library, and
-# `termihub-plugin-api` for the stable ABI contract.
+# plugin host (#1995), which runs every native plugin in an out-of-process
+# sandboxed runner and never opens a plugin library itself (ADR-19). Pulls `zip`
+# to read `.termihub-plugin` archives, `termihub-plugin-api` for the stable ABI
+# contract, and the runner library's shared gates and IPC protocol.
 plugin = [
     "dep:zip",
-    "dep:libloading",
     "dep:termihub-plugin-api",
     "dep:termihub-plugin-runner",
     # Package code-signing substrate (#2036): Ed25519 signatures over a per-entry

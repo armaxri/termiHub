@@ -15,6 +15,16 @@
 //! * [`sandbox`] — the OS-neutral sandbox policy and report, and the per-OS
 //!   confinement the runner applies to itself before `dlopen` (#4186).
 //!
+//! # The `runner` feature (ADR-19, #4373)
+//!
+//! Everything that loads a plugin into the calling process (`dlopen` +
+//! `plugin_init`: `loader::load_plugin_library`, `loader::PreparedLibrary`,
+//! `loader::PluginLibrary`) or confines the calling process (`sandbox::apply`
+//! and the per-OS layers behind it) is compiled only with the `runner`
+//! feature. It is on by default for the binary; termihub-core depends on the
+//! library with `default-features = false`, so "the host never loads a plugin
+//! in-process" is enforced by the compiler rather than by convention.
+//!
 //! The runner binary itself (`src/main.rs`) loads exactly one plugin and
 //! proxies the frozen 1.x C ABI over [`ipc`]; the plugin is not rebuilt and the
 //! ABI is not bumped.

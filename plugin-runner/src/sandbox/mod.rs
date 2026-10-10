@@ -10,13 +10,17 @@
 //! * [`SandboxReport`] — what the runner actually
 //!   enforced, sent before any plugin code is mapped; [`Isolation`] classifies
 //!   it and [`layer`] names the layers.
-//! * [`apply`] — the per-OS confinement of the calling process: Seatbelt on
+//! * `apply` — the per-OS confinement of the calling process: Seatbelt on
 //!   macOS ([`macos`], #4186), no_new_privs + landlock + seccomp on Linux
 //!   (`linux`, #4185), whose `EPERM` denials are reported to the host
 //!   ([`denial`], #4236). On Windows (#4187) the confinement cannot be applied
 //!   from inside: the host starts the runner in the plugin's Less-Privileged
 //!   AppContainer and job object (`crate::appcontainer`, `crate::process`),
-//!   and [`apply`] verifies its own token and job instead (`windows`).
+//!   and `apply` verifies its own token and job instead (`windows`).
+//!   Self-confinement is runner-only: `apply`, `take_denial_reports` and the
+//!   `linux`, `sigsys` and `windows` modules exist only with the crate's
+//!   `runner` feature (ADR-19, #4373); the host shares the policy and report
+//!   types and never confines itself.
 //!
 //! The runner applies the policy to **itself** after it opened its IPC channel
 //! and pinned the plugin library, and before `dlopen`, so every byte of plugin
@@ -25,17 +29,19 @@
 
 pub mod denial;
 #[cfg(all(
+    feature = "runner",
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 pub mod linux;
 pub mod macos;
 #[cfg(all(
+    feature = "runner",
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 pub mod sigsys;
-#[cfg(windows)]
+#[cfg(all(feature = "runner", windows))]
 pub mod windows;
 
 use serde::{Deserialize, Serialize};
@@ -256,6 +262,7 @@ impl SandboxReport {
 ///
 /// On a platform whose sandbox phase has not landed yet this applies nothing
 /// and returns an empty (unconfined) report.
+#[cfg(feature = "runner")]
 #[must_use]
 pub fn apply(policy: &SandboxPolicy) -> SandboxReport {
     match apply_os(policy) {
@@ -264,7 +271,7 @@ pub fn apply(policy: &SandboxPolicy) -> SandboxReport {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "runner", target_os = "macos"))]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
     macos::apply(policy)?;
@@ -272,6 +279,7 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 }
 
 #[cfg(all(
+    feature = "runner",
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
@@ -289,6 +297,7 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 /// Linux on an architecture the seccomp filter has no syscall table for:
 /// fail closed (the runner ships for x86_64 and aarch64 only).
 #[cfg(all(
+    feature = "runner",
     target_os = "linux",
     not(any(target_arch = "x86_64", target_arch = "aarch64"))
 ))]
@@ -303,13 +312,16 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 /// Windows: the host started this process confined; verify that it really is
 /// (an LPAC token with no capabilities, inside a job) before any plugin code
 /// is mapped (#4187).
-#[cfg(windows)]
+#[cfg(all(feature = "runner", windows))]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
     windows::verify()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+#[cfg(all(
+    feature = "runner",
+    not(any(target_os = "macos", target_os = "linux", windows))
+))]
 fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     policy.validate()?;
     Ok(SandboxReport::default())
@@ -318,6 +330,7 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
 /// Drain the system-call denials counted since the last call into
 /// `Denied{syscall}` log frames (#4236; see [`denial`]). Empty where the
 /// sandbox does not trap denials (every platform but Linux).
+#[cfg(feature = "runner")]
 #[must_use]
 pub fn take_denial_reports() -> Vec<crate::ipc::Log> {
     #[cfg(all(
