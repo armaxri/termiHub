@@ -10,6 +10,8 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { checkDockerAvailable, checkPodmanAvailable } from "@/services/api";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 
 const mockDockerAvailable = vi.mocked(checkDockerAvailable);
 const mockPodmanAvailable = vi.mocked(checkPodmanAvailable);
@@ -85,14 +87,21 @@ describe("useAvailableRuntimes", () => {
     mockDockerAvailable.mockRejectedValue(new Error("not found"));
     mockPodmanAvailable.mockRejectedValue(new Error("not found"));
 
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
     let latest: ReturnType<typeof useAvailableRuntimes> | undefined;
     await act(async () => {
       root.render(createElement(HookReader, { onState: (s) => (latest = s) }));
     });
+    unsubscribe();
 
     expect(latest!.loading).toBe(false);
     expect(latest!.dockerAvailable).toBe(false);
     expect(latest!.podmanAvailable).toBe(false);
+    // The fallback is no longer silent (#4520).
+    const messages = entries.map((e) => e.message);
+    expect(messages).toContain("Failed to probe Docker: not found");
+    expect(messages).toContain("Failed to probe Podman: not found");
   });
 
   it("uses cached result on subsequent renders", async () => {

@@ -6,6 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FileEntry } from "@/types/connection";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 
 const api = vi.hoisted(() => ({
   sessionUpload: vi.fn(),
@@ -245,6 +247,13 @@ describe("shared per-leg helpers (#3563)", () => {
     api.sessionSupportsTransferQueue.mockResolvedValueOnce(true);
     expect(await probePaneRemote("s9")).toEqual({ sessionId: "s9", queueCapable: true });
     api.sessionSupportsTransferQueue.mockRejectedValueOnce(new Error("gone"));
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
     expect(await probePaneRemote("s9")).toEqual({ sessionId: "s9", queueCapable: false });
+    unsubscribe();
+    // The byte-based fallback leaves a trace (#4520).
+    expect(entries.map((e) => e.message)).toContain(
+      "Failed to probe transfer-queue support of session s9: gone"
+    );
   });
 });

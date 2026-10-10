@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/services/api", () => ({
   resolveFieldSecrets: vi.fn(),
@@ -7,6 +7,8 @@ vi.mock("@/services/api", () => ({
 
 import { resolveFieldSecrets as apiResolve, storeFieldSecrets } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import type { SettingsSchema } from "@/types/schema";
 import {
   hasFieldSecretsToSave,
@@ -258,6 +260,44 @@ describe("resolveFieldSecrets", () => {
     const r = await resolveFieldSecrets(opts({ unattended: true }));
     expect(r.status).toBe("refused");
     expect(requestUnlock).not.toHaveBeenCalled();
+  });
+
+  describe("a failed stored-secret read (#4520)", () => {
+    let entries: LogEntry[];
+    let unsubscribe: () => void;
+    beforeEach(() => {
+      entries = [];
+      unsubscribe = onFrontendLog((e) => entries.push(e));
+      mockedResolve.mockRejectedValue(new Error("keychain unavailable"));
+    });
+    afterEach(() => unsubscribe());
+
+    it("logs a WARN and still prompts, saying the saved secret could not be read", async () => {
+      setStore("os_keychain", "unlocked");
+      requestPassword.mockResolvedValue("entered");
+      const r = await resolveFieldSecrets(opts());
+      expect(r).toEqual({ status: "resolved", settings: { ...TUNNEL, sshPassword: "entered" } });
+      const warn = entries.find((e) => e.level === "WARN");
+      expect(warn?.message).toContain("Failed to read stored field secrets for Desk");
+      expect(warn?.message).toContain("keychain unavailable");
+      expect(requestPassword.mock.calls[0][2]).toMatch(/could not be read/);
+    });
+
+    it("unattended, refuses with a read-failure reason instead of 'No saved'", async () => {
+      setStore("os_keychain", "unlocked");
+      const r = await resolveFieldSecrets(opts({ unattended: true }));
+      expect(r).toEqual({ status: "refused", reason: "The saved SSH Password could not be read." });
+      expect(entries.some((e) => e.level === "WARN")).toBe(true);
+    });
+
+    it("an empty store (no read failure) keeps the plain prompt", async () => {
+      setStore("os_keychain", "unlocked");
+      mockedResolve.mockResolvedValue(null);
+      requestPassword.mockResolvedValue("entered");
+      await resolveFieldSecrets(opts());
+      expect(requestPassword.mock.calls[0][2]).toBe("Enter the SSH Password for this connection.");
+      expect(entries.some((e) => e.level === "WARN")).toBe(false);
+    });
   });
 
   it("does nothing when no field secret is needed", async () => {

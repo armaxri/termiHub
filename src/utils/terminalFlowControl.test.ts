@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import { TerminalOutputFlow, createFlowSignal } from "./terminalFlowControl";
 
 const bytes = (n: number, fill = 0x61) => new Uint8Array(n).fill(fill);
@@ -177,10 +179,29 @@ describe("createFlowSignal", () => {
       calls.push(paused);
       return Promise.resolve();
     });
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
     const signal = createFlowSignal(send);
     signal(true);
     signal(false);
     await signal.settled();
+    unsubscribe();
     expect(calls).toEqual([false]);
+    // The failure is traced, not dropped (#4520).
+    expect(entries.map((e) => e.message)).toContain("pause signal failed: session gone");
+  });
+
+  it("reports a failing send through onError and keeps the chain alive", async () => {
+    const onError = vi.fn();
+    const send = vi.fn((paused: boolean) =>
+      paused ? Promise.reject(new Error("gone")) : Promise.resolve()
+    );
+    const signal = createFlowSignal(send, onError);
+    signal(true);
+    signal(false);
+    await signal.settled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(true, new Error("gone"));
+    expect(send).toHaveBeenCalledTimes(2);
   });
 });
