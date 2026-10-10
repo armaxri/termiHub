@@ -203,3 +203,76 @@ async fn a_newly_attached_worker_starts_flowing() {
     let got = collect_output(&mut rx_b, 5, Duration::from_secs(5)).await;
     assert_eq!(got, b"for-b", "a new worker must not inherit the pause");
 }
+
+/// #4439: with the transport stalled (the worker's notifications are held, so
+/// none returns its credit), the worker pauses the daemon once the session's
+/// output budget is queued: the daemon stops reading and the backend producer
+/// is backpressured, with the queue bounded near the budget. Writing the queue
+/// out resumes the daemon.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stalled_transport_pauses_the_daemon_at_the_budget() {
+    use crate::daemon::worker_sink::OUTBOUND_BUDGET_BYTES;
+    use crate::session::output_budget::OUTPUT_BUDGET_BYTES;
+
+    const CHUNK: usize = 64 * 1024;
+    let endpoint = unique_endpoint("budget");
+    let out = spawn_daemon(&endpoint).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let client = DaemonClient::connect("s-1".into(), endpoint, tx)
+        .await
+        .expect("worker attaches");
+    assert!(client.output_flow_supported());
+
+    // Flood until the producer stays blocked.
+    let chunk = vec![b'z'; CHUNK];
+    let max = 8 * OUTPUT_BUDGET_BYTES / CHUNK;
+    let mut accepted = 0;
+    while accepted < max {
+        let send = out.send(chunk.clone());
+        if tokio::time::timeout(Duration::from_millis(500), send)
+            .await
+            .is_err()
+        {
+            break;
+        }
+        accepted += 1;
+    }
+    assert!(accepted < max, "the daemon must stop reading at the budget");
+    assert!(client.output_budget().is_paused());
+    let queued = client.output_budget().queued();
+    assert!(
+        queued >= OUTPUT_BUDGET_BYTES,
+        "paused early: {queued} bytes"
+    );
+    // On this path the bound also covers what the daemon had already queued
+    // for the worker when the pause landed (its own outbound budget, #3890)
+    // plus the local socket's buffers — a byte bound that does not grow with
+    // link latency.
+    let bound = OUTPUT_BUDGET_BYTES + OUTBOUND_BUDGET_BYTES + 512 * 1024;
+    assert!(
+        queued <= bound,
+        "{queued} bytes queued for one session (bound {bound})"
+    );
+
+    // The transport writes the queue out: the daemon resumes and drains.
+    let mut held = Vec::new();
+    while let Ok(n) = rx.try_recv() {
+        held.push(n);
+    }
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(5), out.send(b"end".to_vec()))
+        .await
+        .expect("the daemon resumed reading")
+        .unwrap();
+    let mut tail = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        while !tail.ends_with(b"end") {
+            tail.extend(collect_output(&mut rx, 1, Duration::from_secs(5)).await);
+        }
+    })
+    .await;
+    assert!(
+        tail.ends_with(b"end"),
+        "the held output and the tail arrived"
+    );
+}
