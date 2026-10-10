@@ -78,6 +78,12 @@ node scripts\internal\check-doc-symbols.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === ADR-14 projection region list ===
+REM Every registered projection region is named in ADR-14's status paragraph (#4586).
+node scripts\internal\check-adr14-regions.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1

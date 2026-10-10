@@ -3171,7 +3171,8 @@ pilot, #2150), `session-lifecycle` (#2152), `system-monitors` (#2224), `agents` 
 intents — it reports each native plugin's OS-sandbox state). The client-scoped regions —
 `layout@<clientId>` (#2151), `restore-cohort@<clientId>` (#2206), `file-browser@<clientId>`,
 `broadcast@<clientId>` and `workflow-run@<clientId>` (#2206/#2152) — are created on first subscribe.
-(The test-bridge build also seeds a `diag.counter` diagnostic region.) With the sessions/agents
+(The test-bridge build also seeds a `diag.counter` diagnostic region.) This region list is
+checked against the code by `scripts/internal/check-adr14-regions.mjs` (#4586). With the sessions/agents
 inversion complete, the **frontend client-side reconnect engine was deleted** (#2558) — session and
 agent reconnection is driven entirely by the backend redrive
 (`session_projection::redrive`, #2283; automation-proven, #2553). Layout is fully inverted too: the layout region is the only writer
