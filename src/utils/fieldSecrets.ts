@@ -30,7 +30,7 @@ import {
   ensureCredentialStoreUnlocked,
 } from "@/utils/ensureCredentialStoreUnlocked";
 import { errorMessage } from "@/utils/errorMessage";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendLog, frontendWarn } from "@/utils/frontendLog";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 
 /** The settings key whose secret has its own credential entries and prompt. */
@@ -198,7 +198,8 @@ async function promptFor(
   slot: FieldSecretSlot,
   settings: Record<string, unknown>,
   requestPassword: RequestPassword,
-  allowSave: boolean
+  allowSave: boolean,
+  readFailed = false
 ): Promise<string | null> {
   const host =
     slot.kind === "hop"
@@ -208,15 +209,23 @@ async function promptFor(
     slot.kind === "hop"
       ? slot.username
       : readString(settings, "sshUsername") || readString(settings, "username");
-  const notice = `Enter the ${slotLabel(slot)} for this connection.`;
+  const notice = readFailed
+    ? `The saved secrets could not be read — enter the ${slotLabel(slot)} for this connection.`
+    : `Enter the ${slotLabel(slot)} for this connection.`;
   return await requestPassword(host, username, notice, "password", { allowSave });
+}
+
+/** The stored field secrets, and whether reading them failed (vs. none stored). */
+interface StoredFieldSecrets {
+  secrets: FieldSecrets;
+  readFailed: boolean;
 }
 
 /** Take the stored field secrets, behind the unlock gate. */
 async function takeStored(
   opts: ResolveFieldSecretsOptions,
   connectionId: string
-): Promise<FieldSecrets | FieldSecretsResult> {
+): Promise<StoredFieldSecrets | FieldSecretsResult> {
   const gate = { authMethod: "", fieldSecrets: true };
   if (opts.unattended && credentialStoreNeedsUnlock(gate)) {
     return { status: "refused", reason: "The credential store is locked." };
@@ -227,9 +236,18 @@ async function takeStored(
       reason: "Connect canceled — the credential store stayed locked.",
     };
   }
-  return (
-    (await fetchStoredFieldSecrets(connectionId, opts.sourceFile ?? null).catch(() => null)) ?? {}
-  );
+  try {
+    const secrets = await fetchStoredFieldSecrets(connectionId, opts.sourceFile ?? null);
+    return { secrets: secrets ?? {}, readFailed: false };
+  } catch (err) {
+    // A failed read falls back to prompting, but must not look like "nothing
+    // stored": log it, and tell the user why they are asked (#4520).
+    frontendWarn(
+      "field_secrets",
+      `Failed to read stored field secrets for ${connectionId}: ${errorMessage(err)}`
+    );
+    return { secrets: {}, readFailed: true };
+  }
 }
 
 /** Fill in the schema field secrets a connect needs; see the module docs. */
@@ -242,21 +260,26 @@ export async function resolveFieldSecrets(
   }
   const mode = useAppStore.getState().credentialStoreStatus?.mode;
   const usesStore = opts.connectionId !== null && mode !== "none";
+  let readFailed = false;
   if (usesStore && opts.connectionId !== null) {
     const stored = await takeStored(opts, opts.connectionId);
     if ("status" in stored) return stored;
-    settings = splice(settings, stored);
+    settings = splice(settings, stored.secrets);
+    readFailed = stored.readFailed;
   }
 
   const missing = neededFieldSecrets(opts.schema, settings);
   if (missing.length > 0 && opts.unattended) {
-    return { status: "refused", reason: `No saved ${slotLabel(missing[0])}.` };
+    const reason = readFailed
+      ? `The saved ${slotLabel(missing[0])} could not be read.`
+      : `No saved ${slotLabel(missing[0])}.`;
+    return { status: "refused", reason };
   }
   const allowSave = usesStore && (opts.allowSave ?? true);
   const entered: Required<FieldSecrets> = { fields: {}, hops: {} };
   const toSave: Required<FieldSecrets> = { fields: {}, hops: {} };
   for (const slot of missing) {
-    const value = await promptFor(slot, settings, opts.requestPassword, allowSave);
+    const value = await promptFor(slot, settings, opts.requestPassword, allowSave, readFailed);
     if (value === null) {
       return { status: "canceled", reason: `Connect canceled — ${slotLabel(slot)} is required.` };
     }

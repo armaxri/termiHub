@@ -1702,7 +1702,10 @@ export function Terminal({
     if (typeof document !== "undefined" && document.fonts) {
       void document.fonts
         .load(`${baseFontSize}px "MesloLGS Nerd Font Mono"`)
-        .catch(() => undefined)
+        // The re-fit below still runs against whatever font is in place.
+        .catch((err: unknown) =>
+          frontendLog("terminal", `terminal font failed to load: ${errorMessage(err)}`)
+        )
         .then(() => document.fonts.ready)
         .then(() => {
           if (connectAbort.signal.aborted) return;
