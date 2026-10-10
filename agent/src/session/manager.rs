@@ -2672,6 +2672,9 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
 /// connection to itself: it runs before this returns when no write or resize is
 /// in flight, and otherwise in a background task that takes the session's turn once that I/O
 /// returned — mirroring the desktop's `session_io::disconnect_removed` (#4300).
+/// In that case the backend is first told to interrupt the in-flight I/O
+/// (`ConnectionType::interrupt_io`, #4394), so a write that would never return
+/// on its own fails and the disconnect runs promptly.
 /// Operations still queued for the turn find the session gone and fail as not
 /// found, so nothing reaches the backend after the close.
 async fn close_in_process_removed(session_id: &str, mut info: SessionInfo) {
@@ -2681,6 +2684,15 @@ async fn close_in_process_removed(session_id: &str, mut info: SessionInfo) {
         }
     }
     let turn = info.turn.clone();
+    let guard = turn.clone().try_lock_owned().ok();
+    if guard.is_none() {
+        // A write or resize is still in flight and may never return on its
+        // own (a PTY whose program stopped reading); make the backend end it
+        // (#4394) so the deferred disconnect below follows promptly.
+        if let SessionBackend::InProcess { connection, .. } = &info.backend {
+            connection.interrupt_io();
+        }
+    }
     let session_id = session_id.to_string();
     let disconnect = async move {
         if let SessionBackend::InProcess { connection, .. } = &mut info.backend {
@@ -2688,12 +2700,12 @@ async fn close_in_process_removed(session_id: &str, mut info: SessionInfo) {
         }
         debug!("In-process session {session_id} disconnected after close");
     };
-    match turn.clone().try_lock_owned() {
-        Ok(guard) => {
+    match guard {
+        Some(guard) => {
             disconnect.await;
             drop(guard);
         }
-        Err(_) => {
+        None => {
             info!("Backend I/O still in flight; disconnect deferred until it returns");
             tokio::spawn(async move {
                 let guard = turn.lock_owned().await;

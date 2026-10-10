@@ -16,8 +16,8 @@ evidence:
   - src/components/Settings/NativePluginGateSettings.tsx:140
   - src/components/Settings/NativePluginGateSettings.tsx:182
   - docs/concepts/implemented/plugin-os-sandbox.html:2440
-status: open
-resolution: ""
+status: fixed
+resolution: "#4379 — Restart, Revoke and the global toggle ask (warn ConfirmDialog with the session count) when sessions are open"
 audit: 2026-10
 commit: 663465d52
 relation: new

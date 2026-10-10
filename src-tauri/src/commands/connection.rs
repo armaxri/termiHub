@@ -535,6 +535,11 @@ pub struct ConnectionImportResult {
     /// (#3689, #4210).
     pub connections_skipped: usize,
     pub credentials_imported: usize,
+    /// Remote agents actually added to the store (#4380).
+    pub agents_imported: usize,
+    /// Remote agents in the file skipped because the store already holds them
+    /// (#4380).
+    pub agents_skipped: usize,
     /// Shared credentials created, or given their missing secret.
     pub shared_credentials_imported: usize,
     /// Notes for the user (a renamed or secret-less shared credential, or
@@ -586,6 +591,8 @@ pub async fn import_connections_with_credentials<R: Runtime>(
         connections_imported: result.connections_imported,
         connections_skipped: result.connections_skipped,
         credentials_imported: result.credentials_imported,
+        agents_imported: result.agents_imported,
+        agents_skipped: result.agents_skipped,
         shared_credentials_imported: prepared.imported_count,
         warnings: prepared.warnings,
     })

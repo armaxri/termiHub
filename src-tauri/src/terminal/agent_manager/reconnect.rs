@@ -22,8 +22,10 @@ use termihub_core::reconnect_backoff::{
 };
 
 use super::alive::AgentAlive;
+use super::capabilities::capabilities_from_initialize;
 use super::{
-    build_initialize_params, read_handshake_line, serialize_request, AGENT_HANDSHAKE_TIMEOUT,
+    build_initialize_params, parse_initialize_result, read_handshake_line, serialize_request,
+    AgentCapabilities, AGENT_HANDSHAKE_TIMEOUT,
 };
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_update_auth::token_path_from_initialize;
@@ -57,6 +59,7 @@ pub(super) async fn reconnect_agent(
         russh::Channel<russh::client::Msg>,
         Vec<(String, Value)>,
         Option<String>,
+        Option<AgentCapabilities>,
     ),
     String,
 > {
@@ -139,8 +142,8 @@ pub(super) async fn reconnect_agent(
         )
         .await;
         match handshake {
-            Ok((channel, buffered, token_path)) => {
-                return Ok((session, channel, buffered, token_path));
+            Ok((channel, buffered, token_path, capabilities)) => {
+                return Ok((session, channel, buffered, token_path, capabilities));
             }
             Err(e) => {
                 if !alive.is_alive() {
@@ -172,9 +175,12 @@ pub(super) async fn reconnect_agent(
 /// by `timeout` and aborted as soon as `cancel` fires (CONC2-004, #4304).
 ///
 /// Returns the ready channel, the notifications the agent sent before
-/// answering (replayed after the channel is handed back, #1660) and the new
-/// instance's update auth token path (AGT-003, #3213); or a short reason the
-/// attempt failed, which the caller counts as a [`ReconnectEvent::Failure`].
+/// answering (replayed after the channel is handed back, #1660), the new
+/// instance's update auth token path (AGT-003, #3213) and the capabilities it
+/// reported (#4440; `None` when the answer did not parse as the desktop's
+/// capabilities, which keeps the attempt a success as before); or a short
+/// reason the attempt failed, which the caller counts as a
+/// [`ReconnectEvent::Failure`].
 #[allow(clippy::type_complexity)]
 pub(super) async fn reconnect_handshake(
     session: &SshSession,
@@ -188,6 +194,7 @@ pub(super) async fn reconnect_handshake(
         russh::Channel<russh::client::Msg>,
         Vec<(String, Value)>,
         Option<String>,
+        Option<AgentCapabilities>,
     ),
     String,
 > {
@@ -242,14 +249,28 @@ pub(super) async fn reconnect_handshake(
                 .map_err(|e| format!("parse init response: {e}"))?;
             match jsonrpc::classify_handshake_message(msg, *request_id) {
                 jsonrpc::HandshakeOutcome::Response(result) => {
-                    // Only the token path matters here; the capabilities are
-                    // ignored, and a malformed result still counts as a
-                    // successful re-initialize (as before DUP-001, #3226).
-                    let token_path =
-                        serde_json::from_value::<InitializeResult<serde::de::IgnoredAny>>(result)
+                    // The re-launched agent may be a different binary (an
+                    // update or a downgrade), so its capabilities replace the
+                    // cached ones (#4440). A result that does not parse as the
+                    // desktop's capabilities still counts as a successful
+                    // re-initialize (as before DUP-001, #3226): the token path
+                    // is then read leniently and the cache is left as it was.
+                    let (token_path, capabilities) = match parse_initialize_result(result.clone()) {
+                        Ok(init) => (
+                            token_path_from_initialize(&init),
+                            Some(capabilities_from_initialize(init)),
+                        ),
+                        Err(e) => {
+                            warn!("Reconnect: initialize answer not understood ({e})");
+                            let token_path = serde_json::from_value::<
+                                InitializeResult<serde::de::IgnoredAny>,
+                            >(result)
                             .ok()
                             .and_then(|r| token_path_from_initialize(&r));
-                    return Ok((channel, buffered, token_path));
+                            (token_path, None)
+                        }
+                    };
+                    return Ok((channel, buffered, token_path, capabilities));
                 }
                 jsonrpc::HandshakeOutcome::Rejected(message) => {
                     return Err(format!("init rejected: {message}"));

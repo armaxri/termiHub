@@ -1174,6 +1174,9 @@ impl ConnectionManager {
         // already holds are skipped and reported separately (#4210).
         let mut connections_imported = 0;
         let mut connections_skipped = 0;
+        // Agents are counted the same way so the summary can report them (#4380).
+        let mut agents_imported = 0;
+        let mut agents_skipped = 0;
 
         // Merge connections, folders, and agents
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -1202,8 +1205,11 @@ impl ConnectionManager {
         }
 
         for agent in imported.agents {
-            if !store.agents.iter().any(|a| a.id == agent.id) {
+            if store.agents.iter().any(|a| a.id == agent.id) {
+                agents_skipped += 1;
+            } else {
                 added_ids.insert(agent.id.clone());
+                agents_imported += 1;
                 store.agents.push(agent);
             }
         }
@@ -1235,6 +1241,8 @@ impl ConnectionManager {
             connections_imported,
             connections_skipped,
             credentials_imported,
+            agents_imported,
+            agents_skipped,
         })
     }
 

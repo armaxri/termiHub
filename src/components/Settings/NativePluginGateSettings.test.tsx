@@ -570,4 +570,146 @@ describe("NativePluginGateSettings", () => {
       ]);
     });
   });
+
+  describe("ending open sessions (#4379)", () => {
+    const trustedEcho: NativePluginTrust = {
+      enabled: true,
+      disclosure: "d",
+      acknowledged: [
+        {
+          id: "echo",
+          librarySha256: "abc",
+          acknowledgedAt: "t",
+          unverifiedToolchainAccepted: false,
+          reducedIsolationAccepted: false,
+          state: "current",
+          addedAccess: [],
+        },
+      ],
+    };
+
+    function running(sessions: number) {
+      mockSandbox = {
+        plugins: {
+          echo: {
+            isolation: "full",
+            enforced: ["seatbelt"],
+            missing: [],
+            denials: [],
+            process: { state: "running", sessions, crashes: 0, maxRestarts: 3 },
+          },
+        },
+      };
+    }
+
+    function inDoc(testId: string): HTMLElement | null {
+      return document.querySelector(`[data-testid="${testId}"]`);
+    }
+
+    beforeEach(() => {
+      getNativePluginTrust.mockResolvedValue(trustedEcho);
+      mockPlugins = [plugin("echo", "Echo", true)];
+    });
+
+    it("asks before Restart ends open sessions, and Cancel leaves the plugin running", async () => {
+      running(2);
+      await renderFlushed();
+      await act(async () => query("native-plugin-restart-echo")!.click());
+      expect(enablePlugin).not.toHaveBeenCalled();
+      const dialog = inDoc("native-plugin-end-sessions-dialog-echo")!;
+      expect(dialog.textContent).toContain("Restart Echo?");
+      expect(dialog.textContent).toContain("2 open sessions");
+      await act(async () => inDoc("native-plugin-end-sessions-echo-cancel")!.click());
+      expect(enablePlugin).not.toHaveBeenCalled();
+      expect(inDoc("native-plugin-end-sessions-dialog-echo")).toBeNull();
+    });
+
+    it("restarts once the user confirms", async () => {
+      running(1);
+      await renderFlushed();
+      await act(async () => query("native-plugin-restart-echo")!.click());
+      expect(inDoc("native-plugin-end-sessions-dialog-echo")!.textContent).toContain(
+        "1 open session."
+      );
+      await act(async () => inDoc("native-plugin-end-sessions-echo-confirm")!.click());
+      expect(enablePlugin).toHaveBeenCalledWith("echo");
+    });
+
+    it("restarts immediately when the plugin has no open sessions", async () => {
+      running(0);
+      await renderFlushed();
+      await act(async () => query("native-plugin-restart-echo")!.click());
+      expect(inDoc("native-plugin-end-sessions-dialog-echo")).toBeNull();
+      expect(enablePlugin).toHaveBeenCalledWith("echo");
+    });
+
+    it("asks before Revoke ends open sessions, and Cancel keeps the trust", async () => {
+      running(3);
+      await renderFlushed();
+      await act(async () => query("native-plugin-revoke-echo")!.click());
+      expect(revokeNativePluginTrust).not.toHaveBeenCalled();
+      const dialog = inDoc("native-plugin-end-sessions-dialog-echo")!;
+      expect(dialog.textContent).toContain("Revoke trust for Echo?");
+      expect(dialog.textContent).toContain("3 open sessions");
+      await act(async () => inDoc("native-plugin-end-sessions-echo-cancel")!.click());
+      expect(revokeNativePluginTrust).not.toHaveBeenCalled();
+    });
+
+    it("revokes once the user confirms", async () => {
+      running(3);
+      await renderFlushed();
+      await act(async () => query("native-plugin-revoke-echo")!.click());
+      await act(async () => inDoc("native-plugin-end-sessions-echo-confirm")!.click());
+      expect(revokeNativePluginTrust).toHaveBeenCalledWith("echo");
+    });
+
+    it("revokes immediately when the plugin has no open sessions", async () => {
+      running(0);
+      await renderFlushed();
+      await act(async () => query("native-plugin-revoke-echo")!.click());
+      expect(inDoc("native-plugin-end-sessions-dialog-echo")).toBeNull();
+      expect(revokeNativePluginTrust).toHaveBeenCalledWith("echo");
+    });
+
+    it("asks before the global switch ends open sessions, summing every plugin", async () => {
+      mockPlugins = [plugin("echo", "Echo", true), plugin("modbus", "Modbus", true)];
+      mockSandbox = {
+        plugins: {
+          echo: {
+            isolation: "full",
+            enforced: [],
+            missing: [],
+            denials: [],
+            process: { state: "running", sessions: 2, crashes: 0, maxRestarts: 3 },
+          },
+          modbus: {
+            isolation: "full",
+            enforced: [],
+            missing: [],
+            denials: [],
+            process: { state: "running", sessions: 1, crashes: 0, maxRestarts: 3 },
+          },
+        },
+      };
+      await renderFlushed();
+      await act(async () => query("settings-native-plugins-enabled")!.click());
+      expect(setNativePluginsEnabled).not.toHaveBeenCalled();
+      expect(inDoc("native-plugins-disable-dialog")!.textContent).toContain("3 open sessions");
+      await act(async () => inDoc("native-plugins-disable-cancel")!.click());
+      expect(setNativePluginsEnabled).not.toHaveBeenCalled();
+      expect(query("settings-native-plugins-enabled")!.getAttribute("aria-checked")).toBe("true");
+
+      await act(async () => query("settings-native-plugins-enabled")!.click());
+      await act(async () => inDoc("native-plugins-disable-confirm")!.click());
+      expect(setNativePluginsEnabled).toHaveBeenCalledWith(false);
+    });
+
+    it("disables native plugins immediately when no plugin has open sessions", async () => {
+      running(0);
+      await renderFlushed();
+      await act(async () => query("settings-native-plugins-enabled")!.click());
+      expect(inDoc("native-plugins-disable-dialog")).toBeNull();
+      expect(setNativePluginsEnabled).toHaveBeenCalledWith(false);
+    });
+  });
 });

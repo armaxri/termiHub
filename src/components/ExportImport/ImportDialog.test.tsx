@@ -82,6 +82,8 @@ describe("ImportDialog", () => {
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 1,
       connectionsSkipped: 0,
+      agentsImported: 0,
+      agentsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 0,
       warnings: [],
@@ -108,6 +110,8 @@ describe("ImportDialog", () => {
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 2,
       connectionsSkipped: 0,
+      agentsImported: 0,
+      agentsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 1,
       warnings: ['Shared credential "Bastion" was imported as "Bastion (imported)".'],
@@ -133,6 +137,8 @@ describe("ImportDialog", () => {
     mockedImport.mockResolvedValueOnce({
       connectionsImported: 1,
       connectionsSkipped: 0,
+      agentsImported: 0,
+      agentsSkipped: 0,
       credentialsImported: 0,
       sharedCredentialsImported: 0,
       warnings: [],
@@ -211,6 +217,8 @@ describe("importSummary", () => {
   const base = {
     connectionsImported: 0,
     connectionsSkipped: 0,
+    agentsImported: 0,
+    agentsSkipped: 0,
     credentialsImported: 0,
     sharedCredentialsImported: 0,
     warnings: [],
@@ -247,7 +255,9 @@ describe("importSummary", () => {
   });
 
   it("reports an empty file", () => {
-    expect(importSummary(base)).toBe("Nothing imported — the file contains no connections");
+    expect(importSummary(base)).toBe(
+      "Nothing imported — the file contains no connections or agents"
+    );
   });
 
   it("lists shared credentials alongside added connections", () => {
@@ -261,6 +271,40 @@ describe("importSummary", () => {
       })
     ).toBe(
       "Imported 2 connections and 2 credentials, 1 shared credential, skipped 1 that already exists"
+    );
+  });
+
+  it("reports a file with only agents instead of 'Nothing imported' (#4380)", () => {
+    expect(importSummary({ ...base, agentsImported: 3 })).toBe("Imported 3 agents");
+    expect(importSummary({ ...base, agentsImported: 1, credentialsImported: 1 })).toBe(
+      "Imported 1 agent and 1 credential"
+    );
+  });
+
+  it("reports added agents alongside skipped connections (#4380)", () => {
+    expect(importSummary({ ...base, connectionsSkipped: 2, agentsImported: 1 })).toBe(
+      "Imported 1 agent, skipped 2 connections that already exist"
+    );
+  });
+
+  it("names every skipped kind once agents are involved (#4380)", () => {
+    expect(
+      importSummary({ ...base, connectionsImported: 2, connectionsSkipped: 1, agentsSkipped: 1 })
+    ).toBe("Imported 2 connections, skipped 1 connection and 1 agent that already exist");
+    expect(importSummary({ ...base, connectionsImported: 1, agentsImported: 2 })).toBe(
+      "Imported 1 connection, 2 agents"
+    );
+  });
+
+  it("says nothing was imported when every agent already exists (#4380)", () => {
+    expect(importSummary({ ...base, agentsSkipped: 1 })).toBe(
+      "Nothing imported — the agent already exists"
+    );
+    expect(importSummary({ ...base, agentsSkipped: 3 })).toBe(
+      "Nothing imported — all 3 agents already exist"
+    );
+    expect(importSummary({ ...base, connectionsSkipped: 2, agentsSkipped: 1 })).toBe(
+      "Nothing imported — 2 connections and 1 agent already exist"
     );
   });
 });

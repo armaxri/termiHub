@@ -229,6 +229,23 @@ pub trait ConnectionType: Send + Sync {
     /// Check whether the connection is currently active.
     fn is_connected(&self) -> bool;
 
+    /// Interrupt in-flight terminal I/O so a session can be torn down while a
+    /// [`write`](Self::write) or [`resize`](Self::resize) is stalled (#4394).
+    ///
+    /// [`disconnect`](Self::disconnect) needs `&mut self`, so it cannot run
+    /// while another thread is parked inside `write` on a shared handle. A
+    /// tab close calls this first, through `&self`, to make that parked call
+    /// return (with an error) so the exclusive disconnect can follow promptly
+    /// — e.g. the local shell kills its child, which unblocks a PTY write the
+    /// child stopped reading, and telnet shuts its socket down.
+    ///
+    /// Must be synchronous, non-blocking, idempotent and safe to call
+    /// concurrently with `write` / `resize`. It is only ever followed by
+    /// `disconnect`, so it may leave the connection unusable. The default is
+    /// a no-op: backends whose writes cannot stall indefinitely (or that
+    /// bound them some other way) need nothing here.
+    fn interrupt_io(&self) {}
+
     // --- Terminal I/O ---
 
     /// Write input bytes to the terminal (user keystrokes, paste data).
