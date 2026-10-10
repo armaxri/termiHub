@@ -47,7 +47,10 @@ pub(in crate::session) struct SessionIo {
 impl SessionIo {
     /// Take an I/O handle on `connection`. `None` once teardown holds the gate
     /// (the session is being closed), which callers report as "session gone".
-    pub(in crate::session) fn handle(&self, connection: &Arc<dyn ConnectionType>) -> Option<IoHandle> {
+    pub(in crate::session) fn handle(
+        &self,
+        connection: &Arc<dyn ConnectionType>,
+    ) -> Option<IoHandle> {
         let gate = self.gate.clone().try_read_owned().ok()?;
         Some(IoHandle {
             connection: connection.clone(),
