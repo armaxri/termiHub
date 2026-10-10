@@ -72,18 +72,23 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
 
 ## Moving items without dragging
 
-Tabs and saved connections can be moved from the keyboard as well as by
-dragging. These keys act on the focused item only, so they never reach a
+Tabs, saved connections and remote agents can be moved from the keyboard as
+well as by dragging. These keys act on the focused item only, so they never reach a
 terminal.
 
-| Action                            | macOS                  | Windows / Linux         |
-| --------------------------------- | ---------------------- | ----------------------- |
-| Move focused tab left / right     | `Cmd+Shift+Left/Right` | `Ctrl+Shift+Left/Right` |
-| Move focused connection up / down | `Cmd+Shift+Up/Down`    | `Ctrl+Shift+Up/Down`    |
+| Action                              | macOS                  | Windows / Linux         |
+| ----------------------------------- | ---------------------- | ----------------------- |
+| Move focused tab left / right       | `Cmd+Shift+Left/Right` | `Ctrl+Shift+Left/Right` |
+| Move focused connection up / down   | `Cmd+Shift+Up/Down`    | `Ctrl+Shift+Up/Down`    |
+| Move focused remote agent up / down | `Cmd+Shift+Up/Down`    | `Ctrl+Shift+Up/Down`    |
 
 A connection moves within its own folder. To move it to another folder, open its
 context menu (right-click, <kbd>Shift</kbd>+<kbd>F10</kbd> or the Menu key) and
 pick **Move to Folder**.
+
+In the Remote Agents section, an agent's context menu also offers **Move Up**
+and **Move Down**. A saved connection on an agent has **Move to Folder** in its
+context menu, listing that agent's folders and its top level.
 
 ## Paste, and right-click in apps that use the mouse
 

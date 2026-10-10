@@ -3,10 +3,23 @@
 /**
  * A single captured log entry.
  */
-export type LogEntry = { timestamp: string, level: string, target: string, message: string, 
+export type LogEntry = { 
+/**
+ * Capture time as an ISO-8601 UTC string with millisecond precision
+ * (e.g. `2026-10-10T12:34:56.789Z`) — the same shape the frontend log
+ * channel uses, so exports read uniformly (#4536). Payloads from before
+ * #4536 carry a local `HH:MM:SS.mmm` here instead.
+ */
+timestamp: string, level: string, target: string, message: string, 
 /**
  * Label of the window a frontend-forwarded entry ([`FRONTEND_LOG_TARGET`])
  * came from, so a Log Viewer can tell its own echo from another window's
  * warning (#4535). Absent for every other entry.
  */
-window?: string, };
+window?: string, 
+/**
+ * Capture time as Unix epoch milliseconds: the Log Viewer's chronological
+ * sort key and the source of its locale-formatted display time (#4536).
+ * Optional so payloads from before it existed still parse.
+ */
+timestampMs?: number, };

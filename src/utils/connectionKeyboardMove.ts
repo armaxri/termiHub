@@ -1,16 +1,27 @@
 /**
- * Pure helpers for the keyboard / context-menu alternatives to dragging a saved
- * connection in the Connections sidebar tree (#4528, WCAG 2.1.1 / 2.5.7).
+ * Pure helpers for the keyboard / context-menu alternatives to dragging in the
+ * sidebar: saved connections in the Connections tree (#4528) and remote agents
+ * plus their saved connections in the Remote Agents tree (#4641). WCAG 2.1.1 /
+ * 2.5.7.
  *
  * They compute the same store-action arguments the drag path produces
- * (`reorderConnections(oldIndex, newIndex)` / `moveConnectionToFolder`), so the
- * menu, the shortcut and dragging all end up in the same place.
+ * (`reorderConnections` / `reorderRemoteAgents(oldIndex, newIndex)`,
+ * `moveConnectionToFolder` / `moveAgentDefToFolder`), so the menu, the shortcut
+ * and dragging all end up in the same place.
  */
-import type { ConnectionFolder, SavedConnection } from "@/types/connection";
+import type { SavedConnection } from "@/types/connection";
+import { isMac } from "@/utils/platform";
+
+/** The folder shape shared by local connection folders and agent folders. */
+export interface MoveTargetFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+}
 
 /** One entry in the "Move to Folder" submenu. */
 export interface FolderMoveTarget {
-  /** The folder id passed to `moveConnectionToFolder`. */
+  /** The folder id passed to `moveConnectionToFolder` / `moveAgentDefToFolder`. */
   id: string;
   /** The folder's full path, e.g. `Work / Dev`, so nested folders are unambiguous. */
   label: string;
@@ -21,7 +32,7 @@ export interface FolderMoveTarget {
  * order), each labelled with its full path. Folders whose parent is missing
  * are unreachable in the tree and are left out.
  */
-export function folderMoveTargets(folders: readonly ConnectionFolder[]): FolderMoveTarget[] {
+export function folderMoveTargets(folders: readonly MoveTargetFolder[]): FolderMoveTarget[] {
   const result: FolderMoveTarget[] = [];
   const visit = (parentId: string | null, prefix: string, seen: Set<string>) => {
     for (const folder of folders) {
@@ -55,11 +66,64 @@ export function connectionReorderIndices(
   const connection = siblingsSource.find((c) => c.id === connectionId);
   if (!connection) return null;
   const siblings = siblingsSource.filter((c) => c.folderId === connection.folderId);
-  const position = siblings.findIndex((c) => c.id === connectionId);
+  return neighbourReorderIndices(connectionId, delta, siblings, allConnections);
+}
+
+/**
+ * The `reorderRemoteAgents` arguments that move `agentId` one place up (`-1`) or
+ * down (`1`) in the Remote Agents list, or `null` when it is already first /
+ * last there (or unknown).
+ *
+ * @param visibleAgents The agents the sidebar shows (a search filter may hide
+ *   some), so the move swaps with the neighbour the user can see.
+ * @param allAgents The full list the store reorders; the returned indices are
+ *   into this list, exactly like the drag path's.
+ */
+export function agentReorderIndices(
+  agentId: string,
+  delta: -1 | 1,
+  visibleAgents: readonly { id: string }[],
+  allAgents: readonly { id: string }[]
+): { oldIndex: number; newIndex: number } | null {
+  return neighbourReorderIndices(agentId, delta, visibleAgents, allAgents);
+}
+
+/** Shared core: swap `id` with its neighbour in `siblings`, as indices into `all`. */
+function neighbourReorderIndices(
+  id: string,
+  delta: -1 | 1,
+  siblings: readonly { id: string }[],
+  all: readonly { id: string }[]
+): { oldIndex: number; newIndex: number } | null {
+  const position = siblings.findIndex((item) => item.id === id);
+  if (position === -1) return null;
   const neighbour = siblings[position + delta];
   if (!neighbour) return null;
-  const oldIndex = allConnections.findIndex((c) => c.id === connectionId);
-  const newIndex = allConnections.findIndex((c) => c.id === neighbour.id);
+  const oldIndex = all.findIndex((item) => item.id === id);
+  const newIndex = all.findIndex((item) => item.id === neighbour.id);
   if (oldIndex === -1 || newIndex === -1) return null;
   return { oldIndex, newIndex };
+}
+
+/**
+ * Whether a keydown is the "move this row" shortcut: Ctrl/Cmd+Shift+ArrowUp or
+ * ArrowDown (no Alt). Returns the direction, or `null` for any other key.
+ */
+export function moveShortcutDelta(event: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}): -1 | 1 | null {
+  if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey) return null;
+  if (event.key === "ArrowUp") return -1;
+  if (event.key === "ArrowDown") return 1;
+  return null;
+}
+
+/** Shortcut hint shown next to Move Up / Move Down (Cmd on macOS, Ctrl elsewhere). */
+export function moveShortcutHint(direction: "Up" | "Down"): string {
+  const arrow = direction === "Up" ? "\u2191" : "\u2193";
+  return isMac() ? `\u2318\u21e7${arrow}` : `Ctrl+Shift+${arrow}`;
 }
