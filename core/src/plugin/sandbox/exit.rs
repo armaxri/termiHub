@@ -221,12 +221,6 @@ impl CrashBudget {
             crate::plugin::security::RecoveryState::Disabled => MAX_RESTART_ATTEMPTS + 1,
         }
     }
-
-    /// Whether the budget is spent.
-    #[must_use]
-    pub fn is_exhausted(&self) -> bool {
-        self.tracker.is_disabled()
-    }
 }
 
 #[cfg(test)]
@@ -246,7 +240,7 @@ mod tests {
             budget.record_crash(t0 + Duration::from_secs(60)),
             RecoveryAction::Disable
         );
-        assert!(budget.is_exhausted());
+        assert!(budget.tracker.is_disabled());
         // A spent budget stays spent, even after the window.
         assert_eq!(
             budget.record_crash(t0 + Duration::from_secs(3600)),

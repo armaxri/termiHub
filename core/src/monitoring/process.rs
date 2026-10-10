@@ -146,13 +146,6 @@ impl KillSignal {
         }
     }
 
-    /// `true` for the signals the process cannot catch or ignore and that
-    /// take effect immediately (SIGKILL ends it, SIGSTOP freezes it). The UI
-    /// warns explicitly before sending one of these.
-    pub fn is_destructive(self) -> bool {
-        matches!(self, KillSignal::Kill | KillSignal::Stop)
-    }
-
     /// `true` when a Windows local process can honour this signal. Windows has
     /// no POSIX signals: the only thing it can do is terminate the process, so
     /// only the two terminating signals are accepted.
@@ -546,14 +539,6 @@ mod tests {
         }
         // An unknown signal is rejected at deserialization, never coerced.
         assert!(serde_json::from_str::<KillSignal>("\"segv\"").is_err());
-    }
-
-    #[test]
-    fn only_kill_and_stop_are_destructive() {
-        for (signal, _, _) in SIGNAL_TABLE {
-            let expected = matches!(signal, KillSignal::Kill | KillSignal::Stop);
-            assert_eq!(signal.is_destructive(), expected, "{signal:?}");
-        }
     }
 
     #[test]
