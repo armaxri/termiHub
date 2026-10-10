@@ -347,6 +347,14 @@ pub struct Capabilities {
     /// [`AGENT_FORWARD_ACK`] (protocol 0.28.0, #4284). Absent (read as
     /// `false`) on older agents, whose streams are relayed unbounded.
     pub forward_flow: bool,
+    /// The chmod / chown / symlink operations the agent host's **own** file
+    /// system performs (protocol 0.29.0, #4601) — what an agent-hosted local
+    /// session's browser and the host-level `connection.files.*` service
+    /// (no `connection_id`) answer with something other than `NotSupported`.
+    /// A Windows agent host reports none. Absent on older agents, which the
+    /// desktop keeps treating by session type (a local session offers all
+    /// three).
+    pub host_file_attribute_ops: crate::files::FileAttributeOps,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -2636,6 +2644,11 @@ mod tests {
                 file_ranges: true,
                 output_flow: true,
                 forward_flow: true,
+                host_file_attribute_ops: crate::files::FileAttributeOps {
+                    permissions: true,
+                    owner: false,
+                    symlink: true,
+                },
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2664,6 +2677,11 @@ mod tests {
         assert_eq!(v["capabilities"]["outputFlow"], true);
         // #4284: flow-controlled port-forward streams.
         assert_eq!(v["capabilities"]["forwardFlow"], true);
+        // #4601: the agent host's own chmod / chown / symlink support.
+        assert_eq!(
+            v["capabilities"]["hostFileAttributeOps"],
+            json!({ "permissions": true, "owner": false, "symlink": true })
+        );
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()

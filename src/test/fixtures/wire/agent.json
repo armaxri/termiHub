@@ -32,6 +32,11 @@
       "dockerAvailable": true,
       "embeddedServerActivity": false,
       "fileRanges": false,
+      "hostFileAttributeOps": {
+        "owner": false,
+        "permissions": false,
+        "symlink": false
+      },
       "maxSessions": 16,
       "monitoringSupported": true,
       "outputFlow": false,

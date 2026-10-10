@@ -178,7 +178,20 @@ use termihub_core::monitoring::{
 /// `capabilities.forwardFlow` flag (#4284): a desktop port forward (VNC/RDP)
 /// is credit-windowed in both directions. An older desktop requests no window
 /// and keeps an unbounded stream.
-const AGENT_PROTOCOL_VERSION: &str = "0.28.0";
+/// Bumped to 0.29.0 for the additive `capabilities.hostFileAttributeOps`
+/// field (#4601): which of chmod / chown / symlink the agent host's own file
+/// system performs, so the desktop hides those actions on a Windows agent
+/// host's local sessions. An older desktop ignores it; for an older agent the
+/// desktop keeps its session-type answer.
+const AGENT_PROTOCOL_VERSION: &str = "0.29.0";
+
+/// The chmod / chown / symlink operations the agent host's own file system
+/// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
+/// both agent-hosted local sessions and the host-level `connection.files.*`
+/// service.
+fn host_file_attribute_ops() -> termihub_core::files::FileAttributeOps {
+    LocalFileBrowser::new().attribute_ops()
+}
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -1013,6 +1026,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 file_ranges: true,
                 output_flow: true,
                 forward_flow: true,
+                host_file_attribute_ops: host_file_attribute_ops(),
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -3867,10 +3881,11 @@ mod tests {
     /// 0.26.0 the ranged `connection.files.*` methods with their `fileRanges`
     /// capability (#3587), and 0.27.0 `connection.output_flow` with its
     /// `outputFlow` capability (#4416), and 0.28.0 `agent.forward.ack` with
-    /// the connect window and its `forwardFlow` capability (#4284).
+    /// the connect window and its `forwardFlow` capability (#4284), and
+    /// 0.29.0 the `hostFileAttributeOps` capability (#4601).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.28.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.29.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -4063,6 +4078,19 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
         assert_eq!(result["result"]["capabilities"]["forwardFlow"], true);
+    }
+
+    /// #4601: the agent reports which of chmod / chown / symlink its host's
+    /// own file system performs — none on a Windows host, all on Unix.
+    #[tokio::test]
+    async fn initialize_advertises_host_file_attribute_ops() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        let supported = cfg!(unix);
+        assert_eq!(
+            result["result"]["capabilities"]["hostFileAttributeOps"],
+            json!({ "permissions": supported, "owner": supported, "symlink": supported })
+        );
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────

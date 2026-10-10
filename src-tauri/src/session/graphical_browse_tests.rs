@@ -439,3 +439,52 @@ async fn a_cancelled_side_channel_download_stops() {
         TransferStateTag::Cancelled
     );
 }
+
+/// An agent that answers no request and reports `host_ops` as its host's
+/// chmod / chown / symlink support (#4601).
+struct HostOpsAgent(Option<termihub_core::files::FileAttributeOps>);
+
+impl AgentRequests for HostOpsAgent {
+    fn request(
+        &self,
+        _agent_id: &str,
+        method: &str,
+        _params: Value,
+    ) -> Result<Value, termihub_core::errors::FileError> {
+        Err(termihub_core::errors::FileError::OperationFailed(format!(
+            "unexpected {method}"
+        )))
+    }
+
+    fn host_file_attribute_ops(
+        &self,
+        _agent_id: &str,
+    ) -> Option<termihub_core::files::FileAttributeOps> {
+        self.0
+    }
+}
+
+fn host_ops_files(host_ops: Option<termihub_core::files::FileAttributeOps>) -> AgentHostFiles {
+    AgentHostFiles::new("agent-1".to_string(), Arc::new(HostOpsAgent(host_ops)))
+}
+
+/// A Windows agent host reports no chmod / chown / symlink (#4601), so its
+/// remote-desktop file channel offers none instead of failing on use.
+#[test]
+fn agent_host_files_offer_what_the_agent_host_reports() {
+    use termihub_core::files::FileAttributeOps;
+    let windows = host_ops_files(Some(FileAttributeOps::NONE));
+    assert_eq!(windows.attribute_ops(), FileAttributeOps::NONE);
+    let unix = host_ops_files(Some(FileAttributeOps::ALL));
+    assert_eq!(unix.attribute_ops(), FileAttributeOps::ALL);
+}
+
+/// An older agent reports nothing: the agent host keeps all three, as before
+/// #4601.
+#[test]
+fn agent_host_files_on_an_older_agent_offer_all_attribute_ops() {
+    assert_eq!(
+        host_ops_files(None).attribute_ops(),
+        termihub_core::files::FileAttributeOps::ALL
+    );
+}
