@@ -268,6 +268,10 @@ windows-sys = { version = "0.59", features = [
     # The plugin bridge checks a socket's provider hands out kernel (IFS)
     # handles before duplicating it into a runner (#4219).
     "Win32_Networking_WinSock",
+    # The plugin filesystem bridge opens with `FILE_FLAG_OPEN_REPARSE_POINT` and
+    # re-verifies the handle's final path (`GetFinalPathNameByHandleW`) is under
+    # the canonical root (#4391).
+    "Win32_Storage_FileSystem",
 ] }
 # Read Git for Windows' `InstallPath` from HKLM/HKCU\SOFTWARE\GitForWindows so
 # Git Bash is discoverable regardless of install location — see
