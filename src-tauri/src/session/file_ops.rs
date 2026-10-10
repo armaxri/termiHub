@@ -513,10 +513,7 @@ impl BrowserHandle {
     /// The file browser this handle holds.
     fn browser(&self) -> Result<&dyn FileBrowser, TerminalError> {
         match self {
-            Self::Session(handle) => handle
-                .connection
-                .file_browser()
-                .ok_or_else(no_file_browser),
+            Self::Session(handle) => handle.connection.file_browser().ok_or_else(no_file_browser),
             Self::SideChannel(browser) => Ok(browser.as_ref()),
         }
     }
