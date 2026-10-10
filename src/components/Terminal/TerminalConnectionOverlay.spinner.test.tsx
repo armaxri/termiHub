@@ -96,6 +96,10 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       return container.querySelector(".ui-content-overlay__heading");
     }
 
+    function liveRegion() {
+      return container.querySelector("[data-testid='content-overlay-live']");
+    }
+
     it("reduced motion: static spinner sits beside a steady, announced 'Connecting…' label", async () => {
       motion = mockReducedMotion(true);
       await renderConnecting();
@@ -103,11 +107,45 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       expect(spinner?.className).toContain("motion-essential-spinner");
       const label = statusLabel();
       expect(label?.textContent).toBe("Connecting…");
-      expect(label?.getAttribute("role")).toBe("status");
-      expect(label?.getAttribute("aria-live")).toBe("polite");
+      // #4512: the steady label is announced by the overlay's always-mounted
+      // polite live region (mounted empty, then filled); the heading itself
+      // carries no live attributes, so the state is spoken exactly once.
+      expect(label?.getAttribute("role")).toBeNull();
+      expect(label?.getAttribute("aria-live")).toBeNull();
+      const region = liveRegion();
+      expect(region?.getAttribute("role")).toBe("status");
+      expect(region?.getAttribute("aria-live")).toBe("polite");
+      expect(region?.textContent).toBe("Connecting… my-server");
       // Adjacent: the label is the spinner's next sibling in the overlay body.
       expect(spinner?.nextElementSibling).toBe(label);
       expect(label?.parentElement?.getAttribute("aria-busy")).toBe("true");
+    });
+
+    it("the steady label does not re-announce on every render", async () => {
+      motion = mockReducedMotion(true);
+      await renderConnecting();
+      const mutations: MutationRecord[] = [];
+      const observer = new MutationObserver((recs) => mutations.push(...recs));
+      observer.observe(liveRegion() as HTMLElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      for (let i = 0; i < 3; i++) {
+        act(() => {
+          root.render(
+            <TerminalConnectionOverlay
+              tabId={TAB_ID}
+              panelId={PANEL_ID}
+              tabTitle="my-server"
+              isVisible={true}
+            />
+          );
+        });
+      }
+      await flushSessionRegion();
+      observer.disconnect();
+      expect(mutations).toHaveLength(0);
     });
 
     it("full motion: renders the same spinner and label (nothing changes)", async () => {

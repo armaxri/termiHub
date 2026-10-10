@@ -16,7 +16,9 @@ import {
   disconnected,
   failed,
   flushSessionRegion,
+  idleReconnect,
   installSessionLifecycleHarness,
+  reconnecting,
   sessionLost,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { ProjectedSessionLifecycle } from "@/store/sessionBridge";
@@ -80,6 +82,32 @@ describe("TerminalDisconnectOverlay announcements (#4331)", () => {
     await renderWith(disconnected("unexpected"), true);
     expect(liveRegion()?.getAttribute("role")).toBe("status");
     expect(liveRegion()?.textContent).toContain("Session disconnected.");
+  });
+
+  it("announces the busy reconnecting state politely through the live region (#4512)", async () => {
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((recs) => records.push(...recs));
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    await renderWith(reconnecting(idleReconnect()), true);
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+    const region = liveRegion();
+    expect(region?.getAttribute("role")).toBe("status");
+    expect(region?.textContent).toBe(
+      "Reconnecting… Connection lost. Attempting to reconnect automatically."
+    );
+    // The region was in the document before its text arrived.
+    expect(
+      records.some((r) => r.target === region && r.type === "childList" && r.addedNodes.length > 0)
+    ).toBe(true);
+    // The heading no longer announces itself, so nothing is spoken twice.
+    const heading = container.querySelector(".ui-content-overlay__heading");
+    expect(heading?.textContent).toBe("Reconnecting…");
+    expect(heading?.getAttribute("role")).toBeNull();
+    expect(heading?.getAttribute("aria-live")).toBeNull();
+    expect(container.querySelectorAll("[role='status'], [role='alert'], [aria-live]")).toHaveLength(
+      1
+    );
   });
 
   it("describes the failure body by its error message", async () => {
