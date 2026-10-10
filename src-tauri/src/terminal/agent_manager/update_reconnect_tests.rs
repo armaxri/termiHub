@@ -505,19 +505,16 @@ async fn no_live_connection_to_suspend_reports_failed() {
 
 // ── A manual connect during an attempt (#4621) ───────────────────────
 
+/// A boxed update-reconnect attempt future.
+type AttemptFuture =
+    std::pin::Pin<Box<dyn Future<Output = Result<Option<AgentCapabilities>, String>> + Send>>;
+
 /// A scripted, slow connect attempt that holds the agent's real connect
 /// reservation, as the agent's own connect does: it takes 60 s, unless its
 /// connect is cancelled, which aborts it at once.
 fn slow_reserving_attempt(
     manager: &Arc<AgentConnectionManager<tauri::test::MockRuntime>>,
-) -> impl Fn(
-    String,
-    RetainedAgentConfig,
-) -> std::pin::Pin<
-    Box<dyn Future<Output = Result<Option<AgentCapabilities>, String>> + Send>,
-> + Send
-       + Sync
-       + 'static {
+) -> impl Fn(String, RetainedAgentConfig) -> AttemptFuture + Send + Sync + 'static {
     let manager = Arc::clone(manager);
     move |agent_id, _| {
         let manager = Arc::clone(&manager);
