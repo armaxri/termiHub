@@ -427,6 +427,14 @@ pub(crate) trait AgentRequests: Send + Sync {
     fn host_file_attribute_ops(&self, _agent_id: &str) -> Option<FileAttributeOps> {
         None
     }
+
+    /// Whether the agent performs an exclusive create on its host's own file
+    /// system (`capabilities.fileCreateNew`, protocol 0.30.0, #4433). `false`
+    /// when the agent is older or not connected: such an agent would ignore
+    /// `create_new` and truncate, so it is never sent one.
+    fn supports_file_create_new(&self, _agent_id: &str) -> bool {
+        false
+    }
 }
 
 impl AgentRequests for Arc<dyn AgentRpcClient> {
@@ -437,6 +445,11 @@ impl AgentRequests for Arc<dyn AgentRpcClient> {
     fn host_file_attribute_ops(&self, agent_id: &str) -> Option<FileAttributeOps> {
         self.get_capabilities(agent_id)
             .and_then(|caps| caps.host_file_attribute_ops)
+    }
+
+    fn supports_file_create_new(&self, agent_id: &str) -> bool {
+        self.get_capabilities(agent_id)
+            .is_some_and(|caps| caps.file_create_new)
     }
 }
 
@@ -528,6 +541,7 @@ impl RangedFileAccess for AgentHostFiles {
                 path: path.to_string(),
                 offset,
                 data: base64::engine::general_purpose::STANDARD.encode(data),
+                create_new: false,
             },
         )
         .await
@@ -581,11 +595,35 @@ impl UploadDestination for AgentHostFiles {
         .map_err(|e| e.to_string())
     }
 
-    /// The agent's `connection.files.*` service has no exclusive create yet:
-    /// its first `write_range` slice creates or truncates the file, so the
-    /// strict probe above is what keeps an existing file safe.
-    async fn claim_new_file(&self, _path: &str) -> Result<Claim, String> {
-        Ok(Claim::Unsupported)
+    /// An empty `write_range` with `create_new` (protocol 0.30.0, #4433): the
+    /// agent creates the file only if nothing holds the name, so the upload
+    /// then only ever writes the file it created. An agent that does not
+    /// advertise `fileCreateNew` is never sent the flag — it would ignore it
+    /// and truncate — and keeps [`Claim::Unsupported`], as does one that
+    /// answers "method not found" or "not supported"; the strict probe is
+    /// then what keeps an existing file safe.
+    async fn claim_new_file(&self, path: &str) -> Result<Claim, String> {
+        if !self.agents.supports_file_create_new(&self.agent_id) {
+            return Ok(Claim::Unsupported);
+        }
+        let created = self
+            .call(
+                CONNECTION_FILES_WRITE_RANGE,
+                FilesWriteRangeParams {
+                    connection_id: None,
+                    path: path.to_string(),
+                    offset: 0,
+                    data: String::new(),
+                    create_new: true,
+                },
+            )
+            .await;
+        match created {
+            Ok(_) => Ok(Claim::Claimed),
+            Err(FileError::AlreadyExists(_)) => Ok(Claim::Exists),
+            Err(FileError::NotSupported) => Ok(Claim::Unsupported),
+            Err(e) => settle_exclusive_create(self, path, Err(e.to_string())).await,
+        }
     }
 }
 

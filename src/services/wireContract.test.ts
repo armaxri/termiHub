@@ -197,6 +197,7 @@ describe("wire contract: agent connect / definitions", () => {
       owner: false,
       symlink: false,
     });
+    expect(result.capabilities.fileCreateNew).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local Shell",
@@ -217,6 +218,7 @@ describe("wire contract: agent connect / definitions", () => {
       "connectionTypes",
       "dockerAvailable",
       "embeddedServerActivity",
+      "fileCreateNew",
       "fileRanges",
       "maxSessions",
       "monitoringSupported",
@@ -230,6 +232,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.availableShells).toEqual([]);
     expect(result.capabilities.dockerAvailable).toBe(false);
     expect(result.capabilities.agentVersion).toBe("");
+    // #4433: an older agent never gets an exclusive create.
+    expect(result.capabilities.fileCreateNew).toBe(false);
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {

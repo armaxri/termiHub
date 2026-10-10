@@ -31,6 +31,7 @@
       ],
       "dockerAvailable": true,
       "embeddedServerActivity": false,
+      "fileCreateNew": true,
       "fileRanges": false,
       "hostFileAttributeOps": {
         "owner": false,
@@ -58,6 +59,7 @@
       "connectionTypes": [],
       "dockerAvailable": false,
       "embeddedServerActivity": false,
+      "fileCreateNew": false,
       "fileRanges": false,
       "maxSessions": 4,
       "monitoringSupported": false,
