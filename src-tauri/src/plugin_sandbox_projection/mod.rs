@@ -36,7 +36,9 @@
 //! runner crashing, being respawned or reaped, a bridge denial). Rather than
 //! threading a projector through the host, a small publisher re-snapshots the
 //! host every [`PUBLISH_INTERVAL`]; the projector emits a diff only when the
-//! view actually changed, so an idle app sends nothing. There are no intents:
+//! view actually changed, so an idle app sends nothing. The publisher is an
+//! app-lifetime loop owned by `AppTasks` (ARCH-007): shutdown cancels it and
+//! waits for its thread to finish (#4373). There are no intents:
 //! every action (trust, revoke, re-enable) goes through the plugin commands,
 //! whose effect shows up in the next snapshot.
 
@@ -50,6 +52,7 @@ use tauri::{AppHandle, Manager};
 use termihub_core::plugin::sandbox::PluginSandboxStatus;
 use termihub_core::plugin::PluginHost;
 
+use crate::app_tasks::AppTasks;
 use crate::commands::projection::ProjectionState;
 
 /// The shared region id.
@@ -104,19 +107,57 @@ pub fn seed(app: &AppHandle, projection: &ProjectionState) {
     }
 }
 
-/// Start the background publisher (see the module docs). It runs for the
-/// app's lifetime; publishing is cheap and emits nothing while nothing
-/// changes.
+/// Start the background publisher (see the module docs) as an app-lifetime
+/// task owned by [`AppTasks`] (ARCH-007, #4373): it runs until shutdown
+/// cancels the app token, and teardown waits for it. Publishing is cheap and
+/// emits nothing while nothing changes.
 pub fn start_publisher(app: AppHandle) {
-    let spawned = std::thread::Builder::new()
-        .name("plugin-sandbox-projection".to_owned())
-        .spawn(move || loop {
-            std::thread::sleep(PUBLISH_INTERVAL);
-            publish(&app);
-        });
-    if let Err(e) = spawned {
+    let tasks = AppTasks::for_app(&app);
+    if let Err(e) = spawn_publisher(&tasks, PUBLISH_INTERVAL, move || publish(&app)) {
         tracing::warn!("could not start the plugin-sandbox publisher: {e}");
     }
+}
+
+/// Run `publish` every `interval` on a dedicated thread registered with
+/// `tasks`, until `tasks` is cancelled.
+///
+/// Snapshotting the host takes its locks, so the loop stays off the shared
+/// async runtime: it follows the [`AppTasks`] contract for loops on a
+/// dedicated thread — a [`TaskTracker::token`](tokio_util::task::TaskTracker::token)
+/// held for the thread's lifetime (so [`AppTasks::shutdown`] awaits it) and a
+/// child of the app's cancellation token as its stop signal, observed by a
+/// small current-thread runtime that drives the interval.
+fn spawn_publisher(
+    tasks: &AppTasks,
+    interval: Duration,
+    mut publish: impl FnMut() + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    let tracked = tasks.tracker().token();
+    let cancel = tasks.cancellation_token().child_token();
+    std::thread::Builder::new()
+        .name("plugin-sandbox-projection".to_owned())
+        .spawn(move || {
+            // Dropped when the thread ends, which is what lets shutdown finish.
+            let _tracked = tracked;
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(e) => {
+                    tracing::warn!("plugin-sandbox publisher has no runtime: {e}");
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                loop {
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        () = tokio::time::sleep(interval) => publish(),
+                    }
+                }
+            });
+        })
 }
 
 #[cfg(test)]
