@@ -134,7 +134,7 @@ pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateIn
     let available = latest > running;
 
     let body = release.body.unwrap_or_default();
-    let is_security = body.contains("<!-- security -->");
+    let is_security = is_security_release(&body);
 
     Ok(UpdateInfo {
         available,
@@ -143,6 +143,31 @@ pub async fn fetch_update_info(running_version: &str) -> anyhow::Result<UpdateIn
         release_notes: body,
         is_security,
     })
+}
+
+/// The self-update security marker the release pipeline emits
+/// (`scripts/internal/emit-release-notes.mjs` exports the same string as
+/// `SECURITY_MARKER`). Keep in sync.
+const SECURITY_MARKER: &str = "<!-- security -->";
+
+/// Whether a release body carries the pipeline-emitted security marker.
+///
+/// The marker only counts when it is anchored: either at the very start of the
+/// body (after an optional BOM and leading whitespace) or alone on its own line,
+/// which is how `emit-release-notes.mjs` emits it. A marker quoted inline in
+/// release-note prose (e.g. a changelog entry describing the feature) does NOT
+/// make a release a security release (#4389). CRLF line endings are tolerated.
+///
+/// Mirrors `isSecurityMarked` in `scripts/internal/emit-release-notes.mjs`; both
+/// are pinned by the shared cases in
+/// `scripts/internal/security-marker-cases.json`.
+fn is_security_release(body: &str) -> bool {
+    // JS `trim()` also strips U+FEFF; match it so both sides agree on a BOM.
+    let is_space = |c: char| c.is_whitespace() || c == '\u{feff}';
+    if body.trim_start_matches(is_space).starts_with(SECURITY_MARKER) {
+        return true;
+    }
+    body.lines().any(|line| line.trim_matches(is_space) == SECURITY_MARKER)
 }
 
 /// Return the current UTC time as an ISO 8601 string.
@@ -373,7 +398,7 @@ mod tests {
         let running_v = parse_tag(running).unwrap();
         let available = latest > running_v;
         let body = release.body.unwrap_or_default();
-        let is_security = body.contains("<!-- security -->");
+        let is_security = is_security_release(&body);
         UpdateInfo {
             available,
             latest_version: latest.to_string(),
@@ -412,6 +437,59 @@ mod tests {
         let info = detect_from_json("0.1.0", &json);
         assert!(info.available);
         assert!(info.is_security);
+    }
+
+    #[test]
+    fn inline_quoted_marker_is_not_a_security_release() {
+        // The CHANGELOG update-checker entry quotes the marker in prose (#4389).
+        let body = "### Added\n\n- Update checker: Security releases (marked \
+                    `<!-- security -->` in the release notes) show a red dot.";
+        let info = detect_from_json("0.1.0", &make_release_json("v0.2.0", false, body));
+        assert!(info.available);
+        assert!(!info.is_security);
+    }
+
+    #[test]
+    fn pipeline_emitted_marker_is_a_security_release() {
+        // Exactly what emit-release-notes.mjs prepends.
+        let body = "<!-- security -->\n\n### Security\n\n- patched a CVE";
+        let info = detect_from_json("0.1.0", &make_release_json("v0.1.1", false, body));
+        assert!(info.is_security);
+    }
+
+    #[test]
+    fn security_marker_tolerates_crlf_and_bom() {
+        assert!(is_security_release(
+            "<!-- security -->\r\n\r\n### Security\r\n"
+        ));
+        assert!(is_security_release("\u{feff}<!-- security -->\n\nnotes"));
+        assert!(is_security_release("### Security\r\n<!-- security -->\r\nmore"));
+        assert!(!is_security_release(
+            "- see `<!-- security -->` docs\r\n"
+        ));
+    }
+
+    /// One case of the contract shared with emit-release-notes.test.mjs.
+    #[derive(Deserialize)]
+    struct MarkerCase {
+        name: String,
+        body: String,
+        marked: bool,
+    }
+
+    #[test]
+    fn security_marker_matches_shared_contract_cases() {
+        let raw = include_str!("../../../scripts/internal/security-marker-cases.json");
+        let cases: Vec<MarkerCase> = serde_json::from_str(raw).unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            assert_eq!(
+                is_security_release(&case.body),
+                case.marked,
+                "shared marker case {:?}",
+                case.name
+            );
+        }
     }
 
     #[test]

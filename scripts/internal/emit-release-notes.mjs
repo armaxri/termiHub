@@ -3,7 +3,9 @@
 //
 // The in-app self-update check (src-tauri/src/commands/update.rs) decides a
 // GitHub release is a *security* update by testing whether the release body
-// `.contains("<!-- security -->")`; when it does, the update notification drops
+// carries an anchored "<!-- security -->" marker — at the start of the body or
+// alone on its own line, never quoted inline in prose (#4389); when it does, the
+// update notification drops
 // the "Skip this version" action so the patch cannot be suppressed. Nothing in
 // the release pipeline used to emit that marker, so security releases never
 // actually triggered the bypass (#1878).
@@ -21,8 +23,34 @@
 import { readFileSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
 
-/** The exact string src-tauri/src/commands/update.rs greps for. Keep in sync. */
+/** The exact string src-tauri/src/commands/update.rs looks for. Keep in sync. */
 export const SECURITY_MARKER = "<!-- security -->";
+
+/**
+ * Does the release body carry the pipeline-emitted security marker?
+ *
+ * The marker only counts when anchored: at the very start of the body (after an
+ * optional BOM and leading whitespace) or alone on its own line — exactly how
+ * {@link buildReleaseNotes} emits it. A marker quoted inline in release-note
+ * prose (e.g. the CHANGELOG entry describing the update checker) does not count
+ * (#4389). CRLF line endings are tolerated.
+ *
+ * Mirrors `is_security_release` in src-tauri/src/commands/update.rs; both are
+ * pinned by the shared cases in security-marker-cases.json.
+ *
+ * @param {unknown} notes - Release notes / release body.
+ * @returns {boolean} True when an anchored marker is present.
+ */
+export function isSecurityMarked(notes) {
+  if (typeof notes !== "string") {
+    return false;
+  }
+  // `trim()` strips U+FEFF too, so a leading BOM is ignored.
+  if (notes.trimStart().startsWith(SECURITY_MARKER)) {
+    return true;
+  }
+  return notes.split(/\r?\n/).some((line) => line.trim() === SECURITY_MARKER);
+}
 
 /**
  * A Keep a Changelog "Security" category heading (`## Security` … `#### Security`),
@@ -53,7 +81,7 @@ export function hasSecuritySection(notes) {
  */
 export function buildReleaseNotes(notes, { force = false } = {}) {
   const body = typeof notes === "string" ? notes : "";
-  if (body.includes(SECURITY_MARKER)) {
+  if (isSecurityMarked(body)) {
     return body;
   }
   if (!force && !hasSecuritySection(body)) {
