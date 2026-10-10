@@ -630,10 +630,10 @@ impl ConnectionType for Telnet {
     ///
     /// On Unix a `shutdown` wakes a thread blocked in `send` on that socket,
     /// which then fails (`EPIPE`). Windows does not promise to abort a
-    /// blocking `send` that is already pending; there the socket's
-    /// [`WRITE_TIMEOUT`] bounds the write instead. Either way the reader
-    /// thread sees the shutdown and stops, and the peer sees the connection
-    /// close.
+    /// blocking `send` that is already pending; there the socket's write
+    /// timeout (`WRITE_TIMEOUT`) bounds the write instead. Either way the
+    /// reader thread sees the shutdown and stops, and the peer sees the
+    /// connection close.
     fn interrupt_io(&self) {
         if let Some(state) = self.state.as_ref() {
             state.alive.store(false, Ordering::SeqCst);
