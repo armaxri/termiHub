@@ -4333,6 +4333,9 @@ mod close_ownership;
 // One stalled session must not freeze the others (#4300).
 mod blocking_io;
 
+// A slow file operation must not freeze the other sessions (#4393).
+mod file_ops_lock;
+
 /// Frontend flow control reaches the output reader (PERF2-002, #4307).
 mod output_flow;
 
