@@ -37,9 +37,10 @@ use crate::errors::SessionError;
 use tracing::{debug, info};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, handle_attempt_error, local_fingerprint,
-    local_size, rehydrate_start_offset, settle_attempt, stop_reason, AttemptOutcome,
-    AttemptsResult, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    local_fingerprint, local_size, probe_timed_out, rehydrate_start_offset, settle_attempt,
+    stop_reason, AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor,
+    StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::retry::SourceFingerprint;
@@ -171,10 +172,23 @@ async fn run_attempts(
         attempt += 1;
         handle.set_attempt(attempt);
 
-        let endpoints = match probe_endpoints(config, direction, remote_path, local_path).await {
+        // The probe is cancel-aware and bounded (#4672): a dead server cannot
+        // park the attempt outside the stall watchdog.
+        let probe = probe_endpoints(config, direction, remote_path, local_path);
+        let probed = match guard_probe(probe, handle, STALL_TIMEOUT).await {
+            Probed::Done(probed) => probed.map_err(FtpTransferError::Session),
+            Probed::Cancelled => {
+                handle.transition(TransferEvent::Cancel);
+                return AttemptsResult::Cancelled;
+            }
+            Probed::TimedOut => Err(FtpTransferError::Stalled(probe_timed_out(
+                "probe FTP server",
+                STALL_TIMEOUT,
+            ))),
+        };
+        let endpoints = match probed {
             Ok(endpoints) => endpoints,
             Err(e) => {
-                let e = FtpTransferError::Session(e);
                 if let Some(outcome) =
                     handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
                 {
@@ -275,10 +289,19 @@ pub async fn run_ftp_transfer(
 ) {
     // Establish the source identity + total up front so progress/ETA are
     // meaningful and a later resume can detect a changed source.
-    let baseline = match probe_endpoints(&config, direction, &remote_path, &local_path).await {
-        Ok(endpoints) => endpoints.source,
-        Err(e) => {
+    // The probe is cancel-aware and bounded (#4672): a cancel or a dead server
+    // leaves the source unknown and falls through to `drive_transfer`, which
+    // settles a cancel exactly once.
+    let probe = probe_endpoints(&config, direction, &remote_path, &local_path);
+    let baseline = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
+        Probed::Done(Ok(endpoints)) => endpoints.source,
+        Probed::Done(Err(e)) => {
             debug!(error = %e, "FTP probe failed before the transfer; source unknown");
+            None
+        }
+        Probed::Cancelled => None,
+        Probed::TimedOut => {
+            debug!("FTP probe timed out before the transfer; source unknown");
             None
         }
     };
