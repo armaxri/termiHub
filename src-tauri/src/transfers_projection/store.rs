@@ -19,7 +19,7 @@
 //! (`src-tauri/src/files/transfer`) that produces the `transfer-progress` events —
 //! nor the per-window ownership scoping of a transfer (#1951 / #1964), which is
 //! frontend presentation. The store learns of a transfer only through the
-//! `seed` / `progress` / `reconcile` folds the frontend already drives.
+//! `seed` / `progress` folds (the engine folds progress server-side, #2387).
 //!
 //! # Shared — Open Design Decision #4 / #6
 //!
@@ -63,19 +63,6 @@ pub enum TransferQueueState {
     Completed,
     Failed,
     Cancelled,
-}
-
-impl TransferQueueState {
-    /// The terminal states — a transfer in one of these will not move on its own
-    /// (mirrors `isTerminalTransferState` / `TERMINAL_TRANSFER_STATES`).
-    pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            TransferQueueState::Completed
-                | TransferQueueState::Failed
-                | TransferQueueState::Cancelled
-        )
-    }
 }
 
 /// The legacy `transfer-progress` lifecycle phase (#1245), mapped to a
@@ -287,11 +274,16 @@ impl From<&crate::files::transfer::TransferProgress> for TransferProgress {
     }
 }
 
-/// A snapshot of one queued transfer from `transfer_list`, mirroring the frontend
-/// `TransferSnapshot` — the reconcile backstop (#1645 / #1657).
-#[derive(Deserialize, Clone, Debug)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+/// A snapshot of one queued transfer from `transfer_list` — the wire shape the
+/// frontend reads. The Rust twin is compiled only in tests (#4387): it exports
+/// this type and pins that the wire JSON decodes into it (`ipc_wire_fixtures`).
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "decode-only wire mirror; fields are checked by serde, not read"
+)]
+#[derive(Deserialize, Clone, Debug, ts_rs::TS)]
+#[ts(export, export_to = "../../src/types/generated/")]
 #[serde(rename_all = "camelCase")]
 pub struct TransferSnapshot {
     pub transfer_id: String,
@@ -302,8 +294,8 @@ pub struct TransferSnapshot {
     #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
     pub state: TransferQueueState,
-    /// Whether this is a genuinely settled outcome the reconcile may fold into a
-    /// stuck row (#1657) — stricter than [`TransferQueueState::is_terminal`].
+    /// Whether this is a genuinely settled outcome (#1657) — stricter than a
+    /// terminal `state` (a mid-auto-retry failure is terminal but unsettled).
     pub settled: bool,
     #[cfg_attr(test, ts(type = "number"))]
     pub transferred: u64,
@@ -519,58 +511,6 @@ impl TransferEntry {
             _ => prev.speed_bytes_per_sec,
         }
     }
-
-    /// Fold a `transfer_list` snapshot into an entry, settling a stuck row to its
-    /// true terminal state (mirror of `transferEntryFromSnapshot`). `prev` is the
-    /// row being settled; its path / retry counters / error are preserved where
-    /// the snapshot does not supply them.
-    fn from_snapshot(snapshot: &TransferSnapshot, prev: Option<&TransferEntry>, now: u64) -> Self {
-        let total_bytes =
-            total_or_none(snapshot.total).or_else(|| prev.and_then(|p| p.total_bytes));
-        let state = snapshot.state;
-        let percent = derive_percent(state, snapshot.transferred, total_bytes);
-        let speed_bytes_per_sec = (snapshot.speed > 0).then_some(snapshot.speed);
-        let eta_seconds = derive_eta(
-            state,
-            snapshot.transferred,
-            total_bytes,
-            speed_bytes_per_sec,
-            None,
-            None,
-        );
-
-        Self {
-            id: snapshot.transfer_id.clone(),
-            session_id: snapshot.session_id.clone(),
-            direction: snapshot.direction,
-            name: snapshot.file_name.clone(),
-            path: snapshot
-                .path
-                .clone()
-                .or_else(|| prev.and_then(|p| p.path.clone())),
-            state,
-            transferred: snapshot.transferred,
-            total_bytes,
-            percent,
-            speed_bytes_per_sec,
-            eta_seconds,
-            error: if state == TransferQueueState::Failed {
-                Some(
-                    prev.and_then(|p| p.error.clone())
-                        .unwrap_or_else(|| "Transfer failed".to_string()),
-                )
-            } else {
-                None
-            },
-            attempt: (snapshot.attempt != 0)
-                .then_some(snapshot.attempt)
-                .or_else(|| prev.and_then(|p| p.attempt)),
-            max_attempts: (snapshot.max_attempts != 0)
-                .then_some(snapshot.max_attempts)
-                .or_else(|| prev.and_then(|p| p.max_attempts)),
-            updated_at: now,
-        }
-    }
 }
 
 /// The private mutable core: the per-transfer queue map plus the panel-minimized
@@ -651,28 +591,6 @@ impl TransferStore {
         let entry = TransferEntry::from_progress(progress, prev.as_ref(), now);
         inner.dirty_queue.insert(entry.id.clone());
         inner.queue.insert(entry.id.clone(), entry);
-    }
-
-    /// `transfer.reconcile` — settle stuck non-terminal rows against a
-    /// `transfer_list` snapshot (mirrors `reconcileTransferQueue`). Only a
-    /// genuinely settled terminal snapshot for an existing, still-live row folds;
-    /// events own live progress, so this never regresses an event-advanced row.
-    pub fn reconcile(&self, snapshots: &[TransferSnapshot], now: u64) {
-        let mut inner = self.lock();
-        for snap in snapshots {
-            if !snap.settled || !snap.state.is_terminal() {
-                continue;
-            }
-            let Some(prev) = inner.queue.get(&snap.transfer_id) else {
-                continue;
-            };
-            if prev.state.is_terminal() {
-                continue;
-            }
-            let settled = TransferEntry::from_snapshot(snap, Some(prev), now);
-            inner.dirty_queue.insert(snap.transfer_id.clone());
-            inner.queue.insert(snap.transfer_id.clone(), settled);
-        }
     }
 
     /// `transfer.remove` — drop one queue row (mirrors `removeTransfer`).

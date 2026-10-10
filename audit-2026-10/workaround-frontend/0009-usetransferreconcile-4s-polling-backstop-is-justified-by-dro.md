@@ -15,8 +15,8 @@ evidence:
   - src/store/transfersBridge.ts:234
   - src-tauri/src/files/transfer/mod.rs:112
   - src-tauri/src/files/transfer/relaunch.rs:968
-status: open
-resolution: ""
+status: fixed
+resolution: "#4387 — audited every termination path; gated late seeds on a live handle; poll and reconcile route retired"
 audit: 2026-10
 commit: 663465d52
 relation: new
