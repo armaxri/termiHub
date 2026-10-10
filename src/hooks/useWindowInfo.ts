@@ -6,6 +6,7 @@ import { windowDisplayName } from "@/utils/windowPicker";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { subscribeGuarded } from "@/hooks/useTauriListener";
 
 /** The current window's identity and the live count of open windows (#1902). */
 export interface WindowInfoState {
@@ -53,13 +54,18 @@ export function useWindowInfo(): WindowInfoState {
 
     void refresh();
 
-    const unlistenPromise = listen<void>("windows-changed", () => {
-      void refresh();
-    });
+    const dispose = subscribeGuarded(
+      () =>
+        listen<void>("windows-changed", () => {
+          void refresh();
+        }),
+      "multi_window",
+      '"windows-changed"'
+    );
 
     return () => {
       active = false;
-      void unlistenPromise.then((fn) => fn());
+      dispose();
     };
   }, []);
 

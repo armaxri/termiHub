@@ -44,7 +44,7 @@ import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSupers
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useInterruptedFolderPastes } from "@/hooks/useInterruptedFolderPastes";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
-import { useTauriListener } from "@/hooks/useTauriListener";
+import { subscribeGuarded, useTauriListener } from "@/hooks/useTauriListener";
 import { usePluginEvents } from "@/hooks/usePluginEvents";
 import { useScheduledRuns } from "@/hooks/useScheduledRuns";
 import { usePluginUpdateSchedule } from "@/hooks/usePluginUpdateSchedule";
@@ -207,11 +207,14 @@ function App() {
       // the main window here so the aggregated session is re-persisted with that
       // window's latest slice.
       if (disposed) return;
-      const off = await listen<void>("window-layout-changed", () => {
-        useAppStore.getState().scheduleLastSessionSave();
-      });
-      if (disposed) off();
-      else unlistenLayoutChanged = off;
+      unlistenLayoutChanged = subscribeGuarded(
+        () =>
+          listen<void>("window-layout-changed", () => {
+            useAppStore.getState().scheduleLastSessionSave();
+          }),
+        "app",
+        '"window-layout-changed"'
+      );
     })();
 
     return () => {
@@ -225,16 +228,20 @@ function App() {
   // in a parallel instance (add, delete, rename) are immediately visible here.
   // Uses the versioned reload guard so a stale focus reload cannot override a
   // more recent mutation's correction.
-  useEffect(() => {
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        useAppStore.getState().reloadConnectionsFromBackend();
-      }
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
+  useEffect(
+    () =>
+      subscribeGuarded(
+        () =>
+          getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+            if (focused) {
+              useAppStore.getState().reloadConnectionsFromBackend();
+            }
+          }),
+        "app",
+        "window focus changes"
+      ),
+    []
+  );
 
   // Reload connections when another running instance modifies connections.json.
   // The backend polls the file's mtime every second and emits this event on change.
@@ -246,25 +253,22 @@ function App() {
 
   // Per-workspace settings (PROD-052): follow the backend's active workspace so a
   // workspace switch (from any window) applies its theme / font overrides live.
-  useEffect(() => {
-    const unlistenPromise = initActiveWorkspaceSync();
-    return () => {
-      void unlistenPromise.then((fn) => fn());
-    };
-  }, []);
+  useEffect(() => subscribeGuarded(initActiveWorkspaceSync, "app", "active workspace changes"), []);
 
   // A second launch with `--workspace` / `--workspace-file` is forwarded to this
   // running instance (#3101); launch it as if it had been passed at startup. Only
   // the main window acts, so a multi-window app opens it once.
   useEffect(() => {
     if (getCurrentWindow().label !== MAIN_WINDOW_LABEL) return;
-    const unlistenPromise = listen<string>(CLI_WORKSPACE_REQUESTED_EVENT, (event) => {
-      // Confirm first if the launch would end live sessions (UX2-002).
-      void launchWorkspaceByName(event.payload, { reload: true, confirmIfLive: true });
-    });
-    return () => {
-      void unlistenPromise.then((fn) => fn());
-    };
+    return subscribeGuarded(
+      () =>
+        listen<string>(CLI_WORKSPACE_REQUESTED_EVENT, (event) => {
+          // Confirm first if the launch would end live sessions (UX2-002).
+          void launchWorkspaceByName(event.payload, { reload: true, confirmIfLive: true });
+        }),
+      "app",
+      "CLI workspace requests"
+    );
   }, []);
 
   // Multi-window (#1900): a tab moved into an already-open window arrives as a
@@ -285,7 +289,7 @@ function App() {
   // window is actually destroyed.
   useEffect(() => {
     const win = getCurrentWindow();
-    const unlistenPromise = win.onCloseRequested(async (event) => {
+    const onCloseRequested = async (event: { preventDefault: () => void }) => {
       event.preventDefault();
       let others: Awaited<ReturnType<typeof listWindows>> = [];
       try {
@@ -301,10 +305,12 @@ function App() {
       }
       // "prompt": the decision dialog is up and will destroy the window on
       // resolve — do nothing here.
-    });
-    return () => {
-      void unlistenPromise.then((fn) => fn());
     };
+    return subscribeGuarded(
+      () => win.onCloseRequested(onCloseRequested),
+      "app",
+      "window close requests"
+    );
   }, []);
 
   // Schedule update check: 5-second delay on startup, then every 24 hours.

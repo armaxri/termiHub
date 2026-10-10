@@ -1,6 +1,6 @@
-import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onPluginsChanged } from "@/services/events";
+import { useTauriSubscription } from "@/hooks/useTauriListener";
 
 /**
  * Keep the store's plugin state in step with the backend plugin manager (#3344).
@@ -16,21 +16,12 @@ export function usePluginEvents(): void {
   const loadPlugins = useAppStore((s) => s.loadPlugins);
   const refreshConnectionTypes = useAppStore((s) => s.refreshConnectionTypes);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-
-    void onPluginsChanged(() => {
+  useTauriSubscription(
+    onPluginsChanged,
+    () => {
       void loadPlugins();
       void refreshConnectionTypes();
-    }).then((off) => {
-      if (disposed) off();
-      else unlisten = off;
-    });
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [loadPlugins, refreshConnectionTypes]);
+    },
+    "plugins"
+  );
 }
