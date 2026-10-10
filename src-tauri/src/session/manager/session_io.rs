@@ -19,7 +19,9 @@
 //!   under the map lock, so no new handle can be taken; it then takes the I/O
 //!   gate's write half, which waits only for handles already in flight, and
 //!   disconnects with exclusive access. When a write is stuck, close does not
-//!   wait for it: the disconnect is deferred to a background task.
+//!   wait for it: it interrupts the backend's in-flight I/O
+//!   ([`ConnectionType::interrupt_io`], #4394) so the write returns promptly,
+//!   and the disconnect is deferred to a background task that runs once it has.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -119,6 +121,13 @@ impl Drop for TurnGuard {
 /// resize still shares the connection, and `disconnect` needs exclusive access,
 /// so it is deferred to a background task that runs once the in-flight I/O
 /// returns — the caller (a tab close) is not held up by the stalled session.
+///
+/// A write can stay blocked indefinitely (a PTY whose program never reads
+/// stdin again, a telnet peer that stopped reading), which would leave the
+/// child process or socket behind the closed tab. So before deferring, the
+/// backend is told to interrupt that I/O ([`ConnectionType::interrupt_io`]:
+/// the local shell kills its child, telnet shuts its socket down), and the
+/// deferred disconnect follows as soon as the write fails (#4394).
 pub(super) async fn disconnect_removed(
     session_id: &str,
     connection: Arc<dyn ConnectionType>,
@@ -129,8 +138,9 @@ pub(super) async fn disconnect_removed(
         Err(_) => {
             info!(
                 session_id,
-                "Backend I/O still in flight; disconnect deferred until it returns"
+                "Backend I/O still in flight; interrupting it, disconnect deferred until it returns"
             );
+            connection.interrupt_io();
             let session_id = session_id.to_string();
             tokio::spawn(async move {
                 let gate = io.gate.clone().write_owned().await;
