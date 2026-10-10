@@ -125,6 +125,7 @@ fn install(
         manifest,
         state: PluginState::Installed,
         error_message: None,
+        invalid_manifest: false,
         installed_at: 0,
     }
 }
@@ -182,6 +183,7 @@ fn install_with_manifest(root: &Path, lib: &Path, id: &str, manifest_src: &str) 
         manifest,
         state: PluginState::Installed,
         error_message: None,
+        invalid_manifest: false,
         installed_at: 0,
     }
 }

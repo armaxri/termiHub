@@ -175,6 +175,15 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-detail-error"]')?.textContent).toContain(
       "dependency aws CLI not found"
     );
+    // A load failure keeps its full layout (#4578): meta line, extension
+    // points, and no invalid-manifest hint.
+    expect(container.querySelector(".plugin-detail__meta")?.textContent).toContain(
+      "v1.2.0 · by k8s-contrib"
+    );
+    expect(
+      container.querySelector('[data-testid="plugin-detail-extension-points"]')
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugin-detail-invalid-hint"]')).toBeNull();
     const btn = container.querySelector('[data-testid="plugin-action-retry"]');
     expect(btn).not.toBeNull();
     await act(async () => {
@@ -265,6 +274,7 @@ describe("PluginDetailPanel (#1997)", () => {
           },
           state: "error",
           errorMessage: reason,
+          invalidManifest: true,
           installedAt: 1767225600000,
         },
       ],
@@ -275,6 +285,16 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-detail"]')?.textContent).toContain(
       "Old Plugin"
     );
+    // #4578: no Retry (enable can only fail again), no Enable/Disable, no empty
+    // Extension Points block, and the meta line omits the absent author.
+    expect(container.querySelector('[data-testid="plugin-action-retry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-action-enable"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-action-disable"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-detail-extension-points"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-detail-meta"]')?.textContent).toBe(
+      "v1.2.3"
+    );
+    expect(container.querySelector('[data-testid="plugin-detail-invalid-hint"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="plugin-detail-error"]')?.textContent).toContain(
       reason
     );
@@ -290,6 +310,40 @@ describe("PluginDetailPanel (#1997)", () => {
       await Promise.resolve();
     });
     expect(uninstallPlugin).toHaveBeenCalledWith("old-plugin");
+  });
+
+  it("omits the meta line entirely for an invalid manifest with no readable version or author (#4578)", () => {
+    useAppStore.setState({
+      plugins: [
+        {
+          manifest: {
+            id: "old-plugin",
+            name: "old-plugin",
+            version: "",
+            author: "",
+            description: "",
+            license: "",
+            apiVersion: "",
+            platforms: [],
+            permissions: [],
+            extensions: {},
+          },
+          state: "error",
+          errorMessage: "manifest is not valid JSON",
+          invalidManifest: true,
+          installedAt: 1767225600000,
+        },
+      ],
+    });
+    render("old-plugin");
+
+    expect(container.querySelector(".plugin-detail__meta")).toBeNull();
+    expect(container.textContent).not.toContain(" · by ");
+    expect(container.querySelector('[data-testid="plugin-action-retry"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-action-uninstall"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugin-detail-error"]')?.textContent).toContain(
+      "manifest is not valid JSON"
+    );
   });
 
   describe("supported platforms (#3507)", () => {

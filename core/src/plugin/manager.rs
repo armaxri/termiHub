@@ -115,6 +115,14 @@ pub struct InstalledPlugin {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error_message: Option<String>,
+    /// `true` when the plugin is in [`PluginState::Error`] because its
+    /// `manifest.json` no longer parses or validates (#4392), as opposed to a
+    /// load failure. Such a plugin is listed under a placeholder manifest, can
+    /// never be enabled (only uninstalled), so the UI hides Retry and the empty
+    /// manifest fields for it (#4578). Omitted from the wire when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub invalid_manifest: bool,
     /// When the plugin was installed, as milliseconds since the Unix epoch.
     #[cfg_attr(test, ts(type = "number"))]
     pub installed_at: u64,
@@ -1148,6 +1156,7 @@ impl PluginManager {
             manifest,
             state: plugin_state,
             error_message,
+            invalid_manifest: false,
             installed_at,
         }
     }
@@ -1435,6 +1444,7 @@ fn invalid_plugin_from(
         manifest: invalid.manifest,
         state: PluginState::Error,
         error_message: Some(invalid.reason),
+        invalid_manifest: true,
         installed_at,
     }
 }

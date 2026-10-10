@@ -23,6 +23,14 @@ state: PluginState,
  */
 errorMessage?: string, 
 /**
+ * `true` when the plugin is in [`PluginState::Error`] because its
+ * `manifest.json` no longer parses or validates (#4392), as opposed to a
+ * load failure. Such a plugin is listed under a placeholder manifest, can
+ * never be enabled (only uninstalled), so the UI hides Retry and the empty
+ * manifest fields for it (#4578). Omitted from the wire when `false`.
+ */
+invalidManifest?: boolean, 
+/**
  * When the plugin was installed, as milliseconds since the Unix epoch.
  */
 installedAt: number, };
