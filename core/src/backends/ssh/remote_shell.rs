@@ -41,7 +41,8 @@
 //!
 //! A PowerShell login shell needs one more thing (#4148, #4604): its setup is
 //! held back until the first prompt has printed, and the user's input until
-//! the setup has run ([`SetupGate`]). Typed earlier on Linux/macOS, the setup
+//! the setup has run ([`SetupGate`]). A cmd.exe host with env or X11 setup is
+//! held the same way (#4610). Typed earlier on Linux/macOS, the setup
 //! lands in the tty while it is still in cooked mode, whose `ICRNL` turns the
 //! CR into LF — a continuation for PSReadLine, which then merges the user's
 //! first command into the setup line. On Windows, input that arrives while
@@ -176,14 +177,26 @@ pub fn line_ending(shell: RemoteShell) -> Option<&'static str> {
 }
 
 /// Whether the setup lines for `shell` must wait for its first prompt, and the
-/// user's input for the setup (see [`SetupGate`]): every PowerShell login
-/// shell. On Linux/macOS the cooked tty turns the setup's CR into LF until
-/// PSReadLine is up (#4148); on Windows input typed while `powershell.exe` is
-/// still starting can be dropped, so the first command ran without the
-/// configured environment (#4604). POSIX shells read the LF-ended lines fine
-/// from the cooked tty, and cmd.exe gets no integration line to sequence.
-pub fn defers_setup_until_prompt(shell: RemoteShell) -> bool {
-    matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell)
+/// user's input for the setup (see [`SetupGate`]). `has_setup` says whether
+/// any setup line (env fallback, X11, integration) will be typed at all.
+///
+/// - Every PowerShell login shell. On Linux/macOS the cooked tty turns the
+///   setup's CR into LF until PSReadLine is up (#4148); on Windows input typed
+///   while `powershell.exe` is still starting can be dropped, so the first
+///   command ran without the configured environment (#4604).
+/// - cmd.exe, when it has env or X11 setup to type (#4610): it starts under
+///   the same Windows ConPTY, so the same early-input window applies to its
+///   `set` line. It gets no integration line, so the gate waits for the
+///   setup's answer to settle ([`SetupDone::OutputSettled`]). A cmd.exe host
+///   with nothing to set up is left ungated, as before.
+/// - POSIX shells never: they read the LF-ended lines fine from the cooked
+///   tty, and their behaviour stays unchanged.
+pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
+    match shell {
+        RemoteShell::PowerShell | RemoteShell::UnixPowerShell => true,
+        RemoteShell::Cmd => has_setup,
+        RemoteShell::Posix | RemoteShell::Unknown => false,
+    }
 }
 
 /// Whether `name` is safe to type as an environment variable name in every
@@ -432,8 +445,8 @@ enum Phase {
     },
 }
 
-/// Sequences a PowerShell session's typed setup against the shell's startup
-/// and the user's input (#4148, #4604).
+/// Sequences a PowerShell (or cmd.exe, #4610) session's typed setup against
+/// the shell's startup and the user's input (#4148, #4604).
 ///
 /// Two races it closes:
 ///
@@ -1025,11 +1038,25 @@ mod tests {
     #[test]
     fn every_powershell_defers_its_setup() {
         for shell in ALL_SHELLS {
-            assert_eq!(
-                defers_setup_until_prompt(shell),
-                matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell),
-                "{shell:?}"
-            );
+            for has_setup in [false, true] {
+                let powershell =
+                    matches!(shell, RemoteShell::PowerShell | RemoteShell::UnixPowerShell);
+                let cmd_with_setup = shell == RemoteShell::Cmd && has_setup;
+                assert_eq!(
+                    defers_setup_until_prompt(shell, has_setup),
+                    powershell || cmd_with_setup,
+                    "{shell:?} has_setup={has_setup}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn posix_and_unknown_never_defer() {
+        // POSIX hosts stay unchanged (#4610): their setup is typed at once.
+        for has_setup in [false, true] {
+            assert!(!defers_setup_until_prompt(RemoteShell::Posix, has_setup));
+            assert!(!defers_setup_until_prompt(RemoteShell::Unknown, has_setup));
         }
     }
 
@@ -1218,5 +1245,68 @@ mod tests {
         output(&mut gate, t0, b"PS> ");
         assert_eq!(gate.poll(t0 + SETUP_GATE_SETTLE), vec![b"first\r".to_vec()]);
         assert!(!gate.is_holding());
+    }
+
+    /// #4610: the cmd.exe replay of the #4604 race. The `set` env line, the X11
+    /// `DISPLAY` line and the user's first command are all written while
+    /// `cmd.exe` is still starting under ConPTY, where early input can be
+    /// dropped. cmd.exe has no integration line (no prompt mark), so the gate
+    /// waits for the first prompt, types the setup, and releases the first
+    /// command only once the setup's answer has settled — in that order.
+    #[test]
+    fn cmd_first_command_waits_for_the_setup_to_settle() {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("V".to_string(), "x".to_string());
+        let env_line = env_setup_line(RemoteShell::Cmd, &env_vars).unwrap();
+        let x11 = x11_setup_lines(RemoteShell::Cmd, 10, None);
+        assert_eq!(integration_setup_line(RemoteShell::Cmd), None);
+
+        let t0 = Instant::now();
+        let hold = defers_setup_until_prompt(RemoteShell::Cmd, true);
+        assert!(hold, "cmd.exe with env/X11 setup is gated");
+        let mut gate = SetupGate::new(hold, SetupDone::OutputSettled, t0);
+        let mut setup = vec![env_line.clone().into_bytes()];
+        setup.extend(x11.iter().map(|l| l.clone().into_bytes()));
+        for line in &setup {
+            assert_eq!(gate.setup(line.clone()), None, "nothing typed at start");
+        }
+        assert_eq!(gate.write(b"echo FIRST-%V%\r".to_vec()), None);
+
+        // The banner prints while cmd.exe is still starting: nothing typed.
+        let banner = b"Microsoft Windows [Version 10.0.20348]\r\n";
+        assert!(output(&mut gate, t0 + ms(200), banner).is_empty());
+        assert!(gate.poll(t0 + ms(400)).is_empty());
+        // The first prompt, then quiet: the setup — only — is typed.
+        assert!(output(&mut gate, t0 + ms(450), b"\r\nC:\\Users\\u>").is_empty());
+        let t1 = t0 + ms(450) + SETUP_GATE_SETTLE;
+        assert_eq!(gate.poll(t1), setup);
+        assert!(gate.is_holding(), "the first command still waits");
+
+        // Typed but unanswered: the first command still waits.
+        assert!(gate.poll(t1 + SETUP_GATE_SETTLE * 2).is_empty());
+        // The echo of the setup and the next prompt, then quiet: released.
+        let answered = t1 + ms(30);
+        let echo = format!("{env_line}\nC:\\Users\\u>");
+        assert!(output(&mut gate, answered, echo.as_bytes()).is_empty());
+        assert_eq!(
+            gate.write(b"dir\r".to_vec()),
+            None,
+            "typeahead queues behind"
+        );
+        assert!(gate.poll(answered + SETUP_GATE_SETTLE - ms(1)).is_empty());
+        assert_eq!(
+            gate.poll(answered + SETUP_GATE_SETTLE),
+            vec![b"echo FIRST-%V%\r".to_vec(), b"dir\r".to_vec()]
+        );
+        assert!(!gate.is_holding());
+        assert_eq!(gate.write(b"cls\r".to_vec()), Some(b"cls\r".to_vec()));
+    }
+
+    #[test]
+    fn cmd_without_setup_is_not_gated() {
+        let hold = defers_setup_until_prompt(RemoteShell::Cmd, false);
+        let mut gate = SetupGate::new(hold, SetupDone::OutputSettled, Instant::now());
+        assert!(!gate.is_holding());
+        assert_eq!(gate.write(b"dir\r".to_vec()), Some(b"dir\r".to_vec()));
     }
 }
