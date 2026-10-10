@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use bollard::container::{InspectContainerOptions, ListContainersOptions};
 use support::container::{runtime_client_for, runtime_required, CleanupGuard};
+use support::fixture_env::require_reported;
 use termihub_core::backends::docker::Docker;
 use termihub_core::config::ContainerRuntime;
 use termihub_core::connection::ConnectionType;
@@ -97,14 +98,17 @@ async fn container_state(client: &bollard::Docker, id: &str) -> Option<String> {
 async fn assert_directory_mount_spawn(runtime: ContainerRuntime, require_env: &str, label: &str) {
     let required = runtime_required(require_env);
     let Some(client) = runtime_client_for(&runtime).await else {
-        assert!(
-            !required,
-            "{require_env} is set but no {label} daemon is reachable \
-             (directory-mount container spawn integration test, #1372)"
-        );
-        eprintln!(
-            "SKIPPED: no reachable {label} daemon \
-             (directory-mount container spawn integration test, #1372)"
+        require_reported(
+            false,
+            required,
+            format_args!(
+                "no reachable {label} daemon \
+                 (directory-mount container spawn integration test, #1372)"
+            ),
+            format_args!(
+                "{require_env} is set but no {label} daemon is reachable \
+                 (directory-mount container spawn integration test, #1372)"
+            ),
         );
         return;
     };
@@ -139,11 +143,12 @@ async fn assert_directory_mount_spawn(runtime: ContainerRuntime, require_env: &s
 
     let mut docker = Docker::new();
     if let Err(e) = docker.connect(settings).await {
-        assert!(
-            !required,
-            "{require_env} is set but the {label} spawn failed to connect/pull: {e}"
+        require_reported(
+            false,
+            required,
+            format_args!("{label} connect/pull failed ({e}); treating daemon as unavailable"),
+            format_args!("{require_env} is set but the {label} spawn failed to connect/pull: {e}"),
         );
-        eprintln!("SKIPPED: {label} connect/pull failed ({e}); treating daemon as unavailable");
         return;
     }
     let container_id = docker
