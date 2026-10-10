@@ -21,7 +21,10 @@
 //!   are dropped (`Ok(())`, like `commands::session::send_input`);
 //! - **clipboard** is gated in *both* directions — a non-owner can neither push
 //!   text or an image to the remote nor read the remote clipboard (text, image or
-//!   surfaced files; the image commands live in `remote_desktop_image`).
+//!   surfaced files; the image commands live in `remote_desktop_image`);
+//! - the **file side channel** (#4384) — resolving the route (and supplying its
+//!   linked secret), uploading, and opening the File Browser on it — is refused
+//!   for a non-owner with [`TerminalError::SessionHeldByPeer`].
 //!
 //! An unclaimed session accepts every window (single-window / pre-claim). The
 //! evicted window shows "Taken over by another window" + Reclaim; nothing
@@ -58,6 +61,8 @@ pub(crate) enum GatedOp {
     Resize,
     ClipboardSend,
     ClipboardRead,
+    /// The file side channel: route, upload, browse (#4384).
+    Files,
 }
 
 /// Whether `window_label` controls `session_id` (unclaimed → any window;
@@ -71,7 +76,9 @@ pub(crate) fn window_controls(
     let allowed = match op {
         GatedOp::Resize => window_manager.may_resize(session_id, window_label),
         // Clipboard is session input/content: same single-owner rule as input.
-        GatedOp::Input | GatedOp::ClipboardSend | GatedOp::ClipboardRead => {
+        // The file side channel moves bytes to and from the session's host:
+        // the same single-owner rule as input (#4384).
+        GatedOp::Input | GatedOp::ClipboardSend | GatedOp::ClipboardRead | GatedOp::Files => {
             window_manager.may_send_input(session_id, window_label)
         }
     };
@@ -84,6 +91,23 @@ pub(crate) fn window_controls(
         );
     }
     allowed
+}
+
+/// The ownership gate of the file side-channel commands (#4384): `Ok` when
+/// `window_label` controls `session_id` (or nobody has claimed it), else the
+/// typed refusal a stale (taken-over) window gets.
+pub(crate) fn require_files_control(
+    window_manager: &WindowManager,
+    session_id: &str,
+    window_label: &str,
+) -> Result<(), TerminalError> {
+    if window_controls(window_manager, session_id, window_label, GatedOp::Files) {
+        Ok(())
+    } else {
+        Err(TerminalError::SessionHeldByPeer(
+            "Another window controls this session".to_string(),
+        ))
+    }
 }
 
 /// Ownership-gated input forward. Returns whether the event was forwarded
@@ -308,14 +332,21 @@ pub fn remote_desktop_cancel_connect(
 /// `needsSecret`); it is kept in memory for the session only. When it makes
 /// the route ready, transfers a restart cut off that wait for this connection
 /// are resumed.
+///
+/// Ownership-gated (#4384): refused for a window another window has taken the
+/// session over from, so a stale window can neither probe the route nor supply
+/// its secret.
 #[tauri::command]
 pub async fn remote_desktop_file_channel(
     session_id: String,
     linked_secret: Option<String>,
     app_handle: tauri::AppHandle,
+    window: tauri::WebviewWindow,
     manager: State<'_, GraphicalSessionManager>,
+    window_manager: State<'_, WindowManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<RemoteDesktopFileChannel, TerminalError> {
+    require_files_control(&window_manager, &session_id, window.label())?;
     let agents: Arc<dyn AgentFiles> = Arc::new(agent_manager.inner().clone());
     let supplied = linked_secret.filter(|s| !s.is_empty());
     let supplied_any = supplied.is_some();
@@ -347,16 +378,24 @@ pub async fn remote_desktop_file_channel(
 /// recursively without following links, and starts one Transfers-queue upload
 /// per file, keyed by the graphical session id. Returns immediately with what
 /// was queued; progress arrives as `transfer-progress` events.
+///
+/// Ownership-gated (#4384): refused for a non-owning (taken-over) window.
+// Tauri command: the argument list is the IPC surface (typed params + injected
+// State), so it cannot be collapsed into a struct.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn remote_desktop_upload(
     session_id: String,
     local_paths: Vec<String>,
     dest: Option<String>,
+    window: tauri::WebviewWindow,
     manager: State<'_, GraphicalSessionManager>,
+    window_manager: State<'_, WindowManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
     registry: State<'_, crate::files::transfer::TransferRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<RemoteDesktopUploadStarted, TerminalError> {
+    require_files_control(&window_manager, &session_id, window.label())?;
     debug!(
         session_id,
         count = local_paths.len(),
@@ -817,7 +856,8 @@ pub async fn remote_desktop_disconnect(
     )
     .await?;
     if closed {
-        // The side channel open for browsing closes with the session (#4193).
+        // The side channel open for browsing closes with the session (#4193);
+        // the manager's own disconnect drops it too (#4384).
         sessions.side_channels.remove(&session_id);
         // Closing the session cancels its queued side-channel uploads (#4192).
         let cancelled =

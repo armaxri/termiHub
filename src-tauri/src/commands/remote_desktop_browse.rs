@@ -7,20 +7,30 @@
 //! lists it through `session_list_files` and downloads it through
 //! `session_download` (the Transfers queue: progress, pause, cancel, retry).
 //! See [`crate::session::graphical_browse`].
+//!
+//! The registration belongs to the graphical session's own lifecycle (#4384):
+//! the manager re-opens it after an automatic reconnect ([`AppSideChannelOpener`])
+//! and drops it when the session ends, so no window closes it. Opening is
+//! ownership-gated like input and clipboard; a tab moved to another window, or
+//! a reloaded window, reads the open source back with
+//! [`remote_desktop_file_browser_source`].
 
 use std::sync::Arc;
 
 use tauri::State;
 use tracing::debug;
 
-use crate::commands::remote_desktop::upload_carrier;
-use crate::session::graphical_browse::{RemoteDesktopFileBrowser, SideChannelBrowsers};
+use crate::commands::remote_desktop::{require_files_control, upload_carrier};
+use crate::session::graphical_browse::{
+    RemoteDesktopFileBrowser, ReopenedSideChannel, SideChannelBrowsers, SideChannelOpener,
+};
 use crate::session::graphical_file_channel::{AgentFiles, RemoteDesktopFileChannel};
 use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::graphical_upload::{resolve_dest_dir, AgentRequests};
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
+use crate::window::WindowManager;
 
 /// Open the File Browser on a graphical session's side channel (#4193).
 ///
@@ -31,14 +41,20 @@ use crate::utils::errors::TerminalError;
 /// answers the route line and the folder to open: `dir` when given (a leading
 /// `~` is the account's home; it must be an existing folder), else the
 /// session's default folder.
+///
+/// Ownership-gated (#4384): refused for a window another window has taken the
+/// session over from.
 #[tauri::command]
 pub async fn remote_desktop_open_file_browser(
     session_id: String,
     dir: Option<String>,
+    window: tauri::WebviewWindow,
     manager: State<'_, GraphicalSessionManager>,
+    window_manager: State<'_, WindowManager>,
     sessions: State<'_, SessionManager>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<RemoteDesktopFileBrowser, TerminalError> {
+    require_files_control(&window_manager, &session_id, window.label())?;
     debug!(session_id, ?dir, "Remote desktop open file browser");
     let rpc: Arc<dyn AgentRpcClient> = agent_manager.inner().clone();
     let agents: Arc<dyn AgentFiles> = Arc::new(rpc.clone());
@@ -85,17 +101,57 @@ pub(crate) async fn open_side_channel(
         &channel,
         &carrier,
     );
-    side_channels.register_with_target(session_id, carrier, target);
-    Ok(RemoteDesktopFileBrowser { channel, start_dir })
+    let opened = RemoteDesktopFileBrowser { channel, start_dir };
+    side_channels.register_browse(session_id, carrier, target, opened.clone());
+    Ok(opened)
 }
 
-/// Close the File Browser source of a graphical session (#4193): later file
-/// commands for its id fail as for an unknown session. Closing the session
-/// does this too; an id with nothing open is a no-op.
+/// The File Browser source "Browse remote files" opened for a graphical
+/// session, if it is open (#4384) — what a tab moved in from another window,
+/// or a reloaded window, renders. `None` once the session ended or before it
+/// was opened. Read-only route metadata (the route line and folder), so it is
+/// not ownership-gated: an evicted window keeps showing the same source.
 #[tauri::command]
-pub fn remote_desktop_close_file_browser(session_id: String, sessions: State<'_, SessionManager>) {
-    if sessions.side_channels.remove(&session_id) {
-        debug!(session_id, "Remote desktop file browser closed");
+pub fn remote_desktop_file_browser_source(
+    session_id: String,
+    sessions: State<'_, SessionManager>,
+) -> Option<RemoteDesktopFileBrowser> {
+    sessions.side_channels.source(&session_id)
+}
+
+/// Re-opens a graphical session's side channel on its current backend after
+/// an automatic reconnect (#4384), the way
+/// [`remote_desktop_open_file_browser`] opens it: installed on the
+/// [`GraphicalSessionManager`] at boot.
+pub(crate) struct AppSideChannelOpener {
+    /// The agent RPC client (the agent route, and an agent-hosted carrier).
+    pub(crate) agents: Arc<dyn AgentRpcClient>,
+}
+
+#[async_trait::async_trait]
+impl SideChannelOpener for AppSideChannelOpener {
+    async fn reopen(
+        &self,
+        manager: &GraphicalSessionManager,
+        session_id: &str,
+    ) -> Result<ReopenedSideChannel, TerminalError> {
+        let files: Arc<dyn AgentFiles> = Arc::new(self.agents.clone());
+        let (channel, ssh) = manager
+            .file_channel_with_session(session_id, Some(files))
+            .await?;
+        let requests: Arc<dyn AgentRequests> = Arc::new(self.agents.clone());
+        let (carrier, channel, _) = upload_carrier(channel, ssh, requests).await?;
+        let saved_connection = manager.saved_connection_of(session_id).await;
+        let target = crate::files::transfer::relaunch_graphical::side_channel_target(
+            saved_connection.as_deref(),
+            &channel,
+            &carrier,
+        );
+        Ok(ReopenedSideChannel {
+            carrier,
+            target,
+            channel,
+        })
     }
 }
 

@@ -16,8 +16,14 @@
 //!   `connectionId`), which implements [`FileBrowser`] below and drives queued
 //!   downloads in ranged slices.
 //!
-//! A registration lives until the graphical session closes (or the user opens
-//! the browser again, which replaces it with the current tunnel's channel).
+//! A registration belongs to the graphical session's backend lifecycle, not
+//! to the window that opened it (#4384): the
+//! [`GraphicalSessionManager`](super::graphical_manager::GraphicalSessionManager)
+//! re-opens it on the new tunnel / agent link after an automatic reconnect
+//! (through a [`SideChannelOpener`]) and drops it when the session ends —
+//! disconnected or resting for good. Opening the browser again replaces it.
+//! A tab moved to another window, or a reloaded window, reads the open source
+//! back with `remote_desktop_file_browser_source`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -36,8 +42,10 @@ use termihub_core::protocol::methods::{
     CONNECTION_FILES_SET_OWNER, CONNECTION_FILES_SET_PERMISSIONS, CONNECTION_FILES_WRITE,
 };
 
+use super::graphical_manager::GraphicalSessionManager;
 use super::graphical_upload::{AgentHostFiles, UploadCarrier};
 use crate::files::transfer::persist::PersistedGraphicalTarget;
+use crate::utils::errors::TerminalError;
 
 /// A file browser shared between the registry and the commands using it.
 pub(crate) type SharedFileBrowser = Arc<dyn FileBrowser + Send + Sync>;
@@ -78,6 +86,36 @@ pub struct SideChannelBrowsers {
 struct SideChannelEntry {
     carrier: UploadCarrier,
     target: Option<PersistedGraphicalTarget>,
+    /// What "Browse remote files" opened (route line and folder), so a tab
+    /// moved to another window or a reloaded window renders the same source
+    /// (#4384). `None` for a registration made without the browser.
+    source: Option<RemoteDesktopFileBrowser>,
+}
+
+/// A side channel re-opened on a graphical session's current backend after
+/// an automatic reconnect (#4384).
+pub(crate) struct ReopenedSideChannel {
+    /// The carrier on the new tunnel / agent link.
+    pub(crate) carrier: UploadCarrier,
+    /// The identity its transfers persist (#4205), if any.
+    pub(crate) target: Option<PersistedGraphicalTarget>,
+    /// The route line of the re-opened channel.
+    pub(crate) channel: termihub_core::connection::FileSideChannel,
+}
+
+/// Re-opens the side channel of a graphical session on its current backend
+/// (#4384). The manager calls it when an automatic reconnect lifts a session
+/// with an open side channel back to `Active`; production resolves the route
+/// like `remote_desktop_open_file_browser`, tests substitute a fake.
+#[async_trait::async_trait]
+pub(crate) trait SideChannelOpener: Send + Sync {
+    /// Resolve and build the side channel of `session_id` on `manager`'s
+    /// current backend, or the reason it is not available now.
+    async fn reopen(
+        &self,
+        manager: &GraphicalSessionManager,
+        session_id: &str,
+    ) -> Result<ReopenedSideChannel, TerminalError>;
 }
 
 impl SideChannelBrowsers {
@@ -88,24 +126,66 @@ impl SideChannelBrowsers {
     }
 
     /// Register (or replace) the side channel of graphical session
-    /// `session_id`, without a persisted identity: its transfers are not
-    /// resumed after a restart.
+    /// `session_id`, without a persisted identity or a browse source.
     #[cfg(test)]
     pub(crate) fn register(&self, session_id: &str, carrier: UploadCarrier) {
-        self.register_with_target(session_id, carrier, None);
+        self.lock().insert(
+            session_id.to_string(),
+            SideChannelEntry {
+                carrier,
+                target: None,
+                source: None,
+            },
+        );
     }
 
-    /// Register (or replace) the side channel of graphical session
-    /// `session_id`; with `target`, its queued transfers are persisted under
-    /// that identity so they resume after a restart (#4205).
-    pub(crate) fn register_with_target(
+    /// Register (or replace) the side channel "Browse remote files" opened
+    /// for `session_id`; with `target`, its queued transfers are persisted
+    /// under that identity so they resume after a restart (#4205). Remembers
+    /// what it opened (`source`) so every window can render it (#4384).
+    pub(crate) fn register_browse(
         &self,
         session_id: &str,
         carrier: UploadCarrier,
         target: Option<PersistedGraphicalTarget>,
+        source: RemoteDesktopFileBrowser,
     ) {
-        self.lock()
-            .insert(session_id.to_string(), SideChannelEntry { carrier, target });
+        self.lock().insert(
+            session_id.to_string(),
+            SideChannelEntry {
+                carrier,
+                target,
+                source: Some(source),
+            },
+        );
+    }
+
+    /// Swap in the side channel re-opened after a reconnect (#4384), keeping
+    /// the folder the browser opened at. Only replaces a registration that is
+    /// still open — one closed while the reconnect resolved stays closed.
+    /// Returns whether it replaced one.
+    pub(crate) fn replace_if_open(&self, session_id: &str, reopened: ReopenedSideChannel) -> bool {
+        let mut map = self.lock();
+        let Some(entry) = map.get_mut(session_id) else {
+            return false;
+        };
+        entry.carrier = reopened.carrier;
+        entry.target = reopened.target;
+        if let Some(source) = entry.source.as_mut() {
+            source.channel = reopened.channel;
+        }
+        true
+    }
+
+    /// What "Browse remote files" opened for `session_id`, if it is open
+    /// (#4384).
+    pub(crate) fn source(&self, session_id: &str) -> Option<RemoteDesktopFileBrowser> {
+        self.lock().get(session_id).and_then(|e| e.source.clone())
+    }
+
+    /// Whether a side channel is open for `session_id`.
+    pub(crate) fn contains(&self, session_id: &str) -> bool {
+        self.lock().contains_key(session_id)
     }
 
     /// Drop the side channel of `session_id`; `true` when one was open.
