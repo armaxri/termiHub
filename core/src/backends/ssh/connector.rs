@@ -302,7 +302,22 @@ impl SshConnector for RusshSshConnector {
         // env-var fallback and the X11 lines (#4147).
         let types_setup = !config.env.is_empty() || config.enable_x11_forwarding;
         let remote_shell = if detect_remote_shell || types_setup {
-            super::remote_shell::detect_remote_shell(&session).await
+            // Bounded generously (a cold PowerShell start is slow, #4670), so
+            // keep the wait abortable by the connect's cancel token.
+            let probe = super::remote_shell::detect_remote_shell(&session);
+            match cancel {
+                Some(token) => tokio::select! {
+                    biased;
+                    _ = token.cancelled() => {
+                        return Err(SessionError::SpawnFailed(
+                            "SSH connection cancelled while detecting the remote shell"
+                                .to_string(),
+                        ));
+                    }
+                    shell = probe => shell,
+                },
+                None => probe.await,
+            }
         } else {
             RemoteShell::Unknown
         };
@@ -465,6 +480,7 @@ impl SshConnector for RusshSshConnector {
         );
         for (what, line) in setup {
             if let Some(data) = gate.setup(line.into_bytes()) {
+                remote_shell::setup_trace(shell_requested_at, "send (ungated setup)", &data);
                 if let Err(e) = channel.data(&data[..]).await {
                     tracing::warn!(
                         setup = what,
@@ -474,6 +490,13 @@ impl SshConnector for RusshSshConnector {
                     );
                 }
             }
+        }
+        if remote_shell::setup_trace_enabled() {
+            let event = format!(
+                "shell requested; remote_shell={remote_shell:?} holding={}",
+                gate.is_holding()
+            );
+            remote_shell::setup_trace(shell_requested_at, &event, &[]);
         }
         if gate.is_holding() {
             tracing::debug!(
@@ -505,6 +528,7 @@ impl SshConnector for RusshSshConnector {
                     tracing::debug!(writes = burst.len(), "releasing held session writes");
                     let mut ok = true;
                     for data in burst {
+                        remote_shell::setup_trace(shell_requested_at, "send (gate burst)", &data);
                         ok = should_continue_after_send(channel.data(&data[..]).await, "write");
                         if !ok {
                             break;
@@ -525,7 +549,15 @@ impl SshConnector for RusshSshConnector {
                         match cmd {
                             Some(ChannelCmd::Write(data)) => {
                                 // Held (in order) until the setup has run, or sent now.
-                                let Some(data) = gate.write(data) else { continue };
+                                let Some(data) = gate.write(data) else {
+                                    remote_shell::setup_trace(
+                                        shell_requested_at,
+                                        "user write held",
+                                        &[],
+                                    );
+                                    continue;
+                                };
+                                remote_shell::setup_trace(shell_requested_at, "send (user)", &data);
                                 if !should_continue_after_send(
                                     channel.data(&data[..]).await,
                                     "write",
@@ -551,6 +583,7 @@ impl SshConnector for RusshSshConnector {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { ref data }) => {
+                                remote_shell::setup_trace(shell_requested_at, "recv", data);
                                 gate.on_output(std::time::Instant::now(), data);
                                 capture_early_output(&mut early_output, data);
                                 if data_tx.send(data.to_vec()).is_err() {

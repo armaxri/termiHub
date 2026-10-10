@@ -50,12 +50,15 @@
 //! without the configured environment.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
-use super::exec::ssh_exec_with_stdin_timeout;
+use super::exec::{ssh_exec_with_stdin, SshExecOutput};
 use super::handler::SshSession;
+use crate::errors::CoreError;
 use crate::output::prompt_mark::PromptMarkDetector;
 use crate::session::shell::osc7_setup_command;
 
@@ -68,10 +71,21 @@ pub const SHELL_PROBE_END: &str = "termihub_shell_probe_end";
 pub const SHELL_PROBE_COMMAND: &str =
     "echo termihub_shell_probe %OS% $PSHOME termihub_shell_probe_end";
 
-/// Upper bound on the probe. Generous enough for a cold Windows PowerShell
-/// start (or a heavy `.bashrc`, which bash sources for sshd-run commands), yet
-/// short enough that a stalled exec channel delays the connect only briefly.
-pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// Upper bound on the probe (#4670).
+///
+/// The probe gates every typed setup line: a probe that gives up reports
+/// [`RemoteShell::Unknown`], so the env-var fallback, the X11 lines and the
+/// shell-integration line are all skipped and the user's first command runs
+/// without the configured environment. So the bound must cover the slowest
+/// *legitimate* answer, not a typical one: a cold Windows PowerShell start
+/// (Win32-OpenSSH runs the probe through `powershell.exe -c`, which loads .NET
+/// and the profile) took longer than the former 8 s on the CI host, and the
+/// session then started with no setup at all (#4670). A heavy `.bashrc` (bash
+/// sources it for sshd-run commands) is the POSIX twin.
+///
+/// Only a host whose exec channel stalls outright waits the full bound, and the
+/// connector keeps the wait abortable by the connect's cancel token.
+pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The flavour of the remote login shell, as far as shell integration cares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -126,18 +140,62 @@ pub fn classify_shell_probe(stdout: &str) -> RemoteShell {
 ///
 /// Never fails: any error or timeout is reported as [`RemoteShell::Unknown`].
 pub async fn detect_remote_shell(session: &SshSession) -> RemoteShell {
-    match ssh_exec_with_stdin_timeout(session, SHELL_PROBE_COMMAND, "", SHELL_PROBE_TIMEOUT).await {
+    await_shell_probe(
+        ssh_exec_with_stdin(session, SHELL_PROBE_COMMAND, ""),
+        SHELL_PROBE_TIMEOUT,
+    )
+    .await
+}
+
+/// Await a running shell probe for at most `timeout` and classify its answer.
+///
+/// Split from [`detect_remote_shell`] so the timing — the probe answering only
+/// after a slow shell start (#4670) — is unit-testable without a server.
+/// A failure is logged at `warn`: it means no setup line will be typed, so the
+/// configured environment and shell integration silently do not apply.
+pub async fn await_shell_probe<F>(probe: F, timeout: Duration) -> RemoteShell
+where
+    F: std::future::Future<Output = Result<SshExecOutput, CoreError>>,
+{
+    let started = Instant::now();
+    let result = match tokio::time::timeout(timeout, probe).await {
+        Ok(result) => result,
+        Err(_) => Err(CoreError::Other(format!(
+            "no answer within {}s",
+            timeout.as_secs()
+        ))),
+    };
+    let elapsed_ms = started.elapsed().as_millis();
+    match result {
         Ok(output) => {
             let shell = classify_shell_probe(&output.stdout);
             debug!(
                 ?shell,
                 exit_status = output.exit_status,
+                elapsed_ms,
                 "Remote shell probe"
             );
+            setup_trace(
+                started,
+                &format!("shell probe answered: {shell:?}"),
+                output.stdout.as_bytes(),
+            );
+            if shell == RemoteShell::Unknown {
+                warn!(
+                    elapsed_ms,
+                    "remote shell not recognised; no session setup (environment variables, \
+                     X11 display, shell integration) will be typed"
+                );
+            }
             shell
         }
         Err(e) => {
-            debug!("Remote shell probe failed: {e}");
+            setup_trace(started, &format!("shell probe failed: {e}"), &[]);
+            warn!(
+                elapsed_ms,
+                "remote shell probe failed ({e}); no session setup (environment variables, \
+                 X11 display, shell integration) will be typed"
+            );
             RemoteShell::Unknown
         }
     }
@@ -398,6 +456,40 @@ pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str
     lines
 }
 
+// ── Diagnostic trace of the setup sequence (#4670) ──────────────────────
+
+/// Set by [`enable_setup_trace`] (the live Windows SSH-host test does).
+static SETUP_TRACE: AtomicBool = AtomicBool::new(false);
+
+/// Turn on the diagnostic trace of every byte the [`SetupGate`] sequence
+/// types and receives (#4670). Off by default; also on when the environment
+/// variable `TERMIHUB_TEST_SSH_TRACE=1` is set. **Test-only**: the trace
+/// prints the typed setup verbatim, which embeds env values and the X11
+/// cookie, so production code never calls this.
+pub fn enable_setup_trace() {
+    SETUP_TRACE.store(true, Ordering::Relaxed);
+}
+
+/// Whether the setup trace is on (an atomic load once the env is cached).
+pub fn setup_trace_enabled() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    SETUP_TRACE.load(Ordering::Relaxed)
+        || *ENV.get_or_init(|| std::env::var("TERMIHUB_TEST_SSH_TRACE").is_ok_and(|v| v == "1"))
+}
+
+/// Print one trace event — `ms` since the shell request, the event, and the
+/// bytes involved, escaped — to stderr when the trace is on.
+pub fn setup_trace(t0: Instant, event: &str, data: &[u8]) {
+    if setup_trace_enabled() {
+        eprintln!(
+            "[ssh-setup-trace +{:>6}ms] {event} ({} B): {}",
+            t0.elapsed().as_millis(),
+            data.len(),
+            data.escape_ascii()
+        );
+    }
+}
+
 /// How long the shell's output must stay quiet after it printed something
 /// before its first prompt counts as up ([`SetupGate`]).
 pub const SETUP_GATE_SETTLE: Duration = Duration::from_millis(300);
@@ -476,6 +568,8 @@ pub struct SetupGate {
     setup: Vec<Vec<u8>>,
     /// The user's writes held so far, in order.
     held: Vec<Vec<u8>>,
+    /// When the gate was created (the shell request), for the trace.
+    started: Instant,
 }
 
 impl SetupGate {
@@ -496,6 +590,7 @@ impl SetupGate {
             done,
             setup: Vec::new(),
             held: Vec::new(),
+            started: now,
         }
     }
 
@@ -539,6 +634,7 @@ impl SetupGate {
                 *last_output = Some(now);
                 if marks.feed(data) && self.done == SetupDone::PromptMark {
                     // The setup's own prompt is up: it has run.
+                    setup_trace(self.started, "gate: prompt mark seen -> open", &[]);
                     self.phase = Phase::Open;
                 }
             }
@@ -587,9 +683,15 @@ impl SetupGate {
             Phase::Open => std::mem::take(&mut self.held),
             Phase::AwaitPrompt { .. } => {
                 if self.setup.is_empty() {
+                    setup_trace(self.started, "gate: first prompt, no setup -> open", &[]);
                     self.phase = Phase::Open;
                     return std::mem::take(&mut self.held);
                 }
+                setup_trace(
+                    self.started,
+                    "gate: first prompt settled -> typing setup",
+                    &[],
+                );
                 self.phase = Phase::AwaitSetup {
                     deadline: now + SETUP_GATE_CAP,
                     retype_at: now + SETUP_GATE_RETYPE,
@@ -610,6 +712,15 @@ impl SetupGate {
                     if !settled {
                         warn!("the session setup did not report back; releasing input anyway");
                     }
+                    setup_trace(
+                        self.started,
+                        if settled {
+                            "gate: setup output settled -> open"
+                        } else {
+                            "gate: cap reached without a report -> open"
+                        },
+                        &[],
+                    );
                     self.phase = Phase::Open;
                     return std::mem::take(&mut self.held);
                 }
@@ -617,6 +728,7 @@ impl SetupGate {
                 *retype_at = now + SETUP_GATE_RETYPE;
                 *last_output = None;
                 debug!("the session setup did not report back; typing it again");
+                setup_trace(self.started, "gate: no report -> retyping setup", &[]);
                 self.setup.clone()
             }
         }
@@ -686,6 +798,64 @@ mod tests {
         ] {
             assert_eq!(classify_shell_probe(out), RemoteShell::Unknown, "{out:?}");
         }
+    }
+
+    // ── Probe timing (#4670) ────────────────────────────────────────────
+
+    const WINDOWS_POWERSHELL_PROBE: &str = "termihub_shell_probe\r\n%OS%\r\n\
+        C:\\Windows\\System32\\WindowsPowerShell\\v1.0\r\ntermihub_shell_probe_end\r\n";
+
+    /// A probe whose answer arrives `after` — a shell that starts that slowly.
+    async fn probe_answering_after(after: Duration) -> Result<SshExecOutput, CoreError> {
+        tokio::time::sleep(after).await;
+        Ok(SshExecOutput {
+            stdout: WINDOWS_POWERSHELL_PROBE.to_string(),
+            ..SshExecOutput::default()
+        })
+    }
+
+    /// #4670: on the CI Windows host a cold `powershell.exe -c` answered the
+    /// probe only after the former 8 s bound. The probe was abandoned, the
+    /// shell reported Unknown, and the session opened with no env / shell
+    /// integration setup at all — the user's first command ran ungated and
+    /// without the configured environment. A slow-but-answering shell must
+    /// still be detected.
+    #[tokio::test(start_paused = true)]
+    async fn a_cold_powershell_answering_after_8s_is_still_detected() {
+        let cold_start = Duration::from_secs(12);
+        // The former bound lost exactly this answer (the regression).
+        assert_eq!(
+            await_shell_probe(probe_answering_after(cold_start), Duration::from_secs(8)).await,
+            RemoteShell::Unknown
+        );
+        assert!(SHELL_PROBE_TIMEOUT > cold_start);
+        assert_eq!(
+            await_shell_probe(probe_answering_after(cold_start), SHELL_PROBE_TIMEOUT).await,
+            RemoteShell::PowerShell
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_probe_gives_up_at_the_bound() {
+        let start = tokio::time::Instant::now();
+        let shell = await_shell_probe(
+            std::future::pending::<Result<SshExecOutput, CoreError>>(),
+            SHELL_PROBE_TIMEOUT,
+        )
+        .await;
+        assert_eq!(shell, RemoteShell::Unknown);
+        assert_eq!(start.elapsed(), SHELL_PROBE_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_probe_is_unknown_at_once() {
+        let start = tokio::time::Instant::now();
+        let failed = async { Err(CoreError::Other("exec refused".to_string())) };
+        assert_eq!(
+            await_shell_probe(failed, SHELL_PROBE_TIMEOUT).await,
+            RemoteShell::Unknown
+        );
+        assert_eq!(start.elapsed(), Duration::ZERO);
     }
 
     #[test]
