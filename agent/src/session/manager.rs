@@ -35,8 +35,6 @@ use termihub_core::errors::SessionError;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
-
-use crate::session::output_budget::OutputBudget;
 use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
 
@@ -46,6 +44,7 @@ use crate::daemon::client::{
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::session::orphan_sweep::{self, OrphanSweepConfig, OrphanSweepReport};
+use crate::session::output_budget::OutputBudget;
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     cleanup_stale_update_backup, confine_to_staging, discard_applied_upload,
