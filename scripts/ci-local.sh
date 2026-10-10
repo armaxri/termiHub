@@ -157,10 +157,18 @@ gate_manual_inventory() { python3 scripts/manual-inventory.py --check; }
 gate_versions() { ./scripts/release-check.sh --versions-only; }
 gate_bundle_size() { pnpm build && pnpm size; }
 
+# rustdoc: default + --all-features, then each opt-in core feature alone (#4561)
+# so a link to an item gated behind another feature fails here, as in CI.
 gate_rustdoc() {
-  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p termihub-core &&
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features \
-      -p termihub -p termihub-core -p termihub-agent
+  local features feature
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p termihub-core || return 1
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features \
+    -p termihub -p termihub-core -p termihub-agent || return 1
+  features="$(node scripts/internal/ci-local.mjs core-features)" || return 1
+  for feature in $features; do
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p termihub-core --features "$feature" ||
+      return 1
+  done
 }
 
 # plugin-fuzz-check: the workspace-excluded fuzz crate, seeded from the
