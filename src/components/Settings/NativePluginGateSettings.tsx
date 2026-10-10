@@ -11,11 +11,11 @@ import {
   setNativePluginsEnabled,
 } from "@/services/api";
 import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
-import { EmptyState, Toggle, toast } from "@/components/ui";
+import { ConfirmDialog, EmptyState, Toggle, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsField } from "./SettingsField";
-import { NativePluginRow } from "./NativePluginRow";
+import { NativePluginRow, openSessionsLabel } from "./NativePluginRow";
 
 /**
  * Settings → Plugins → the native plugin trust gate (SEC-002 / PLG-006 /
@@ -39,6 +39,9 @@ export function NativePluginGateSettings() {
   const plugins = useAppStore((s) => s.plugins);
   const sandbox = usePluginSandbox();
   const [trust, setTrust] = useState<NativePluginTrust | null>(null);
+  // Switching native plugins off ends every open plugin session; with any
+  // open, it waits for this confirmation first (#4379).
+  const [confirmDisable, setConfirmDisable] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -64,12 +67,22 @@ export function NativePluginGateSettings() {
     [plugins]
   );
 
+  /** Open sessions across every native plugin, from the `plugin-sandbox` region. */
+  const openSessions = useMemo(
+    () =>
+      nativePlugins.reduce(
+        (sum, p) => sum + (sandbox.plugins[p.manifest.id]?.process?.sessions ?? 0),
+        0
+      ),
+    [nativePlugins, sandbox]
+  );
+
   const acknowledgments = useMemo(
     () => new Map((trust?.acknowledged ?? []).map((a) => [a.id, a])),
     [trust]
   );
 
-  const handleToggleGlobal = useCallback(
+  const applyGlobal = useCallback(
     async (checked: boolean) => {
       try {
         await setNativePluginsEnabled(checked);
@@ -82,6 +95,22 @@ export function NativePluginGateSettings() {
     },
     [load]
   );
+
+  const handleToggleGlobal = useCallback(
+    async (checked: boolean) => {
+      if (!checked && openSessions > 0) {
+        setConfirmDisable(true);
+        return;
+      }
+      await applyGlobal(checked);
+    },
+    [applyGlobal, openSessions]
+  );
+
+  const handleConfirmDisable = useCallback(async () => {
+    await applyGlobal(false);
+    setConfirmDisable(false);
+  }, [applyGlobal]);
 
   const handleTrust = useCallback(
     async (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
@@ -173,6 +202,19 @@ export function NativePluginGateSettings() {
             data-testid="settings-native-plugins-enabled"
           />
         </SettingsField>
+        <ConfirmDialog
+          open={confirmDisable}
+          variant="warn"
+          title="Disable native plugins?"
+          message={`This ends the ${openSessionsLabel(openSessions)} of your native plugins.`}
+          confirmLabel="Disable"
+          confirmVariant="danger"
+          confirmErrorToast={false}
+          onConfirm={handleConfirmDisable}
+          onCancel={() => setConfirmDisable(false)}
+          testIdBase="native-plugins-disable"
+          data-testid="native-plugins-disable-dialog"
+        />
 
         <div className="settings-panel__subsection-title">Trusted Native Plugins</div>
         <p className="settings-panel__description">
