@@ -18,29 +18,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-.workflow-sidebar__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  gap: var(--spacing-sm);
-}
-
-.workflow-sidebar__empty-link {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--accent-color);
-  cursor: pointer;
-  font-size: inherit;
-  text-decoration: underline;
-}
-
 /*
  * Workflow rows compose from the shared `SidebarListItem` shell, so the row
  * layout lives in `SidebarListItem.css`. Only workflow-specific detail lines
@@ -153,12 +130,6 @@
 .workflow-history__list {
   overflow-y: auto;
   padding: var(--spacing-xxs) 0;
-}
-
-.workflow-history__empty {
-  padding: var(--spacing-sm) var(--spacing-md);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
 }
 
 .workflow-history__meta {

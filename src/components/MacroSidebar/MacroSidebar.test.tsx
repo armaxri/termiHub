@@ -4,6 +4,7 @@ import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { MacroSidebar } from "./MacroSidebar";
 import { withTooltip } from "@/test/tooltip";
+import { checkA11y } from "@/test/axe";
 import type { Macro } from "@/types/macro";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -189,6 +190,26 @@ describe("MacroSidebar", () => {
     setSearch("release");
     expect(query("macro-item-macro-1")).not.toBeNull();
     expect(query("macro-item-macro-2")).toBeNull();
+  });
+
+  it("renders the empty state through the shared EmptyState primitive (#4382)", async () => {
+    await render();
+    const empty = query("macro-empty-message");
+    expect(empty?.classList.contains("ui-empty")).toBe(true);
+    expect(empty?.getAttribute("role")).toBe("status");
+    expect(empty?.querySelector(".ui-empty__title")?.textContent).toBe("No macros recorded yet.");
+    expect(empty?.querySelectorAll("button.ui-empty__link")).toHaveLength(2);
+    expect(await checkA11y()).toHaveNoViolations();
+  });
+
+  it("renders the no-results state through EmptyState with no a11y violations (#4382)", async () => {
+    useAppStore.setState({ macros: sampleMacros });
+    await render();
+    setSearch("nonexistent");
+    const empty = query("macro-no-results");
+    expect(empty?.classList.contains("ui-empty")).toBe(true);
+    expect(empty?.textContent).toBe('No macros match "nonexistent".');
+    expect(await checkA11y()).toHaveNoViolations();
   });
 
   it("shows a no-results state when the query matches nothing", async () => {

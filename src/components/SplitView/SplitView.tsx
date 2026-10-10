@@ -73,7 +73,7 @@ import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBa
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { ImportedCommandBanner } from "@/components/Terminal/ImportedCommandBanner";
 import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
-import { toast, Spinner } from "@/components/ui";
+import { toast, Spinner, EmptyState } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -877,9 +877,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
           </div>
         )}
         {panel.tabs.length === 0 && (
-          <div className="split-view__empty">
-            No terminals open. Use the toolbar or double-click a connection.
-          </div>
+          <EmptyState
+            variant="card"
+            title="No terminals open."
+            description="Use the toolbar or double-click a connection."
+            data-testid="split-view-empty"
+          />
         )}
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (

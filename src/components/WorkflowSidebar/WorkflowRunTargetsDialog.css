@@ -20,11 +20,6 @@
   gap: var(--spacing-sm);
 }
 
-.workflow-run-targets__empty {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-
 /* "Run in parallel" toggle (#3418), set apart from the terminal list. */
 .workflow-run-targets__mode {
   margin-top: var(--spacing-sm);

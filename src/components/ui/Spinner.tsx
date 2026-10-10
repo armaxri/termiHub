@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, type LucideIcon } from "lucide-react";
 import "./ui.css";
 
 /** Named spinner sizes. Map to a pixel diameter for the lucide icon. */
@@ -31,6 +31,12 @@ export interface SpinnerProps {
    * omitted and the icon is hidden from the accessibility tree.
    */
   label?: string | null;
+  /**
+   * The rotating glyph. Defaults to lucide's `Loader2`; pass another lucide icon
+   * (e.g. `RefreshCw` for a reconnect) where the surface's own glyph should spin.
+   * The rotation and reduced-motion handling are the same for any glyph.
+   */
+  icon?: LucideIcon;
   /** Extra class for layout tweaks (margin, colour) at the call site. */
   className?: string;
   /** Test hook forwarded to the rendered element. */
@@ -45,12 +51,14 @@ export interface SpinnerProps {
  * "Loading…") so the progress state stays readable when the icon does not move.
  *
  * Use this instead of hand-rolling a `<Loader2 className="…__spinner">` plus a
- * per-component spin class. Where the spinner lives inside a button, prefer the
+ * per-component spin class (pass `icon` to spin a different glyph, such as a
+ * reconnect's `RefreshCw`). Where the spinner lives inside a button, prefer the
  * async `Button` state instead.
  */
 export function Spinner({
   size = "sm",
   label = "Loading…",
+  icon: Icon = Loader2,
   className,
   "data-testid": dataTestId,
 }: SpinnerProps): React.ReactElement {
@@ -60,7 +68,7 @@ export function Spinner({
     .join(" ");
 
   return (
-    <Loader2
+    <Icon
       className={classes}
       size={px}
       role={label == null ? undefined : "status"}

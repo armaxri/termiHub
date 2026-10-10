@@ -4,7 +4,7 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { Button, ConfirmDialog, SearchInput, Tooltip, toast } from "@/components/ui";
+import { Button, ConfirmDialog, SearchInput, Tooltip, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -171,14 +171,16 @@ export function RecentSessionsSidebar() {
         </div>
       )}
       {history.length === 0 ? (
-        <div className="recent-sessions__empty" data-testid="recent-sessions-empty">
-          <span>No recent sessions yet.</span>
-          <span>Connect to a host and it will appear here for quick reconnection.</span>
-        </div>
+        <EmptyState
+          title="No recent sessions yet."
+          description="Connect to a host and it will appear here for quick reconnection."
+          data-testid="recent-sessions-empty"
+        />
       ) : filtered.length === 0 ? (
-        <div className="recent-sessions__empty" data-testid="recent-sessions-no-results">
-          <span>No sessions match &quot;{query}&quot;.</span>
-        </div>
+        <EmptyState
+          title={<>No sessions match &quot;{query}&quot;.</>}
+          data-testid="recent-sessions-no-results"
+        />
       ) : (
         <div
           className="recent-sessions__list"

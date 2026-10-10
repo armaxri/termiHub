@@ -8,6 +8,7 @@ import {
   RadioGroup,
   RadioGroupItem,
   Select,
+  EmptyState,
 } from "@/components/ui";
 import { listSpawnOptions, type SpawnOptions } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice, SpawnTarget } from "@/types/spawn";
@@ -271,9 +272,11 @@ export function SpawnPicker({
       </div>
 
       {options === null ? (
-        <p className="spawn-picker__empty" data-testid="spawn-picker-loading">
-          Looking for available sessions…
-        </p>
+        <EmptyState
+          loading
+          title="Looking for available sessions…"
+          data-testid="spawn-picker-loading"
+        />
       ) : (
         <RadioGroup
           className="spawn-picker__sections"
@@ -303,9 +306,10 @@ export function SpawnPicker({
           {renderContainerSection("podman")}
 
           {!selected ? (
-            <p className="spawn-picker__empty" data-testid="spawn-picker-none">
-              No spawn targets were found on this host.
-            </p>
+            <EmptyState
+              title="No spawn targets were found on this host."
+              data-testid="spawn-picker-none"
+            />
           ) : null}
         </RadioGroup>
       )}

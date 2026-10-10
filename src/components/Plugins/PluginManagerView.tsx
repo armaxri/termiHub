@@ -3,7 +3,7 @@ import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin } from "@/types/plugin";
-import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
+import { Button, SearchInput, StatusDot, toast, EmptyState } from "@/components/ui";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
@@ -115,9 +115,10 @@ export function PluginManagerView() {
       <div className="plugin-manager__list" data-testid="plugin-list">
         <div className="plugin-manager__sep">Installed ({plugins.length})</div>
         {filtered.length === 0 ? (
-          <div className="plugin-manager__empty" data-testid="plugin-list-empty">
-            {plugins.length === 0 ? "No plugins installed" : "No plugins match your search"}
-          </div>
+          <EmptyState
+            title={plugins.length === 0 ? "No plugins installed" : "No plugins match your search"}
+            data-testid="plugin-list-empty"
+          />
         ) : (
           filtered.map((plugin) => {
             const { manifest, state } = plugin;

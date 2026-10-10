@@ -126,12 +126,6 @@
   color: var(--color-error);
 }
 
-.network-panel__placeholder {
-  color: var(--text-disabled);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-sm) 0;
-}
-
 /* Section title */
 .network-panel__section-title {
   font-size: var(--font-size-xs);

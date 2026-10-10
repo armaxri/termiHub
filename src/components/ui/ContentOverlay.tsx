@@ -10,9 +10,11 @@ import "./ui.css";
  */
 export interface ContentOverlayProps {
   /**
-   * The status icon element — a lucide icon or {@link Spinner}, already sized and
-   * coloured by the caller (its `className` carries the per-state colour/spin, so
-   * each surface keeps its own icon semantics). Rendered as the first child.
+   * The status icon element — a lucide icon, or for a `busy` screen the shared
+   * {@link Spinner} (`<Spinner size={32} label={null} className="…__icon" />`;
+   * never a hand-rolled `Loader2` + spin class). Already sized and coloured by
+   * the caller (its `className` carries the per-state colour, so each surface
+   * keeps its own icon semantics). Rendered as the first child.
    */
   icon: React.ReactNode;
   /** Primary heading line (e.g. "Connecting…", "Connection failed"). */

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderOpen, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { FolderOpen, AlertCircle, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
-import { Button, toast } from "@/components/ui";
+import { Button, ContentOverlay, Spinner, toast } from "@/components/ui";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -117,6 +117,9 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
     };
   }, [tabId, setTabSessionId, retryNonce]);
 
+  // The error text is part of the failure overlay's accessible description.
+  const errorTextId = useId();
+
   const handleRetry = useCallback(() => {
     setRetryNonce((n) => n + 1);
   }, []);
@@ -126,38 +129,47 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
       className={`file-browser-tab${isVisible ? "" : " file-browser-tab--hidden"}`}
       data-testid="file-browser-tab"
     >
-      <div className="file-browser-tab__body">
-        {phase === "connecting" && (
-          <>
-            <Loader2
-              size={32}
-              className="file-browser-tab__icon file-browser-tab__spin motion-essential-spinner"
-            />
-            <p className="file-browser-tab__heading">Connecting…</p>
-            <p className="file-browser-tab__hint">Opening {title || "the connection"}.</p>
-          </>
-        )}
+      {phase === "connecting" && (
+        <ContentOverlay
+          icon={<Spinner size={32} label={null} className="file-browser-tab__icon" />}
+          busy
+          heading="Connecting…"
+          subheading={`Opening ${title || "the connection"}.`}
+          data-testid="file-browser-tab-connecting"
+        />
+      )}
 
-        {phase === "connected" && (
-          <>
-            <FolderOpen size={32} className="file-browser-tab__icon" />
-            <p className="file-browser-tab__heading">No terminal for this connection</p>
-            <p className="file-browser-tab__hint">
+      {phase === "connected" && (
+        <ContentOverlay
+          icon={<FolderOpen size={32} className="file-browser-tab__icon" aria-hidden />}
+          heading="No terminal for this connection"
+          subheading={
+            <>
               {title ? `${title} browses files instead of running a shell. ` : ""}
               This connection has no terminal output. Use the file browser in the sidebar to
               navigate, open, and transfer files.
-            </p>
-          </>
-        )}
+            </>
+          }
+          data-testid="file-browser-tab-connected"
+        />
+      )}
 
-        {phase === "error" && (
-          <>
+      {phase === "error" && (
+        <ContentOverlay
+          icon={
             <AlertCircle
               size={32}
               className="file-browser-tab__icon file-browser-tab__icon--error"
+              aria-hidden
             />
-            <p className="file-browser-tab__heading">Could not open connection</p>
-            {error && <p className="file-browser-tab__error">{error}</p>}
+          }
+          heading="Could not open connection"
+          announce="assertive"
+          announcement={error ? "Could not open connection. ".concat(error) : undefined}
+          describedBy={error ? errorTextId : undefined}
+          autoFocusPrimaryAction={isVisible}
+          data-testid="file-browser-tab-error"
+          actions={
             <Button
               variant="primary"
               size="sm"
@@ -167,9 +179,15 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
             >
               Retry
             </Button>
-          </>
-        )}
-      </div>
+          }
+        >
+          {error && (
+            <p id={errorTextId} className="file-browser-tab__error">
+              {error}
+            </p>
+          )}
+        </ContentOverlay>
+      )}
     </div>
   );
 }

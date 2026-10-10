@@ -6,7 +6,7 @@ import { currentBroadcastView } from "@/store/broadcastBridge";
 import { resolveConnectedTargets, type RunnableTarget } from "@/store/slices/workflowFanout";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, SearchInput, toast } from "@/components/ui";
+import { Button, SearchInput, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
@@ -365,20 +365,24 @@ export function WorkflowSidebar() {
         />
       </div>
       {workflows.length === 0 ? (
-        <div className="workflow-sidebar__empty" data-testid="workflow-empty-message">
-          <span>No workflows yet.</span>
-          <span>
-            Author one with{" "}
-            <button className="workflow-sidebar__empty-link" onClick={handleNew} type="button">
-              New workflow
-            </button>
-            , or promote a macro into a workflow.
-          </span>
-        </div>
+        <EmptyState
+          title="No workflows yet."
+          description={
+            <>
+              Author one with{" "}
+              <button className="ui-empty__link" onClick={handleNew} type="button">
+                New workflow
+              </button>
+              , or promote a macro into a workflow.
+            </>
+          }
+          data-testid="workflow-empty-message"
+        />
       ) : filtered.length === 0 ? (
-        <div className="workflow-sidebar__empty" data-testid="workflow-no-results">
-          <span>No workflows match &quot;{query}&quot;.</span>
-        </div>
+        <EmptyState
+          title={<>No workflows match &quot;{query}&quot;.</>}
+          data-testid="workflow-no-results"
+        />
       ) : (
         <div
           className="workflow-sidebar__list"

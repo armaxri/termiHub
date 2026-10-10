@@ -64,15 +64,6 @@
   z-index: var(--z-sticky);
 }
 
-.split-view__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-disabled);
-  font-size: var(--font-size-md);
-}
-
 .split-view__resize-handle {
   background-color: var(--resize-handle-color);
   transition: background-color var(--transition-normal);

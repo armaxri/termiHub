@@ -3,7 +3,7 @@ import { Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
-import { Modal, ModalClose, Button, Input, Field, NumberInput } from "@/components/ui";
+import { Modal, ModalClose, Button, Input, Field, NumberInput, EmptyState } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
 import { parseTags } from "@/utils/parseTags";
 import { draftKey as toDraftKey } from "@/utils/draftKey";
@@ -397,9 +397,10 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
         Ctrl+C) and <code>\\</code> for a backslash.
       </p>
       {fields.length === 0 ? (
-        <p className="macro-editor__empty" role="status" data-testid="macro-editor-no-steps">
-          This macro has no steps. Add one, or it cannot be saved.
-        </p>
+        <EmptyState
+          title="This macro has no steps. Add one, or it cannot be saved."
+          data-testid="macro-editor-no-steps"
+        />
       ) : (
         <div className="macro-editor__steps" data-testid="macro-editor-steps">
           {stepRows}

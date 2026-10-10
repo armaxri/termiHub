@@ -16,7 +16,7 @@ import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { readConfigString } from "@/utils/connectionConfigFields";
-import { Modal, Input } from "@/components/ui";
+import { Modal, Input, EmptyState } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
 import { useComboboxListNav } from "@/hooks/useComboboxListNav";
@@ -347,11 +347,14 @@ export function CommandPalette(): React.ReactElement {
           data-testid="command-palette-input"
         />
         {results.length === 0 ? (
-          <p className="command-palette__empty" role="status">
-            {mode === "broadcast-workflow"
-              ? "No matching workflows."
-              : "No matching commands or connections."}
-          </p>
+          <EmptyState
+            title={
+              mode === "broadcast-workflow"
+                ? "No matching workflows."
+                : "No matching commands or connections."
+            }
+            data-testid="command-palette-empty"
+          />
         ) : (
           <ul
             {...nav.listboxProps}

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Circle, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, SearchInput, toast, Tooltip } from "@/components/ui";
+import { Button, SearchInput, toast, Tooltip, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
@@ -261,29 +261,33 @@ export function MacroSidebar() {
         />
       </div>
       {macros.length === 0 ? (
-        <div className="macro-sidebar__empty" data-testid="macro-empty-message">
-          <span>No macros recorded yet.</span>
-          <span>
-            Record one with the terminal toolbar&apos;s record button,{" "}
-            <button className="macro-sidebar__empty-link" onClick={handleRecord} type="button">
-              start recording now
-            </button>
-            , or{" "}
-            <button
-              className="macro-sidebar__empty-link"
-              onClick={handleNew}
-              type="button"
-              data-testid="macro-empty-new-link"
-            >
-              write one by hand
-            </button>
-            .
-          </span>
-        </div>
+        <EmptyState
+          title="No macros recorded yet."
+          description={
+            <>
+              Record one with the terminal toolbar&apos;s record button,{" "}
+              <button className="ui-empty__link" onClick={handleRecord} type="button">
+                start recording now
+              </button>
+              , or{" "}
+              <button
+                className="ui-empty__link"
+                onClick={handleNew}
+                type="button"
+                data-testid="macro-empty-new-link"
+              >
+                write one by hand
+              </button>
+              .
+            </>
+          }
+          data-testid="macro-empty-message"
+        />
       ) : filtered.length === 0 ? (
-        <div className="macro-sidebar__empty" data-testid="macro-no-results">
-          <span>No macros match &quot;{query}&quot;.</span>
-        </div>
+        <EmptyState
+          title={<>No macros match &quot;{query}&quot;.</>}
+          data-testid="macro-no-results"
+        />
       ) : (
         <div
           className="macro-sidebar__list"

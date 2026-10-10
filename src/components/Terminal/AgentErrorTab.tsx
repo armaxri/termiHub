@@ -2,7 +2,7 @@ import { useState, useCallback, useId } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
-import { Button, ContentOverlay } from "@/components/ui";
+import { Button, ContentOverlay, Spinner } from "@/components/ui";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -92,10 +92,11 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
               variant="primary"
               size="sm"
               icon={
-                <RefreshCw
-                  size={14}
-                  className={isReconnecting ? "agent-error-tab__spin motion-essential-spinner" : ""}
-                />
+                isReconnecting ? (
+                  <Spinner icon={RefreshCw} size={14} label={null} />
+                ) : (
+                  <RefreshCw size={14} />
+                )
               }
               onClick={() => void handleReconnect()}
               disabled={isReconnecting}

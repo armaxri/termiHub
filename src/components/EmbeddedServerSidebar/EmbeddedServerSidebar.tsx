@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
-import { Button, ConfirmDialog, toast } from "@/components/ui";
+import { Button, ConfirmDialog, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -174,10 +174,11 @@ export function EmbeddedServerSidebar() {
       </SidebarToolbar>
 
       {servers.length === 0 ? (
-        <div className="server-sidebar__empty" data-testid="server-empty-message">
-          <span>No services configured.</span>
-          <span>Click &quot;+ New Service&quot; to add one.</span>
-        </div>
+        <EmptyState
+          title="No services configured."
+          description={<>Click &quot;+ New Service&quot; to add one.</>}
+          data-testid="server-empty-message"
+        />
       ) : (
         <div
           className="server-sidebar__list"

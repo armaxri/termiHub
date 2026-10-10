@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FileDown, Server, AlertTriangle } from "lucide-react";
-import { Modal } from "@/components/ui";
+import { Modal, EmptyState } from "@/components/ui";
 import type { JumpHostConfig, SshConfigImportHost } from "@/types/connection";
 import { importSshConfigHosts } from "@/services/api";
 import "./SshConfigImportDialog.css";
@@ -79,17 +79,22 @@ export function SshConfigImportDialog({
       )}
 
       {state.status === "error" && (
-        <div className="ssh-config-import__empty" data-testid="ssh-config-import-error">
-          <AlertTriangle size={20} aria-hidden />
-          <p>Could not read ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<AlertTriangle size={20} aria-hidden />}
+          title="Could not read ~/.ssh/config."
+          role="alert"
+          data-testid="ssh-config-import-error"
+        />
       )}
 
       {state.status === "ready" && state.hosts.length === 0 && (
-        <div className="ssh-config-import__empty" data-testid="ssh-config-import-empty">
-          <Server size={20} aria-hidden />
-          <p>No hosts with a ProxyJump were found in ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<Server size={20} aria-hidden />}
+          title="No hosts with a ProxyJump were found in ~/.ssh/config."
+          data-testid="ssh-config-import-empty"
+        />
       )}
 
       {state.status === "ready" && state.hosts.length > 0 && (

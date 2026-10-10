@@ -36,6 +36,10 @@ pub const MAX_RANGE_BYTES: u32 = 256 * 1024;
 ///   and `data` is appended. This makes a retried or resumed upload safe: a
 ///   chunk can never land on top of, or leave a gap after, the bytes already
 ///   there.
+/// - [`create_new`](Self::create_new) is the exclusive form of a write at
+///   offset 0 (#4433): it creates `path` only if nothing holds the name yet,
+///   then writes `data`. An existing file, directory or symlink — dangling or
+///   not — fails with [`FileError::AlreadyExists`] and is left untouched.
 #[async_trait::async_trait]
 pub trait RangedFileAccess: Send + Sync {
     /// Read at most `len` bytes of `path` from `offset`.
@@ -43,6 +47,15 @@ pub trait RangedFileAccess: Send + Sync {
 
     /// Write `data` to `path` at `offset` (see the trait docs for the rules).
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError>;
+
+    /// Create `path`, which must not exist yet, and write `data` to it — an
+    /// exclusive create (#4433, see the trait docs). The default answers
+    /// [`FileError::NotSupported`]: a backend without an atomic exclusive
+    /// create never emulates one with a check-then-create race.
+    async fn create_new(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let _ = (path, data);
+        Err(FileError::NotSupported)
+    }
 
     /// Confirm that this backend can serve slices on its live connection,
     /// without moving any file data (#4146).
@@ -71,6 +84,7 @@ fn io_error(e: std::io::Error, path: &str) -> FileError {
     match e.kind() {
         std::io::ErrorKind::NotFound => FileError::NotFound(path.to_string()),
         std::io::ErrorKind::PermissionDenied => FileError::PermissionDenied(path.to_string()),
+        std::io::ErrorKind::AlreadyExists => FileError::AlreadyExists(path.to_string()),
         _ => FileError::OperationFailed(format!("{path}: {e}")),
     }
 }
@@ -119,6 +133,40 @@ pub async fn fs_write_range(
             }
             file
         };
+        file.write_all(&data).map_err(|e| io_error(e, &label))?;
+        file.flush().map_err(|e| io_error(e, &label))
+    })
+    .await
+    .map_err(|e| FileError::OperationFailed(e.to_string()))?
+}
+
+/// Map a refused exclusive create. Windows answers `ERROR_ACCESS_DENIED`
+/// (not "already exists") for a directory in `path`'s place, so a refusal of
+/// any other kind is re-checked with a non-following `symlink_metadata`: an
+/// entry there now — file, directory or symlink — is
+/// [`FileError::AlreadyExists`], anything else keeps its own mapping. The
+/// check only refines the error after the create was refused; it never
+/// creates or truncates anything.
+fn create_new_error(e: std::io::Error, path: &std::path::Path, label: &str) -> FileError {
+    if e.kind() != std::io::ErrorKind::AlreadyExists && std::fs::symlink_metadata(path).is_ok() {
+        return FileError::AlreadyExists(label.to_string());
+    }
+    io_error(e, label)
+}
+
+/// [`RangedFileAccess::create_new`] for a filesystem path (local disk, a WSL
+/// UNC share): `O_CREAT | O_EXCL` via [`OpenOptions::create_new`], which also
+/// refuses a symlink in `path`'s place without following it. `label` names
+/// the file in errors.
+///
+/// [`OpenOptions::create_new`]: std::fs::OpenOptions::create_new
+pub async fn fs_create_new(path: PathBuf, label: String, data: Vec<u8>) -> Result<(), FileError> {
+    tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| create_new_error(e, &path, &label))?;
         file.write_all(&data).map_err(|e| io_error(e, &label))?;
         file.flush().map_err(|e| io_error(e, &label))
     })
@@ -223,5 +271,120 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"");
+    }
+
+    #[tokio::test]
+    async fn create_new_creates_a_missing_file_with_its_data() {
+        let (_dir, path) = temp("new");
+        let l = label(&path);
+        fs_create_new(path.clone(), l.clone(), b"abc".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        // The created file continues like any other upload.
+        fs_write_range(path.clone(), l, 3, b"def".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn create_new_refuses_an_existing_file_and_leaves_it_untouched() {
+        let (_dir, path) = temp("taken");
+        std::fs::write(&path, b"precious").unwrap();
+        let l = label(&path);
+        assert!(matches!(
+            fs_create_new(path.clone(), l.clone(), Vec::new()).await,
+            Err(FileError::AlreadyExists(p)) if p == l
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"precious");
+    }
+
+    #[tokio::test]
+    async fn create_new_refuses_an_existing_directory() {
+        let (dir, _) = temp("unused");
+        let l = label(dir.path());
+        assert!(matches!(
+            fs_create_new(dir.path().to_path_buf(), l, Vec::new()).await,
+            Err(FileError::AlreadyExists(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn create_new_does_not_follow_a_dangling_symlink() {
+        let (dir, link) = temp("link");
+        let target = dir.path().join("target");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let l = label(&link);
+        assert!(matches!(
+            fs_create_new(link, l, b"x".to_vec()).await,
+            Err(FileError::AlreadyExists(_))
+        ));
+        assert!(!target.exists(), "the symlink target must not be created");
+    }
+
+    /// Windows refuses an exclusive create over a directory with "access
+    /// denied"; an entry in the path's place still reads as "already exists",
+    /// on every platform.
+    #[test]
+    fn a_refused_create_over_an_existing_entry_is_already_exists() {
+        let (dir, file) = temp("file");
+        std::fs::write(&file, b"x").unwrap();
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        for path in [dir.path().to_path_buf(), file] {
+            assert!(matches!(
+                create_new_error(denied(), &path, "p"),
+                FileError::AlreadyExists(l) if l == "p"
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).unwrap();
+            assert!(matches!(
+                create_new_error(denied(), &link, "p"),
+                FileError::AlreadyExists(_)
+            ));
+        }
+    }
+
+    /// With nothing in the path's place, a refusal keeps its own mapping.
+    #[test]
+    fn a_refused_create_of_a_missing_path_keeps_its_error() {
+        let (_dir, missing) = temp("missing");
+        let err = |kind| create_new_error(std::io::Error::from(kind), &missing, "p");
+        assert!(matches!(
+            err(std::io::ErrorKind::PermissionDenied),
+            FileError::PermissionDenied(_)
+        ));
+        assert!(matches!(
+            err(std::io::ErrorKind::NotFound),
+            FileError::NotFound(_)
+        ));
+        assert!(matches!(
+            err(std::io::ErrorKind::AlreadyExists),
+            FileError::AlreadyExists(_)
+        ));
+    }
+
+    /// A backend without an atomic exclusive create says so, rather than
+    /// emulating one.
+    #[tokio::test]
+    async fn create_new_defaults_to_not_supported() {
+        struct Plain;
+        #[async_trait::async_trait]
+        impl RangedFileAccess for Plain {
+            async fn read_range(&self, _: &str, _: u64, _: u32) -> Result<Vec<u8>, FileError> {
+                Ok(Vec::new())
+            }
+            async fn write_range(&self, _: &str, _: u64, _: &[u8]) -> Result<(), FileError> {
+                Ok(())
+            }
+        }
+        assert!(matches!(
+            Plain.create_new("/f", b"").await,
+            Err(FileError::NotSupported)
+        ));
     }
 }

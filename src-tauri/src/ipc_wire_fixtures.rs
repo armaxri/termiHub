@@ -204,6 +204,8 @@ fn agent_fixture() -> Value {
             "embeddedServerActivity": false,
             // A Windows agent host: no chmod / chown / symlink (#4601).
             "hostFileAttributeOps": { "permissions": false, "owner": false, "symlink": false },
+            // The host-level exclusive create for upload claims (#4433).
+            "fileCreateNew": true,
             "agentVersion": "1.4.2"
         }),
     );

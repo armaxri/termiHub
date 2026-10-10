@@ -15,6 +15,7 @@ import {
 } from "@/services/networkApi";
 import { toast } from "@/components/ui";
 import { withTooltip } from "@/test/tooltip";
+import { checkA11y } from "@/test/axe";
 import { WolPanel } from "./WolPanel";
 
 vi.mock("@/services/networkApi", () => ({
@@ -61,6 +62,15 @@ describe("WolPanel — Button migration", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
+  });
+
+  it("renders the no-saved-devices state as an announced EmptyState panel (#4382)", async () => {
+    await renderPanel();
+    const empty = container.querySelector('[data-testid="wol-devices-empty"]');
+    expect(empty?.classList.contains("ui-empty--panel")).toBe(true);
+    expect(empty?.getAttribute("role")).toBe("status");
+    expect(empty?.textContent).toBe("No saved devices");
+    expect(await checkA11y(container)).toHaveNoViolations();
   });
 
   it("renders the Send action as a shared Button primitive", async () => {

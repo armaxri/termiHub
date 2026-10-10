@@ -9,6 +9,7 @@ import {
   Input,
   NumberInput,
   Select,
+  EmptyState,
 } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useListenerGroup } from "@/hooks/useTauriListener";
@@ -537,9 +538,11 @@ export function HttpMonitorPanel() {
       )}
 
       {monitors.length === 0 && !activeMonitorId && (
-        <div className="network-panel__placeholder">
-          No running monitors. Enter a URL and click Start.
-        </div>
+        <EmptyState
+          variant="panel"
+          title="No running monitors. Enter a URL and click Start."
+          data-testid="http-monitor-empty"
+        />
       )}
     </form>
   );

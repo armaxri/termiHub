@@ -11,19 +11,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-.tunnel-sidebar__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  gap: var(--spacing-sm);
-}
-
 /*
  * Tunnel rows are composed from the shared `SidebarListItem` shell (issue 1383),
  * so the row layout (container, header, status dot, name, badge, actions,

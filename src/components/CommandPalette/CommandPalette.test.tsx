@@ -239,7 +239,7 @@ describe("CommandPalette", () => {
 
   it("shows an empty state when nothing matches", () => {
     typeInto("zzzznomatch");
-    expect(document.querySelector(".command-palette__empty")).not.toBeNull();
+    expect(document.querySelector('[data-testid="command-palette-empty"]')).not.toBeNull();
   });
 
   it("surfaces a context-bound command disabled when no target applies", () => {

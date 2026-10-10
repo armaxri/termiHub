@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
-import { Button, toast, ConfirmDialog } from "@/components/ui";
+import { Button, toast, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -170,10 +170,11 @@ export function TunnelSidebar() {
         </Button>
       </SidebarToolbar>
       {tunnels.length === 0 ? (
-        <div className="tunnel-sidebar__empty" data-testid="tunnel-empty-message">
-          <span>No SSH tunnels configured.</span>
-          <span>Click &quot;+ New Tunnel&quot; to create one.</span>
-        </div>
+        <EmptyState
+          title="No SSH tunnels configured."
+          description={<>Click &quot;+ New Tunnel&quot; to create one.</>}
+          data-testid="tunnel-empty-message"
+        />
       ) : (
         <div
           className="tunnel-sidebar__list"

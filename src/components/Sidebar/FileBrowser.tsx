@@ -1828,10 +1828,12 @@ export function FileBrowser() {
   if (mode === "none") {
     return (
       <div className="file-browser">
-        <div className="file-browser__placeholder" data-testid="file-browser-placeholder">
-          <MonitorOff size={32} />
-          <span>No filesystem available for this connection type</span>
-        </div>
+        <EmptyState
+          variant="card"
+          icon={<MonitorOff size={28} strokeWidth={1.5} aria-hidden />}
+          title="No filesystem available for this connection type"
+          data-testid="file-browser-placeholder"
+        />
       </div>
     );
   }
@@ -1840,26 +1842,35 @@ export function FileBrowser() {
   if (mode === "session" && !isConnected) {
     return (
       <div className="file-browser">
-        <div className="file-browser__placeholder" data-testid="file-browser-session-connecting">
-          {isLoading ? (
-            <>
-              <Spinner size="md" label={null} />
-              <span>Loading files...</span>
-            </>
-          ) : error ? (
-            <>
-              <AlertCircle size={20} />
-              <span>{error}</span>
+        {isLoading ? (
+          <EmptyState
+            variant="panel"
+            loading
+            title="Loading files..."
+            data-testid="file-browser-session-connecting"
+          />
+        ) : error ? (
+          <EmptyState
+            variant="panel"
+            icon={<AlertCircle size={20} aria-hidden />}
+            title={error}
+            role="alert"
+            action={
               <FileBrowserErrorActions
                 onRetry={refresh}
                 onDismiss={dismissError}
                 testIdPrefix="file-browser-connect"
               />
-            </>
-          ) : (
-            <span>Waiting for session...</span>
-          )}
-        </div>
+            }
+            data-testid="file-browser-session-connecting"
+          />
+        ) : (
+          <EmptyState
+            variant="panel"
+            title="Waiting for session..."
+            data-testid="file-browser-session-connecting"
+          />
+        )}
       </div>
     );
   }

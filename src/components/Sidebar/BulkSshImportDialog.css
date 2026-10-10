@@ -9,21 +9,6 @@
   padding: var(--spacing-sm) 0;
 }
 
-.ssh-config-import__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xl) var(--spacing-sm);
-  color: var(--text-secondary);
-  text-align: center;
-}
-
-.ssh-config-import__empty p {
-  margin: 0;
-  font-size: var(--font-size-md);
-}
-
 .ssh-config-import__list {
   list-style: none;
   margin: 0;

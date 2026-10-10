@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Braces, ChevronDown, ChevronRight, Eye, RotateCcw, Trash2 } from "lucide-react";
-import { Button, ConfirmDialog, toast } from "@/components/ui";
+import { Button, ConfirmDialog, toast, EmptyState } from "@/components/ui";
 import { useNetworkToolHistoryStore } from "@/store/networkToolHistoryStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -119,9 +119,11 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
             </div>
           )}
           {runs.length === 0 ? (
-            <div className="network-panel__placeholder" data-testid="network-history-empty">
-              No recorded runs yet. Finished runs are kept here (stored only on this computer).
-            </div>
+            <EmptyState
+              variant="panel"
+              title="No recorded runs yet. Finished runs are kept here (stored only on this computer)."
+              data-testid="network-history-empty"
+            />
           ) : (
             <ul className="network-history__list">
               {runs.map((run) => (
