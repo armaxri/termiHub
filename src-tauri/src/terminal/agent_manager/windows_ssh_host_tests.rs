@@ -760,6 +760,25 @@ fn first_command(shell: WindowsShell) -> (&'static str, &'static str) {
 /// (so its prompt emits OSC 7) and cmd.exe gets none. The session also carries
 /// a configured env var (#4147), typed as `$env:` / `set` — never `export`.
 async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, shell: WindowsShell) {
+    // DIAGNOSTIC (#4670, temporary): repeat the check with the setup trace on.
+    termihub_core::backends::ssh::remote_shell::enable_setup_trace();
+    let mut failures = Vec::new();
+    for i in 0..12 {
+        eprintln!("==== #4670 diagnostic iteration {i} ====");
+        if let Err(e) = first_command_once(fixture, shell).await {
+            eprintln!("==== #4670 iteration {i} FAILED: {e}");
+            failures.push(i);
+        } else {
+            eprintln!("==== #4670 iteration {i} ok");
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "#4670 failing iterations: {failures:?}"
+    );
+}
+
+async fn first_command_once(fixture: &Fixture, shell: WindowsShell) -> Result<(), String> {
     use termihub_core::connection::ConnectionType;
 
     let mut ssh = termihub_core::backends::ssh::Ssh::new();
@@ -773,7 +792,7 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
         "env": { FIRST_ENV.0: FIRST_ENV.1 },
     }))
     .await
-    .unwrap_or_else(|e| panic!("SSH terminal session to the Windows host failed: {e}"));
+    .map_err(|e| format!("SSH terminal session to the Windows host failed: {e}"))?;
     let mut rx = ssh.subscribe_output();
     let (line, expect) = first_command(shell);
     ssh.write(line.as_bytes())
@@ -781,7 +800,7 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
 
     let want_osc7 = shell == WindowsShell::PowerShell;
     let mut raw = Vec::new();
-    let done = tokio::time::timeout(LIVE_CEILING, async {
+    let done = tokio::time::timeout(Duration::from_secs(25), async {
         while let Some(chunk) = rx.recv().await {
             raw.extend_from_slice(&chunk);
             let text = String::from_utf8_lossy(&raw);
@@ -797,24 +816,20 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
     .unwrap_or(false);
     let text = String::from_utf8_lossy(&raw).into_owned();
     let _ = ssh.disconnect().await;
-    assert!(
-        done,
-        "{shell:?}: the first command did not run with shell integration on{} — output: {:?}",
-        if want_osc7 {
-            " (or no OSC 7 followed)"
-        } else {
-            ""
-        },
-        strip_ansi(&text)
-    );
-    assert!(
-        !text.contains("PROMPT_COMMAND")
-            && !text.contains("ParserError")
-            && !text.contains("export "),
-        "{shell:?}: the POSIX setup reached the Windows shell — output: {:?}",
-        strip_ansi(&text)
-    );
+    if !done {
+        return Err(format!(
+            "{shell:?}: the first command did not run with shell integration on — output: {:?}",
+            strip_ansi(&text)
+        ));
+    }
+    if text.contains("PROMPT_COMMAND") || text.contains("ParserError") || text.contains("export ") {
+        return Err(format!(
+            "{shell:?}: the POSIX setup reached the Windows shell — output: {:?}",
+            strip_ansi(&text)
+        ));
+    }
     eprintln!("SSH terminal with shell integration ran the first command via {shell:?}");
+    Ok(())
 }
 
 async fn deploy_install_connect_reattach(want: WindowsShell) {
