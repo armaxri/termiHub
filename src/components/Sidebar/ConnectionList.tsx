@@ -80,11 +80,13 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { resolveConnectionDrop } from "@/utils/connectionDropTarget";
 import { startSavedPersistentSession } from "@/utils/startSavedPersistentSession";
 import {
+  agentReorderIndices,
   connectionReorderIndices,
   folderMoveTargets,
+  moveShortcutDelta,
+  moveShortcutHint,
   type FolderMoveTarget,
 } from "@/utils/connectionKeyboardMove";
-import { isMac } from "@/utils/platform";
 
 /**
  * Keyboard / menu alternatives to dragging a connection in the tree (#4528):
@@ -100,12 +102,6 @@ interface ConnectionMoveActions {
   moveBy: (connectionId: string, delta: -1 | 1) => void;
   /** Move the connection (or the multi-selection holding it) into a folder; `null` = top level. */
   moveToFolder: (connectionId: string, folderId: string | null) => void;
-}
-
-/** Shortcut hint shown next to Move Up / Move Down (Cmd on macOS, Ctrl elsewhere). */
-function moveShortcutHint(direction: "Up" | "Down"): string {
-  const arrow = direction === "Up" ? "\u2191" : "\u2193";
-  return isMac() ? `\u2318\u21e7${arrow}` : `Ctrl+Shift+${arrow}`;
 }
 
 /**
@@ -1073,15 +1069,11 @@ export function ConnectionList() {
       const index = getNodeIndex(nodeId);
       const node = treeNodes[index];
       if (!node) return;
-      const isMove =
-        (event.ctrlKey || event.metaKey) &&
-        event.shiftKey &&
-        !event.altKey &&
-        (event.key === "ArrowUp" || event.key === "ArrowDown");
-      if (isMove) {
+      const moveDelta = moveShortcutDelta(event);
+      if (moveDelta !== null) {
         event.preventDefault();
         event.stopPropagation();
-        if (node.kind === "connection") moveConnectionBy(node.id, event.key === "ArrowUp" ? -1 : 1);
+        if (node.kind === "connection") moveConnectionBy(node.id, moveDelta);
         return;
       }
       switch (event.key) {
@@ -1474,6 +1466,22 @@ export function ConnectionList() {
     [normalizedAgentQuery, remoteAgents, agentNameMatches, agentHasDefinitionMatch]
   );
 
+  // Keyboard / menu alternative to dragging an agent node (#4641): move it one
+  // place up or down among the agents the sidebar shows, through the same
+  // `reorderRemoteAgents` call the drag path makes.
+  const canMoveAgentBy = useCallback(
+    (agentId: string, delta: -1 | 1) =>
+      agentReorderIndices(agentId, delta, visibleAgents, remoteAgents) !== null,
+    [visibleAgents, remoteAgents]
+  );
+  const moveAgentBy = useCallback(
+    (agentId: string, delta: -1 | 1) => {
+      const move = agentReorderIndices(agentId, delta, visibleAgents, remoteAgents);
+      if (move) reorderRemoteAgents(move.oldIndex, move.newIndex);
+    },
+    [visibleAgents, remoteAgents, reorderRemoteAgents]
+  );
+
   return (
     <div className="connection-list">
       <DndContext
@@ -1677,6 +1685,8 @@ export function ConnectionList() {
                         // filter); one surfaced only by a child match keeps the
                         // query so just the matching connections show (#2485).
                         filterQuery={agentNameMatches(agent) ? "" : agentFilterQuery}
+                        canMoveBy={canMoveAgentBy}
+                        onMoveBy={moveAgentBy}
                       />
                     ))}
                     {normalizedAgentQuery && visibleAgents.length === 0 && (
