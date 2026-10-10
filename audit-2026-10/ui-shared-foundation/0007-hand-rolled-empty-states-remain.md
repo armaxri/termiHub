@@ -6,8 +6,8 @@ severity: low
 category: ui
 is_workaround: false
 subsystem: "src/components"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4382 — all bespoke __empty/__placeholder markup migrated to ui/EmptyState, orphaned CSS deleted, tokenDiscipline guard added"
 audit: "2026-10"
 commit: "663465d52"
 relation: previous-incomplete

@@ -6,8 +6,8 @@ severity: low
 category: ui
 is_workaround: false
 subsystem: "src/components/Terminal, src/components/RemoteDesktop"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4382 — ContentOverlay busy states (terminal connect/disconnect, FileBrowserTab, path dialog, agent reconnect) use the shared Spinner; FileBrowserTab rebuilt on ContentOverlay with live region; RD overlay deferred behind #4378"
 audit: "2026-10"
 commit: "663465d52"
 relation: previous-incomplete
