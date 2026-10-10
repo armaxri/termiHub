@@ -10,6 +10,9 @@ interface HarnessProps {
   listId?: string;
   getItemKey?: UseComboboxListNavOptions<string>["getItemKey"];
   onUnhandledKeyDown?: UseComboboxListNavOptions<string>["onUnhandledKeyDown"];
+  autocomplete?: boolean;
+  open?: boolean;
+  onClose?: () => void;
 }
 
 /** A minimal search picker: filters `items` by the query and wires the hook. */
@@ -20,6 +23,9 @@ function Harness({
   listId,
   getItemKey,
   onUnhandledKeyDown,
+  autocomplete,
+  open,
+  onClose,
 }: HarnessProps) {
   const [query, setQuery] = useState("");
   const results = items.filter((i) => i.includes(query));
@@ -31,6 +37,9 @@ function Harness({
     listId,
     getItemKey,
     onUnhandledKeyDown,
+    autocomplete,
+    open,
+    onClose,
   });
   return (
     <div>
@@ -223,5 +232,138 @@ describe("useComboboxListNav", () => {
     } finally {
       Element.prototype.scrollIntoView = original;
     }
+  });
+
+  describe("autocomplete mode", () => {
+    it("starts with nothing highlighted", () => {
+      render(<Harness items={["a1", "a2"]} autocomplete />);
+      expect(active()).toBe(-1);
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+      expect(byTestId("opt-a1").getAttribute("aria-selected")).toBe("false");
+    });
+
+    it("moves from no highlight to the first / last option and wraps", () => {
+      render(<Harness items={["a1", "a2", "a3"]} autocomplete />);
+      key("ArrowDown");
+      expect(active()).toBe(0);
+      expect(input().getAttribute("aria-activedescendant")).toBe(byTestId("opt-a1").id);
+      key("ArrowUp");
+      expect(active()).toBe(2);
+      key("ArrowDown");
+      expect(active()).toBe(0);
+      cleanup();
+      render(<Harness items={["a1", "a2", "a3"]} autocomplete />);
+      key("ArrowUp");
+      expect(active()).toBe(2);
+    });
+
+    it("forwards Enter with nothing highlighted and picks the highlighted option", () => {
+      const onSelect = vi.fn();
+      const onUnhandled = vi.fn();
+      render(
+        <Harness
+          items={["a1", "a2"]}
+          autocomplete
+          onSelect={onSelect}
+          onUnhandledKeyDown={onUnhandled}
+        />
+      );
+      key("Enter");
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onUnhandled).toHaveBeenCalledTimes(1);
+      expect(onUnhandled.mock.calls[0][0].key).toBe("Enter");
+      expect(onUnhandled.mock.calls[0][0].defaultPrevented).toBe(false);
+      key("ArrowDown");
+      key("Enter");
+      expect(onSelect).toHaveBeenCalledWith("a1");
+      expect(onUnhandled).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the highlight when the reset key changes", () => {
+      render(<Harness items={["a1", "a2"]} autocomplete />);
+      key("ArrowDown");
+      key("ArrowDown");
+      expect(active()).toBe(1);
+      type("a");
+      expect(active()).toBe(-1);
+    });
+
+    it("closes on Escape when onClose is given, clearing the highlight", () => {
+      const onClose = vi.fn();
+      const onUnhandled = vi.fn();
+      render(
+        <Harness
+          items={["a1", "a2"]}
+          autocomplete
+          onClose={onClose}
+          onUnhandledKeyDown={onUnhandled}
+        />
+      );
+      key("ArrowDown");
+      key("Escape");
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onUnhandled).not.toHaveBeenCalled();
+      expect(active()).toBe(-1);
+    });
+
+    it("forwards Escape when no onClose is given", () => {
+      const onUnhandled = vi.fn();
+      render(<Harness items={["a1"]} autocomplete onUnhandledKeyDown={onUnhandled} />);
+      key("Escape");
+      expect(onUnhandled).toHaveBeenCalledTimes(1);
+      expect(onUnhandled.mock.calls[0][0].key).toBe("Escape");
+    });
+  });
+
+  describe("open flag", () => {
+    it("navigates nothing and forwards every key while closed", () => {
+      const onSelect = vi.fn();
+      const onClose = vi.fn();
+      const onUnhandled = vi.fn();
+      render(
+        <Harness
+          items={["a1", "a2"]}
+          open={false}
+          onSelect={onSelect}
+          onClose={onClose}
+          onUnhandledKeyDown={onUnhandled}
+        />
+      );
+      expect(active()).toBe(-1);
+      expect(input().hasAttribute("aria-activedescendant")).toBe(false);
+      key("ArrowDown");
+      key("Enter");
+      key("Escape");
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(onUnhandled.mock.calls.map((c) => c[0].key)).toEqual(["ArrowDown", "Enter", "Escape"]);
+    });
+
+    it("restores the highlighted position when the list reopens", () => {
+      function Toggle() {
+        const [open, setOpen] = useState(true);
+        return (
+          <>
+            <button data-testid="toggle" onClick={() => setOpen((o) => !o)} />
+            <Harness items={["a1", "a2", "a3"]} autocomplete open={open} />
+          </>
+        );
+      }
+      render(<Toggle />);
+      key("ArrowDown");
+      key("ArrowDown");
+      expect(active()).toBe(1);
+      click(byTestId("toggle"));
+      expect(active()).toBe(-1);
+      click(byTestId("toggle"));
+      expect(active()).toBe(1);
+    });
+  });
+
+  it("still handles Enter itself in the default mode when nothing matches", () => {
+    const onUnhandled = vi.fn();
+    render(<Harness items={[]} onUnhandledKeyDown={onUnhandled} />);
+    key("Enter");
+    expect(onUnhandled).not.toHaveBeenCalled();
   });
 });

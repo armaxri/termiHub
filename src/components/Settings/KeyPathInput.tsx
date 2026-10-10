@@ -5,8 +5,8 @@ import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { validateSshKey, SshKeyValidation } from "@/services/api";
 import { Input, Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
-import { isImeComposing } from "@/utils/imeComposition";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
 /** Debounce (ms) before validating a typed key path against the backend. */
 const VALIDATION_DEBOUNCE_MS = 300;
@@ -36,18 +36,15 @@ export function KeyPathInput({
 }: KeyPathInputProps) {
   const { keyFiles, sshDirPath } = useSshKeyFiles();
   const [isOpen, setIsOpen] = useState(false);
-  const [highlightIndex, setHighlightIndex] = useState(-1);
   const [validation, setValidation] = useState<SshKeyValidation | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
   // Stable ids for the WAI-ARIA combobox wiring (#4330): the input controls the
   // listbox, points aria-activedescendant at the highlighted option, and is
   // described by the validation live region.
   const baseId = useId();
   const listId = `${baseId}-listbox`;
   const validationId = `${baseId}-validation`;
-  const optionId = (index: number) => `${listId}-opt-${index}`;
 
   // Inline key-file validation (PR #204): debounce a backend check of the typed
   // path and surface a hint (public key / PuTTY PPK / unrecognized / not found /
@@ -76,29 +73,38 @@ export function KeyPathInput({
     return keyFiles.filter((f) => itemMatchesQuery(f, (k) => [k.name, k.path], q));
   }, [keyFiles, value]);
 
-  // Reset highlight when filtered list changes
-  useEffect(() => {
-    setHighlightIndex(-1);
-  }, [filtered]);
+  const listVisible = isOpen && filtered.length > 0;
 
-  // Scroll highlighted item into view
-  useEffect(() => {
-    if (highlightIndex >= 0 && listRef.current) {
-      const items = listRef.current.children;
-      if (items[highlightIndex]) {
-        (items[highlightIndex] as HTMLElement).scrollIntoView({ block: "nearest" });
+  const acceptItem = (item: SshKeyFile) => {
+    onChange(item.path);
+    setIsOpen(false);
+    // `nav` is initialised below; this only runs from its event handlers.
+    nav.setActiveIndex(-1);
+  };
+
+  const closeList = useCallback(() => setIsOpen(false), []);
+
+  // Shared combobox keyboard navigation (#4646): nothing is highlighted until the
+  // arrow keys move into the list, and the highlight resets whenever the
+  // filtered list changes. Tab accepts the highlighted option (or the only one).
+  const nav = useComboboxListNav({
+    items: filtered,
+    onSelect: acceptItem,
+    resetKey: filtered,
+    listId,
+    autocomplete: true,
+    open: listVisible,
+    onClose: closeList,
+    onUnhandledKeyDown: (e) => {
+      if (!listVisible || e.key !== "Tab") return;
+      const target = nav.activeItem ?? (filtered.length === 1 ? filtered[0] : undefined);
+      if (target !== undefined) {
+        e.preventDefault();
+        acceptItem(target);
       }
-    }
-  }, [highlightIndex]);
-
-  const acceptItem = useCallback(
-    (item: SshKeyFile) => {
-      onChange(item.path);
-      setIsOpen(false);
-      setHighlightIndex(-1);
     },
-    [onChange]
-  );
+  });
+  const { setActiveIndex } = nav;
 
   const handleFocus = useCallback(() => {
     if (keyFiles.length > 0) {
@@ -106,50 +112,14 @@ export function KeyPathInput({
     }
   }, [keyFiles]);
 
-  const handleBlur = useCallback((e: React.FocusEvent) => {
-    // Don't close if focus moves within the wrapper (e.g. clicking a dropdown item)
-    if (wrapperRef.current?.contains(e.relatedTarget as Node)) return;
-    setIsOpen(false);
-    setHighlightIndex(-1);
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (isImeComposing(e)) return;
-      if (!isOpen || filtered.length === 0) return;
-
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          setHighlightIndex((prev) => (prev < filtered.length - 1 ? prev + 1 : 0));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          setHighlightIndex((prev) => (prev > 0 ? prev - 1 : filtered.length - 1));
-          break;
-        case "Tab":
-          if (highlightIndex >= 0) {
-            e.preventDefault();
-            acceptItem(filtered[highlightIndex]);
-          } else if (filtered.length === 1) {
-            e.preventDefault();
-            acceptItem(filtered[0]);
-          }
-          break;
-        case "Enter":
-          if (highlightIndex >= 0) {
-            e.preventDefault();
-            acceptItem(filtered[highlightIndex]);
-          }
-          break;
-        case "Escape":
-          e.preventDefault();
-          setIsOpen(false);
-          setHighlightIndex(-1);
-          break;
-      }
+  const handleBlur = useCallback(
+    (e: React.FocusEvent) => {
+      // Don't close if focus moves within the wrapper (e.g. clicking a dropdown item)
+      if (wrapperRef.current?.contains(e.relatedTarget as Node)) return;
+      setIsOpen(false);
+      setActiveIndex(-1);
     },
-    [isOpen, filtered, highlightIndex, acceptItem]
+    [setActiveIndex]
   );
 
   const handleBrowse = useCallback(async () => {
@@ -164,11 +134,6 @@ export function KeyPathInput({
   }, [sshDirPath, onChange]);
 
   const prefix = testIdPrefix ? `${testIdPrefix}-` : "";
-  const listVisible = isOpen && filtered.length > 0;
-  const activeDescendant =
-    listVisible && highlightIndex >= 0 && highlightIndex < filtered.length
-      ? optionId(highlightIndex)
-      : undefined;
   const validationMessage = validation?.message ? validation.message : null;
   const describedBy =
     [ariaDescribedBy, validationMessage ? validationId : null].filter(Boolean).join(" ") ||
@@ -187,13 +152,9 @@ export function KeyPathInput({
             if (!isOpen && keyFiles.length > 0) setIsOpen(true);
           }}
           onFocus={handleFocus}
-          onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          role="combobox"
+          {...nav.inputProps}
           aria-expanded={listVisible}
-          aria-controls={listId}
-          aria-activedescendant={activeDescendant}
-          aria-autocomplete="list"
           aria-describedby={describedBy}
           aria-invalid={ariaInvalid || undefined}
           data-testid={`${prefix}key-path-input`}
@@ -211,30 +172,35 @@ export function KeyPathInput({
         </Tooltip>
         {listVisible && (
           <ul
-            id={listId}
+            {...nav.listboxProps}
             className="key-path-input__dropdown"
-            ref={listRef}
-            role="listbox"
             data-testid={`${prefix}key-path-dropdown`}
           >
-            {filtered.map((file, i) => (
-              <li
-                key={file.path}
-                id={optionId(i)}
-                className={`key-path-input__option${i === highlightIndex ? " key-path-input__option--highlighted" : ""}`}
-                role="option"
-                aria-selected={i === highlightIndex}
-                onMouseDown={(e) => {
-                  e.preventDefault(); // Prevent blur before click registers
-                  acceptItem(file);
-                }}
-                onMouseEnter={() => setHighlightIndex(i)}
-                data-testid={`${prefix}key-path-option-${i}`}
-              >
-                {file.name}
-                <span className="key-path-input__option-path">{file.path}</span>
-              </li>
-            ))}
+            {filtered.map((file, i) => {
+              // Picking happens on mousedown (before the input blurs), so the
+              // hook's click / mousemove handlers are not used here.
+              const {
+                onClick: _onClick,
+                onMouseMove: _onMouseMove,
+                ...optionProps
+              } = nav.getOptionProps(i);
+              return (
+                <li
+                  key={file.path}
+                  {...optionProps}
+                  className={`key-path-input__option${i === nav.activeIndex ? " key-path-input__option--highlighted" : ""}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // Prevent blur before click registers
+                    acceptItem(file);
+                  }}
+                  onMouseEnter={() => setActiveIndex(i)}
+                  data-testid={`${prefix}key-path-option-${i}`}
+                >
+                  {file.name}
+                  <span className="key-path-input__option-path">{file.path}</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
