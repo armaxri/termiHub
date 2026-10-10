@@ -17,6 +17,13 @@
 //! persistent session — so a backend that learns on connect that it cannot
 //! serve slices (FTP without `REST STREAM`) refuses the probe and the desktop
 //! falls back to whole-file transfers (#4146).
+//!
+//! A write with `create_new: true` (protocol 0.30.0, #4433) is an exclusive
+//! create: only at `offset: 0`, it creates the file only if nothing holds the
+//! path yet ([`RangedFileAccess::create_new`]) and answers `-32030` (file
+//! already exists) without writing otherwise. The agent host's own file system
+//! performs it atomically; a target without an atomic exclusive create answers
+//! `-32013` rather than emulating one.
 
 use base64::Engine;
 use jsonrpsee::core::server::RpcModule;
@@ -121,12 +128,21 @@ fn register_write_range(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
                     ),
                 ));
             }
+            if p.create_new && p.offset != 0 {
+                return Err(rpc_err(
+                    errors::INVALID_PARAMS,
+                    format!("create_new needs offset 0, not {}", p.offset),
+                ));
+            }
             let browser =
                 resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
-            ranged(browser.as_ref())?
-                .write_range(&p.path, p.offset, &data)
-                .await
-                .map_err(map_file_error)?;
+            let access = ranged(browser.as_ref())?;
+            if p.create_new {
+                access.create_new(&p.path, &data).await
+            } else {
+                access.write_range(&p.path, p.offset, &data).await
+            }
+            .map_err(map_file_error)?;
             Ok::<Value, ErrorObjectOwned>(json!({}))
         },
     )?;

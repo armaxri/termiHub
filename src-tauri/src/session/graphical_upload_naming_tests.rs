@@ -235,18 +235,40 @@ async fn resolve_dest_dir_reports_the_real_probe_error() {
 
 /// An agent whose `connection.files.stat` answers are scripted per path; a
 /// path with no answer is the agent's `FILE_NOT_FOUND`. Every method called
-/// is logged.
+/// is logged, and every `write_range` request's params are kept.
+///
+/// With `file_create_new` it advertises the exclusive create (#4433): a
+/// `create_new` write over a path in `appears` (a file that showed up after
+/// the probe) answers `FILE_ALREADY_EXISTS`, and `create_error` scripts any
+/// other answer.
 #[derive(Default)]
 struct StatAgent {
     stat_errors: HashMap<String, String>,
     existing: Vec<String>,
     methods: Mutex<Vec<String>>,
+    file_create_new: bool,
+    appears: Vec<String>,
+    create_error: Option<fn(String) -> FileError>,
+    writes: Mutex<Vec<Value>>,
 }
 
 impl AgentRequests for StatAgent {
     fn request(&self, _agent_id: &str, method: &str, params: Value) -> Result<Value, FileError> {
         self.methods.lock().unwrap().push(method.to_string());
         let path = params["path"].as_str().unwrap_or_default().to_string();
+        if method == CONNECTION_FILES_WRITE_RANGE {
+            let create_new = params["create_new"] == true;
+            self.writes.lock().unwrap().push(params);
+            if create_new {
+                if let Some(error) = self.create_error {
+                    return Err(error(path));
+                }
+                if self.appears.contains(&path) {
+                    return Err(FileError::AlreadyExists(path));
+                }
+            }
+            return Ok(serde_json::json!({}));
+        }
         if method != CONNECTION_FILES_STAT {
             return Ok(serde_json::json!({}));
         }
@@ -262,6 +284,10 @@ impl AgentRequests for StatAgent {
             .unwrap());
         }
         Err(FileError::NotFound(path))
+    }
+
+    fn supports_file_create_new(&self, _agent_id: &str) -> bool {
+        self.file_create_new
     }
 }
 
@@ -315,8 +341,11 @@ async fn agent_upload_never_writes_over_a_name_whose_stat_failed() {
     );
 }
 
+/// An older agent (no `fileCreateNew`) is never sent `create_new`: it would
+/// ignore the unknown field and truncate the file. The claim stays
+/// unsupported and nothing reaches the agent.
 #[tokio::test]
-async fn the_agent_host_has_no_exclusive_create() {
+async fn an_older_agent_is_never_sent_an_exclusive_create() {
     let (agent, files) = agent_files(StatAgent::default());
 
     assert_eq!(
@@ -324,4 +353,90 @@ async fn the_agent_host_has_no_exclusive_create() {
         Ok(Claim::Unsupported)
     );
     assert!(agent.methods.lock().unwrap().is_empty());
+}
+
+/// An agent advertising `fileCreateNew` claims the name with an empty
+/// `create_new` write at offset 0 on its host's own file system (#4433).
+#[tokio::test]
+async fn an_agent_claims_a_free_name_with_an_exclusive_create() {
+    let (agent, files) = agent_files(StatAgent {
+        file_create_new: true,
+        ..StatAgent::default()
+    });
+
+    assert_eq!(files.claim_new_file("/d/a.txt").await, Ok(Claim::Claimed));
+    let writes = agent.writes.lock().unwrap().clone();
+    assert_eq!(
+        writes,
+        vec![serde_json::json!({
+            "connection_id": null,
+            "path": "/d/a.txt",
+            "offset": 0,
+            "data": "",
+            "create_new": true,
+        })]
+    );
+}
+
+/// A file that appeared on the agent host after the probe makes the claim
+/// report "exists", and the upload moves on to `name (1)` — it never writes
+/// the file it did not create (#4433).
+#[tokio::test]
+async fn an_agent_upload_moves_on_when_the_claim_reports_exists() {
+    let (agent, files) = agent_files(StatAgent {
+        file_create_new: true,
+        appears: vec!["/d/a.txt".to_string()],
+        ..StatAgent::default()
+    });
+
+    let placement = place(&files, "/d", one_file("a.txt")).await;
+
+    assert_eq!(remotes(&placement), vec!["/d/a (1).txt"]);
+    let claimed: Vec<String> = agent
+        .writes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|w| {
+            assert_eq!(w["create_new"], true, "only claims are written: {w}");
+            w["path"].as_str().unwrap().to_string()
+        })
+        .collect();
+    assert_eq!(claimed, vec!["/d/a.txt", "/d/a (1).txt"]);
+}
+
+/// An agent that advertises the flag but answers "method not found" or "not
+/// supported" for this target keeps the probe's answer, as before (#4433).
+#[tokio::test]
+async fn an_agent_that_cannot_create_exclusively_keeps_the_probed_name() {
+    let (_, files) = agent_files(StatAgent {
+        file_create_new: true,
+        create_error: Some(|_| FileError::NotSupported),
+        ..StatAgent::default()
+    });
+
+    assert_eq!(
+        files.claim_new_file("/d/a.txt").await,
+        Ok(Claim::Unsupported)
+    );
+}
+
+/// Any other refusal is a clash only when the name exists now; otherwise it
+/// is a real error and the item is skipped, never written.
+#[tokio::test]
+async fn an_agent_claim_failure_that_is_not_a_clash_skips_the_item() {
+    let (_, files) = agent_files(StatAgent {
+        file_create_new: true,
+        create_error: Some(FileError::PermissionDenied),
+        ..StatAgent::default()
+    });
+
+    let placement = place(&files, "/d", one_file("a.txt")).await;
+
+    assert!(placement.files.is_empty(), "{:?}", placement.files);
+    assert!(
+        placement.skipped[0].reason.contains("Permission denied"),
+        "{}",
+        placement.skipped[0].reason
+    );
 }

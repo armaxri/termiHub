@@ -112,6 +112,14 @@ pub struct AgentCapabilities {
         ts(type = "import(\"./FileAttributeOps\").FileAttributeOps", optional)
     )]
     pub host_file_attribute_ops: Option<termihub_core::files::FileAttributeOps>,
+    /// Whether the agent performs an atomic exclusive create on its host's own
+    /// file system (`connection.files.write_range` with `create_new`, protocol
+    /// 0.30.0, #4433), which the remote-desktop upload claims its name with.
+    /// `false` for older agents: they would ignore the flag and truncate, so
+    /// the desktop never sends it to them.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub file_create_new: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]
