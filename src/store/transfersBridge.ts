@@ -24,8 +24,7 @@
  * - **dispatches** the few client-originated `transfer.*` intents that have no
  *   live-engine data source and are therefore genuine client actions, never
  *   server-produced progress: seeding a `queued` row at registration
- *   (`transfer.seed`, #1632), the dropped-terminal-event reconcile backstop
- *   (`transfer.reconcile`, #1645), removing a row (`transfer.remove`), clearing
+ *   (`transfer.seed`, #1632), removing a row (`transfer.remove`), clearing
  *   completed rows (`transfer.clearCompleted`), and collapsing/expanding the
  *   panel (`transfer.setMinimized`).
  *
@@ -230,14 +229,14 @@ export function currentTransfersView(): TransfersView {
  * Rust routes). The backend folds the server-originated progress stream itself
  * (#2387) — every live `transfer-progress` sample and lifecycle step — so the
  * frontend only ever dispatches the client-originated transitions that have no
- * live-engine data source: the registration seed, the reconcile backstop, and the
- * panel-only remove / clearCompleted / setMinimized actions. Excludes
- * `transfer.progress` (server-fed) and the retired `transfer.replace` render
- * mirror.
+ * live-engine data source: the registration seed and the panel-only remove /
+ * clearCompleted / setMinimized actions. There is no client reconcile backstop:
+ * every engine termination path folds its terminal state server-side (#4387).
+ * Excludes `transfer.progress` (server-fed) and the retired `transfer.replace`
+ * render mirror.
  */
 export type TransferIntentKind =
   | "transfer.seed"
-  | "transfer.reconcile"
   | "transfer.remove"
   | "transfer.clearCompleted"
   | "transfer.setMinimized";
@@ -254,8 +253,8 @@ export function dispatchTransferIntent(
  * Fire a client-originated `transfer.*` intent against the authoritative region,
  * swallowing and logging any failure so a bridge/transport hiccup never throws out
  * of a UI action or hook. Used for the transitions that have no live-engine data
- * source — the registration seed, the reconcile backstop, and the panel-only
- * remove / clearCompleted / setMinimized actions — so they are genuine client
+ * source — the registration seed and the panel-only remove / clearCompleted /
+ * setMinimized actions — so they are genuine client
  * actions, not server-produced progress routed through the client. Never throws: a
  * synchronous transport-construction failure (non-Tauri, no socket) is caught and
  * logged. The twin of the monitor bridge's

@@ -21,7 +21,7 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
-import type { TransferProgress, TransferSnapshot } from "@/services/api";
+import type { TransferProgress } from "@/services/api";
 import {
   setTransferTransportForTest,
   stopTransfersSubscription,
@@ -29,10 +29,8 @@ import {
   type TransfersView,
 } from "@/store/transfersBridge";
 import {
-  isTerminalTransferState,
   transferEntryFromProgress,
   transferEntryFromSeed,
-  transferEntryFromSnapshot,
   type TransferDirection,
   type TransferEntry,
   type TransferSeed,
@@ -70,7 +68,7 @@ export function transfersView(entries: TransferEntry[], minimized = false): Tran
  * An in-memory substrate double for the `transfers` region: holds one view, folds
  * the granular `transfer.*` intents like the Rust store, and fans a snapshot to
  * every subscriber. Faithful enough that a client-dispatched intent round-trips
- * back into the projected view. The `seed`/`progress`/`reconcile` folds reuse the
+ * back into the projected view. The `seed`/`progress` folds reuse the
  * frontend `transferEntryFrom*` helpers, which mirror the Rust store's
  * `entry_from_*` folds one-to-one.
  */
@@ -84,6 +82,18 @@ export class FakeTransferTransport implements Transport {
   /** Seed the region view directly (test setup), fanning a snapshot. */
   seed(view: TransfersView): void {
     this.view = { queue: { ...view.queue }, minimized: view.minimized };
+    this.bump();
+  }
+
+  /**
+   * Simulate the backend's server-side `fold_transfer_progress` (#2387): the
+   * engine folds a progress sample / lifecycle step straight into the region,
+   * with no client dispatch, and the diff fans out to every subscriber.
+   */
+  serverFold(progress: TransferProgress): void {
+    const prev = this.view.queue[progress.transferId];
+    const entry = transferEntryFromProgress(progress, prev, this.now());
+    this.view = { ...this.view, queue: { ...this.view.queue, [entry.id]: entry } };
     this.bump();
   }
 
@@ -115,19 +125,6 @@ export class FakeTransferTransport implements Transport {
         const prev = queue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, this.now());
         this.view.queue = { ...queue, [entry.id]: entry };
-        break;
-      }
-      case "transfer.reconcile": {
-        const snapshots = p.snapshots as TransferSnapshot[];
-        let next: Record<string, TransferEntry> | null = null;
-        for (const snap of snapshots) {
-          if (!snap.settled || !isTerminalTransferState(snap.state)) continue;
-          const prev = queue[snap.transferId];
-          if (!prev || isTerminalTransferState(prev.state)) continue;
-          next ??= { ...queue };
-          next[snap.transferId] = transferEntryFromSnapshot(snap, prev, this.now());
-        }
-        if (next) this.view.queue = next;
         break;
       }
       case "transfer.remove": {
