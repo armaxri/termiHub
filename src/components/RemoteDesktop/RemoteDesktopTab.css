@@ -175,15 +175,9 @@
   word-break: break-word;
 }
 
-.rd-overlay__spin {
-  animation: th-spin 1.1s linear infinite;
-  transform-origin: 50% 50%;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  /* `.rd-overlay__spin` is the connecting/reconnecting overlay's essential
-     progress cue — it carries `.motion-essential-spinner` (animations.css,
-     #4039), so it renders static beside the overlay's steady heading. */
+  /* The connecting/reconnecting overlay's progress cue is the shared Spinner
+     (#4699), which owns its rotation and reduced-motion handling. */
   .rd-toolbar {
     transition: none;
   }
