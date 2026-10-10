@@ -107,6 +107,7 @@ impl OutputBudget {
     }
 
     /// Bytes currently charged and not yet released.
+    #[cfg(test)]
     #[must_use]
     pub fn queued(&self) -> usize {
         self.inner.lock().queued
@@ -129,7 +130,8 @@ impl OutputBudget {
     /// budget until the returned credit is dropped.
     #[must_use]
     pub fn charge(&self, bytes: usize) -> OutputCredit {
-        self.inner.update(|s| s.queued = s.queued.saturating_add(bytes));
+        self.inner
+            .update(|s| s.queued = s.queued.saturating_add(bytes));
         OutputCredit {
             inner: self.inner.clone(),
             bytes,

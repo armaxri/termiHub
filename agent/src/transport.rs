@@ -13,11 +13,11 @@ use base64::Engine;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::session::output_budget::OutputBudget;
 use crate::protocol::methods::{
     ConnectionErrorNotification, ConnectionExitNotification, ConnectionOutputNotification,
     CONNECTION_ERROR, CONNECTION_EXIT, CONNECTION_OUTPUT,
 };
+use crate::session::output_budget::OutputBudget;
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
 

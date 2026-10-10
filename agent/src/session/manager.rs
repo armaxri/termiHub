@@ -2147,13 +2147,14 @@ impl SessionManager {
             let mut sessions = self.sessions.lock().await;
             let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             match &info.backend {
-                // An evicted client no longer holds the daemon: nothing to pause.
-                SessionBackend::Daemon(client)
-                    if client.output_flow_supported() && !client.is_evicted() =>
-                {
-                    Some(client.writer_handle())
+                // The daemon is sent the combined state: the desktop's pause or
+                // the transport byte budget (#4439). An evicted client no longer
+                // holds the daemon: nothing to send.
+                SessionBackend::Daemon(client) => {
+                    client.output_budget().set_paused(paused);
+                    (client.output_flow_supported() && !client.is_evicted())
+                        .then(|| (client.writer_handle(), client.output_budget().clone()))
                 }
-                SessionBackend::Daemon(_) => None,
                 SessionBackend::InProcess { flow, .. } => {
                     flow.set_paused(paused);
                     None
@@ -2162,8 +2163,8 @@ impl SessionManager {
                 SessionBackend::Stub { .. } => None,
             }
         };
-        if let Some(handle) = daemon_handle {
-            DaemonClient::output_flow_via_handle(&handle, paused)
+        if let Some((handle, budget)) = daemon_handle {
+            DaemonClient::output_flow_via_handle(&handle, &budget)
                 .await
                 .map_err(|e| e.to_string())?;
         }
