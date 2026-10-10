@@ -3,9 +3,23 @@
 //! Extracted from [`SessionManager`](super::manager::SessionManager) (#2076) to
 //! keep the manager focused on session lifecycle. Every method here is a pure
 //! pass-through: resolve the session's [`FileBrowser`], forward the call, and
-//! map errors to [`TerminalError`]. The behavior, error messages, and lock
-//! discipline are exactly what lived inline on the manager — the `sessions`
-//! lock is held across the browser `await`, as before.
+//! map errors to [`TerminalError`]. The behavior and error messages are
+//! exactly what lived inline on the manager.
+//!
+//! **Lock discipline (#4393).** The `sessions` lock is held only to *look the
+//! session up*: [`FileOps::resolve`] takes an owned [`BrowserHandle`] — the
+//! session's [`IoHandle`] (a shared connection plus a read guard on its I/O
+//! gate), or a graphical session's side channel — and releases the lock before
+//! the browser call is awaited. One slow or hung SFTP / FTP / `docker exec` /
+//! agent round-trip therefore no longer freezes input, resize, create, list or
+//! close in every other tab.
+//!
+//! Closing a session while one of its file operations is in flight is safe:
+//! close removes the entry under the map lock (so no new handle can be taken)
+//! and its disconnect waits behind the in-flight handle's gate guard, so the
+//! connection is never torn down under the call — the operation finishes (or
+//! fails, once close has interrupted the backend's I/O) and the deferred
+//! disconnect then runs.
 
 use std::sync::Arc;
 
@@ -20,6 +34,7 @@ use crate::utils::errors::TerminalError;
 use termihub_core::session::registry::Sessions;
 
 use super::graphical_browse::{SharedFileBrowser, SideChannelBrowsers};
+use super::manager::session_io::IoHandle;
 use super::manager::{SessionEntry, SessionMap};
 
 /// Borrowing facade exposing a session's file-browser operations.
@@ -50,32 +65,32 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         self
     }
 
-    /// Resolve a session's file browser, preserving the manager's exact errors:
-    /// [`TerminalError::SessionNotFound`] when the id is neither a session nor
-    /// a graphical session with an open side channel, and
+    /// Resolve a session's file browser into an owned [`BrowserHandle`],
+    /// holding the `sessions` lock only for the lookup (#4393).
+    ///
+    /// Preserves the manager's exact errors: [`TerminalError::SessionNotFound`]
+    /// when the id is neither a session nor a graphical session with an open
+    /// side channel (or the session is being closed), and
     /// [`TerminalError::RemoteError`] when the session exposes no file-browser
     /// capability.
-    ///
-    /// A side channel (#4193) is an owned handle: it is parked in `holder` so
-    /// the returned borrow lives as long as the session one. Only the plain
-    /// reference is held across the caller's `await`, as before.
-    fn resolve<'g>(
-        &self,
-        sessions: &'g M,
-        holder: &'g mut Option<SharedFileBrowser>,
-        session_id: &str,
-    ) -> Result<&'g dyn FileBrowser, TerminalError> {
+    async fn resolve(&self, session_id: &str) -> Result<BrowserHandle, TerminalError> {
+        let sessions = self.sessions.lock().await;
         if let Some(entry) = sessions.get(session_id) {
-            return entry.connection.file_browser().ok_or_else(|| {
-                TerminalError::RemoteError("No file browser capability".to_string())
-            });
+            if entry.connection.file_browser().is_none() {
+                return Err(no_file_browser());
+            }
+            // `None` once close holds the session's I/O gate.
+            return entry
+                .io
+                .handle(&entry.connection)
+                .map(BrowserHandle::Session)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()));
         }
         let carrier = self
             .side_channels
             .and_then(|side| side.get(session_id))
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser: &'g SharedFileBrowser = holder.insert(carrier.file_browser());
-        Ok(browser.as_ref())
+        Ok(BrowserHandle::SideChannel(carrier.file_browser()))
     }
 
     /// List directory contents via the session's file browser.
@@ -84,9 +99,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
         path: &str,
     ) -> Result<Vec<FileEntry>, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .list_dir(path)
             .await
@@ -99,9 +113,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
         path: &str,
     ) -> Result<Vec<u8>, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .read_file(path)
             .await
@@ -114,9 +127,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         session_id: &str,
         path: &str,
     ) -> Result<FileEntry, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .stat(path)
             .await
@@ -130,9 +142,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         path: &str,
         data: &[u8],
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .write_file(path, data)
             .await
@@ -141,9 +152,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
 
     /// Delete a file via the session's file browser.
     pub(super) async fn delete(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .delete(path)
             .await
@@ -157,9 +167,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         from: &str,
         to: &str,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .rename(from, to)
             .await
@@ -168,9 +177,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
 
     /// Create a directory via the session's file browser.
     pub(super) async fn mkdir(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .mkdir(path)
             .await
@@ -185,9 +193,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         path: &str,
         mode: u32,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .set_permissions(path, mode)
             .await
@@ -203,9 +210,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .set_owner(path, uid, gid)
             .await
@@ -220,9 +226,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         target: &str,
         link_path: &str,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .create_symlink(target, link_path)
             .await
@@ -236,9 +241,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         &self,
         session_id: &str,
     ) -> Result<FileAttributeOps, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         Ok(browser.attribute_ops())
     }
 
@@ -249,9 +253,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         src: &str,
         dest: &str,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         browser
             .copy(src, dest)
             .await
@@ -278,9 +281,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         &self,
         session_id: &str,
     ) -> Result<Arc<SftpFileBrowser>, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         let sftp = browser
             .as_any()
             .and_then(|any| any.downcast_ref::<SftpFileBrowser>())
@@ -308,9 +310,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         &self,
         session_id: &str,
     ) -> Result<termihub_core::config::FtpConfig, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         termihub_core::backends::ftp::ftp_config_of(browser).ok_or_else(|| {
             TerminalError::RemoteError(
                 "Session file browser is not FTP-backed; queued transfer unavailable".to_string(),
@@ -331,9 +332,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
         &self,
         session_id: &str,
     ) -> Result<termihub_core::backends::docker::DockerTransferTarget, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let mut side = None;
-        let browser = self.resolve(&sessions, &mut side, session_id)?;
+        let handle = self.resolve(session_id).await?;
+        let browser = handle.browser()?;
         termihub_core::backends::docker::docker_transfer_target_of(browser).ok_or_else(|| {
             TerminalError::RemoteError(
                 "Session file browser is not Docker-backed; queued transfer unavailable"
@@ -359,9 +359,8 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     {
         use crate::session::remote_proxy::RemoteFileBrowserProxy;
         let proxy = {
-            let sessions = self.sessions.lock().await;
-            let mut side = None;
-            let browser = self.resolve(&sessions, &mut side, session_id)?;
+            let handle = self.resolve(session_id).await?;
+            let browser = handle.browser()?;
             browser
                 .as_any()
                 .and_then(|any| any.downcast_ref::<RemoteFileBrowserProxy>())
@@ -488,5 +487,34 @@ impl<'a, M: SessionMap> FileOps<'a, M> {
     ) -> Result<bool, TerminalError> {
         let sftp = self.sftp_browser(session_id).await?;
         Ok(sftp.has_exec_capability().await.unwrap_or(false))
+    }
+}
+
+/// The "no file browser" error, shared by every resolution path.
+fn no_file_browser() -> TerminalError {
+    TerminalError::RemoteError("No file browser capability".to_string())
+}
+
+/// An owned file-browser source, resolved under the `sessions` lock and used
+/// after it is released (#4393).
+///
+/// A session's browser is borrowed from its connection, so the handle keeps
+/// that connection alive — and close's disconnect waiting — for as long as the
+/// call runs. A graphical session's side channel (#4193) is already an owned,
+/// shared browser.
+enum BrowserHandle {
+    /// A session's I/O handle: a shared connection plus its I/O gate guard.
+    Session(IoHandle),
+    /// A graphical session's side channel opened for browsing.
+    SideChannel(SharedFileBrowser),
+}
+
+impl BrowserHandle {
+    /// The file browser this handle holds.
+    fn browser(&self) -> Result<&dyn FileBrowser, TerminalError> {
+        match self {
+            Self::Session(handle) => handle.connection.file_browser().ok_or_else(no_file_browser),
+            Self::SideChannel(browser) => Ok(browser.as_ref()),
+        }
     }
 }

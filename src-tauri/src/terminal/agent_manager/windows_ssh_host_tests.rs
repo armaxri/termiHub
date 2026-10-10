@@ -762,6 +762,11 @@ fn first_command(shell: WindowsShell) -> (&'static str, &'static str) {
 async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, shell: WindowsShell) {
     use termihub_core::connection::ConnectionType;
 
+    // Print the shell probe's answer and timing and every byte the setup gate
+    // types and receives (#4670): a failure here is a timing race, and the
+    // lane's `--show-output` log is the only place its sequence is visible.
+    termihub_core::backends::ssh::remote_shell::enable_setup_trace();
+
     let mut ssh = termihub_core::backends::ssh::Ssh::new();
     ssh.connect(serde_json::json!({
         "host": FIXTURE_HOST,

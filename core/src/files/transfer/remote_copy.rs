@@ -36,9 +36,10 @@ use tracing::{debug, warn};
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, handle_attempt_error, map_copy_outcome,
-    rehydrate_start_offset, settle_attempt, stop_reason, AttemptOutcome, AttemptsResult,
-    ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    map_copy_outcome, probe_timed_out, rehydrate_start_offset, settle_attempt, stop_reason,
+    AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason,
+    STALL_TIMEOUT,
 };
 #[cfg(feature = "local-transfer")]
 use super::ranged::RangedTransferTarget;
@@ -380,8 +381,21 @@ async fn run_attempts(
         // Fresh access to both ends per attempt, so a broken channel or exec
         // is re-established on retry and browsing stays live meanwhile. A
         // failed open keeps the requested offset: nothing was written, and
-        // the next attempt re-verifies it.
-        let (src, dst) = match open_links(ends).await {
+        // the next attempt re-verifies it. The opens (and the resume probe
+        // after them) are cancel-aware and bounded (#4672), so a dead peer
+        // cannot park the attempt outside the stall watchdog.
+        let opened = match guard_probe(open_links(ends), handle, STALL_TIMEOUT).await {
+            Probed::Done(opened) => opened,
+            Probed::Cancelled => {
+                handle.transition(TransferEvent::Cancel);
+                return AttemptsResult::Cancelled;
+            }
+            Probed::TimedOut => Err(RemoteCopyError(probe_timed_out(
+                "open copy endpoints",
+                STALL_TIMEOUT,
+            ))),
+        };
+        let (src, dst) = match opened {
             Ok(links) => links,
             Err(e) => {
                 if let Some(outcome) =
@@ -406,14 +420,33 @@ async fn run_attempts(
             (Ok(AttemptOutcome::ResumeRejected), ends.dst.peer())
         } else {
             // Re-verify the resume point on this attempt's access (PARITY-004).
-            let current = src.fingerprint(ends.src_path).await;
-            let present = if cursor.offset > 0 {
-                dst.file_size(ends.dst_path).await
-            } else {
-                None
+            let resuming = cursor.offset > 0;
+            let probe = async {
+                let current = src.fingerprint(ends.src_path).await;
+                let present = if resuming {
+                    dst.file_size(ends.dst_path).await
+                } else {
+                    None
+                };
+                (current, present)
             };
-            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
-            run_one(ends, src.as_ref(), dst.as_ref(), cursor, handle, sink).await
+            match guard_probe(probe, handle, STALL_TIMEOUT).await {
+                Probed::Done((current, present)) => {
+                    apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+                    run_one(ends, src.as_ref(), dst.as_ref(), cursor, handle, sink).await
+                }
+                Probed::Cancelled => {
+                    handle.transition(TransferEvent::Cancel);
+                    return AttemptsResult::Cancelled;
+                }
+                Probed::TimedOut => (
+                    Err(RemoteCopyError(probe_timed_out(
+                        "verify resume point",
+                        STALL_TIMEOUT,
+                    ))),
+                    ends.src.peer(),
+                ),
+            }
         };
 
         if let Some(outcome) =
@@ -441,17 +474,30 @@ pub(crate) async fn run_copy(
     // Establish the source identity + total up front so progress/ETA are
     // meaningful and a later resume can detect a changed source (PARITY-004).
     // A failed open is retried by the first attempt.
-    let (baseline, total) = match src.link().await {
-        Ok(link) => {
-            let baseline = link.fingerprint(&src_path).await;
-            let total = match baseline {
-                Some(fp) => fp.size,
-                None => link.file_size(&src_path).await.unwrap_or_default(),
-            };
-            (baseline, total)
+    // The probe is cancel-aware and bounded (#4672): a cancel or a dead peer
+    // leaves the source unknown and falls through to `drive_transfer`, which
+    // settles a cancel exactly once.
+    let probe = async {
+        match src.link().await {
+            Ok(link) => {
+                let baseline = link.fingerprint(&src_path).await;
+                let total = match baseline {
+                    Some(fp) => fp.size,
+                    None => link.file_size(&src_path).await.unwrap_or_default(),
+                };
+                (baseline, total)
+            }
+            Err(e) => {
+                debug!(error = %e, "could not stat the copy source up front");
+                (None, 0)
+            }
         }
-        Err(e) => {
-            debug!(error = %e, "could not stat the copy source up front");
+    };
+    let (baseline, total) = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
+        Probed::Done(probed) => probed,
+        Probed::Cancelled => (None, 0),
+        Probed::TimedOut => {
+            debug!(transfer_id = %handle.transfer_id, "copy source probe timed out; source unknown");
             (None, 0)
         }
     };
