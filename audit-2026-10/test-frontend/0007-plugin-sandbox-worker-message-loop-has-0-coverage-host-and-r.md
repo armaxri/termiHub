@@ -10,8 +10,8 @@ evidence:
   - src/plugins/sandbox/pluginSandboxWorker.ts:84-96
   - src/plugins/sandbox/pluginSandboxWorker.ts:98-124
   - src/plugins/sandbox/pluginSandboxHost.test.ts:30-56
-status: open
-resolution: ""
+status: fixed
+resolution: "#4385 — real worker message loop now tested (100% coverage, host+worker wired together); malformed messages are dropped instead of faulting the sandbox"
 audit: 2026-10
 commit: 663465d52
 relation: new
