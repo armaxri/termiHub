@@ -6,6 +6,9 @@
       "core": 90.48,
       "agent": 89.07,
       "src-tauri": 74.91,
+      "plugin-runner": 64.07,
+      "plugin-api": 74.25,
+      "rdp-sidecar": 68.0,
       "unified": 83.41
     },
     "darwin": {
@@ -13,6 +16,9 @@
       "core": 90.45,
       "agent": 89.09,
       "src-tauri": 74.76,
+      "plugin-runner": 64.85,
+      "plugin-api": 74.17,
+      "rdp-sidecar": 78.77,
       "unified": 83.38
     }
   }
