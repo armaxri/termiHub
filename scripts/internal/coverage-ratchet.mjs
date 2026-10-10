@@ -7,11 +7,18 @@
 // coverage of each gated component, and compares it with
 // scripts/coverage-baseline.json:
 //
-//   frontend   src/**            (vitest/v8)
-//   core       core/**           (cargo-llvm-cov)
-//   agent      agent/**
-//   src-tauri  src-tauri/**
-//   unified    every record in the unit lcovs (incl. plugin-api, vendor, ...)
+//   frontend       src/**            (vitest/v8)
+//   core           core/**           (cargo-llvm-cov)
+//   agent          agent/**
+//   src-tauri      src-tauri/**
+//   plugin-runner  plugin-runner/**  (the plugin sandbox, IPC and loader; #4341)
+//   plugin-api     plugin-api/**     (the frozen plugin ABI; #4341)
+//   rdp-sidecar    rdp-sidecar/**    (outside the workspace: its own llvm-cov
+//                                     pass in coverage.sh; #4341)
+//   unified        every record in the unit lcovs (incl. vendor, examples, ...)
+//
+// A component without a baseline value for the platform is reported but not
+// gated, so a new component starts gating once its baseline is recorded.
 //
 // A component fails when its line % drops more than `tolerance` percentage
 // points below its baseline. The nightly integration overlay (TOOL-005) is
@@ -26,8 +33,9 @@
 //   node scripts/internal/coverage-ratchet.mjs [--check]        (default)
 //   node scripts/internal/coverage-ratchet.mjs --update [--allow-decrease]
 // Options:
-//   --lcov <file>        lcov to read (repeatable). Default: coverage/lcov.info
-//                        and coverage-unified/rust.lcov.
+//   --lcov <file>        lcov to read (repeatable). Default: coverage/lcov.info,
+//                        coverage-unified/rust.lcov and
+//                        coverage-unified/rdp-sidecar.lcov.
 //   --baseline <file>    Default: scripts/coverage-baseline.json
 //   --root <dir>         Repo root used to relativize SF: paths. Default: cwd.
 //   --platform <name>    Baseline key. Default: process.platform.
@@ -39,14 +47,32 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
 
-export const COMPONENTS = ["frontend", "core", "agent", "src-tauri", "unified"];
+export const COMPONENTS = [
+  "frontend",
+  "core",
+  "agent",
+  "src-tauri",
+  "plugin-runner",
+  "plugin-api",
+  "rdp-sidecar",
+  "unified",
+];
 const DIR_TO_COMPONENT = {
   src: "frontend",
   core: "core",
   agent: "agent",
   "src-tauri": "src-tauri",
+  "plugin-runner": "plugin-runner",
+  "plugin-api": "plugin-api",
+  "rdp-sidecar": "rdp-sidecar",
 };
 export const DEFAULT_TOLERANCE = 0.25;
+/** What scripts/coverage.sh / coverage.cmd write: frontend, workspace Rust, RDP sidecar. */
+export const DEFAULT_LCOVS = [
+  "coverage/lcov.info",
+  "coverage-unified/rust.lcov",
+  "coverage-unified/rdp-sidecar.lcov",
+];
 
 /** Map an lcov SF: path to its gated component (or null: unified only). */
 export function componentFor(sfPath, root) {
@@ -201,7 +227,7 @@ export function parseArgs(argv) {
     }
   }
   if (opts.lcovs.length === 0) {
-    opts.lcovs = ["coverage/lcov.info", "coverage-unified/rust.lcov"];
+    opts.lcovs = DEFAULT_LCOVS;
   }
   return opts;
 }
@@ -218,7 +244,8 @@ function main(argv) {
   const missing = opts.lcovs.filter((f) => !existsSync(f));
   if (missing.length > 0) {
     console.error(`coverage-ratchet: missing lcov input(s): ${missing.join(", ")}`);
-    console.error("  Run ./scripts/coverage.sh (frontend + Rust) first; the gate needs both.");
+    console.error("  Run ./scripts/coverage.sh (frontend + Rust + RDP sidecar) first; the gate");
+    console.error("  needs all of them.");
     return 1;
   }
   const current = percentages(

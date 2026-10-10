@@ -13,8 +13,8 @@ evidence:
   - "Cargo.toml:workspace.members"
   - "rdp-sidecar/src/main.rs:4-6"
   - ".github/workflows/code-quality.yml:325-375"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4341 — plugin-runner, plugin-api and rdp-sidecar are ratchet components; coverage.sh/.cmd add an rdp-sidecar llvm-cov pass"
 audit: 2026-10
 commit: 663465d52
 relation: previous-incomplete

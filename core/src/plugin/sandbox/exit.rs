@@ -111,6 +111,16 @@ impl RunnerExitCause {
     }
 }
 
+/// Whether a reaped runner ended the way a clean shutdown ends it: exit code
+/// 0 and, on Unix, no terminating signal (TBE2-004, #4341). `None` (no status
+/// could be collected) is not clean. A host-initiated stop records
+/// [`RunnerExitCause::Stopped`] whatever the process did, so this is what tells
+/// a runner that crashed or hung during its own teardown from a clean exit.
+#[must_use]
+pub(super) fn is_clean_exit(status: Option<std::process::ExitStatus>) -> bool {
+    status.is_some_and(|status| status.success())
+}
+
 /// The conventional name of a terminating signal, for the overlay text.
 #[must_use]
 fn signal_name(signal: i32) -> Option<&'static str> {
@@ -301,6 +311,36 @@ mod tests {
             RunnerExitCause::from_status(Some(abort), true),
             RunnerExitCause::OutOfMemory
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_exit_code_zero_is_a_clean_exit() {
+        use std::os::unix::process::ExitStatusExt;
+        assert!(is_clean_exit(Some(std::process::ExitStatus::from_raw(0))));
+        // A non-zero code (the runner's own PROTOCOL exit), a crash during
+        // teardown, the host's kill, or no status at all are not.
+        for raw in [2 << 8, libc::SIGSEGV, libc::SIGABRT, libc::SIGKILL] {
+            assert!(
+                !is_clean_exit(Some(std::process::ExitStatus::from_raw(raw))),
+                "{raw}"
+            );
+        }
+        assert!(!is_clean_exit(None));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_exit_code_zero_is_a_clean_exit() {
+        use std::os::windows::process::ExitStatusExt;
+        assert!(is_clean_exit(Some(std::process::ExitStatus::from_raw(0))));
+        for raw in [1, 2, 0xC000_0005, 0xC000_0409] {
+            assert!(
+                !is_clean_exit(Some(std::process::ExitStatus::from_raw(raw))),
+                "{raw}"
+            );
+        }
+        assert!(!is_clean_exit(None));
     }
 
     /// Windows: no signals; an exception or a kill shows as the exit code.

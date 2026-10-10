@@ -95,10 +95,24 @@ async fn echo_backend_round_trips_through_the_runner() {
 
     // Unload: bounded close + Shutdown; the runner exits and the remaining
     // session ends with it.
+    let runner = handle.running().expect("still running");
     host.unload(&echo.plugin.manifest.id);
     assert!(
         wait_until(WAIT, || !process_exists(pid)),
         "the runner exits on unload"
+    );
+    // ... and it exits *cleanly*: tearing down a live session and unmapping
+    // the library must not crash it (TBE2-004, #4341). The recorded cause is
+    // `Stopped` either way, so check the process status itself.
+    assert!(
+        wait_until(WAIT, || runner.exited_cleanly().is_some()),
+        "the runner is reaped"
+    );
+    assert_eq!(
+        runner.exited_cleanly(),
+        Some(true),
+        "the runner exits with code 0 after unload (cause: {:?})",
+        runner.exit_cause()
     );
     assert!(!b.is_connected());
     assert!(b.write(b"gone").is_err());
@@ -117,12 +131,16 @@ async fn a_crashed_runner_ends_its_sessions_and_respawns_for_the_next() {
     let mut rx = connect(&mut conn, "").await;
     conn.write(b"ping").unwrap();
     assert_eq!(read_echo(&mut rx).await, "ping");
-    let pid = handle.running().unwrap().pid().unwrap();
+    let crashed = handle.running().unwrap();
+    let pid = crashed.pid().unwrap();
 
     // The plugin process dies (segfault, OOM kill, …): the host survives, the
     // session reports not connected, and its output stream ends.
     kill_process(pid);
     assert!(wait_until(WAIT, || !conn.is_connected()));
+    // A killed runner is never mistaken for a clean exit (#4341).
+    assert!(wait_until(WAIT, || crashed.exited_cleanly().is_some()));
+    assert_eq!(crashed.exited_cleanly(), Some(false));
     let ended = tokio::time::timeout(WAIT, rx.recv())
         .await
         .expect("stream ends");
