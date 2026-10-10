@@ -53,16 +53,39 @@ impl<T: SecretSlot + ?Sized> SecretSlot for Arc<T> {
 }
 
 /// [`SecretSlot`] in the native OS credential store via `keyring`.
-#[derive(Default)]
+///
+/// The default slot holds the biometric-unlock wrapping key; [`Self::new`]
+/// names any other entry (a backup restore's seal key, #4414).
 #[cfg_attr(
     test,
     expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
 )]
 pub struct KeyringSlot {
+    service: &'static str,
+    account: String,
     entry: Mutex<Option<Arc<keyring::Entry>>>,
 }
 
+impl Default for KeyringSlot {
+    fn default() -> Self {
+        Self::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+    }
+}
+
 impl KeyringSlot {
+    /// A slot for the OS credential-store entry `service`/`account`.
+    #[cfg_attr(
+        test,
+        expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
+    )]
+    pub fn new(service: &'static str, account: &str) -> Self {
+        Self {
+            service,
+            account: account.to_string(),
+            entry: Mutex::new(None),
+        }
+    }
+
     #[cfg_attr(
         test,
         expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
@@ -73,8 +96,12 @@ impl KeyringSlot {
             return Ok(entry.clone());
         }
         let entry = Arc::new(
-            keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
-                .context("Failed to open the OS credential store entry for biometric unlock")?,
+            keyring::Entry::new(self.service, &self.account).with_context(|| {
+                format!(
+                    "Failed to open the OS credential store entry {}",
+                    self.service
+                )
+            })?,
         );
         *guard = Some(entry.clone());
         Ok(entry)
@@ -90,21 +117,23 @@ impl SecretSlot for KeyringSlot {
         match off_runtime(|| entry.get_password()) {
             Ok(value) => Ok(Some(Zeroizing::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e).context("Failed to read the biometric unlock key"),
+            Err(e) => Err(e).with_context(|| format!("Failed to read the {} secret", self.service)),
         }
     }
 
     fn write(&self, value: &str) -> Result<()> {
         let entry = self.entry()?;
         off_runtime(|| entry.set_password(value))
-            .context("Failed to store the biometric unlock key")
+            .with_context(|| format!("Failed to store the {} secret", self.service))
     }
 
     fn delete(&self) -> Result<()> {
         let entry = self.entry()?;
         match off_runtime(|| entry.delete_credential()) {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e).context("Failed to delete the biometric unlock key"),
+            Err(e) => {
+                Err(e).with_context(|| format!("Failed to delete the {} secret", self.service))
+            }
         }
     }
 }

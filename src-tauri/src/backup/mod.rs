@@ -61,6 +61,7 @@ use crate::credential::crypto::EncryptedEnvelope;
 use crate::credential::vault::{VaultExportFile, VaultImportPreview, VaultImportResult};
 
 pub mod commit;
+pub mod deferred;
 pub mod export;
 pub mod pending;
 pub mod plugins;
