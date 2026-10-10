@@ -158,7 +158,7 @@ impl LoadError {
 }
 
 /// Metadata a loaded plugin reported through `plugin_init`, copied out of the
-/// FFI-owned [`PluginInfo`] into owned Rust strings.
+/// FFI-owned [`termihub_plugin_api::PluginInfo`] into owned Rust strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedPluginInfo {
     /// Stable plugin identifier the library reported.
