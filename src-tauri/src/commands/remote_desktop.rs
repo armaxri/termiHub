@@ -1027,6 +1027,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_owner_file_side_channel_commands_are_refused() {
+        // #4384: route / upload / browse share the input gate. A taken-over
+        // window is refused with the typed held-by-peer error; the owner and
+        // an unclaimed session pass.
+        let (mgr, sink, sid) = connected().await;
+        let wm = WindowManager::new();
+        for label in ["main", "win-1"] {
+            assert!(require_files_control(&wm, &sid, label).is_ok());
+        }
+        wm.claim(&sid, "main");
+        wm.claim(&sid, "win-1");
+        assert!(require_files_control(&wm, &sid, "win-1").is_ok());
+        assert!(
+            matches!(
+                require_files_control(&wm, &sid, "main"),
+                Err(TerminalError::SessionHeldByPeer(_))
+            ),
+            "the evicted window cannot reach the side channel"
+        );
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
     async fn unclaimed_graphical_session_accepts_any_window() {
         // Single-window / pre-claim: no owner → every window may drive it.
         let (mgr, sink, sid) = connected().await;

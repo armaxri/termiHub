@@ -1103,3 +1103,7 @@ mod held_input;
 /// Waiting side-channel transfers resuming on an automatic reconnect (#4230).
 #[path = "graphical_reconnect_resume_tests.rs"]
 mod reconnect_resume;
+
+/// The browse side channel following the session's lifecycle (#4384).
+#[path = "graphical_side_channel_lifecycle_tests.rs"]
+mod side_channel_lifecycle;
