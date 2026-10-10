@@ -445,5 +445,23 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
 
     expect(promptInput()).not.toBeNull();
     expect(saveBox()).not.toBeNull();
+    // The connection's name titles the prompt (#4475).
+    expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
+
+    // That prompt's own Save choice decides the store (#4474).
+    act(() => useAppStore.getState().submitPassword("key-pass", true));
+    await flush();
+    expect(commandCalls("store_credential")).toHaveLength(1);
+  });
+
+  it("names the connection in the prompt opened by Test (#4475)", async () => {
+    mockBackend({ keyEncrypted: true });
+    render(CONN_KEY.id, { withPrompt: true });
+    await flush();
+
+    await clickTest();
+
+    expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
+    expect(document.querySelector(".ui-modal__title")?.textContent).toContain("Key Server");
   });
 });
