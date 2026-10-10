@@ -482,6 +482,11 @@ pub struct ImportResult {
     /// (#3689, #4210).
     pub connections_skipped: usize,
     pub credentials_imported: usize,
+    /// Remote agents actually added to the store (#4380).
+    pub agents_imported: usize,
+    /// Remote agents in the file skipped because the store already holds them
+    /// (#4380).
+    pub agents_skipped: usize,
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import {
   sshJumpHostOptions,
   ambiguousConnectionIds,
   findJumpHostDependents,
+  findFileRouteDependents,
   jumpHostInlineFields,
 } from "./jumpHost";
 import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
@@ -379,6 +380,45 @@ describe("findJumpHostDependents (#941)", () => {
       config: { type: "ssh", config: { jumpHosts: [ref("bastion")] } },
     };
     expect(findJumpHostDependents([legacy], ["bastion"]).map((d) => d.id)).toEqual(["L"]);
+  });
+});
+
+describe("findFileRouteDependents (#4380)", () => {
+  const vnc = (id: string, via?: string): SavedConnection => ({
+    id,
+    name: id,
+    folderId: null,
+    config: { type: "vnc", config: { host: "desk", ...(via ? { fileTransferVia: via } : {}) } },
+  });
+  const ssh = (id: string): SavedConnection => ({
+    id,
+    name: id,
+    folderId: null,
+    config: sshConfig({ host: id }),
+  });
+
+  it("finds connections that use the target as their file-transfer route", () => {
+    const deps = findFileRouteDependents(
+      [ssh("Lab/Tiger"), vnc("desk-a", "Lab/Tiger"), vnc("desk-b", "Other"), vnc("desk-c")],
+      ["Lab/Tiger"]
+    );
+    expect(deps.map((d) => d.id)).toEqual(["desk-a"]);
+  });
+
+  it("excludes connections within the deletion set", () => {
+    expect(
+      findFileRouteDependents([ssh("tiger"), vnc("desk", "tiger")], ["tiger", "desk"])
+    ).toEqual([]);
+  });
+
+  it("ignores a non-string fileTransferVia", () => {
+    const odd: SavedConnection = {
+      id: "odd",
+      name: "odd",
+      folderId: null,
+      config: { type: "vnc", config: { fileTransferVia: 42 } },
+    };
+    expect(findFileRouteDependents([odd], ["42"])).toEqual([]);
   });
 });
 

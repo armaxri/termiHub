@@ -16,40 +16,69 @@ function plural(count: number, noun: string): string {
 /**
  * One-line summary of a completed connection import.
  *
- * Counts only the connections actually added; ones the store already held
- * are skipped by the backend (#3689) and reported separately (#4210).
+ * Counts only the connections and agents actually added; ones the store
+ * already held are skipped by the backend (#3689) and reported separately
+ * (#4210, #4380). "Nothing imported" is only claimed when no agent was added
+ * either (#4380).
  */
 export function importSummary(result: ConnectionImportResult): string {
   const { connectionsImported, connectionsSkipped, credentialsImported } = result;
+  const { agentsImported, agentsSkipped } = result;
   const shared = result.sharedCredentialsImported;
+  const credentials =
+    credentialsImported > 0 ? ` and ${plural(credentialsImported, "credential")}` : "";
 
-  let message: string;
+  const added: string[] = [];
   if (connectionsImported > 0) {
-    message = `Imported ${plural(connectionsImported, "connection")}`;
-    if (credentialsImported > 0) {
-      message += ` and ${plural(credentialsImported, "credential")}`;
-    }
-    if (shared > 0) {
-      message += `, ${plural(shared, "shared credential")}`;
-    }
-    if (connectionsSkipped > 0) {
-      const verb = connectionsSkipped === 1 ? "exists" : "exist";
-      message += `, skipped ${connectionsSkipped} that already ${verb}`;
-    }
-  } else if (shared > 0) {
-    message = `Imported ${plural(shared, "shared credential")}`;
-    if (connectionsSkipped > 0) {
-      const verb = connectionsSkipped === 1 ? "exists" : "exist";
-      message += `, skipped ${plural(connectionsSkipped, "connection")} that already ${verb}`;
-    }
-  } else if (connectionsSkipped === 1) {
-    message = "Nothing imported — the connection already exists";
-  } else if (connectionsSkipped > 1) {
-    message = `Nothing imported — all ${connectionsSkipped} connections already exist`;
-  } else {
-    message = "Nothing imported — the file contains no connections";
+    added.push(plural(connectionsImported, "connection") + credentials);
   }
-  return message;
+  if (shared > 0) {
+    added.push(plural(shared, "shared credential"));
+  }
+  if (agentsImported > 0) {
+    // Agent credentials ride on the agents when no connection was added.
+    added.push(plural(agentsImported, "agent") + (connectionsImported > 0 ? "" : credentials));
+  }
+
+  // "skipped N that already exist" may drop its noun only when connections are
+  // the one kind mentioned; once agents appear, every count names its kind.
+  const agentsMentioned = agentsImported > 0 || agentsSkipped > 0;
+  const skipped: string[] = [];
+  if (connectionsSkipped > 0) {
+    skipped.push(
+      connectionsImported > 0 && !agentsMentioned
+        ? `${connectionsSkipped}`
+        : plural(connectionsSkipped, "connection")
+    );
+  }
+  if (agentsSkipped > 0) {
+    skipped.push(plural(agentsSkipped, "agent"));
+  }
+  const verb = connectionsSkipped + agentsSkipped === 1 ? "exists" : "exist";
+
+  if (added.length > 0) {
+    let message = `Imported ${added.join(", ")}`;
+    if (skipped.length > 0) {
+      message += `, skipped ${skipped.join(" and ")} that already ${verb}`;
+    }
+    return message;
+  }
+  if (connectionsSkipped > 0 && agentsSkipped > 0) {
+    return `Nothing imported — ${skipped.join(" and ")} already exist`;
+  }
+  if (connectionsSkipped === 1) {
+    return "Nothing imported — the connection already exists";
+  }
+  if (connectionsSkipped > 1) {
+    return `Nothing imported — all ${connectionsSkipped} connections already exist`;
+  }
+  if (agentsSkipped === 1) {
+    return "Nothing imported — the agent already exists";
+  }
+  if (agentsSkipped > 1) {
+    return `Nothing imported — all ${agentsSkipped} agents already exist`;
+  }
+  return "Nothing imported — the file contains no connections or agents";
 }
 
 export function ImportDialog() {
