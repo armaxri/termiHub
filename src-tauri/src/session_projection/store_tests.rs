@@ -1388,3 +1388,70 @@ fn agent_transport_reconnecting_never_refolds_an_ended_tab() {
         }
     }
 }
+
+// ── #4459: user agent end folds live tabs; no redrive afterwards ─────────────
+
+#[test]
+fn disconnect_if_live_ends_only_live_tabs() {
+    let store = deterministic_store();
+    store.connect("connecting");
+    store.connect("connected");
+    store.connected("connected");
+    store.connect("reconnecting");
+    store.connected("reconnecting");
+    store.reconnect("reconnecting");
+    for tab in ["connecting", "connected", "reconnecting"] {
+        assert!(store.disconnect_if_live(tab), "{tab} is live");
+        let life = store.get(tab).unwrap();
+        assert_eq!(life.status, SessionStatus::Disconnected, "{tab}");
+        assert_eq!(life.end_reason, Some(EndReason::User), "{tab}");
+        assert_eq!(life.reconnect.phase, ReconnectPhase::Idle, "{tab}");
+    }
+
+    store.connect("failed");
+    store.connect_failed("failed", Some("refused".to_string()));
+    store.connect("lost");
+    store.session_lost("lost", None);
+    store.connect("evicted");
+    store.evicted("evicted", None);
+    for tab in ["failed", "lost", "evicted"] {
+        let before = store.get(tab).unwrap();
+        assert!(!store.disconnect_if_live(tab), "{tab} already ended");
+        assert_eq!(store.get(tab).unwrap(), before, "{tab} untouched");
+    }
+    assert!(!store.disconnect_if_live("unknown"));
+    assert!(store.get("unknown").is_none(), "no phantom entry");
+}
+
+#[test]
+fn reconnect_never_leaves_a_user_end_auth_failure_or_lost_session() {
+    let store = deterministic_store();
+    store.connect("user");
+    store.connected("user");
+    store.disconnect("user");
+    store.connect("auth");
+    store.connect_auth_failed("auth", Some("denied".to_string()));
+    store.connect("lost");
+    store.session_lost("lost", None);
+    for tab in ["user", "auth", "lost"] {
+        let before = store.get(tab).unwrap();
+        store.reconnect(tab);
+        assert_eq!(store.get(tab).unwrap(), before, "{tab}: no loop armed");
+    }
+}
+
+#[test]
+fn reconnect_still_arms_after_an_unexpected_drop_or_a_failure() {
+    let store = deterministic_store();
+    store.connect("dropped");
+    store.connected("dropped");
+    store.dropped("dropped", None);
+    store.connect("failed");
+    store.connect_failed("failed", None);
+    for tab in ["dropped", "failed"] {
+        store.reconnect(tab);
+        let life = store.get(tab).unwrap();
+        assert_eq!(life.status, SessionStatus::Reconnecting, "{tab}");
+        assert_eq!(life.reconnect.phase, ReconnectPhase::Waiting, "{tab}");
+    }
+}

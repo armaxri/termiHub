@@ -398,6 +398,31 @@ pub fn fold_agent_reconnect_failed<R: tauri::Runtime>(
     sync_timer_generic(app_handle, tab_id);
 }
 
+/// End a hosted agent session's region entry at the **backend source** because
+/// the user disconnected or shut its agent down (#4459): fold the user
+/// `Disconnected(User)` state, reconcile the timer (cancelling any armed
+/// redrive) and scrub the tab's retained request, so nothing can reconnect it —
+/// the agent's transport config is gone. Folded once for every window, before
+/// the `agent-state-change` "disconnected" event is emitted.
+///
+/// Applies only to a live tab ([`SessionLifecycleStore::disconnect_if_live`]) and
+/// returns whether it did, so a tab that ended earlier is not reported as just
+/// ended. The retained request is scrubbed either way.
+pub fn fold_agent_session_user_ended<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+) -> bool {
+    let mut applied = false;
+    fold_session_transition(app_handle, |store| {
+        applied = store.disconnect_if_live(tab_id);
+    });
+    sync_timer_generic(app_handle, tab_id);
+    if let Some(manager) = app_handle.try_state::<SessionManager>() {
+        manager.clear_retained_request_with_agent_scrub(tab_id);
+    }
+    applied
+}
+
 /// Human-readable "why" note carried on an evicted tab's region entry (SM-003).
 pub const EVICTED_BY_OTHER_DESKTOP: &str = "This session was taken over by another desktop.";
 

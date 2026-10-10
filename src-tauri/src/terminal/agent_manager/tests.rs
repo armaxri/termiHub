@@ -1076,7 +1076,7 @@ fn reconcile_output_senders_drops_non_recovered_sessions() {
 /// ignores its command channel and never returns — a stand-in for a task
 /// wedged in a blocking op that can only be stopped by an abort. Returns the
 /// connection plus the task's `JoinHandle` so the test can observe the abort.
-fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<()>) {
+pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<()>) {
     let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
     let command_tx_conn = command_tx.clone();
     // The task holds its own command sender (mirroring the real io_task's

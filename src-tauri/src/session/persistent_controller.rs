@@ -323,7 +323,7 @@ impl<'a> PersistentController<'a> {
                                     title: "Persistent Session".to_string(),
                                     connection_type: "remote".to_string(),
                                     alive: true,
-                                    agent_id: Some(agent_id),
+                                    agent_id: Some(agent_id.clone()),
                                     spawned: false,
                                 },
                                 remote_session_id: Some(remote_sid),
@@ -373,6 +373,7 @@ impl<'a> PersistentController<'a> {
                             .or_insert_with(|| TabBinding {
                                 tab_id: tab_id.to_string(),
                                 resilient: false,
+                                agent_id: Some(agent_id.clone()),
                             });
                         info!(
                             connection_id,

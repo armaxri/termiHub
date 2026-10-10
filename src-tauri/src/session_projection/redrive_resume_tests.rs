@@ -1837,3 +1837,7 @@ fn agent_reattach_keeps_the_saved_connection_and_fires_resume_triggers() {
 /// SM2-002 (#4305): the agent-recovery folds respect the tab's current status.
 #[path = "agent_recovery_status_tests.rs"]
 mod agent_recovery_status;
+
+/// #4459: a user agent Disconnect/Shutdown ends the hosted tabs at the backend.
+#[path = "agent_user_end_tests.rs"]
+mod agent_user_end;
