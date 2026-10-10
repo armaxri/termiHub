@@ -161,7 +161,7 @@ describe("redactLogText — shared secret-key vectors (#4430)", () => {
   // The same vectors run against the Rust diagnostics redactor
   // (core/src/diagnostics/redact_tests.rs), so the two key lists cannot drift.
   const cases = secretTextVectors.cases.map(
-    (c) => [c.input, c.expected.replaceAll("{R}", MARK)] as [string, string]
+    (c) => [c.input, c.expected.split("{R}").join(MARK)] as [string, string]
   );
 
   it("has vectors", () => {

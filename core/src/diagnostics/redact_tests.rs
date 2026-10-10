@@ -53,6 +53,39 @@ fn keeps_non_secret_words_that_contain_a_keyword() {
     assert_eq!(r.redact("tokenizer: ready"), "tokenizer: ready");
 }
 
+#[derive(serde::Deserialize)]
+struct SharedVectors {
+    cases: Vec<SharedVector>,
+}
+
+#[derive(serde::Deserialize)]
+struct SharedVector {
+    input: String,
+    expected: String,
+}
+
+/// The same vectors run against the frontend `redactLogText`
+/// (`src/utils/redactLogText.test.ts`), so the two key lists cannot drift (#4430).
+#[test]
+fn shared_secret_key_vectors_match() {
+    let raw = include_str!("../../../src/test/fixtures/redaction/secret-text-vectors.json");
+    let vectors: SharedVectors = serde_json::from_str(raw).unwrap();
+    assert!(vectors.cases.len() > 100);
+    let r = plain();
+    for case in vectors.cases {
+        let expected = case.expected.replace("{R}", REDACTED);
+        let out = r.redact(&case.input);
+        assert_eq!(out, expected, "shared vector {:?}", case.input);
+        assert_eq!(r.redact(&out), out, "not idempotent: {:?}", case.input);
+    }
+}
+
+#[test]
+fn secret_key_pattern_builds_from_the_shared_list() {
+    let pattern = secret_key_pattern().expect("shared secret-key list parses");
+    assert!(Regex::new(&pattern).is_ok(), "{pattern}");
+}
+
 #[test]
 fn masks_pem_private_keys_even_when_truncated() {
     let r = plain();
