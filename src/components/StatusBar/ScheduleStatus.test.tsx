@@ -3,8 +3,12 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { flushAsync } from "@/test/flushAsync";
 import type { ScheduleView } from "@/types/schedule";
 import { ScheduleStatus } from "./ScheduleStatus";
+
+setupSettingsRegion();
 
 function view(id: string, enabled: boolean, running = false): ScheduleView {
   return {
@@ -51,12 +55,33 @@ describe("ScheduleStatus (PROD-043)", () => {
     expect(pill()!.textContent).toBe("2 schedules active · running");
   });
 
-  it("says paused under the global pause and opens the Workflows sidebar on click", () => {
-    const setSidebarView = vi.fn();
-    useAppStore.setState({ schedules: [view("a", true)], schedulesPaused: true, setSidebarView });
+  it("says paused under the global pause", () => {
+    useAppStore.setState({ schedules: [view("a", true)], schedulesPaused: true });
     render();
     expect(pill()!.textContent).toBe("Schedules paused");
+  });
+
+  it("opens Settings → Schedules, not the hidden Workflows view, when experimental is off (#4623)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: false });
+    const setSidebarView = vi.fn();
+    const openSettingsTab = vi.fn();
+    useAppStore.setState({ schedules: [view("a", true)], setSidebarView, openSettingsTab });
+    render();
+    await flushAsync();
+    act(() => pill()!.click());
+    expect(openSettingsTab).toHaveBeenCalledWith({ category: "schedules" });
+    expect(setSidebarView).not.toHaveBeenCalled();
+  });
+
+  it("opens the Workflows sidebar when experimental is on (#4623)", async () => {
+    seedSettings({ experimentalFeaturesEnabled: true });
+    const setSidebarView = vi.fn();
+    const openSettingsTab = vi.fn();
+    useAppStore.setState({ schedules: [view("a", true)], setSidebarView, openSettingsTab });
+    render();
+    await flushAsync();
     act(() => pill()!.click());
     expect(setSidebarView).toHaveBeenCalledWith("workflows");
+    expect(openSettingsTab).not.toHaveBeenCalled();
   });
 });

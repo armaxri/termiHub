@@ -91,6 +91,92 @@ describe("nativePluginSandbox helpers", () => {
     );
   });
 
+  describe("missing Landlock warning (#4605)", () => {
+    const base = "This system cannot restrict file access (Linux Landlock is unavailable).";
+
+    it("says the home folder stays hidden where the namespace layer is enforced", () => {
+      expect(missingLayerWarning(["landlock"], ["seccomp", "netns"])).toBe(
+        `${base} Your home folder stays hidden, but the plugin can read and change other files on this system.`
+      );
+    });
+
+    it("says every file is reachable without the namespace layer", () => {
+      const text = missingLayerWarning(["landlock"], ["seccomp"]);
+      expect(text).toBe(
+        `${base} The plugin can read and change any of your files, including startup scripts, so it can effectively run programs as you.`
+      );
+      // The old copy overstated the protection.
+      expect(text).not.toContain("still apply");
+    });
+
+    it("assumes the worst when the enforced layers are unknown", () => {
+      expect(missingLayerWarning(["landlock"])).toContain("can read and change any of your files");
+    });
+
+    it("adds no file consequence when Landlock is present", () => {
+      expect(missingLayerWarning(["seccomp"], ["landlock", "netns"])).toBe(
+        "This system cannot restrict network and program access (Linux seccomp is unavailable)."
+      );
+    });
+  });
+
+  describe("files chip per isolation level (#4605)", () => {
+    const filesChip = (s?: PluginSandboxStatus, overrides: Record<string, unknown> = {}) =>
+      accessChips(plugin(overrides), s).find((c) => c.id === "files");
+    const declared = { permissions: ["terminal", "filesystem"], filesystemPaths: ["/data"] };
+
+    it("denies all file access off Linux and without a status", () => {
+      expect(filesChip()).toMatchObject({
+        rule: "No access to your home folder or other files",
+        denied: true,
+      });
+      expect(filesChip(status({ enforced: ["seatbelt"] }))).toMatchObject({
+        rule: "No access to your home folder or other files",
+        denied: true,
+      });
+    });
+
+    it("denies all file access on Linux with Landlock and the namespace layer", () => {
+      expect(filesChip(status({ enforced: ["seccomp", "landlock", "netns"] }))).toMatchObject({
+        rule: "No access to your home folder or other files",
+        denied: true,
+      });
+    });
+
+    it("notes visible file names and sizes on Linux without the namespace layer", () => {
+      const s = status({ enforced: ["seccomp", "landlock"] });
+      expect(filesChip(s)).toMatchObject({
+        label: "Your files",
+        rule: "Cannot open your home folder or other files, but can see their names and sizes",
+        denied: true,
+      });
+      expect(filesChip(s, declared)).toMatchObject({
+        label: "Other files",
+        rule: "Cannot open files outside the declared folders, but can see their names and sizes",
+        denied: true,
+      });
+    });
+
+    it("says only the home folder is hidden in reduced isolation with the namespace layer", () => {
+      const chip = filesChip(
+        status({ isolation: "reduced", enforced: ["seccomp", "netns"], missing: ["landlock"] })
+      );
+      expect(chip).toMatchObject({
+        rule: "Your home folder stays hidden; other files on this system can be read and changed",
+        denied: false,
+      });
+    });
+
+    it("grants every file in reduced isolation without the namespace layer", () => {
+      const s = status({ isolation: "reduced", enforced: ["seccomp"], missing: ["landlock"] });
+      expect(filesChip(s)).toMatchObject({
+        rule: "Can read and change any of your files",
+        denied: false,
+      });
+      expect(filesChip(s, declared)?.denied).toBe(false);
+    });
+  });
+
   it("derives the access chips from the manifest permissions", () => {
     const chips = accessChips(
       plugin({

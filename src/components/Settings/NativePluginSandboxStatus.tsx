@@ -85,7 +85,7 @@ export function NativePluginSandboxStatus({
           className="settings-panel__description native-plugin-sandbox__warning"
           data-testid={`native-plugin-isolation-warning-${id}`}
         >
-          {missingLayerWarning(status?.missing ?? [])}
+          {missingLayerWarning(status?.missing ?? [], status?.enforced ?? [])}
         </p>
       )}
       {(badge?.kind === "failed" || badge?.kind === "runnerMissing") && badge.detail && (
@@ -121,7 +121,7 @@ export function NativePluginSandboxStatus({
           aria-label="What this plugin can reach"
           data-testid={`native-plugin-access-${id}`}
         >
-          {accessChips(plugin).map((chip) => (
+          {accessChips(plugin, status).map((chip) => (
             <span role="listitem" key={chip.id}>
               <Chip
                 label={chip.label}

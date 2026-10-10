@@ -27,9 +27,19 @@ function scheduleStatus(s: ScheduleView, paused: boolean): string {
  * rule, targets, next run and last result — expandable to its recent attempts
  * (#3528); per-schedule enable (the first
  * enable asks for confirmation of the target hosts), edit and delete; and the
- * global pause switch. Lives in the Workflow sidebar.
+ * global pause switch. Lives in the Workflow sidebar, and in Settings →
+ * Schedules (#4623), which is reachable with experimental features off.
  */
-export function SchedulesSection() {
+export interface SchedulesSectionProps {
+  /**
+   * Show the create/edit actions (default `true`). The Settings panel passes
+   * `false`: it only views, pauses/resumes and deletes schedules (#4623).
+   */
+  editable?: boolean;
+}
+
+/** Renders the schedules list; see the module notes above. */
+export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
   const schedules = useAppStore((s) => s.schedules);
   const paused = useAppStore((s) => s.schedulesPaused);
   const setScheduleEnabled = useAppStore((s) => s.setScheduleEnabled);
@@ -109,17 +119,19 @@ export function SchedulesSection() {
               data-testid="schedules-pause-toggle"
             />
           </label>
-          <Tooltip content="New schedule" side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="New schedule"
-              data-testid="schedules-new-btn"
-              icon={<Plus size={12} />}
-              onClick={() => openScheduleEditor()}
-            />
-          </Tooltip>
+          {editable ? (
+            <Tooltip content="New schedule" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="New schedule"
+                data-testid="schedules-new-btn"
+                icon={<Plus size={12} />}
+                onClick={() => openScheduleEditor()}
+              />
+            </Tooltip>
+          ) : null}
         </span>
       </header>
       {schedules.length === 0 ? (
@@ -156,17 +168,19 @@ export function SchedulesSection() {
                       aria-label={`${s.enabled ? "Disable" : "Enable"} schedule ${s.name}`}
                       data-testid={`schedule-enable-${s.id}`}
                     />
-                    <Tooltip content="Edit" side="top">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Edit schedule"
-                        data-testid={`schedule-edit-${s.id}`}
-                        icon={<Pencil size={12} />}
-                        onClick={() => openScheduleEditor({ scheduleId: s.id })}
-                      />
-                    </Tooltip>
+                    {editable ? (
+                      <Tooltip content="Edit" side="top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          aria-label="Edit schedule"
+                          data-testid={`schedule-edit-${s.id}`}
+                          icon={<Pencil size={12} />}
+                          onClick={() => openScheduleEditor({ scheduleId: s.id })}
+                        />
+                      </Tooltip>
+                    ) : null}
                     <Tooltip content="Delete" side="top">
                       <Button
                         variant="ghost"

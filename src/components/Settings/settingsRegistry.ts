@@ -14,6 +14,7 @@ export type SettingsCategory =
   | "editor"
   | "plugins"
   | "backup"
+  | "schedules"
   | "portable"
   | "updates";
 
@@ -46,6 +47,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "editor", label: "Editor" },
   { id: "plugins", label: "Plugins" },
   { id: "backup", label: "Backup & Restore" },
+  { id: "schedules", label: "Schedules" },
   { id: "portable", label: "Portable Mode" },
   { id: "updates", label: "Updates" },
 ];
@@ -876,6 +878,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
     keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
+  },
+  {
+    id: "schedules",
+    label: "Schedules",
+    description: "View, pause, resume and delete scheduled workflow and macro runs",
+    category: "schedules",
+    keywords: [
+      "schedule",
+      "scheduled",
+      "cron",
+      "timer",
+      "pause",
+      "resume",
+      "macro",
+      "workflow",
+      "automation",
+    ],
   },
   {
     id: "externalConnectionFiles",

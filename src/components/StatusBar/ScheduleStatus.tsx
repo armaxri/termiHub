@@ -1,6 +1,7 @@
 import { CalendarClock } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Tooltip } from "@/components/ui";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 
 /**
  * Status-bar indicator for scheduled runs (PROD-043): "N schedules active"
@@ -14,6 +15,8 @@ export function ScheduleStatus() {
   const running = useAppStore((s) => s.schedules.some((x) => x.running));
   const paused = useAppStore((s) => s.schedulesPaused);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
+  const experimental = useExperimentalFeatures();
 
   if (enabled === 0) return null;
 
@@ -30,7 +33,9 @@ export function ScheduleStatus() {
         className="status-bar__item status-bar__item--interactive"
         aria-label={tooltip}
         data-testid="schedule-status"
-        onClick={() => setSidebarView("workflows")}
+        onClick={() =>
+          experimental ? setSidebarView("workflows") : openSettingsTab({ category: "schedules" })
+        }
       >
         <CalendarClock size={12} />
         {label}
