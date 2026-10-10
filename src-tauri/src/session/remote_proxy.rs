@@ -1936,6 +1936,7 @@ mod tests {
                     file_ranges: false,
                     output_flow: false,
                     host_file_attribute_ops: None,
+                    file_create_new: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),

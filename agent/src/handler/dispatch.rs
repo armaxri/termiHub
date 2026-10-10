@@ -183,7 +183,13 @@ use termihub_core::monitoring::{
 /// system performs, so the desktop hides those actions on a Windows agent
 /// host's local sessions. An older desktop ignores it; for an older agent the
 /// desktop keeps its session-type answer.
-const AGENT_PROTOCOL_VERSION: &str = "0.29.0";
+/// Bumped to 0.30.0 for the additive `create_new` flag on
+/// `connection.files.write_range`, its `capabilities.fileCreateNew` flag and
+/// the `-32030` file-already-exists error (#4433): an exclusive create on the
+/// agent host's own file system, so a remote-desktop upload claims its name
+/// without ever truncating a file it did not create. An older desktop never
+/// sends the flag; an older agent does not advertise it and is never sent it.
+const AGENT_PROTOCOL_VERSION: &str = "0.30.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -660,6 +666,7 @@ fn map_file_error(e: FileError) -> ErrorObjectOwned {
     match e {
         FileError::NotFound(msg) => rpc_err(errors::FILE_NOT_FOUND, msg),
         FileError::PermissionDenied(msg) => rpc_err(errors::PERMISSION_DENIED, msg),
+        FileError::AlreadyExists(msg) => rpc_err(errors::FILE_ALREADY_EXISTS, msg),
         FileError::OperationFailed(msg) => rpc_err(errors::FILE_OPERATION_FAILED, msg),
         // A rejected oversized read (CORE-013) surfaces as an operation failure
         // carrying the clean "file too large" message rather than a crash.
@@ -1027,6 +1034,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 output_flow: true,
                 forward_flow: true,
                 host_file_attribute_ops: host_file_attribute_ops(),
+                file_create_new: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -3882,10 +3890,12 @@ mod tests {
     /// capability (#3587), and 0.27.0 `connection.output_flow` with its
     /// `outputFlow` capability (#4416), and 0.28.0 `agent.forward.ack` with
     /// the connect window and its `forwardFlow` capability (#4284), and
-    /// 0.29.0 the `hostFileAttributeOps` capability (#4601).
+    /// 0.29.0 the `hostFileAttributeOps` capability (#4601), and 0.30.0 the
+    /// `write_range` exclusive create with its `fileCreateNew` capability
+    /// (#4433).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.29.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.30.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -4091,6 +4101,14 @@ mod tests {
             result["result"]["capabilities"]["hostFileAttributeOps"],
             json!({ "permissions": supported, "owner": supported, "symlink": supported })
         );
+    }
+
+    /// #4433: the agent advertises the host-level exclusive create.
+    #[tokio::test]
+    async fn initialize_advertises_file_create_new() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(result["result"]["capabilities"]["fileCreateNew"], true);
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────

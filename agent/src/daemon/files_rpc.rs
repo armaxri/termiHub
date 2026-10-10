@@ -228,6 +228,7 @@ pub enum FileOutcome {
 pub enum WireFileError {
     NotFound { message: String },
     PermissionDenied { message: String },
+    AlreadyExists { message: String },
     OperationFailed { message: String },
     TooLarge { size: u64, limit: u64 },
     NotSupported,
@@ -239,6 +240,7 @@ impl From<FileError> for WireFileError {
         match e {
             FileError::NotFound(message) => Self::NotFound { message },
             FileError::PermissionDenied(message) => Self::PermissionDenied { message },
+            FileError::AlreadyExists(message) => Self::AlreadyExists { message },
             FileError::OperationFailed(message) => Self::OperationFailed { message },
             FileError::TooLarge { size, limit } => Self::TooLarge { size, limit },
             FileError::NotSupported => Self::NotSupported,
@@ -254,6 +256,7 @@ impl From<WireFileError> for FileError {
         match e {
             WireFileError::NotFound { message } => Self::NotFound(message),
             WireFileError::PermissionDenied { message } => Self::PermissionDenied(message),
+            WireFileError::AlreadyExists { message } => Self::AlreadyExists(message),
             WireFileError::OperationFailed { message } => Self::OperationFailed(message),
             WireFileError::TooLarge { size, limit } => Self::TooLarge { size, limit },
             WireFileError::NotSupported => Self::NotSupported,

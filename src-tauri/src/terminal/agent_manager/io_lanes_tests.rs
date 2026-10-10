@@ -639,6 +639,7 @@ fn connection(
             file_ranges: false,
             output_flow: false,
             host_file_attribute_ops: None,
+            file_create_new: false,
             agent_version: String::new(),
         }
         .into(),
