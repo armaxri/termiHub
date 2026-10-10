@@ -75,8 +75,8 @@ pub mod ftp {
 // `super::{ProgressSink, TransferProgress, CHUNK_SIZE, …}`, and the external
 // `crate::files::transfer::*` — resolves unchanged.
 pub use termihub_core::files::transfer::{
-    is_queue_teardown, registry, retry, scheduler, state, ProgressSink, TransferDirection,
-    TransferPhase, TransferProgress, CHUNK_SIZE, PROGRESS_THROTTLE, QUEUE_TEARDOWN,
+    registry, retry, scheduler, state, ProgressSink, TransferDirection, TransferPhase,
+    TransferProgress, CHUNK_SIZE, PROGRESS_THROTTLE,
 };
 
 pub use persist::{PersistedTransfer, PersistedTransferStatus, PersistedTransferStore};
@@ -119,16 +119,20 @@ pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
         if let Some(pm) = app.try_state::<TransferPersistenceManager>() {
             // The source mtime the executor fingerprinted (#3572) lives on the
             // live handle, not in the wire event; persist it with the offset.
-            let source_mtime = app
-                .try_state::<TransferRegistry>()
+            let registry = app.try_state::<TransferRegistry>();
+            let source_mtime = registry
+                .as_ref()
                 .and_then(|registry| registry.get(&progress.transfer_id))
                 .and_then(|handle| handle.source_mtime());
+            // The quit sweep's teardown flag lives on the managed registry
+            // (#4675) — the one `cancel_all` flips at app quit.
+            let teardown = registry.is_some_and(|registry| registry.is_queue_teardown());
             pm.note_progress(
                 &progress.transfer_id,
                 PersistedTransferStatus::from(progress.state),
                 progress.transferred,
                 progress.total,
-                is_queue_teardown(),
+                teardown,
                 source_mtime,
             );
         }
