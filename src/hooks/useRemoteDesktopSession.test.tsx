@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { useRemoteDesktopSession, type RemoteDesktopSession } from "./useRemoteDesktopSession";
+import { remoteDesktopDispatcher } from "@/services/remoteDesktopDispatcher";
 import {
   remoteDesktopConnect,
   remoteDesktopCancelConnect,
@@ -110,6 +111,9 @@ beforeEach(() => {
   hoisted.stateCbs.length = 0;
   hoisted.clipCbs.length = 0;
   hoisted.certCbs.length = 0;
+  // The dispatcher registers its global listeners once per lifetime; start each
+  // test with fresh ones so they land in the just-cleared mock arrays.
+  remoteDesktopDispatcher.destroy();
   useAppStore.setState(useAppStore.getInitialState());
 });
 
@@ -956,5 +960,72 @@ describe("useRemoteDesktopSession — multi-monitor (#3696)", () => {
     vi.mocked(availableMonitors).mockResolvedValue([]);
     vi.mocked(primaryMonitor).mockResolvedValue(null);
     if (originalWindow) vi.mocked(getCurrentWindow).mockImplementation(originalWindow);
+  });
+});
+
+describe("useRemoteDesktopSession — shared event listeners (FEC2-002, #4378)", () => {
+  /** Render one hook per tab in the same root. */
+  function renderSessions(tabIds: string[]): Array<() => RemoteDesktopSession> {
+    const latest: Array<RemoteDesktopSession | null> = tabIds.map(() => null);
+    function Probe({ tabId, index }: { tabId: string; index: number }) {
+      latest[index] = useRemoteDesktopSession(tabId);
+      return null;
+    }
+    act(() =>
+      root.render(
+        <>
+          {tabIds.map((id, i) => (
+            <Probe key={id} tabId={id} index={i} />
+          ))}
+        </>
+      )
+    );
+    return tabIds.map((_, i) => () => {
+      const s = latest[i];
+      if (!s) throw new Error("hook not rendered");
+      return s;
+    });
+  }
+
+  it("two sessions share one listener per event type and get only their own events", async () => {
+    mockedConnect.mockResolvedValueOnce("rd-1").mockResolvedValueOnce("rd-2");
+    const [a, b] = renderSessions([addTab(), addTab()]);
+    await flush();
+    expect(a().sessionId).toBe("rd-1");
+    expect(b().sessionId).toBe("rd-2");
+
+    // One global Tauri listener per event type, not one per tab.
+    expect(hoisted.stateCbs).toHaveLength(1);
+    expect(hoisted.clipCbs).toHaveLength(1);
+    expect(hoisted.certCbs).toHaveLength(1);
+
+    act(() => hoisted.clipCbs.forEach((cb) => cb({ session_id: "rd-2", text: "for-b" })));
+    expect(a().remoteClipboard).toBeNull();
+    expect(b().remoteClipboard).toBe("for-b");
+
+    const prompt: RemoteDesktopCertPromptPayload = {
+      session_id: "rd-1",
+      host: "a.local:3389",
+      fingerprint: "sha256:AA",
+      changed: false,
+    };
+    act(() => hoisted.certCbs.forEach((cb) => cb(prompt)));
+    expect(a().certPrompt).toEqual(prompt);
+    expect(b().certPrompt).toBeNull();
+
+    dispatchState({ session_id: "rd-2", state: "reconnecting", reconnect_attempt: 1 });
+    expect(b().state).toBe("reconnecting");
+    expect(a().state).not.toBe("reconnecting");
+  });
+
+  it("unsubscribes its session callbacks on unmount", async () => {
+    const h = renderSessions([addTab()]);
+    await flush();
+    expect(h[0]().sessionId).toBe("rd-1");
+    expect(remoteDesktopDispatcher.subscriberCount()).toBeGreaterThan(0);
+
+    act(() => root.render(<></>));
+    await flush();
+    expect(remoteDesktopDispatcher.subscriberCount()).toBe(0);
   });
 });
