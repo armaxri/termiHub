@@ -543,3 +543,6 @@ fn spawn_alive_poller(
         }
     })
 }
+
+#[cfg(test)]
+mod tests;
