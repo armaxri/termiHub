@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::test_fixtures::{
-    gate, parse_flag, require_with, resolve, FixtureEnv, Gate, ALLOW_DEFAULT_ENV, DEFAULT_PROJECT,
-    PORT_OFFSET_ENV, PROJECT_ENV, REQUIRE_DOCKER_ENV,
+    gate, parse_flag, require_reported, require_with, resolve, FixtureEnv, Gate, ALLOW_DEFAULT_ENV,
+    DEFAULT_PROJECT, PORT_OFFSET_ENV, PROJECT_ENV, REQUIRE_DOCKER_ENV,
 };
 
 /// An environment reader over a fixed map, so tests never touch the process env.
@@ -201,4 +201,38 @@ fn require_runs_when_available_and_skips_when_not_required() {
 )]
 fn require_panics_when_missing_and_required() {
     require_with(false, true, REQUIRE_DOCKER_ENV, "docker daemon", "hint");
+}
+
+#[test]
+fn require_reported_runs_when_available_and_skips_when_not_required() {
+    assert!(require_reported(
+        true,
+        false,
+        format_args!("fixture"),
+        format_args!("fixture unavailable")
+    ));
+    assert!(require_reported(
+        true,
+        true,
+        format_args!("fixture"),
+        format_args!("fixture unavailable")
+    ));
+    assert!(!require_reported(
+        false,
+        false,
+        format_args!("fixture"),
+        format_args!("fixture unavailable")
+    ));
+}
+
+#[test]
+#[should_panic(expected = "REQUIRED fixture unavailable: ssh-sudo on port 2212")]
+fn require_reported_panics_with_the_required_prefix_when_missing_and_required() {
+    let port = 2212;
+    require_reported(
+        false,
+        true,
+        format_args!("ssh-sudo on port {port}"),
+        format_args!("fixture unavailable: ssh-sudo on port {port}"),
+    );
 }

@@ -48,25 +48,10 @@ pub fn is_port_reachable(host: &str, port: u16) -> bool {
 /// *hard failure* (TBE-006). Set it (`=1`) in a CI lane that brings the Docker
 /// fixtures up, so an absent/broken fixture reds the lane instead of the
 /// integration test skipping to a false green.
-pub const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
+pub const REQUIRE_DOCKER_ENV: &str = fixture_env::REQUIRE_DOCKER_ENV;
 
-/// What a `require_docker!`-style guard should do for a given reachability +
-/// require-env state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FixtureGate {
-    /// Fixture reachable — run the test body.
-    Run,
-    /// Fixture absent and not required — skip the test (visible `SKIPPED:` line).
-    Skip,
-    /// Fixture absent but required (`TERMIHUB_REQUIRE_DOCKER` set) — hard-fail.
-    Fail,
-}
-
-/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean.
-///
-/// Truthy: `1`, `true`, `yes`, `on` (case-insensitive). Everything else —
-/// including `None` (unset), the empty string, and `0`/`false`/`no`/`off` — is
-/// falsey, so a local or per-PR run (where the var is unset) never hard-fails.
+/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (see
+/// [`fixture_env::parse_flag`]).
 pub fn parse_required(val: Option<&str>) -> bool {
     fixture_env::parse_flag(val)
 }
@@ -74,24 +59,12 @@ pub fn parse_required(val: Option<&str>) -> bool {
 /// Whether the current process requires Docker fixtures to be present (reads
 /// [`REQUIRE_DOCKER_ENV`]).
 pub fn docker_required() -> bool {
-    parse_required(std::env::var(REQUIRE_DOCKER_ENV).ok().as_deref())
+    fixture_env::flag_set(REQUIRE_DOCKER_ENV)
 }
 
-/// Decide the gate outcome purely from reachability and the require flag.
-///
-/// A reachable fixture always runs. An absent fixture skips normally, but
-/// hard-fails when `required` is set — that is the TBE-006 enforcement that
-/// stops a Docker-backed integration lane going falsely green when its
-/// fixtures never came up.
-pub fn fixture_gate(reachable: bool, required: bool) -> FixtureGate {
-    match (reachable, required) {
-        (true, _) => FixtureGate::Run,
-        (false, false) => FixtureGate::Skip,
-        (false, true) => FixtureGate::Fail,
-    }
-}
-
-/// Resolve whether a fixture-gated test body should run.
+/// Resolve whether a fixture-gated test body should run: a thin wrapper over
+/// [`fixture_env::require_reported`] (#4544) that words the messages for a
+/// fixture reached on `port`.
 ///
 /// Returns `true` when the fixture is reachable (run the body). Returns `false`
 /// after printing a visible `SKIPPED:` line when the fixture is absent and not
@@ -102,18 +75,16 @@ pub fn fixture_gate(reachable: bool, required: bool) -> FixtureGate {
 /// `what` names the fixture for the message (e.g. `"Docker container"`); `hint`
 /// is a short "how to start it" suffix.
 pub fn require_fixture(reachable: bool, required: bool, what: &str, port: u16, hint: &str) -> bool {
-    match fixture_gate(reachable, required) {
-        FixtureGate::Run => true,
-        FixtureGate::Skip => {
-            eprintln!("SKIPPED: {what} not reachable on port {port} ({hint})");
-            false
-        }
-        FixtureGate::Fail => panic!(
-            "REQUIRED fixture unavailable: {what} not reachable on port {port} \
+    fixture_env::require_reported(
+        reachable,
+        required,
+        format_args!("{what} not reachable on port {port} ({hint})"),
+        format_args!(
+            "fixture unavailable: {what} not reachable on port {port} \
              but {REQUIRE_DOCKER_ENV} is set — a missing/broken fixture is a hard \
              failure here, not a skip ({hint})"
         ),
-    }
+    )
 }
 
 /// Skip *or hard-fail* the current test based on a Docker container's port.
@@ -124,9 +95,8 @@ pub fn require_fixture(reachable: bool, required: bool, what: &str, port: u16, h
 /// (set by the Docker-backed integration lane) it panics instead, so an
 /// absent/broken fixture reds CI rather than skipping to a false green
 /// (TBE-006). See [`require_fixture`].
-// Not every test binary that includes this shared module uses the macro (e.g.
-// `require_docker_gate.rs` tests only the gate helpers), so allow it to go
-// unused there without tripping `-D warnings`.
+// Not every test binary that includes this shared module uses the macro, so
+// allow it to go unused there without tripping `-D warnings`.
 #[allow(unused_macros)]
 macro_rules! require_docker {
     ($port:expr) => {
@@ -239,22 +209,22 @@ pub fn require_native_sshd_fixture() -> Option<NativeSshd> {
     let reachable = fixture
         .as_ref()
         .is_some_and(|f| f.port != 0 && is_port_reachable("127.0.0.1", f.port));
-    match fixture_gate(reachable, required) {
-        FixtureGate::Run => fixture,
-        FixtureGate::Skip => {
-            eprintln!(
-                "SKIPPED: native sshd fixture not reachable (port {port}; start with: \
-                 eval \"$(scripts/internal/native-sshd-fixture.sh up)\")"
-            );
-            None
-        }
-        FixtureGate::Fail => panic!(
-            "REQUIRED fixture unavailable: native sshd not reachable on port {port} but \
+    fixture_env::require_reported(
+        reachable,
+        required,
+        format_args!(
+            "native sshd fixture not reachable (port {port}; start with: \
+             eval \"$(scripts/internal/native-sshd-fixture.sh up)\")"
+        ),
+        format_args!(
+            "fixture unavailable: native sshd not reachable on port {port} but \
              {NATIVE_SSHD_ENV} is set -- a missing/broken fixture is a hard failure here, \
              not a skip (TERMIHUB_NATIVE_SSHD_PORT/_USER/_KEY come from \
              scripts/internal/native-sshd-fixture.sh up)"
         ),
-    }
+    )
+    .then_some(fixture)
+    .flatten()
 }
 
 /// Skip *or hard-fail* the current test on the native sshd fixture and bind it.

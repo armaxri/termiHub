@@ -147,10 +147,7 @@ fn parse_default_shell(value: &str) -> Option<WindowsShell> {
 /// Interpret a `TERMIHUB_REQUIRE_WINDOWS_SSH` value (truthy: `1`, `true`,
 /// `yes`, `on`; case-insensitive), mirroring `TERMIHUB_REQUIRE_DOCKER`.
 fn parse_required(value: Option<&str>) -> bool {
-    matches!(
-        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
+    termihub_core::test_fixtures::parse_flag(value)
 }
 
 /// Build the fixture from `var` (an env lookup), or the reason it is
@@ -194,21 +191,24 @@ fn resolve_fixture(
 /// Apply the gate: `Some` to run, `None` after a visible `SKIPPED:` line, a
 /// panic when the fixture is missing but required.
 fn gate(resolved: Result<Fixture, String>, required: bool) -> Option<Fixture> {
-    match resolved {
-        Ok(fixture) => Some(fixture),
-        Err(reason) if required => panic!(
-            "REQUIRED Windows SSH-host fixture unavailable ({reason}) but {REQUIRE_ENV} is \
+    let reason = match resolved {
+        Ok(fixture) => return Some(fixture),
+        Err(reason) => reason,
+    };
+    termihub_core::test_fixtures::require_reported(
+        false,
+        required,
+        format_args!(
+            "no Windows SSH-host fixture ({reason}); run it with \
+             scripts/internal/run-windows-ssh-host-suite.sh on Windows (the \
+             `Windows SSH Host` nightly lane does)"
+        ),
+        format_args!(
+            "Windows SSH-host fixture unavailable ({reason}) but {REQUIRE_ENV} is \
              set — a missing fixture is a hard failure here, not a skip"
         ),
-        Err(reason) => {
-            eprintln!(
-                "SKIPPED: no Windows SSH-host fixture ({reason}); run it with \
-                 scripts/internal/run-windows-ssh-host-suite.sh on Windows (the \
-                 `Windows SSH Host` nightly lane does)"
-            );
-            None
-        }
-    }
+    );
+    None
 }
 
 /// The process's fixture, or `None` (after a `SKIPPED:` line) to skip.

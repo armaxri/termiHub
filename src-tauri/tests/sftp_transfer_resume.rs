@@ -108,11 +108,15 @@ impl Drop for ContainerShell {
 fn container_shell_or_skip() -> Option<ContainerShell> {
     let shell = ContainerShell::open();
     if shell.is_none() {
-        assert!(
-            !docker_required(),
-            "REQUIRED: cannot `docker exec` into the sftp-stress fixture container"
+        termihub_core::test_fixtures::require_reported(
+            false,
+            docker_required(),
+            format_args!("cannot `docker exec` into the sftp-stress fixture container"),
+            format_args!(
+                "fixture unavailable: cannot `docker exec` into the sftp-stress fixture \
+                 container but {REQUIRE_DOCKER_ENV} is set"
+            ),
         );
-        eprintln!("SKIPPED: cannot `docker exec` into the sftp-stress fixture container");
     }
     shell
 }
