@@ -18,29 +18,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-.macro-sidebar__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  gap: var(--spacing-sm);
-}
-
-.macro-sidebar__empty-link {
-  border: none;
-  background: none;
-  padding: 0;
-  color: var(--accent-color);
-  cursor: pointer;
-  font-size: inherit;
-  text-decoration: underline;
-}
-
 /*
  * Macro rows compose from the shared `SidebarListItem` shell, so the row layout
  * (container, header, badge, name, actions, details) lives in

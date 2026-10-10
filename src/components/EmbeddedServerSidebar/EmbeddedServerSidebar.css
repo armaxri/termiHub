@@ -11,19 +11,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-.server-sidebar__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  gap: var(--spacing-sm);
-}
-
 /* Server rows compose the shared SidebarListItem shell (issue 1358). */
 
 /* ─── Dialog body text (LAN warning; shell/buttons via ui primitives) ─────── */

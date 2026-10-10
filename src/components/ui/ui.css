@@ -1086,6 +1086,18 @@
   color: var(--text-secondary);
 }
 
+/* An inline text-link action inside an empty state's copy ("…, or write one
+   by hand."), for when a full Button would break the sentence. */
+.ui-empty__link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent-color);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
 .ui-empty__actions {
   display: flex;
   gap: var(--spacing-sm);
