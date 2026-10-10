@@ -15,6 +15,8 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { applyCombineEmoji } from "./unicodeWidth";
+import { waitForUsableDimensions } from "./waitForUsableDimensions";
+import { abortableDelay } from "@/utils/abortableDelay";
 import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
@@ -134,50 +136,6 @@ function resolveTabTitle(tabId: string): string {
 /** The saved connection a tab was opened from, if any (#3876). */
 function resolveTabConnectionId(tabId: string): string | undefined {
   return getAllTabsAcrossGroupTrees().find((t) => t.id === tabId)?.connectionId;
-}
-
-/**
- * Wait until the xterm element is sitting in a real slot (large parent
- * container) AND xterm has at least `MIN_REATTACH_COLS` columns.
- *
- * The xterm DOM element is shared across slot remounts: TerminalSlot moves
- * it from a 1×1 hidden parking area into a real container and back. If a
- * state update (e.g. persistent-session-state → "attached") fires during
- * reattach setup, the slot can remount and stash the element back into
- * parking for a few hundred milliseconds. Calling fitAddon.fit() while the
- * element is parked resizes xterm to 2×1, and then `xterm.write(buffer)`
- * renders the scrollback at that doll-house width.
- *
- * Strategy: only call fit() once `el.offsetWidth` looks like a real slot;
- * skip fits against parking entirely so xterm's current cols are not
- * clobbered. Bounded by ~3 s so a misbehaving slot doesn't hang the
- * reattach indefinitely; the buffer is then written at whatever
- * dimensions xterm has, and the normal resize path still attempts to
- * rewrap.
- */
-const MIN_REATTACH_COLS = 20;
-const MIN_REATTACH_ELEMENT_PX = 50;
-const MAX_REATTACH_FIT_FRAMES = 180;
-async function waitForUsableDimensions(
-  xterm: XTerm,
-  fitAddon: FitAddon,
-  terminalEl: HTMLDivElement | null,
-  isCanceled: () => boolean
-): Promise<void> {
-  for (let i = 0; i < MAX_REATTACH_FIT_FRAMES; i++) {
-    const elWidth = terminalEl?.offsetWidth ?? 0;
-    if (elWidth >= MIN_REATTACH_ELEMENT_PX) {
-      try {
-        fitAddon.fit();
-      } catch {
-        // Per-frame retry loop (up to MAX_REATTACH_FIT_FRAMES): silent so it
-        // cannot flood the Log Viewer; the next frame retries (#4520).
-      }
-      if (xterm.cols >= MIN_REATTACH_COLS) return;
-    }
-    if (isCanceled()) return;
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  }
 }
 
 /**
@@ -679,7 +637,7 @@ export function Terminal({
                 // back into its real container; the wait below blocks until
                 // that has happened.
                 useAppStore.getState().setTerminalReattaching(tabId, false);
-                await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
+                await waitForUsableDimensions(xterm, fitAddon, isCanceled);
                 if (isCanceled()) return;
                 // DEBUG/reattach: confirm dimensions + container size after the wait.
                 frontendLog(
@@ -723,7 +681,7 @@ export function Terminal({
               if (isCanceled()) return;
               if (buffer.length > 0) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
-                await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
+                await waitForUsableDimensions(xterm, fitAddon, isCanceled);
                 if (isCanceled()) return;
                 // xterm.reset() keeps markers on the old buffer alive; drop the
                 // tracked command marks so the OSC 133 in the replayed raw
@@ -838,24 +796,18 @@ export function Terminal({
                 useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
                 setClassifiedSpawnError(tabId, err);
 
-                // 3 s visible failure display (cancellable via isCanceled or user retry).
-                const failDeadline = Date.now() + 3000;
-                while (Date.now() < failDeadline) {
-                  if (isCanceled()) return;
-                  await new Promise<void>((r) => setTimeout(r, 100));
-                }
+                // 3 s visible failure display. Cancels promptly off the signal's
+                // `abort` event (tab close / user retry) — no 100 ms polling (#4381).
+                await abortableDelay(3000, signal);
                 if (isCanceled()) return;
 
                 // Transition to "Connecting… (attempt N)" for the retry countdown.
                 // setTerminalAutoRetrying also clears terminalConnecting.
                 useAppStore.getState().setTerminalAutoRetrying(tabId, attempt);
 
-                // 2.5 s cancellable delay before the next createTerminal attempt.
-                const deadline = Date.now() + 2500;
-                while (Date.now() < deadline) {
-                  if (isCanceled()) return;
-                  await new Promise<void>((r) => setTimeout(r, 100));
-                }
+                // 2.5 s abortable delay before the next createTerminal attempt.
+                await abortableDelay(2500, signal);
+                if (isCanceled()) return;
               } else {
                 // Direct connection (SSH, Telnet, serial, local) — show error.
                 // Strip any backend code marker so a machine token
