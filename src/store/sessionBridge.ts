@@ -360,6 +360,15 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
   // jittered backoff delay this optimistic overlay estimated.
   "session.reconnect": (view, sessionId) => {
     const prev = view.sessions[sessionId];
+    // Twin of the Rust guard (#4459): the loop never starts from a user end, an
+    // auth failure or a lost session — only an explicit Reconnect leaves those.
+    if (
+      (prev?.status === "disconnected" && prev.endReason === "user") ||
+      prev?.status === "authFailed" ||
+      prev?.status === "sessionLost"
+    ) {
+      return view;
+    }
     const reconnect = reconnectReducer(
       prev?.reconnect ?? initialReconnectState,
       "drop",

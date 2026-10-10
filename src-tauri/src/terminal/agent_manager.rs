@@ -132,8 +132,8 @@ use reconnect::AGENT_RECONNECT_POLICY;
 #[cfg(test)]
 pub(crate) use recovery::resolve_agent_hosted_sessions;
 use recovery::{
-    evicted_remote_ids, hosted_sessions_for_agent, list_recovered_session_ids_bounded,
-    reconcile_output_senders,
+    evicted_remote_ids, fold_agent_hosted_user_ended, hosted_sessions_for_agent,
+    list_recovered_session_ids_bounded, reconcile_output_senders,
 };
 pub(crate) use recovery::{
     evicted_session_ids, fold_agent_hosted_reconnect_failed, fold_agent_hosted_reconnecting,
@@ -1624,7 +1624,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             Err(e) => {
                 if cancel_token.is_cancelled() {
                     // Only a user Cancel / Disconnect fires the token.
-                    emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User);
+                    emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User, None);
                 }
                 return Err(e);
             }
@@ -1649,7 +1649,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 alive.stop();
                 io_task.abort();
                 io_budget.close();
-                emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User);
+                emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User, None);
                 return Err(TerminalError::RemoteError("Connect cancelled".to_string()));
             }
             // Paired with the map entry under the same `agents` lock (#3018).
@@ -1761,6 +1761,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
         if scrub_config {
             self.agent_configs.clear(agent_id);
         }
+        // #4459: a user Disconnect/Shutdown ends the agent's hosted tabs at the
+        // backend, once for every window and before the I/O task is torn down —
+        // so a hosted session closing afterwards cannot arm a redrive (the store
+        // refuses to reconnect a `Disconnected(User)` tab) — and before the
+        // event below, which lists the tabs it ended.
+        let ended_tabs = matches!(reason, AgentEndReason::User | AgentEndReason::Shutdown)
+            .then(|| fold_agent_hosted_user_ended(&self.app_handle, agent_id));
 
         if let Some(conn) = live {
             // Cooperative shutdown first: a live task processes `Disconnect` and
@@ -1774,7 +1781,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // for good, so interrupting an in-flight write cannot corrupt any
             // framing we still care about. A no-op if the task already exited.
             conn.io_task.abort();
-            emit_agent_disconnected(&self.app_handle, agent_id, reason);
+            emit_agent_disconnected(&self.app_handle, agent_id, reason, ended_tabs);
             Ok(Some(conn.reattach_config.clone()))
         } else if cancelled_connect {
             // The in-flight connect emits `disconnected` itself once it unwinds.
@@ -1785,6 +1792,18 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 agent_id
             )))
         }
+    }
+
+    /// TEST-ONLY (#4459): register a live agent whose I/O task parks until
+    /// aborted, so a test outside this module can drive a user Disconnect of a
+    /// connected agent. Call inside a tokio runtime (the task is spawned).
+    #[cfg(test)]
+    pub(crate) fn insert_wedged_agent_for_test(&self, agent_id: &str) {
+        let (conn, _join) = tests::make_wedged_agent_connection();
+        self.agents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(agent_id.to_string(), conn);
     }
 
     /// Check if an agent is connected.

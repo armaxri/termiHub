@@ -40,18 +40,30 @@ pub(super) fn emit_agent_state_with_error<R: Runtime>(
     error: Option<&str>,
 ) {
     let reason = (state == "disconnected").then_some(AgentEndReason::Lost);
-    emit_agent_state_event(app_handle, agent_id, state, error, reason);
+    emit_agent_state_event(app_handle, agent_id, state, error, reason, None);
 }
 
 /// Emit `agent-state-change` = "disconnected" with the reason the agent ended
 /// (#4447): every window reads it, so a user Disconnect/Shutdown ends the hosted
 /// tabs everywhere, not only in the window where the user clicked.
+///
+/// `ended_tabs` lists the tabs the backend just folded to `Disconnected(User)`
+/// for this end (#4459), so each window applies its presentation to exactly
+/// those; `None` when nothing was folded here.
 pub(super) fn emit_agent_disconnected<R: Runtime>(
     app_handle: &AppHandle<R>,
     agent_id: &str,
     reason: AgentEndReason,
+    ended_tabs: Option<Vec<String>>,
 ) {
-    emit_agent_state_event(app_handle, agent_id, "disconnected", None, Some(reason));
+    emit_agent_state_event(
+        app_handle,
+        agent_id,
+        "disconnected",
+        None,
+        Some(reason),
+        ended_tabs,
+    );
 }
 
 /// The single choke point: fold the transition, then emit the event.
@@ -61,6 +73,7 @@ fn emit_agent_state_event<R: Runtime>(
     state: &str,
     error: Option<&str>,
     reason: Option<AgentEndReason>,
+    ended_tabs: Option<Vec<String>>,
 ) {
     // Server-authority fold (#2388): reflect the connection-state transition into
     // the shared `AgentsStore` at the source — this function is the single choke
@@ -83,6 +96,7 @@ fn emit_agent_state_event<R: Runtime>(
             state: state.to_string(),
             error: error.map(|s| s.to_string()),
             reason,
+            ended_tabs,
         },
     );
 }

@@ -450,22 +450,28 @@ impl SessionLifecycleStore {
     /// `session.disconnect` — a user-initiated graceful disconnect. Stops any
     /// reconnect loop and lands in idle `Disconnected` with reason `User`.
     pub fn disconnect(&self, session_id: &str) {
+        apply_disconnect(&mut self.lock(), session_id);
+    }
+
+    /// [`disconnect`](Self::disconnect), applied only while the tab is live —
+    /// `Connecting`, `Connected` or `Reconnecting` (#4459). The backend folds it
+    /// for every tab an agent hosts when the user disconnects or shuts the agent
+    /// down. A tab that already ended (stopped, failed, auth-failed, lost), an
+    /// `Evicted` tab and an unknown id are left untouched, so a tab that ended
+    /// earlier is not reported as ended again. Returns whether the fold applied;
+    /// the check and the fold run under one lock.
+    pub fn disconnect_if_live(&self, session_id: &str) -> bool {
         let mut inner = self.lock();
-        inner.dirty.insert(session_id.to_string());
-        // No-op for an unknown/removed session (SM-006): a user disconnect only
-        // fires for a live tab that already folded `connect`, so a late/duplicate
-        // `disconnect` for a removed tab must not resurrect a phantom entry.
-        if let Some(entry) = inner.sessions.get_mut(session_id) {
-            entry.status = SessionStatus::Disconnected;
-            entry.reconnect = INITIAL_RECONNECT_STATE;
-            entry.end_reason = Some(EndReason::User);
-            entry.error = None;
-            entry.reconnect_error = None;
-            // The session is torn down; drop the re-attach id so the region never
-            // advertises a dead backend session (#2457).
-            entry.backend_session_id = None;
-            entry.files_only = false;
+        let live = inner.sessions.get(session_id).is_some_and(|s| {
+            matches!(
+                s.status,
+                SessionStatus::Connecting | SessionStatus::Connected | SessionStatus::Reconnecting
+            )
+        });
+        if live {
+            apply_disconnect(&mut inner, session_id);
         }
+        live
     }
 
     /// `session.dropped` — the link dropped without the user asking. Lands in
@@ -506,6 +512,16 @@ impl SessionLifecycleStore {
         // loop would re-attach (a takeover) and ping-pong control between two
         // desktops, so the loop never starts from Evicted.
         if is_evicted(&inner, session_id) {
+            return;
+        }
+        // #4459: nor from a status that only the user can leave. A tab the user
+        // stopped or whose agent the user disconnected (`Disconnected(User)`), a
+        // tab whose credentials were refused (`AuthFailed`) and a tab whose
+        // session is gone (`SessionLost`) are resumed by an explicit Reconnect,
+        // which starts a fresh `connect`. A late drop of such a tab (its backend
+        // session closing after the fold) must not arm a redrive that can never
+        // succeed — after an agent Disconnect its transport config is gone.
+        if ended_by_user_or_terminal(&inner, session_id) {
             return;
         }
         inner.dirty.insert(session_id.to_string());
@@ -988,6 +1004,39 @@ fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
 }
 
 /// Whether a session is in the sticky [`SessionStatus::Evicted`] state (SM-003).
+/// Whether the tab sits in a status the reconnect loop must never leave on its
+/// own (#4459): `Disconnected(User)`, `AuthFailed` or `SessionLost`.
+fn ended_by_user_or_terminal(inner: &Inner, session_id: &str) -> bool {
+    inner
+        .sessions
+        .get(session_id)
+        .is_some_and(|s| match s.status {
+            SessionStatus::Disconnected => s.end_reason == Some(EndReason::User),
+            SessionStatus::AuthFailed | SessionStatus::SessionLost => true,
+            _ => false,
+        })
+}
+
+/// The `session.disconnect` transition on the locked store (see
+/// [`SessionLifecycleStore::disconnect`]).
+fn apply_disconnect(inner: &mut Inner, session_id: &str) {
+    inner.dirty.insert(session_id.to_string());
+    // No-op for an unknown/removed session (SM-006): a user disconnect only
+    // fires for a live tab that already folded `connect`, so a late/duplicate
+    // `disconnect` for a removed tab must not resurrect a phantom entry.
+    if let Some(entry) = inner.sessions.get_mut(session_id) {
+        entry.status = SessionStatus::Disconnected;
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = Some(EndReason::User);
+        entry.error = None;
+        entry.reconnect_error = None;
+        // The session is torn down; drop the re-attach id so the region never
+        // advertises a dead backend session (#2457).
+        entry.backend_session_id = None;
+        entry.files_only = false;
+    }
+}
+
 fn is_evicted(inner: &Inner, session_id: &str) -> bool {
     inner
         .sessions

@@ -2016,6 +2016,7 @@ async fn emit_and_cleanup_clears_the_tab_id_identity_bridge() {
         TabBinding {
             tab_id: "tab-9".to_string(),
             resilient: false,
+            agent_id: None,
         },
     );
 
