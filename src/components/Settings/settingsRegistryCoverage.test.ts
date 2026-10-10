@@ -77,6 +77,7 @@ const WHOLE_PANEL_CATEGORIES = new Set<SettingsCategory>([
   "external-files",
   "plugins",
   "backup",
+  "schedules",
   "portable",
 ]);
 
