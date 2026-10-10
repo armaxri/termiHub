@@ -15,8 +15,8 @@ evidence:
   - src-tauri/src/commands/remote_desktop.rs:772
   - src/hooks/useRemoteDesktopBrowse.ts:21
   - src/components/RemoteDesktop/browseRemoteFiles.ts:81
-status: open
-resolution: ""
+status: fixed
+resolution: "#4384 — file_channel/upload/open_file_browser gated via may_send_input; window-driven close removed (session end drops it)"
 audit: 2026-10
 commit: 663465d52
 relation: new

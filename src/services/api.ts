@@ -1045,9 +1045,18 @@ export async function remoteDesktopOpenFileBrowser(
   });
 }
 
-/** Close a graphical session's File Browser source (#4193); a no-op when none is open. */
-export async function remoteDesktopCloseFileBrowser(sessionId: SessionId): Promise<void> {
-  await invoke("remote_desktop_close_file_browser", { sessionId });
+/**
+ * The File Browser source "Browse remote files" opened for a graphical
+ * session, or `null` when none is open (#4384). The backend owns it — it
+ * re-opens it after a reconnect and drops it when the session ends — so a tab
+ * moved in from another window, or a reloaded window, reads it back here.
+ */
+export async function remoteDesktopFileBrowserSource(
+  sessionId: SessionId
+): Promise<RemoteDesktopFileBrowser | null> {
+  return await invoke<RemoteDesktopFileBrowser | null>("remote_desktop_file_browser_source", {
+    sessionId,
+  });
 }
 
 /** Disconnect a graphical remote-desktop session. */

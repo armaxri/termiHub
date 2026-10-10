@@ -7,14 +7,14 @@
 
 import { toast } from "@/components/ui";
 import {
-  remoteDesktopCloseFileBrowser,
+  remoteDesktopFileBrowserSource,
   remoteDesktopOpenFileBrowser,
   sessionListFiles,
 } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
 import { errorMessage } from "@/utils/errorMessage";
-import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { frontendLog } from "@/utils/frontendLog";
 import { compareNames } from "@/utils/locale";
 
 /** Show the Files sidebar (expanding it if collapsed) without toggling it shut. */
@@ -55,33 +55,39 @@ export async function openRemoteDesktopBrowser(
 }
 
 /**
- * Re-register an open source after its session reconnected (a new tunnel or
- * agent link), keeping the folder the user is in. Logged, not toasted, on
- * failure: the File Browser shows the route's error on its next listing.
+ * Render the source the backend has open for `sessionId` in tab `tabId`
+ * (#4384), without showing the sidebar. The backend owns the registration: it
+ * re-opens it after a reconnect and drops it when the session ends, so this
+ * is how a tab moved in from another window, a reloaded window, or a
+ * reconnected session picks it up (keeping the folder of a source already
+ * shown here). Nothing open on the backend changes nothing here (a browse
+ * the user starts meanwhile is not undone). Logged, not toasted, on failure.
  */
-export async function reattachRemoteDesktopBrowser(tabId: string): Promise<void> {
-  const source = useRemoteDesktopBrowseStore.getState().sources[tabId];
-  if (!source) return;
+export async function syncRemoteDesktopBrowser(tabId: string, sessionId: string): Promise<void> {
   try {
-    const opened = await remoteDesktopOpenFileBrowser(source.sessionId);
-    useRemoteDesktopBrowseStore.getState().refreshSource(tabId, opened.channel);
+    const open = await remoteDesktopFileBrowserSource(sessionId);
+    if (!open) return;
+    const store = useRemoteDesktopBrowseStore.getState();
+    const current = store.sources[tabId];
+    if (current?.sessionId === sessionId) {
+      store.refreshSource(tabId, open.channel);
+    } else {
+      store.openSource(tabId, { sessionId, channel: open.channel, dir: open.startDir });
+    }
   } catch (err) {
-    frontendLog("remote_desktop_files", `re-attach file browser failed: ${errorMessage(err)}`);
+    frontendLog("remote_desktop_files", `sync file browser failed: ${errorMessage(err)}`);
   }
 }
 
 /**
- * Close the File Browser source of tab `tabId` (its session closed or ended):
- * forget it here and on the backend. A no-op when none is open.
+ * Forget the File Browser source of tab `tabId` in this window (the tab
+ * unmounted, or its session changed). The backend registration is not
+ * touched: it belongs to the session and closes when the session ends
+ * (#4384) — a tab moving to another window or a stale window's tab closing
+ * must not take it away from the window still showing it.
  */
-export function closeRemoteDesktopBrowser(tabId: string): void {
-  const source = useRemoteDesktopBrowseStore.getState().sources[tabId];
-  if (!source) return;
+export function forgetRemoteDesktopBrowser(tabId: string): void {
   useRemoteDesktopBrowseStore.getState().closeSource(tabId);
-  fireAndForget(
-    remoteDesktopCloseFileBrowser(source.sessionId),
-    "close remote desktop file browser"
-  );
 }
 
 /** One folder level of the side-channel host, for the folder picker (#4204). */
