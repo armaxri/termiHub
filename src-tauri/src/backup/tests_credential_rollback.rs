@@ -214,7 +214,8 @@ fn restore_without_credentials_writes_no_import_record() {
     assert!(warning.message.contains(UNCHANGED), "{}", warning.message);
 }
 
-/// An unlocked store without a vault file, like the OS keychain.
+/// An unlocked store without a vault file and without a slot for a seal key:
+/// its import cannot be deferred (#4414), so it is applied right away.
 #[derive(Default)]
 struct KeychainLikeStore(Mutex<HashMap<String, String>>);
 

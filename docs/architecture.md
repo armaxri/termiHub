@@ -2053,6 +2053,16 @@ changed underneath it (and cannot overwrite the restored data with stale in-memo
 startup swap snapshots the originals before touching anything, so a crash mid-swap resumes from the
 original snapshot, and the manifest may only name known store files.
 
+Credentials are made restart-atomic too. A master-password store imports right away and the restore
+keeps a copy of the vault from before the import, which a failed swap puts back (#4295). The OS
+keychain keeps no single file to put back, so a restart-applied restore **defers** its import
+instead (#4414): the credentials are sealed with AES-256-GCM under a random key that lives only in
+the OS keychain, staged with the stores, and imported once the credential store is available after a
+successful swap. A failed swap deletes them, so the keychain is exactly as before the restore. Each
+sealed entry records a hash of the value it replaces, so a crash mid-import is finished without
+writing anything twice and a credential changed after the restore is never overwritten; the sealed
+file and its key are deleted on both paths.
+
 ##### Embedded-server passwords (#3514, #3520)
 
 `embedded_servers.json` v2 keeps no password (they live in the credential store), so the

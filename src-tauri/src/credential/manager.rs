@@ -655,6 +655,14 @@ impl CredentialStore for CredentialManager {
             _ => None,
         }
     }
+
+    fn restore_seal_slot(&self, id: &str) -> Option<Box<dyn super::biometric_slot::SecretSlot>> {
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
+        match *inner {
+            StoreBackend::OsKeychain(ref s) => s.restore_seal_slot(id),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
