@@ -1148,7 +1148,13 @@ mod tests {
         let shutdown = ShutdownSignal::new();
         let (ready, ready_rx) = BindSignal::for_test();
 
-        let server = run_ftp_server(&config, shutdown.clone(), AtomicServerStats::new(), ready);
+        let server = run_ftp_server(
+            &config,
+            FtpLimits::for_config(&config),
+            shutdown.clone(),
+            AtomicServerStats::new(),
+            ready,
+        );
         tokio::pin!(server);
 
         // Drive the server (without idling, so the paused clock never advances)
