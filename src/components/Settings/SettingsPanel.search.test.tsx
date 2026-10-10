@@ -111,6 +111,16 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(navItem("external-files")?.className).not.toContain("settings-nav__item--dimmed");
   });
 
+  it("offers a Schedules category and finds it by searching 'pause' (#4623)", async () => {
+    await render();
+    expect(navItem("schedules")).not.toBeNull();
+    search("schedule");
+    expect(container.querySelector("[data-testid='schedules-settings']")).not.toBeNull();
+    expect(navItem("schedules")?.className).not.toContain("settings-nav__item--dimmed");
+    search("pause");
+    expect(container.querySelector("[data-testid='schedules-settings']")).not.toBeNull();
+  });
+
   it("still reports no results for a query nothing matches", async () => {
     await render();
     search("zzz-no-such-setting");

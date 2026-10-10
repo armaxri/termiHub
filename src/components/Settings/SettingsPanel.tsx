@@ -29,6 +29,7 @@ import {
   Puzzle,
   RefreshCw,
   Check,
+  CalendarClock,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -57,6 +58,7 @@ import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { BackupRestoreSettings } from "./BackupRestoreSettings";
+import { SchedulesSettings } from "./SchedulesSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
 import { PluginUpdateCheckSettings } from "./PluginUpdateCheckSettings";
@@ -94,6 +96,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   editor: FileCode2,
   plugins: Puzzle,
   backup: DatabaseBackup,
+  schedules: CalendarClock,
   portable: HardDrive,
   updates: RefreshCw,
 };
@@ -395,6 +398,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       </>
     ),
     backup: () => <BackupRestoreSettings />,
+    schedules: () => <SchedulesSettings />,
     portable: () => <PortableModeSettings />,
     updates: (fields) => <UpdateSettings visibleFields={fields} />,
   };
