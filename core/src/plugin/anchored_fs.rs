@@ -270,9 +270,11 @@ mod imp {
             return match err.raw_os_error() {
                 // Unavailable (old kernel, seccomp profile) or an argument this
                 // kernel rejects: the per-component walk is equally safe.
-                Some(libc::ENOSYS) | Some(libc::EPERM) | Some(libc::EINVAL) | Some(libc::E2BIG) => {
-                    None
-                }
+                // `ENOTDIR` is ambiguous here (a leaf symlink refused by
+                // `O_NOFOLLOW | O_DIRECTORY`, or a plain file in the way), so
+                // let the walk classify it component by component.
+                Some(libc::ENOSYS) | Some(libc::EPERM) | Some(libc::EINVAL) | Some(libc::E2BIG)
+                | Some(libc::ENOTDIR) => None,
                 Some(libc::ELOOP) | Some(libc::EXDEV) => Some(Err(AnchoredError::Escape)),
                 Some(libc::ENOENT) => Some(Err(AnchoredError::NotFound)),
                 _ => Some(Err(AnchoredError::Io)),
