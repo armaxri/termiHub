@@ -222,13 +222,7 @@ describe("UI-locale date helpers (#4374, I18N2-004)", () => {
     expect(formatLogTime(ms.getTime())).toBe("18:05:07.042");
     setLocale("de-DE");
     expect(formatLogTime(ms.toISOString())).toBe(
-      new Intl.DateTimeFormat("de-DE", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        fractionalSecondDigits: 3,
-        hourCycle: "h23",
-      }).format(ms)
+      `${ms.toLocaleTimeString("de-DE", { hourCycle: "h23" })},042`
     );
   });
 

@@ -199,6 +199,19 @@ export function formatClockTime(value: DateInput): string {
 }
 
 /**
+ * Options for {@link formatLogTime}. Typed via an intersection because the
+ * project's TS `lib` predates `fractionalSecondDigits` (ES2021), which every
+ * supported webview implements.
+ */
+const LOG_TIME_OPTIONS: Intl.DateTimeFormatOptions & { fractionalSecondDigits?: 1 | 2 | 3 } = {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  fractionalSecondDigits: 3,
+  hourCycle: "h23",
+};
+
+/**
  * Format the time-of-day of `value` for a log row: 24-hour `HH:MM:SS` plus
  * milliseconds, with the UI locale's separators ({@link resolveUiLocale}), e.g.
  * `18:05:07.123` in `en-US` and `de-DE` (#4536). Log rows need sub-second
@@ -208,13 +221,7 @@ export function formatClockTime(value: DateInput): string {
 export function formatLogTime(value: DateInput): string {
   const date = toValidDate(value);
   if (!date) return "";
-  return new Intl.DateTimeFormat(resolveUiLocale(), {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    fractionalSecondDigits: 3,
-    hourCycle: "h23",
-  }).format(date);
+  return new Intl.DateTimeFormat(resolveUiLocale(), LOG_TIME_OPTIONS).format(date);
 }
 
 /**
