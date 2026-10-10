@@ -33,10 +33,10 @@ use tracing::{debug, warn};
 
 pub use super::attempt::STALL_TIMEOUT;
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, handle_attempt_error, local_fingerprint,
-    local_size, map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset,
-    settle_attempt, settle_writer, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter,
-    ResumeCursor, StopReason,
+    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    local_fingerprint, local_size, map_copy_outcome, open_local_dest, open_local_read,
+    probe_timed_out, rehydrate_start_offset, settle_attempt, settle_writer, stop_reason,
+    AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -200,11 +200,27 @@ async fn run_attempts(
         // Open a fresh dedicated channel per attempt, so a broken channel is
         // re-established on retry and browsing stays live meanwhile. A failed
         // open keeps the requested offset: nothing is written, and the next
-        // attempt re-verifies it.
-        let channel = match browser.open_dedicated_channel().await {
+        // attempt re-verifies it. The open (and the resume probe after it) is
+        // cancel-aware and bounded, so a dead connection cannot park the
+        // attempt outside the stall watchdog (#4672).
+        let opened =
+            match guard_probe(browser.open_dedicated_channel(), handle, STALL_TIMEOUT).await {
+                Probed::Done(Ok(c)) => Ok(c),
+                Probed::Done(Err(e)) => Err(SftpTransferError::Ssh(format!(
+                    "open SFTP transfer channel: {e}"
+                ))),
+                Probed::Cancelled => {
+                    handle.transition(TransferEvent::Cancel);
+                    return AttemptsResult::Cancelled;
+                }
+                Probed::TimedOut => Err(SftpTransferError::Ssh(probe_timed_out(
+                    "open SFTP transfer channel",
+                    STALL_TIMEOUT,
+                ))),
+            };
+        let channel = match opened {
             Ok(c) => c,
             Err(e) => {
-                let e = SftpTransferError::Ssh(format!("open SFTP transfer channel: {e}"));
                 if let Some(outcome) =
                     handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
                 {
@@ -219,23 +235,46 @@ async fn run_attempts(
             cursor.offset = 0;
         } else {
             let resuming = cursor.offset > 0;
-            let (current, present) = match direction {
-                TransferDirection::Download => (
-                    channel.remote_fingerprint(remote_path).await,
-                    if resuming {
-                        local_size(local_path).await
-                    } else {
-                        None
-                    },
-                ),
-                TransferDirection::Upload => (
-                    local_fingerprint(local_path).await,
-                    if resuming {
-                        channel.remote_file_size(remote_path).await
-                    } else {
-                        None
-                    },
-                ),
+            let probe = async {
+                match direction {
+                    TransferDirection::Download => (
+                        channel.remote_fingerprint(remote_path).await,
+                        if resuming {
+                            local_size(local_path).await
+                        } else {
+                            None
+                        },
+                    ),
+                    TransferDirection::Upload => (
+                        local_fingerprint(local_path).await,
+                        if resuming {
+                            channel.remote_file_size(remote_path).await
+                        } else {
+                            None
+                        },
+                    ),
+                }
+            };
+            let (current, present) = match guard_probe(probe, handle, STALL_TIMEOUT).await {
+                Probed::Done(probed) => probed,
+                Probed::Cancelled => {
+                    handle.transition(TransferEvent::Cancel);
+                    return AttemptsResult::Cancelled;
+                }
+                Probed::TimedOut => {
+                    // The fresh channel is wedged: fail this attempt so the
+                    // retry opens another one.
+                    let e = SftpTransferError::Ssh(probe_timed_out(
+                        "verify resume point",
+                        STALL_TIMEOUT,
+                    ));
+                    if let Some(outcome) =
+                        handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                    {
+                        return outcome;
+                    }
+                    continue;
+                }
             };
             apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
         }
@@ -353,17 +392,31 @@ pub async fn run_sftp_transfer(
 ) {
     // Establish the source identity + total up front so progress/ETA are
     // meaningful and a later resume can detect a changed source (PARITY-004).
-    let baseline = match direction {
-        TransferDirection::Download => match browser.open_dedicated_channel().await {
-            Ok(ch) => ch.remote_fingerprint(&remote_path).await,
-            Err(_) => None,
-        },
-        TransferDirection::Upload => local_fingerprint(&local_path).await,
+    // The probe is cancel-aware and bounded (#4672): a cancel or a dead
+    // connection leaves the source unknown and falls through to
+    // `drive_transfer`, which settles a cancel exactly once.
+    let probe = async {
+        let baseline = match direction {
+            TransferDirection::Download => match browser.open_dedicated_channel().await {
+                Ok(ch) => ch.remote_fingerprint(&remote_path).await,
+                Err(_) => None,
+            },
+            TransferDirection::Upload => local_fingerprint(&local_path).await,
+        };
+        let total = match (baseline, direction) {
+            (Some(fp), _) => fp.size,
+            (None, TransferDirection::Download) => browser.remote_size(&remote_path).await,
+            (None, TransferDirection::Upload) => 0,
+        };
+        (baseline, total)
     };
-    let total = match (baseline, direction) {
-        (Some(fp), _) => fp.size,
-        (None, TransferDirection::Download) => browser.remote_size(&remote_path).await,
-        (None, TransferDirection::Upload) => 0,
+    let (baseline, total) = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
+        Probed::Done(probed) => probed,
+        Probed::Cancelled => (None, 0),
+        Probed::TimedOut => {
+            warn!(transfer_id = %handle.transfer_id, "SFTP source probe timed out; source unknown");
+            (None, 0)
+        }
     };
     // A rehydrated transfer's handle was registered with its persisted total.
     let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);

@@ -29,10 +29,10 @@ use crate::backends::docker::{ContainerCaps, DockerTransferTarget};
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, local_fingerprint, local_size,
-    map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset, settle_attempt,
-    settle_writer, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter, ResumeCursor,
-    StopReason, STALL_TIMEOUT,
+    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
+    local_size, map_copy_outcome, open_local_dest, open_local_read, probe_timed_out,
+    rehydrate_start_offset, settle_attempt, settle_writer, stop_reason, AttemptOutcome,
+    AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -211,7 +211,8 @@ async fn probe_caps(target: &DockerTransferTarget) -> Result<ContainerCaps, Dock
 }
 
 /// Re-verify the resume point before an attempt via the shared gate, over a
-/// freshly-read source fingerprint and destination size.
+/// freshly-read source fingerprint and destination size. The reads are
+/// cancel-aware and bounded (#4672); the gate is applied only when they finish.
 #[allow(clippy::too_many_arguments)]
 async fn gate_resume(
     target: &DockerTransferTarget,
@@ -222,17 +223,28 @@ async fn gate_resume(
     cursor: &mut ResumeCursor,
     handle: &TransferHandle,
     sink: &ProgressSink,
-) {
-    let current = source_fingerprint(target, caps, direction, remote_path, local_path).await;
-    let present = if cursor.offset == 0 {
-        None
-    } else {
-        match direction {
-            TransferDirection::Download => local_size(local_path).await,
-            TransferDirection::Upload => target.file_size(remote_path).await,
-        }
+) -> Probed<()> {
+    let offset = cursor.offset;
+    let probe = async {
+        let current = source_fingerprint(target, caps, direction, remote_path, local_path).await;
+        let present = if offset == 0 {
+            None
+        } else {
+            match direction {
+                TransferDirection::Download => local_size(local_path).await,
+                TransferDirection::Upload => target.file_size(remote_path).await,
+            }
+        };
+        (current, present)
     };
-    apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+    match guard_probe(probe, handle, STALL_TIMEOUT).await {
+        Probed::Done((current, present)) => {
+            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+            Probed::Done(())
+        }
+        Probed::Cancelled => Probed::Cancelled,
+        Probed::TimedOut => Probed::TimedOut,
+    }
 }
 
 /// Run attempts (with auto-retry/backoff) for one Active stint.
@@ -256,15 +268,20 @@ async fn run_attempts(
         attempt += 1;
         handle.set_attempt(attempt);
 
-        let result = match ensure_caps(target, caps).await {
-            Ok(probed) if cursor.offset > 0 && !resume_supported(probed, direction) => {
+        // The probe and the resume reads are cancel-aware and bounded
+        // (#4672): a wedged daemon cannot park the attempt outside the stall
+        // watchdog.
+        let result = match guard_probe(ensure_caps(target, caps), handle, STALL_TIMEOUT).await {
+            Probed::Done(Ok(probed))
+                if cursor.offset > 0 && !resume_supported(probed, direction) =>
+            {
                 // Refuse rather than guess: the shared settle restarts the
                 // stint from zero (without consuming a retry) and says why.
                 warn!(transfer_id = %handle.transfer_id, offset = cursor.offset, ?probed, "container cannot verify a resume; restarting from zero");
                 Ok(AttemptOutcome::ResumeRejected)
             }
-            Ok(probed) => {
-                gate_resume(
+            Probed::Done(Ok(probed)) => {
+                match gate_resume(
                     target,
                     probed,
                     direction,
@@ -274,19 +291,39 @@ async fn run_attempts(
                     handle,
                     sink,
                 )
-                .await;
-                run_one(
-                    target,
-                    direction,
-                    remote_path,
-                    local_path,
-                    cursor,
-                    handle,
-                    sink,
-                )
                 .await
+                {
+                    Probed::Done(()) => {
+                        run_one(
+                            target,
+                            direction,
+                            remote_path,
+                            local_path,
+                            cursor,
+                            handle,
+                            sink,
+                        )
+                        .await
+                    }
+                    Probed::Cancelled => {
+                        handle.transition(TransferEvent::Cancel);
+                        return AttemptsResult::Cancelled;
+                    }
+                    Probed::TimedOut => Err(DockerTransferError::Exec(probe_timed_out(
+                        "verify resume point",
+                        STALL_TIMEOUT,
+                    ))),
+                }
             }
-            Err(e) => Err(e),
+            Probed::Done(Err(e)) => Err(e),
+            Probed::Cancelled => {
+                handle.transition(TransferEvent::Cancel);
+                return AttemptsResult::Cancelled;
+            }
+            Probed::TimedOut => Err(DockerTransferError::Exec(probe_timed_out(
+                "probe container tools",
+                STALL_TIMEOUT,
+            ))),
         };
 
         if let Some(outcome) = settle_attempt(
@@ -408,19 +445,33 @@ pub async fn run_docker_transfer(
 ) {
     // Probe up front so the baseline fingerprint and total are meaningful; a
     // failed probe is retried by the first attempt.
+    // The probe is cancel-aware and bounded (#4672): a cancel or a wedged
+    // daemon leaves the source unknown and falls through to `drive_transfer`,
+    // which settles a cancel exactly once.
     let caps = OnceCell::new();
-    let probed = ensure_caps(&target, &caps).await.ok();
-    let baseline = match probed {
-        Some(c) => source_fingerprint(&target, c, direction, &remote_path, &local_path).await,
-        None if direction == TransferDirection::Upload => local_fingerprint(&local_path).await,
-        None => None,
+    let probe = async {
+        let probed = ensure_caps(&target, &caps).await.ok();
+        let baseline = match probed {
+            Some(c) => source_fingerprint(&target, c, direction, &remote_path, &local_path).await,
+            None if direction == TransferDirection::Upload => local_fingerprint(&local_path).await,
+            None => None,
+        };
+        let total = match (baseline, direction) {
+            (Some(fp), _) => fp.size,
+            (None, TransferDirection::Download) => {
+                target.file_size(&remote_path).await.unwrap_or_default()
+            }
+            (None, TransferDirection::Upload) => 0,
+        };
+        (baseline, total)
     };
-    let total = match (baseline, direction) {
-        (Some(fp), _) => fp.size,
-        (None, TransferDirection::Download) => {
-            target.file_size(&remote_path).await.unwrap_or_default()
+    let (baseline, total) = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
+        Probed::Done(probed) => probed,
+        Probed::Cancelled => (None, 0),
+        Probed::TimedOut => {
+            warn!(transfer_id = %handle.transfer_id, "Docker source probe timed out; source unknown");
+            (None, 0)
         }
-        (None, TransferDirection::Upload) => 0,
     };
     let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
     handle.set_metrics(offset, total, 0);

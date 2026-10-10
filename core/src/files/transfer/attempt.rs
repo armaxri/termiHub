@@ -164,6 +164,11 @@ impl ProgressReporter {
 /// cancelled while waiting (returns `false`).
 async fn wait_for_active(handle: &Arc<TransferHandle>, registry: &TransferRegistry) -> bool {
     use super::scheduler::Admission;
+    // Cancelled before it ever asked (e.g. during an up-front probe, #4672):
+    // settle without taking a slot.
+    if handle.is_cancelled() {
+        return false;
+    }
     if registry.request_slot(handle) == Admission::Run {
         return true;
     }
@@ -543,6 +548,48 @@ where
     }
 }
 
+/// How one guarded probe ended — see [`guard_probe`].
+#[derive(Debug)]
+pub(super) enum Probed<T> {
+    /// The probe resolved with its own output.
+    Done(T),
+    /// The transfer was cancelled while the probe was still pending; the probe
+    /// future was dropped.
+    Cancelled,
+    /// The probe made no progress for the whole timeout (a dead connection).
+    TimedOut,
+}
+
+/// Run a probe or channel open that moves no transfer bytes — a fingerprint,
+/// a capability probe, a dedicated-channel open — so that cancellation and a
+/// dead connection both interrupt it (#4672).
+///
+/// Resolves with the probe's output, with [`Probed::Cancelled`] as soon as the
+/// handle's token is cancelled (immediately when it already was — the probe is
+/// then never polled), or with [`Probed::TimedOut`] once `timeout` elapses. A
+/// cancelled or timed-out probe is dropped, which tears down whatever it was
+/// waiting on. The caller decides how each outcome settles: an up-front probe
+/// falls through to [`drive_transfer`], which settles a cancel exactly once;
+/// a per-attempt probe returns [`AttemptsResult::Cancelled`] or treats the
+/// timeout as a failed attempt.
+pub(super) async fn guard_probe<F: Future>(
+    probe: F,
+    handle: &TransferHandle,
+    timeout: Duration,
+) -> Probed<F::Output> {
+    tokio::select! {
+        biased;
+        _ = handle.token.cancelled() => Probed::Cancelled,
+        output = probe => Probed::Done(output),
+        _ = tokio::time::sleep(timeout) => Probed::TimedOut,
+    }
+}
+
+/// The message of a probe that timed out after `timeout`.
+pub(super) fn probe_timed_out(what: &str, timeout: Duration) -> String {
+    format!("{what}: timed out after {}s", timeout.as_secs())
+}
+
 /// Apply the retry/backoff policy after a failed attempt. Returns `Some(...)`
 /// when the stint should end (cancelled while backing off, or the retry budget
 /// is exhausted), or `None` to loop and retry from the current offset.
@@ -644,19 +691,42 @@ pub(super) async fn settle_attempt<E: Display>(
     }
 }
 
+/// Upper bound on the best-effort partial cleanup after a cancel (#4672).
+///
+/// Removing a partial upload opens a fresh channel to the peer, and when the
+/// cancel was the user's answer to a dead connection that open would park
+/// forever — keeping the row `active` and its slot taken. Past this bound the
+/// partial is left behind (logged) and the cancel settles anyway.
+pub(super) const CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Run the cancel `cleanup` under [`CLEANUP_TIMEOUT`].
+async fn bounded_cleanup<C, CFut>(handle: &TransferHandle, backend: &'static str, cleanup: &C)
+where
+    C: Fn() -> CFut,
+    CFut: Future<Output = ()>,
+{
+    if tokio::time::timeout(CLEANUP_TIMEOUT, cleanup())
+        .await
+        .is_err()
+    {
+        warn!(backend, transfer_id = %handle.transfer_id, "partial cleanup after cancel timed out; leaving it behind");
+    }
+}
+
 /// Settle a transfer that ends as cancelled: clean up the partial, emit the
 /// terminal event, and drop the registry entry.
 async fn finish_cancelled<C, CFut>(
     handle: &Arc<TransferHandle>,
     registry: &TransferRegistry,
     sink: &ProgressSink,
+    backend: &'static str,
     cleanup: &C,
 ) where
     C: Fn() -> CFut,
     CFut: Future<Output = ()>,
 {
     handle.transition(TransferEvent::Cancel);
-    cleanup().await;
+    bounded_cleanup(handle, backend, cleanup).await;
     emit(handle, sink, TransferPhase::Cancelled, None, None);
     registry.drop_entry(&handle.transfer_id);
 }
@@ -779,7 +849,7 @@ async fn drive_stints<S, SFut, C, CFut>(
 {
     loop {
         if !wait_for_active(handle, registry).await {
-            finish_cancelled(handle, registry, sink, &cleanup).await;
+            finish_cancelled(handle, registry, sink, backend, &cleanup).await;
             return;
         }
         emit(handle, sink, TransferPhase::Transferring, None, None);
@@ -795,7 +865,7 @@ async fn drive_stints<S, SFut, C, CFut>(
             }
             AttemptsResult::Cancelled => {
                 info!(backend, transfer_id = %handle.transfer_id, "transfer cancelled");
-                cleanup().await;
+                bounded_cleanup(handle, backend, &cleanup).await;
                 emit(handle, sink, TransferPhase::Cancelled, None, None);
                 registry.drop_entry(&handle.transfer_id);
                 return;
@@ -805,7 +875,7 @@ async fn drive_stints<S, SFut, C, CFut>(
                 registry.release_slot(handle);
                 emit(handle, sink, TransferPhase::Transferring, None, None);
                 if !wait_for_resume(handle).await {
-                    finish_cancelled(handle, registry, sink, &cleanup).await;
+                    finish_cancelled(handle, registry, sink, backend, &cleanup).await;
                     return;
                 }
                 handle.transition(TransferEvent::Resume); // Paused → Queued
@@ -814,7 +884,7 @@ async fn drive_stints<S, SFut, C, CFut>(
                 // Release the slot; keep the handle for a manual retry.
                 registry.release_slot(handle);
                 if !wait_for_resume(handle).await {
-                    finish_cancelled(handle, registry, sink, &cleanup).await;
+                    finish_cancelled(handle, registry, sink, backend, &cleanup).await;
                     return;
                 }
                 handle.set_attempt(0);
