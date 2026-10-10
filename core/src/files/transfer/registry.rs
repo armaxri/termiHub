@@ -10,6 +10,7 @@
 //! production path registered legacy transfers any more.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -252,6 +253,15 @@ struct RegistryState {
 pub struct TransferRegistry {
     state: Arc<Mutex<RegistryState>>,
     max_concurrent: usize,
+    /// Set while the app-quit teardown's cancel-all sweep is running
+    /// (PROD-0011); see [`Self::is_queue_teardown`].
+    ///
+    /// Held per registry (shared by its clones) rather than as a process-wide
+    /// static, so a [`Self::cancel_all`] on one registry can never leak into
+    /// another — in production there is exactly one managed registry, so the
+    /// quit behaviour is unchanged, while independent test registries no longer
+    /// inherit each other's teardown (#4675).
+    teardown: Arc<AtomicBool>,
 }
 
 impl Default for TransferRegistry {
@@ -271,6 +281,7 @@ impl TransferRegistry {
         Self {
             state: Arc::new(Mutex::new(RegistryState::default())),
             max_concurrent: max_concurrent.max(1),
+            teardown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -306,13 +317,25 @@ impl TransferRegistry {
         // Mark the teardown sweep so the persistence layer (PROD-0011) keeps the
         // in-flight records it is about to cancel, rather than pruning them — they
         // rehydrate as paused on the next launch.
-        super::QUEUE_TEARDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.teardown.store(true, Ordering::SeqCst);
         let state = self.lock();
         for handle in state.rich.values() {
             handle.token.cancel();
             handle.notify.notify_one();
         }
         state.rich.len()
+    }
+
+    /// Whether this registry's app-quit teardown cancel-all sweep has begun
+    /// (PROD-0011).
+    ///
+    /// [`Self::cancel_all`] flips this on entry so the persistence layer can
+    /// tell a *teardown-induced* cancellation (which must leave in-flight
+    /// records intact, to rehydrate as paused next launch) from a *genuine user
+    /// cancel* (which prunes the record). It is only ever set — the process is
+    /// exiting.
+    pub fn is_queue_teardown(&self) -> bool {
+        self.teardown.load(Ordering::SeqCst)
     }
 
     /// Drop a transfer's registry entry once its copy loop has finished. This
@@ -660,6 +683,21 @@ mod tests {
     fn cancel_all_on_empty_registry_is_zero() {
         let reg = TransferRegistry::new();
         assert_eq!(reg.cancel_all(), 0);
+    }
+
+    #[test]
+    fn cancel_all_marks_teardown_on_its_own_registry_only() {
+        let reg = TransferRegistry::new();
+        let clone = reg.clone();
+        let other = TransferRegistry::new();
+        assert!(!reg.is_queue_teardown());
+        reg.cancel_all();
+        assert!(reg.is_queue_teardown(), "the sweeping registry is in teardown");
+        assert!(clone.is_queue_teardown(), "clones share the teardown flag");
+        assert!(
+            !other.is_queue_teardown(),
+            "an independent registry never inherits another's teardown (#4675)"
+        );
     }
 
     #[test]
