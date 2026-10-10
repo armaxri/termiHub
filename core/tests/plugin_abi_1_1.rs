@@ -165,6 +165,7 @@ fn install(root: &Path, lib: &Path, id: &str, api: &str) -> InstalledPlugin {
         manifest,
         state: PluginState::Installed,
         error_message: None,
+        invalid_manifest: false,
         installed_at: 0,
     }
 }
