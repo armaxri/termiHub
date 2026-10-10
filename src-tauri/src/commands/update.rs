@@ -164,10 +164,14 @@ const SECURITY_MARKER: &str = "<!-- security -->";
 fn is_security_release(body: &str) -> bool {
     // JS `trim()` also strips U+FEFF; match it so both sides agree on a BOM.
     let is_space = |c: char| c.is_whitespace() || c == '\u{feff}';
-    if body.trim_start_matches(is_space).starts_with(SECURITY_MARKER) {
+    if body
+        .trim_start_matches(is_space)
+        .starts_with(SECURITY_MARKER)
+    {
         return true;
     }
-    body.lines().any(|line| line.trim_matches(is_space) == SECURITY_MARKER)
+    body.lines()
+        .any(|line| line.trim_matches(is_space) == SECURITY_MARKER)
 }
 
 /// Return the current UTC time as an ISO 8601 string.
@@ -463,10 +467,10 @@ mod tests {
             "<!-- security -->\r\n\r\n### Security\r\n"
         ));
         assert!(is_security_release("\u{feff}<!-- security -->\n\nnotes"));
-        assert!(is_security_release("### Security\r\n<!-- security -->\r\nmore"));
-        assert!(!is_security_release(
-            "- see `<!-- security -->` docs\r\n"
+        assert!(is_security_release(
+            "### Security\r\n<!-- security -->\r\nmore"
         ));
+        assert!(!is_security_release("- see `<!-- security -->` docs\r\n"));
     }
 
     /// One case of the contract shared with emit-release-notes.test.mjs.
