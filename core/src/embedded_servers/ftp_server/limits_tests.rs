@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use super::relay_tests::{wait_for_log, Control, RunningServer, IO_TIMEOUT};
 use super::*;
 use crate::embedded_servers::auth_guard::MAX_FAILED_LOGINS;
+use crate::embedded_servers::config::DEFAULT_MAX_CONCURRENT_SESSIONS as DEFAULT_MAX_CONCURRENT_FTP_SESSIONS;
 
 /// Connect without expecting a greeting; return the first reply line and the
 /// open reader.

@@ -137,13 +137,16 @@ pub struct EmbeddedServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_transfer_bytes: Option<u64>,
-    /// Maximum number of concurrent sessions (FTP only, CORE2-002 / #4292).
+    /// Maximum number of concurrent sessions (FTP and HTTP, CORE2-002 / #4292,
+    /// #4399).
     ///
-    /// Each FTP control connection runs its own libunftp server behind the
-    /// relay, so the cap bounds the sockets and tasks an unauthenticated client
-    /// can make the server hold. A connection beyond the cap is answered with
-    /// `421` and closed. `None` falls back to the server's built-in default of
-    /// 32; `0` is treated as 1.
+    /// For FTP a session is a control connection, which runs its own libunftp
+    /// server behind the relay; a connection beyond the cap is answered with
+    /// `421` and closed. For HTTP a session is a TCP connection; a connection
+    /// beyond the cap is answered with `503` and closed. Either way the cap
+    /// bounds the sockets and tasks an unauthenticated client can make the
+    /// server hold. `None` falls back to the server's built-in default of 32;
+    /// `0` is treated as 1. Not used by TFTP, which caps its transfers itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_concurrent_sessions: Option<u32>,
@@ -153,6 +156,21 @@ pub struct EmbeddedServerConfig {
     #[serde(flatten, default)]
     #[cfg_attr(test, ts(skip))]
     pub extra: EntryExtra,
+}
+
+/// Default cap on concurrent sessions when a config sets no
+/// `max_concurrent_sessions` (CORE2-002 / #4292, #4399). In line with the TFTP
+/// transfer cap.
+pub(super) const DEFAULT_MAX_CONCURRENT_SESSIONS: usize = 32;
+
+impl EmbeddedServerConfig {
+    /// The effective concurrent-session cap: `max_concurrent_sessions`, or
+    /// [`DEFAULT_MAX_CONCURRENT_SESSIONS`] when unset, and at least one.
+    pub(super) fn session_cap(&self) -> usize {
+        self.max_concurrent_sessions
+            .map_or(DEFAULT_MAX_CONCURRENT_SESSIONS, |cap| cap as usize)
+            .max(1)
+    }
 }
 
 impl StoreEntry for EmbeddedServerConfig {
