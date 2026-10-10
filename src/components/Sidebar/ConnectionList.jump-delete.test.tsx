@@ -152,4 +152,48 @@ describe("ConnectionList — jump-host delete protection", () => {
     expect(q("confirm-delete-dialog")).toBeNull();
     expect(deleteConnection).not.toHaveBeenCalled();
   });
+
+  it("warns before deleting a connection used as a file-transfer route (#4380)", async () => {
+    const vnc: SavedConnection = {
+      id: "office-desktop",
+      name: "office-desktop",
+      folderId: null,
+      config: { type: "vnc", config: { host: "office-pc", fileTransferVia: "tiger" } },
+    };
+    await renderWith([sshConnection("tiger"), vnc]);
+    clickDelete("tiger");
+
+    const dialog = q("confirm-delete-dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain(
+      "used as the file-transfer route by 1 other connection(s)"
+    );
+    expect(dialog.textContent).toContain("office-desktop");
+    expect(dialog.textContent).not.toContain("used as a jump host");
+    expect(deleteConnection).not.toHaveBeenCalled();
+
+    act(() => q("confirm-delete-confirm").click());
+    expect(deleteConnection).toHaveBeenCalledWith("tiger");
+  });
+
+  it("names both jump-host and file-route dependents (#4380)", async () => {
+    const vnc: SavedConnection = {
+      id: "office-desktop",
+      name: "office-desktop",
+      folderId: null,
+      config: { type: "vnc", config: { host: "office-pc", fileTransferVia: "bastion" } },
+    };
+    await renderWith([
+      sshConnection("bastion"),
+      sshConnection("app-server", { proxyJump: [ref("bastion")] }),
+      vnc,
+    ]);
+    clickDelete("bastion");
+
+    const text = q("confirm-delete-dialog").textContent ?? "";
+    expect(text).toContain("used as a jump host by 1 other connection(s): app-server.");
+    expect(text).toContain(
+      "It is also used as the file-transfer route by 1 other connection(s): office-desktop."
+    );
+  });
 });

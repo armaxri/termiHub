@@ -12,8 +12,8 @@ evidence:
   - src/utils/jumpHost.ts:181
   - src-tauri/src/session/graphical_linked_ssh.rs:58
   - README.md:277
-status: open
-resolution: ""
+status: fixed
+resolution: "#4380 — delete confirmation also names connections that use the target as their fileTransferVia route"
 audit: 2026-10
 commit: 663465d52
 relation: new
