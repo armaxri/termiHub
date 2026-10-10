@@ -357,9 +357,15 @@ async fn reconnect_handshake_succeeds_when_the_agent_answers() {
         &CancellationToken::new(),
     )
     .await;
-    let (_channel, buffered, token_path) = outcome.expect("an answering agent re-initializes");
+    let (_channel, buffered, token_path, capabilities) =
+        outcome.expect("an answering agent re-initializes");
     assert!(buffered.is_empty());
     assert_eq!(token_path, None);
+    // #4440: the re-initialized agent's capabilities come back for the cache.
+    assert_eq!(
+        capabilities.map(|c| c.agent_version).as_deref(),
+        Some("0.0.0-fake")
+    );
 }
 
 /// CONC2-005: an exhausted reconnect clears `alive` before anyone can observe

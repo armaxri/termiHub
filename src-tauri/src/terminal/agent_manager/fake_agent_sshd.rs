@@ -53,7 +53,25 @@ pub(super) enum InitBehavior {
     /// Answer straight away as a protocol 0.27.0 agent advertising the
     /// `outputFlow` capability (#4416).
     AnswerWithOutputFlow,
+    /// Answer the first `initialize` as [`RICH_AGENT_VERSION`] (`outputFlow`,
+    /// `fileRanges`, `hostFileAttributeOps`), every later one as a minimal
+    /// [`MINIMAL_AGENT_VERSION`] agent — a downgrade across a reconnect (#4440).
+    /// Unix-only, like the transport-sever tests that drive it.
+    #[cfg(unix)]
+    DowngradeOnReconnect,
+    /// The reverse of [`InitBehavior::DowngradeOnReconnect`]: minimal first,
+    /// rich on every reconnect — an update across a reconnect (#4440).
+    #[cfg(unix)]
+    UpgradeOnReconnect,
 }
+
+/// The agent version the rich `initialize` answer reports (#4440).
+#[cfg(unix)]
+pub(super) const RICH_AGENT_VERSION: &str = "0.29.0-fake";
+
+/// The agent version the minimal `initialize` answer reports (#4440).
+#[cfg(unix)]
+pub(super) const MINIMAL_AGENT_VERSION: &str = "0.26.0-fake";
 
 /// One JSON-RPC request the fake agent received: `(method, params)`.
 pub(super) type ReceivedRequest = (String, serde_json::Value);
@@ -213,6 +231,28 @@ fn initialize_answer_with_output_flow(id: u64) -> String {
     }))
 }
 
+/// An `initialize` answer from a protocol 0.29.0 agent advertising
+/// `outputFlow`, `fileRanges` and `hostFileAttributeOps` (#4440).
+#[cfg(unix)]
+fn initialize_answer_rich(id: u64) -> String {
+    ndjson_line(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "protocolVersion": "0.29.0",
+            "agentVersion": RICH_AGENT_VERSION,
+            "clientId": "fake-client",
+            "capabilities": {
+                "connectionTypes": [],
+                "maxSessions": 20,
+                "outputFlow": true,
+                "fileRanges": true,
+                "hostFileAttributeOps": { "permissions": true, "owner": false, "symlink": true },
+            },
+        },
+    }))
+}
+
 /// [`initialize_answer`] reporting `agent_version`.
 fn initialize_answer_with_version(id: u64, agent_version: &str) -> String {
     let mut line = serde_json::json!({
@@ -259,6 +299,19 @@ impl FakeAgentHandler {
         self.inits.fetch_add(1, Ordering::SeqCst);
         self.init_seen.notify_waiters();
         match self.behavior {
+            #[cfg(unix)]
+            InitBehavior::DowngradeOnReconnect | InitBehavior::UpgradeOnReconnect => {
+                // The counter is shared by every connection, so the first
+                // connect's `initialize` is the one that brought it to 1.
+                let first = self.inits.load(Ordering::SeqCst) == 1;
+                let rich = first == (self.behavior == InitBehavior::DowngradeOnReconnect);
+                let answer = if rich {
+                    initialize_answer_rich(id)
+                } else {
+                    initialize_answer_with_version(id, MINIMAL_AGENT_VERSION)
+                };
+                let _ = session.data(channel, answer.into_bytes());
+            }
             InitBehavior::Stall => {}
             InitBehavior::Answer => {
                 let _ = session.data(channel, initialize_answer(id).into_bytes());
