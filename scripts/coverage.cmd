@@ -11,7 +11,7 @@ REM
 REM Run from the repo root: scripts\coverage.cmd  [--dry-run] [--update-baseline]
 REM
 REM BLOCKING RATCHET (#3740): after reporting, the per-component unit line
-REM coverage is graded against the committed per-platform baseline in
+REM coverage (incl. plugin-runner, plugin-api and rdp-sidecar, #4341) is graded against the committed per-platform baseline in
 REM scripts\coverage-baseline.json (scripts\internal\coverage-ratchet.mjs); a
 REM drop beyond the tolerance fails the script. --update-baseline instead raises
 REM this platform's baseline to the measured values (never lowers). Mirrors
@@ -46,6 +46,8 @@ goto parse_args
 set OUT_DIR=coverage-unified
 set FRONTEND_LCOV=coverage\lcov.info
 set RUST_LCOV=%OUT_DIR%\rust.lcov
+set SIDECAR_RAW_LCOV=%OUT_DIR%\rdp-sidecar.raw.lcov
+set SIDECAR_LCOV=%OUT_DIR%\rdp-sidecar.lcov
 set UNIT_LCOV=%OUT_DIR%\unit.lcov
 set MERGED_LCOV=%OUT_DIR%\merged.lcov
 set SUMMARY_FILE=%OUT_DIR%\summary.txt
@@ -74,10 +76,26 @@ if "%DRY_RUN%"=="1" (
     if errorlevel 1 exit /b 1
 )
 
+REM RDP sidecar coverage (#4341, TOOL2-003): workspace-excluded (own lockfile),
+REM so a second pass measures it; the filter keeps only its own sources (the
+REM pass also reports core and the vendored IronRDP forks). Mirrors coverage.sh.
+echo === RDP sidecar coverage (cargo llvm-cov --manifest-path rdp-sidecar) ===
+if "%DRY_RUN%"=="1" (
+    echo   [dry-run] skipping: cargo llvm-cov --manifest-path rdp-sidecar/Cargo.toml --no-report
+) else (
+    cargo llvm-cov --manifest-path rdp-sidecar\Cargo.toml --locked --no-report
+    if errorlevel 1 exit /b 1
+    node scripts\internal\llvm-cov-report.mjs "%SIDECAR_RAW_LCOV%" 4 -- --manifest-path rdp-sidecar\Cargo.toml
+    if errorlevel 1 exit /b 1
+    node scripts\internal\lcov-filter.mjs --in "%SIDECAR_RAW_LCOV%" --out "%SIDECAR_LCOV%" --root "%CD%" --keep rdp-sidecar/ --drop rdp-sidecar/vendor/
+    if errorlevel 1 exit /b 1
+)
+
 echo === Merging lcov + computing unified number ===
 break > "%UNIT_LCOV%"
 set FRONTEND_PRESENT=0
 set RUST_PRESENT=0
+set SIDECAR_PRESENT=0
 set INTEGRATION_PRESENT=0
 set HARNESS_PRESENT=0
 if exist "%FRONTEND_LCOV%" (
@@ -92,10 +110,16 @@ if exist "%RUST_LCOV%" (
 ) else (
     echo   note: no Rust lcov at %RUST_LCOV%
 )
+if exist "%SIDECAR_LCOV%" (
+    type "%SIDECAR_LCOV%" >> "%UNIT_LCOV%"
+    set SIDECAR_PRESENT=1
+) else (
+    echo   note: no RDP sidecar lcov at %SIDECAR_LCOV%
+)
 
 for %%A in ("%UNIT_LCOV%") do set UNIT_SIZE=%%~zA
 if "%UNIT_SIZE%"=="0" (
-    echo   no coverage data to summarize ^(both lcov files missing^).
+    echo   no coverage data to summarize ^(every unit lcov file missing^).
     if "%DRY_RUN%"=="1" (
         echo   [dry-run] nothing to summarize — that is expected without a prior run.
         exit /b 0
@@ -145,7 +169,7 @@ if errorlevel 1 exit /b 1
 type "%SUMMARY_FILE%"
 
 echo.
-echo Sources merged: frontend=%FRONTEND_PRESENT% rust=%RUST_PRESENT% integration=%INTEGRATION_PRESENT% harness=%HARNESS_PRESENT%
+echo Sources merged: frontend=%FRONTEND_PRESENT% rust=%RUST_PRESENT% rdp-sidecar=%SIDECAR_PRESENT% integration=%INTEGRATION_PRESENT% harness=%HARNESS_PRESENT%
 echo Merged lcov:    %MERGED_LCOV%
 echo Summary:        %SUMMARY_FILE%
 if "%INTEGRATION_PRESENT%%HARNESS_PRESENT%" neq "00" echo Gap report:     %GAP_REPORT%
