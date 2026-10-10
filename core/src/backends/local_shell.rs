@@ -2349,3 +2349,7 @@ mod tests {
 #[cfg(all(test, unix))]
 #[path = "local_shell_osc133_tests.rs"]
 mod osc133_tests;
+
+#[cfg(all(test, unix))]
+#[path = "local_shell_interrupt_tests.rs"]
+mod interrupt_tests;
