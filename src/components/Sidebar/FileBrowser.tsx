@@ -135,12 +135,6 @@ interface FileRowProps {
   tabIndex: number;
   /** Ref callback so the parent can move focus to this row's button. */
   rowRef: (el: HTMLButtonElement | null) => void;
-  /** When true, the row renders an inline rename input instead of the name. */
-  isRenaming: boolean;
-  /** Commit a rename to `newName` (parent validates and clears the edit). */
-  onRenameSubmit: (entry: FileEntry, newName: string) => void;
-  /** Abandon the in-progress rename. */
-  onRenameCancel: () => void;
   /**
    * What dragging this row carries: the whole selection when the row is part of
    * a multi-selection, otherwise just the row (PROD-006).
@@ -526,22 +520,33 @@ function FileEntryIcon({ entry }: { entry: FileEntry }) {
 }
 
 /**
- * Inline rename editor rendered in place of a file row. Mirrors the New File /
- * New Folder inline-input idiom: an uncontrolled input that commits on Enter
- * and cancels on Escape (the base name is pre-selected so the extension is
- * preserved).
+ * Inline rename editor shown over a file row. Mirrors the New File / New Folder
+ * inline-input idiom: an uncontrolled input that commits on Enter and cancels on
+ * Escape (the base name is pre-selected so the extension is preserved).
+ *
+ * It is rendered *outside* the file listbox, absolutely positioned over the
+ * row's slot (#4637): a listbox may only own options, and an option's children
+ * are presentational, so a text box inside either is invalid ARIA. While the
+ * rename runs, the row's option is simply not rendered and this labelled text
+ * box takes its place visually.
  */
 function RenameRow({
   entry,
+  top,
   onSubmit,
   onCancel,
 }: {
   entry: FileEntry;
+  /** Offset of the row's virtual slot within the scrolling list, in px. */
+  top: number;
   onSubmit: (entry: FileEntry, newName: string) => void;
   onCancel: () => void;
 }) {
   return (
-    <div className="file-browser__row-wrapper file-browser__row-wrapper--renaming">
+    <div
+      className="file-browser__row-wrapper file-browser__row-wrapper--renaming"
+      style={{ transform: `translateY(${top}px)` }}
+    >
       <div className="file-browser__row file-browser__row--renaming">
         <FileEntryIcon entry={entry} />
         <Input
@@ -557,6 +562,10 @@ function RenameRow({
           }}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
+            // The editor sits inside the list's keyboard scope; keep its keys
+            // (typing, Enter, Escape, arrows) from also driving the listbox's
+            // roving navigation, type-ahead and activation.
+            e.stopPropagation();
             if (isImeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
@@ -604,14 +613,12 @@ function FileRow({
   onShareVia,
   tabIndex,
   rowRef,
-  isRenaming,
-  onRenameSubmit,
-  onRenameCancel,
   dragEntries,
 }: FileRowProps) {
   // Every row is a drag source for drag-to-move; directory rows are also drop
-  // targets (PROD-006). Called before the rename early-return (rules of hooks).
-  const dnd = useFileRowDnd(entry, dragEntries, isRenaming);
+  // targets (PROD-006). A row being renamed is not rendered as a FileRow at all
+  // (see RenameRow), so drag-and-drop is never live during a rename.
+  const dnd = useFileRowDnd(entry, dragEntries, false);
   const menuItemProps = {
     entry,
     vscodeAvailable,
@@ -683,10 +690,6 @@ function FileRow({
       </span>
     );
   }
-  if (isRenaming) {
-    return <RenameRow entry={entry} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />;
-  }
-
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -1291,12 +1294,10 @@ export function FileBrowser() {
   // selection/navigation semantics are supplied below via makeKeyDownHandler.
   // The scroll callback lets the hook mount an off-screen focus target (via the
   // virtualizer) before focusing it — essential once rows are windowed.
-  const { activeIndex, setActiveIndex, getRowRef, reset, makeKeyDownHandler } = useRovingListNav<
-    FileEntry,
-    HTMLButtonElement
-  >(displayEntries, (e) => e.name, {
-    onScrollToIndex: (index) => rowVirtualizer.scrollToIndex(index),
-  });
+  const { activeIndex, setActiveIndex, getRowRef, reset, focusRow, makeKeyDownHandler } =
+    useRovingListNav<FileEntry, HTMLButtonElement>(displayEntries, (e) => e.name, {
+      onScrollToIndex: (index) => rowVirtualizer.scrollToIndex(index),
+    });
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -1530,9 +1531,22 @@ export function FileBrowser() {
     ]
   );
 
+  // Ending a rename (commit or cancel) hands focus back to the renamed row, so
+  // keyboard users land where they started instead of on <body> (#4637). The
+  // row remounts once `renamingPath` clears; the roving hook defers the focus
+  // until it is in the DOM.
+  const endRename = useCallback(
+    (path: string) => {
+      setRenamingPath(null);
+      const index = displayEntries.findIndex((fe) => fe.path === path);
+      if (index >= 0) focusRow(index);
+    },
+    [displayEntries, focusRow]
+  );
+
   const handleRenameSubmit = useCallback(
     (entry: FileEntry, rawName: string) => {
-      setRenamingPath(null);
+      endRename(entry.path);
       const newName = rawName.trim();
       if (!newName || newName === entry.name) return;
       renameEntry(entry.path, newName)
@@ -1542,10 +1556,26 @@ export function FileBrowser() {
           toast.error(`Rename failed: ${errorMessage(err)}`);
         });
     },
-    [renameEntry]
+    [renameEntry, endRename]
   );
 
-  const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
+  const handleRenameCancel = useCallback(() => {
+    if (renamingPath !== null) endRename(renamingPath);
+  }, [renamingPath, endRename]);
+
+  // Where the inline rename editor goes: over the renamed row's virtual slot,
+  // while that slot is in the rendered window (#4637). Not memoized: the
+  // virtualizer instance is stable while its window moves with every scroll.
+  let renamingSlot: { entry: FileEntry; top: number } | null = null;
+  if (renamingPath !== null) {
+    for (const virtualRow of rowVirtualizer.getVirtualItems()) {
+      const entry = displayEntries[virtualRow.index];
+      if (entry?.path === renamingPath) {
+        renamingSlot = { entry, top: virtualRow.start };
+        break;
+      }
+    }
+  }
 
   const handleApplyPermissions = useCallback(
     async (entry: FileEntry, newMode: number) => {
@@ -2171,7 +2201,9 @@ export function FileBrowser() {
                     {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                       const index = virtualRow.index;
                       const entry = displayEntries[index];
-                      if (!entry) return null;
+                      // The row being renamed is drawn by RenameRow, outside the
+                      // listbox (#4637); its slot stays reserved by the spacer.
+                      if (!entry || entry.path === renamingPath) return null;
                       return (
                         <div
                           key={virtualRow.key}
@@ -2196,9 +2228,6 @@ export function FileBrowser() {
                             onShareVia={mode === "local" ? handleShareVia : undefined}
                             tabIndex={index === activeIndex ? 0 : -1}
                             rowRef={getRowRef(index)}
-                            isRenaming={renamingPath === entry.path}
-                            onRenameSubmit={handleRenameSubmit}
-                            onRenameCancel={handleRenameCancel}
                             dragEntries={
                               selectedPaths.has(entry.path) && selectedEntries.length > 1
                                 ? selectedEntries
@@ -2209,6 +2238,14 @@ export function FileBrowser() {
                       );
                     })}
                   </div>
+                )}
+                {renamingSlot && (
+                  <RenameRow
+                    entry={renamingSlot.entry}
+                    top={renamingSlot.top}
+                    onSubmit={handleRenameSubmit}
+                    onCancel={handleRenameCancel}
+                  />
                 )}
               </div>
             )}
