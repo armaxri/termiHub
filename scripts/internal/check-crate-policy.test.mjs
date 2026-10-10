@@ -8,6 +8,7 @@ import {
   policyCrates,
   findProblems,
   loadRepo,
+  runnerFeatureLeaks,
 } from "./check-crate-policy.mjs";
 
 const ROOT_MANIFEST = [
@@ -167,6 +168,76 @@ describe("findProblems", () => {
   });
 });
 
+describe("runnerFeatureLeaks (ADR-19, #4373)", () => {
+  const CORE = [
+    "[dependencies]",
+    'termihub-plugin-runner = { path = "../plugin-runner", optional = true, default-features = false }',
+    "",
+    "[dev-dependencies]",
+    "# Test-only: the in-process loader baseline.",
+    'termihub-plugin-runner = { path = "../plugin-runner", features = ["runner"] }',
+    "",
+    "[features]",
+    'plugin = ["dep:termihub-plugin-runner"]',
+  ].join("\n");
+
+  it("accepts the runner library without its runner feature, and a runner dev-dependency", () => {
+    expect(runnerFeatureLeaks(CORE)).toEqual([]);
+  });
+
+  it("rejects a normal dependency that keeps the default features", () => {
+    const toml = CORE.replace(", default-features = false", "");
+    expect(runnerFeatureLeaks(toml)).toEqual([
+      "[dependencies] termihub-plugin-runner: a normal dependency on termihub-plugin-runner must " +
+        "set `default-features = false` (its default `runner` feature is runner-only, ADR-19)",
+    ]);
+  });
+
+  it("rejects a bare version requirement (it keeps the default features)", () => {
+    expect(runnerFeatureLeaks('[dependencies]\ntermihub-plugin-runner = "0.1"\n')).toHaveLength(1);
+  });
+
+  it("rejects enabling runner explicitly, in a target table or through a rename", () => {
+    const explicit = CORE.replace(
+      "default-features = false }",
+      'default-features = false, features = ["runner"] }'
+    );
+    expect(runnerFeatureLeaks(explicit)).toEqual([
+      "[dependencies] termihub-plugin-runner: a normal dependency on termihub-plugin-runner must " +
+        "not enable `runner` (ADR-19)",
+    ]);
+    const target = "[target.'cfg(unix)'.dependencies]\ntermihub-plugin-runner = { path = \"x\" }\n";
+    expect(runnerFeatureLeaks(target)).toHaveLength(1);
+    const renamed = '[dependencies]\nrunner = { package = "termihub-plugin-runner", path = "x" }\n';
+    expect(runnerFeatureLeaks(renamed)).toHaveLength(1);
+  });
+
+  it("rejects a dotted dependency table and a feature forwarding runner", () => {
+    const dotted = [
+      "[dependencies.termihub-plugin-runner]",
+      'path = "../plugin-runner"',
+      'features = ["runner"]',
+      "default-features = false",
+      "",
+      "[features]",
+      'plugin = ["termihub-plugin-runner?/runner"]',
+    ].join("\n");
+    expect(runnerFeatureLeaks(dotted)).toEqual([
+      "[dependencies.termihub-plugin-runner]: a normal dependency on termihub-plugin-runner " +
+        "must not enable `runner` (ADR-19)",
+      "[features]: must not enable termihub-plugin-runner/runner (ADR-19)",
+    ]);
+  });
+
+  it("is reported per crate by findProblems", () => {
+    const problems = findProblems(
+      repo({ memberManifests: { core: CORE.replace(", default-features = false", "") } })
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^core\/Cargo\.toml \[dependencies\] termihub-plugin-runner:/);
+  });
+});
+
 describe("the real repository", () => {
   it("is compliant", () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -177,5 +248,10 @@ describe("the real repository", () => {
       expect.arrayContaining(["plugin-runner", "rdp-sidecar", "win-security"])
     );
     expect(Object.keys(loaded.crateRoots["plugin-runner"])).toEqual(["src/lib.rs", "src/main.rs"]);
+    // Rule 4 scans the desktop and core, but never the runner itself (#4373).
+    expect(Object.keys(loaded.memberManifests)).toEqual(
+      expect.arrayContaining(["core", "src-tauri"])
+    );
+    expect(loaded.memberManifests).not.toHaveProperty("plugin-runner");
   });
 });
