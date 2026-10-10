@@ -23,11 +23,19 @@
  * non-flaky; deep behavior is covered by the per-component tests and the nightly
  * integration lane.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import App from "./App";
+
+// The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
+// backend's session-ownership map is never undefined: stub it as the real
+// empty map so `refreshSessionOwners` sees a faithful value (#4520).
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+}));
 
 describe("App shell smoke (#2065)", () => {
   let container: HTMLDivElement;

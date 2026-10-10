@@ -87,6 +87,7 @@ import { windowDisplayName } from "@/utils/windowPicker";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
 import { errorMessage } from "@/utils/errorMessage";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 import "./OpenConnectionsModal.css";
 
 interface OpenConnectionsModalProps {
@@ -247,9 +248,21 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       const [locals, xServerReport, owners, ...agentSessionArrays] = await Promise.all([
         listLocalSessions(),
-        xServerStatus().catch(() => null),
-        listSessionOwners().catch(() => ({}) as Record<string, string>),
-        ...connectedAgents.map((a) => listAgentSessions(a.id).catch(() => [])),
+        withLoggedFallback(xServerStatus(), null, "open_connections", "read X server status"),
+        withLoggedFallback(
+          listSessionOwners(),
+          {} as Record<string, string>,
+          "open_connections",
+          "list session owners"
+        ),
+        ...connectedAgents.map((a) =>
+          withLoggedFallback(
+            listAgentSessions(a.id),
+            [],
+            "open_connections",
+            `list sessions of agent ${a.id}`
+          )
+        ),
       ]);
 
       setLocalSessions(locals.filter((s) => !s.agentId));

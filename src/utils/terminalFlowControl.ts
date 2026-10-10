@@ -29,6 +29,8 @@
 
 import { setTerminalOutputPaused } from "@/services/api";
 import type { SessionId } from "@/types/terminal";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendLog } from "@/utils/frontendLog";
 
 /** Unparsed bytes above which the backend is paused. */
 export const FLOW_HIGH_WATERMARK = 2 * 1024 * 1024;
@@ -160,6 +162,11 @@ export class TerminalOutputFlow {
   }
 }
 
+/** "pause" or "resume", for log lines. */
+function flowVerb(paused: boolean): string {
+  return paused ? "pause" : "resume";
+}
+
 /** A pause/resume signal sender; see {@link createFlowSignal}. */
 export interface FlowSignal {
   (paused: boolean): void;
@@ -170,13 +177,18 @@ export interface FlowSignal {
 /**
  * Wrap the pause/resume IPC so signals reach the backend one at a time and in
  * order. Two concurrent IPC calls could otherwise land out of order and leave
- * the backend paused after the frontend resumed. A failing send (the session
- * is already gone) is swallowed and does not block later signals.
+ * the backend paused after the frontend resumed. A failing send (usually: the
+ * session is already gone) is reported through `onError` — a DEBUG Log Viewer
+ * line by default — and does not block later signals.
  */
-export function createFlowSignal(send: (paused: boolean) => Promise<void>): FlowSignal {
+export function createFlowSignal(
+  send: (paused: boolean) => Promise<void>,
+  onError: (paused: boolean, err: unknown) => void = (paused, err) =>
+    frontendLog("terminal_flow", `${flowVerb(paused)} signal failed: ${errorMessage(err)}`)
+): FlowSignal {
   let chain: Promise<void> = Promise.resolve();
   const signal = ((paused: boolean) => {
-    chain = chain.then(() => send(paused)).catch(() => undefined);
+    chain = chain.then(() => send(paused)).catch((err: unknown) => onError(paused, err));
   }) as FlowSignal;
   signal.settled = () => chain;
   return signal;
@@ -192,7 +204,13 @@ export function createSessionOutputFlow(
   sessionId: SessionId,
   log: (message: string) => void
 ): TerminalOutputFlow {
-  const signal = createFlowSignal((paused) => setTerminalOutputPaused(sessionId, paused));
+  const signal = createFlowSignal(
+    (paused) => setTerminalOutputPaused(sessionId, paused),
+    (paused, err) =>
+      log(
+        `output flow: ${flowVerb(paused)} signal failed session=${sessionId}: ${errorMessage(err)}`
+      )
+  );
   signal(false);
   return new TerminalOutputFlow({
     onPausedChange: signal,

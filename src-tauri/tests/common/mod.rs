@@ -39,43 +39,35 @@ pub fn is_port_reachable(port: u16) -> bool {
 }
 
 /// Env var that flips a missing fixture from a silent skip to a hard failure
-/// (TBE-006). Mirrors `core/tests/common`'s `REQUIRE_DOCKER_ENV`; a CI lane that
-/// brings the sftp-stress fixture up sets it (`=1`) so an absent/broken
-/// container reds the lane instead of skipping to a false green.
-pub const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
-
-/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (truthy: `1`,
-/// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey, so
-/// local and per-PR runs never hard-fail).
-pub fn parse_required(val: Option<&str>) -> bool {
-    termihub_core::test_fixtures::parse_flag(val)
-}
+/// (TBE-006). A CI lane that brings the sftp-stress fixture up sets it (`=1`)
+/// so an absent/broken container reds the lane instead of skipping to a false
+/// green.
+pub const REQUIRE_DOCKER_ENV: &str = termihub_core::test_fixtures::REQUIRE_DOCKER_ENV;
 
 /// Whether this process requires the Docker fixture to be present.
 pub fn docker_required() -> bool {
-    parse_required(std::env::var(REQUIRE_DOCKER_ENV).ok().as_deref())
+    termihub_core::test_fixtures::flag_set(REQUIRE_DOCKER_ENV)
 }
 
-/// Resolve whether a fixture-gated test body should run. Returns `true` to run;
-/// `false` after a visible `SKIPPED:` line when the fixture is absent and not
-/// required; **panics** when absent but required (`TERMIHUB_REQUIRE_DOCKER`
+/// Resolve whether a fixture-gated test body should run: a thin wrapper over
+/// `termihub_core::test_fixtures::require_reported` (#4544). Returns `true` to
+/// run; `false` after a visible `SKIPPED:` line when the fixture is absent and
+/// not required; **panics** when absent but required (`TERMIHUB_REQUIRE_DOCKER`
 /// set), so a Docker-backed lane reds instead of going falsely green (TBE-006).
 pub fn require_fixture(reachable: bool, required: bool, port: u16) -> bool {
-    match (reachable, required) {
-        (true, _) => true,
-        (false, false) => {
-            eprintln!(
-                "SKIPPED: sftp-stress container not reachable on port {port} \
-                 (start with `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`)"
-            );
-            false
-        }
-        (false, true) => panic!(
-            "REQUIRED fixture unavailable: sftp-stress container not reachable on \
+    termihub_core::test_fixtures::require_reported(
+        reachable,
+        required,
+        format_args!(
+            "sftp-stress container not reachable on port {port} \
+             (start with `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`)"
+        ),
+        format_args!(
+            "fixture unavailable: sftp-stress container not reachable on \
              port {port} but {REQUIRE_DOCKER_ENV} is set — a missing/broken \
              fixture is a hard failure here, not a skip (TBE-006)"
         ),
-    }
+    )
 }
 
 /// Register a process-wide host-key verifier that trusts the local Docker
