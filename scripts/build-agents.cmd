@@ -17,6 +17,11 @@ REM sha256sum format release.yml publishes, #1350). A target whose sidecar canno
 REM be written FAILS, and a final gate re-checks every built binary has a
 REM non-empty sidecar (WA-CI-036, same as build-agents.sh).
 REM
+REM Every built agent is also checked for test-only artifacts (#4554, same as
+REM build-agents.sh): the TEST-ONLY update-signing key and, outside --dev, the
+REM env-armed test hooks. A target whose binary carries one FAILS. A
+REM --features test-hooks build is the system-test agent and is not checked.
+REM
 REM Usage: scripts\build-agents.cmd [--targets <list>] [--sequential] [--native]
 REM                                 [--dev] [--features <list>] [--sign-key <pem>]
 REM                                 [--help]
@@ -24,7 +29,8 @@ REM
 REM Prerequisites (default Linux mode): Rust, Docker/Podman (running), cross-rs.
 REM Run scripts\setup-agent-cross.cmd first to install required toolchains.
 REM Prerequisites (--native Windows mode): Rust + MSVC toolchain only.
-REM Hashing uses Windows PowerShell (.NET SHA256 only, no cmdlets, #4029);
+REM Hashing and the test-artifact guard use Windows PowerShell (.NET only, no
+REM cmdlets, #4029);
 REM --sign-key additionally needs Git Bash with OpenSSL 3 (Git for Windows
 REM ships both).
 
@@ -139,6 +145,10 @@ echo.
 echo Every built binary gets a ^<binary^>.sha256 checksum sidecar; a target whose
 echo sidecar cannot be written fails the build.
 echo.
+echo Every built agent is checked for test-only artifacts (#4554): the TEST-ONLY
+echo update-signing key and, outside --dev, the env-armed test hooks. A target whose
+echo binary carries one FAILS. A --features test-hooks build is not checked.
+echo.
 echo Linux targets (default, cross-rs):
 echo   x86_64-unknown-linux-musl       Static x64 binaries (musl)
 echo   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
@@ -179,6 +189,20 @@ if "%DEV%"=="1" (
 REM Rendered into each build command as `--features <list>` (empty when unset).
 set "FEATURES_FLAG="
 if defined FEATURES set "FEATURES_FLAG=--features %FEATURES%"
+
+REM Test-only artifact guard (#4554), twin of assert_shippable_agent in
+REM build-agents.sh: off for a --features test-hooks build (the system-test
+REM agent), on for everything else. See :guard_agent.
+set "CHECK_TEST_ARTIFACTS=1"
+set "FEATURES_PADDED=,%FEATURES%,"
+if not "!FEATURES_PADDED:,test-hooks,=!"=="!FEATURES_PADDED!" set "CHECK_TEST_ARTIFACTS=0"
+if not "!FEATURES_PADDED:,termihub-agent/test-hooks,=!"=="!FEATURES_PADDED!" set "CHECK_TEST_ARTIFACTS=0"
+set "FEATURES_PADDED="
+if "%CHECK_TEST_ARTIFACTS%"=="0" (
+    echo NOTE: --features test-hooks: skipping the test-only artifact guard.
+    echo   This agent trusts the TEST-ONLY update-signing key; never upload or ship it.
+    echo.
+)
 
 REM --sign-key: fail fast (before any build) if signing cannot possibly work.
 REM The signing pipeline is scripts/internal/agent-update-signing.sh (bash +
@@ -412,6 +436,15 @@ if not exist "%BIN%" (
     set /a FAILED+=1
     exit /b 0
 )
+call :guard_agent "%BIN%"
+if errorlevel 1 (
+    REM No checksum or signature may vouch for this binary: drop stale sidecars.
+    if exist "%BIN%.sha256" del /q "%BIN%.sha256"
+    if exist "%BIN%.sig" del /q "%BIN%.sig"
+    echo   FAILED: %BIN% embeds test-only artifacts and must never be uploaded
+    set /a FAILED+=1
+    exit /b 0
+)
 call :write_checksum "%BIN%"
 if errorlevel 1 (
     echo   FAILED: could not write %BIN%.sha256
@@ -427,6 +460,21 @@ if errorlevel 1 (
 set "PRODUCED=%PRODUCED% %BIN%"
 echo   -^> %BIN%
 set /a BUILT+=1
+exit /b 0
+
+REM Fail (exit 1) if a built agent carries test-only artifacts (#4554): the
+REM TEST-ONLY update-signing key (#4083) and, outside --dev, the env-armed test
+REM hooks (#4362). It lands in target\<triple>\<profile>\, the path developers
+REM upload. scripts/internal/assert-no-agent-test-artifacts.ps1 is the
+REM PowerShell twin of the two bash guards build-agents.sh and CI run, so this
+REM needs no Git Bash. Skipped for a --features test-hooks build.
+REM   %1 = binary path
+:guard_agent
+if "%CHECK_TEST_ARTIFACTS%"=="0" exit /b 0
+set "GUARD_SKIP="
+if "%DEV%"=="1" set "GUARD_SKIP=-SkipTestHooks"
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\internal\assert-no-agent-test-artifacts.ps1 -Binary "%~1" %GUARD_SKIP%
+if errorlevel 1 exit /b 1
 exit /b 0
 
 REM Write "<binary>.sha256" next to a built binary: "<lowercase hex>  <file name>"

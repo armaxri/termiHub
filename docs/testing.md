@@ -1637,7 +1637,8 @@ Notes worth knowing before you use it:
   `agent/keys/test-only/` (see its README), so a test can sign its staged binary;
   there is no skip-signature path. Shipped agents never embed that key:
   `scripts/internal/assert-no-test-signing-key.sh` fails any `agent.yml` /
-  `release.yml` build that does. Once the staged binary is the running one, the
+  `release.yml` build that does, and any local `scripts/build-agents.*` /
+  `scripts/build.sh` agent built without `--features test-hooks` (#4554). Once the staged binary is the running one, the
   hook stands down instead of re-staging it. It recognises that by the running
   binary matching the staged file or hashing to `…_SHA256`; the digest is what
   still holds after the re-execed agent removed the applied upload (#4526).

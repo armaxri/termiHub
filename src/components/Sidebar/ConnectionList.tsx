@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
@@ -30,6 +30,11 @@ import {
   Link,
   Square,
   Puzzle,
+  ArrowUp,
+  ArrowDown,
+  FolderInput,
+  Folder,
+  ChevronRight,
 } from "lucide-react";
 import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
@@ -74,6 +79,34 @@ import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { resolveConnectionDrop } from "@/utils/connectionDropTarget";
 import { startSavedPersistentSession } from "@/utils/startSavedPersistentSession";
+import {
+  connectionReorderIndices,
+  folderMoveTargets,
+  type FolderMoveTarget,
+} from "@/utils/connectionKeyboardMove";
+import { isMac } from "@/utils/platform";
+
+/**
+ * Keyboard / menu alternatives to dragging a connection in the tree (#4528):
+ * Move Up / Move Down within its folder and Move to Folder. They reuse the
+ * store actions the drag path calls.
+ */
+interface ConnectionMoveActions {
+  /** Every folder, in tree order, for the Move to Folder submenu. */
+  folderTargets: FolderMoveTarget[];
+  /** Whether the connection can move one place up (`-1`) or down (`1`). */
+  canMoveBy: (connectionId: string, delta: -1 | 1) => boolean;
+  /** Move the connection one place up or down among its siblings. */
+  moveBy: (connectionId: string, delta: -1 | 1) => void;
+  /** Move the connection (or the multi-selection holding it) into a folder; `null` = top level. */
+  moveToFolder: (connectionId: string, folderId: string | null) => void;
+}
+
+/** Shortcut hint shown next to Move Up / Move Down (Cmd on macOS, Ctrl elsewhere). */
+function moveShortcutHint(direction: "Up" | "Down"): string {
+  const arrow = direction === "Up" ? "\u2191" : "\u2193";
+  return isMac() ? `\u2318\u21e7${arrow}` : `Ctrl+Shift+${arrow}`;
+}
 
 /**
  * Shared keyboard-navigation / filter plumbing threaded through the tree so
@@ -96,6 +129,8 @@ interface TreeNavProps {
   onTreeKeyDown: (event: React.KeyboardEvent, nodeId: string) => void;
   /** Sync the roving active index when a row gains DOM focus. */
   onRowFocus: (index: number) => void;
+  /** Keyboard / menu move commands for connection rows (#4528). */
+  moveActions: ConnectionMoveActions;
 }
 
 interface TreeNodeProps extends TreeNavProps {
@@ -142,6 +177,7 @@ function TreeNode({
   getRowRef,
   onTreeKeyDown,
   onRowFocus,
+  moveActions,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   // Under an active filter, matched folders are force-expanded regardless of
@@ -258,6 +294,7 @@ function TreeNode({
               getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
+              moveActions={moveActions}
             />
           ))}
           {visibleConnections.map((conn) => (
@@ -277,6 +314,7 @@ function TreeNode({
               getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
+              moveActions={moveActions}
             />
           ))}
         </div>
@@ -287,7 +325,7 @@ function TreeNode({
 
 interface ConnectionItemProps extends Pick<
   TreeNavProps,
-  "activeIndex" | "getNodeIndex" | "getRowRef" | "onTreeKeyDown" | "onRowFocus"
+  "activeIndex" | "getNodeIndex" | "getRowRef" | "onTreeKeyDown" | "onRowFocus" | "moveActions"
 > {
   connection: SavedConnection;
   depth: number;
@@ -315,6 +353,7 @@ function ConnectionItem({
   getRowRef,
   onTreeKeyDown,
   onRowFocus,
+  moveActions,
 }: ConnectionItemProps) {
   const {
     attributes,
@@ -659,6 +698,8 @@ function ConnectionItem({
               <Copy size={14} /> Duplicate
             </ContextMenu.Item>
             <ContextMenu.Separator className="context-menu__separator" />
+            <ConnectionMoveItems connection={connection} moveActions={moveActions} />
+            <ContextMenu.Separator className="context-menu__separator" />
             <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               onSelect={() => onDelete(connection.id)}
@@ -669,6 +710,83 @@ function ConnectionItem({
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+    </>
+  );
+}
+
+/** Context-menu items that move a connection without dragging it (#4528). */
+function ConnectionMoveItems({
+  connection,
+  moveActions,
+}: {
+  connection: SavedConnection;
+  moveActions: ConnectionMoveActions;
+}) {
+  const { folderTargets, canMoveBy, moveBy, moveToFolder } = moveActions;
+  const atRoot = connection.folderId === null;
+  return (
+    <>
+      <ContextMenu.Sub>
+        <ContextMenu.SubTrigger
+          className="context-menu__item context-menu__sub-trigger"
+          data-testid="context-connection-move-folder"
+        >
+          <FolderInput size={14} /> Move to Folder
+          <ChevronRight size={14} className="context-menu__sub-arrow" />
+        </ContextMenu.SubTrigger>
+        <ContextMenu.Portal>
+          <ContextMenu.SubContent
+            className="context-menu__content"
+            data-testid="context-connection-move-folder-submenu"
+          >
+            <ContextMenu.Item
+              className="context-menu__item"
+              disabled={atRoot}
+              onSelect={() => moveToFolder(connection.id, null)}
+              data-testid="context-connection-move-folder-root"
+            >
+              <Folder size={14} /> Top Level
+              {atRoot && <span className="context-menu__sub-label">current</span>}
+            </ContextMenu.Item>
+            {folderTargets.length > 0 && (
+              <ContextMenu.Separator className="context-menu__separator" />
+            )}
+            {folderTargets.map((target) => {
+              const isCurrent = connection.folderId === target.id;
+              return (
+                <ContextMenu.Item
+                  key={target.id}
+                  className="context-menu__item"
+                  disabled={isCurrent}
+                  onSelect={() => moveToFolder(connection.id, target.id)}
+                  data-testid={`context-connection-move-folder-${target.id}`}
+                >
+                  <Folder size={14} /> {target.label}
+                  {isCurrent && <span className="context-menu__sub-label">current</span>}
+                </ContextMenu.Item>
+              );
+            })}
+          </ContextMenu.SubContent>
+        </ContextMenu.Portal>
+      </ContextMenu.Sub>
+      <ContextMenu.Item
+        className="context-menu__item"
+        disabled={!canMoveBy(connection.id, -1)}
+        onSelect={() => moveBy(connection.id, -1)}
+        data-testid="context-connection-move-up"
+      >
+        <ArrowUp size={14} /> Move Up
+        <span className="context-menu__sub-label">{moveShortcutHint("Up")}</span>
+      </ContextMenu.Item>
+      <ContextMenu.Item
+        className="context-menu__item"
+        disabled={!canMoveBy(connection.id, 1)}
+        onSelect={() => moveBy(connection.id, 1)}
+        data-testid="context-connection-move-down"
+      >
+        <ArrowDown size={14} /> Move Down
+        <span className="context-menu__sub-label">{moveShortcutHint("Down")}</span>
+      </ContextMenu.Item>
     </>
   );
 }
@@ -886,14 +1004,86 @@ export function ConnectionList() {
     [makeKeyDownHandler, activateNode, clearConnectionSelection]
   );
 
+  // Keyboard / menu alternatives to dragging a connection (#4528, WCAG 2.1.1 /
+  // 2.5.7). They call the same store actions as `handleDragEnd`. A moved row
+  // keeps focus: its flat index changes, so focus is restored by id once the
+  // re-ordered tree renders.
+  const refocusNodeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const nodeId = refocusNodeIdRef.current;
+    if (!nodeId) return;
+    const index = nodeIndexById.get(nodeId);
+    if (index === undefined) return;
+    refocusNodeIdRef.current = null;
+    focusRow(index);
+  }, [nodeIndexById, focusRow]);
+
+  const folderTargets = useMemo(() => folderMoveTargets(folders), [folders]);
+  const canMoveConnectionBy = useCallback(
+    (connectionId: string, delta: -1 | 1) =>
+      connectionReorderIndices(connectionId, delta, connections, allConnections) !== null,
+    [connections, allConnections]
+  );
+  const moveConnectionBy = useCallback(
+    (connectionId: string, delta: -1 | 1) => {
+      const move = connectionReorderIndices(connectionId, delta, connections, allConnections);
+      if (!move) return;
+      refocusNodeIdRef.current = connectionId;
+      reorderConnections(move.oldIndex, move.newIndex);
+    },
+    [connections, allConnections, reorderConnections]
+  );
+  // Like a drop onto a folder: a connection that is part of a multi-selection
+  // moves the whole selection; connections already in the folder are skipped.
+  const moveConnectionToFolderFromMenu = useCallback(
+    (connectionId: string, folderId: string | null) => {
+      const bulk = selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId);
+      const candidates = bulk ? [...selectedConnectionIds] : [connectionId];
+      const ids = candidates.filter(
+        (id) => connections.find((c) => c.id === id)?.folderId !== folderId
+      );
+      if (ids.length === 1) moveConnectionToFolder(ids[0], folderId);
+      else if (ids.length > 1) bulkMoveConnectionsToFolder(ids, folderId);
+      if (bulk) clearConnectionSelection();
+    },
+    [
+      selectedConnectionIds,
+      connections,
+      moveConnectionToFolder,
+      bulkMoveConnectionsToFolder,
+      clearConnectionSelection,
+    ]
+  );
+  const moveActions = useMemo<ConnectionMoveActions>(
+    () => ({
+      folderTargets,
+      canMoveBy: canMoveConnectionBy,
+      moveBy: moveConnectionBy,
+      moveToFolder: moveConnectionToFolderFromMenu,
+    }),
+    [folderTargets, canMoveConnectionBy, moveConnectionBy, moveConnectionToFolderFromMenu]
+  );
+
   // Per-row keydown: tree-specific keys (expand/collapse, move to parent/child,
   // Space to activate) are handled here; everything else delegates to the
-  // shared roving-nav handler.
+  // shared roving-nav handler. Ctrl/Cmd+Shift+ArrowUp/Down moves a focused
+  // connection within its folder instead of moving focus (#4528).
   const handleTreeKeyDown = useCallback(
     (event: React.KeyboardEvent, nodeId: string) => {
       const index = getNodeIndex(nodeId);
       const node = treeNodes[index];
       if (!node) return;
+      const isMove =
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        !event.altKey &&
+        (event.key === "ArrowUp" || event.key === "ArrowDown");
+      if (isMove) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (node.kind === "connection") moveConnectionBy(node.id, event.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
       switch (event.key) {
         case "ArrowRight": {
           if (node.kind !== "folder") return;
@@ -925,7 +1115,15 @@ export function ConnectionList() {
           rovingKeyDown(event);
       }
     },
-    [treeNodes, getNodeIndex, focusRow, activateNode, rovingKeyDown, handleToggleFolder]
+    [
+      treeNodes,
+      getNodeIndex,
+      focusRow,
+      activateNode,
+      rovingKeyDown,
+      handleToggleFolder,
+      moveConnectionBy,
+    ]
   );
 
   // Sync the roving active index when a row gains DOM focus (Tab, click).
@@ -1396,6 +1594,7 @@ export function ConnectionList() {
               getRowRef={getRowRef}
               onTreeKeyDown={handleTreeKeyDown}
               onRowFocus={handleRowFocus}
+              moveActions={moveActions}
             />
           )}
         </div>
@@ -1627,6 +1826,7 @@ function RootDropZone({
   getRowRef,
   onTreeKeyDown,
   onRowFocus,
+  moveActions,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
@@ -1694,6 +1894,7 @@ function RootDropZone({
               getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
+              moveActions={moveActions}
             />
           ))}
           {visibleRootConnections.map((conn) => (
@@ -1713,6 +1914,7 @@ function RootDropZone({
               getRowRef={getRowRef}
               onTreeKeyDown={onTreeKeyDown}
               onRowFocus={onRowFocus}
+              moveActions={moveActions}
             />
           ))}
         </div>
