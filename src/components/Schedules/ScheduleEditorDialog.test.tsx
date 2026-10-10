@@ -3,13 +3,19 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { withTooltip } from "@/test/tooltip";
 import type { SavedConnection } from "@/types/connection";
-import type { ScheduleInput } from "@/types/schedule";
+import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
+import type { Macro } from "@/types/macro";
 import type { Workflow } from "@/types/workflow";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { flushAsync } from "@/test/flushAsync";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
+
+const useExperimentalFeatures = vi.fn<() => boolean>(() => true);
+vi.mock("@/hooks/useExperimentalFeatures", () => ({
+  useExperimentalFeatures: () => useExperimentalFeatures(),
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -36,12 +42,17 @@ const workflows: Workflow[] = [
     updatedAt: "",
   },
 ];
+const macros: Macro[] = [{ id: "m-1", name: "Restart" } as Macro];
 const connections: SavedConnection[] = [
   { id: "c1", name: "web-1", config: {} as never, folderId: null },
   { id: "c2", name: "web-2", config: {} as never, folderId: null },
 ];
 
-function render(props: { schedule?: ScheduleInput | null; onSave?: (i: ScheduleInput) => void }) {
+function render(props: {
+  schedule?: ScheduleInput | null;
+  onSave?: (i: ScheduleInput) => void;
+  initialAction?: ScheduleAction;
+}) {
   act(() => {
     root.render(
       withTooltip(
@@ -49,9 +60,13 @@ function render(props: { schedule?: ScheduleInput | null; onSave?: (i: ScheduleI
           open
           scheduleId="schedule-new"
           schedule={props.schedule ?? null}
-          initialAction={{ kind: "workflow", workflowId: "wf-1" }}
+          initialAction={
+            "initialAction" in props
+              ? props.initialAction
+              : { kind: "workflow", workflowId: "wf-1" }
+          }
           workflows={workflows}
-          macros={[]}
+          macros={macros}
           connections={connections}
           groups={[]}
           onOpenChange={vi.fn()}
@@ -64,6 +79,7 @@ function render(props: { schedule?: ScheduleInput | null; onSave?: (i: ScheduleI
 
 describe("ScheduleEditorDialog (PROD-043)", () => {
   beforeEach(() => {
+    useExperimentalFeatures.mockReturnValue(true);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -193,5 +209,83 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     expect(nameError()?.textContent).toBe("Name is required.");
     setInput("schedule-editor-name", "Nightly");
     expect(nameError()).toBeNull();
+  });
+
+  describe("the experimental Workflow action is gated (#4629)", () => {
+    const actionKindOptions = () => {
+      const trigger = query("schedule-editor-action-kind") as HTMLButtonElement;
+      act(() => {
+        trigger.focus();
+        trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      return Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent);
+    };
+
+    const workflowSchedule: ScheduleInput = {
+      id: "s1",
+      name: "Backups",
+      action: { kind: "workflow", workflowId: "wf-1" },
+      targets: { kind: "connections", connectionIds: ["c1"] },
+      rule: { kind: "interval", everyMinutes: 5 },
+      missedRuns: "skip",
+    };
+
+    it("offers Workflow and Macro while experimental features are on", () => {
+      useExperimentalFeatures.mockReturnValue(true);
+      render({ initialAction: undefined });
+      expect(query("schedule-editor-action-kind")!.textContent).toContain("Workflow");
+      expect(query("schedule-editor-workflow")).not.toBeNull();
+      expect(actionKindOptions()).toEqual(["Workflow", "Macro"]);
+    });
+
+    it("offers only Macro, defaulting to it, while experimental features are off", async () => {
+      useExperimentalFeatures.mockReturnValue(false);
+      const onSave = vi.fn();
+      render({ initialAction: undefined, onSave });
+      expect(query("schedule-editor-action-kind")!.textContent).toContain("Macro");
+      expect(query("schedule-editor-workflow")).toBeNull();
+      expect(query("schedule-editor-macro")).not.toBeNull();
+      expect(query("schedule-editor-dialog")!.textContent).not.toContain("Run a workflow");
+      expect(actionKindOptions()).toEqual(["Macro"]);
+    });
+
+    it("never starts a new schedule on a pre-selected workflow while off", () => {
+      useExperimentalFeatures.mockReturnValue(false);
+      render({ initialAction: { kind: "workflow", workflowId: "wf-1" } });
+      expect(query("schedule-editor-action-kind")!.textContent).toContain("Macro");
+      expect(query("schedule-editor-workflow")).toBeNull();
+    });
+
+    it("shows an existing workflow schedule's action read-only while off, and keeps it on save", async () => {
+      useExperimentalFeatures.mockReturnValue(false);
+      const onSave = vi.fn();
+      render({ schedule: workflowSchedule, onSave });
+      const kind = query("schedule-editor-action-kind") as HTMLButtonElement;
+      const workflow = query("schedule-editor-workflow") as HTMLButtonElement;
+      expect(kind.textContent).toContain("Workflow");
+      expect(kind.hasAttribute("disabled")).toBe(true);
+      expect(workflow.textContent).toContain("Health check");
+      expect(workflow.hasAttribute("disabled")).toBe(true);
+      expect(query("schedule-editor-dialog")!.textContent).toContain("Workflows are experimental");
+
+      setInput("schedule-editor-name", "Backups v2");
+      await act(async () => query("schedule-editor-save")!.click());
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Backups v2",
+          action: { kind: "workflow", workflowId: "wf-1" },
+        })
+      );
+    });
+
+    it("leaves an existing workflow schedule editable while on", () => {
+      useExperimentalFeatures.mockReturnValue(true);
+      render({ schedule: workflowSchedule });
+      expect(query("schedule-editor-action-kind")!.hasAttribute("disabled")).toBe(false);
+      expect(query("schedule-editor-workflow")!.hasAttribute("disabled")).toBe(false);
+      expect(query("schedule-editor-dialog")!.textContent).not.toContain(
+        "Workflows are experimental"
+      );
+    });
   });
 });
