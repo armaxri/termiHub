@@ -18,8 +18,8 @@ evidence:
   - src/store/slices/workflowRunOnTarget.ts:63
   - src/services/workflowRunner.ts:367
   - src/services/workflowRunner.ts:373
-status: open
-resolution: ""
+status: fixed
+resolution: "#4381 — Terminal retry waits use abortableDelay on the AbortSignal; workflow seams react to whenCancelled, no setInterval polls"
 audit: 2026-10
 commit: 663465d52
 relation: regression

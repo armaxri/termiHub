@@ -16,14 +16,18 @@
  *    replaced by a per-connection secret.
  *
  * This helper **never persists anything**: it does not store a prompt-entered
- * secret (Save & Connect does that itself when the prompt's Save box is
- * checked) and never logs the secret. Callers splice the returned secret into
+ * secret (Save & Connect does that itself when the result's `shouldSave` says
+ * the prompt's Save box was checked) and never logs the secret. Callers splice the returned secret into
  * an in-memory connect/probe config only.
  */
 
 import { isSshKeyEncrypted } from "@/services/api";
 import type { SettingsSchema } from "@/types/schema";
-import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
+import type {
+  PasswordPromptKind,
+  PasswordPromptOptions,
+  RequestPassword,
+} from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { findKeyPassphrasePromptInfo, findPasswordPromptInfo } from "@/utils/schemaDefaults";
@@ -41,6 +45,12 @@ export type ConnectSecretResult =
       /** Whether it came from the credential store or an interactive prompt. */
       source: "stored" | "prompt";
       credentialType: PasswordPromptKind;
+      /**
+       * Whether the user ticked this prompt's own "Save password" box
+       * (#4474). Always `false` for a stored secret or a prompt without a
+       * Save box. The caller persists the secret when it is `true`.
+       */
+      shouldSave: boolean;
     }
   /** The user dismissed the unlock dialog or the password prompt. */
   | { status: "canceled" };
@@ -62,13 +72,7 @@ export interface ResolveConnectSecretOptions {
    */
   sourceFile?: string | null;
   /** The store's promise-based prompt (`useAppStore().requestPassword`). */
-  requestPassword: (
-    host: string,
-    username: string,
-    notice?: string,
-    kind?: PasswordPromptKind,
-    options?: PasswordPromptOptions
-  ) => Promise<string | null>;
+  requestPassword: RequestPassword;
   /**
    * Whether the prompt may offer its "Save" control. Defaults to `true` (Save &
    * Connect persists a checked Save box itself). Test Connection passes `false`
@@ -148,6 +152,7 @@ export async function resolveConnectSecret({
         secret: resolution.password,
         source: "stored",
         credentialType,
+        shouldSave: false,
       };
     }
   }
@@ -157,16 +162,17 @@ export async function resolveConnectSecret({
     ...(allowSave && !credentialRef ? {} : { allowSave: false }),
     ...(label ? { label } : {}),
   };
-  const entered =
+  const answer =
     Object.keys(options).length === 0
       ? await requestPassword(host, username, "", credentialType)
       : await requestPassword(host, username, "", credentialType, options);
-  if (entered === null) return { status: "canceled" };
+  if (answer === null) return { status: "canceled" };
   return {
     status: "resolved",
     passwordKey: promptInfo.passwordKey,
-    secret: entered,
+    secret: answer.password,
     source: "prompt",
     credentialType,
+    shouldSave: answer.shouldSave,
   };
 }

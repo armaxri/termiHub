@@ -10,8 +10,8 @@ use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_app_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
-    guard_not_newer, load_versioned, recover_corrupt_store, salvage_list_store, LoadOutcome,
-    Salvage, VersionedStore,
+    guard_not_newer, load_versioned, recover_corrupt_store, release_unbacked_corrupt,
+    salvage_list_store, LoadOutcome, Salvage, VersionedStore,
 };
 
 const FILE_NAME: &str = "embedded_servers.json";
@@ -78,6 +78,9 @@ impl EmbeddedServerStorage {
             // A v1 file is not rewritten here: the manager's legacy-password
             // migration owns that rewrite (#3514).
             LoadOutcome::Loaded { data: store, .. } => {
+                // The file parses again, so a guard armed by an earlier failed
+                // backup has nothing left to protect (#4466).
+                release_unbacked_corrupt(&self.file_path);
                 return Ok(RecoveryResult {
                     data: store,
                     warnings: Vec::new(),
@@ -610,5 +613,27 @@ mod tests {
         let servers = saved_servers(&storage);
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0]["futureField"], 7);
+    }
+
+    /// #4466: a clean load releases an unbacked-corrupt guard armed earlier
+    /// this session, so saves work again without a restart.
+    #[test]
+    fn clean_load_releases_unbacked_corrupt_guard() {
+        use crate::utils::migrate::{is_unbacked_corrupt, protect_unbacked_corrupt};
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        storage.save(&EmbeddedServerStore::default()).unwrap();
+
+        protect_unbacked_corrupt(&storage.file_path);
+        assert!(
+            storage.save(&EmbeddedServerStore::default()).is_err(),
+            "armed guard refuses"
+        );
+
+        storage.load_with_recovery().unwrap();
+
+        assert!(!is_unbacked_corrupt(&storage.file_path));
+        storage.save(&EmbeddedServerStore::default()).unwrap();
     }
 }

@@ -10,6 +10,8 @@ import { storeCredential } from "@/services/api";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import type { LinkedSecretRequest } from "@/types/generated/LinkedSecretRequest";
 import { isPasswordPromptAbort } from "@/store/slices/passwordPromptSlice";
+import { setConnectionsViewForTest } from "@/store/connectionsBridge";
+import type { SavedConnection } from "@/types/connection";
 import { askLinkedSshSecret } from "./linkedSshSecret";
 
 vi.mock("@/services/api", () => ({
@@ -37,16 +39,33 @@ const REQUEST: LinkedSecretRequest = {
 
 /** A prompt that answers `answer`, with the Save box checked when `save`. */
 function prompt(answer: string | null, save = false) {
-  return vi.fn(async () => {
-    useAppStore.setState({ passwordPromptShouldSave: answer !== null && save });
-    return answer;
-  });
+  return vi.fn(async () => (answer === null ? null : { password: answer, shouldSave: save }));
 }
 
 describe("askLinkedSshSecret", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAppStore.setState(useAppStore.getInitialState());
+    setConnectionsViewForTest({ folders: [], connections: [] });
+  });
+
+  it("names the linked connection in the prompt title (#4475)", async () => {
+    setConnectionsViewForTest({
+      folders: [],
+      connections: [
+        {
+          id: "Lab/Tiger",
+          name: "Tiger box",
+          config: { type: "ssh", config: {} },
+          folderId: null,
+        } as unknown as SavedConnection,
+      ],
+    });
+    const requestPassword = prompt("typed");
+    await askLinkedSshSecret(REQUEST, requestPassword);
+    expect(requestPassword).toHaveBeenCalledWith("tiger-box", "arne", "", "password", {
+      label: "Tiger box",
+    });
   });
 
   it("asks with the usual prompt for the linked host and account", async () => {

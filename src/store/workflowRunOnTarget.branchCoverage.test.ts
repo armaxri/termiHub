@@ -217,6 +217,28 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
     expect(mocks.toast.info).not.toHaveBeenCalled();
   });
 
+  it("ends the wait on the cancel event itself, without a polling timer (#4381)", async () => {
+    vi.useFakeTimers();
+    try {
+      let runId = "";
+      const fanout: WorkflowFanoutHooks = { onStart: (id) => (runId = id) };
+      let settled = false;
+      const done = run(workflow([{ kind: "wait-for-output", pattern: "never" }]), { fanout });
+      void done.then(() => (settled = true));
+      await listenerAttached();
+      // Only the step's own timeout is pending — no cancel-poll interval.
+      expect(vi.getTimerCount()).toBe(1);
+
+      expect(cancelWorkflowRunById(runId)).toBe(true);
+      // No clock advance: the cancel signal alone settles the wait.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      expect((await done).status).toBe("cancelled");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("treats a failed output subscription as a timeout", async () => {
     mocks.onTerminalOutput.mockRejectedValueOnce(new Error("no event bus"));
 

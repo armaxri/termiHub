@@ -18,7 +18,8 @@ import { useAppStore } from "./appStore";
 /**
  * The promise-based interactive host/SSH password prompt (PasswordPromptSlice,
  * extracted under #2077 via #2300): requestPassword opens the prompt and hands
- * back a promise that settles when the user submits (with the password) or
+ * back a promise that settles when the user submits (with the password and its
+ * own Save choice, #4474) or
  * dismisses (with `null`) it, then clears the prompt state each time.
  */
 describe("appStore password prompt", () => {
@@ -32,7 +33,7 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
     expect(s.passwordPromptQueue).toHaveLength(0);
-    expect(s.passwordPromptShouldSave).toBe(false);
+    expect("passwordPromptShouldSave" in s).toBe(false);
   });
 
   it("requestPassword opens the prompt with the host/username and a pending request", () => {
@@ -42,7 +43,6 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptHost).toBe("example.com");
     expect(s.passwordPromptUsername).toBe("alice");
     expect(s.passwordPromptQueue).toHaveLength(1);
-    expect(s.passwordPromptShouldSave).toBe(false);
   });
 
   it("defaults the prompt kind to password and carries an explicit kind (UX-010)", () => {
@@ -64,26 +64,24 @@ describe("appStore password prompt", () => {
     expect(useAppStore.getState().passwordPromptKind).toBe("password");
   });
 
-  it("submitPassword resolves the pending promise with the password and closes the prompt", async () => {
+  it("submitPassword resolves the pending promise with the password and its Save choice", async () => {
     const pending = useAppStore.getState().requestPassword("example.com", "alice");
     useAppStore.getState().submitPassword("hunter2", true);
 
-    await expect(pending).resolves.toBe("hunter2");
+    await expect(pending).resolves.toEqual({ password: "hunter2", shouldSave: true });
 
     const s = useAppStore.getState();
     expect(s.passwordPromptOpen).toBe(false);
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
     expect(s.passwordPromptQueue).toHaveLength(0);
-    expect(s.passwordPromptShouldSave).toBe(true);
   });
 
   it("submitPassword defaults shouldSave to false", async () => {
     const pending = useAppStore.getState().requestPassword("example.com", "alice");
     useAppStore.getState().submitPassword("hunter2");
 
-    await expect(pending).resolves.toBe("hunter2");
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    await expect(pending).resolves.toEqual({ password: "hunter2", shouldSave: false });
   });
 
   it("dismissPasswordPrompt resolves the pending promise with null and closes the prompt", async () => {
@@ -97,7 +95,6 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptHost).toBe("");
     expect(s.passwordPromptUsername).toBe("");
     expect(s.passwordPromptQueue).toHaveLength(0);
-    expect(s.passwordPromptShouldSave).toBe(false);
   });
 
   it("submit/dismiss with no pending prompt are safe no-ops", () => {
@@ -122,8 +119,7 @@ describe("appStore password prompt", () => {
       .getState()
       .requestPassword("example.com", "alice", "", "password", { allowSave: false });
     useAppStore.getState().submitPassword("secret", true);
-    await expect(p).resolves.toBe("secret");
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    await expect(p).resolves.toEqual({ password: "secret", shouldSave: false });
     // The opt-out does not leak into the next prompt.
     expect(useAppStore.getState().passwordPromptAllowSave).toBe(true);
   });

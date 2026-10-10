@@ -32,6 +32,7 @@ use termihub_core::protocol::methods::{
 
 use super::agent_stderr::AgentStderr;
 use super::alive::AgentAlive;
+use super::capabilities::{refresh_agent_capabilities, SharedCapabilities};
 use super::files_only::FilesOnlyRoutes;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
 use super::stdout_reader::{frame, Frame};
@@ -207,6 +208,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
     pending_notifications: Vec<(String, Value)>,
     ki_activity: Arc<AgentPromptActivity>,
     update_auth_token_path: Option<String>,
+    capabilities: SharedCapabilities,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     // #3018: however this task ends — return, panic or a teardown abort — fail
@@ -660,8 +662,20 @@ pub(super) async fn agent_io_task<R: Runtime>(
         }
 
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
-            Ok((new_session, new_channel, reconnect_notifications, new_token_path)) => {
+            Ok((
+                new_session,
+                new_channel,
+                reconnect_notifications,
+                new_token_path,
+                new_capabilities,
+            )) => {
                 update_auth_token_path = new_token_path;
+                // #4440: the re-launched agent may be another binary (an update
+                // or a downgrade) — decide by what it reports now, before any
+                // session is re-attached or the agent is announced connected.
+                if let Some(fresh) = new_capabilities {
+                    refresh_agent_capabilities(&app_handle, &agent_id, &capabilities, fresh);
+                }
                 // Replace the current session handle with the new one.
                 // This drops the old (broken) session and keeps the new one alive
                 // for the next iteration of the outer loop.

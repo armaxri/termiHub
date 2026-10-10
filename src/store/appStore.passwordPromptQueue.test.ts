@@ -74,8 +74,8 @@ describe("appStore password prompt queue (#4312)", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
     useAppStore.getState().submitPassword("pw-2");
 
-    await expect(first).resolves.toBe("pw-1");
-    await expect(second).resolves.toBe("pw-2");
+    await expect(first).resolves.toEqual({ password: "pw-1", shouldSave: false });
+    await expect(second).resolves.toEqual({ password: "pw-2", shouldSave: false });
     expect(order).toEqual(["first", "second"]);
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     expect(useAppStore.getState().passwordPromptQueue).toHaveLength(0);
@@ -95,29 +95,49 @@ describe("appStore password prompt queue (#4312)", () => {
 
     useAppStore.getState().submitPassword("pw-2");
     await flush();
-    expect(second.value).toBe("pw-2");
+    expect(second.value).toEqual({ password: "pw-2", shouldSave: false });
   });
 
   it("reports each request's own Save choice when it settles", async () => {
     const store = useAppStore.getState();
     const first = store.requestPassword("first.example", "alice");
     const second = store.requestPassword("second.example", "bob");
-    const saves: boolean[] = [];
-    // Callers read the flag right after their await, as the connect flows do.
-    void first.then(() => saves.push(useAppStore.getState().passwordPromptShouldSave));
-    void second.then(() => saves.push(useAppStore.getState().passwordPromptShouldSave));
 
     useAppStore.getState().submitPassword("pw-1", true);
     await flush();
     useAppStore.getState().submitPassword("pw-2", false);
-    await flush();
 
-    expect(saves).toEqual([true, false]);
+    await expect(first).resolves.toEqual({ password: "pw-1", shouldSave: true });
+    await expect(second).resolves.toEqual({ password: "pw-2", shouldSave: false });
   });
 
-  it("applies each request's own allowSave and label", () => {
+  it("keeps each caller's own Save choice when it awaits something else first (#4474)", async () => {
     const store = useAppStore.getState();
-    void store.requestPassword("first.example", "alice", "", "password", {
+    // Each caller awaits its prompt, then awaits other work (a connect, a
+    // credential write) before acting on its Save choice — while the next
+    // queued prompt is answered with the opposite choice in between.
+    const caller = async (host: string) => {
+      const answer = await store.requestPassword(host, "u");
+      await flush();
+      await flush();
+      return answer?.shouldSave;
+    };
+    const first = caller("first.example");
+    const second = caller("second.example");
+    const third = caller("third.example");
+
+    useAppStore.getState().submitPassword("pw-1", true);
+    useAppStore.getState().submitPassword("pw-2", false);
+    useAppStore.getState().submitPassword("pw-3", true);
+
+    expect(await first).toBe(true);
+    expect(await second).toBe(false);
+    expect(await third).toBe(true);
+  });
+
+  it("applies each request's own allowSave and label", async () => {
+    const store = useAppStore.getState();
+    const first = store.requestPassword("first.example", "alice", "", "password", {
       allowSave: false,
       label: "Prod DB",
     });
@@ -127,7 +147,7 @@ describe("appStore password prompt queue (#4312)", () => {
     expect(useAppStore.getState().passwordPromptLabel).toBe("Prod DB");
     useAppStore.getState().submitPassword("x", true);
     // The first prompt's opt-out never reports a save.
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    await expect(first).resolves.toEqual({ password: "x", shouldSave: false });
     expect(useAppStore.getState().passwordPromptAllowSave).toBe(true);
     expect(useAppStore.getState().passwordPromptLabel).toBe("Jump host");
   });
@@ -159,8 +179,8 @@ describe("appStore password prompt queue (#4312)", () => {
     useAppStore.getState().submitPassword("pw-1");
     useAppStore.getState().submitPassword("pw-3");
     await flush();
-    expect(first.value).toBe("pw-1");
-    expect(third.value).toBe("pw-3");
+    expect(first.value).toEqual({ password: "pw-1", shouldSave: false });
+    expect(third.value).toEqual({ password: "pw-3", shouldSave: false });
   });
 
   it("aborting the prompt on screen advances to the next one", async () => {
@@ -180,7 +200,7 @@ describe("appStore password prompt queue (#4312)", () => {
 
     useAppStore.getState().submitPassword("pw-2");
     await flush();
-    expect(second.value).toBe("pw-2");
+    expect(second.value).toEqual({ password: "pw-2", shouldSave: false });
   });
 
   it("rejects immediately, without queueing, when the signal is already aborted", async () => {
@@ -201,7 +221,7 @@ describe("appStore password prompt queue (#4312)", () => {
     });
     useAppStore.getState().submitPassword("pw");
     controller.abort();
-    await expect(p).resolves.toBe("pw");
+    await expect(p).resolves.toEqual({ password: "pw", shouldSave: false });
   });
 
   it("leaves no orphaned promise across a mixed burst of requests", async () => {
@@ -221,7 +241,7 @@ describe("appStore password prompt queue (#4312)", () => {
     await flush();
 
     expect(tracked.every((t) => t.settled)).toBe(true);
-    expect(tracked.map((t) => (t.error ? "aborted" : t.value))).toEqual([
+    expect(tracked.map((t) => (t.error ? "aborted" : (t.value?.password ?? null)))).toEqual([
       "a",
       null,
       "c",

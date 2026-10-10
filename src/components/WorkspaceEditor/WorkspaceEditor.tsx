@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pencil, Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
@@ -19,7 +19,7 @@ import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
 import { ImportedItemsSection } from "./ImportedItemsSection";
 import { normalizeWorkspaceSettings } from "@/services/workspaceSettings";
 import { newId } from "@/services/transport/ids";
-import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
 import { isImeComposing } from "@/utils/imeComposition";
@@ -71,13 +71,36 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   const [settings, setSettings] = useState<WorkspaceSettings>({});
   // Carried through unchanged so editing a multi-window workspace keeps its windows.
   const [windows, setWindows] = useState<WorkspaceWindowDef[] | undefined>(undefined);
+  // The tab groups the editor was opened with (a new workspace's defaults, or
+  // the loaded ones), kept as data rather than a key so a connection rename can
+  // be followed in the baseline too (#4413).
+  const [baselineGroups, setBaselineGroups] = useState<WorkspaceTabGroupDef[]>(() => [
+    { name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT },
+  ]);
   // A saved connection renamed while the editor is open: re-point the draft's
   // tab refs, or saving would write the old id back over the backend's follow (#3603).
-  useFollowConnectionIdChanges(setTabGroupDefs, remapWorkspaceTabGroups);
-  // The values the editor was opened with (a new workspace's defaults, or the
-  // loaded one): the draft differing from them marks the tab dirty (UX2-004).
-  const [baselineKey, setBaselineKey] = useState(() =>
-    workspaceDraftKey("", "", [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }], {})
+  // The remap is not a user edit, so the baseline follows it as well: an
+  // unedited editor stays clean, and undoing an edit is clean again (#4413).
+  useConnectionIdChanges((remap) => {
+    setTabGroupDefs((prev) => remapWorkspaceTabGroups(prev, remap));
+    setBaselineGroups((prev) => remapWorkspaceTabGroups(prev, remap));
+  });
+  // The rest of the values the editor was opened with: the draft differing from
+  // the baseline marks the tab dirty (UX2-004).
+  const [baselineFields, setBaselineFields] = useState<{
+    name: string;
+    description: string;
+    settings: WorkspaceSettings;
+  }>({ name: "", description: "", settings: {} });
+  const baselineKey = useMemo(
+    () =>
+      workspaceDraftKey(
+        baselineFields.name,
+        baselineFields.description,
+        baselineGroups,
+        baselineFields.settings
+      ),
+    [baselineFields, baselineGroups]
   );
 
   useEffect(() => {
@@ -95,9 +118,12 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
           setWindows(ws.windows);
           setTabGroupDefs(groups);
           setActiveGroupIndex(0);
-          setBaselineKey(
-            workspaceDraftKey(ws.name, ws.description ?? "", groups, ws.settings ?? {})
-          );
+          setBaselineGroups(groups);
+          setBaselineFields({
+            name: ws.name,
+            description: ws.description ?? "",
+            settings: ws.settings ?? {},
+          });
         })
         .catch(() => {
           // Discard broken workspace; editor starts fresh

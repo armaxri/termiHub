@@ -109,6 +109,41 @@ describe("disconnectTerminal (UX-015)", () => {
     expect(liveTabIds()).toContain(tabId);
   });
 
+  it("clears the intentional-kill marker when the close rejects (FES2-003)", async () => {
+    closeTerminalMock.mockImplementationOnce(() => Promise.reject(new Error("backend down")));
+    const tabId = makeLiveTerminalTab("sess-1");
+
+    useAppStore.getState().disconnectTerminal(tabId);
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-1"]).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The session is still live, so the marker must not linger: a later genuine
+    // drop would otherwise consume it and be folded as a user kill, silently
+    // skipping auto-reconnect.
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-1"]).toBeUndefined();
+    expect(liveTabIds()).toContain(tabId);
+  });
+
+  it("clears the intentional-kill marker when the detach rejects (FES2-003)", async () => {
+    detachPersistentTabMock.mockImplementationOnce(() => Promise.reject(new Error("stuck")));
+    const tabId = makeLiveTerminalTab("sess-1", "persist-1");
+
+    useAppStore.getState().disconnectTerminal(tabId);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-1"]).toBeUndefined();
+  });
+
+  it("keeps the marker armed when the close succeeds", async () => {
+    const tabId = makeLiveTerminalTab("sess-1");
+
+    useAppStore.getState().disconnectTerminal(tabId);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The exit handler consumes it when the session actually exits.
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-1"]).toBe(true);
+  });
+
   it("is a no-op for a tab with no live session", () => {
     const noSessionTab = useAppStore
       .getState()
