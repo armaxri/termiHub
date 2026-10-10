@@ -149,49 +149,18 @@ fn correct_password_logs_in_through_the_relay() {
 
 // ── Per-client-IP sub-cap and pre-login timeout (#4398) ──────────────────────
 
+/// The FTP limits derive the per-client sub-cap from the session cap (the
+/// derivation itself is tested in `client_limits`).
 #[test]
-fn per_client_cap_is_a_bounded_quarter_of_the_session_cap() {
-    assert_eq!(
-        per_client_session_cap(DEFAULT_MAX_CONCURRENT_FTP_SESSIONS),
-        8
-    );
-    assert_eq!(per_client_session_cap(100), 25);
-    assert_eq!(per_client_session_cap(9), 3);
-    assert_eq!(per_client_session_cap(8), 2);
-    // Never below the floor, never above the cap itself.
-    assert_eq!(per_client_session_cap(3), MIN_SESSIONS_PER_CLIENT);
-    assert_eq!(per_client_session_cap(2), 2);
-    assert_eq!(per_client_session_cap(1), 1);
-
+fn ftp_limits_derive_the_per_client_cap_from_the_session_cap() {
     let limits = FtpLimits::for_config(&super::tests::ftp_test_config(Path::new(".")));
     assert_eq!(limits.session_cap, DEFAULT_MAX_CONCURRENT_FTP_SESSIONS);
     assert_eq!(limits.per_client_cap, 8);
+    assert_eq!(
+        limits.per_client_cap,
+        per_client_cap(DEFAULT_MAX_CONCURRENT_FTP_SESSIONS)
+    );
     assert_eq!(limits.prelogin_timeout, Duration::from_secs(30));
-}
-
-/// The per-IP counter only tracks IPs that hold a session, so it is bounded
-/// by the session cap, and an IPv4-mapped address counts as its IPv4 address.
-#[test]
-fn client_session_counter_is_bounded_and_released_on_drop() {
-    let clients = ClientSessions::new(2);
-    let a: IpAddr = "192.0.2.1".parse().expect("ip");
-    let a_mapped: IpAddr = "::ffff:192.0.2.1".parse().expect("ip");
-    let b: IpAddr = "192.0.2.2".parse().expect("ip");
-
-    let first = clients.try_acquire(a).expect("first slot");
-    let second = clients.try_acquire(a_mapped).expect("second slot");
-    assert!(clients.try_acquire(a).is_none(), "sub-cap reached");
-    let other = clients
-        .try_acquire(b)
-        .expect("another client is unaffected");
-    assert_eq!(clients.held(a), 2);
-    assert_eq!(clients.tracked(), 2);
-
-    drop(first);
-    assert_eq!(clients.held(a), 1);
-    let again = clients.try_acquire(a).expect("a released slot is reusable");
-    drop((second, again, other));
-    assert_eq!(clients.tracked(), 0, "idle clients leave no entry behind");
 }
 
 /// Regression for #4398: one client IP opening sub-cap + 1 connections gets
