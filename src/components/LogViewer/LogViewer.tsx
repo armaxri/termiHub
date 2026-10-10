@@ -11,12 +11,12 @@ import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import {
   clearFrontendLogHistory,
-  fireAndForget,
   frontendError,
   frontendWarn,
   onFrontendLog,
 } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { subscribeGuarded } from "@/hooks/useTauriListener";
 import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
@@ -114,16 +114,18 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         frontendWarn("log_viewer", `loading buffered backend logs failed: ${errorMessage(err)}`);
       });
 
-    const unlistenPromise = onLogEntry((entry) => {
-      if (!isOwnEcho(entry)) addEntry(entry);
-    });
+    const unsubBackend = subscribeGuarded(
+      () =>
+        onLogEntry((entry) => {
+          if (!isOwnEcho(entry)) addEntry(entry);
+        }),
+      "log_viewer",
+      "backend log events"
+    );
 
     return () => {
       cancelled = true;
-      fireAndForget(
-        unlistenPromise.then((unlisten) => unlisten()),
-        "unsubscribe log viewer from backend log events"
-      );
+      unsubBackend();
       unsubFrontend();
     };
   }, []);

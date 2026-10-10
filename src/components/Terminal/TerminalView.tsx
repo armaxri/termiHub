@@ -11,7 +11,7 @@ import {
   Radio,
   ScrollText,
 } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
   useActivePanelId,
@@ -76,20 +76,11 @@ export function TerminalView() {
   // session-lost, reconnect, or a clean end after a user Disconnect/Shutdown
   // (#4309). (The `remote-state-change` listener was removed: no backend code
   // emits it — direct-session drops surface via `terminal-exit`, #4344.)
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let disposed = false;
-    void listen<AgentStateChangePayload>(TAURI_EVENT.agentStateChange, (event) =>
-      handleAgentStateChange(event.payload)
-    ).then((fn) => {
-      if (disposed) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
+  useTauriListener<AgentStateChangePayload>(
+    TAURI_EVENT.agentStateChange,
+    handleAgentStateChange,
+    "terminal_view"
+  );
 
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
