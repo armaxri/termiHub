@@ -29,6 +29,15 @@ vi.mock("./Tab", () => ({
   ),
 }));
 
+// Wrap the shared single-tab close guard so the tests can assert the tab X
+// routes through it (the same helper the close-tab shortcut uses, #4410).
+const { routeDirtyTabCloseSpy } = vi.hoisted(() => ({ routeDirtyTabCloseSpy: vi.fn() }));
+vi.mock("@/utils/tabCloseGuard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/tabCloseGuard")>();
+  routeDirtyTabCloseSpy.mockImplementation(actual.routeDirtyTabClose);
+  return { ...actual, routeDirtyTabClose: routeDirtyTabCloseSpy };
+});
+
 vi.mock("./ColorPickerDialog", () => ({
   ColorPickerDialog: () => null,
 }));
@@ -267,5 +276,23 @@ describe("TabBar — unsaved-changes fallback dialog (shared Modal, no window.co
 
     expect(closeTab).not.toHaveBeenCalled();
     expect(document.querySelector(DIALOG)).toBeNull();
+  });
+});
+
+describe("TabBar — shared single-tab close guard (#4410)", () => {
+  it("routes the tab X through routeDirtyTabClose", async () => {
+    const closeTab = vi.fn();
+    useAppStore.setState({ closeTab });
+    await render([makeEditorTab()]);
+    routeDirtyTabCloseSpy.mockClear();
+
+    act(() => {
+      (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();
+    });
+
+    expect(routeDirtyTabCloseSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: TAB_ID, contentType: "editor" }),
+      PANEL_ID
+    );
   });
 });
