@@ -39,7 +39,7 @@
 //!   that *is* showing the dialog waits for the user, however long that takes.
 //! * **OS shutdown / logout.** These never wait on this flow. On macOS they
 //!   arrive as `-[NSApp terminate:]` driven by a quit Apple Event that carries a
-//!   `kAEQuitReason`; [`decide_should_terminate`] lets them terminate at once
+//!   `kAEQuitReason`; `decide_should_terminate` lets them terminate at once
 //!   (`RunEvent::Exit`). On Windows and Linux the session manager closes the
 //!   windows itself and bounds any app that holds a close open. Either way
 //!   shutdown proceeds without waiting on a dialog; the synchronous part of the
@@ -136,8 +136,8 @@ pub fn decide_exit_request(
 /// carries: logout, restart and shutdown, with or without their confirmation
 /// dialog. Any non-zero reason counts as system-initiated (see
 /// [`is_system_quit_reason`]); these are listed for documentation and tests.
-#[cfg(any(target_os = "macos", test))]
-pub const SYSTEM_QUIT_REASONS: [u32; 6] = [
+#[cfg(test)]
+const SYSTEM_QUIT_REASONS: [u32; 6] = [
     u32::from_be_bytes(*b"logo"), // kAELogOut
     u32::from_be_bytes(*b"rlgo"), // kAEReallyLogOut
     u32::from_be_bytes(*b"rrst"), // kAEShowRestartDialog

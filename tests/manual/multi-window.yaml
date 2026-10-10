@@ -69,7 +69,7 @@ tests:
     verification: manual
     tags: [os-native]
 
-  - id: MT-WIN-03b
+  - id: MT-WIN-04
     release_gate: true
     manual_reason: "The Dock menu, AppleScript quit and logout are OS-native; the bridge cannot drive them"
     name: "macOS — Dock Quit and AppleScript quit ask before quitting; logout is not blocked"
@@ -80,13 +80,13 @@ tests:
     instructions:
       - "Open one local shell tab and an editor tab with an unsaved change"
       - "Right-click the termiHub Dock icon and choose Quit, then click Cancel"
-      - "In Terminal.app run: osascript -e 'quit app \"termiHub\"', then click Cancel"
+      - 'In Terminal.app run: osascript -e ''quit app "termiHub"'', then click Cancel'
       - 'Run the osascript command again and click "Quit & end sessions"'
       - "Relaunch, open a local shell tab and an unsaved editor again, then choose Apple menu > Log Out and confirm"
     expected:
       - 'The Dock Quit opens the same "Quit termiHub?" dialog as Cmd+Q; after Cancel the app and the shell keep running'
       - "The osascript quit opens the same dialog; after Cancel the app keeps running"
       - "Confirming the dialog quits the app"
-      - "Log Out proceeds without waiting on a termiHub dialog and termiHub is gone after logging back in (no \"termiHub cancelled logout\" message)"
+      - 'Log Out proceeds without waiting on a termiHub dialog and termiHub is gone after logging back in (no "termiHub cancelled logout" message)'
     verification: manual
     tags: [os-native]
