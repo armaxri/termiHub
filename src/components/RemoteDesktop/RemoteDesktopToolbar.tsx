@@ -13,7 +13,7 @@ import { Button } from "@/components/ui";
 import type { MonitorRect, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { monitorLabel } from "./monitorLayout";
-import { releaseChordLabel } from "./releaseChord";
+import { useReleaseChordLabel } from "./releaseChord";
 
 interface RemoteDesktopToolbarProps {
   /** Host label (badge). */
@@ -88,6 +88,7 @@ export function RemoteDesktopToolbar({
   filesOpen = false,
   onToggleFiles,
 }: RemoteDesktopToolbarProps) {
+  const releaseChord = useReleaseChordLabel();
   return (
     <div className="rd-toolbar" data-testid="remote-desktop-toolbar">
       <span className="rd-toolbar__host">
@@ -96,10 +97,10 @@ export function RemoteDesktopToolbar({
       </span>
       <span
         className="rd-toolbar__hint"
-        title={`Press ${releaseChordLabel()} to return keyboard focus to termiHub`}
+        title={`Press ${releaseChord} to return keyboard focus to termiHub`}
         data-testid="remote-desktop-release-hint"
       >
-        <kbd>{releaseChordLabel()}</kbd> release keyboard
+        <kbd>{releaseChord}</kbd> release keyboard
       </span>
       {resolution && (
         <span className="rd-toolbar__res">
