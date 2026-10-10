@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { RefreshCw } from "lucide-react";
 import { Spinner } from "./Spinner";
 
 let container: HTMLDivElement;
@@ -72,5 +73,14 @@ describe("Spinner", () => {
     expect(el).toBeTruthy();
     expect(el.classList.contains("my-spin")).toBe(true);
     expect(el.classList.contains("ui-spinner")).toBe(true);
+  });
+
+  it("spins a custom glyph via the icon prop with the same motion wiring", () => {
+    render(<Spinner icon={RefreshCw} label={null} data-testid="spin" />);
+    const el = container.querySelector('[data-testid="spin"]') as SVGElement;
+    expect(el.classList.contains("lucide-refresh-cw")).toBe(true);
+    expect(el.classList.contains("lucide-loader-circle")).toBe(false);
+    expect(el.classList.contains("ui-spinner")).toBe(true);
+    expect(el.classList.contains("motion-essential-spinner")).toBe(true);
   });
 });

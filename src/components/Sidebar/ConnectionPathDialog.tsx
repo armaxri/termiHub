@@ -5,12 +5,11 @@ import {
   User,
   Server,
   MonitorDot,
-  Loader2,
   CheckCircle2,
   XCircle,
   Circle,
 } from "lucide-react";
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, Spinner } from "@/components/ui";
 import { SavedConnection } from "@/types/connection";
 import { getJumpHosts } from "@/utils/jumpHost";
 import { readConfigString } from "@/utils/connectionConfigFields";
@@ -37,18 +36,19 @@ interface PathNode {
 /** A node's live probe status; `pending` is the initial (not-yet-probed) state. */
 type NodeStatus = "pending" | HopProbeStatus;
 
-/** Pick the status indicator icon + spin flag for a node status. */
-function statusIcon(status: NodeStatus): { Icon: typeof User; spin: boolean } {
+/**
+ * The settled status icon for a node status. `connecting` has no icon here: it
+ * renders the shared {@link Spinner} instead.
+ */
+function statusIcon(status: Exclude<NodeStatus, "connecting">): typeof User {
   switch (status) {
-    case "connecting":
-      return { Icon: Loader2, spin: true };
     case "connected":
-      return { Icon: CheckCircle2, spin: false };
+      return CheckCircle2;
     case "failed":
-      return { Icon: XCircle, spin: false };
+      return XCircle;
     case "pending":
     default:
-      return { Icon: Circle, spin: false };
+      return Circle;
   }
 }
 
@@ -177,7 +177,8 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
           // to statuses[index - 1].
           const status: NodeStatus = index === 0 ? "connected" : (statuses[index - 1] ?? "pending");
           const message = index === 0 ? undefined : messages[index - 1];
-          const { Icon: StatusIcon, spin } = statusIcon(status);
+          const spin = status === "connecting";
+          const StatusIcon = status === "connecting" ? null : statusIcon(status);
           return (
             <li
               key={index}
@@ -194,13 +195,19 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                     Connecting…
                   </span>
                 )}
-                <StatusIcon
-                  size={15}
-                  className={`connection-path-dialog__status connection-path-dialog__status--${status}${
-                    spin ? " connection-path-dialog__status--spin motion-essential-spinner" : ""
-                  }`}
-                  aria-label={`status: ${status}`}
-                />
+                {StatusIcon === null ? (
+                  <Spinner
+                    size={15}
+                    label="status: connecting"
+                    className="connection-path-dialog__status connection-path-dialog__status--connecting"
+                  />
+                ) : (
+                  <StatusIcon
+                    size={15}
+                    className={`connection-path-dialog__status connection-path-dialog__status--${status}`}
+                    aria-label={`status: ${status}`}
+                  />
+                )}
               </div>
               {message && (
                 <span className="connection-path-dialog__error" role="alert">
