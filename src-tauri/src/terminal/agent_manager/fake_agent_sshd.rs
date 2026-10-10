@@ -56,16 +56,21 @@ pub(super) enum InitBehavior {
     /// Answer the first `initialize` as [`RICH_AGENT_VERSION`] (`outputFlow`,
     /// `fileRanges`, `hostFileAttributeOps`), every later one as a minimal
     /// [`MINIMAL_AGENT_VERSION`] agent — a downgrade across a reconnect (#4440).
+    /// Unix-only, like the transport-sever tests that drive it.
+    #[cfg(unix)]
     DowngradeOnReconnect,
     /// The reverse of [`InitBehavior::DowngradeOnReconnect`]: minimal first,
     /// rich on every reconnect — an update across a reconnect (#4440).
+    #[cfg(unix)]
     UpgradeOnReconnect,
 }
 
 /// The agent version the rich `initialize` answer reports (#4440).
+#[cfg(unix)]
 pub(super) const RICH_AGENT_VERSION: &str = "0.29.0-fake";
 
 /// The agent version the minimal `initialize` answer reports (#4440).
+#[cfg(unix)]
 pub(super) const MINIMAL_AGENT_VERSION: &str = "0.26.0-fake";
 
 /// One JSON-RPC request the fake agent received: `(method, params)`.
@@ -228,6 +233,7 @@ fn initialize_answer_with_output_flow(id: u64) -> String {
 
 /// An `initialize` answer from a protocol 0.29.0 agent advertising
 /// `outputFlow`, `fileRanges` and `hostFileAttributeOps` (#4440).
+#[cfg(unix)]
 fn initialize_answer_rich(id: u64) -> String {
     ndjson_line(&serde_json::json!({
         "jsonrpc": "2.0",
@@ -290,10 +296,14 @@ fn ndjson_line(value: &serde_json::Value) -> String {
 impl FakeAgentHandler {
     /// Note one `initialize` request and answer it as configured.
     fn on_initialize(&self, channel: ChannelId, id: u64, session: &mut Session) {
-        let first = self.inits.fetch_add(1, Ordering::SeqCst) == 0;
+        self.inits.fetch_add(1, Ordering::SeqCst);
         self.init_seen.notify_waiters();
         match self.behavior {
+            #[cfg(unix)]
             InitBehavior::DowngradeOnReconnect | InitBehavior::UpgradeOnReconnect => {
+                // The counter is shared by every connection, so the first
+                // connect's `initialize` is the one that brought it to 1.
+                let first = self.inits.load(Ordering::SeqCst) == 1;
                 let rich = first == (self.behavior == InitBehavior::DowngradeOnReconnect);
                 let answer = if rich {
                     initialize_answer_rich(id)
