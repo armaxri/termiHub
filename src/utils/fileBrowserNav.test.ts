@@ -137,6 +137,12 @@ describe("filterEntries", () => {
   it("matches the readme regardless of case", () => {
     expect(filterEntries(entries, "readme").map((e) => e.name)).toEqual(["README.md"]);
   });
+
+  it("matches diacritic-insensitively (#4582)", () => {
+    const named = [entry("Müller.txt"), entry("notes.md")];
+    expect(filterEntries(named, "muller").map((e) => e.name)).toEqual(["Müller.txt"]);
+    expect(filterEntries(named, "  MÜLL ").map((e) => e.name)).toEqual(["Müller.txt"]);
+  });
 });
 
 describe("filterHiddenEntries", () => {

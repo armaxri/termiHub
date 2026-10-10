@@ -4,7 +4,12 @@ import { createRoot, Root } from "react-dom/client";
 import type { SettingsField } from "@/types/schema";
 import type { DockerContainerInfo } from "@/services/api";
 import { listAgentDockerContainers, listDockerContainers } from "@/services/api";
-import { DynamicField, type ContainerContext } from "./DynamicField";
+import {
+  DynamicField,
+  containerMatches,
+  filterComposeServiceGroups,
+  type ContainerContext,
+} from "./DynamicField";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("@/services/api", () => ({
@@ -356,5 +361,34 @@ describe("DynamicField dockerContainer picker in Compose-service mode (#3784)", 
   it("asks for project/service when listing is unavailable", async () => {
     await renderService("", vi.fn(), { listingEnabled: false });
     expect(q("field-composeService-listing-unavailable")?.textContent).toContain("project/service");
+  });
+});
+
+describe("dockerContainer picker filters (#4582)", () => {
+  it("matches name, image and compose fields diacritic-insensitively", () => {
+    const c = info("müller-db", true, { composeProject: "Café", composeService: "worker" });
+    expect(containerMatches(c, "muller")).toBe(true);
+    expect(containerMatches(c, "cafe")).toBe(true);
+    expect(containerMatches(c, "UBUNTU")).toBe(true);
+    expect(containerMatches(c, "WORK")).toBe(true);
+    expect(containerMatches(c, "")).toBe(true);
+    expect(containerMatches(c, "postgres")).toBe(false);
+  });
+
+  it("keeps the container ID a prefix match", () => {
+    const c = info("web", true, { id: "abc123def456" });
+    expect(containerMatches(c, "ABC1")).toBe(true);
+    expect(containerMatches(c, "def456")).toBe(false);
+  });
+
+  it("filters compose services diacritic-insensitively and drops empty groups", () => {
+    const groups = [
+      { project: "shop", services: [{ value: "shop/müller-api" }, { value: "shop/db" }] },
+      { project: "blog", services: [{ value: "blog/web" }] },
+    ];
+    expect(filterComposeServiceGroups(groups, "muller")).toEqual([
+      { project: "shop", services: [{ value: "shop/müller-api" }] },
+    ]);
+    expect(filterComposeServiceGroups(groups, "")).toEqual(groups);
   });
 });
