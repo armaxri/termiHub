@@ -12,8 +12,8 @@ evidence:
   - src/store/slices/terminalSessionStateSlice.ts:536
   - src/store/slices/terminalSessionStateSlice.ts:554
   - src/store/reconnectHelpers.ts:69
-status: open
-resolution: ""
+status: fixed
+resolution: "#4388 — the region reconnect observer skips tab ids not in this window's layout"
 audit: 2026-10
 commit: 663465d52
 relation: new
