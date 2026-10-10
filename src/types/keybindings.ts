@@ -12,7 +12,13 @@ export interface KeyCombo {
 }
 
 /** Categories for grouping shortcuts in the overlay and settings. */
-export type ShortcutCategory = "general" | "clipboard" | "terminal" | "navigation" | "tab-groups";
+export type ShortcutCategory =
+  | "general"
+  | "clipboard"
+  | "terminal"
+  | "navigation"
+  | "tab-groups"
+  | "remote-desktop";
 
 /**
  * Where an action is allowed to fire, relative to the active tab's content.
@@ -23,8 +29,11 @@ export type ShortcutCategory = "general" | "clipboard" | "terminal" | "navigatio
  * - `editor-delegated` — when an editor or input surface is focused the global
  *   handler steps aside so the focused widget receives the key (copy, paste,
  *   select-all, …); it may still fire in non-editor contexts.
+ * - `remote-desktop` — never fires through the global shortcut engine; the
+ *   focused remote-desktop canvas reads the binding directly (the keyboard
+ *   release chord, #4524), because the canvas swallows every key first.
  */
-export type ShortcutScope = "global" | "terminal" | "editor-delegated";
+export type ShortcutScope = "global" | "terminal" | "editor-delegated" | "remote-desktop";
 
 /** A default keybinding definition with platform-specific defaults. */
 export interface KeyBinding {
@@ -45,6 +54,12 @@ export interface KeyBinding {
    * Defaults to `"global"` when omitted.
    */
   scope?: ShortcutScope;
+  /**
+   * The binding is a modifier-only chord (e.g. Ctrl+Alt+Shift, stored with an
+   * empty `key`) rather than key + modifiers. The recorder then captures the
+   * held modifiers and requires at least two of them (#4524).
+   */
+  modifierOnly?: boolean;
 }
 
 /** A user override for a keybinding. */

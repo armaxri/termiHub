@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useId } from "react";
 import { MonitorX, RotateCcw, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { getComposedLayout } from "@/store/layoutHelpers";
@@ -13,6 +13,12 @@ export interface TerminalPluginExitOverlayProps {
   tabId: string;
   /** Why the plugin process failed (from the tab's lifecycle region entry). */
   exit: PluginSessionExit;
+  /**
+   * Whether this tab is the active (visible) one. Moves focus to the first
+   * enabled action when the overlay appears (#4514); background tabs never
+   * steal focus.
+   */
+  isActive?: boolean;
 }
 
 /** The overlay heading per failure kind (concept "Failure modes"). */
@@ -36,7 +42,12 @@ function capitalize(text: string): string {
  * Plugin types have no auto-reconnect (PLG-004), so the user decides:
  * **Restart session** or **Close tab**. The scrollback stays below.
  */
-export function TerminalPluginExitOverlay({ tabId, exit }: TerminalPluginExitOverlayProps) {
+export function TerminalPluginExitOverlay({
+  tabId,
+  exit,
+  isActive = false,
+}: TerminalPluginExitOverlayProps) {
+  const reasonId = useId();
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const closeTab = useAppStore((s) => s.closeTab);
@@ -62,6 +73,8 @@ export function TerminalPluginExitOverlay({ tabId, exit }: TerminalPluginExitOve
   } else if (process && process.crashes > 0) {
     restartNote = ` termiHub restarted the plugin (${process.crashes} of ${process.maxRestarts}).`;
   }
+  const heading = HEADINGS[exit.kind] ?? HEADINGS.crashed;
+  const reason = capitalize(exit.message);
   const subheading = `"${exit.pluginName}" ran in its own sandboxed process, so termiHub and your other sessions are not affected.${restartNote}`;
 
   return (
@@ -88,8 +101,13 @@ export function TerminalPluginExitOverlay({ tabId, exit }: TerminalPluginExitOve
             className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
           />
         }
-        heading={HEADINGS[exit.kind] ?? HEADINGS.crashed}
+        heading={heading}
         subheading={subheading}
+        // A failure the user must act on (#4514): the reason lives in children.
+        announce="assertive"
+        announcement={`${heading}. ${reason}`}
+        describedBy={reasonId}
+        autoFocusPrimaryAction={isActive}
         actions={
           <>
             <Button
@@ -117,8 +135,8 @@ export function TerminalPluginExitOverlay({ tabId, exit }: TerminalPluginExitOve
           className="terminal-disconnect-overlay__error-box"
           data-testid="terminal-plugin-exit-reason"
         >
-          <span className="terminal-disconnect-overlay__error-text">
-            {capitalize(exit.message)}
+          <span id={reasonId} className="terminal-disconnect-overlay__error-text">
+            {reason}
           </span>
         </div>
       </ContentOverlay>

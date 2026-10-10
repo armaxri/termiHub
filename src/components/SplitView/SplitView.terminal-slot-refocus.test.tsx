@@ -165,3 +165,35 @@ describe("TerminalSlot refocus after the connection overlay closes (#4513)", () 
     expect(focusTerminal).toHaveBeenCalledWith(TAB);
   });
 });
+
+describe("TerminalSlot focus around the taken-over overlay (#4514)", () => {
+  it("leaves focus on Reclaim when an evicted tab becomes visible", () => {
+    life.evicted = true;
+    render(false);
+    render(true);
+    expect(focusTerminal).not.toHaveBeenCalled();
+    expect(document.activeElement?.getAttribute("data-testid")).toBe(
+      "terminal-evicted-reclaim-btn"
+    );
+  });
+
+  it("returns focus to the terminal after a reclaim when focus is unclaimed", () => {
+    life.evicted = true;
+    render();
+    focusTerminal.mockClear();
+    life.evicted = false;
+    render();
+    expect(focusTerminal).toHaveBeenCalledWith(TAB);
+  });
+
+  it("does not steal focus from a dialog after a reclaim", () => {
+    life.evicted = true;
+    render();
+    outside.focus();
+    focusTerminal.mockClear();
+    life.evicted = false;
+    render();
+    expect(focusTerminal).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(outside);
+  });
+});

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useId } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
@@ -24,6 +24,8 @@ interface AgentErrorTabProps {
 export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabProps) {
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
+  const detailsId = useId();
+  const reconnectErrorId = useId();
 
   const connectRemoteAgent = useAppStore((s) => s.connectRemoteAgent);
   const resolveAgentErrorTabs = useAppStore((s) => s.resolveAgentErrorTabs);
@@ -66,6 +68,12 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
     }
   }, [meta.agentId, connectRemoteAgent, resolveAgentErrorTabs]);
 
+  // A failure the user must act on (#4514): the reason lives in the details rows,
+  // and a failed manual reconnect changes the announcement so it is spoken too.
+  const announcement = reconnectError
+    ? `Reconnect failed. ${reconnectError}`
+    : `Agent connection unavailable. ${meta.agentName}, ${meta.definitionName}: ${meta.error}`;
+
   return (
     <div
       className={`agent-error-tab${isVisible ? "" : " agent-error-tab--hidden"}`}
@@ -74,8 +82,36 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
       <ContentOverlay
         icon={<WifiOff size={32} className="agent-error-tab__icon" />}
         heading="Agent connection unavailable"
+        announce="assertive"
+        announcement={announcement}
+        describedBy={reconnectError ? `${detailsId} ${reconnectErrorId}` : detailsId}
+        autoFocusPrimaryAction={isVisible}
+        actions={
+          <div className="agent-error-tab__actions">
+            <Button
+              variant="primary"
+              size="sm"
+              icon={
+                <RefreshCw
+                  size={14}
+                  className={isReconnecting ? "agent-error-tab__spin motion-essential-spinner" : ""}
+                />
+              }
+              onClick={() => void handleReconnect()}
+              disabled={isReconnecting}
+              data-testid="agent-error-reconnect-btn"
+            >
+              {isReconnecting ? "Reconnecting…" : "Reconnect"}
+            </Button>
+            {reconnectError && (
+              <span id={reconnectErrorId} className="agent-error-tab__reconnect-error">
+                {reconnectError}
+              </span>
+            )}
+          </div>
+        }
       >
-        <div className="agent-error-tab__details">
+        <div id={detailsId} className="agent-error-tab__details">
           <div className="agent-error-tab__row">
             <span className="agent-error-tab__label">Agent</span>
             <span className="agent-error-tab__value">{meta.agentName}</span>
@@ -90,27 +126,6 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
               {meta.error}
             </span>
           </div>
-        </div>
-
-        <div className="agent-error-tab__actions">
-          <Button
-            variant="primary"
-            size="sm"
-            icon={
-              <RefreshCw
-                size={14}
-                className={isReconnecting ? "agent-error-tab__spin motion-essential-spinner" : ""}
-              />
-            }
-            onClick={() => void handleReconnect()}
-            disabled={isReconnecting}
-            data-testid="agent-error-reconnect-btn"
-          >
-            {isReconnecting ? "Reconnecting…" : "Reconnect"}
-          </Button>
-          {reconnectError && (
-            <span className="agent-error-tab__reconnect-error">{reconnectError}</span>
-          )}
         </div>
       </ContentOverlay>
     </div>

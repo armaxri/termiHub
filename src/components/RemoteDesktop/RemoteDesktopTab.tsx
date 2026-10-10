@@ -347,6 +347,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         <TerminalWindowEvictedOverlay
           sessionId={session.sessionId}
           controllingWindowName={windowEviction.name}
+          isActive={isVisible}
         />
       )}
 
@@ -390,6 +391,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onCancel={session.cancelReconnect}
           onCancelConnect={session.cancelConnect}
           onReconnect={session.reconnect}
+          isActive={isVisible}
         />
       )}
 

@@ -16,6 +16,7 @@ const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   terminal: "Terminal",
   navigation: "Navigation / Split",
   "tab-groups": "Tab Groups",
+  "remote-desktop": "Remote Desktop",
 };
 
 const CATEGORY_ORDER: ShortcutCategory[] = [
@@ -24,6 +25,7 @@ const CATEGORY_ORDER: ShortcutCategory[] = [
   "terminal",
   "navigation",
   "tab-groups",
+  "remote-desktop",
 ];
 
 const CHEAT_SHEET_FILENAME = "termihub-shortcuts.html";

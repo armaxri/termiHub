@@ -13,7 +13,7 @@ import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./
 import type { Viewport } from "./monitorLayout";
 import { errorMessage } from "@/utils/errorMessage";
 import { LiveRegion } from "@/components/ui/LiveRegion";
-import { isReleaseChord, releaseChordLabel } from "./releaseChord";
+import { isReleaseChord, useReleaseChordLabel } from "./releaseChord";
 
 /** The part of a `width x height` framebuffer to show: `viewport`, clamped. */
 function sourceRegion(viewport: Viewport | null | undefined, width: number, height: number) {
@@ -152,7 +152,7 @@ export function RemoteDesktopCanvas({
   const [captured, setCaptured] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const descriptionId = useId();
-  const chord = releaseChordLabel();
+  const chord = useReleaseChordLabel();
 
   /** Ensure the offscreen framebuffer canvas exists at the given size. */
   const ensureFramebuffer = useCallback((w: number, h: number) => {
@@ -416,9 +416,11 @@ export function RemoteDesktopCanvas({
 
   const handleKey = useCallback(
     (e: React.KeyboardEvent, pressed: boolean) => {
-      // Escape hatch: Ctrl+Alt+Shift releases focus back to termiHub so global
-      // shortcuts and tab switching work again. Disclosed in the canvas's
-      // description, the on-focus hint and the toolbar (#4328).
+      // Escape hatch: the release chord (default Ctrl+Alt+Shift, rebindable,
+      // #4524) releases focus back to termiHub so global shortcuts and tab
+      // switching work again. Read live from the keybinding service, and
+      // disclosed in the canvas's description, the on-focus hint and the
+      // toolbar (#4328).
       if (pressed && isReleaseChord(e)) {
         releaseHeldKeys();
         canvasRef.current?.blur();

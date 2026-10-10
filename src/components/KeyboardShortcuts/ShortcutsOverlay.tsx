@@ -27,6 +27,7 @@ const SCOPE_HINTS: Record<ShortcutScope, string> = {
   global: "All tabs",
   terminal: "Terminal tabs",
   "editor-delegated": "Yields to editors & inputs",
+  "remote-desktop": "Focused remote desktop",
 };
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
@@ -35,6 +36,7 @@ const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   terminal: "Terminal",
   navigation: "Navigation / Split",
   "tab-groups": "Tab Groups",
+  "remote-desktop": "Remote Desktop",
 };
 
 const CATEGORY_ORDER: ShortcutCategory[] = [
@@ -43,6 +45,7 @@ const CATEGORY_ORDER: ShortcutCategory[] = [
   "terminal",
   "navigation",
   "tab-groups",
+  "remote-desktop",
 ];
 
 interface ShortcutsOverlayProps {
