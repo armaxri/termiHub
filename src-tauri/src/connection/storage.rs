@@ -10,8 +10,8 @@ use super::tree::flatten_tree;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{
-    guard_not_newer, load_versioned, read_unknown_fields, recover_corrupt_store, LoadOutcome,
-    Salvage, VersionedStore,
+    guard_not_newer, load_versioned, read_unknown_fields, recover_corrupt_store,
+    release_unbacked_corrupt, LoadOutcome, Salvage, VersionedStore,
 };
 
 const FILE_NAME: &str = "connections.json";
@@ -67,6 +67,9 @@ impl ConnectionStorage {
         // the granular per-node recovery below.
         let detail = match load_versioned::<ConnectionStore>(&data) {
             LoadOutcome::Loaded { data: store, .. } => {
+                // The file parses again, so a guard armed by an earlier failed
+                // backup has nothing left to protect (#4466).
+                release_unbacked_corrupt(&self.file_path);
                 let (connections, folders) = flatten_tree(&store.children, None);
                 let mut flat = FlatConnectionStore {
                     connections,
@@ -1235,6 +1238,28 @@ mod tests {
         assert_eq!(fs::read_to_string(&backup).unwrap(), "earlier backup");
         let second = dir.path().join("connections.json.bak.1");
         assert_eq!(fs::read_to_string(second).unwrap(), "corrupt again!!!");
+        storage.save_flat(&empty_flat()).unwrap();
+    }
+
+    /// #4466: a clean load releases an unbacked-corrupt guard armed earlier
+    /// this session, so saves work again without a restart.
+    #[test]
+    fn clean_load_releases_unbacked_corrupt_guard() {
+        use crate::utils::migrate::{is_unbacked_corrupt, protect_unbacked_corrupt};
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        storage.save_flat(&empty_flat()).unwrap();
+
+        protect_unbacked_corrupt(&storage.file_path);
+        assert!(
+            storage.save_flat(&empty_flat()).is_err(),
+            "armed guard refuses"
+        );
+
+        storage.load_with_recovery().unwrap();
+
+        assert!(!is_unbacked_corrupt(&storage.file_path));
         storage.save_flat(&empty_flat()).unwrap();
     }
 }

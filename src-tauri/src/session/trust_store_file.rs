@@ -35,7 +35,10 @@
 //!   intact and every write to it is refused (checked again at write time, so a
 //!   newer build that wrote the file after this one opened it is honoured too).
 //!   A corrupt file is copied to a non-clobbering backup *before* anything may
-//!   overwrite it; if that backup cannot be made, writes are refused.
+//!   overwrite it, through the shared
+//!   [`backup_corrupt_file`](crate::utils::migrate::backup_corrupt_file) rule;
+//!   if that backup cannot be made, writes are refused and the shared
+//!   unbacked-corrupt save guard is armed (#4466).
 //! * **Salvage per entry.** A readable-but-invalid file keeps every valid
 //!   `host → fingerprint` pair and drops only the invalid parts, each reported
 //!   as a [`RecoveryWarning`]. Dropping an entry can only make a host prompt
@@ -57,15 +60,15 @@ use tracing::{error, warn};
 
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{
+    backup_corrupt_file, is_unbacked_corrupt, protect_unbacked_corrupt, release_unbacked_corrupt,
+};
 
 /// The trust-store on-disk format version this build reads and writes.
 pub const TRUST_STORE_FORMAT_VERSION: u32 = 1;
 
 /// Format version assumed when there is no sidecar (every pre-#2745 file).
 const ASSUMED_VERSION: u32 = 1;
-
-/// How many numbered backups of a corrupt file are kept before giving up.
-const MAX_BACKUPS: u32 = 100;
 
 /// The in-memory trust entries: `host:port` → trusted fingerprints.
 pub type TrustEntries = BTreeMap<String, Vec<String>>;
@@ -196,6 +199,9 @@ pub fn load(path: &Path, file_name: &str) -> LoadedTrustFile {
     if let Ok(value) = &parsed {
         if let Ok(entries) = serde_json::from_value::<TrustEntries>(value.clone()) {
             if entries_are_valid(&entries) {
+                // The file parses again, so a guard armed by an earlier failed
+                // backup has nothing left to protect.
+                release_unbacked_corrupt(path);
                 return LoadedTrustFile {
                     entries,
                     ..LoadedTrustFile::empty()
@@ -235,7 +241,7 @@ fn refused(file_name: &str, reason: String, message: &str) -> LoadedTrustFile {
 /// then salvage what `parsed` still holds, or start empty if it is not JSON.
 fn recover_corrupt(path: &Path, file_name: &str, parsed: Result<Value, String>) -> LoadedTrustFile {
     let mut out = LoadedTrustFile::empty();
-    let backup_note = match backup_corrupt(path) {
+    let backup_note = match backup_corrupt_file(path) {
         Ok(p) => format!(
             "The original was backed up to {}.",
             p.file_name().unwrap_or_default().to_string_lossy()
@@ -243,6 +249,10 @@ fn recover_corrupt(path: &Path, file_name: &str, parsed: Result<Value, String>) 
         Err(e) => {
             let reason = format!("{file_name} is corrupt and could not be backed up: {e}");
             error!("{reason}; refusing to overwrite it");
+            // ERR2-002: the live file is the only copy. Arm the shared save
+            // guard too, so every writer of this path refuses — not only the
+            // store instance holding `write_refused`.
+            protect_unbacked_corrupt(path);
             out.write_refused = Some(reason);
             "It could not be backed up, so it was left unchanged and changes will not be saved \
              over it."
@@ -340,45 +350,21 @@ fn salvage(value: &Value) -> (TrustEntries, Vec<String>) {
     (entries, dropped)
 }
 
-/// Copy a corrupt store to the first free `<file>.bak`, `<file>.bak.1`, …, so
-/// an earlier backup is never clobbered.
-fn backup_corrupt(path: &Path) -> std::io::Result<PathBuf> {
-    let name = path.file_name().unwrap_or_default().to_string_lossy();
-    for n in 0..MAX_BACKUPS {
-        let candidate = if n == 0 {
-            path.with_file_name(format!("{name}.bak"))
-        } else {
-            path.with_file_name(format!("{name}.bak.{n}"))
-        };
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(_) => {
-                if let Err(e) = fs::copy(path, &candidate) {
-                    let _ = fs::remove_file(&candidate);
-                    return Err(e);
-                }
-                return Ok(candidate);
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    Err(std::io::Error::other(format!(
-        "{MAX_BACKUPS} backups of {name} already exist"
-    )))
-}
-
 /// Write `entries` to `path` in the current format.
 ///
 /// Refuses (returns an error, writes nothing) when the file on disk is in a
-/// newer or unknown format — re-checked here on every write, not only at load.
+/// newer or unknown format — re-checked here on every write, not only at load —
+/// or when it is corrupt and its backup failed this session (the shared
+/// unbacked-corrupt guard).
 /// Records the format version in the sidecar before writing the document.
 pub fn persist(path: &Path, entries: &TrustEntries, file_name: &str) -> Result<(), PersistError> {
     if let Some(reason) = write_blocker(path, file_name) {
         return Err(PersistError::Refused(reason));
+    }
+    if is_unbacked_corrupt(path) {
+        return Err(PersistError::Refused(format!(
+            "{file_name} is corrupt and could not be backed up; refusing to overwrite the only copy"
+        )));
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| PersistError::Io(e.to_string()))?;
@@ -468,6 +454,79 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries.get("a:22").unwrap(), &vec!["k1", "k2"]);
         assert_eq!(dropped.len(), 5);
+    }
+
+    /// #4466: a corrupt file is backed up through the shared helper — first
+    /// free `<file>.bak`, then `<file>.bak.1`, never clobbering an earlier one.
+    #[test]
+    fn corrupt_file_is_backed_up_through_shared_helper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(NAME);
+
+        fs::write(&path, "{ not json").unwrap();
+        let loaded = load(&path, NAME);
+        assert!(loaded.entries.is_empty());
+        assert!(loaded.write_refused.is_none());
+        assert!(!is_unbacked_corrupt(&path));
+        let first = tmp.path().join(format!("{NAME}.bak"));
+        assert_eq!(fs::read_to_string(&first).unwrap(), "{ not json");
+        assert!(loaded.warnings[0].message.contains(&format!("{NAME}.bak")));
+
+        fs::write(&path, "second corruption").unwrap();
+        let loaded = load(&path, NAME);
+        assert!(loaded.write_refused.is_none());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "{ not json");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join(format!("{NAME}.bak.1"))).unwrap(),
+            "second corruption"
+        );
+    }
+
+    /// #4466: when the backup fails the shared save guard is armed, so no write
+    /// may overwrite the only copy; a later clean load releases it again.
+    #[cfg(unix)]
+    #[test]
+    fn failed_backup_arms_shared_guard_and_clean_load_releases_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("cfg");
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join(NAME);
+        fs::write(&path, r#"{"h:22":["SHA256:x"], "":["bad"]}"#).unwrap();
+
+        // A read-only directory: the backup slot cannot be created.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let loaded = load(&path, NAME);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(loaded.write_refused.is_some());
+        assert!(is_unbacked_corrupt(&path), "guard must be armed");
+        // Salvaged in memory, but the original is left untouched on disk.
+        assert_eq!(loaded.entries.get("h:22").unwrap(), &vec!["SHA256:x"]);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            r#"{"h:22":["SHA256:x"], "":["bad"]}"#
+        );
+        assert!(!dir.join(format!("{NAME}.bak")).exists());
+
+        // Even with the directory writable again, the shared guard refuses.
+        let err = persist(&path, &TrustEntries::new(), NAME).unwrap_err();
+        assert!(matches!(err, PersistError::Refused(_)));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            r#"{"h:22":["SHA256:x"], "":["bad"]}"#
+        );
+
+        // The user repairs the file: a clean load disarms the guard.
+        fs::write(&path, r#"{"h:22":["SHA256:x"]}"#).unwrap();
+        let loaded = load(&path, NAME);
+        assert!(loaded.warnings.is_empty());
+        assert!(
+            !is_unbacked_corrupt(&path),
+            "clean load must release the guard"
+        );
+        persist(&path, &loaded.entries, NAME).unwrap();
     }
 
     #[test]
