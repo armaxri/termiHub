@@ -1,7 +1,8 @@
 /**
  * An open workspace editor follows a saved connection's id change (#3603): the
  * draft's tab `connectionRef`s are re-pointed, so saving does not write the old
- * id back over the backend's follow of the saved workspace (#3596).
+ * id back over the backend's follow of the saved workspace (#3596). Following a
+ * rename is not a user edit, so it never marks an unedited editor dirty (#4413).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -12,6 +13,7 @@ import { setupConnectionsRegion } from "@/test/connectionsHarness";
 import { flushAsync } from "@/test/flushAsync";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 import { withTooltip } from "@/test/tooltip";
+import { typeInto } from "@/test/dirtyDismiss";
 import type { WorkspaceDefinition } from "@/types/workspace";
 import { WorkspaceEditor } from "./WorkspaceEditor";
 
@@ -74,7 +76,7 @@ describe("WorkspaceEditor — follows connection id changes (#3603)", () => {
     vi.clearAllMocks();
   });
 
-  it("saves the draft with the renamed connections' new ids", async () => {
+  async function renderEditor() {
     const events = installConnectionIdChangesHarness();
     act(() => {
       root.render(
@@ -84,6 +86,49 @@ describe("WorkspaceEditor — follows connection id changes (#3603)", () => {
       );
     });
     await flushAsync();
+    return events;
+  }
+
+  const isDirty = () => !!useAppStore.getState().editorDirtyTabs[TAB_ID];
+
+  it("stays clean when a referenced connection is renamed (#4413)", async () => {
+    const events = await renderEditor();
+    expect(isDirty()).toBe(false);
+
+    events.emit([{ oldId: "Work/web", newId: "Job/web" }]);
+    await flushAsync();
+
+    expect(isDirty()).toBe(false);
+  });
+
+  it("still turns dirty on a real edit after following a rename (#4413)", async () => {
+    const events = await renderEditor();
+    events.emit([{ oldId: "Work/web", newId: "Job/web" }]);
+    await flushAsync();
+
+    typeInto("workspace-name-input", "Ops 2");
+    expect(isDirty()).toBe(true);
+
+    // Undoing the edit returns to the (followed) baseline: clean again.
+    typeInto("workspace-name-input", "Ops");
+    expect(isDirty()).toBe(false);
+  });
+
+  it("an edited draft stays dirty across a rename and is clean once the edit is undone", async () => {
+    const events = await renderEditor();
+    typeInto("workspace-name-input", "Ops 2");
+    expect(isDirty()).toBe(true);
+
+    events.emit([{ oldId: "Work/db", newId: "Job/db" }]);
+    await flushAsync();
+    expect(isDirty()).toBe(true);
+
+    typeInto("workspace-name-input", "Ops");
+    expect(isDirty()).toBe(false);
+  });
+
+  it("saves the draft with the renamed connections' new ids", async () => {
+    const events = await renderEditor();
 
     // A folder rename moves both connections in one batch.
     events.emit([
