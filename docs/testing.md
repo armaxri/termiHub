@@ -1007,8 +1007,8 @@ Reproduce the Windows split locally with `CI_RUST_TESTS_SPLIT_SERIAL=1 scripts/i
 ## Coverage Goals
 
 Coverage is gated by a **fail-on-decrease ratchet** (see [Coverage ratchet](#coverage-ratchet)):
-the frontend, `core`, `agent`, and `src-tauri` line coverage may not drop below the committed
-baseline. The guideline levels below are targets to grow toward, not gates:
+the frontend, `core`, `agent`, `src-tauri`, `plugin-runner`, `plugin-api` and `rdp-sidecar`
+line coverage may not drop below the committed baseline. The guideline levels below are targets to grow toward, not gates:
 
 - **Rust Backend**: aim for high line coverage (guideline ~80%) — ratcheted per crate
 - **React Components**: aim for ~70% coverage — ratcheted, plus the vitest floors in `vitest.config.ts`
@@ -1019,7 +1019,10 @@ baseline. The guideline levels below are targets to grow toward, not gates:
 Run `./scripts/coverage.sh` (or `scripts\coverage.cmd`) for a **unified whole-app
 number**: it runs the frontend suite under vitest/v8, the Rust workspace under
 [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (`--workspace
---all-features`), merges both lcov tracefiles, and prints one repo-wide line/
+--all-features`), then the workspace-excluded RDP sidecar in a second pass
+(`--manifest-path rdp-sidecar/Cargo.toml`, filtered to `rdp-sidecar/src` by
+`scripts/internal/lcov-filter.mjs` so the core sources it compiles are not counted
+twice), merges the lcov tracefiles, and prints one repo-wide line/
 function/branch percentage plus a merged `coverage-unified/merged.lcov`. It then
 runs the [coverage ratchet](#coverage-ratchet) and exits non-zero on a drop. Install
 the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
@@ -1049,16 +1052,22 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
 ### Coverage ratchet
 
 `scripts/internal/coverage-ratchet.mjs` (called at the end of `coverage.sh`/`.cmd`) grades
-the **unit-test** line coverage of five components against
+the **unit-test** line coverage of these components against
 [`scripts/coverage-baseline.json`](../scripts/coverage-baseline.json):
 
-| Component   | Source files                                              |
-| ----------- | --------------------------------------------------------- |
-| `frontend`  | `src/**` (vitest lcov)                                    |
-| `core`      | `core/**`                                                 |
-| `agent`     | `agent/**`                                                |
-| `src-tauri` | `src-tauri/**`                                            |
-| `unified`   | every unit lcov record (also `plugin-api`, `vendor`, ...) |
+| Component       | Source files                                              |
+| --------------- | --------------------------------------------------------- |
+| `frontend`      | `src/**` (vitest lcov)                                    |
+| `core`          | `core/**`                                                 |
+| `agent`         | `agent/**`                                                |
+| `src-tauri`     | `src-tauri/**`                                            |
+| `plugin-runner` | `plugin-runner/**` (plugin sandbox, IPC, loader; #4341)   |
+| `plugin-api`    | `plugin-api/**` (the frozen plugin ABI; #4341)            |
+| `rdp-sidecar`   | `rdp-sidecar/**` minus `rdp-sidecar/vendor/**` (own pass) |
+| `unified`       | every unit lcov record (also `vendor`, `examples`, ...)   |
+
+A component with no baseline value for the platform is reported but not gated, so a new
+component starts gating once its baseline is recorded.
 
 - **Fail rule:** a component fails when its line % is more than `tolerance` (0.25 percentage
   points) below its baseline. Recent `develop` runs vary by at most ~0.02 pp on unchanged
@@ -1068,6 +1077,11 @@ the **unit-test** line coverage of five components against
   because `cfg`-gated Rust code makes the numbers OS-dependent. CI grades `linux`; the
   release check grades the machine it runs on. A platform with no baseline fails with the
   command that records one.
+- **What `plugin-runner` counts:** its own unit tests (including the session server's
+  teardown-order tests) and `plugin-runner/tests/runner_process.rs`, which drives the
+  instrumented runner binary. The runner that `core/tests/plugin_runner_*` spawn is built
+  into a private target dir and started with a scrubbed environment inside the OS sandbox,
+  so its process writes no profile and does not count.
 - **Not gated:** the nightly integration overlay (its availability and staleness vary run to
   run) and function/branch percentages (reported only).
 - **Raising the baseline (one command):** when coverage improves — the ratchet prints

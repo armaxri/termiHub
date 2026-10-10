@@ -11,8 +11,8 @@
 # Run from anywhere: ./scripts/coverage.sh
 #
 # BLOCKING RATCHET (#3740 — CI-011, TBE-007, TOOL-011): after reporting, the
-# per-component UNIT line coverage (frontend, core, agent, src-tauri, unified)
-# is compared with the committed per-platform baseline in
+# per-component UNIT line coverage (frontend, core, agent, src-tauri,
+# plugin-runner, plugin-api, rdp-sidecar, unified; #4341) is compared with the committed per-platform baseline in
 # scripts/coverage-baseline.json by scripts/internal/coverage-ratchet.mjs. A drop
 # of more than the baseline's tolerance fails the script (exit 1). The nightly
 # integration overlay below is reported but NOT gated (it varies run to run).
@@ -57,6 +57,8 @@ done
 OUT_DIR="coverage-unified"
 FRONTEND_LCOV="coverage/lcov.info"
 RUST_LCOV="$OUT_DIR/rust.lcov"
+SIDECAR_RAW_LCOV="$OUT_DIR/rdp-sidecar.raw.lcov"
+SIDECAR_LCOV="$OUT_DIR/rdp-sidecar.lcov"
 UNIT_LCOV="$OUT_DIR/unit.lcov"
 MERGED_LCOV="$OUT_DIR/merged.lcov"
 SUMMARY_FILE="$OUT_DIR/summary.txt"
@@ -95,7 +97,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Merge both lcov files into one and compute a single repo-wide number.
+# 2b. RDP sidecar coverage (#4341, TOOL2-003). rdp-sidecar is excluded from the
+#     workspace (its own Cargo.lock), so `--workspace` never instruments it.
+#     A second pass measures it; the filter keeps only its own sources, since
+#     the pass also reports its path dependencies (core, the vendored IronRDP
+#     forks) and core is already owned by the workspace report.
+echo "=== RDP sidecar coverage (cargo llvm-cov --manifest-path rdp-sidecar) ==="
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "  [dry-run] skipping: cargo llvm-cov --manifest-path rdp-sidecar/Cargo.toml --no-report"
+else
+    cargo llvm-cov --manifest-path rdp-sidecar/Cargo.toml --locked --no-report
+    node scripts/internal/llvm-cov-report.mjs "$SIDECAR_RAW_LCOV" 4 -- \
+        --manifest-path rdp-sidecar/Cargo.toml
+    node scripts/internal/lcov-filter.mjs --in "$SIDECAR_RAW_LCOV" --out "$SIDECAR_LCOV" \
+        --root "$PWD" --keep rdp-sidecar/ --drop rdp-sidecar/vendor/
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Merge the unit lcov files into one and compute a single repo-wide number.
 #    Both tools emit standard lcov, so a plain concatenation is a valid merged
 #    tracefile — each record keeps its own SF: path. We summarize with awk (no
 #    dependency on the `lcov`/`genhtml` binaries, which are not installed on all
@@ -104,6 +123,7 @@ echo "=== Merging lcov + computing unified number ==="
 : > "$UNIT_LCOV"
 FRONTEND_PRESENT=0
 RUST_PRESENT=0
+SIDECAR_PRESENT=0
 INTEGRATION_PRESENT=0
 HARNESS_PRESENT=0
 if [ -f "$FRONTEND_LCOV" ]; then
@@ -118,9 +138,15 @@ if [ -f "$RUST_LCOV" ]; then
 else
     echo "  note: no Rust lcov at $RUST_LCOV"
 fi
+if [ -f "$SIDECAR_LCOV" ]; then
+    cat "$SIDECAR_LCOV" >> "$UNIT_LCOV"
+    SIDECAR_PRESENT=1
+else
+    echo "  note: no RDP sidecar lcov at $SIDECAR_LCOV"
+fi
 
 if [ ! -s "$UNIT_LCOV" ]; then
-    echo "  no coverage data to summarize (both lcov files missing)." >&2
+    echo "  no coverage data to summarize (every unit lcov file missing)." >&2
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "  [dry-run] nothing to summarize — that is expected without a prior run."
         exit 0
@@ -128,11 +154,11 @@ if [ ! -s "$UNIT_LCOV" ]; then
     exit 1
 fi
 
-# The frontend and Rust unit reports never share a source file, so a plain
-# concatenation is already a valid merged tracefile. The integration lcovs DO
-# share files with the unit report, so each is merged per file instead (hits
-# summed, the unit report owning the denominator, stale files skipped), one
-# after the other onto the merged tracefile.
+# The frontend, Rust and (filtered) sidecar unit reports never share a source
+# file, so a plain concatenation is already a valid merged tracefile. The
+# integration lcovs DO share files with the unit report, so each is merged per
+# file instead (hits summed, the unit report owning the denominator, stale
+# files skipped), one after the other onto the merged tracefile.
 rm -f "$GAP_REPORT" "$RATCHET_REPORT"
 cp "$UNIT_LCOV" "$MERGED_LCOV"
 if { [ -n "$INTEGRATION_LCOV" ] && [ -s "$INTEGRATION_LCOV" ]; } ||
@@ -166,7 +192,7 @@ fi
 node scripts/internal/lcov-summary.mjs "$MERGED_LCOV" | tee "$SUMMARY_FILE"
 
 echo ""
-echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT integration=$INTEGRATION_PRESENT harness=$HARNESS_PRESENT"
+echo "Sources merged: frontend=$FRONTEND_PRESENT rust=$RUST_PRESENT rdp-sidecar=$SIDECAR_PRESENT integration=$INTEGRATION_PRESENT harness=$HARNESS_PRESENT"
 echo "Merged lcov:    $MERGED_LCOV"
 echo "Summary:        $SUMMARY_FILE"
 if [ "$INTEGRATION_PRESENT" -eq 1 ] || [ "$HARNESS_PRESENT" -eq 1 ]; then

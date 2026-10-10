@@ -287,6 +287,47 @@ impl PluginLibrary {
         // same library, whose ownership now transfers to the wrapper.
         Ok(unsafe { LoadedBackend::from_raw(backend) })
     }
+
+    /// Build a library handle for the runner's teardown-ordering tests
+    /// without a real plugin (TBE2-004, #4341).
+    ///
+    /// The `library` handle is the already-loaded process image (`dlopen(NULL)`
+    /// / the current module), which loads nothing new and runs no initializers.
+    /// The only observable effect on drop is `shutdown`. Never call
+    /// `create_backend_with_context` on it (it fails with a plugin error).
+    ///
+    /// Public rather than `#[cfg(test)]` because the tests that need it live in
+    /// the runner binary, which links this library built without `cfg(test)`.
+    ///
+    /// # Errors
+    ///
+    /// Only on Windows, when the handle to the current module cannot be taken.
+    #[doc(hidden)]
+    pub fn for_teardown_test(
+        info: LoadedPluginInfo,
+        shutdown: PluginShutdownFn,
+    ) -> Result<Self, libloading::Error> {
+        unsafe extern "C" fn unused_create_backend(
+            _config: *const PluginSessionConfig,
+            _output: PluginOutputSender,
+            _bridge: PluginHostBridge,
+            _out_backend: *mut PluginBackend,
+        ) -> termihub_plugin_api::PluginStatus {
+            termihub_plugin_api::PluginStatus::Other
+        }
+
+        #[cfg(unix)]
+        let library: Library = libloading::os::unix::Library::this().into();
+        #[cfg(windows)]
+        let library: Library = libloading::os::windows::Library::this()?.into();
+
+        Ok(Self {
+            info,
+            create_backend: unused_create_backend,
+            shutdown,
+            library,
+        })
+    }
 }
 
 #[cfg(feature = "runner")]
@@ -527,3 +568,6 @@ fn load_prepared(
         library,
     })
 }
+
+#[cfg(test)]
+mod tests;

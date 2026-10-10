@@ -23,7 +23,10 @@
 // daemon (agent/tests/common/daemon_reaper.rs). This retry stays as defense in
 // depth: any other process killed mid-exit would still truncate its profile.
 //
-// Usage: node scripts/internal/llvm-cov-report.mjs <output.lcov> [max-attempts]
+// Usage: node scripts/internal/llvm-cov-report.mjs <output.lcov> [max-attempts] [-- <report args>]
+//   Anything after `--` is passed to `cargo llvm-cov report` (e.g.
+//   `--manifest-path rdp-sidecar/Cargo.toml` for the workspace-excluded RDP
+//   sidecar, #4341).
 import { spawnSync } from "node:child_process";
 import { rmSync, existsSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
@@ -36,16 +39,30 @@ export function corruptProfraws(stderr) {
   return [...out];
 }
 
+/** Split argv into `{ output, attempts, extra }` (extra = args after `--`). */
+export function parseReportArgs(argv) {
+  const dash = argv.indexOf("--");
+  const own = dash === -1 ? argv : argv.slice(0, dash);
+  const extra = dash === -1 ? [] : argv.slice(dash + 1);
+  const [output, attempts] = own;
+  return { output, attempts, extra };
+}
+
+/** The `cargo` arguments of one report attempt. */
+export function reportCommand(output, extra = []) {
+  return ["llvm-cov", "report", ...extra, "--lcov", "--output-path", output];
+}
+
 function main(argv) {
-  const [output, attemptsArg] = argv;
+  const { output, attempts: attemptsArg, extra } = parseReportArgs(argv);
   if (!output) {
-    console.error("usage: llvm-cov-report.mjs <output.lcov> [max-attempts]");
+    console.error("usage: llvm-cov-report.mjs <output.lcov> [max-attempts] [-- <report args>]");
     return 2;
   }
   const maxAttempts = Number.parseInt(attemptsArg ?? "4", 10);
   const cargo = process.env.CARGO || "cargo";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = spawnSync(cargo, ["llvm-cov", "report", "--lcov", "--output-path", output], {
+    const res = spawnSync(cargo, reportCommand(output, extra), {
       encoding: "utf8",
       stdio: ["ignore", "inherit", "pipe"],
       shell: process.platform === "win32",

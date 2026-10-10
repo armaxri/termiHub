@@ -17,8 +17,8 @@ evidence:
   - plugin-runner/src/loader/mod.rs:265
   - core/tests/plugin_runner_e2e.rs:96
   - core/tests/plugin_runner_e2e.rs:98
-status: open
-resolution: ""
+status: fixed
+resolution: "#4341 — runner teardown-order unit tests (stub library + recording backends) and a clean-exit (code 0) assertion after the e2e unload"
 audit: 2026-10
 commit: 663465d52
 relation: regression

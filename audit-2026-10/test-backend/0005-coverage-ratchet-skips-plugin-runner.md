@@ -16,8 +16,8 @@ evidence:
   - plugin-runner/src/runner/shim.rs:1
   - plugin-runner/src/loader/mod.rs:336
   - core/tests/plugin_runner_support/mod.rs:42
-status: open
-resolution: ""
+status: fixed
+resolution: "#4341 — plugin-runner is a gated coverage-ratchet component with seeded baselines, plus teardown and loader error-path unit tests"
 audit: 2026-10
 commit: 663465d52
 relation: new
