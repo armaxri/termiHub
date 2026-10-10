@@ -26,7 +26,6 @@
 //! plugin verbatim at connect time.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use termihub_plugin_api::PluginError;
@@ -41,8 +40,7 @@ use crate::monitoring::MonitoringProvider;
 
 use super::capabilities::ConnectionPolicy;
 use super::sandbox::{BridgeGrant, SandboxedPluginHandle, SandboxedSession};
-use super::security::{PermissionError, PermissionSet};
-use super::PluginPermission;
+use super::security::PermissionSet;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
 use tokio_util::sync::CancellationToken;

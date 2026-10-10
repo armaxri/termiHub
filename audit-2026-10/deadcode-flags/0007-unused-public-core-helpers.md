@@ -22,8 +22,8 @@ evidence:
   - core/src/service/registry.rs:108
   - core/src/monitoring/http_monitor.rs:441
   - core/src/monitoring/process.rs:152
-status: open
-resolution: ""
+status: fixed
+resolution: "#4364 — deleted the ten unused public helpers + tests; permission checks stay on the single PermissionSet path"
 audit: 2026-10
 commit: 663465d52
 relation: new
