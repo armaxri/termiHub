@@ -537,9 +537,10 @@ jobs:
   # or private intra-doc links, so they accumulated silently (a link to a private
   # item, a feature-gated path, a TS-only type). This builds the first-party
   # crates' docs with `-D warnings` so a new broken link fails the run. The
-  # default, the --all-features, and each single-feature build of termihub-core
-  # are checked: its backends are feature-gated, so each build sees a different
-  # set of items (#4561: links that only resolved under --all-features).
+  # default and the --all-features build of termihub-core are checked on every
+  # run; each single-feature build runs post-merge only (slim PR lane): its
+  # backends are feature-gated, so each build sees a different set of items
+  # (#4561: links that only resolved under --all-features).
   #
   # On a PR it runs whenever workspace Rust changes, code or comment-only
   # (`rustdoc` area, #3903): #3899 showed a broken intra-doc link reaching
@@ -598,8 +599,17 @@ jobs:
           echo "::group::cargo doc termihub, termihub-core, termihub-agent (--all-features)"
           cargo doc --no-deps --all-features -p termihub -p termihub-core -p termihub-agent
           echo "::endgroup::"
-          # Each opt-in core feature alone (#4561): a link to an item gated behind a
-          # different feature resolves under --all-features but breaks in isolation.
+
+      # Each opt-in core feature alone (#4561): a link to an item gated behind a
+      # different feature resolves under --all-features but breaks in isolation.
+      # Post-merge only (push/schedule): 24 doc builds are heavy, and the slim PR
+      # lane decision (2026-09-25) keeps heavy jobs off pull requests.
+      - name: Build core docs per opt-in feature with -D warnings
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          set -euo pipefail
           FEATURES=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "termihub-core")
                      | .features | keys[] | select(. != "default")')
