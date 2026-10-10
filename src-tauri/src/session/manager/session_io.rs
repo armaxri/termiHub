@@ -47,7 +47,10 @@ pub(in crate::session) struct SessionIo {
 impl SessionIo {
     /// Take an I/O handle on `connection`. `None` once teardown holds the gate
     /// (the session is being closed), which callers report as "session gone".
-    pub(super) fn handle(&self, connection: &Arc<dyn ConnectionType>) -> Option<IoHandle> {
+    pub(in crate::session) fn handle(
+        &self,
+        connection: &Arc<dyn ConnectionType>,
+    ) -> Option<IoHandle> {
         let gate = self.gate.clone().try_read_owned().ok()?;
         Some(IoHandle {
             connection: connection.clone(),
@@ -69,11 +72,17 @@ impl SessionIo {
 
 /// A shared connection handle usable outside the session-map lock.
 ///
+/// Taken for blocking writes / resizes and for file-browser calls
+/// ([`FileOps`](crate::session::file_ops), #4393), so a slow SFTP / FTP /
+/// `docker exec` / agent round-trip neither holds the map lock nor outlives
+/// the connection: close waits for (and defers its disconnect behind) every
+/// handle still in flight.
+///
 /// Field order matters: the connection clone drops before the gate guard, so
 /// once teardown acquires the gate no in-flight handle still shares the
 /// connection.
-pub(super) struct IoHandle {
-    pub(super) connection: Arc<dyn ConnectionType>,
+pub(in crate::session) struct IoHandle {
+    pub(in crate::session) connection: Arc<dyn ConnectionType>,
     _gate: OwnedRwLockReadGuard<()>,
 }
 
