@@ -10,6 +10,12 @@
 //! `busy`, and closed without being served. Admitted connections are served by
 //! hyper's HTTP/1 implementation with a header-read timeout, so an idle or
 //! slow-header connection cannot hold its slot indefinitely.
+//!
+//! On top of the server-wide cap, one client IP may hold at most
+//! [`HttpLimits::per_client_cap`] connections at a time (#4686), the same
+//! sub-cap the FTP server enforces (#4398): otherwise a single client could
+//! occupy every slot and lock everyone else out. A connection over its IP's
+//! sub-cap is refused the same way, with a per-client detail in the log.
 
 use std::io;
 use std::net::SocketAddr;
@@ -27,6 +33,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tower::ServiceExt as _;
 
 use super::super::activity::AccessRecord;
+use super::super::client_limits::{per_client_cap, ClientConnections, ClientSlot};
 use super::super::config::{AtomicServerStats, EmbeddedServerConfig};
 use super::super::shutdown::ShutdownSignal;
 
@@ -42,7 +49,8 @@ const CONNECTION_DRAIN: Duration = Duration::from_secs(3);
 /// failure (such as running out of file descriptors) does not spin the loop.
 const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
 
-/// Response written to a connection refused because every slot is taken.
+/// Response written to a connection refused because every slot is taken or
+/// its client IP already holds its share of them.
 const REFUSED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\n\
 Content-Type: text/plain; charset=utf-8\r\n\
 Content-Length: 25\r\n\
@@ -56,23 +64,29 @@ Connection: close\r\n\
 pub(super) struct HttpLimits {
     /// Server-wide concurrent-connection cap (`max_concurrent_sessions`).
     pub connection_cap: usize,
+    /// Concurrent connections one client IP may hold (#4686), derived from
+    /// the cap by [`per_client_cap`].
+    pub per_client_cap: usize,
     /// See [`HEADER_READ_TIMEOUT`].
     pub header_read_timeout: Duration,
 }
 
 impl HttpLimits {
-    /// The limits for `config`: its session cap (or the default) and the
-    /// built-in header-read timeout.
+    /// The limits for `config`: its session cap (or the default), the derived
+    /// per-client sub-cap and the built-in header-read timeout.
     pub(super) fn for_config(config: &EmbeddedServerConfig) -> Self {
+        let connection_cap = config.session_cap();
         Self {
-            connection_cap: config.session_cap(),
+            connection_cap,
+            per_client_cap: per_client_cap(connection_cap),
             header_read_timeout: HEADER_READ_TIMEOUT,
         }
     }
 }
 
 /// Serve `router` on `listener` until `shutdown` fires, admitting at most
-/// `limits.connection_cap` connections at a time (see the module docs).
+/// `limits.connection_cap` connections at a time, and at most
+/// `limits.per_client_cap` from one client IP (see the module docs).
 ///
 /// Each request carries the peer address as a [`ConnectInfo<SocketAddr>`]
 /// extension, exactly as `into_make_service_with_connect_info` would add it.
@@ -84,12 +98,13 @@ pub(super) async fn serve(
     shutdown: ShutdownSignal,
 ) {
     let slots = Arc::new(Semaphore::new(limits.connection_cap.max(1)));
+    let clients = ClientConnections::new(limits.per_client_cap);
     let mut connections = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) => {
-                    let Some(permit) = admit(peer, &slots, &stats) else {
+                    let Some(slot) = admit(peer, &slots, &clients, &stats) else {
                         refuse(stream);
                         continue;
                     };
@@ -98,7 +113,7 @@ pub(super) async fn serve(
                         peer,
                         router.clone(),
                         limits.header_read_timeout,
-                        permit,
+                        slot,
                         shutdown.clone(),
                     ));
                 }
@@ -133,21 +148,38 @@ pub(super) async fn serve(
     }
 }
 
+/// A connection's slots: one of the server-wide cap and one of its client
+/// IP's sub-cap, both held for the connection's whole lifetime.
+struct ConnectionSlot {
+    _global: OwnedSemaphorePermit,
+    _client: ClientSlot,
+}
+
 /// Take a connection slot for `peer`, or record the refusal and return `None`
-/// when every slot is taken.
+/// when every slot is taken or `peer`'s IP already holds its sub-cap.
 fn admit(
     peer: SocketAddr,
     slots: &Arc<Semaphore>,
+    clients: &Arc<ClientConnections>,
     stats: &AtomicServerStats,
-) -> Option<OwnedSemaphorePermit> {
-    if let Ok(permit) = Arc::clone(slots).try_acquire_owned() {
-        return Some(permit);
-    }
-    tracing::debug!(%peer, "HTTP connection refused: too many concurrent connections");
+) -> Option<ConnectionSlot> {
+    let detail = match Arc::clone(slots).try_acquire_owned() {
+        Ok(global) => match clients.try_acquire(peer.ip()) {
+            Some(client) => {
+                return Some(ConnectionSlot {
+                    _global: global,
+                    _client: client,
+                })
+            }
+            None => "too many concurrent connections from this client",
+        },
+        Err(_) => "too many concurrent connections",
+    };
+    tracing::debug!(%peer, detail, "HTTP connection refused");
     stats.activity.record(
         AccessRecord::new("CONNECT", "busy", false)
             .client(peer.ip().to_canonical())
-            .detail("too many concurrent connections"),
+            .detail(detail),
     );
     None
 }
@@ -171,10 +203,10 @@ async fn serve_connection(
     peer: SocketAddr,
     router: Router,
     header_read_timeout: Duration,
-    permit: OwnedSemaphorePermit,
+    slot: ConnectionSlot,
     shutdown: ShutdownSignal,
 ) {
-    let _permit = permit;
+    let _slot = slot;
     let service =
         TowerToHyperService::new(router.map_request(move |mut req: Request<Incoming>| {
             req.extensions_mut().insert(ConnectInfo(peer));

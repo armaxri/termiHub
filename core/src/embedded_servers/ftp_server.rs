@@ -12,14 +12,13 @@
 //! caps the control line, and forwards to one libunftp server per session that
 //! listens on loopback in PROXY protocol mode (#3996).
 
-use std::collections::HashMap;
 use std::fmt::{self, Debug, Display};
 use std::io;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 use std::time::{Duration, Instant};
 
@@ -38,6 +37,7 @@ use unftp_sbe_fs::Filesystem;
 
 use super::activity::{AccessRecord, ServerActivity, TransferGuard};
 use super::auth_guard::{secret_eq, LoginThrottle};
+use super::client_limits::{per_client_cap, ClientConnections, ClientSlot};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
 use super::ftp_relay::{BackendDialer, RelaySession, PRELOGIN_TIMEOUT};
 use super::service::BindSignal;
@@ -104,10 +104,6 @@ const REPLY_TOO_MANY_SESSIONS: &[u8] = b"421 Too many connections, try again lat
 const REPLY_TOO_MANY_CLIENT_SESSIONS: &[u8] =
     b"421 Too many connections from your address, try again later.\r\n";
 
-/// Smallest per-client-IP session sub-cap: an interactive client commonly
-/// opens a second control connection for a background transfer (#4398).
-pub(super) const MIN_SESSIONS_PER_CLIENT: usize = 2;
-
 /// Reply sent to a connection from a client locked out after failed logins.
 const REPLY_THROTTLED: &[u8] = b"421 Too many failed logins, try again later.\r\n";
 
@@ -117,17 +113,6 @@ const REPLY_THROTTLED: &[u8] = b"421 Too many failed logins, try again later.\r\
 /// unauthenticated connections can make the server hold.
 pub(super) fn session_cap(config: &EmbeddedServerConfig) -> usize {
     config.session_cap()
-}
-
-/// The per-client-IP session sub-cap for a server-wide cap of `session_cap`
-/// (#4398): a quarter of the cap, at least [`MIN_SESSIONS_PER_CLIENT`], and
-/// never more than the cap itself. One client IP can then not take every
-/// session slot and lock everyone else out.
-pub(super) fn per_client_session_cap(session_cap: usize) -> usize {
-    session_cap
-        .div_ceil(4)
-        .max(MIN_SESSIONS_PER_CLIENT)
-        .min(session_cap)
 }
 
 /// The connection limits the accept loop and the relay enforce.
@@ -148,78 +133,8 @@ impl FtpLimits {
         let session_cap = session_cap(config);
         Self {
             session_cap,
-            per_client_cap: per_client_session_cap(session_cap),
+            per_client_cap: per_client_cap(session_cap),
             prelogin_timeout: PRELOGIN_TIMEOUT,
-        }
-    }
-}
-
-/// Live session counts per client IP, bounded by the per-client sub-cap
-/// (#4398). An entry exists only while that IP holds a session, so the map
-/// never has more entries than the server-wide session cap.
-pub(super) struct ClientSessions {
-    per_client_cap: usize,
-    counts: Mutex<HashMap<IpAddr, usize>>,
-}
-
-impl ClientSessions {
-    pub(super) fn new(per_client_cap: usize) -> Arc<Self> {
-        Arc::new(Self {
-            per_client_cap: per_client_cap.max(1),
-            counts: Mutex::new(HashMap::new()),
-        })
-    }
-
-    fn counts(&self) -> std::sync::MutexGuard<'_, HashMap<IpAddr, usize>> {
-        // Every critical section is a single map update, so a poisoned lock
-        // still holds consistent counts.
-        self.counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// Take one of `ip`'s session slots, or `None` when it holds them all.
-    pub(super) fn try_acquire(self: &Arc<Self>, ip: IpAddr) -> Option<ClientSlot> {
-        let ip = ip.to_canonical();
-        let mut counts = self.counts();
-        let count = counts.entry(ip).or_insert(0);
-        if *count >= self.per_client_cap {
-            return None;
-        }
-        *count += 1;
-        Some(ClientSlot {
-            sessions: Arc::clone(self),
-            ip,
-        })
-    }
-
-    /// Sessions `ip` currently holds.
-    #[cfg(test)]
-    pub(super) fn held(&self, ip: IpAddr) -> usize {
-        self.counts().get(&ip.to_canonical()).copied().unwrap_or(0)
-    }
-
-    /// Client IPs currently tracked.
-    #[cfg(test)]
-    pub(super) fn tracked(&self) -> usize {
-        self.counts().len()
-    }
-}
-
-/// One client IP's hold on a session slot; released on drop.
-pub(super) struct ClientSlot {
-    sessions: Arc<ClientSessions>,
-    ip: IpAddr,
-}
-
-impl Drop for ClientSlot {
-    fn drop(&mut self) {
-        let mut counts = self.sessions.counts();
-        if let Some(count) = counts.get_mut(&self.ip) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                counts.remove(&self.ip);
-            }
         }
     }
 }
@@ -324,7 +239,7 @@ async fn run_ftp_server(
     tracing::info!(?local_addr, "FTP server listening (relay + libunftp)");
 
     let slots = Arc::new(tokio::sync::Semaphore::new(limits.session_cap));
-    let clients = ClientSessions::new(limits.per_client_cap);
+    let clients = ClientConnections::new(limits.per_client_cap);
     let config = Arc::new(config.clone());
     let mut sessions = tokio::task::JoinSet::new();
     loop {
@@ -392,7 +307,7 @@ fn admit(
     stream: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
     slots: &Arc<tokio::sync::Semaphore>,
-    clients: &Arc<ClientSessions>,
+    clients: &Arc<ClientConnections>,
     throttle: &LoginThrottle,
     stats: &AtomicServerStats,
 ) -> Option<(tokio::net::TcpStream, SessionSlot)> {
