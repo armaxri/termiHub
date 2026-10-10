@@ -164,12 +164,3 @@
   flex: 1;
   min-width: 0;
 }
-
-.log-viewer__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-disabled);
-  font-size: var(--font-size-sm);
-}

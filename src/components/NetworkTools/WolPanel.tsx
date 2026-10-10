@@ -1,6 +1,15 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, Tooltip, toast, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
+import {
+  Button,
+  Tooltip,
+  toast,
+  ConfirmDialog,
+  Field,
+  Input,
+  NumberInput,
+  EmptyState,
+} from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkWolSend,
@@ -207,7 +216,7 @@ export function WolPanel() {
       {/* Saved Devices */}
       <div className="network-panel__section-title">Saved Devices</div>
       {savedDevices.length === 0 && (
-        <div className="network-panel__placeholder">No saved devices</div>
+        <EmptyState variant="panel" title="No saved devices" data-testid="wol-devices-empty" />
       )}
       {savedDevices.map((device) => (
         <div key={device.id} className="wol-device-row">

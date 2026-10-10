@@ -6,7 +6,7 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { pluginConnectionTypeId } from "@/utils/pluginConnectionTypes";
 import type { PluginDetailMeta } from "@/types/terminal";
 import type { InstalledPlugin } from "@/types/plugin";
-import { Button, ConfirmDialog, StatusDot } from "@/components/ui";
+import { Button, ConfirmDialog, StatusDot, EmptyState } from "@/components/ui";
 import {
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
@@ -92,9 +92,11 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
   if (!plugin) {
     return (
       <div className="plugin-detail" data-testid="plugin-detail">
-        <div className="plugin-detail__empty" data-testid="plugin-detail-missing">
-          This plugin is no longer installed.
-        </div>
+        <EmptyState
+          variant="card"
+          title="This plugin is no longer installed."
+          data-testid="plugin-detail-missing"
+        />
       </div>
     );
   }

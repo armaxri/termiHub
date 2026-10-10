@@ -1,6 +1,6 @@
 import { useState, useMemo, useId, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
-import { Modal, SearchInput } from "@/components/ui";
+import { Modal, SearchInput, EmptyState } from "@/components/ui";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { WorkspaceTabDef } from "@/types/workspace";
@@ -289,22 +289,16 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
         </div>
 
         {!hasConnections && !hasAgents && (
-          <p
-            className="connection-picker__empty"
-            role="status"
+          <EmptyState
+            title="No connections match your search."
             data-testid="connection-picker-empty"
-          >
-            No connections match your search.
-          </p>
+          />
         )}
         {!hasConnections && connections.length > 0 && hasAgents && (
-          <p
-            className="connection-picker__empty"
-            role="status"
+          <EmptyState
+            title="No saved connections match your search."
             data-testid="connection-picker-empty"
-          >
-            No saved connections match your search.
-          </p>
+          />
         )}
       </div>
     </Modal>

@@ -25,10 +25,10 @@
   flex-shrink: 0;
 }
 
-.terminal-connection-overlay__icon--spin {
+/* Busy-state tone for the shared Spinner (which owns the rotation). */
+.terminal-connection-overlay__icon--busy {
   color: var(--accent-color);
   opacity: 1;
-  animation: th-spin 1s linear infinite;
 }
 
 .terminal-connection-overlay__elapsed {

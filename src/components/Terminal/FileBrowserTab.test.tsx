@@ -13,6 +13,7 @@ import { FileBrowserTab } from "./FileBrowserTab";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { getAllLeaves } from "@/utils/panelTree";
 import { layoutState } from "@/test/layoutState";
+import { checkA11y } from "@/test/axe";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("ftp-session-1")),
@@ -164,5 +165,71 @@ describe("FileBrowserTab", () => {
     expect(container.textContent).toContain("Invalid FTP settings: invalid type: null");
     expect(container.textContent).not.toContain("[object Object]");
     expect(container.querySelector('[data-testid="file-browser-tab-retry"]')).not.toBeNull();
+  });
+
+  describe("shared ContentOverlay phases (UISF2-006 / #4382)", () => {
+    function liveRegion(): HTMLElement | null {
+      return container.querySelector("[data-testid='content-overlay-live']");
+    }
+
+    it("connecting: shared Spinner + busy overlay announced through the live region", async () => {
+      // Never resolve, so the tab stays in its connecting phase.
+      mockedCreateTerminal.mockReturnValueOnce(new Promise<string>(() => {}));
+      const tabId = addFileBrowserTab();
+      await act(async () => {
+        root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+      });
+
+      const body = container.querySelector(
+        "[data-testid='file-browser-tab-connecting']"
+      ) as HTMLElement;
+      expect(body).not.toBeNull();
+      expect(body.classList.contains("ui-content-overlay")).toBe(true);
+      expect(body.getAttribute("aria-busy")).toBe("true");
+      const spinner = body.querySelector(".ui-spinner");
+      expect(spinner).not.toBeNull();
+      expect(spinner?.getAttribute("class")).toContain("motion-essential-spinner");
+      expect(spinner?.getAttribute("aria-hidden")).toBe("true");
+      const region = liveRegion();
+      expect(region?.getAttribute("role")).toBe("status");
+      expect(region?.getAttribute("aria-live")).toBe("polite");
+      expect(region?.textContent).toBe("Connecting… Opening My FTP Server.");
+      // No hand-rolled spin class remains.
+      expect(container.querySelector(".file-browser-tab__spin")).toBeNull();
+    });
+
+    it("error: failure is announced assertively with the backend message", async () => {
+      mockedCreateTerminal.mockRejectedValueOnce(new Error("connection refused"));
+      const tabId = addFileBrowserTab();
+      await act(async () => {
+        root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const region = liveRegion();
+      expect(region?.getAttribute("role")).toBe("alert");
+      expect(region?.textContent).toBe("Could not open connection. connection refused");
+      const body = container.querySelector("[data-testid='file-browser-tab-error']");
+      const describedBy = body?.getAttribute("aria-describedby") ?? "";
+      const errorEl = container.querySelector(".file-browser-tab__error");
+      expect(errorEl?.id).toBeTruthy();
+      expect(describedBy.split(" ")).toContain(errorEl?.id);
+    });
+
+    it("has no accessibility violations in the error phase", async () => {
+      vi.useRealTimers();
+      mockedCreateTerminal.mockRejectedValueOnce(new Error("connection refused"));
+      const tabId = addFileBrowserTab();
+      await act(async () => {
+        root.render(React.createElement(FileBrowserTab, { tabId, isVisible: true }));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(container.querySelector("[data-testid='file-browser-tab-error']")).not.toBeNull();
+      expect(await checkA11y()).toHaveNoViolations();
+    });
   });
 });

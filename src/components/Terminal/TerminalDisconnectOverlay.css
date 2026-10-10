@@ -56,9 +56,9 @@
   color: var(--color-error);
 }
 
-.terminal-disconnect-overlay__icon--spin {
+/* Busy-state tone for the shared Spinner (which owns the rotation). */
+.terminal-disconnect-overlay__icon--busy {
   color: var(--accent-color);
-  animation: th-spin 1s linear infinite;
 }
 
 .terminal-disconnect-overlay__subheading {

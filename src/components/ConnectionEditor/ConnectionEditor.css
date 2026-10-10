@@ -660,7 +660,3 @@
   margin-right: var(--spacing-sm);
   cursor: pointer;
 }
-
-.port-forwarding__empty {
-  margin-bottom: var(--spacing-md);
-}

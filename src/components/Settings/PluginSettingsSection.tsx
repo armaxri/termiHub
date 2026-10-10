@@ -117,9 +117,11 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
     return (
       <div className="settings-panel__category" data-testid="plugin-settings-section">
         <h3 className="settings-panel__category-title">Plugins</h3>
-        <div className="settings-panel__empty" data-testid="plugin-settings-empty">
-          No installed plugin has configurable settings.
-        </div>
+        <EmptyState
+          variant="panel"
+          title="No installed plugin has configurable settings."
+          data-testid="plugin-settings-empty"
+        />
       </div>
     );
   }

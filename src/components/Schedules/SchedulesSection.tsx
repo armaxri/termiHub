@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { CalendarClock, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
+import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -135,9 +135,10 @@ export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
         </span>
       </header>
       {schedules.length === 0 ? (
-        <div className="schedules__empty" data-testid="schedules-empty">
-          No schedules. Schedule a workflow or macro to run it on saved connections at set times.
-        </div>
+        <EmptyState
+          title="No schedules. Schedule a workflow or macro to run it on saved connections at set times."
+          data-testid="schedules-empty"
+        />
       ) : (
         <div className="schedules__list" data-testid="schedules-list">
           {schedules.map((s) => {

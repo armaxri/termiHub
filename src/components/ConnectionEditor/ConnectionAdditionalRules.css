@@ -7,12 +7,6 @@
   gap: var(--spacing-sm);
 }
 
-.connection-additional-rules__empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  padding: var(--spacing-xs) var(--spacing-sm);
-}
-
 .connection-additional-rule {
   display: flex;
   align-items: center;

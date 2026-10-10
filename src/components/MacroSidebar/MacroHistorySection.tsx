@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { History, Trash2, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
+import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { MacroRun, MacroRunOrigin, MacroRunStatus } from "@/types/macro";
@@ -140,9 +140,10 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
         </span>
       </header>
       {runs.length === 0 ? (
-        <div className="macro-history__empty" data-testid="macro-history-empty">
-          {macroId ? "This macro has not been played yet." : "No playbacks recorded yet."}
-        </div>
+        <EmptyState
+          title={macroId ? "This macro has not been played yet." : "No playbacks recorded yet."}
+          data-testid="macro-history-empty"
+        />
       ) : (
         <div className="macro-history__list" data-testid="macro-history-list">
           {runs.map((run) => {

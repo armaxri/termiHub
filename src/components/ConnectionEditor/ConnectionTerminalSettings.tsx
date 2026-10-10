@@ -4,7 +4,16 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
-import { Button, Checkbox, Field, Input, NumberInput, Select, Toggle } from "@/components/ui";
+import {
+  Button,
+  Checkbox,
+  Field,
+  Input,
+  NumberInput,
+  Select,
+  Toggle,
+  EmptyState,
+} from "@/components/ui";
 import { CustomRuleEditor } from "@/components/Settings/CustomRuleEditor";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import {
@@ -125,13 +134,10 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
       {/* Fragment: the rule list is a composite whose controls name themselves. */}
       <>
         {rules.length === 0 && editor?.mode !== "new" ? (
-          <span
-            className="connection-additional-rules__empty"
+          <EmptyState
+            title="No connection-specific rules yet. Add one to highlight patterns for this connection only."
             data-testid="connection-additional-rules-empty"
-          >
-            No connection-specific rules yet. Add one to highlight patterns for this connection
-            only.
-          </span>
+          />
         ) : null}
 
         {rules.map((rule, index) => {

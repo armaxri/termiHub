@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
 import { AppSettings } from "@/types/connection";
 import type { HighlightRule } from "@/types/syntaxHighlighting";
-import { Button, Checkbox, Toggle } from "@/components/ui";
+import { Button, Checkbox, Toggle, EmptyState } from "@/components/ui";
 import { BUILTIN_RULES, getThemedRuleColor } from "@/services/syntaxHighlightingRules";
 import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { normalizeHexColor } from "@/services/syntaxHighlighting";
@@ -157,9 +157,10 @@ export function SyntaxHighlightingSettings({
         </div>
 
         {customRules.length === 0 && editor?.mode !== "new" ? (
-          <span className="syntax-custom-rule__empty" data-testid="syntax-custom-rules-empty">
-            No custom rules yet. Add one to highlight your own patterns.
-          </span>
+          <EmptyState
+            title="No custom rules yet. Add one to highlight your own patterns."
+            data-testid="syntax-custom-rules-empty"
+          />
         ) : null}
 
         {customRules.map((rule, index) => {

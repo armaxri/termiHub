@@ -218,9 +218,10 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
       </div>
       {error && <span className="sidebar-list-item__error">{error}</span>}
       {visible.length === 0 ? (
-        <span className="server-activity__empty" data-testid={`server-activity-empty-${serverId}`}>
-          {view.entries.length === 0 ? "No requests yet" : "No entries match the filter"}
-        </span>
+        <EmptyState
+          title={view.entries.length === 0 ? "No requests yet" : "No entries match the filter"}
+          data-testid={`server-activity-empty-${serverId}`}
+        />
       ) : (
         <ol className="server-activity__log" aria-label="Access log">
           {visible.map((e) => (

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw } from "lucide-react";
-import { Button, Field, Input, Select } from "@/components/ui";
+import { Button, Field, Input, Select, EmptyState } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
 import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -179,9 +179,12 @@ export function OpenPortsPanel() {
       {error && <div className="network-panel__error">{error}</div>}
 
       {!loaded && (
-        <div className="network-panel__placeholder" data-testid="open-ports-placeholder">
-          {loading ? "Listing listening ports…" : "Click Refresh to list listening ports"}
-        </div>
+        <EmptyState
+          variant="panel"
+          loading={loading}
+          title={loading ? "Listing listening ports…" : "Click Refresh to list listening ports"}
+          data-testid="open-ports-placeholder"
+        />
       )}
 
       <DiagnosticResultsTable

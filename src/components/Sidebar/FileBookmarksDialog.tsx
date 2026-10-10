@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderOpen, Pencil, Trash2 } from "lucide-react";
-import { Button, Input, Modal, Tooltip, toast } from "@/components/ui";
+import { Button, Input, Modal, Tooltip, toast, EmptyState } from "@/components/ui";
 import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import type { FileBookmark } from "@/types/fileBookmark";
 import { errorMessage } from "@/utils/errorMessage";
@@ -82,7 +82,7 @@ export function FileBookmarksDialog({
       data-testid="file-bookmarks-dialog"
     >
       {bookmarks.length === 0 ? (
-        <p className="file-bookmarks__empty">No bookmarks for this connection.</p>
+        <EmptyState title="No bookmarks for this connection." data-testid="file-bookmarks-empty" />
       ) : (
         <ul className="file-bookmarks__list" aria-label="Bookmarked folders">
           {bookmarks.map((b) => (

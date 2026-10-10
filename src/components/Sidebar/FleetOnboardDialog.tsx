@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Server } from "lucide-react";
-import { Button, Checkbox, Modal, Select } from "@/components/ui";
+import { Button, Checkbox, Modal, Select, EmptyState } from "@/components/ui";
 import { toast } from "@/components/ui";
 import type { InventoryHost, SavedConnection } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
@@ -148,18 +148,19 @@ export function FleetOnboardDialog({
       }
     >
       {noTemplates ? (
-        <div className="ssh-config-import__empty" data-testid="fleet-onboard-no-templates">
-          <Server size={20} aria-hidden />
-          <p>
-            Create a host-based connection (e.g. SSH or Telnet) first, then use it as a template to
-            onboard hosts in bulk.
-          </p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<Server size={20} aria-hidden />}
+          title="Create a host-based connection (e.g. SSH or Telnet) first, then use it as a template to onboard hosts in bulk."
+          data-testid="fleet-onboard-no-templates"
+        />
       ) : rows.length === 0 ? (
-        <div className="ssh-config-import__empty" data-testid="fleet-onboard-empty">
-          <Server size={20} aria-hidden />
-          <p>No hosts to onboard from {sourceLabel}.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<Server size={20} aria-hidden />}
+          title={<>No hosts to onboard from {sourceLabel}.</>}
+          data-testid="fleet-onboard-empty"
+        />
       ) : (
         <div className="bulk-ssh-import">
           <div className="bulk-ssh-import__folder">

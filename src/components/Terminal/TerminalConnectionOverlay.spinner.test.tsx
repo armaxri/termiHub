@@ -83,7 +83,8 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
     await renderConnecting();
     const spinner = container.querySelector("[data-testid='icon-loader']");
     expect(spinner).not.toBeNull();
-    expect(spinner?.className).toContain("terminal-connection-overlay__icon--spin");
+    expect(spinner?.className).toContain("ui-spinner");
+    expect(spinner?.className).toContain("terminal-connection-overlay__icon--busy");
     expect(spinner?.className).toContain("motion-essential-spinner");
   });
 
@@ -152,7 +153,8 @@ describe("TerminalConnectionOverlay — connecting spinner motion", () => {
       motion = mockReducedMotion(false);
       await renderConnecting();
       const spinner = container.querySelector("[data-testid='icon-loader']");
-      expect(spinner?.className).toContain("terminal-connection-overlay__icon--spin");
+      expect(spinner?.className).toContain("ui-spinner");
+      expect(spinner?.className).toContain("terminal-connection-overlay__icon--busy");
       expect(spinner?.className).toContain("motion-essential-spinner");
       expect(statusLabel()?.textContent).toBe("Connecting…");
     });

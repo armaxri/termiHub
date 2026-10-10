@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { History, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
+import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { WorkflowRun, WorkflowRunHistoryStatus } from "@/types/workflow";
@@ -90,9 +90,7 @@ export function WorkflowHistorySection() {
         </Tooltip>
       </header>
       {workflowRuns.length === 0 ? (
-        <div className="workflow-history__empty" data-testid="workflow-history-empty">
-          No runs recorded yet.
-        </div>
+        <EmptyState title="No runs recorded yet." data-testid="workflow-history-empty" />
       ) : (
         <div className="workflow-history__list" data-testid="workflow-history-list">
           {workflowRuns.map((run) => {

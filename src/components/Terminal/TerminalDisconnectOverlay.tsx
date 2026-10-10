@@ -1,17 +1,8 @@
 import { useCallback, useEffect, useId, useState } from "react";
-import {
-  WifiOff,
-  RefreshCw,
-  X,
-  AlertTriangle,
-  Loader2,
-  CheckCircle2,
-  Unplug,
-  Plus,
-} from "lucide-react";
+import { WifiOff, RefreshCw, X, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay, Tooltip } from "@/components/ui";
+import { Button, ContentOverlay, Spinner, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import { CredentialReentry } from "./CredentialReentry";
@@ -318,9 +309,10 @@ export function TerminalDisconnectOverlay({
         <ContentOverlay
           className="terminal-disconnect-overlay__body"
           icon={
-            <Loader2
+            <Spinner
               size={32}
-              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin motion-essential-spinner"
+              label={null}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--busy"
             />
           }
           busy

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Plus, Save } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
-import { Button, toast, Tooltip, ConfirmDialog } from "@/components/ui";
+import { Button, toast, Tooltip, ConfirmDialog, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { formatUntrustedImportNotice } from "@/services/workspaceImportTrust";
@@ -249,10 +249,11 @@ export function WorkspaceSidebar() {
         />
       </SidebarToolbar>
       {workspaces.length === 0 ? (
-        <div className="workspace-sidebar__empty" data-testid="workspace-empty-message">
-          <span>No workspaces configured.</span>
-          <span>Click &quot;+ New Workspace&quot; to create one.</span>
-        </div>
+        <EmptyState
+          title="No workspaces configured."
+          description={<>Click &quot;+ New Workspace&quot; to create one.</>}
+          data-testid="workspace-empty-message"
+        />
       ) : (
         <div
           className="workspace-sidebar__list"

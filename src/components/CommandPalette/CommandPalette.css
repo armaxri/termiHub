@@ -73,13 +73,6 @@
   text-transform: uppercase;
 }
 
-.command-palette__empty {
-  margin: 0;
-  padding: var(--spacing-md);
-  color: var(--text-secondary);
-  text-align: center;
-}
-
 /* Sub-picker breadcrumb (#3430): shows which picker is open; click to go back. */
 .command-palette__picker {
   display: inline-flex;

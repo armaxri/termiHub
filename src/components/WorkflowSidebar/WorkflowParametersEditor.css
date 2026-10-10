@@ -4,13 +4,7 @@
   gap: var(--spacing-sm);
 }
 
-.workflow-params__empty {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.workflow-params__empty code {
+.workflow-params__code {
   padding: 0 var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);

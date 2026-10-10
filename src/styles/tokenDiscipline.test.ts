@@ -922,3 +922,75 @@ describe("raw-hex guard ignores comments (#1563)", () => {
     expect(hasStandaloneRawHex(css)).toBe(true);
   });
 });
+
+/**
+ * UISF2-007 / #4382: empty / no-results / loading placeholders compose from
+ * the shared `EmptyState` primitive (src/components/ui/EmptyState.tsx). A
+ * bespoke `x__empty` / `x__placeholder` class (plus its per-file CSS) is the
+ * pattern that kept being copied beside the primitive, so it is banned outright
+ * in component TSX and CSS outside the primitive layer. Suffixed names such as
+ * `__empty-link` are not this pattern and are not matched.
+ */
+const BESPOKE_EMPTY_CLASS_RE = /[a-z0-9-]+__(?:empty|placeholder)(?![\w-])/;
+
+/**
+ * UISF2-006 / #4382: a ContentOverlay busy state passes the shared `Spinner`
+ * as its icon, never a hand-rolled `<Loader2 className="…--spin
+ * motion-essential-spinner">`. Files that render ContentOverlay must not carry
+ * the hand-rolled spinner marker.
+ *
+ * Allowlist (shrinking): RemoteDesktopOverlay's reconnecting glyph is left for
+ * after the in-flight canvas/frame-path change in that directory lands.
+ */
+const OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST = ["components/RemoteDesktop/RemoteDesktopOverlay.tsx"];
+
+describe("shared EmptyState / Spinner adoption (#4382)", () => {
+  const componentSources = collectFiles(
+    COMPONENTS_DIR,
+    (name) => (name.endsWith(".tsx") || name.endsWith(".css")) && !name.includes(".test."),
+    UI_DIR
+  );
+
+  it("matches the bespoke placeholder class pattern, and only it", () => {
+    expect(BESPOKE_EMPTY_CLASS_RE.test('className="macro-sidebar__empty"')).toBe(true);
+    expect(BESPOKE_EMPTY_CLASS_RE.test(".network-panel__placeholder {")).toBe(true);
+    expect(BESPOKE_EMPTY_CLASS_RE.test('className="ui-empty__link"')).toBe(false);
+    expect(BESPOKE_EMPTY_CLASS_RE.test('className="macro-sidebar__empty-link"')).toBe(false);
+    expect(BESPOKE_EMPTY_CLASS_RE.test('placeholder="Search…"')).toBe(false);
+  });
+
+  it("introduces no bespoke __empty / __placeholder classes outside ui/", () => {
+    const offenders = componentSources
+      .filter((file) => BESPOKE_EMPTY_CLASS_RE.test(readFileSync(file, "utf8")))
+      .map(toPosix);
+    expect(
+      offenders,
+      "Compose empty/no-results/loading placeholders from the EmptyState primitive " +
+        `(src/components/ui/EmptyState.tsx) instead of a bespoke class in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+
+  it("passes the shared Spinner to every ContentOverlay busy state", () => {
+    const offenders = componentSources
+      .filter((file) => file.endsWith(".tsx"))
+      .filter((file) => {
+        const src = readFileSync(file, "utf8");
+        return src.includes("ContentOverlay") && /Loader2|motion-essential-spinner/.test(src);
+      })
+      .map(toPosix)
+      .filter(
+        (file) => !OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST.some((allowed) => file.endsWith(allowed))
+      );
+    expect(
+      offenders,
+      'Pass <Spinner size={32} label={null} className="…__icon" /> as the ContentOverlay ' +
+        `icon instead of a hand-rolled Loader2 + spin class in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+
+  it("every allowlisted overlay still exists (no stale exceptions)", () => {
+    for (const allowed of OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST) {
+      expect(componentSources.some((file) => toPosix(file).endsWith(allowed))).toBe(true);
+    }
+  });
+});

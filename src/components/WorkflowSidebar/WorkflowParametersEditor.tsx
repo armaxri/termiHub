@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
-import { Button, Input, Field, Select, Toggle } from "@/components/ui";
+import { Button, Input, Field, Select, Toggle, EmptyState } from "@/components/ui";
 import type { WorkflowParameter, WorkflowParameterType } from "@/types/workflow";
 import "./WorkflowParametersEditor.css";
 
@@ -76,10 +76,15 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
   return (
     <div className="workflow-params" data-testid="workflow-params">
       {parameters.length === 0 ? (
-        <p className="workflow-params__empty" role="status" data-testid="workflow-params-empty">
-          No parameters. Add one to prompt for a value before the workflow runs and reference it as{" "}
-          <code>{"${name}"}</code> in a step.
-        </p>
+        <EmptyState
+          title={
+            <>
+              No parameters. Add one to prompt for a value before the workflow runs and reference it
+              as <code className="workflow-params__code">{"${name}"}</code> in a step.
+            </>
+          }
+          data-testid="workflow-params-empty"
+        />
       ) : (
         <ul className="workflow-params__list" data-testid="workflow-params-list">
           {parameters.map((param, index) => (

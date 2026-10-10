@@ -67,7 +67,3 @@
   max-width: 480px;
   text-align: center;
 }
-
-.agent-error-tab__spin {
-  animation: th-spin 1s linear infinite;
-}

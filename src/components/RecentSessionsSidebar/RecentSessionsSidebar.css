@@ -118,19 +118,6 @@
   color: var(--accent-color);
 }
 
-.recent-sessions__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  gap: var(--spacing-sm);
-}
-
 /* --- Save-as-connection dialog: icon row --- */
 .recent-sessions__save-icon-row {
   display: flex;

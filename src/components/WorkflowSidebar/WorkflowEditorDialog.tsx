@@ -6,7 +6,15 @@ import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { Modal, ModalClose, Button, Input, Field, useModalPortalContainer } from "@/components/ui";
+import {
+  Modal,
+  ModalClose,
+  Button,
+  Input,
+  Field,
+  useModalPortalContainer,
+  EmptyState,
+} from "@/components/ui";
 import type {
   Workflow,
   WorkflowParameter,
@@ -323,9 +331,10 @@ export function WorkflowEditorDialog({
         <span className="workflow-editor__section-title">Steps ({entries.length})</span>
       </div>
       {entries.length === 0 ? (
-        <p className="workflow-editor__empty" role="status" data-testid="workflow-editor-no-steps">
-          No steps yet. Add one below — a workflow needs at least one step to be saved.
-        </p>
+        <EmptyState
+          title="No steps yet. Add one below — a workflow needs at least one step to be saved."
+          data-testid="workflow-editor-no-steps"
+        />
       ) : (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <SortableContext items={stepIds} strategy={verticalListSortingStrategy}>
