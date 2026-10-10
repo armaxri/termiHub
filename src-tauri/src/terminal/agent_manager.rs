@@ -141,6 +141,7 @@ pub(crate) use recovery::{
 use state_events::parse_agent_connection_state;
 use state_events::{emit_agent_disconnected, emit_agent_state, emit_agent_state_with_error};
 use stdout_reader::read_handshake_line;
+pub(crate) use update_reconnect::await_update_reconnect_takeover;
 use update_reconnect::UpdateReconnectRegistry;
 
 /// A failed agent JSON-RPC request: the agent's error `code` (when it answered
@@ -487,6 +488,17 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// (`superseded == true`). Returns whether one was running (#4489).
     fn cancel_update_reconnect(&self, _agent_id: &str, _superseded: bool) -> bool {
         false
+    }
+
+    /// A manual connect takes the agent over from a coordinated-update
+    /// reconnect (#4621): stop the reconnect as superseded and, when one of its
+    /// connect attempts is in flight, cancel that attempt. Returns the token
+    /// that fires once the cancelled attempt has settled and released the
+    /// agent's connect reservation, or `None` when no attempt was in flight.
+    /// Await it through
+    /// [`await_update_reconnect_takeover`](crate::terminal::agent_manager::await_update_reconnect_takeover).
+    fn take_over_update_reconnect(&self, _agent_id: &str) -> Option<CancellationToken> {
+        None
     }
 
     /// Check if an agent is connected.
@@ -1186,6 +1198,68 @@ impl<R: Runtime> AgentConnectionManager<R> {
         cancel_connect_token(&self.connecting, agent_id)
     }
 
+    /// Reserve `agent_id` for a connect (#4304): refuse an agent that is
+    /// already connected or already connecting, evict a dead entry, and
+    /// register `cancel_token` as the connect's Cancel signal (G1, #1235). The
+    /// returned guard releases the reservation when dropped.
+    fn reserve_connect(
+        &self,
+        agent_id: &str,
+        cancel_token: &CancellationToken,
+    ) -> Result<ConnectingGuard, TerminalError> {
+        let mut agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        // Evict a dead entry left behind when the I/O task exits without
+        // removing itself (e.g. reconnection failed after a dropped connection).
+        if let Some(existing) = agents.get(agent_id) {
+            if existing.alive.is_alive() {
+                return Err(TerminalError::already_connected(format!(
+                    "Agent {} is already connected",
+                    agent_id
+                )));
+            }
+        }
+
+        // Reserve the agent for this connect (#4304) and register the
+        // cancellation token a Cancel fires (G1, #1235) in one atomic step.
+        // A second connect to the same agent while this one is in flight is
+        // refused as already connected instead of running a duplicate
+        // handshake. Reserved under the `agents` lock (lock order `agents` →
+        // `connecting`, as in `disconnect_agent`) so a Disconnect either sees
+        // the reservation and cancels it, or runs before it exists.
+        if !register_connecting_token(&self.connecting, agent_id, cancel_token.clone()) {
+            return Err(TerminalError::already_connected(format!(
+                "Agent {} is already connecting",
+                agent_id
+            )));
+        }
+
+        // CONC-009: force-stop the outgoing task as a fallback. A "dead" entry
+        // usually means the task already returned (abort is then a harmless
+        // no-op), but a task wedged in a blocking op would otherwise leak its
+        // SSH session behind the fresh connection replacing it here. Its
+        // budget goes with it, under the same lock that pairs them (#3018).
+        if let Some(old) = agents.remove(agent_id) {
+            old.io_task.abort();
+            if let Some(budget) = self
+                .io_budgets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(agent_id)
+            {
+                budget.close();
+            }
+        }
+
+        Ok(ConnectingGuard {
+            map: self.connecting.clone(),
+            id: agent_id.to_string(),
+        })
+    }
+
     /// Connect to a remote agent via SSH.
     ///
     /// Performs SSH authentication, starts the agent, and runs `initialize`
@@ -1212,60 +1286,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // agent operation (and the main-thread commands and session writes that
         // read the map).
         let cancel_token = CancellationToken::new();
-        {
-            let mut agents = self
-                .agents
-                .lock()
-                .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
-
-            // Evict a dead entry left behind when the I/O task exits without
-            // removing itself (e.g. reconnection failed after a dropped connection).
-            if let Some(existing) = agents.get(agent_id) {
-                if existing.alive.is_alive() {
-                    return Err(TerminalError::already_connected(format!(
-                        "Agent {} is already connected",
-                        agent_id
-                    )));
-                }
-            }
-
-            // Reserve the agent for this connect (#4304) and register the
-            // cancellation token a Cancel fires (G1, #1235) in one atomic step.
-            // A second connect to the same agent while this one is in flight is
-            // refused as already connected instead of running a duplicate
-            // handshake. Reserved under the `agents` lock (lock order `agents` →
-            // `connecting`, as in `disconnect_agent`) so a Disconnect either sees
-            // the reservation and cancels it, or runs before it exists.
-            if !register_connecting_token(&self.connecting, agent_id, cancel_token.clone()) {
-                return Err(TerminalError::already_connected(format!(
-                    "Agent {} is already connecting",
-                    agent_id
-                )));
-            }
-
-            // CONC-009: force-stop the outgoing task as a fallback. A "dead" entry
-            // usually means the task already returned (abort is then a harmless
-            // no-op), but a task wedged in a blocking op would otherwise leak its
-            // SSH session behind the fresh connection replacing it here. Its
-            // budget goes with it, under the same lock that pairs them (#3018).
-            if let Some(old) = agents.remove(agent_id) {
-                old.io_task.abort();
-                if let Some(budget) = self
-                    .io_budgets
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(agent_id)
-                {
-                    budget.close();
-                }
-            }
-        }
         // The guard releases the reservation when this connect finishes
         // (success, failure or cancellation), even on an early `?` return.
-        let _connecting_guard = ConnectingGuard {
-            map: self.connecting.clone(),
-            id: agent_id.to_string(),
-        };
+        let _connecting_guard = self.reserve_connect(agent_id, &cancel_token)?;
 
         // Emit connecting state
         emit_agent_state(&self.app_handle, agent_id, "connecting");
@@ -2996,6 +3019,10 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn cancel_update_reconnect(&self, agent_id: &str, superseded: bool) -> bool {
         AgentConnectionManager::cancel_update_reconnect(self, agent_id, superseded)
+    }
+
+    fn take_over_update_reconnect(&self, agent_id: &str) -> Option<CancellationToken> {
+        AgentConnectionManager::take_over_update_reconnect(self, agent_id)
     }
 
     fn connected_agent_ids(&self) -> Vec<String> {

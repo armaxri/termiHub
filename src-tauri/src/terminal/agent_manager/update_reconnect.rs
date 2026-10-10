@@ -29,10 +29,16 @@
 //! The user's Cancel and every newer action on the agent (a manual connect, a
 //! disconnect or shutdown) stop the reconnect through its cancellation token,
 //! which wakes the backoff wait and drops an attempt in flight at once.
+//!
+//! An attempt runs on its own task, so dropping it does not end the connect
+//! underneath: that keeps the agent's connect reservation (#4304) until it
+//! settles. A manual connect therefore takes the agent over (#4621) by
+//! cancelling the attempt's connect and waiting for it to settle
+//! ([`await_update_reconnect_takeover`]) before it reserves the agent itself,
+//! so it is never refused as "already connecting".
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -64,6 +70,11 @@ pub(crate) const AGENT_UPDATE_RECONNECT_DEADLINE: Duration = Duration::from_secs
 /// (or a 10 s window closes), so reconnecting exactly at the estimate would race
 /// the process still coming up.
 pub(crate) const AGENT_UPDATE_RESTART_BUFFER: Duration = Duration::from_secs(3);
+
+/// How long a manual connect waits for a cancelled update-reconnect attempt to
+/// settle before connecting anyway (#4621). A cancelled connect aborts at once,
+/// so this only bounds a connect that ignores its cancel.
+pub(crate) const UPDATE_ATTEMPT_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The wait before the first attempt: the agent's restart estimate (at least
 /// one second) plus [`AGENT_UPDATE_RESTART_BUFFER`].
@@ -213,13 +224,31 @@ pub(super) struct UpdateReconnectRegistry {
 }
 
 /// The handle a running update reconnect holds: its stop signal, why it was
-/// stopped, and whether an attempt is in flight.
+/// stopped, and the attempt in flight.
 #[derive(Clone)]
 pub(super) struct UpdateReconnectTicket {
     pub(super) generation: u64,
     pub(super) token: CancellationToken,
     stop: Arc<Mutex<Option<UpdateReconnectStop>>>,
-    attempting: Arc<AtomicBool>,
+    /// The settled signal of the attempt in flight, if any (#4621). It fires
+    /// once the attempt's task has ended, which is after its connect released
+    /// the agent's connect reservation.
+    attempt: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+/// Marks an update-reconnect attempt as in flight for as long as it lives:
+/// dropping it (the attempt's task ended, however it ended) clears the
+/// ticket's attempt and fires its settled signal.
+struct AttemptInFlight {
+    slot: Arc<Mutex<Option<CancellationToken>>>,
+    settled: CancellationToken,
+}
+
+impl Drop for AttemptInFlight {
+    fn drop(&mut self) {
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.settled.cancel();
+    }
 }
 
 impl UpdateReconnectTicket {
@@ -235,6 +264,31 @@ impl UpdateReconnectTicket {
     fn stop_with(&self, reason: UpdateReconnectStop) {
         *self.stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
         self.token.cancel();
+    }
+
+    /// Mark an attempt as in flight, unless the reconnect was already stopped.
+    /// Checked under the attempt lock that [`Self::attempt_in_flight`] takes, so
+    /// a stop (which cancels the token first) either prevents the attempt or
+    /// sees it.
+    fn start_attempt(&self) -> Option<AttemptInFlight> {
+        let mut slot = self.attempt.lock().unwrap_or_else(|e| e.into_inner());
+        if self.token.is_cancelled() {
+            return None;
+        }
+        let settled = CancellationToken::new();
+        *slot = Some(settled.clone());
+        Some(AttemptInFlight {
+            slot: Arc::clone(&self.attempt),
+            settled,
+        })
+    }
+
+    /// The settled signal of the attempt in flight, if one is.
+    fn attempt_in_flight(&self) -> Option<CancellationToken> {
+        self.attempt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -265,7 +319,7 @@ impl UpdateReconnectRegistry {
             generation: inner.next_generation,
             token: CancellationToken::new(),
             stop: Arc::new(Mutex::new(None)),
-            attempting: Arc::new(AtomicBool::new(false)),
+            attempt: Arc::new(Mutex::new(None)),
         };
         inner.entries.insert(
             agent_id.to_string(),
@@ -357,6 +411,30 @@ async fn connect_for_update<R: Runtime>(
     })
     .await;
     joined.unwrap_or_else(|e| Err(format!("connect task failed: {e}")))
+}
+
+/// Wait for a manual connect's takeover of an update reconnect (#4621): stop
+/// the reconnect for `agent_id` and, when one of its attempts is in flight,
+/// cancel it and wait (at most [`UPDATE_ATTEMPT_SETTLE_TIMEOUT`]) until it has
+/// released the agent's connect reservation. The connect that follows is then
+/// not refused as "already connecting".
+pub(crate) async fn await_update_reconnect_takeover(manager: &dyn AgentRpcClient, agent_id: &str) {
+    let Some(settled) = manager.take_over_update_reconnect(agent_id) else {
+        return;
+    };
+    info!(
+        agent_id,
+        "manual connect: waiting for the update-reconnect attempt to stop"
+    );
+    if tokio::time::timeout(UPDATE_ATTEMPT_SETTLE_TIMEOUT, settled.cancelled())
+        .await
+        .is_err()
+    {
+        warn!(
+            agent_id,
+            "manual connect: the update-reconnect attempt did not stop in time"
+        );
+    }
 }
 
 /// Spawn on the current tokio runtime when there is one (the I/O task, a test's
@@ -453,7 +531,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ) -> Option<DriveOutcome<Option<AgentCapabilities>>>
     where
         A: Fn(String, RetainedAgentConfig) -> Fut,
-        Fut: Future<Output = Result<Option<AgentCapabilities>, String>>,
+        Fut: Future<Output = Result<Option<AgentCapabilities>, String>> + Send + 'static,
     {
         if ticket.token.is_cancelled() {
             return Some(DriveOutcome::Stopped { attempts: 0 });
@@ -479,12 +557,20 @@ impl<R: Runtime> AgentConnectionManager<R> {
             &mut jitter,
             || {
                 let pending = attempt(agent_id.to_string(), retained.clone());
-                let attempting = Arc::clone(&ticket.attempting);
+                let ticket = ticket.clone();
                 async move {
-                    attempting.store(true, Ordering::SeqCst);
-                    let result = pending.await;
-                    attempting.store(false, Ordering::SeqCst);
-                    result
+                    let Some(in_flight) = ticket.start_attempt() else {
+                        return Err("The update reconnect was stopped.".to_string());
+                    };
+                    // On its own task so that a stop dropping this future still
+                    // lets the attempt settle and mark it settled (#4621): the
+                    // connect underneath holds the agent's reservation until then.
+                    let task = tokio::spawn(async move {
+                        let _in_flight = in_flight;
+                        pending.await
+                    });
+                    task.await
+                        .unwrap_or_else(|e| Err(format!("update reconnect attempt failed: {e}")))
                 }
             },
         )
@@ -580,10 +666,23 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let Some(ticket) = self.update_reconnects.stop(agent_id, reason) else {
             return false;
         };
-        if !superseded && ticket.attempting.load(Ordering::SeqCst) {
+        if !superseded && ticket.attempt_in_flight().is_some() {
             self.cancel_connect(agent_id);
         }
         true
+    }
+
+    /// A manual connect takes the agent over (#4621): stop the reconnect as
+    /// superseded and cancel an attempt in flight. Returns that attempt's
+    /// settled signal, or `None` when none was in flight (or no reconnect was
+    /// running). See [`await_update_reconnect_takeover`].
+    pub fn take_over_update_reconnect(&self, agent_id: &str) -> Option<CancellationToken> {
+        let ticket = self
+            .update_reconnects
+            .stop(agent_id, UpdateReconnectStop::Superseded)?;
+        let settled = ticket.attempt_in_flight()?;
+        self.cancel_connect(agent_id);
+        Some(settled)
     }
 
     /// A newer action supersedes a running coordinated-update reconnect.
