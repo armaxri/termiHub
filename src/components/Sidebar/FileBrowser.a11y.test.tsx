@@ -1,10 +1,12 @@
 /**
  * Accessibility semantics of the file browser list (#4349, audit A11Y2-007).
  *
- * The list must be a named list whose row buttons expose their selection
- * state (aria-pressed — a listbox would forbid the per-row actions button), whose accessible names carry the entry
- * type (file / folder / symbolic link), and whose sort headers expose the
- * active sort direction in a way assistive tech actually reads.
+ * The list must be a named, multi-selectable listbox whose rows are options
+ * exposing their selection through aria-selected (#4559), whose accessible
+ * names carry the entry type (file / folder / symbolic link), and whose sort
+ * headers expose the active sort direction in a way assistive tech actually
+ * reads. The per-row "File actions" button is mouse-only; the keyboard path to
+ * a row's actions is Shift+F10 / the ContextMenu key on the focused row.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -124,11 +126,28 @@ describe("FileBrowser — list accessibility (#4349)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the entries as a named list of items", async () => {
+  it("renders the entries as a named, multi-selectable listbox of options", async () => {
     await renderLocal();
-    const list = byTestId("file-browser-list").querySelector('[role="list"]');
-    expect(list?.getAttribute("aria-label")).toBe("Files in /home");
-    expect(list?.querySelectorAll(':scope > [role="listitem"]')).toHaveLength(entries.length);
+    const listbox = byTestId("file-browser-list").querySelector('[role="listbox"]');
+    expect(listbox?.getAttribute("aria-label")).toBe("Files in /home");
+    expect(listbox?.getAttribute("aria-multiselectable")).toBe("true");
+    const options = listbox?.querySelectorAll('[role="option"]') ?? [];
+    expect(options).toHaveLength(entries.length);
+    expect(byTestId("file-row-report.pdf").getAttribute("role")).toBe("option");
+    // The legacy list semantics are gone.
+    expect(byTestId("file-browser-list").querySelector('[role="list"], [role="listitem"]')).toBe(
+      null
+    );
+  });
+
+  it("keeps the per-row actions button out of the Tab order and the a11y tree", async () => {
+    await renderLocal();
+    const menuButton = byTestId("file-row-menu-report.pdf");
+    expect(menuButton.getAttribute("tabindex")).toBe("-1");
+    expect(menuButton.getAttribute("aria-hidden")).toBe("true");
+    // Exactly one row is a Tab stop (roving tabindex).
+    const tabStops = byTestId("file-browser-list").querySelectorAll('[tabindex="0"]');
+    expect(tabStops).toHaveLength(1);
   });
 
   it("includes the entry type in each row's accessible name", async () => {
@@ -140,16 +159,31 @@ describe("FileBrowser — list accessibility (#4349)", () => {
     );
   });
 
-  it("exposes selection through aria-pressed", async () => {
+  it("exposes selection through aria-selected, not aria-pressed", async () => {
     await renderLocal();
     const report = byTestId("file-row-report.pdf");
-    const dir = byTestId("file-row-mydir");
-    expect(report.getAttribute("aria-pressed")).toBe("false");
+    expect(report.getAttribute("aria-selected")).toBe("false");
+    expect(report.hasAttribute("aria-pressed")).toBe(false);
     await act(async () => {
       report.click();
     });
-    expect(byTestId("file-row-report.pdf").getAttribute("aria-pressed")).toBe("true");
-    expect(dir.getAttribute("aria-pressed")).toBe("false");
+    expect(byTestId("file-row-report.pdf").getAttribute("aria-selected")).toBe("true");
+    expect(byTestId("file-row-mydir").getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("reflects a multi-selection on every selected option", async () => {
+    await renderLocal();
+    await act(async () => {
+      byTestId("file-row-report.pdf").click();
+    });
+    await act(async () => {
+      byTestId("file-row-link").dispatchEvent(
+        new MouseEvent("click", { ctrlKey: true, bubbles: true })
+      );
+    });
+    expect(byTestId("file-row-report.pdf").getAttribute("aria-selected")).toBe("true");
+    expect(byTestId("file-row-link").getAttribute("aria-selected")).toBe("true");
+    expect(byTestId("file-row-mydir").getAttribute("aria-selected")).toBe("false");
   });
 
   it("exposes the sort state in the sort buttons' names, not via invalid aria-sort", async () => {
@@ -169,5 +203,96 @@ describe("FileBrowser — list accessibility (#4349)", () => {
   it("has no axe violations in the list", async () => {
     await renderLocal();
     expect(await checkA11y(byTestId("file-browser-list"))).toHaveNoViolations();
+  });
+
+  it("has no axe violations with a multi-selection (aria-required-children)", async () => {
+    await renderLocal();
+    await act(async () => {
+      byTestId("file-row-report.pdf").click();
+    });
+    await act(async () => {
+      byTestId("file-row-mydir").dispatchEvent(
+        new MouseEvent("click", { ctrlKey: true, bubbles: true })
+      );
+    });
+    expect(await checkA11y(byTestId("file-browser-list"))).toHaveNoViolations();
+  });
+});
+
+/** Fire a keydown on `el` and return the event (to inspect defaultPrevented). */
+function keyDown(el: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
+  const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  act(() => {
+    el.dispatchEvent(ev);
+  });
+  return ev;
+}
+
+function inBody(id: string): HTMLElement | null {
+  return document.body.querySelector(`[data-testid="${id}"]`);
+}
+
+describe("FileBrowser — keyboard row-actions shortcut (#4559)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(entries);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("opens the focused row's actions menu on Shift+F10", async () => {
+    await renderLocal();
+    const row = byTestId("file-row-report.pdf");
+    row.focus();
+    expect(inBody("context-file-rename")).toBe(null);
+    const ev = keyDown(row, { key: "F10", shiftKey: true });
+    await flushAsync();
+    expect(ev.defaultPrevented).toBe(true);
+    expect(inBody("context-file-rename")).not.toBe(null);
+  });
+
+  it("opens the focused row's actions menu on the ContextMenu key", async () => {
+    await renderLocal();
+    const row = byTestId("file-row-mydir");
+    row.focus();
+    keyDown(row, { key: "ContextMenu" });
+    await flushAsync();
+    expect(inBody("context-file-rename")).not.toBe(null);
+  });
+
+  it("opens the multi-selection menu when the focused row is part of a selection", async () => {
+    await renderLocal();
+    await act(async () => {
+      byTestId("file-row-report.pdf").click();
+    });
+    await act(async () => {
+      byTestId("file-row-link").dispatchEvent(
+        new MouseEvent("click", { ctrlKey: true, bubbles: true })
+      );
+    });
+    keyDown(byTestId("file-row-link"), { key: "F10", shiftKey: true });
+    await flushAsync();
+    expect(inBody("multi-select-delete")).not.toBe(null);
+  });
+
+  it("ignores plain F10 and modified Shift+F10", async () => {
+    await renderLocal();
+    const row = byTestId("file-row-report.pdf");
+    const plain = keyDown(row, { key: "F10" });
+    const ctrl = keyDown(row, { key: "F10", shiftKey: true, ctrlKey: true });
+    await flushAsync();
+    expect(plain.defaultPrevented).toBe(false);
+    expect(ctrl.defaultPrevented).toBe(false);
+    expect(inBody("context-file-rename")).toBe(null);
   });
 });

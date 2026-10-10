@@ -572,6 +572,21 @@ function RenameRow({
   );
 }
 
+/**
+ * Whether a keydown on a file row is the "open row actions" shortcut (#4559):
+ * the ContextMenu (Menu) key, or Shift+F10 with no other modifier.
+ */
+function isRowMenuShortcut(e: {
+  key: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+}): boolean {
+  if (e.key === "ContextMenu") return true;
+  return e.key === "F10" && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+}
+
 function FileRow({
   entry,
   vscodeAvailable,
@@ -611,6 +626,28 @@ function FileRow({
   };
 
   const showMultiSelect = isSelected && selectedCount > 1;
+
+  /**
+   * Keyboard path to the row's actions (#4559): Shift+F10 or the ContextMenu
+   * key opens the same (selection-aware) context menu a right-click opens.
+   * WKWebView on macOS has no Menu key and does not turn Shift+F10 into a
+   * `contextmenu` event, so the row synthesizes one itself, anchored at the
+   * row's bottom-left. `preventDefault` stops engines that *do* translate the
+   * key from firing a second, native `contextmenu`.
+   */
+  const openRowMenuFromKeyboard = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!isRowMenuShortcut(e)) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + Math.min(16, rect.width / 2),
+        clientY: rect.bottom,
+      })
+    );
+  };
 
   // Files show a real byte size; directories show none. `formatBytes` returns an
   // empty string when the size is missing/invalid, so a file whose backend never
@@ -664,11 +701,14 @@ function FileRow({
           <button
             ref={rowRef}
             className="file-browser__row"
-            // Selection is a toggle state on the row button (#4349). A listbox
-            // of options would forbid the per-row actions button beside it.
-            aria-pressed={isSelected}
+            // Each row is an option of the multi-selectable file listbox
+            // (#4349, #4559); the actions button beside it is hidden from
+            // assistive tech and the Tab order, so the listbox only owns options.
+            role="option"
+            aria-selected={isSelected}
             aria-label={fileRowAccessibleName(entry)}
             tabIndex={tabIndex}
+            onKeyDown={openRowMenuFromKeyboard}
             data-testid={`file-row-${entry.name}`}
             // Mirrored from the wrapper so the row's own testid exposes the drop
             // state (the bridge's dragTo `observe` reads it mid-drag, #4007).
@@ -723,6 +763,12 @@ function FileRow({
                     className="file-browser__menu-reveal"
                     icon={<MoreHorizontal size={14} />}
                     aria-label="File actions"
+                    // Mouse-only affordance (#4559): the keyboard path to a row's
+                    // actions is Shift+F10 / the ContextMenu key on the row itself.
+                    // Keeping this button out of the Tab order and the a11y tree
+                    // keeps it from being an invalid child of the listbox.
+                    aria-hidden="true"
+                    tabIndex={-1}
                     data-testid={`file-row-menu-${entry.name}`}
                   />
                 </DropdownMenu.Trigger>
@@ -2115,8 +2161,10 @@ export function FileBrowser() {
                 ) : (
                   <div
                     className="file-browser__list-inner"
-                    // A named list of file rows (#4349); each virtual row is an item.
-                    role="list"
+                    // A named, multi-selectable listbox of file rows (#4349,
+                    // #4559); each row button is an option with aria-selected.
+                    role="listbox"
+                    aria-multiselectable="true"
                     aria-label={`Files in ${currentPath || "/"}`}
                     style={{ height: rowVirtualizer.getTotalSize() }}
                   >
@@ -2128,7 +2176,7 @@ export function FileBrowser() {
                         <div
                           key={virtualRow.key}
                           className="file-browser__virtual-row"
-                          role="listitem"
+                          role="presentation"
                           style={{ transform: `translateY(${virtualRow.start}px)` }}
                         >
                           <FileRow
