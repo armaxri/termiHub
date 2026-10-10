@@ -14,9 +14,19 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { layoutState } from "@/test/layoutState";
 import { type CommandMarkTracker, registerCommandMarkTracker } from "./commandMarks";
+import type { TabContentType } from "@/types/terminal";
+
+// Wrap the shared single-tab close guard so the tests can assert the shortcut
+// routes through it (the same helper the tab X uses, #4410).
+const { routeDirtyTabCloseSpy } = vi.hoisted(() => ({ routeDirtyTabCloseSpy: vi.fn() }));
+vi.mock("@/utils/tabCloseGuard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/tabCloseGuard")>();
+  routeDirtyTabCloseSpy.mockImplementation(actual.routeDirtyTabClose);
+  return { ...actual, routeDirtyTabClose: routeDirtyTabCloseSpy };
+});
 
 /** Add a tab of the given content type and make it the active tab/panel. */
-function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
+function addActiveTab(contentType: TabContentType = "terminal"): string {
   const id = useAppStore.getState().addTab("Tab", "local", undefined, { contentType });
   const panel = getAllLeaves(layoutState().rootPanel).find((p) => p.tabs.some((t) => t.id === id))!;
   useAppStore.getState().setActivePanel(panel.id);
@@ -130,6 +140,96 @@ describe("close-tab", () => {
   it("run() is inert when there is no target", () => {
     cmd.run();
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+  });
+});
+
+// #4410: the close-tab shortcut (and its palette entry) must honour the
+// unsaved-editor guard the tab X does, whatever confirmCloseTabOnShortcut is.
+describe("close-tab — unsaved-editor guard (#4410)", () => {
+  const cmd = CONTEXT_COMMANDS["close-tab"];
+  const SELF_PROMPTING = [
+    "editor",
+    "connection-editor",
+    "settings",
+    "tunnel-editor",
+    "workspace-editor",
+  ] as const;
+
+  for (const contentType of SELF_PROMPTING) {
+    for (const confirm of [true, false]) {
+      it(`routes a dirty ${contentType} tab to its own prompt (setting ${confirm ? "on" : "off"})`, () => {
+        const tabId = addActiveTab(contentType);
+        const panelId = activeLeaf()!.id;
+        seedSettings({ confirmCloseTabOnShortcut: confirm });
+        useAppStore.getState().setEditorDirty(tabId, true);
+        const closeSpy = vi.spyOn(useAppStore.getState(), "closeTab");
+
+        cmd.run();
+
+        expect(closeSpy).not.toHaveBeenCalled();
+        expect(activeLeaf()!.tabs.map((t) => t.id)).toContain(tabId);
+        expect(useAppStore.getState().pendingCloseRequest).toEqual({ tabId, panelId });
+        // The generic "work will be lost" confirm offers no Save, so it must not
+        // stand in for the editor's own unsaved-changes dialog.
+        expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+      });
+    }
+  }
+
+  for (const confirm of [true, false]) {
+    it(`raises the generic unsaved prompt for another dirty tab type (setting ${confirm ? "on" : "off"})`, () => {
+      const tabId = addActiveTab("network-diagnostic");
+      const panelId = activeLeaf()!.id;
+      seedSettings({ confirmCloseTabOnShortcut: confirm });
+      useAppStore.getState().setEditorDirty(tabId, true);
+      const closeSpy = vi.spyOn(useAppStore.getState(), "closeTab");
+
+      cmd.run();
+
+      expect(closeSpy).not.toHaveBeenCalled();
+      expect(useAppStore.getState().pendingCloseRequest).toBeNull();
+      expect(useAppStore.getState().pendingShortcutCloseConfirm).toEqual({
+        kind: "tab",
+        tabId,
+        panelId,
+        label: "Tab",
+        unsaved: true,
+      });
+    });
+  }
+
+  it("closes a clean editor tab immediately when the setting is off", () => {
+    addActiveTab("editor");
+    seedSettings({ confirmCloseTabOnShortcut: false });
+    cmd.run();
+    expect(activeLeaf()!.tabs).toHaveLength(0);
+    expect(useAppStore.getState().pendingCloseRequest).toBeNull();
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+  });
+
+  it("asks the plain shortcut confirm for a clean editor tab when the setting is on", () => {
+    const tabId = addActiveTab("editor");
+    seedSettings({ confirmCloseTabOnShortcut: true });
+    cmd.run();
+    expect(activeLeaf()!.tabs).toHaveLength(1);
+    expect(useAppStore.getState().pendingCloseRequest).toBeNull();
+    const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
+    expect(confirm?.kind).toBe("tab");
+    if (confirm?.kind === "tab") {
+      expect(confirm.tabId).toBe(tabId);
+      expect(confirm.unsaved).toBeFalsy();
+    }
+  });
+
+  it("routes through the shared tab-close guard helper", () => {
+    const tabId = addActiveTab("editor");
+    const panelId = activeLeaf()!.id;
+    routeDirtyTabCloseSpy.mockClear();
+    cmd.run();
+    expect(routeDirtyTabCloseSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ id: tabId, contentType: "editor" }),
+      panelId
+    );
   });
 });
 

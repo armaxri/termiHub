@@ -126,4 +126,33 @@ describe("ConfirmCloseTabDialog", () => {
     expect(layoutState().tabGroups).toHaveLength(groupsBefore - 1);
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
   });
+
+  it("shows the unsaved-changes copy and closes on confirm for an unsaved request (#4410)", () => {
+    useAppStore.getState().addTab("Diag", "local");
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
+    const tabId = panel.tabs[0].id;
+
+    render(<ConfirmCloseTabDialog />);
+    act(() => {
+      useAppStore.getState().setPendingShortcutCloseConfirm({
+        kind: "tab",
+        tabId,
+        panelId: panel.id,
+        label: "Diag",
+        unsaved: true,
+      });
+    });
+
+    const dialog = document.querySelector('[data-testid="confirm-close-tab-dialog"]');
+    expect(dialog?.textContent).toContain("Unsaved changes");
+    expect(dialog?.textContent).toContain('"Diag" has unsaved changes');
+    expect(dialog?.textContent).not.toContain("Any work in this tab will be lost");
+
+    act(() => {
+      (document.querySelector('[data-testid="confirm-close-tab-confirm"]') as HTMLElement).click();
+    });
+
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+  });
 });
