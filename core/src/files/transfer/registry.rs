@@ -157,6 +157,12 @@ impl TransferHandle {
     /// Anything else is forced to a non-retryable `failed`: the state machine
     /// only allows `Fail` from `Active`, but a crash can strike while queued,
     /// paused or backing off, and the task that would retry is gone.
+    #[cfg(any(
+        feature = "ssh",
+        feature = "docker",
+        feature = "local-transfer",
+        feature = "ftp"
+    ))]
     pub(super) fn settle_crashed(&self) -> TransferStateTag {
         let mut c = self.lock();
         if !c.state.is_terminal() {
