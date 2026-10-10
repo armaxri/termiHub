@@ -11,19 +11,67 @@
  * unchanged and whole lines are not needlessly nuked.
  */
 
+import secretKeyWords from "@/data/secret-key-words.json";
+
 /** Marker substituted in place of a redacted secret value. */
 export const REDACTION_MARKER = "***redacted***";
 
 /**
- * Secret-bearing key names (case-insensitive). Matched as whole words so
- * `password` matches but `keyboard` does not. Optional `-`/`_`/space separators
- * inside compound names are handled by the pattern fragments below.
+ * The shared secret key-name list (#4430). The Rust diagnostics redactor
+ * (`core/src/diagnostics/redact.rs`) builds its pattern from the same file with
+ * the same algorithm, and both are pinned by the shared vectors in
+ * `src/test/fixtures/redaction/secret-text-vectors.json`, so they cannot drift.
  */
-const SECRET_KEY_PATTERN =
-  "(?:passwords?|ssh[-_ ]?passwords?|passphrases?|passwd|pwd|secrets?|" +
-  "tokens?|access[-_ ]?tokens?|auth[-_ ]?tokens?|id[-_ ]?tokens?|refresh[-_ ]?tokens?|" +
-  "api[-_ ]?keys?|access[-_ ]?keys?|secret[-_ ]?keys?|private[-_ ]?keys?|" +
-  "client[-_ ]?secrets?|credentials?)";
+interface SecretKeyWords {
+  words: string[];
+  compoundWords: string[][];
+  gluedPrefixes: string[];
+}
+
+/** Longest identifier prefix scanned before a secret word (bounds backtracking). */
+const MAX_KEY_PREFIX = 64;
+
+/** `abc` → `[aA][bB][cC]`: case-insensitive without the regex `i` flag. */
+function anyCase(text: string): string {
+  return text.replace(/[a-z]/gi, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+}
+
+/**
+ * Build the secret key-name pattern from {@link SecretKeyWords}. It contains no
+ * capture groups and is **case-sensitive by construction**, so it must be used
+ * without the `i` flag: the camelCase alternative relies on the case of the
+ * first letter (`sshPassword` matches, `spinner` / `SPIN` do not).
+ *
+ * A key matches when a secret term is its whole name or its last component:
+ * - after a `_` / `-` separator, in any case (`ssh_password`, `MY_API_KEY`);
+ * - at a camelCase boundary (`sshPassword`, `keyPassphrase`, `clientSecret`);
+ * - glued to one of `gluedPrefixes`, in any case (`sshpassword`, `accesstoken`).
+ *
+ * Compound terms (`api key`) allow an optional `-`/`_`/space between parts, and
+ * a trailing plural `s` is always allowed.
+ */
+function secretKeyPattern(spec: SecretKeyWords): string {
+  const terms = [...spec.words.map((w) => [w]), ...spec.compoundWords];
+  const sep = "[-_ ]?";
+  const termAnyCase = terms.map((parts) => parts.map(anyCase).join(sep)).join("|");
+  const termCamel = terms
+    .map(([first, ...rest]) =>
+      [first.charAt(0).toUpperCase() + first.slice(1), ...rest.map(anyCase)].join(sep)
+    )
+    .join("|");
+  const glued = spec.gluedPrefixes.map(anyCase).join("|");
+  const ident = `[A-Za-z0-9_-]{0,${MAX_KEY_PREFIX}}`;
+  return (
+    `\\b(?:` +
+    `(?:${ident}[_-])?(?:${termAnyCase})` +
+    `|${ident}[A-Za-z0-9](?:${termCamel})` +
+    `|(?:${glued})(?:${termAnyCase})` +
+    `)[sS]?\\b`
+  );
+}
+
+/** Secret-bearing key names, built from the shared list. */
+const SECRET_KEY_PATTERN = secretKeyPattern(secretKeyWords as SecretKeyWords);
 
 /**
  * A PEM-style private key block, from the BEGIN header through the END footer,
@@ -56,14 +104,14 @@ const BEARER_TOKEN = /\b(bearer)\s+[A-Za-z0-9\-._~+/]+=*/gi;
 
 /** `secretKey: "value"` / `secretKey='value'` — quoted value (may contain spaces). */
 const QUOTED_KEY_VALUE = new RegExp(
-  `(\\b${SECRET_KEY_PATTERN}\\b["']?\\s*[:=]\\s*)(["'])(?:(?!\\2).)*\\2`,
-  "gi"
+  `(${SECRET_KEY_PATTERN}["']?\\s*[:=]\\s*)(["'])(?:(?!\\2).)*\\2`,
+  "g"
 );
 
 /** `secretKey=value` / `secretKey: value` — unquoted value (stops at whitespace/delimiter). */
 const UNQUOTED_KEY_VALUE = new RegExp(
-  `(\\b${SECRET_KEY_PATTERN}\\b["']?\\s*[:=]\\s*)([^\\s"',;}\\])]+)`,
-  "gi"
+  `(${SECRET_KEY_PATTERN}["']?\\s*[:=]\\s*)([^\\s"',;}\\])]+)`,
+  "g"
 );
 
 /**

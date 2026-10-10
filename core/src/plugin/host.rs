@@ -145,12 +145,12 @@ pub enum HostError {
 
     /// The dynamic library could not be opened (missing dependency, wrong
     /// architecture, corrupt file, …).
-    #[error("failed to open plugin library `{path}`: {source}")]
+    #[error("failed to open plugin library `{path}`: {detail}")]
     Open {
         /// The library path that failed to open.
         path: PathBuf,
-        /// The underlying `libloading` error.
-        source: libloading::Error,
+        /// The platform loader's error message.
+        detail: String,
     },
 
     /// A required exported symbol was missing from the library.
@@ -337,7 +337,7 @@ impl From<LoadError> for HostError {
             LoadError::LibraryChangedDuringLoad { path, detail } => {
                 HostError::LibraryChangedDuringLoad { path, detail }
             }
-            LoadError::Open { path, source } => HostError::Open { path, source },
+            LoadError::Open { path, detail } => HostError::Open { path, detail },
             LoadError::MissingSymbol(name) => HostError::MissingSymbol(name),
             LoadError::IncompatibleAbi(detail) => HostError::IncompatibleAbi(detail),
             LoadError::ManifestAbiMismatch { manifest, library } => {

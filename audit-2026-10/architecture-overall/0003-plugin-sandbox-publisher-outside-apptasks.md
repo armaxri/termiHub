@@ -12,8 +12,8 @@ evidence:
   - src-tauri/src/boot/mod.rs:1045
   - src-tauri/src/app_tasks.rs:9
   - src-tauri/src/lib.rs:308
-status: open
-resolution: ""
+status: fixed
+resolution: "#4373 — the publisher holds an AppTasks tracker token and exits on the app cancellation token; shutdown awaits it"
 audit: 2026-10
 commit: 663465d52
 relation: regression
