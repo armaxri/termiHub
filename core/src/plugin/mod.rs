@@ -61,6 +61,7 @@
 //! the `termihub-plugin-pack` binary.
 
 mod abi_check;
+mod anchored_fs;
 mod capabilities;
 mod connection;
 mod fat_pack;
