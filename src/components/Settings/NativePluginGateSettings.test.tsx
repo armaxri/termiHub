@@ -435,9 +435,23 @@ describe("NativePluginGateSettings", () => {
       expect(badge()!.textContent).toContain("Reduced isolation (accepted)");
       expect(badge()!.className).toContain("--warning");
       expect(query("native-plugin-isolation-warning-echo")!.textContent).toBe(
-        "This system cannot restrict file access (Linux Landlock is unavailable). Network and program limits still apply."
+        "This system cannot restrict file access (Linux Landlock is unavailable). The plugin can read and change any of your files, including startup scripts, so it can effectively run programs as you."
       );
       expect(query("native-plugin-load-reduced-echo")).toBeNull();
+    });
+
+    it("does not strike the files chip through when reduced isolation exposes them (#4605)", async () => {
+      withStatus({ isolation: "reduced", enforced: ["seccomp"], missing: ["landlock"] });
+      await renderFlushed();
+      expect(query("native-plugin-access-echo-files")!.className).not.toContain("ui-chip--denied");
+    });
+
+    it("keeps the home folder hidden in the warning when the namespace layer works (#4605)", async () => {
+      withStatus({ isolation: "reduced", enforced: ["seccomp", "netns"], missing: ["landlock"] });
+      await renderFlushed();
+      expect(query("native-plugin-isolation-warning-echo")!.textContent).toContain(
+        "Your home folder stays hidden"
+      );
     });
 
     it("shows Not sandboxed for a runner without OS confinement", async () => {
