@@ -163,6 +163,32 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             )
         };
 
+        // Unix: make the master non-blocking so a write parked on a child that
+        // stopped reading stdin can be interrupted; Linux does not wake it
+        // when the child is killed (#4394, see `pty_unix_io`).
+        #[cfg(unix)]
+        let interrupt = super::pty_unix_io::PtyInterrupt::default();
+        #[cfg(unix)]
+        let (writer, reader) = {
+            use super::pty_unix_io::{nonblocking_poll_fd, InterruptibleWriter, PollingReader};
+            let master_fd = pty_pair.master.as_raw_fd().ok_or_else(|| {
+                SessionError::SpawnFailed("PTY master has no file descriptor".to_string())
+            })?;
+            let poll_fd = nonblocking_poll_fd(master_fd)
+                .map_err(|e| SessionError::SpawnFailed(format!("PTY non-blocking setup: {e}")))?;
+            (
+                InterruptibleWriter {
+                    inner: writer,
+                    poll_fd: poll_fd.clone(),
+                    interrupt: interrupt.clone(),
+                },
+                PollingReader {
+                    inner: reader,
+                    poll_fd,
+                },
+            )
+        };
+
         // Master is stored behind an `Option` so `close_pty` can drop it,
         // releasing the pseudoterminal (a best-effort attempt to unblock the
         // reader; on Windows ConPTY this is not guaranteed — see note #4).
@@ -198,6 +224,10 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
                 }
             }),
             kill: Box::new(move || {
+                // Fail a write parked on the PTY before (and regardless of
+                // whether) the kill wakes it (#4394).
+                #[cfg(unix)]
+                interrupt.interrupt();
                 if let Ok(mut k) = killer.lock() {
                     let _ = k.kill();
                 }
@@ -712,10 +742,13 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     /// another thread does not wake that write, but ending the other side
     /// does:
     ///
-    /// - **Unix** — `kill` sends `SIGHUP` to the shell (the session leader);
-    ///   the kernel then hangs up the terminal and signals its foreground
-    ///   process group. Once the slave side is closed the parked master write
-    ///   fails with `EIO`.
+    /// - **Unix** — the master is non-blocking and a write waits for room in
+    ///   short bounded polls (`pty_unix_io`). `kill` first flags the PTY as
+    ///   interrupted, so a waiting write gives up within one poll interval, then
+    ///   sends `SIGHUP` to the shell (the session leader); the kernel hangs up
+    ///   the terminal and signals its foreground process group. A plain
+    ///   blocking write is not enough: Linux does not wake a master write
+    ///   parked on a full queue when the slave is hung up and closed.
     /// - **Windows** — the console host drains the ConPTY input pipe into its
     ///   own buffer whether or not the child reads, so a write parks only if
     ///   the host itself stops reading. `kill` is `TerminateProcess` on the
