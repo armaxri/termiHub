@@ -9,8 +9,9 @@
  *
  * The fix adds a `restoreInProgress` flag: while it is true,
  * `scheduleLastSessionSave` is a no-op, so a mid-restore snapshot cannot
- * overwrite the good last-session file. Once the restore cohort settles (a short
- * settle window), the flag clears and auto-saves resume.
+ * overwrite the good last-session file. Once the restore cohort settles — every
+ * restored tab has connected or failed (#4387) — the flag clears and auto-saves
+ * resume; a generous safety timeout lowers it if the settlement never arrives.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -54,12 +55,17 @@ import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupRestoreCohortRegion } from "@/test/restoreCohortHarness";
 import { saveLastSession, loadLastSession } from "@/services/lastSessionApi";
 import type { LastSession } from "@/types/lastSession";
+import { getAllLeaves } from "@/utils/panelTree";
+import { layoutState } from "@/test/layoutState";
+import { RESTORE_GUARD_SAFETY_TIMEOUT_MS } from "./restoreHelpers";
 
 setupConnectionsRegion();
 setupSettingsRegion();
 setupAgentsRegion();
+const restoreRegion = setupRestoreCohortRegion();
 
 const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
@@ -112,7 +118,7 @@ describe("appStore — auto-save mid-restore guard (GAP G5, #1146)", () => {
     expect(payload.tabGroups.length).toBeGreaterThan(0);
   });
 
-  it("holds restoreInProgress during a restore and clears it after the settle window", async () => {
+  it("holds restoreInProgress during a restore and clears it by the safety timeout", async () => {
     vi.useFakeTimers();
     mockLoad.mockResolvedValue({
       version: "1",
@@ -140,17 +146,129 @@ describe("appStore — auto-save mid-restore guard (GAP G5, #1146)", () => {
     // Still guarded immediately after restore resolves (tabs are still settling).
     expect(useAppStore.getState().restoreInProgress).toBe(true);
 
-    // A save scheduled during the settle window is dropped.
+    // A save scheduled while the cohort is unsettled is dropped.
     useAppStore.getState().scheduleLastSessionSave();
     await vi.advanceTimersByTimeAsync(0);
     expect(mockSave).not.toHaveBeenCalled();
 
-    // After the settle window elapses the guard clears and saves resume.
+    // No tab ever settles here (no Terminal mounts), so the safety timeout
+    // lowers the guard and saves resume.
     await vi.runAllTimersAsync();
     expect(useAppStore.getState().restoreInProgress).toBe(false);
 
     useAppStore.getState().scheduleLastSessionSave();
     await vi.runAllTimersAsync();
     expect(mockSave).toHaveBeenCalled();
+  });
+});
+
+/** A one-tab session that resolves to a plain local terminal. */
+function oneLocalTabSession(title = "Shell A"): LastSession {
+  return {
+    version: "1",
+    activeGroupIndex: 0,
+    tabGroups: [
+      {
+        name: "Restored",
+        layout: {
+          type: "leaf",
+          tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title }],
+        },
+      },
+    ],
+  };
+}
+
+function restoredTabIds(): string[] {
+  return getAllLeaves(layoutState().rootPanel)
+    .flatMap((l) => l.tabs)
+    .map((t) => t.id);
+}
+
+describe("restore guard follows the restore cohort (#4387)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    useAppStore.setState({ defaultShell: "bash", restoreInProgress: false });
+    seedSettings({ restoreLastSessionOnStartup: true });
+    seedConnectionsRegion({ connections: [] });
+    // Only fake the timers the guard + debounce use; the region harness drains
+    // its dispatch chain through setImmediate, which must stay real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(async () => {
+    // Drain any guard still raised so it does not leak into the next case.
+    await vi.advanceTimersByTimeAsync(RESTORE_GUARD_SAFETY_TIMEOUT_MS);
+    vi.useRealTimers();
+  });
+
+  it("stays guarded while a slow tab connects and resumes exactly when it settles", async () => {
+    mockLoad.mockResolvedValue(oneLocalTabSession());
+    await useAppStore.getState().restoreLastSession();
+    await restoreRegion.flush();
+    const [tabId] = restoredTabIds();
+    expect(tabId).toBeDefined();
+
+    // 5s into a slow SSH/agent connect: well past the old fixed 2s window.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(useAppStore.getState().restoreInProgress).toBe(true);
+    useAppStore.getState().scheduleLastSessionSave();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockSave).not.toHaveBeenCalled();
+
+    // The tab connects: the cohort settles and the guard drops right away,
+    // long before the safety timeout.
+    useAppStore.getState().setTabSessionId(tabId, "sess-a");
+    await restoreRegion.flush();
+    expect(useAppStore.getState().restoreInProgress).toBe(false);
+
+    useAppStore.getState().scheduleLastSessionSave();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("also resumes when the last tab fails to connect", async () => {
+    mockLoad.mockResolvedValue(oneLocalTabSession());
+    await useAppStore.getState().restoreLastSession();
+    await restoreRegion.flush();
+    const [tabId] = restoredTabIds();
+
+    useAppStore.getState().setTerminalDisconnectWithError(tabId, "connection refused");
+    await restoreRegion.flush();
+    expect(useAppStore.getState().restoreInProgress).toBe(false);
+  });
+
+  it("lowers the guard by the safety timeout when the cohort never settles", async () => {
+    mockLoad.mockResolvedValue(oneLocalTabSession());
+    await useAppStore.getState().restoreLastSession();
+    await restoreRegion.flush();
+
+    await vi.advanceTimersByTimeAsync(RESTORE_GUARD_SAFETY_TIMEOUT_MS - 1);
+    expect(useAppStore.getState().restoreInProgress).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(useAppStore.getState().restoreInProgress).toBe(false);
+  });
+
+  it("waits for the newest cohort when restores overlap", async () => {
+    mockLoad.mockResolvedValue(oneLocalTabSession("First"));
+    await useAppStore.getState().restoreLastSession();
+    await restoreRegion.flush();
+    const [firstTab] = restoredTabIds();
+
+    mockLoad.mockResolvedValue(oneLocalTabSession("Second"));
+    await useAppStore.getState().restoreLastSession();
+    await restoreRegion.flush();
+    const [secondTab] = restoredTabIds();
+    expect(secondTab).not.toBe(firstTab);
+
+    // A late connect from the superseded restore does not end the guard.
+    useAppStore.getState().setTabSessionId(firstTab, "sess-old");
+    await restoreRegion.flush();
+    expect(useAppStore.getState().restoreInProgress).toBe(true);
+
+    useAppStore.getState().setTabSessionId(secondTab, "sess-new");
+    await restoreRegion.flush();
+    expect(useAppStore.getState().restoreInProgress).toBe(false);
   });
 });

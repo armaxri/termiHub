@@ -41,7 +41,6 @@ import { ErrorBoundary, ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSuperseded";
-import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useInterruptedFolderPastes } from "@/hooks/useInterruptedFolderPastes";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { subscribeGuarded, useTauriListener } from "@/hooks/useTauriListener";
@@ -75,7 +74,6 @@ function App() {
   useKeyboardShortcuts();
   useTransferEvents();
   useSessionOwnershipSuperseded();
-  useTransferReconcile();
   useInterruptedFolderPastes();
   useEmbeddedServerEvents();
   usePluginEvents();

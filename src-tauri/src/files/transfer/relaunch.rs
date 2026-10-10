@@ -954,17 +954,21 @@ fn block_row(app_handle: &AppHandle, record: &PersistedTransfer, blocked: Relaun
 /// synthetic `failed` progress event through the shared transfers store (so every
 /// subscriber sees the diff). The persisted record is left intact so the user can
 /// reconnect the session and retry.
-fn fail_row(app_handle: &AppHandle, record: &PersistedTransfer, message: String) {
+fn fail_row<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    record: &PersistedTransfer,
+    message: String,
+) {
     fold_row(app_handle, &failed_progress(record, message));
 }
 
 /// Move a rehydrated row whose record was already taken to Cancelled (#3613).
-fn cancel_row(app_handle: &AppHandle, record: &PersistedTransfer) {
+fn cancel_row<R: tauri::Runtime>(app_handle: &AppHandle<R>, record: &PersistedTransfer) {
     fold_row(app_handle, &cancelled_progress(record));
 }
 
 /// Fold a synthetic progress event through the shared transfers store.
-fn fold_row(app_handle: &AppHandle, progress: &TransferProgress) {
+fn fold_row<R: tauri::Runtime>(app_handle: &AppHandle<R>, progress: &TransferProgress) {
     crate::transfers_projection::projection::fold_transfer_progress(app_handle, progress);
 }
 
@@ -1734,5 +1738,44 @@ mod tests {
         assert_eq!(progress.state, TransferStateTag::Cancelled);
         assert_eq!(progress.phase, TransferPhase::Cancelled);
         assert_eq!(progress.message, None);
+    }
+
+    // ── Terminal relaunch rows reach the authoritative store (#4387) ─────────
+    //
+    // The client reconcile poll is retired, so a relaunch that fails or cancels a
+    // rehydrated row must fold its terminal state into the shared transfer store
+    // directly — there is no engine and no later snapshot to heal it.
+
+    fn app_with_store() -> (
+        tauri::App<tauri::test::MockRuntime>,
+        Arc<crate::transfers_projection::store::TransferStore>,
+    ) {
+        let app = tauri::test::mock_app();
+        let store = Arc::new(crate::transfers_projection::store::TransferStore::new());
+        app.manage(store.clone());
+        (app, store)
+    }
+
+    #[test]
+    fn a_failed_relaunch_folds_the_row_failed_into_the_store() {
+        use crate::transfers_projection::store::TransferQueueState;
+        let (app, store) = app_with_store();
+        fail_row(
+            app.handle(),
+            &record("t1", Some("/l")),
+            "session gone".into(),
+        );
+        let row = store.get("t1").expect("row folded");
+        assert_eq!(row.state, TransferQueueState::Failed);
+        assert_eq!(row.error.as_deref(), Some("session gone"));
+    }
+
+    #[test]
+    fn a_cancelled_rehydrated_row_folds_cancelled_into_the_store() {
+        use crate::transfers_projection::store::TransferQueueState;
+        let (app, store) = app_with_store();
+        cancel_row(app.handle(), &record("t1", Some("/l")));
+        let row = store.get("t1").expect("row folded");
+        assert_eq!(row.state, TransferQueueState::Cancelled);
     }
 }

@@ -732,7 +732,7 @@ pub(super) async fn drive_transfer<S, SFut, C, CFut>(
 mod tests {
     use super::*;
     use crate::files::transfer::registry::TransferRegistry;
-    use crate::files::transfer::{TransferDirection, TransferProgress};
+    use crate::files::transfer::{TransferDirection, TransferProgress, TransferStateTag};
     use std::sync::Mutex;
 
     fn fp(size: u64, mtime: u64) -> Option<SourceFingerprint> {
@@ -1121,5 +1121,180 @@ mod tests {
                 reason: StopReason::Cancel,
             })
         ));
+    }
+
+    // ── drive_transfer termination paths (#4387) ─────────────────────────────
+    //
+    // The frontend no longer polls `transfer_list` to heal rows stuck
+    // non-terminal: every way a transfer ends must emit its terminal state
+    // through the sink (which the app folds into the authoritative transfer
+    // store) *before* the registry entry is dropped. These pin each path.
+
+    /// A sink recording every emitted `(phase, state)` pair.
+    type Recorded = Arc<Mutex<Vec<(TransferPhase, TransferStateTag)>>>;
+
+    fn recording_sink() -> (ProgressSink, Recorded) {
+        let events: Recorded = Arc::new(Mutex::new(Vec::new()));
+        let rec = events.clone();
+        let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+            rec.lock().expect("lock").push((p.phase, p.state));
+        });
+        (sink, events)
+    }
+
+    fn cursor() -> ResumeCursor {
+        ResumeCursor {
+            offset: 0,
+            total: 10,
+            baseline: None,
+        }
+    }
+
+    fn last(events: &Recorded) -> (TransferPhase, TransferStateTag) {
+        *events
+            .lock()
+            .expect("lock")
+            .last()
+            .expect("at least one emit")
+    }
+
+    async fn no_cleanup() {}
+
+    /// Run `drive_transfer` for `handle` with a scripted stint sequence.
+    async fn drive(
+        handle: &Arc<TransferHandle>,
+        registry: &TransferRegistry,
+        sink: &ProgressSink,
+        script: Vec<(Option<TransferEvent>, AttemptsResult)>,
+    ) {
+        let script = Arc::new(Mutex::new(std::collections::VecDeque::from(script)));
+        let h = handle.clone();
+        drive_transfer(
+            handle,
+            registry,
+            sink,
+            "test",
+            cursor(),
+            move |c| {
+                let (event, result) = script
+                    .lock()
+                    .expect("lock")
+                    .pop_front()
+                    .expect("stint script exhausted");
+                if let Some(event) = event {
+                    h.transition(event);
+                }
+                async move { (result, c) }
+            },
+            no_cleanup,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn completed_transfer_emits_completed_before_dropping_its_entry() {
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, events) = recording_sink();
+        drive(
+            &h,
+            &reg,
+            &sink,
+            vec![(Some(TransferEvent::Complete), AttemptsResult::Completed)],
+        )
+        .await;
+        assert_eq!(
+            last(&events),
+            (TransferPhase::Done, TransferStateTag::Completed)
+        );
+        assert!(reg.get("t1").is_none(), "entry dropped after the emit");
+    }
+
+    #[tokio::test]
+    async fn cancelled_stint_emits_cancelled() {
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, events) = recording_sink();
+        drive(
+            &h,
+            &reg,
+            &sink,
+            vec![(Some(TransferEvent::Cancel), AttemptsResult::Cancelled)],
+        )
+        .await;
+        assert_eq!(
+            last(&events),
+            (TransferPhase::Cancelled, TransferStateTag::Cancelled)
+        );
+        assert!(reg.get("t1").is_none());
+    }
+
+    /// A transfer cancelled while still queued behind a busy slot never runs a
+    /// stint, yet must still emit its terminal `cancelled` state.
+    #[tokio::test]
+    async fn cancel_while_queued_for_a_slot_emits_cancelled() {
+        let reg = TransferRegistry::with_max_concurrent(1);
+        let busy = reg.enqueue("busy", "s1", TransferDirection::Upload, "f", "/f", 10);
+        assert_eq!(
+            reg.request_slot(&busy),
+            super::super::scheduler::Admission::Run
+        );
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "g", "/g", 10);
+        let (sink, events) = recording_sink();
+        reg.cancel("t1");
+        // The script is empty: a stint must never run for this transfer.
+        drive(&h, &reg, &sink, vec![]).await;
+        assert_eq!(
+            last(&events),
+            (TransferPhase::Cancelled, TransferStateTag::Cancelled)
+        );
+        assert!(reg.get("t1").is_none());
+    }
+
+    #[tokio::test]
+    async fn pause_then_cancel_emits_cancelled() {
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, events) = recording_sink();
+        reg.cancel("t1");
+        drive(
+            &h,
+            &reg,
+            &sink,
+            vec![(Some(TransferEvent::Pause), AttemptsResult::Paused)],
+        )
+        .await;
+        assert_eq!(
+            last(&events),
+            (TransferPhase::Cancelled, TransferStateTag::Cancelled)
+        );
+        assert!(reg.get("t1").is_none());
+    }
+
+    /// Exhausted retries leave the transfer `failed` (the attempt loop emits the
+    /// error); a later cancel of that failed transfer settles it `cancelled`.
+    #[tokio::test]
+    async fn failed_then_cancelled_emits_cancelled() {
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, events) = recording_sink();
+        reg.cancel("t1");
+        drive(
+            &h,
+            &reg,
+            &sink,
+            vec![(
+                Some(TransferEvent::Fail {
+                    attempt: crate::files::transfer::MAX_RETRIES,
+                }),
+                AttemptsResult::FailedPermanent,
+            )],
+        )
+        .await;
+        assert_eq!(
+            last(&events),
+            (TransferPhase::Cancelled, TransferStateTag::Cancelled)
+        );
+        assert!(reg.get("t1").is_none());
     }
 }

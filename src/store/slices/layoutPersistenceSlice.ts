@@ -118,7 +118,8 @@ export interface LayoutPersistenceSlice {
    * {@link scheduleLastSessionSave} is a no-op so a mid-restore snapshot — where
    * some tabs are still connecting or in agent-error — cannot be captured and
    * persisted over the previously-good last session. Cleared once the restored
-   * cohort settles (a short settle window after the layout is placed).
+   * cohort settles — every tab connected or failed (#4387) — with a generous
+   * safety timeout as the backstop (see beginRestoreGuard).
    */
   restoreInProgress: boolean;
 
