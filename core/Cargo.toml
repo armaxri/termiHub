@@ -193,6 +193,20 @@ termihub-plugin-runner = { path = "../plugin-runner", optional = true }
 # hand-rolled over std UDP (RFC 1350) — no crate.
 axum = { version = "0.7", optional = true }
 tower-http = { version = "0.5", features = ["fs"], optional = true }
+# The HTTP server runs its own accept loop (#4399) so it can refuse connections
+# beyond `max_concurrent_sessions` before serving them, which `axum::serve` 0.7
+# cannot: `hyper` serves each admitted connection (HTTP/1 with a header-read
+# timeout), `hyper-util` adapts the tokio socket and the axum router, and
+# `tower` attaches the peer address to each request. All three are already in
+# the tree via axum with these features, so this adds no new crate.
+hyper = { version = "1", features = ["http1", "server"], optional = true }
+hyper-util = { version = "0.1", features = [
+    "tokio",
+    "server",
+    "service",
+    "http1",
+], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
 # The embedded server implementations use `anyhow` for their internal
 # error plumbing (`Context`, `anyhow!`); gated behind `embedded-servers` so the
 # rest of core keeps its `thiserror`-only error surface.
@@ -386,6 +400,9 @@ fixture-test-support = []
 embedded-servers = [
     "dep:axum",
     "dep:tower-http",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tower",
     "dep:libunftp",
     "dep:unftp-core",
     "dep:unftp-sbe-fs",

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::pin::Pin;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -53,6 +53,11 @@ struct MockEndpoint {
     fail_read_at: Arc<Mutex<Option<u64>>>,
     on_write: Mutex<Option<WriteHook>>,
     opens: Arc<Mutex<Vec<Open>>>,
+    /// Number of `link` calls so far.
+    link_calls: AtomicUsize,
+    /// Park every `link` call from this (1-based) index on forever — a dead
+    /// connection (#4672). `0` never parks.
+    park_link_from: usize,
 }
 
 impl MockEndpoint {
@@ -67,6 +72,8 @@ impl MockEndpoint {
             fail_read_at: Arc::new(Mutex::new(None)),
             on_write: Mutex::new(None),
             opens: Arc::new(Mutex::new(Vec::new())),
+            link_calls: AtomicUsize::new(0),
+            park_link_from: 0,
         })
     }
 
@@ -89,6 +96,8 @@ impl MockEndpoint {
             fail_read_at: Arc::new(Mutex::new(None)),
             on_write: Mutex::new(None),
             opens: Arc::new(Mutex::new(Vec::new())),
+            link_calls: AtomicUsize::new(0),
+            park_link_from: 0,
         };
         f(&mut ep);
         Arc::new(ep)
@@ -129,6 +138,10 @@ impl CopyEndpoint for MockEndpoint {
     }
 
     async fn link(&self) -> Result<Box<dyn EndpointLink>, String> {
+        let call = self.link_calls.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+        if self.park_link_from != 0 && call >= self.park_link_from {
+            std::future::pending::<()>().await;
+        }
         Ok(Box::new(MockLink {
             fs: self.fs.clone(),
             resume_read: self.resume_read,
@@ -742,3 +755,51 @@ impl Run {
 #[cfg(feature = "local-transfer")]
 #[path = "remote_copy_ranged_tests.rs"]
 mod ranged;
+
+// ── a cancel while an endpoint open is parked settles promptly (#4672) ──────
+
+/// Start a copy whose source's `park_from`-th `link` never resolves, cancel it
+/// once that call is parked, and assert it settles as cancelled promptly and
+/// exactly once.
+async fn cancel_during_parked_link(park_from: usize) {
+    let src = MockEndpoint::with("server", |ep| ep.park_link_from = park_from);
+    let dst = MockEndpoint::container();
+    src.put(SRC, content(MIB, 1), 1);
+
+    let run = Run::start(&src, &dst, 0, None);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while src.link_calls.load(AtomicOrdering::SeqCst) < park_from {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("the copy reaches the parked open");
+    assert!(run.registry.cancel(ID));
+    let (registry, handle) = (run.registry.clone(), run.handle.clone());
+    let task_events = run.events.clone();
+    tokio::time::timeout(Duration::from_secs(5), run.task)
+        .await
+        .expect("a cancel during a parked open settles promptly")
+        .expect("copy task");
+
+    let events = task_events.lock().expect("events").clone();
+    assert_eq!(terminal(&events), TransferPhase::Cancelled);
+    let cancelled = events
+        .iter()
+        .filter(|e| e.phase == TransferPhase::Cancelled)
+        .count();
+    assert_eq!(cancelled, 1, "exactly one terminal emit");
+    assert_eq!(handle.snapshot().state, TransferStateTag::Cancelled);
+    assert!(registry.get(ID).is_none(), "the entry is dropped");
+    assert!(src.opens().is_empty(), "no stream was opened");
+}
+
+#[tokio::test]
+async fn cancel_during_the_up_front_source_probe_settles_promptly() {
+    cancel_during_parked_link(1).await;
+}
+
+#[tokio::test]
+async fn cancel_during_the_per_attempt_endpoint_open_settles_promptly() {
+    cancel_during_parked_link(2).await;
+}

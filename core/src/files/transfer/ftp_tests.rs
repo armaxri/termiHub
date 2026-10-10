@@ -489,3 +489,74 @@ async fn download_of_a_folder_path_fails_and_lands_no_content() {
     reg.cancel("ftp-dir");
     run.await.expect("executor task");
 }
+
+// --- Cancel while the probe is parked (#4672) ---
+
+/// A server that accepts the control connection and never sends its greeting
+/// parks the up-front probe; a cancel must still settle promptly and once.
+#[tokio::test]
+async fn cancel_during_a_parked_probe_settles_promptly() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let (accepted_tx, mut accepted) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+            let _ = accepted_tx.send(());
+        }
+    });
+    let config = FtpConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        connect_timeout_secs: 120,
+        ..FtpConfig::default()
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("data.bin");
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "ftp-parked",
+        "ftp-session",
+        TransferDirection::Download,
+        "data.bin",
+        REMOTE,
+        0,
+    );
+    let (sink, events) = recording_sink();
+    let task = tokio::spawn(run_ftp_transfer(
+        config,
+        FtpDirection::Download,
+        REMOTE.to_string(),
+        s(&local),
+        handle.clone(),
+        reg.clone(),
+        sink,
+        0,
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(10), accepted.recv())
+        .await
+        .expect("the probe connects")
+        .expect("server alive");
+
+    assert!(reg.cancel("ftp-parked"));
+    tokio::time::timeout(std::time::Duration::from_secs(5), task)
+        .await
+        .expect("a cancel during a parked probe settles promptly")
+        .expect("task");
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Cancelled);
+    let events = events.lock().expect("lock");
+    let cancelled = events
+        .iter()
+        .filter(|p| p.phase == TransferPhase::Cancelled)
+        .count();
+    assert_eq!(cancelled, 1, "exactly one terminal emit");
+    assert_eq!(
+        events.last().map(|p| p.phase),
+        Some(TransferPhase::Cancelled)
+    );
+    assert!(reg.get("ftp-parked").is_none(), "registry entry dropped");
+}

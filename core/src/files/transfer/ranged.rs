@@ -31,9 +31,10 @@ use crate::errors::FileError;
 use crate::files::{FileEntry, RangedFileAccess};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, local_fingerprint, local_size,
-    open_local_dest, open_local_read, rehydrate_start_offset, settle_attempt, stop_reason,
-    AttemptOutcome, AttemptsResult, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
+    local_size, open_local_dest, open_local_read, probe_timed_out, rehydrate_start_offset,
+    settle_attempt, stop_reason, AttemptOutcome, AttemptsResult, Probed, ProgressReporter,
+    ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -213,7 +214,8 @@ where
 }
 
 /// Re-verify the resume point before an attempt via the shared gate, over a
-/// freshly-read source fingerprint and destination size.
+/// freshly-read source fingerprint and destination size. The reads are
+/// cancel-aware and bounded (#4672); the gate is applied only when they finish.
 #[allow(clippy::too_many_arguments)]
 async fn gate_resume(
     target: &dyn RangedTransferTarget,
@@ -223,19 +225,30 @@ async fn gate_resume(
     cursor: &mut ResumeCursor,
     handle: &TransferHandle,
     sink: &ProgressSink,
-) {
-    let current = source_fingerprint(target, direction, remote_path, local_path).await;
-    let present = if cursor.offset == 0 {
-        None
-    } else {
-        match direction {
-            TransferDirection::Download => local_size(local_path).await,
-            TransferDirection::Upload => remote_fingerprint(target, remote_path)
-                .await
-                .map(|fp| fp.size),
-        }
+) -> Probed<()> {
+    let offset = cursor.offset;
+    let probe = async {
+        let current = source_fingerprint(target, direction, remote_path, local_path).await;
+        let present = if offset == 0 {
+            None
+        } else {
+            match direction {
+                TransferDirection::Download => local_size(local_path).await,
+                TransferDirection::Upload => remote_fingerprint(target, remote_path)
+                    .await
+                    .map(|fp| fp.size),
+            }
+        };
+        (current, present)
     };
-    apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+    match guard_probe(probe, handle, STALL_TIMEOUT).await {
+        Probed::Done((current, present)) => {
+            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+            Probed::Done(())
+        }
+        Probed::Cancelled => Probed::Cancelled,
+        Probed::TimedOut => Probed::TimedOut,
+    }
 }
 
 /// Run attempts (with auto-retry/backoff) for one Active stint.
@@ -256,7 +269,7 @@ async fn run_attempts(
         }
         attempt += 1;
         handle.set_attempt(attempt);
-        gate_resume(
+        let gated = gate_resume(
             target,
             direction,
             remote_path,
@@ -266,16 +279,28 @@ async fn run_attempts(
             sink,
         )
         .await;
-        let result = run_one(
-            target,
-            direction,
-            remote_path,
-            local_path,
-            cursor,
-            handle,
-            sink,
-        )
-        .await;
+        let result = match gated {
+            Probed::Done(()) => {
+                run_one(
+                    target,
+                    direction,
+                    remote_path,
+                    local_path,
+                    cursor,
+                    handle,
+                    sink,
+                )
+                .await
+            }
+            Probed::Cancelled => {
+                handle.transition(TransferEvent::Cancel);
+                return AttemptsResult::Cancelled;
+            }
+            Probed::TimedOut => Err(RangedTransferError::Remote(probe_timed_out(
+                "verify resume point",
+                STALL_TIMEOUT,
+            ))),
+        };
         if let Some(outcome) = settle_attempt(
             result,
             cursor,
@@ -393,7 +418,18 @@ pub async fn run_ranged_transfer(
     start_offset: u64,
 ) {
     let target = target.as_ref();
-    let baseline = source_fingerprint(target, direction, &remote_path, &local_path).await;
+    // The probe is cancel-aware and bounded (#4672): a cancel or a dead peer
+    // leaves the source unknown and falls through to `drive_transfer`, which
+    // settles a cancel exactly once.
+    let probe = source_fingerprint(target, direction, &remote_path, &local_path);
+    let baseline = match guard_probe(probe, &handle, STALL_TIMEOUT).await {
+        Probed::Done(baseline) => baseline,
+        Probed::Cancelled => None,
+        Probed::TimedOut => {
+            debug!(transfer_id = %handle.transfer_id, "ranged source probe timed out; source unknown");
+            None
+        }
+    };
     let total = baseline.map(|fp| fp.size).unwrap_or_default();
     let offset = rehydrate_start_offset(start_offset, &handle, baseline, BACKEND);
     handle.set_metrics(offset, total, 0);
