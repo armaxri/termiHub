@@ -191,8 +191,8 @@ pub fn seatbelt_profile(policy: &SandboxPolicy) -> Result<SeatbeltProfile, Sandb
 }
 
 /// Confine the calling process to `policy`. Irreversible: there is no way to
-/// lift a Seatbelt profile once applied.
-#[cfg(target_os = "macos")]
+/// lift a Seatbelt profile once applied. Runner-only (`runner` feature).
+#[cfg(all(feature = "runner", target_os = "macos"))]
 pub fn apply(policy: &SandboxPolicy) -> Result<(), SandboxError> {
     use std::ffi::{c_char, c_int, CStr, CString};
 

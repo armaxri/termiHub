@@ -1221,7 +1221,8 @@ checks that a bundle's runner starts and matches the digest the app embeds:
 `build.yml` (PR), `dev-build.yml` / `release.yml` (target dir, AppImage, `.deb`,
 re-signed `.app`), the release install smokes and `release-check`. Every build runs
 native plugins only through the runner (ADR-19, #4189); there is no in-process load
-path left to fall back to.
+path left to fall back to, and since #4373 the desktop's build does not even contain one
+(the loader's `dlopen` half is behind the runner-only `runner` feature).
 
 The Windows **agent** binaries (#4175: `termihub-agent-windows-x64.exe` /
 `-arm64.exe`) link it statically too, because the desktop deploys them to remote hosts
@@ -3559,6 +3560,17 @@ sandbox is a pre-v1.0 requirement and approved the concept
   load path and the debug-build developer flag that kept it reachable were removed (#4189). There is
   no user-facing "run unsandboxed" switch. Per-session and per-publisher helpers were rejected
   (process count and changed ABI semantics; a shared, union-of-permissions profile).
+- **Structural, not conventional (#4373, audit 2026-10 ARCH2-004).** The runner crate's library is
+  shared by the host and the runner, so "the host never loads a plugin" is enforced by the build:
+  everything that maps a library and calls into it (`loader::load_plugin_library`,
+  `PreparedLibrary::load`, `PluginLibrary`) and the process self-confinement (`sandbox::apply` and
+  the landlock / seccomp layer) compile only with the crate's `runner` feature. It is on by default
+  for the runner binary (`required-features`); `termihub-core` depends on the library with
+  `default-features = false` and no longer depends on `libloading` at all, so an in-process load
+  from core or the desktop is a compile error. Only test code turns the feature on, through core's
+  `[dev-dependencies]` (the in-process ABI baseline and the loader round-trip tests).
+  `scripts/internal/check-crate-policy.mjs` fails CI if any first-party crate enables `runner`
+  through a normal dependency.
 - **Deny by default, mediate through the host.** The runner confines itself before any plugin code
   is mapped — Linux: `no_new_privs`, landlock, seccomp, and an optional user + network namespace;
   macOS: a Seatbelt profile (`sandbox_init_with_parameters`); Windows: the host starts it in a

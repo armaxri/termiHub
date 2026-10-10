@@ -18,7 +18,16 @@
 //      no-panic header
 //        #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 //      Clippy's restriction lints are off by default, so a root without it is
-//      linted with none of them even under CI's `clippy -D warnings`.
+//      linted with none of them even under CI's `clippy -D warnings`;
+//   4. a first-party crate other than the runner itself turns on the plugin
+//      runner's `runner` feature (dlopen + self-confinement) for a normal
+//      dependency (ADR-19, ARCH2-004 — #4373): a `[dependencies]` /
+//      `[target.*.dependencies]` entry on `termihub-plugin-runner` that does
+//      not set `default-features = false` or that lists `runner` in its
+//      `features`, or a `[features]` entry naming `termihub-plugin-runner/runner`.
+//      Dev-dependencies are exempt — they never reach a shipping build. This
+//      keeps "termiHub never loads a plugin in-process" a compile-time fact for
+//      the desktop and core.
 //
 // Sibling of check-rust-version.mjs (rust-version drift for the same crates).
 //
@@ -121,6 +130,81 @@ export function policyCrates(rootManifest) {
   return [...members, ...STANDALONE_CRATES];
 }
 
+/** The plugin runner's package name, and the feature only its binary may enable. */
+export const RUNNER_PACKAGE = "termihub-plugin-runner";
+export const RUNNER_FEATURE = "runner";
+
+const NORMAL_DEPS_TABLE = /^(target\..+\.)?dependencies$/;
+const DOTTED_DEP_TABLE = /^((?:target\..+\.)?dependencies)\.(.+)$/;
+
+/**
+ * Find every way a manifest turns on the runner's `runner` feature through a
+ * normal (non-dev) dependency — policy rule 4.
+ *
+ * Understands inline entries (`termihub-plugin-runner = { … }`, a bare version
+ * string, or a renamed `alias = { package = "termihub-plugin-runner", … }`),
+ * dotted tables (`[dependencies.termihub-plugin-runner]`) and `[features]`
+ * entries naming `termihub-plugin-runner/runner` (or `?/runner`).
+ *
+ * @param {string} toml - crate manifest text.
+ * @returns {string[]} problems, without the crate prefix; empty when clean.
+ */
+export function runnerFeatureLeaks(toml) {
+  const problems = [];
+  const checkEntry = (where, body) => {
+    if (!/(^|[\s,{])default-features\s*=\s*false\b/m.test(body)) {
+      problems.push(
+        `${where}: a normal dependency on ${RUNNER_PACKAGE} must set \`default-features = false\` ` +
+          `(its default \`${RUNNER_FEATURE}\` feature is runner-only, ADR-19)`
+      );
+    }
+    const features = body.match(/(^|[\s,{])features\s*=\s*\[([^\]]*)\]/m);
+    if (features && features[2].includes(`"${RUNNER_FEATURE}"`)) {
+      problems.push(
+        `${where}: a normal dependency on ${RUNNER_PACKAGE} must not enable ` +
+          `\`${RUNNER_FEATURE}\` (ADR-19)`
+      );
+    }
+  };
+
+  const lines = toml.split(/\r?\n/).map((line) => line.replace(/#.*$/, ""));
+  let table = "";
+  let tableStart = -1;
+  const flushTable = (end) => {
+    const dotted = table.match(DOTTED_DEP_TABLE);
+    if (dotted && dotted[2].replace(/"/g, "").trim() === RUNNER_PACKAGE) {
+      checkEntry(`[${table}]`, lines.slice(tableStart + 1, end).join("\n"));
+    }
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const header = line.match(/^\s*\[([^[\]]+)\]\s*$/);
+    if (header) {
+      flushTable(i);
+      table = header[1].trim();
+      tableStart = i;
+      continue;
+    }
+    if (NORMAL_DEPS_TABLE.test(table)) {
+      const entry = line.match(/^\s*"?([A-Za-z0-9_-]+)"?\s*=\s*(.*)$/);
+      if (!entry) continue;
+      const [, name, value] = entry;
+      const renamed = value.includes(`"${RUNNER_PACKAGE}"`) && /\bpackage\s*=/.test(value);
+      if (name !== RUNNER_PACKAGE && !renamed) continue;
+      checkEntry(`[${table}] ${name}`, value.trim().startsWith("{") ? value : "");
+    } else if (table === "features") {
+      if (
+        line.includes(`"${RUNNER_PACKAGE}/${RUNNER_FEATURE}"`) ||
+        line.includes(`"${RUNNER_PACKAGE}?/${RUNNER_FEATURE}"`)
+      ) {
+        problems.push(`[features]: must not enable ${RUNNER_PACKAGE}/${RUNNER_FEATURE} (ADR-19)`);
+      }
+    }
+  }
+  flushTable(lines.length);
+  return problems;
+}
+
 /**
  * Run every policy rule against an in-memory view of the repo.
  *
@@ -130,6 +214,8 @@ export function policyCrates(rootManifest) {
  * @param {Record<string, Record<string, string | null> | null>} repo.crateRoots -
  *   crate dir -> (root source path relative to the crate -> its source), or
  *   null when the crate's Cargo.toml is missing.
+ * @param {Record<string, string | null>} [repo.memberManifests] - crate dir ->
+ *   Cargo.toml for every crate rule 4 covers (omitted: rule 4 is skipped).
  * @returns {string[]} human-readable problems; empty when compliant.
  */
 export function findProblems(repo) {
@@ -180,6 +266,13 @@ export function findProblems(repo) {
       }
     }
   }
+
+  for (const [crate, manifest] of Object.entries(repo.memberManifests ?? {})) {
+    if (manifest === null) continue; // reported by the crate-root rule
+    for (const problem of runnerFeatureLeaks(manifest)) {
+      problems.push(`${crate}/Cargo.toml ${problem}`);
+    }
+  }
   return problems;
 }
 
@@ -224,7 +317,14 @@ export function loadRepo(root) {
   const crateRoots = Object.fromEntries(
     policyCrates(rootManifest).map((c) => [c, crateRootSources(root, c)])
   );
-  return { rootManifest, standaloneManifests, crateRoots };
+  // Rule 4 covers every crate in the tree (examples and test probes too) but
+  // the runner itself, whose binary is the one thing that may load a plugin.
+  const memberManifests = Object.fromEntries(
+    [...workspaceMembers(rootManifest), ...STANDALONE_CRATES]
+      .filter((c) => c !== "plugin-runner")
+      .map((c) => [c, readOrNull(path.join(root, c, "Cargo.toml"))])
+  );
+  return { rootManifest, standaloneManifests, crateRoots, memberManifests };
 }
 
 // CLI mode.
@@ -234,7 +334,9 @@ if (isMainModule(import.meta.url)) {
   const repo = loadRepo(root);
   const problems = findProblems(repo);
   if (problems.length > 0) {
-    console.error("First-party crate policy drift (ERR-010 / TOOL-010, see #4343):");
+    console.error(
+      "First-party crate policy drift (ERR-010 / TOOL-010 / ADR-19, see #4343, #4373):"
+    );
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
@@ -244,6 +346,7 @@ if (isMainModule(import.meta.url)) {
   );
   console.log(
     `Crate policy: release overflow-checks/strip mirrored in ${STANDALONE_CRATES.join(", ")}; ` +
-      `no-panic header on all ${roots} first-party crate roots.`
+      `no-panic header on all ${roots} first-party crate roots; ` +
+      `no crate enables ${RUNNER_PACKAGE}/${RUNNER_FEATURE} outside dev-dependencies.`
   );
 }

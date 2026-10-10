@@ -12,12 +12,27 @@ publish = false
 # One crate, two targets (#4182):
 #
 # * the **library** is the part shared by the host and the runner: the IPC frame
-#   protocol (`ipc`) and the native-library loader (`loader`: digest pinning, ABI
-#   gate, toolchain rule, `plugin_init`). `termihub-core` depends on it, so the
-#   host and the runner run the exact same gates. It must stay small: it pulls
-#   no tokio, no Tauri, no rest-of-core.
+#   protocol (`ipc`), the pure load gates (`loader`: digest pinning, ABI gate,
+#   toolchain rule) and the sandbox policy/report types. `termihub-core` depends
+#   on it, so the host and the runner run the exact same gates. It must stay
+#   small: it pulls no tokio, no Tauri, no rest-of-core.
 # * the **binary** `termihub-plugin-runner` is the sidecar process that loads one
 #   plugin library and proxies the frozen 1.x C ABI over the IPC channel.
+#
+# The half of the library that only the runner may use, `dlopen` + `plugin_init`
+# (`loader::load_plugin_library`, `PreparedLibrary::load`, `PluginLibrary`) and
+# the process self-confinement (`sandbox::apply`, the Linux landlock/seccomp
+# layer), is behind the `runner` feature (ADR-19, #4373). termihub-core depends
+# on this crate with `default-features = false`, so the desktop cannot load a
+# plugin in-process: the symbols do not exist in its build. Only the binary (and
+# test-only dev-dependencies) enable it; scripts/internal/check-crate-policy.mjs
+# fails CI if a first-party crate turns it on for a normal dependency.
+[features]
+# On by default so `cargo build -p termihub-plugin-runner` (the packaging
+# scripts and workflows) builds the sidecar unchanged.
+default = ["runner"]
+runner = ["dep:libloading", "dep:landlock", "dep:seccompiler"]
+
 [lib]
 name = "termihub_plugin_runner"
 path = "src/lib.rs"
@@ -25,13 +40,14 @@ path = "src/lib.rs"
 [[bin]]
 name = "termihub-plugin-runner"
 path = "src/main.rs"
+required-features = ["runner"]
 
 [dependencies]
 # The stable ABI contract shared by the host and every plugin (#1990).
 termihub-plugin-api = { path = "../plugin-api" }
 # Cross-platform `dlopen` / `LoadLibrary` wrapper (moved here from core's host
-# loader so the runner reuses it unchanged).
-libloading = "0.8"
+# loader so the runner reuses it unchanged). Runner-only (`runner` feature).
+libloading = { version = "0.8", optional = true }
 # MessagePack for the control frames (the concept's choice: compact,
 # self-describing, already in the tree for the RDP sidecar IPC).
 rmp-serde = "1"
@@ -83,14 +99,21 @@ windows-sys = { version = "0.59", features = [
 # TCP rulesets, best-effort compatibility mode that reports what the running
 # kernel actually enforced) and seccompiler (AWS Firecracker; pure Rust, no
 # libseccomp) for the seccomp-bpf system-call filter. Both MIT OR Apache-2.0.
-landlock = "0.4"
-seccompiler = "0.5"
+# Runner-only (`runner` feature): the host never confines itself.
+landlock = { version = "0.4", optional = true }
+seccompiler = { version = "0.5", optional = true }
 
 # The namespace layer entered for real (#4237): `unshare(CLONE_NEWUSER)` needs
 # a single-threaded process, which libtest's thread-per-test harness is not.
 [[test]]
 name = "linux_namespaces"
 harness = false
+required-features = ["runner"]
+
+# Drives the runner binary, so it needs the binary's feature.
+[[test]]
+name = "runner_process"
+required-features = ["runner"]
 
 [dev-dependencies]
 proptest = "1"
