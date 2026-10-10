@@ -700,10 +700,26 @@ export function isAppShortcut(event: KeyboardEvent): boolean {
 
 /** Set user overrides from persisted settings. */
 export function setOverrides(entries: KeybindingOverrideEntry[]): void {
-  overrides = entries.map((e) => {
-    const parsed = parseBinding(e.key);
-    return { action: e.action, combo: parsed };
-  });
+  overrides = entries
+    .map((e) => ({ action: e.action, combo: parseBinding(e.key) }))
+    .filter((o) => isAcceptableOverride(o.action, o.combo));
+}
+
+/**
+ * Whether `combo` may be stored as an override for `action`. A modifier-only
+ * action (the remote-desktop release chord, #4524) only accepts a valid
+ * modifier-only chord: unbinding it, a single modifier, or a key combo would
+ * leave the canvas without a keyboard escape, so such an override is dropped
+ * and the action keeps its default.
+ */
+function isAcceptableOverride(action: string, combo: KeyCombo | KeyCombo[]): boolean {
+  if (!isModifierOnlyAction(action)) return true;
+  return isValidModifierOnlyCombo(combo);
+}
+
+/** Whether `action` is bound to a modifier-only chord (see {@link KeyBinding.modifierOnly}). */
+export function isModifierOnlyAction(action: string): boolean {
+  return DEFAULT_BINDINGS.find((b) => b.action === action)?.modifierOnly === true;
 }
 
 /** Get the current overrides as serialized entries. */
@@ -722,7 +738,9 @@ export function clearOverrides(): void {
 /** Set a single override for an action. Pass null combo to remove the override. */
 export function setOverride(action: string, combo: KeyCombo | KeyCombo[] | null): void {
   overrides = overrides.filter((o) => o.action !== action);
-  if (combo !== null) {
+  // An unusable combo for a modifier-only action resets it to its default
+  // rather than storing a chord that would trap the user (#4524).
+  if (combo !== null && isAcceptableOverride(action, combo)) {
     overrides.push({ action, combo });
   }
 }
@@ -731,6 +749,7 @@ export function setOverride(action: string, combo: KeyCombo | KeyCombo[] | null)
  * Explicitly unbind an action so it has no shortcut. Stored as an override (not
  * a removal) so the action stays cleared and does not revert to its platform
  * default. Reset-to-default (via {@link setOverride} with `null`) restores it.
+ * A modifier-only action (the release chord) cannot be unbound; it resets.
  */
 export function unbindAction(action: string): void {
   setOverride(action, { ...UNBOUND_COMBO });
