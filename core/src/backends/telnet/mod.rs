@@ -44,6 +44,14 @@ use negotiation::{Negotiator, DO, DONT, IAC, SB, SE, WILL, WONT};
 /// auto-login prompt timeout).
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
+/// Write timeout on the socket (#4394): a `write` to a peer that stopped
+/// reading (or vanished without FIN/RST) fails after this long without
+/// progress instead of parking until TCP gives up. Defence in depth behind
+/// [`interrupt_io`](ConnectionType::interrupt_io), which a tab close uses to
+/// end such a write at once. Generous, because it applies to every send —
+/// keystrokes and negotiation replies alike — and only a stalled peer hits it.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Upper bound on a buffered subnegotiation payload. Real payloads (TTYPE
 /// SEND, NAWS, …) are a few bytes; a runaway `IAC SB` without `IAC SE` must
 /// not grow memory without bound — excess bytes are discarded.
@@ -94,6 +102,9 @@ pub struct Telnet {
 /// Internal state of an active telnet connection.
 struct ConnectedState {
     writer: Arc<Mutex<TcpStream>>,
+    /// An independent handle on the same socket, used to shut it down while a
+    /// write parked in the kernel still holds the `writer` lock (#4394).
+    interrupter: TcpStream,
     /// Option negotiation state, shared with the reader thread. Lock order is
     /// always `negotiator` → `writer` so size reports are written in order.
     negotiator: Arc<Mutex<Negotiator>>,
@@ -522,11 +533,18 @@ impl ConnectionType for Telnet {
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to set read timeout: {e}")))?;
+        stream
+            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .map_err(|e| SessionError::SpawnFailed(format!("Failed to set write timeout: {e}")))?;
 
-        // Clone for the reader thread.
-        let reader_stream = stream
-            .try_clone()
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone TCP stream: {e}")))?;
+        // Clone for the reader thread, and once more for `interrupt_io`.
+        let clone_stream = || {
+            stream
+                .try_clone()
+                .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone TCP stream: {e}")))
+        };
+        let reader_stream = clone_stream()?;
+        let interrupter = clone_stream()?;
 
         let alive = Arc::new(AtomicBool::new(true));
         let writer = Arc::new(Mutex::new(stream));
@@ -570,6 +588,7 @@ impl ConnectionType for Telnet {
 
         self.state = Some(ConnectedState {
             writer,
+            interrupter,
             negotiator,
             editor: Mutex::new(LineEditor::new()),
             alive,
@@ -603,6 +622,23 @@ impl ConnectionType for Telnet {
         self.state
             .as_ref()
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
+    }
+
+    /// Shut the socket down so a `write` parked on a peer that stopped reading
+    /// returns (#4394). The parked write holds the `writer` lock, so this goes
+    /// through the separate `interrupter` handle on the same socket.
+    ///
+    /// On Unix a `shutdown` wakes a thread blocked in `send` on that socket,
+    /// which then fails (`EPIPE`). Windows does not promise to abort a
+    /// blocking `send` that is already pending; there the socket's write
+    /// timeout (`WRITE_TIMEOUT`) bounds the write instead. Either way the
+    /// reader thread sees the shutdown and stops, and the peer sees the
+    /// connection close.
+    fn interrupt_io(&self) {
+        if let Some(state) = self.state.as_ref() {
+            state.alive.store(false, Ordering::SeqCst);
+            let _ = state.interrupter.shutdown(std::net::Shutdown::Both);
+        }
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -673,3 +709,7 @@ mod tests;
 #[cfg(test)]
 #[path = "mode_tests.rs"]
 mod mode_tests;
+
+#[cfg(test)]
+#[path = "interrupt_tests.rs"]
+mod interrupt_tests;
