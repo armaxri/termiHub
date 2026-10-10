@@ -35,7 +35,17 @@ import {
   Unplug,
   Power,
   ArrowUpCircle,
+  ArrowUp,
+  ArrowDown,
+  Folder,
+  FolderInput,
 } from "lucide-react";
+import {
+  folderMoveTargets,
+  moveShortcutDelta,
+  moveShortcutHint,
+  type FolderMoveTarget,
+} from "@/utils/connectionKeyboardMove";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import {
   agentGraphicalTabConfig,
@@ -157,6 +167,10 @@ interface AgentConnectionItemProps extends AgentItemNavProps {
   onStartPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
   onAttachPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
   onStopPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  /** This agent's folders, in tree order, for the Move to Folder submenu (#4641). */
+  folderTargets: FolderMoveTarget[];
+  /** Move the definition (or the selection holding it) into a folder; `null` = agent root. */
+  onMoveToFolder: (defId: string, folderId: string | null) => void;
 }
 
 function AgentConnectionItem({
@@ -172,6 +186,8 @@ function AgentConnectionItem({
   onStartPersistent,
   onAttachPersistent,
   onStopPersistent,
+  folderTargets,
+  onMoveToFolder,
   activeIndex,
   getNodeIndex,
   getRowRef,
@@ -394,6 +410,12 @@ function AgentConnectionItem({
             Duplicate
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
+          <AgentDefMoveToFolder
+            definition={definition}
+            folderTargets={folderTargets}
+            onMoveToFolder={onMoveToFolder}
+          />
+          <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={() => deleteAgentDef(agentId, definition.id)}
@@ -404,6 +426,68 @@ function AgentConnectionItem({
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
+  );
+}
+
+/**
+ * Move to Folder submenu for an agent's saved connection: the keyboard / menu
+ * alternative to dragging it onto another folder of the same agent (#4641).
+ */
+function AgentDefMoveToFolder({
+  definition,
+  folderTargets,
+  onMoveToFolder,
+}: {
+  definition: AgentDefinitionInfo;
+  folderTargets: FolderMoveTarget[];
+  onMoveToFolder: (defId: string, folderId: string | null) => void;
+}) {
+  const currentFolderId = definition.folderId ?? null;
+  const atRoot = currentFolderId === null;
+  return (
+    <ContextMenu.Sub>
+      <ContextMenu.SubTrigger
+        className="context-menu__item context-menu__sub-trigger"
+        data-testid="context-agent-def-move-folder"
+      >
+        <FolderInput size={14} /> Move to Folder
+        <ChevronRight size={14} className="context-menu__sub-arrow" />
+      </ContextMenu.SubTrigger>
+      <ContextMenu.Portal>
+        <ContextMenu.SubContent
+          className="context-menu__content"
+          data-testid="context-agent-def-move-folder-submenu"
+        >
+          <ContextMenu.Item
+            className="context-menu__item"
+            disabled={atRoot}
+            onSelect={() => onMoveToFolder(definition.id, null)}
+            data-testid="context-agent-def-move-folder-root"
+          >
+            <Folder size={14} /> Top Level
+            {atRoot && <span className="context-menu__sub-label">current</span>}
+          </ContextMenu.Item>
+          {folderTargets.length > 0 && (
+            <ContextMenu.Separator className="context-menu__separator" />
+          )}
+          {folderTargets.map((target) => {
+            const isCurrent = currentFolderId === target.id;
+            return (
+              <ContextMenu.Item
+                key={target.id}
+                className="context-menu__item"
+                disabled={isCurrent}
+                onSelect={() => onMoveToFolder(definition.id, target.id)}
+                data-testid={`context-agent-def-move-folder-${target.id}`}
+              >
+                <Folder size={14} /> {target.label}
+                {isCurrent && <span className="context-menu__sub-label">current</span>}
+              </ContextMenu.Item>
+            );
+          })}
+        </ContextMenu.SubContent>
+      </ContextMenu.Portal>
+    </ContextMenu.Sub>
   );
 }
 
@@ -425,6 +509,8 @@ interface AgentFolderNodeProps extends AgentTreeNavProps {
   onStartPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
   onAttachPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
   onStopPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  folderTargets: FolderMoveTarget[];
+  onMoveDefinitionToFolder: (defId: string, folderId: string | null) => void;
 }
 
 function AgentFolderNode({
@@ -443,6 +529,8 @@ function AgentFolderNode({
   onStartPersistent,
   onAttachPersistent,
   onStopPersistent,
+  folderTargets,
+  onMoveDefinitionToFolder,
   filter,
   activeIndex,
   getNodeIndex,
@@ -571,6 +659,8 @@ function AgentFolderNode({
               onStartPersistent={onStartPersistent}
               onAttachPersistent={onAttachPersistent}
               onStopPersistent={onStopPersistent}
+              folderTargets={folderTargets}
+              onMoveDefinitionToFolder={onMoveDefinitionToFolder}
               filter={filter}
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
@@ -595,6 +685,8 @@ function AgentFolderNode({
               onStartPersistent={onStartPersistent}
               onAttachPersistent={onAttachPersistent}
               onStopPersistent={onStopPersistent}
+              folderTargets={folderTargets}
+              onMoveToFolder={onMoveDefinitionToFolder}
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
               getRowRef={getRowRef}
@@ -659,9 +751,23 @@ interface AgentNodeProps {
   sectionRef?: (el: HTMLDivElement | null) => void;
   /** Active search query for the Remote Agents section (empty = no filter). */
   filterQuery?: string;
+  /**
+   * Whether this agent can move one place up (`-1`) or down (`1`) in the list —
+   * the keyboard / menu alternative to dragging it (#4641). Omitted = no reorder.
+   */
+  canMoveBy?: (agentId: string, delta: -1 | 1) => boolean;
+  /** Move this agent one place up or down in the list. */
+  onMoveBy?: (agentId: string, delta: -1 | 1) => void;
 }
 
-export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentNodeProps) {
+export function AgentNode({
+  agent,
+  style,
+  sectionRef,
+  filterQuery = "",
+  canMoveBy,
+  onMoveBy,
+}: AgentNodeProps) {
   const {
     attributes,
     listeners,
@@ -821,6 +927,49 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       toggleAgentFolder(agent.id, folderId);
     },
     [filter, toggleAgentFolder, agent.id]
+  );
+
+  // Keyboard / menu alternative to dragging a saved connection onto another
+  // folder of this agent (#4641). Like a drop: a definition that is part of a
+  // multi-selection moves the whole selection, and those already in the target
+  // are skipped. Same store actions as the drag path in ConnectionList.
+  const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
+  const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
+  const agentFolderTargets = useMemo(() => folderMoveTargets(agentFolders), [agentFolders]);
+  const handleMoveDefinitionToFolder = useCallback(
+    (defId: string, folderId: string | null) => {
+      const bulk = selectedDefIds.size > 1 && selectedDefIds.has(defId);
+      const candidates = bulk ? [...selectedDefIds] : [defId];
+      const ids = candidates.filter(
+        (id) => (agentDefinitions.find((d) => d.id === id)?.folderId ?? null) !== folderId
+      );
+      if (ids.length === 1) void moveAgentDefToFolder(agent.id, ids[0], folderId);
+      else if (ids.length > 1) void bulkMoveAgentDefsToFolder(agent.id, ids, folderId);
+      if (bulk) clearDefSelection();
+    },
+    [
+      selectedDefIds,
+      agentDefinitions,
+      moveAgentDefToFolder,
+      bulkMoveAgentDefsToFolder,
+      agent.id,
+      clearDefSelection,
+    ]
+  );
+
+  // Ctrl/Cmd+Shift+ArrowUp/Down on the focused agent header reorders the agent
+  // (#4641), mirroring the shortcut on connection rows (#4528).
+  const canMoveUp = canMoveBy?.(agent.id, -1) ?? false;
+  const canMoveDown = canMoveBy?.(agent.id, 1) ?? false;
+  const handleHeaderKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      const delta = moveShortcutDelta(event);
+      if (delta === null || !onMoveBy) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onMoveBy(agent.id, delta);
+    },
+    [onMoveBy, agent.id]
   );
 
   useDndMonitor({
@@ -1299,6 +1448,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
             title={`Remote agent: ${agent.name}`}
             {...attributes}
             {...listeners}
+            onKeyDown={handleHeaderKeyDown}
           >
             <button
               className="connection-list__group-toggle"
@@ -1523,6 +1673,31 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                 </ContextMenu.Item>
               </>
             )}
+            {onMoveBy && (
+              <>
+                <ContextMenu.Separator className="context-menu__separator" />
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  disabled={!canMoveUp}
+                  onSelect={() => onMoveBy(agent.id, -1)}
+                  data-testid="context-agent-move-up"
+                >
+                  <ArrowUp size={14} />
+                  Move Up
+                  <span className="context-menu__sub-label">{moveShortcutHint("Up")}</span>
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  disabled={!canMoveDown}
+                  onSelect={() => onMoveBy(agent.id, 1)}
+                  data-testid="context-agent-move-down"
+                >
+                  <ArrowDown size={14} />
+                  Move Down
+                  <span className="context-menu__sub-label">{moveShortcutHint("Down")}</span>
+                </ContextMenu.Item>
+              </>
+            )}
             <ContextMenu.Separator className="context-menu__separator" />
             <ContextMenu.Item
               className="context-menu__item"
@@ -1675,6 +1850,8 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                   onStartPersistent={handleStartPersistent}
                   onAttachPersistent={handleAttachPersistent}
                   onStopPersistent={handleStopPersistent}
+                  folderTargets={agentFolderTargets}
+                  onMoveDefinitionToFolder={handleMoveDefinitionToFolder}
                   {...treeNav}
                 />
               ))}
@@ -1695,6 +1872,8 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                   onStartPersistent={handleStartPersistent}
                   onAttachPersistent={handleAttachPersistent}
                   onStopPersistent={handleStopPersistent}
+                  folderTargets={agentFolderTargets}
+                  onMoveToFolder={handleMoveDefinitionToFolder}
                   activeIndex={activeIndex}
                   getNodeIndex={getNodeIndex}
                   getRowRef={getRowRef}

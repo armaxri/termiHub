@@ -134,8 +134,10 @@ function emitFrontendLog(
   message: string,
   durable = false
 ): void {
+  const now = Date.now();
   const entry: LogEntry = {
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(now).toISOString(),
+    timestampMs: now,
     level,
     target: `frontend::${target}`,
     message,
