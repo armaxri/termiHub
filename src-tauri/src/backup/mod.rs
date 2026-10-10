@@ -74,6 +74,8 @@ mod tests;
 #[cfg(test)]
 mod tests_credential_rollback;
 #[cfg(test)]
+mod tests_deferred_import;
+#[cfg(test)]
 mod tests_embedded_servers;
 #[cfg(test)]
 mod tests_named_credentials;
