@@ -209,6 +209,29 @@ pub const AUTH_ERROR_INFO: &[ProtocolIndependentCode] = &[
 /// that is shutting down or restarting sends one too — so it stays an ordinary
 /// drop the desktop may auto-reconnect from, as do the remaining codes (server
 /// faults such as `ERRINFO_OUT_OF_MEMORY`).
+///
+/// # Why an xrdp remote logoff still auto-reconnects (#4529)
+///
+/// xrdp sends no `ERRINFO` at all, so a logoff there cannot reach this list.
+/// Captured against `tests/docker/rdp-server` (xrdp 0.10.1, sidecar PDU trace),
+/// the last PDU the server sends in each case is:
+///
+/// | Server-side event | What the client receives |
+/// | --- | --- |
+/// | Remote logoff (the session's `startwm.sh` exits) | Ultimatum `03 00 00 09 02 f0 80 21 80` |
+/// | Wrong password (`require_credentials`) | The same ultimatum |
+/// | `SIGTERM` to the connection's `xrdp` process | The same ultimatum |
+/// | `docker stop` (PID 1 exits, the rest is `SIGKILL`ed) | TCP close, no TLS `close_notify` |
+///
+/// The ultimatum is byte-identical in the first three rows (`rn-user-requested`,
+/// nothing before it): xrdp's MCS disconnect path sends that one frame for
+/// every end of session. The third row is what a real xrdp service restart does
+/// — the packaged `xrdp.service` sets no `KillMode`, so systemd `SIGTERM`s every
+/// per-connection process. Only the container teardown differs, and only
+/// because no process lives to send the ultimatum. Treating the ultimatum as
+/// [`SidecarFailureKind::ServerClosed`] would therefore strand the desktop after
+/// a real xrdp restart (and relabel a rejected xrdp password as a deliberate
+/// close), so a bare ultimatum stays an ordinary drop.
 pub const SERVER_CLOSE_ERROR_INFO: &[ProtocolIndependentCode] = &[
     ProtocolIndependentCode::RpcInitiatedDisconnect,
     ProtocolIndependentCode::RpcInitiatedLogoff,
@@ -738,6 +761,36 @@ mod tests {
         ] {
             assert_eq!(end_failure(&SessionEnd::Server(reason)), None);
         }
+    }
+
+    /// The last PDU xrdp 0.10.1 sends for a remote logoff, a rejected password
+    /// and a `SIGTERM` of the connection's `xrdp` process — the same bytes in
+    /// all three cases (captured against `tests/docker/rdp-server`, #4529).
+    const XRDP_DISCONNECT_ULTIMATUM: [u8; 9] =
+        [0x03, 0x00, 0x00, 0x09, 0x02, 0xf0, 0x80, 0x21, 0x80];
+
+    /// Evidence for #4529: an xrdp logoff carries nothing that tells it apart
+    /// from a server restart — a bare `rn-user-requested` ultimatum, no
+    /// `ERRINFO` — so it ends as a plain server disconnect, which stays an
+    /// ordinary drop the desktop auto-reconnects from.
+    #[test]
+    fn an_xrdp_logoff_ultimatum_carries_no_reason_and_stays_an_ordinary_drop() {
+        use ironrdp::pdu::mcs::{DisconnectProviderUltimatum, DisconnectReason};
+        use ironrdp::pdu::x224::X224;
+
+        let pdu =
+            ironrdp::core::decode::<X224<DisconnectProviderUltimatum>>(&XRDP_DISCONNECT_ULTIMATUM)
+                .expect("the captured frame is an MCS Disconnect Provider Ultimatum");
+        // The only field the ultimatum has, and it is the generic one xrdp uses
+        // for every end of session.
+        assert_eq!(pdu.0.reason, DisconnectReason::UserRequested);
+        // The sidecar maps it to a plain server-initiated end (rdp.rs).
+        assert_eq!(
+            end_failure(&SessionEnd::Server(
+                GracefulDisconnectReason::ServerInitiated
+            )),
+            None
+        );
     }
 
     #[test]
