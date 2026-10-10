@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { matchSorter } from "match-sorter";
 import {
   TerminalSquare,
@@ -19,19 +19,16 @@ import { readConfigString } from "@/utils/connectionConfigFields";
 import { Modal, Input } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
-import { isImeComposing } from "@/utils/imeComposition";
-
-/** DOM id of the results listbox the combobox input controls. */
-const LIST_ID = "command-palette-list";
+import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
 /**
- * Stable DOM id of the option at `index`, referenced by the input's
- * `aria-activedescendant` so screen readers follow arrow-key navigation while
- * DOM focus stays in the input (WAI-ARIA combobox pattern, #4330).
+ * DOM id of the results listbox the combobox input controls. Option ids are
+ * derived from it by {@link useComboboxListNav} (`command-palette-list-opt-<index>`),
+ * referenced by the input's `aria-activedescendant` so screen readers follow
+ * arrow-key navigation while DOM focus stays in the input (WAI-ARIA combobox
+ * pattern, #4330).
  */
-function paletteOptionId(index: number): string {
-  return `${LIST_ID}-opt-${index}`;
-}
+const LIST_ID = "command-palette-list";
 
 /** A single fuzzy-matchable palette entry — either a command or a saved connection. */
 type PaletteEntry =
@@ -147,8 +144,6 @@ export function CommandPalette(): React.ReactElement {
 
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<PaletteMode>("root");
-  const [activeIndex, setActiveIndex] = useState(0);
-  const listRef = useRef<HTMLUListElement>(null);
 
   // All entries (commands first, then connections) in declaration order — the
   // order shown when the query is empty.
@@ -245,27 +240,14 @@ export function CommandPalette(): React.ReactElement {
     });
   }, [entries, query]);
 
-  // Reset the query and selection each time the palette opens.
+  // Reset the query (and, via the nav hook's reset key, the selection) each
+  // time the palette opens.
   useEffect(() => {
     if (open) {
       setQuery("");
       setMode("root");
-      setActiveIndex(0);
     }
   }, [open]);
-
-  // Keep the selection in range and pointed at the top hit as results change.
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
-
-  // Keep the highlighted row scrolled into view.
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const row = list.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`);
-    row?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, results]);
 
   const activate = useCallback(
     (entry: PaletteEntry | undefined) => {
@@ -278,7 +260,6 @@ export function CommandPalette(): React.ReactElement {
       if (entry.kind === "broadcast-workflow") {
         setMode("broadcast-workflow");
         setQuery("");
-        setActiveIndex(0);
         return;
       }
       // Close first so the palette never stacks over a follow-on dialog (e.g.
@@ -303,34 +284,27 @@ export function CommandPalette(): React.ReactElement {
     [connect, playMacro, runWorkflow, requestLaunchWorkspace, getBroadcastTargetTabIds, setOpen]
   );
 
-  const handleKeyDown = useCallback(
+  // Backspace on an empty sub-picker query returns to the root list.
+  const handleUnhandledKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
-      if (isImeComposing(event)) return;
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setActiveIndex((i) => (results.length === 0 ? 0 : (i + 1) % results.length));
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setActiveIndex((i) =>
-          results.length === 0 ? 0 : (i - 1 + results.length) % results.length
-        );
-      } else if (event.key === "Home") {
-        event.preventDefault();
-        setActiveIndex(0);
-      } else if (event.key === "End") {
-        event.preventDefault();
-        setActiveIndex(Math.max(0, results.length - 1));
-      } else if (event.key === "Enter") {
-        event.preventDefault();
-        activate(results[activeIndex]);
-      } else if (event.key === "Backspace" && mode !== "root" && query === "") {
+      if (event.key === "Backspace" && mode !== "root" && query === "") {
         event.preventDefault();
         setMode("root");
-        setActiveIndex(0);
       }
     },
-    [results, activeIndex, activate, mode, query]
+    [mode, query]
   );
+
+  const nav = useComboboxListNav({
+    items: results,
+    onSelect: activate,
+    // Opening the palette, switching sub-picker and a new query each re-target
+    // the top hit. `open` and `mode` never contain ":", so the key is unambiguous.
+    resetKey: `${open}:${mode}:${query}`,
+    listId: LIST_ID,
+    homeEnd: true,
+    onUnhandledKeyDown: handleUnhandledKeyDown,
+  });
 
   return (
     <Modal
@@ -350,7 +324,6 @@ export function CommandPalette(): React.ReactElement {
             onClick={() => {
               setMode("root");
               setQuery("");
-              setActiveIndex(0);
             }}
             title="Back to commands (Backspace)"
             data-testid="command-palette-picker"
@@ -363,18 +336,14 @@ export function CommandPalette(): React.ReactElement {
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
           placeholder={
             mode === "broadcast-workflow"
               ? "Pick a workflow to run on the broadcast group…"
               : "Type a command or connection…"
           }
           aria-label="Command or connection search"
-          role="combobox"
-          aria-autocomplete="list"
+          {...nav.inputProps}
           aria-expanded={results.length > 0}
-          aria-controls={LIST_ID}
-          aria-activedescendant={results[activeIndex] ? paletteOptionId(activeIndex) : undefined}
           data-testid="command-palette-input"
         />
         {results.length === 0 ? (
@@ -385,24 +354,19 @@ export function CommandPalette(): React.ReactElement {
           </p>
         ) : (
           <ul
-            id={LIST_ID}
+            {...nav.listboxProps}
             className="command-palette__list"
-            role="listbox"
             aria-label="Commands and connections"
-            ref={listRef}
           >
             {results.map((entry, index) => {
               const disabled = isDisabled(entry);
               return (
                 <li
                   key={entry.key}
-                  id={paletteOptionId(index)}
-                  data-index={index}
-                  role="option"
-                  aria-selected={index === activeIndex}
+                  {...nav.getOptionProps(index)}
                   aria-disabled={disabled || undefined}
                   className={`command-palette__item${
-                    index === activeIndex ? " command-palette__item--active" : ""
+                    index === nav.activeIndex ? " command-palette__item--active" : ""
                   }${disabled ? " command-palette__item--disabled" : ""}`}
                   title={
                     disabled
@@ -411,8 +375,6 @@ export function CommandPalette(): React.ReactElement {
                         : "Unavailable in the current context"
                       : undefined
                   }
-                  onMouseMove={() => setActiveIndex(index)}
-                  onClick={() => activate(entry)}
                   data-testid={`command-palette-item-${entry.key}`}
                 >
                   <span className="command-palette__icon" aria-hidden="true">
