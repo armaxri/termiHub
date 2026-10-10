@@ -297,6 +297,26 @@ fn killed() -> std::process::ExitStatus {
 }
 
 #[test]
+fn a_host_stop_still_records_whether_the_process_exited_cleanly() {
+    // TBE2-004 (#4341): the cause of a host stop is `Stopped` however the
+    // runner ended, so the clean-exit flag is what exposes a teardown crash.
+    let clean = shared();
+    assert_eq!(clean.exited_cleanly(), None, "not reaped yet");
+    clean.set_pending_cause(RunnerExitCause::Stopped);
+    clean.finish(Some(status(0, 0)));
+    assert_eq!(clean.exit_cause(), Some(RunnerExitCause::Stopped));
+    assert_eq!(clean.exited_cleanly(), Some(true));
+
+    for ended in [Some(aborted()), Some(killed()), None] {
+        let crashed = shared();
+        crashed.set_pending_cause(RunnerExitCause::Stopped);
+        crashed.finish(ended);
+        assert_eq!(crashed.exit_cause(), Some(RunnerExitCause::Stopped));
+        assert_eq!(crashed.exited_cleanly(), Some(false), "{ended:?}");
+    }
+}
+
+#[test]
 fn a_reported_allocation_failure_under_measured_pressure_is_out_of_memory() {
     let shared = measured(true);
     shared.expect_stderr();

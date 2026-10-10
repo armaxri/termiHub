@@ -26,7 +26,7 @@ use crate::plugin::log_rate_limit::PluginLogLimiter;
 
 use super::bridge::BridgeHost;
 use super::client::EXIT_TIMEOUT;
-use super::exit::RunnerExitCause;
+use super::exit::{is_clean_exit, RunnerExitCause};
 use super::rate::{OutputMeter, OutputRateCap};
 use super::spawn::RunnerChild;
 
@@ -55,6 +55,8 @@ pub(super) type MemoryProbe = Box<dyn Fn() -> bool + Send + Sync>;
 struct ExitState {
     cause: Option<RunnerExitCause>,
     hook: Option<ExitHook>,
+    /// Whether the reaped process itself exited cleanly (set with `cause`).
+    clean: Option<bool>,
 }
 
 /// Whether the stderr forwarder has drained, as an awaitable event (#4366):
@@ -517,6 +519,14 @@ impl Shared {
             .clone()
     }
 
+    /// Whether the reaped runner process exited cleanly (code 0, no signal),
+    /// once it is reaped; `None` before. Independent of the recorded cause: a
+    /// host stop is [`RunnerExitCause::Stopped`] even when the runner crashed
+    /// on its way out (TBE2-004, #4341).
+    pub(super) fn exited_cleanly(&self) -> Option<bool> {
+        self.exit.lock().unwrap_or_else(|e| e.into_inner()).clean
+    }
+
     /// Install the exit hook; runs it at once if the runner already ended.
     pub(super) fn set_exit_hook(&self, hook: ExitHook) {
         let mut exit = self.exit.lock().unwrap_or_else(|e| e.into_inner());
@@ -567,6 +577,7 @@ impl Shared {
             );
         }
         exit.cause = Some(cause.clone());
+        exit.clean = Some(is_clean_exit(status));
         let hook = exit.hook.take();
         drop(exit);
         // Dead before the hook runs: a respawn it triggers must not find this

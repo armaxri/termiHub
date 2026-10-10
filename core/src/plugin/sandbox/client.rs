@@ -214,6 +214,15 @@ impl SandboxedPlugin {
         self.shared.exit_cause()
     }
 
+    /// Whether the runner process exited cleanly (exit code 0, no signal),
+    /// once it was reaped; `None` while it runs. A host stop records
+    /// [`RunnerExitCause::Stopped`] however the process ended, so this is what
+    /// tells a clean shutdown from a crash or hang during teardown (#4341).
+    #[must_use]
+    pub fn exited_cleanly(&self) -> Option<bool> {
+        self.shared.exited_cleanly()
+    }
+
     /// Install the hook that receives the final exit cause (runs at once if
     /// the runner already ended).
     pub(super) fn set_exit_hook(&self, hook: ExitHook) {
