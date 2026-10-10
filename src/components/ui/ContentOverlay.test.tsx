@@ -213,8 +213,109 @@ describe("ContentOverlay", () => {
       expect(document.activeElement).toBe(secondary);
     });
 
+    it("mounts the live region even before there is anything to announce", () => {
+      act(() =>
+        root.render(<ContentOverlay icon={<span />} heading={<b>x</b>} announce="polite" />)
+      );
+      expect(liveRegion()).not.toBeNull();
+      expect(liveRegion()?.textContent).toBe("");
+    });
+
     it("has no accessibility violations when announcing", async () => {
       renderFocusable(true);
+      expect(await checkA11y()).toHaveNoViolations();
+    });
+  });
+
+  describe("busy overlays (#4512)", () => {
+    function liveRegion(): HTMLElement | null {
+      return container.querySelector("[data-testid='content-overlay-live']");
+    }
+    function heading(): HTMLElement {
+      return container.querySelector(".ui-content-overlay__heading") as HTMLElement;
+    }
+    function busy(headingText: string, subheading?: string) {
+      return <ContentOverlay icon={<span />} busy heading={headingText} subheading={subheading} />;
+    }
+
+    it("announces politely through the live region, not through the heading", () => {
+      act(() => root.render(busy("Connecting…", "my-server")));
+      expect(liveRegion()?.getAttribute("role")).toBe("status");
+      expect(liveRegion()?.getAttribute("aria-live")).toBe("polite");
+      expect(liveRegion()?.textContent).toBe("Connecting… my-server");
+      expect(heading().textContent).toBe("Connecting…");
+      expect(heading().getAttribute("role")).toBeNull();
+      expect(heading().getAttribute("aria-live")).toBeNull();
+      const body = container.querySelector(".ui-content-overlay") as HTMLElement;
+      expect(body.getAttribute("aria-busy")).toBe("true");
+    });
+
+    it("keeps exactly one announcing node, so the state is never spoken twice", () => {
+      act(() => root.render(busy("Restoring session…", "Loading cached scrollback.")));
+      const announcing = container.querySelectorAll("[role='status'], [role='alert'], [aria-live]");
+      expect(announcing).toHaveLength(1);
+      expect(announcing[0]).toBe(liveRegion());
+    });
+
+    it("mounts the region empty and writes the busy text into it afterwards", () => {
+      const observer = new MutationObserver(() => undefined);
+      observer.observe(container, { childList: true, subtree: true, characterData: true });
+      act(() => root.render(busy("Connecting…")));
+      const records = observer.takeRecords();
+      observer.disconnect();
+      // A childList record targeting the region itself proves it was already in
+      // the document when its text arrived (see LiveRegion.test.tsx).
+      expect(liveRegion()?.textContent).toBe("Connecting…");
+      const textAdds = records.filter(
+        (r) => r.target === liveRegion() && r.type === "childList" && r.addedNodes.length > 0
+      );
+      expect(textAdds.length).toBeGreaterThan(0);
+    });
+
+    it("does not re-announce the steady label on unchanged re-renders", async () => {
+      act(() => root.render(busy("Connecting…", "my-server")));
+      const mutations: MutationRecord[] = [];
+      const observer = new MutationObserver((recs) => mutations.push(...recs));
+      observer.observe(liveRegion() as HTMLElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      for (let i = 0; i < 5; i++) act(() => root.render(busy("Connecting…", "my-server")));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      observer.disconnect();
+      expect(mutations).toHaveLength(0);
+    });
+
+    it("re-announces in the same region when the busy state changes", () => {
+      act(() => root.render(busy("Connecting…", "my-server")));
+      const region = liveRegion();
+      act(() => root.render(busy("Connecting… (attempt 2)", "my-server")));
+      expect(liveRegion()).toBe(region);
+      expect(region?.textContent).toBe("Connecting… (attempt 2). my-server");
+    });
+
+    it("lets an explicit announce/announcement override the busy default", () => {
+      act(() =>
+        root.render(
+          <ContentOverlay
+            icon={<span />}
+            busy
+            heading="Reconnecting…"
+            subheading="Attempt 2 of 5"
+            announce="assertive"
+            announcement="Reconnecting…"
+          />
+        )
+      );
+      expect(liveRegion()?.getAttribute("role")).toBe("alert");
+      expect(liveRegion()?.textContent).toBe("Reconnecting…");
+    });
+
+    it("has no accessibility violations", async () => {
+      act(() => root.render(busy("Connecting…", "my-server")));
       expect(await checkA11y()).toHaveNoViolations();
     });
   });

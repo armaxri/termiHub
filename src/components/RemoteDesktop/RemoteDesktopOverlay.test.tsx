@@ -167,4 +167,71 @@ describe("RemoteDesktopOverlay", () => {
     render("connectFailed", { message: null });
     expect(container.querySelector(".rd-overlay__error")).toBeNull();
   });
+
+  describe("busy states announce through the live region (#4512)", () => {
+    function liveRegion(): HTMLElement | null {
+      return query("content-overlay-live");
+    }
+
+    it.each([
+      ["connecting", {}, "Connecting to rd-host… Establishing connection"],
+      ["authenticating", {}, "Connecting to rd-host… Authenticating"],
+      ["reconnecting", { reconnectAttempt: 2 }, null],
+    ] as const)("%s", (state, overrides, expected) => {
+      const records: MutationRecord[] = [];
+      const observer = new MutationObserver((recs) => records.push(...recs));
+      observer.observe(container, { childList: true, subtree: true, characterData: true });
+      render(state, overrides);
+      records.push(...observer.takeRecords());
+      observer.disconnect();
+
+      const region = liveRegion();
+      expect(region?.getAttribute("role")).toBe("status");
+      expect(region?.getAttribute("aria-live")).toBe("polite");
+      const heading = container.querySelector(".ui-content-overlay__heading");
+      const subheading = container.querySelector(".ui-content-overlay__subheading");
+      expect(region?.textContent).toBe(
+        expected ?? `${heading?.textContent} ${subheading?.textContent}`
+      );
+      // Mounted empty, then filled: the text landed in an already-live region.
+      expect(
+        records.some(
+          (r) => r.target === region && r.type === "childList" && r.addedNodes.length > 0
+        )
+      ).toBe(true);
+      // Exactly one announcing node — the heading carries no live attributes.
+      expect(heading?.getAttribute("role")).toBeNull();
+      expect(heading?.getAttribute("aria-live")).toBeNull();
+      expect(
+        container.querySelectorAll("[role='status'], [role='alert'], [aria-live]")
+      ).toHaveLength(1);
+    });
+
+    it("does not re-announce the reconnecting state on an unchanged re-render", async () => {
+      render("reconnecting", { reconnectAttempt: 2 });
+      const mutations: MutationRecord[] = [];
+      const observer = new MutationObserver((recs) => mutations.push(...recs));
+      observer.observe(liveRegion() as HTMLElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      render("reconnecting", { reconnectAttempt: 2 });
+      render("reconnecting", { reconnectAttempt: 2 });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      observer.disconnect();
+      expect(mutations).toHaveLength(0);
+    });
+
+    it("re-announces in the same region when the reconnect attempt advances", () => {
+      render("reconnecting", { reconnectAttempt: 1 });
+      const region = liveRegion();
+      const before = region?.textContent;
+      render("reconnecting", { reconnectAttempt: 2 });
+      expect(liveRegion()).toBe(region);
+      expect(region?.textContent).not.toBe(before);
+    });
+  });
 });
