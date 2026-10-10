@@ -1225,15 +1225,20 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   const showDisconnectOverlay =
     !isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode));
   // Read through a ref so the focus effect below keeps firing only on activation.
-  const showDisconnectOverlayRef = useRef(showDisconnectOverlay);
-  showDisconnectOverlayRef.current = showDisconnectOverlay;
+  // Overlays that move focus to their own primary action when this tab is
+  // visible (#4331, #4514): the disconnect overlay, the "Taken over" overlays
+  // and the files-only panel. The terminal-focus effect below must not pull
+  // focus back into the (dead or input-paused) terminal while one is up.
+  const overlayOwnsFocus = showDisconnectOverlay || isEvicted || lifecycle.filesOnly;
+  const overlayOwnsFocusRef = useRef(overlayOwnsFocus);
+  overlayOwnsFocusRef.current = overlayOwnsFocus;
 
   // Focus the terminal when it becomes visible (tab activation or initial
-  // creation) — unless the disconnect overlay is up: it moves focus to its own
-  // primary action (#4331), and this parent effect would otherwise run after it
-  // and pull focus back into the dead terminal.
+  // creation) — unless a focus-owning overlay is up: it moves focus to its own
+  // primary action (#4331, #4514), and this parent effect would otherwise run
+  // after it and pull focus back into the terminal.
   useEffect(() => {
-    if (!isVisible || showDisconnectOverlayRef.current) return;
+    if (!isVisible || overlayOwnsFocusRef.current) return;
     // Mounted because a reconnect the user started from an overlay (Retry,
     // Reconnect, Start New Shell) succeeded (#4513): the overlay held focus, so
     // return it to the terminal — but never take it from a dialog or another
@@ -1260,6 +1265,19 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
     }
   }, [showDisconnectOverlay, sessionBack, isVisible, tabId, focusTerminal]);
 
+  // The "Taken over" overlay closed because this tab reclaimed the session
+  // (#4514): Reclaim held focus and has just left the DOM, so return focus to
+  // the terminal when it is unclaimed — the same hand-back as #4513.
+  const prevIsEvictedRef = useRef(isEvicted);
+  useEffect(() => {
+    const wasEvicted = prevIsEvictedRef.current;
+    prevIsEvictedRef.current = isEvicted;
+    if (!wasEvicted || isEvicted || showDisconnectOverlay) return;
+    if (isVisible && slotRef.current && isFocusUnclaimed(slotRef.current)) {
+      focusTerminal(tabId);
+    }
+  }, [isEvicted, showDisconnectOverlay, isVisible, tabId, focusTerminal]);
+
   return (
     <div
       ref={slotRef}
@@ -1267,7 +1285,11 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     >
       {isDesktopEvicted && (
-        <TerminalEvictedOverlay tabId={tabId} onBeforeReclaim={() => clearTerminal(tabId)} />
+        <TerminalEvictedOverlay
+          tabId={tabId}
+          isActive={isVisible}
+          onBeforeReclaim={() => clearTerminal(tabId)}
+        />
       )}
       {!isDesktopEvicted && windowEviction && windowEvictedSessionId && (
         // No pre-reclaim clear: the terminal replays the session's scrollback
@@ -1276,11 +1298,12 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
         <TerminalWindowEvictedOverlay
           sessionId={windowEvictedSessionId}
           controllingWindowName={windowEviction.name}
+          isActive={isVisible}
         />
       )}
       {showDisconnectOverlay && <TerminalDisconnectOverlay tabId={tabId} isActive={isVisible} />}
       {/* #4078: the host refused the shell but SFTP works — no terminal to show. */}
-      {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} />}
+      {!isEvicted && <TerminalFilesOnlyPanel tabId={tabId} isActive={isVisible} />}
       {isImportedConnectionHeld && <ImportedConnectionPrompt tabId={tabId} isVisible />}
       {!isEvicted && !isImportedConnectionHeld && <ImportedCommandBanner tabId={tabId} />}
       {isExited && isViewMode && (

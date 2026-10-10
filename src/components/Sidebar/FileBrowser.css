@@ -112,6 +112,9 @@
    than the panel be reached by scrolling instead of being cut. The scrollbars
    are styled globally in global.css. */
 .file-browser__list {
+  /* Positioned so the inline rename editor (rendered outside the listbox, #4637)
+     can sit over its row's slot and scroll with the rows. */
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -151,6 +154,16 @@
 
 .file-browser__row-wrapper--selected:hover {
   background-color: var(--bg-active);
+}
+
+/* The rename editor overlays its row's virtual slot (the row's option is not
+   rendered while it is renamed), offset by an inline translateY like the
+   virtual rows themselves (#4637). */
+.file-browser__row-wrapper--renaming {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 /* Single-line row: the icon and the full filename sit on one baseline; the

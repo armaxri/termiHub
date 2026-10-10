@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { useAppStore } from "@/store/appStore";
+import { RELEASE_CHORD_ACTION, clearOverrides, setOverride } from "@/services/keybindings";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -167,5 +168,34 @@ describe("ShortcutsOverlay", () => {
     expect(cells("toggle-sidebar")[1]).toContain("Ctrl+Shift+B");
     expect(cells("toggle-sidebar")[2]).toContain("Cmd+B");
     expect(cells("new-tab-group")[2]).toContain("Cmd+Shift+T");
+  });
+
+  describe("remote-desktop release chord (#4524)", () => {
+    afterEach(() => clearOverrides());
+
+    function row(): HTMLElement | null {
+      return document.querySelector(`[data-testid="shortcut-row-${RELEASE_CHORD_ACTION}"]`);
+    }
+
+    it("lists the release chord under Remote Desktop with its default in both columns", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(document.body.textContent).toContain("Remote Desktop");
+      const r = row();
+      expect(r?.textContent).toContain("Release Remote Desktop Keyboard");
+      expect(r?.textContent).toContain("Focused remote desktop");
+      const keys = Array.from(r?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
+      expect(keys).toEqual(["Ctrl+Shift+Alt", "Ctrl+Shift+Alt"]);
+    });
+
+    it("shows a rebound chord for the current platform", () => {
+      setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const keys = Array.from(row()?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
+      expect(keys).toContain("Ctrl+Alt");
+    });
   });
 });

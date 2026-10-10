@@ -1,4 +1,8 @@
-import { getDefaultBindings, getActionAccelerator } from "@/services/keybindings";
+import {
+  getDefaultBindings,
+  getActionAccelerator,
+  RELEASE_CHORD_ACTION,
+} from "@/services/keybindings";
 import { useAppStore } from "@/store/appStore";
 import { CONTEXT_COMMANDS, ContextCommand } from "@/services/contextCommands";
 
@@ -36,6 +40,9 @@ export interface PaletteCommand {
  *
  * - `command-palette` — opens the palette itself; a self-referential entry is
  *   pointless inside the palette.
+ * - `release-remote-desktop-keyboard` — the remote-desktop release chord
+ *   (#4524) is read directly by the focused canvas; running it from the
+ *   palette is meaningless because opening the palette already left the canvas.
  *
  * The clipboard actions (`copy` / `paste` / `select-all`) were previously excluded
  * for want of a focused-terminal command seam; they are now surfaced through
@@ -43,7 +50,10 @@ export interface PaletteCommand {
  * terminal command bridge (PROD-054), so they invoke the same registry handlers
  * the Cmd/Ctrl shortcuts use.
  */
-export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set(["command-palette"]);
+export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
+  "command-palette",
+  RELEASE_CHORD_ACTION,
+]);
 
 /**
  * Store-only runners: actions that operate purely on global store state and are
