@@ -16,6 +16,23 @@ import { isMac } from "@/utils/platform";
  * Cmd modifier, which does not collide with shell keybindings, so they keep
  * the more conventional single-modifier form.
  */
+/**
+ * Action id of the remote-desktop keyboard release chord (#4524). The canvas
+ * reads this binding directly via {@link getReleaseChord}; it never fires
+ * through the global shortcut engine.
+ */
+export const RELEASE_CHORD_ACTION = "release-remote-desktop-keyboard";
+
+/** Default release chord: Ctrl+Alt+Shift (Ctrl+Option+Shift on macOS). */
+const DEFAULT_RELEASE_CHORD: KeyCombo = { key: "", ctrl: true, alt: true, shift: true };
+
+/**
+ * Minimum number of modifiers in a modifier-only chord. A single modifier
+ * (e.g. bare Shift) would fire on ordinary typing, and the release chord must
+ * stay deliberate yet always reachable, so a rebind can never trap the user.
+ */
+export const MIN_MODIFIER_ONLY_MODIFIERS = 2;
+
 export const DEFAULT_BINDINGS: KeyBinding[] = [
   // General
   {
@@ -346,6 +363,21 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     winLinuxDefault: { key: "[", ctrl: true, shift: true },
     configurable: true,
   },
+
+  // Remote desktop
+  {
+    action: RELEASE_CHORD_ACTION,
+    label: "Release Remote Desktop Keyboard",
+    category: "remote-desktop",
+    // The only keyboard way out of a focused remote-desktop canvas, which
+    // forwards every other key to the remote machine (#4328, #4524). A
+    // modifier-only chord, so it cannot collide with any key the remote needs.
+    macDefault: DEFAULT_RELEASE_CHORD,
+    winLinuxDefault: DEFAULT_RELEASE_CHORD,
+    configurable: true,
+    scope: "remote-desktop",
+    modifierOnly: true,
+  },
 ];
 
 /** Active user overrides. */
@@ -369,9 +401,73 @@ export const UNBOUND_COMBO: KeyCombo = { key: "" };
 export function isUnboundCombo(combo: KeyCombo | KeyCombo[] | null | undefined): boolean {
   if (!combo) return false;
   if (Array.isArray(combo)) {
-    return combo.length === 0 || combo.every((c) => c.key === "");
+    return combo.length === 0 || combo.every(isEmptyCombo);
   }
-  return combo.key === "";
+  return isEmptyCombo(combo);
+}
+
+/** An empty key with no modifiers — the unbound sentinel shape. */
+function isEmptyCombo(combo: KeyCombo): boolean {
+  return combo.key === "" && comboModifierCount(combo) === 0;
+}
+
+/** How many modifiers a combo holds. */
+export function comboModifierCount(combo: KeyCombo): number {
+  return [combo.ctrl, combo.shift, combo.alt, combo.meta].filter(Boolean).length;
+}
+
+/**
+ * Whether a binding is a modifier-only chord — a single combo with an empty
+ * key and at least one modifier (e.g. Ctrl+Alt+Shift).
+ */
+export function isModifierOnlyCombo(combo: KeyCombo | KeyCombo[] | null | undefined): boolean {
+  if (!combo || Array.isArray(combo)) return false;
+  return combo.key === "" && comboModifierCount(combo) > 0;
+}
+
+/**
+ * Whether a binding is a usable modifier-only chord: modifier-only and holding
+ * at least {@link MIN_MODIFIER_ONLY_MODIFIERS} modifiers (#4524).
+ */
+export function isValidModifierOnlyCombo(
+  combo: KeyCombo | KeyCombo[] | null | undefined
+): combo is KeyCombo {
+  return (
+    isModifierOnlyCombo(combo) &&
+    comboModifierCount(combo as KeyCombo) >= MIN_MODIFIER_ONLY_MODIFIERS
+  );
+}
+
+/**
+ * The effective remote-desktop keyboard release chord (#4524). Falls back to
+ * the default whenever the stored override is missing, unbound or otherwise
+ * unusable (e.g. a hand-edited settings file or an imported JSON naming a
+ * single modifier), so the canvas always has a working escape.
+ */
+export function getReleaseChord(): KeyCombo {
+  const effective = getEffectiveCombo(RELEASE_CHORD_ACTION);
+  return isValidModifierOnlyCombo(effective) ? effective : DEFAULT_RELEASE_CHORD;
+}
+
+/** The release chord formatted for display, e.g. `Ctrl+Shift+Alt`. */
+export function getReleaseChordLabel(mac: boolean = isMac()): string {
+  return formatComboForDisplay(getReleaseChord(), mac);
+}
+
+/**
+ * Whether a keyboard event holds every modifier of a modifier-only chord.
+ * Extra held modifiers still match, so the escape stays reachable.
+ */
+export function eventHoldsModifiers(
+  event: Pick<KeyboardEvent, "ctrlKey" | "shiftKey" | "altKey" | "metaKey">,
+  combo: KeyCombo
+): boolean {
+  if (comboModifierCount(combo) === 0) return false;
+  if (combo.ctrl && !event.ctrlKey) return false;
+  if (combo.shift && !event.shiftKey) return false;
+  if (combo.alt && !event.altKey) return false;
+  if (combo.meta && !event.metaKey) return false;
+  return true;
 }
 
 /** Serialize a KeyCombo to a human-readable string like "Ctrl+Shift+C". */
@@ -381,7 +477,9 @@ export function serializeCombo(combo: KeyCombo): string {
   if (combo.shift) parts.push("Shift");
   if (combo.alt) parts.push("Alt");
   if (combo.meta) parts.push("Cmd");
-  parts.push(normalizeKeyDisplay(combo.key));
+  // A modifier-only chord (#4524) serializes as just its modifiers
+  // ("Ctrl+Shift+Alt"), which parseCombo reads back with an empty key.
+  if (combo.key !== "" || parts.length === 0) parts.push(normalizeKeyDisplay(combo.key));
   return parts.join("+");
 }
 
@@ -418,7 +516,8 @@ export function formatComboForDisplay(combo: KeyCombo, mac: boolean = isMac()): 
   if (combo.alt) parts.push("Alt");
   if (!mac && combo.meta) parts.push("Cmd");
   const key = normalizeKeyDisplay(combo.key);
-  parts.push(key.length === 1 ? key.toUpperCase() : key);
+  // A modifier-only chord (#4524) shows just its modifiers.
+  if (key !== "" || parts.length === 0) parts.push(key.length === 1 ? key.toUpperCase() : key);
   return parts.join("+");
 }
 
@@ -582,6 +681,10 @@ export function findMatchingAction(event: KeyboardEvent): string | null {
     // Skip chord bindings (arrays with >1 combo)
     if (Array.isArray(combo) && combo.length > 1) continue;
 
+    // Modifier-only chords (the remote-desktop release chord) are read
+    // directly by their owner, never matched as app shortcuts.
+    if (isModifierOnlyCombo(combo)) continue;
+
     const single = Array.isArray(combo) ? combo[0] : combo;
     if (eventMatchesCombo(event, single)) {
       return binding.action;
@@ -597,10 +700,26 @@ export function isAppShortcut(event: KeyboardEvent): boolean {
 
 /** Set user overrides from persisted settings. */
 export function setOverrides(entries: KeybindingOverrideEntry[]): void {
-  overrides = entries.map((e) => {
-    const parsed = parseBinding(e.key);
-    return { action: e.action, combo: parsed };
-  });
+  overrides = entries
+    .map((e) => ({ action: e.action, combo: parseBinding(e.key) }))
+    .filter((o) => isAcceptableOverride(o.action, o.combo));
+}
+
+/**
+ * Whether `combo` may be stored as an override for `action`. A modifier-only
+ * action (the remote-desktop release chord, #4524) only accepts a valid
+ * modifier-only chord: unbinding it, a single modifier, or a key combo would
+ * leave the canvas without a keyboard escape, so such an override is dropped
+ * and the action keeps its default.
+ */
+function isAcceptableOverride(action: string, combo: KeyCombo | KeyCombo[]): boolean {
+  if (!isModifierOnlyAction(action)) return true;
+  return isValidModifierOnlyCombo(combo);
+}
+
+/** Whether `action` is bound to a modifier-only chord (see {@link KeyBinding.modifierOnly}). */
+export function isModifierOnlyAction(action: string): boolean {
+  return DEFAULT_BINDINGS.find((b) => b.action === action)?.modifierOnly === true;
 }
 
 /** Get the current overrides as serialized entries. */
@@ -619,7 +738,9 @@ export function clearOverrides(): void {
 /** Set a single override for an action. Pass null combo to remove the override. */
 export function setOverride(action: string, combo: KeyCombo | KeyCombo[] | null): void {
   overrides = overrides.filter((o) => o.action !== action);
-  if (combo !== null) {
+  // An unusable combo for a modifier-only action resets it to its default
+  // rather than storing a chord that would trap the user (#4524).
+  if (combo !== null && isAcceptableOverride(action, combo)) {
     overrides.push({ action, combo });
   }
 }
@@ -628,6 +749,7 @@ export function setOverride(action: string, combo: KeyCombo | KeyCombo[] | null)
  * Explicitly unbind an action so it has no shortcut. Stored as an override (not
  * a removal) so the action stays cleared and does not revert to its platform
  * default. Reset-to-default (via {@link setOverride} with `null`) restores it.
+ * A modifier-only action (the release chord) cannot be unbound; it resets.
  */
 export function unbindAction(action: string): void {
   setOverride(action, { ...UNBOUND_COMBO });

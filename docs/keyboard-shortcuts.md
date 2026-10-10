@@ -165,11 +165,29 @@ the remote desktop as if you were sitting at it. A highlighted border and a
 "Keyboard captured" hint show when the canvas holds the keyboard, and screen
 readers announce the capture.
 
-To give the keyboard back to termiHub, press
-<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd> (macOS:
-<kbd>Ctrl</kbd>+<kbd>Option</kbd>+<kbd>Shift</kbd>). The chord is never sent to
-the remote machine; any keys still held there are released. The chord is also
-shown in the remote-desktop toolbar.
+To give the keyboard back to termiHub, press the **release chord** — by default
+<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd> (on macOS the Alt key is
+<kbd>Option</kbd>). The chord is never sent to the remote machine; any keys
+still held there are released. Holding an extra modifier on top of the chord
+still releases. The chord is shown in the canvas's description, the on-focus
+hint, the remote-desktop toolbar and the shortcuts overlay (under
+**Remote Desktop**), always reflecting your current binding.
+
+The release chord is a **modifier-only** chord and can be rebound in
+**Settings → Keyboard Shortcuts → Remote Desktop → Release Remote Desktop
+Keyboard**. Because it is the only keyboard way out of the canvas, termiHub
+refuses any binding that could trap you:
+
+- Hold **at least two** modifier keys (<kbd>Ctrl</kbd>, <kbd>Alt</kbd>/<kbd>Option</kbd>,
+  <kbd>Shift</kbd>, <kbd>Cmd</kbd>), then release them — the largest set held at
+  once becomes the chord. A single modifier is rejected.
+- Pressing a non-modifier key while recording is rejected; the chord must be
+  modifiers only.
+- The chord cannot be cleared: there is no **Clear shortcut** button and
+  <kbd>Backspace</kbd> is refused. **Reset to default** restores
+  <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>.
+- An unusable stored value (for example from a hand-edited settings file or an
+  imported shortcuts file) is ignored and the default chord applies.
 
 ## File browser list keys
 
