@@ -222,6 +222,8 @@ pub(crate) struct FeatureChannels {
     pub files: Arc<FileChannel>,
     /// Whether the daemon honors [`MSG_OUTPUT_FLOW`] (#4416).
     pub output_flow: Arc<AtomicBool>,
+    /// Whether the daemon takes output credit ([`MSG_OUTPUT_ACK`], #4439).
+    pub output_credit: Arc<AtomicBool>,
     /// The session's output flow: the desktop's pause plus the byte budget of
     /// output queued on the transport (#4439). Outlives reconnects.
     pub output_budget: OutputBudget,
@@ -239,6 +241,7 @@ impl FeatureChannels {
         self.files.set_ranges_supported(false);
         self.files.fail_all();
         self.output_flow.store(false, Ordering::SeqCst);
+        self.output_credit.store(false, Ordering::SeqCst);
         // The desktop's pause belonged to the previous connection; a newly
         // attached worker starts flowing (#4416). A budget pause stays until
         // the output already queued has been written (#4439).
@@ -254,6 +257,8 @@ impl FeatureChannels {
             .set_ranges_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_RANGES != 0);
         self.output_flow
             .store(flags & CAP_OUTPUT_FLOW != 0, Ordering::SeqCst);
+        self.output_credit
+            .store(flags & CAP_OUTPUT_CREDIT != 0, Ordering::SeqCst);
     }
 
     /// The connection ended: nothing sent over it will be answered.
@@ -355,11 +360,7 @@ impl DaemonClient {
             features.clone(),
         )
         .await?;
-        spawn_output_flow_forwarder(
-            writer.clone(),
-            features.output_flow.clone(),
-            features.output_budget.subscribe(),
-        );
+        spawn_output_flow_forwarder(writer.clone(), &features);
 
         Ok(Self {
             session_id,
@@ -1253,7 +1254,7 @@ async fn send_attach_preamble(
     let mut preamble = protocol::encode_frame(MSG_ATTACH_INTENT, &[intent]);
     preamble.extend(protocol::encode_frame(
         MSG_AGENT_CAPABILITIES,
-        &[CAP_HEARTBEAT],
+        &[CAP_HEARTBEAT | CAP_OUTPUT_CREDIT],
     ));
     let written = async {
         writer.write_all(&preamble).await?;
@@ -1593,29 +1594,73 @@ pub(crate) fn send_output_notification(
     }
 }
 
-/// Forward the session's output flow state to its daemon whenever it changes
-/// (#4439): a budget exhausted by output queued on the transport pauses the
-/// daemon's output reading, and the queue draining resumes it — the same
-/// [`MSG_OUTPUT_FLOW`] the desktop's pause uses (#4416). Sent only to a daemon
-/// that honors it; ends once the budget (the client) is gone.
-fn spawn_output_flow_forwarder(
-    writer: DaemonWriterHandle,
-    supported: Arc<AtomicBool>,
-    mut paused: tokio::sync::watch::Receiver<bool>,
-) {
+/// Keep the session's daemon informed of its output flow (#4439):
+///
+/// - the combined paused state (desktop pause or exhausted budget) as
+///   [`MSG_OUTPUT_FLOW`], to a daemon that honors it (#4416), and
+/// - the output bytes the transport has written (or discarded) as
+///   [`MSG_OUTPUT_ACK`] credit, to a daemon that takes it. That credit is the
+///   strict bound: such a daemon keeps at most [`OUTPUT_CREDIT_WINDOW`] output
+///   bytes unacknowledged, so the queue cannot outgrow it while a pause is
+///   still in flight.
+///
+/// Ends once the budget (the client) is gone.
+fn spawn_output_flow_forwarder(writer: DaemonWriterHandle, features: &FeatureChannels) {
+    let flow_supported = features.output_flow.clone();
+    let credit_supported = features.output_credit.clone();
+    let mut paused = features.output_budget.subscribe();
+    let mut released = features.output_budget.subscribe_released();
     tokio::spawn(async move {
-        while paused.changed().await.is_ok() {
-            if !supported.load(Ordering::SeqCst) {
-                paused.mark_unchanged();
-                continue;
-            }
-            let mut guard = writer.lock().await;
-            // Read under the writer lock, so the last frame written is the
-            // latest state (a later change wakes this loop again).
-            let state = *paused.borrow_and_update();
-            if let Some(w) = guard.as_mut() {
-                if let Err(e) = write_frame_timed(w, MSG_OUTPUT_FLOW, &[u8::from(state)]).await {
-                    debug!("Output flow frame not sent: {e:#}");
+        let mut acked = *released.borrow_and_update();
+        loop {
+            tokio::select! {
+                changed = paused.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    if !flow_supported.load(Ordering::SeqCst) {
+                        paused.mark_unchanged();
+                        continue;
+                    }
+                    let mut guard = writer.lock().await;
+                    // Read under the writer lock, so the last frame written is
+                    // the latest state (a later change wakes this loop again).
+                    let state = *paused.borrow_and_update();
+                    if let Some(w) = guard.as_mut() {
+                        if let Err(e) =
+                            write_frame_timed(w, MSG_OUTPUT_FLOW, &[u8::from(state)]).await
+                        {
+                            debug!("Output flow frame not sent: {e:#}");
+                        }
+                    }
+                }
+                changed = released.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    let total = *released.borrow_and_update();
+                    if !credit_supported.load(Ordering::SeqCst) {
+                        // Nothing to return: this connection takes no credit.
+                        acked = total;
+                        continue;
+                    }
+                    let mut guard = writer.lock().await;
+                    let Some(w) = guard.as_mut() else {
+                        // Disconnected: the next connection starts afresh.
+                        acked = total;
+                        continue;
+                    };
+                    while acked < total {
+                        let bytes = u32::try_from(total - acked).unwrap_or(u32::MAX);
+                        if let Err(e) =
+                            write_frame_timed(w, MSG_OUTPUT_ACK, &bytes.to_be_bytes()).await
+                        {
+                            // Kept owed: the next release retries it.
+                            debug!("Output credit not returned: {e:#}");
+                            break;
+                        }
+                        acked += u64::from(bytes);
+                    }
                 }
             }
         }
@@ -2443,7 +2488,7 @@ mod tests {
         let mut expected = protocol::encode_frame(MSG_ATTACH_INTENT, &[INTENT_RECOVERY]);
         expected.extend(protocol::encode_frame(
             MSG_AGENT_CAPABILITIES,
-            &[CAP_HEARTBEAT],
+            &[CAP_HEARTBEAT | CAP_OUTPUT_CREDIT],
         ));
         assert_eq!(*writes.lock().unwrap(), vec![expected]);
     }

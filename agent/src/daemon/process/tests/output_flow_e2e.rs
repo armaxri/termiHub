@@ -205,13 +205,13 @@ async fn a_newly_attached_worker_starts_flowing() {
 }
 
 /// #4439: with the transport stalled (the worker's notifications are held, so
-/// none returns its credit), the worker pauses the daemon once the session's
-/// output budget is queued: the daemon stops reading and the backend producer
-/// is backpressured, with the queue bounded near the budget. Writing the queue
-/// out resumes the daemon.
+/// none returns its credit), the daemon stops reading once the credit window is
+/// used up and the worker pauses it at its budget: the backend producer is
+/// backpressured and the queue stays within the window plus one chunk. Writing
+/// the queue out returns the credit and resumes the daemon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_stalled_transport_pauses_the_daemon_at_the_budget() {
-    use crate::daemon::worker_sink::OUTBOUND_BUDGET_BYTES;
+    use crate::daemon::protocol::OUTPUT_CREDIT_WINDOW;
     use crate::session::output_budget::OUTPUT_BUDGET_BYTES;
 
     const CHUNK: usize = 64 * 1024;
@@ -238,17 +238,22 @@ async fn a_stalled_transport_pauses_the_daemon_at_the_budget() {
         accepted += 1;
     }
     assert!(accepted < max, "the daemon must stop reading at the budget");
-    assert!(client.output_budget().is_paused());
+    // Frames the daemon sent before stopping may still be on the socket.
+    let mut paused = client.output_budget().subscribe();
+    tokio::time::timeout(Duration::from_secs(5), paused.wait_for(|p| *p))
+        .await
+        .expect("the worker queued its whole budget")
+        .unwrap();
     let queued = client.output_budget().queued();
     assert!(
         queued >= OUTPUT_BUDGET_BYTES,
         "paused early: {queued} bytes"
     );
-    // On this path the bound also covers what the daemon had already queued
-    // for the worker when the pause landed (its own outbound budget, #3890)
-    // plus the local socket's buffers — a byte bound that does not grow with
-    // link latency.
-    let bound = OUTPUT_BUDGET_BYTES + OUTBOUND_BUDGET_BYTES + 512 * 1024;
+    // Output credit is the strict bound: the daemon keeps at most the window
+    // unacknowledged (and reads one more backend chunk at most), however late
+    // the pause lands. Without it a loaded Linux runner queued 3.75 MiB while
+    // the pause was still in flight.
+    let bound = OUTPUT_CREDIT_WINDOW + CHUNK;
     assert!(
         queued <= bound,
         "{queued} bytes queued for one session (bound {bound})"

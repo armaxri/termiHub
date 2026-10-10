@@ -48,6 +48,9 @@ struct Inner {
     paused: watch::Sender<bool>,
     /// Combined paused state, for the in-process output pump.
     gate: OutputFlowGate,
+    /// Total bytes ever released, for returning output credit to a session
+    /// daemon (#4439).
+    released: watch::Sender<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -85,6 +88,7 @@ impl OutputBudget {
                 state: Mutex::new(State::default()),
                 paused: watch::Sender::new(false),
                 gate: OutputFlowGate::new(),
+                released: watch::Sender::new(0),
             }),
         }
     }
@@ -124,6 +128,13 @@ impl OutputBudget {
     #[must_use]
     pub fn subscribe(&self) -> watch::Receiver<bool> {
         self.inner.paused.subscribe()
+    }
+
+    /// Watch the total of bytes ever released (written or discarded by the
+    /// transport). Closes like [`subscribe`](Self::subscribe).
+    #[must_use]
+    pub fn subscribe_released(&self) -> watch::Receiver<u64> {
+        self.inner.released.subscribe()
     }
 
     /// Charge `bytes` of output about to be queued. The bytes count against the
@@ -180,6 +191,9 @@ impl Drop for OutputCredit {
         let bytes = self.bytes;
         self.inner
             .update(|s| s.queued = s.queued.saturating_sub(bytes));
+        self.inner
+            .released
+            .send_modify(|total| *total = total.saturating_add(bytes as u64));
     }
 }
 
@@ -218,6 +232,16 @@ mod tests {
         assert!(budget.is_paused(), "the desktop still holds the pause");
         budget.resume();
         assert!(!budget.is_paused());
+    }
+
+    #[test]
+    fn released_bytes_are_totalled() {
+        let budget = OutputBudget::with_limits(10, 5);
+        let mut released = budget.subscribe_released();
+        drop(budget.charge(3));
+        drop(budget.charge(4));
+        assert!(released.has_changed().unwrap());
+        assert_eq!(*released.borrow_and_update(), 7);
     }
 
     #[test]
