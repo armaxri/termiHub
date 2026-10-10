@@ -73,6 +73,7 @@ import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { fileManagerActionLabel } from "@/utils/platform";
 import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
+import { getBasename } from "@/utils/paths";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
@@ -1256,7 +1257,7 @@ export function FileBrowser() {
   useEffect(() => {
     let cleanup: (() => void) | null = null;
     onVscodeEditComplete((remotePath, success, err) => {
-      const name = remotePath.split("/").pop() || remotePath;
+      const name = getBasename(remotePath);
       if (success) {
         toast.success(`Saved "${name}" from VS Code`);
         refresh();

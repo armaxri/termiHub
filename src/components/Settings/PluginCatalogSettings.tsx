@@ -27,6 +27,7 @@ import { PluginCatalogEntryCard } from "./PluginCatalogEntryCard";
 import { PluginUrlInstall, urlFieldError } from "./PluginUrlInstall";
 import "./PluginCatalogSettings.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 
 /** Shown when the index URL setting is unset — mirrors the backend default. */
 const DEFAULT_PLUGIN_INDEX_URL =
@@ -38,12 +39,18 @@ type LoadState =
   | { phase: "loaded"; result: PluginIndexResult }
   | { phase: "error"; error: string };
 
-/** Case-insensitive match on name, id, author and description. */
-export function entryMatches(view: PluginIndexEntryView, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
+/** The searchable fields of a catalog entry: name, id, author and description. */
+function catalogEntryFields(view: PluginIndexEntryView): ReadonlyArray<string> {
   const { name, id, author, description } = view.entry;
-  return [name, id, author, description].some((field) => field.toLowerCase().includes(q));
+  return [name, id, author, description];
+}
+
+/**
+ * Case- and diacritic-insensitive substring match on name, id, author and
+ * description, through the shared {@link itemMatchesQuery} (#4582).
+ */
+export function entryMatches(view: PluginIndexEntryView, query: string): boolean {
+  return itemMatchesQuery(view, catalogEntryFields, query.trim());
 }
 
 /**

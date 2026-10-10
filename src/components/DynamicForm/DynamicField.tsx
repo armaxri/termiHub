@@ -14,6 +14,8 @@ import { Button, Field, Input, Modal, NumberInput, Select, Toggle } from "@/comp
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { textFieldsMatchQuery } from "@/utils/searchMatching";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -669,17 +671,42 @@ async function fetchContainers(
     : { status: "unsupported" };
 }
 
-/** Case-insensitive match of the typed text against a container's name, image or ID prefix. */
-function containerMatches(c: DockerContainerInfo, query: string): boolean {
-  const q = query.trim().toLowerCase();
+/** The substring-searchable fields of a container (its ID is prefix-matched separately). */
+function containerTextFields(c: DockerContainerInfo): ReadonlyArray<string | undefined> {
+  return [c.name, c.image, c.composeProject, c.composeService];
+}
+
+/**
+ * Match of the typed text against a container's name, image, compose project or
+ * compose service (case- and diacritic-insensitive substring, through the shared
+ * {@link itemMatchesQuery}, #4582) or its ID. The ID stays a case-insensitive
+ * **prefix** match, as `docker` accepts an ID prefix: a substring hit in the
+ * middle of a hex ID would only add noise.
+ */
+export function containerMatches(c: DockerContainerInfo, query: string): boolean {
+  const q = query.trim();
   if (q === "") return true;
   return (
-    c.name.toLowerCase().includes(q) ||
-    c.image.toLowerCase().includes(q) ||
-    (c.composeProject?.toLowerCase().includes(q) ?? false) ||
-    (c.composeService?.toLowerCase().includes(q) ?? false) ||
-    c.id.toLowerCase().startsWith(q)
+    itemMatchesQuery(c, containerTextFields, q) || c.id.toLowerCase().startsWith(q.toLowerCase())
   );
+}
+
+/**
+ * Compose services whose value matches the typed text (case- and
+ * diacritic-insensitive substring, through the shared {@link textFieldsMatchQuery},
+ * #4582). An empty query keeps every service.
+ */
+export function filterComposeServiceGroups<G extends { services: { value: string }[] }>(
+  groups: G[],
+  query: string
+): G[] {
+  const q = query.trim();
+  return groups
+    .map((g) => ({
+      ...g,
+      services: g.services.filter((sv) => textFieldsMatchQuery([sv.value], q)),
+    }))
+    .filter((g) => g.services.length > 0);
 }
 
 /**
@@ -806,15 +833,7 @@ function DockerContainerField({
   if (serviceMode) {
     const all = composeServicesFromContainers(containers);
     const exactService = all.some((g) => g.services.some((sv) => sv.value === currentValue));
-    const query = currentValue.trim().toLowerCase();
-    const shownGroups = exactService
-      ? all
-      : all
-          .map((g) => ({
-            ...g,
-            services: g.services.filter((sv) => sv.value.toLowerCase().includes(query)),
-          }))
-          .filter((g) => g.services.length > 0);
+    const shownGroups = exactService ? all : filterComposeServiceGroups(all, currentValue);
     return (
       <>
         {header}

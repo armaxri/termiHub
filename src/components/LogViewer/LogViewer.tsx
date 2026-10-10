@@ -321,6 +321,14 @@ function reportFailure(title: string, action: string, err: unknown): void {
   toast.error(title, { description: message });
 }
 
+/**
+ * Deliberately exact (case-insensitive) substring matching rather than the shared
+ * diacritic-insensitive `itemMatchesQuery` (#4582, as LIBFE2-005 allows): log
+ * search is used to find literal tokens (error codes, paths, module targets) in
+ * a buffer that can hold thousands of lines and is re-filtered on every new entry,
+ * so the cheap `includes()` keeps the filter fast and never folds characters a
+ * user is grepping for.
+ */
 function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
   return (
     entry.message.toLowerCase().includes(searchLower) ||
