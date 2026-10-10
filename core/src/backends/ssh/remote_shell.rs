@@ -50,6 +50,8 @@
 //! without the configured environment.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
@@ -398,6 +400,40 @@ pub fn x11_setup_lines(shell: RemoteShell, display_num: u32, cookie: Option<&str
     lines
 }
 
+// ── Diagnostic trace of the setup sequence (#4670) ──────────────────────
+
+/// Set by [`enable_setup_trace`] (the live Windows SSH-host test does).
+static SETUP_TRACE: AtomicBool = AtomicBool::new(false);
+
+/// Turn on the diagnostic trace of every byte the [`SetupGate`] sequence
+/// types and receives (#4670). Off by default; also on when the environment
+/// variable `TERMIHUB_TEST_SSH_TRACE=1` is set. **Test-only**: the trace
+/// prints the typed setup verbatim, which embeds env values and the X11
+/// cookie, so production code never calls this.
+pub fn enable_setup_trace() {
+    SETUP_TRACE.store(true, Ordering::Relaxed);
+}
+
+/// Whether the setup trace is on (an atomic load once the env is cached).
+pub fn setup_trace_enabled() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    SETUP_TRACE.load(Ordering::Relaxed)
+        || *ENV.get_or_init(|| std::env::var("TERMIHUB_TEST_SSH_TRACE").is_ok_and(|v| v == "1"))
+}
+
+/// Print one trace event — `ms` since the shell request, the event, and the
+/// bytes involved, escaped — to stderr when the trace is on.
+pub fn setup_trace(t0: Instant, event: &str, data: &[u8]) {
+    if setup_trace_enabled() {
+        eprintln!(
+            "[ssh-setup-trace +{:>6}ms] {event} ({} B): {}",
+            t0.elapsed().as_millis(),
+            data.len(),
+            data.escape_ascii()
+        );
+    }
+}
+
 /// How long the shell's output must stay quiet after it printed something
 /// before its first prompt counts as up ([`SetupGate`]).
 pub const SETUP_GATE_SETTLE: Duration = Duration::from_millis(300);
@@ -476,6 +512,8 @@ pub struct SetupGate {
     setup: Vec<Vec<u8>>,
     /// The user's writes held so far, in order.
     held: Vec<Vec<u8>>,
+    /// When the gate was created (the shell request), for the trace.
+    started: Instant,
 }
 
 impl SetupGate {
@@ -496,6 +534,7 @@ impl SetupGate {
             done,
             setup: Vec::new(),
             held: Vec::new(),
+            started: now,
         }
     }
 
@@ -539,6 +578,7 @@ impl SetupGate {
                 *last_output = Some(now);
                 if marks.feed(data) && self.done == SetupDone::PromptMark {
                     // The setup's own prompt is up: it has run.
+                    setup_trace(self.started, "gate: prompt mark seen -> open", &[]);
                     self.phase = Phase::Open;
                 }
             }
@@ -587,9 +627,15 @@ impl SetupGate {
             Phase::Open => std::mem::take(&mut self.held),
             Phase::AwaitPrompt { .. } => {
                 if self.setup.is_empty() {
+                    setup_trace(self.started, "gate: first prompt, no setup -> open", &[]);
                     self.phase = Phase::Open;
                     return std::mem::take(&mut self.held);
                 }
+                setup_trace(
+                    self.started,
+                    "gate: first prompt settled -> typing setup",
+                    &[],
+                );
                 self.phase = Phase::AwaitSetup {
                     deadline: now + SETUP_GATE_CAP,
                     retype_at: now + SETUP_GATE_RETYPE,
@@ -610,6 +656,15 @@ impl SetupGate {
                     if !settled {
                         warn!("the session setup did not report back; releasing input anyway");
                     }
+                    setup_trace(
+                        self.started,
+                        if settled {
+                            "gate: setup output settled -> open"
+                        } else {
+                            "gate: cap reached without a report -> open"
+                        },
+                        &[],
+                    );
                     self.phase = Phase::Open;
                     return std::mem::take(&mut self.held);
                 }
@@ -617,6 +672,7 @@ impl SetupGate {
                 *retype_at = now + SETUP_GATE_RETYPE;
                 *last_output = None;
                 debug!("the session setup did not report back; typing it again");
+                setup_trace(self.started, "gate: no report -> retyping setup", &[]);
                 self.setup.clone()
             }
         }
