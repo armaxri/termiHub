@@ -121,6 +121,7 @@ export function setRestoreTransportForTest(t: Transport | null): void {
   lastObservedSeq = 0;
   lastView = EMPTY_RESTORE_COHORT_VIEW;
   versionGuard.reset();
+  resetSettledSignal();
 }
 
 function transport(): Transport {
@@ -164,6 +165,7 @@ export function stopRestoreSubscription(): void {
   lastObservedSeq = 0;
   lastView = EMPTY_RESTORE_COHORT_VIEW;
   versionGuard.reset();
+  resetSettledSignal();
 }
 
 /**
@@ -199,10 +201,76 @@ export function setRestoreSettlementRenderer(fn: RestoreSettlementRenderer | nul
 function commitRestoreCohortView(view: RestoreCohortView, version: number): void {
   if (!versionGuard.shouldApply(version)) return;
   lastView = view;
+  lastAppliedVersion = version;
   const settlement = view.settlement;
-  if (!settlement || settlement.seq <= lastObservedSeq) return;
-  lastObservedSeq = settlement.seq;
-  settlementRenderer?.(settlement);
+  if (settlement && settlement.seq > lastObservedSeq) {
+    lastObservedSeq = settlement.seq;
+    settlementRenderer?.(settlement);
+  }
+  checkAwaitedCohortSettled();
+}
+
+// ── Cohort-settled signal (#4387) ──────────────────────────────────────────────
+//
+// The restore-in-progress auto-save guard (GAP G5, #1146) used to lower after a
+// fixed 2s wall-clock guess. The region already knows exactly when a cohort has
+// settled — every tab connected or failed — so the guard now listens for that.
+//
+// Correlation: the cohort begun by the most recent `restore.beginCohort` is the
+// one awaited. Its ack carries the region version the begin produced; the cohort
+// counts as settled once a view at (or after) that version shows no in-flight
+// cohort. A settlement from an older, superseded cohort that is still in flight
+// is therefore never mistaken for the new one. A begin that fails or is rejected
+// leaves the await pending — the guard's own safety timeout covers that case.
+
+/** Fired once the most recently begun cohort has settled. */
+export type RestoreCohortSettledListener = () => void;
+
+const settledListeners = new Set<RestoreCohortSettledListener>();
+/** The awaited begin: `version` is `null` until its ack lands. */
+let awaitedBegin: { token: number; version: number | null } | null = null;
+let beginToken = 0;
+/** The region version of {@link lastView} (`-1` before the first diff). */
+let lastAppliedVersion = -1;
+
+/**
+ * Subscribe to the "most recently begun restore cohort has settled" signal
+ * (#4387). Returns an unsubscribe function. Survives transport swaps in tests.
+ */
+export function onRestoreCohortSettled(listener: RestoreCohortSettledListener): () => void {
+  settledListeners.add(listener);
+  return () => {
+    settledListeners.delete(listener);
+  };
+}
+
+function resetSettledSignal(): void {
+  awaitedBegin = null;
+  lastAppliedVersion = -1;
+}
+
+function notifyCohortSettled(): void {
+  awaitedBegin = null;
+  for (const listener of [...settledListeners]) listener();
+}
+
+function checkAwaitedCohortSettled(): void {
+  if (!awaitedBegin || awaitedBegin.version === null) return;
+  if (lastAppliedVersion < awaitedBegin.version) return;
+  if (lastView.cohort !== null) return;
+  notifyCohortSettled();
+}
+
+/** Record the version a begin's ack produced, then re-check settlement (the
+ * settling diff may already have landed before the ack resolved). */
+function onBeginAck(token: number, ack: IntentAck): void {
+  if (!awaitedBegin || awaitedBegin.token !== token) return;
+  if (ack.status === "rejected") return;
+  const produced = ack.produced?.find((p) => p.region === region);
+  // No produced region means the begin did not change the view; settle against
+  // whatever the current view already shows.
+  awaitedBegin.version = produced?.version ?? lastAppliedVersion;
+  checkAwaitedCohortSettled();
 }
 
 function onRegionChange(state: ProjectionCacheState): void {
@@ -237,7 +305,8 @@ function dispatchRestoreIntent(
  * socket) is caught the same way. */
 function mirrorRestore(
   kind: "restore.beginCohort" | "restore.settleTab",
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  onAck?: (ack: IntentAck) => void
 ): void {
   // Keep the subscription warm so settlement diffs are received. Guarded because a
   // non-Tauri env without a socket throws *synchronously* from transport
@@ -264,11 +333,13 @@ function mirrorRestore(
       if (ack.status === "rejected") {
         logRestoreBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
       }
+      onAck?.(ack);
     })
     .catch((err) => logRestoreBridgeFallback(kind, err));
 }
 
-/** Dispatch `restore.beginCohort` (register a restore/launch cohort). */
+/** Dispatch `restore.beginCohort` (register a restore/launch cohort). The begun
+ * cohort becomes the one {@link onRestoreCohortSettled} awaits. */
 export function mirrorRestoreBegin(payload: {
   pendingTabIds: string[];
   preFailedCount: number;
@@ -279,7 +350,14 @@ export function mirrorRestoreBegin(payload: {
     preFailedCount: payload.preFailedCount,
   };
   if (payload.toastId !== undefined) body.toastId = String(payload.toastId);
-  mirrorRestore("restore.beginCohort", body);
+  const token = ++beginToken;
+  awaitedBegin = { token, version: null };
+  mirrorRestore("restore.beginCohort", body, (ack) => onBeginAck(token, ack));
+  // An empty cohort (nothing to connect, nothing pre-failed) is a region no-op
+  // that never settles, so there is nothing to wait for: signal it now.
+  if (new Set(payload.pendingTabIds).size + payload.preFailedCount === 0) {
+    notifyCohortSettled();
+  }
 }
 
 /** Dispatch `restore.settleTab` (settle one tab of the active cohort). */

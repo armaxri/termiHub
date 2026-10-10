@@ -24,10 +24,10 @@ use crate::projection::{
     ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 use crate::transfers_projection::projection::{
-    fold_transfer_progress, publish_transfers, TRANSFERS_REGION,
+    fold_transfer_progress, publish_transfers, seed_target_is_live, TRANSFERS_REGION,
 };
 use crate::transfers_projection::store::{
-    TransferProgress, TransferQueueState, TransferSeed, TransferSnapshot, TransferStore,
+    TransferProgress, TransferQueueState, TransferSeed, TransferStore,
 };
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -84,19 +84,16 @@ fn registry_for(store: Arc<TransferStore>) -> HandlerRegistry {
     let s = store.clone();
     registry.route("transfer.seed", move |intent, projector| {
         let seed: TransferSeed = parse_field(intent, "seed")?;
-        s.seed(&seed, NOW);
+        // No `TransferRegistry` is managed here, so the liveness gate admits it.
+        if seed_target_is_live(None, &seed.id) {
+            s.seed(&seed, NOW);
+        }
         Ok(publish_transfers(projector, &s))
     });
     let s = store.clone();
     registry.route("transfer.progress", move |intent, projector| {
         let progress: TransferProgress = parse_field(intent, "progress")?;
         s.progress(&progress, NOW);
-        Ok(publish_transfers(projector, &s))
-    });
-    let s = store.clone();
-    registry.route("transfer.reconcile", move |intent, projector| {
-        let snapshots: Vec<TransferSnapshot> = parse_field(intent, "snapshots")?;
-        s.reconcile(&snapshots, NOW);
         Ok(publish_transfers(projector, &s))
     });
     let s = store.clone();
@@ -770,4 +767,76 @@ fn incremental_publish_replace_matches_the_whole_region_diff() {
 
     assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "replace");
     assert_eq!(prev, source.snapshot(), "region mirrors the replace source");
+}
+
+// ── Late-seed liveness gate (#4387) ──────────────────────────────────────────
+//
+// With the client reconcile poll retired, a `transfer.seed` that lands after a
+// fast transfer already finished (and its row was removed) must not resurrect a
+// `queued` row nobody will ever settle.
+
+fn registry_with(id: &str) -> crate::files::transfer::TransferRegistry {
+    let registry = crate::files::transfer::TransferRegistry::new();
+    registry.enqueue(
+        id,
+        "sess-1",
+        crate::files::transfer::TransferDirection::Download,
+        "data.csv",
+        "/remote/data.csv",
+        1000,
+    );
+    registry
+}
+
+#[test]
+fn seed_is_admitted_while_the_engine_holds_a_live_handle() {
+    let registry = registry_with("t1");
+    assert!(seed_target_is_live(Some(&registry), "t1"));
+}
+
+#[test]
+fn seed_is_admitted_without_a_managed_registry() {
+    assert!(seed_target_is_live(None, "t1"));
+}
+
+#[test]
+fn seed_is_refused_for_an_unknown_transfer() {
+    let registry = crate::files::transfer::TransferRegistry::new();
+    assert!(!seed_target_is_live(Some(&registry), "ghost"));
+}
+
+#[test]
+fn seed_is_refused_once_the_transfer_finished_and_its_entry_dropped() {
+    let registry = registry_with("t1");
+    let handle = registry.get("t1").expect("live");
+    handle.transition(crate::files::transfer::TransferEvent::Cancel);
+    registry.drop_entry("t1");
+    assert!(!seed_target_is_live(Some(&registry), "t1"));
+}
+
+#[test]
+fn seed_is_refused_for_a_terminal_handle_still_in_the_registry() {
+    let registry = registry_with("t1");
+    let handle = registry.get("t1").expect("live");
+    handle.transition(crate::files::transfer::TransferEvent::Cancel);
+    assert!(!seed_target_is_live(Some(&registry), "t1"));
+}
+
+/// The race end to end at the store level: the terminal fold lands, the user
+/// removes the row, then the late seed arrives — gated, it inserts nothing.
+#[test]
+fn a_late_seed_after_completion_and_removal_does_not_resurrect_the_row() {
+    let registry = registry_with("t1");
+    let store = TransferStore::new();
+    store.progress(&progress("t1", "completed", 1000), NOW);
+    let handle = registry.get("t1").expect("live");
+    handle.transition(crate::files::transfer::TransferEvent::Activate);
+    handle.transition(crate::files::transfer::TransferEvent::Complete);
+    registry.drop_entry("t1");
+    store.remove("t1");
+
+    if seed_target_is_live(Some(&registry), "t1") {
+        store.seed(&seed("t1"), NOW);
+    }
+    assert!(store.get("t1").is_none(), "no stuck queued row");
 }

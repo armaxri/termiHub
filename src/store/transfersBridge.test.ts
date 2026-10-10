@@ -93,28 +93,37 @@ describe("dispatchTransferIntent", () => {
     expect(currentTransfersView().queue.t1.state).toBe("active");
   });
 
-  it("reconcile settles a stuck non-terminal row from a terminal snapshot", async () => {
-    transport.seed(transfersView([fakeTransferEntry("t1", { state: "active", percent: 50 })]));
-    await ensureTransfersSubscribed();
+  // #4387: the client reconcile poll is retired. A row's terminal state reaches
+  // the projection from the backend's own server-side fold — no client intent.
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "a %s row settles from server-side projection updates alone",
+    async (state) => {
+      await ensureTransfersSubscribed();
+      dispatchTransferIntentBestEffort("transfer.seed", {
+        seed: { id: "t1", sessionId: "sess-1", direction: "download", name: "t1.bin" },
+      });
+      await flush();
+      expect(currentTransfersView().queue.t1.state).toBe("queued");
 
-    await dispatchTransferIntent("transfer.reconcile", {
-      snapshots: [
-        {
-          transferId: "t1",
-          sessionId: "sess-t1",
-          direction: "download",
-          fileName: "t1.bin",
-          state: "completed",
-          transferred: 1000,
-          total: 1000,
-          speed: 0,
-          settled: true,
-        },
-      ],
-    });
-    expect(currentTransfersView().queue.t1.state).toBe("completed");
-    expect(currentTransfersView().queue.t1.percent).toBe(100);
-  });
+      const base = {
+        transferId: "t1",
+        sessionId: "sess-1",
+        direction: "download" as const,
+        fileName: "t1.bin",
+        path: "/t1.bin",
+        total: 1000,
+        speed: 0,
+      };
+      transport.serverFold({ ...base, transferred: 400, phase: "transferring", state: "active" });
+      expect(currentTransfersView().queue.t1.state).toBe("active");
+
+      const phase = state === "completed" ? "done" : state === "failed" ? "error" : "cancelled";
+      transport.serverFold({ ...base, transferred: 1000, phase, state });
+      expect(currentTransfersView().queue.t1.state).toBe(state);
+      // Nothing but the registration seed was ever dispatched by the client.
+      expect(transport.kinds()).toEqual(["transfer.seed"]);
+    }
+  );
 });
 
 describe("dispatchTransferIntentBestEffort", () => {

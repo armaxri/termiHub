@@ -3,12 +3,13 @@ import type { TransferDirection } from "./TransferDirection";
 import type { TransferQueueState } from "./TransferQueueState";
 
 /**
- * A snapshot of one queued transfer from `transfer_list`, mirroring the frontend
- * `TransferSnapshot` — the reconcile backstop (#1645 / #1657).
+ * A snapshot of one queued transfer from `transfer_list` — the wire shape the
+ * frontend reads. The Rust twin is compiled only in tests (#4387): it exports
+ * this type and pins that the wire JSON decodes into it (`ipc_wire_fixtures`).
  */
 export type TransferSnapshot = { transferId: string, sessionId: string, direction: TransferDirection, fileName: string, path?: string, state: TransferQueueState, 
 /**
- * Whether this is a genuinely settled outcome the reconcile may fold into a
- * stuck row (#1657) — stricter than [`TransferQueueState::is_terminal`].
+ * Whether this is a genuinely settled outcome (#1657) — stricter than a
+ * terminal `state` (a mid-auto-retry failure is terminal but unsettled).
  */
 settled: boolean, transferred: number, total: number, speed: number, attempt: number, maxAttempts: number, };

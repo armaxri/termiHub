@@ -16,7 +16,8 @@ import {
 import { type RestorePrompt } from "@/utils/restoreMode";
 import { probeRestoreTargets } from "@/utils/restoreReachability";
 import { probeTargetReachable } from "@/services/networkApi";
-import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog, frontendWarn } from "@/utils/frontendLog";
+import { onRestoreCohortSettled } from "./restoreCohortBridge";
 import { toast } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { AppState } from "./appStore";
@@ -26,30 +27,62 @@ import { errorMessage } from "@/utils/errorMessage";
 
 export const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
 /**
- * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
- * restore/launch places its layout, per-tab connects keep mutating the tree for
- * a moment; we hold {@link AppState.restoreInProgress} for this window so those
- * transient (still-connecting / agent-error) states are not auto-saved over the
- * good session. Comfortably larger than the auto-save debounce.
+ * Safety timeout for the restore-in-progress guard (GAP G5, #1146; #4387).
+ * After a restore/launch places its layout, per-tab connects keep mutating the
+ * tree until every tab has connected or failed; we hold
+ * {@link AppState.restoreInProgress} until then so those transient
+ * (still-connecting / agent-error) states are not auto-saved over the good
+ * session. The guard lowers on the real signal — the restore cohort settling
+ * ({@link onRestoreCohortSettled}) — and this generous timeout only exists so a
+ * lost settlement (bridge/transport failure, a tab that never reports) cannot
+ * disable auto-save for the rest of the session.
  */
-let restoreSettleTimer: ReturnType<typeof setTimeout> | null = null;
-const RESTORE_SETTLE_MS = 2000;
+export const RESTORE_GUARD_SAFETY_TIMEOUT_MS = 30_000;
+let restoreSafetyTimer: ReturnType<typeof setTimeout> | null = null;
+/** The setter of the currently raised guard; `null` while the guard is down. */
+let raisedGuardSetState: ((partial: Partial<AppState>) => void) | null = null;
+let settledSubscription: (() => void) | null = null;
+
+function lowerRestoreGuard(reason: "settled" | "timeout"): void {
+  const setState = raisedGuardSetState;
+  if (!setState) return;
+  raisedGuardSetState = null;
+  if (restoreSafetyTimer) {
+    clearTimeout(restoreSafetyTimer);
+    restoreSafetyTimer = null;
+  }
+  setState({ restoreInProgress: false });
+  if (reason === "settled") {
+    frontendLog("workspace", "restore cohort settled; auto-save re-enabled");
+  } else {
+    frontendWarn(
+      "workspace",
+      `restore cohort did not report settled within ${RESTORE_GUARD_SAFETY_TIMEOUT_MS}ms; ` +
+        "auto-save re-enabled by safety timeout"
+    );
+  }
+}
 
 /**
- * Raise the restore-in-progress guard (GAP G5, #1146) and (re)arm the settle
- * timer that lowers it. Call immediately after a restore/launch has placed its
- * layout so the auto-save subscription and any in-flight per-tab connects are
- * skipped until the cohort settles. Safe to call repeatedly — the timer is
- * reset each time so overlapping restores extend the window.
+ * Raise the restore-in-progress guard (GAP G5, #1146). Call immediately before a
+ * restore/launch places its layout (and before it begins its restore cohort) so
+ * the auto-save subscription and any in-flight per-tab connects are skipped until
+ * the cohort settles. The guard lowers when the most recently begun cohort
+ * settles (#4387), or after {@link RESTORE_GUARD_SAFETY_TIMEOUT_MS} at the
+ * latest. Safe to call repeatedly — overlapping restores re-arm the timeout and
+ * wait for the newest cohort.
  */
 export function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void {
+  if (!settledSubscription) {
+    settledSubscription = onRestoreCohortSettled(() => lowerRestoreGuard("settled"));
+  }
+  raisedGuardSetState = setState;
   setState({ restoreInProgress: true });
-  if (restoreSettleTimer) clearTimeout(restoreSettleTimer);
-  restoreSettleTimer = setTimeout(() => {
-    restoreSettleTimer = null;
-    setState({ restoreInProgress: false });
-    frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
-  }, RESTORE_SETTLE_MS);
+  if (restoreSafetyTimer) clearTimeout(restoreSafetyTimer);
+  restoreSafetyTimer = setTimeout(() => {
+    restoreSafetyTimer = null;
+    lowerRestoreGuard("timeout");
+  }, RESTORE_GUARD_SAFETY_TIMEOUT_MS);
 }
 
 /**

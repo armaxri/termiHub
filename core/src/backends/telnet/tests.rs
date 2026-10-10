@@ -507,6 +507,7 @@ async fn drop_without_disconnect_marks_dead_and_closes_socket() {
     let (client, mut peer) = connected_pair();
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
+        interrupter: client.try_clone().expect("clone"),
         writer: Arc::new(Mutex::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         editor: Mutex::new(LineEditor::new()),
@@ -537,6 +538,7 @@ async fn drop_after_disconnect_flag_is_noop() {
     let (client, _peer) = connected_pair();
     let alive = Arc::new(AtomicBool::new(true));
     let state = ConnectedState {
+        interrupter: client.try_clone().expect("clone"),
         writer: Arc::new(Mutex::new(client)),
         negotiator: Arc::new(Mutex::new(Negotiator::new(DEFAULT_TERMINAL_TYPE))),
         editor: Mutex::new(LineEditor::new()),
