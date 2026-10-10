@@ -297,7 +297,9 @@ export function TerminalDisconnectOverlay({
   // crash overlay with the cause and a manual Restart session (plugin types
   // have no auto-reconnect, PLG-004).
   if (lifecycle.pluginExit) {
-    return <TerminalPluginExitOverlay tabId={tabId} exit={lifecycle.pluginExit} />;
+    return (
+      <TerminalPluginExitOverlay tabId={tabId} exit={lifecycle.pluginExit} isActive={isActive} />
+    );
   }
 
   // Agentless resilient reconnect (#1962) takes precedence: while the backoff
