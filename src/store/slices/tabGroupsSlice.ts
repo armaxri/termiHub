@@ -2,7 +2,11 @@ import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
 import { beginRestoreGuard, collectRestoreCohort } from "../restoreHelpers";
-import { buildTransferAwareHandoff, removeTransferSessionsFromWindow } from "../windowHelpers";
+import {
+  bestEffortOwnership,
+  buildTransferAwareHandoff,
+  removeTransferSessionsFromWindow,
+} from "../windowHelpers";
 import {
   currentLayoutSnapshot,
   generateGroupId,
@@ -12,7 +16,12 @@ import {
   tabContentFromGroups,
 } from "../layoutHelpers";
 import { TerminalTab, TabGroup } from "@/types/terminal";
-import { openWindow, sendHandoffToWindow, takePendingWindowRestore } from "@/services/api";
+import {
+  openWindow,
+  releaseSession,
+  sendHandoffToWindow,
+  takePendingWindowRestore,
+} from "@/services/api";
 import type { MoveWindowTarget, TabHandoffRecord, WindowRestorePayload } from "@/types/window";
 import { buildTabGroupsFromWorkspace } from "@/utils/workspaceLayout";
 import { newId } from "@/services/transport/ids";
@@ -29,7 +38,8 @@ import { mirrorLayoutIntent, mirrorLayoutMove } from "@/store/layoutBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
-import { prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
+import { prunedTabState, prunedTabsState, releaseTabFromSharedRegions } from "../tabTeardown";
+import { notifyWorkflowTabClosing } from "../workflowSessionTriggers";
 import { errorMessage } from "@/utils/errorMessage";
 import { stashCarriedBuffer } from "@/utils/editorBufferRegistry";
 
@@ -147,15 +157,50 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
     },
 
     closeTabGroup: (groupId) => {
-      if (curLayout().tabGroups.length <= 1) return; // sole group: no-op (backend rejects too)
+      const layout = curLayout();
+      if (layout.tabGroups.length <= 1) return; // sole group: no-op (backend rejects too)
+      const group = layout.tabGroups.find((g) => g.id === groupId);
+      if (!group) return;
+      // The active group's live tree is `rootPanel`; inactive groups keep theirs.
+      const groupRoot = groupId === layout.activeTabGroupId ? layout.rootPanel : group.rootPanel;
+      const closingTabs = getAllLeaves(groupRoot).flatMap((l) => l.tabs);
+      const closingTabIds = closingTabs.map((t) => t.id);
+
+      // Every tab in the group is closed by the user, so run `closeTab`'s
+      // teardown for each (#4453; the unsaved-editor / live-session prompt ran
+      // before this, in the caller's guard). The backend session itself is
+      // closed once, by each tab's Terminal view unmounting — not here.
+      const releasedSessions = new Set<string>();
+      for (const tab of closingTabs) {
+        // Lifecycle record + broadcast membership (#4313).
+        releaseTabFromSharedRegions(get, tab.id);
+        // On-disconnect workflow triggers (#3791) — checked before the tab
+        // leaves the layout.
+        notifyWorkflowTabClosing({ get, set }, tab.id);
+        // Relinquish backend `session → window` ownership (#1939), once per
+        // session, skipping a session mid-move (the destination owns it).
+        const sid = tab.sessionId;
+        if (sid && !releasedSessions.has(sid) && !get().isSessionMoving(sid)) {
+          releasedSessions.add(sid);
+          bestEffortOwnership(() => releaseSession(sid));
+        }
+      }
+
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const next = setLayoutLocal((state) => {
+        // Every per-tab map, persistent attachedTabIds, and the session-keyed
+        // maps of sessions no surviving tab shows (#4313 / #4453).
+        const pruned = prunedTabsState(state, closingTabIds);
+        const zoomedTabId =
+          state.zoomedTabId !== null && closingTabIds.includes(state.zoomedTabId)
+            ? null
+            : state.zoomedTabId;
         const newGroups = state.tabGroups.filter((g) => g.id !== groupId);
 
         if (groupId !== state.activeTabGroupId) {
           // Closing an inactive group — straightforward removal
-          return { tabGroups: newGroups };
+          return { tabGroups: newGroups, zoomedTabId, ...pruned };
         }
 
         // Closing the active group — pick adjacent group
@@ -167,6 +212,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           activeTabGroupId: newActiveGroup.id,
           rootPanel: newActiveGroup.rootPanel,
           activePanelId: newActiveGroup.activePanelId,
+          zoomedTabId,
+          ...pruned,
         };
       });
       // Dispatch the close to the region; the mirror composes it back (E2).

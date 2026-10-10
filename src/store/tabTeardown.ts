@@ -7,9 +7,9 @@ import { currentBroadcastView } from "./broadcastBridge";
  * Shared per-tab / per-session teardown (#4313, audit-2026-10 FES2-002 /
  * FES2-007).
  *
- * A tab leaves a window in two ways — it is closed (`closeTab`) or handed off to
- * another window (`moveTabToWindow`, where the destination mints a fresh tab id).
- * Both must drop every piece of state keyed by the departing tab id, or it leaks
+ * A tab leaves a window in three ways — it is closed (`closeTab`), closed with
+ * its whole tab group (`closeTabGroup`, #4453), or handed off to another window
+ * (`moveTabToWindow`, where the destination mints a fresh tab id). All must drop every piece of state keyed by the departing tab id, or it leaks
  * for the life of the window and of the shared regions, and a later tab that
  * reuses the id would inherit it. Before this helper each seam hand-pruned its
  * own list and the move seam pruned nothing.
@@ -60,46 +60,75 @@ type TabTeardownSource = LayoutViewState &
  * tab's session.
  */
 export function prunedTabState(state: TabTeardownSource, tabId: string): TabTeardownPatch {
+  return prunedTabsState(state, [tabId]);
+}
+
+/**
+ * {@link prunedTabState} for several tabs leaving the window at once — a whole
+ * tab group closing (#4453). A session shown only by departing tabs has its
+ * session-keyed entries dropped even when several of them show it; one still
+ * shown by a tab that stays is kept.
+ */
+export function prunedTabsState(
+  state: TabTeardownSource,
+  tabIds: readonly string[]
+): TabTeardownPatch {
+  const departing = new Set(tabIds);
+
   const perTab = {} as Pick<AppState, PerTabStateKey>;
   for (const key of PER_TAB_STATE_KEYS) {
-    (perTab as Record<string, unknown>)[key] = omitKey(
-      state[key] as Record<string, unknown>,
-      tabId
-    );
+    let map = state[key] as Record<string, unknown>;
+    for (const tabId of tabIds) map = omitKey(map, tabId);
+    (perTab as Record<string, unknown>)[key] = map;
   }
 
   let persistentSessions = state.persistentSessions;
   for (const [connId, entry] of Object.entries(state.persistentSessions)) {
-    if (entry.attachedTabIds.includes(tabId)) {
+    if (entry.attachedTabIds.some((id) => departing.has(id))) {
       if (persistentSessions === state.persistentSessions) {
         persistentSessions = { ...state.persistentSessions };
       }
       persistentSessions[connId] = {
         ...entry,
-        attachedTabIds: entry.attachedTabIds.filter((id) => id !== tabId),
+        attachedTabIds: entry.attachedTabIds.filter((id) => !departing.has(id)),
       };
     }
   }
 
   const windowTabs = collectWindowTabs(state);
-  const sessionId = windowTabs.find((t) => t.id === tabId)?.sessionId ?? null;
-  const sessionPatch = sessionId ? prunedSessionState(state, sessionId, tabId, windowTabs) : {};
+  const departingSessions = new Set(
+    windowTabs.filter((t) => departing.has(t.id) && t.sessionId).map((t) => t.sessionId as string)
+  );
+  let sessionPatch: Partial<Pick<AppState, PerSessionStateKey>> = {};
+  for (const sessionId of departingSessions) {
+    const patch = prunedSessionState(
+      { ...state, ...sessionPatch },
+      sessionId,
+      departing,
+      windowTabs
+    );
+    sessionPatch = { ...sessionPatch, ...patch };
+  }
 
   return { ...perTab, persistentSessions, ...sessionPatch };
 }
 
 /**
  * Pure state patch that drops `sessionId`'s session-keyed entries unless a tab
- * other than `departingTabId` in this window still shows that session. Returns
- * an empty patch when the session is still in use.
+ * in this window other than the departing one(s) still shows that session.
+ * Returns an empty patch when the session is still in use.
  */
 export function prunedSessionState(
   state: LayoutViewState & Pick<AppState, PerSessionStateKey>,
   sessionId: string,
-  departingTabId: string,
+  departingTabIds: string | ReadonlySet<string>,
   windowTabs = collectWindowTabs(state)
 ): Partial<Pick<AppState, PerSessionStateKey>> {
-  const stillShown = windowTabs.some((t) => t.id !== departingTabId && t.sessionId === sessionId);
+  const isDeparting =
+    typeof departingTabIds === "string"
+      ? (id: string) => id === departingTabIds
+      : (id: string) => departingTabIds.has(id);
+  const stillShown = windowTabs.some((t) => !isDeparting(t.id) && t.sessionId === sessionId);
   if (stillShown) return {};
   return {
     sessionCapabilities: omitKey(state.sessionCapabilities, sessionId),
