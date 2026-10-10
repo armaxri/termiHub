@@ -11,8 +11,8 @@ evidence:
   - src/services/events.ts:97-112
   - src/hooks/useRemoteDesktopSession.ts:345-370
   - audit/frontend-components/0005-remotedesktop-per-component-global-listeners.md
-status: open
-resolution: ""
+status: fixed
+resolution: "#4378 — state, clipboard and cert-prompt events go through one shared RemoteDesktopDispatcher listener per event type, routed by session id; frames already use a per-session channel (#4291)"
 audit: 2026-10
 commit: 663465d52
 relation: regression

@@ -6,8 +6,8 @@ severity: low
 category: perf
 is_workaround: false
 subsystem: src/components/RemoteDesktop/RemoteDesktopCanvas.tsx
-status: open
-resolution: ""
+status: fixed
+resolution: "#4378 — repaints coalesced into one requestAnimationFrame per canvas; the visible canvas is resized only when container, scale mode, viewport or framebuffer size change"
 audit: 2026-10
 commit: 663465d52
 relation: new
