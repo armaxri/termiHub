@@ -100,11 +100,6 @@
   color: var(--color-error);
 }
 
-.workflow-run-output__empty {
-  color: var(--text-muted);
-  font-style: italic;
-}
-
 .workflow-run-output__footer {
   padding: var(--spacing-xs) var(--spacing-sm);
   border-top: 1px solid var(--border-primary);

@@ -47,13 +47,6 @@
   background: var(--border-secondary);
 }
 
-.plugin-manager__empty {
-  padding: var(--spacing-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  text-align: center;
-}
-
 .plugin-row {
   display: flex;
   align-items: center;
@@ -286,16 +279,6 @@
   gap: var(--spacing-sm);
   margin-top: var(--spacing-xs-sm);
   flex-wrap: wrap;
-}
-
-.plugin-detail__empty {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  padding: var(--spacing-xl);
-  color: var(--text-secondary);
-  font-size: var(--font-size-md);
-  text-align: center;
 }
 
 /* ── Install dialog — provenance banner (four trust states) ───────────── */

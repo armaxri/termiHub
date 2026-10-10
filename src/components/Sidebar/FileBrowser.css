@@ -389,17 +389,6 @@
 }
 
 /* Placeholder for unsupported connection types */
-.file-browser__placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-lg);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: center;
-}
 
 /* Recovery controls (Retry / Dismiss) shown under a failed-connect message. */
 .file-browser__error-actions {
@@ -704,9 +693,4 @@
   font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.file-bookmarks__empty {
-  margin: 0;
-  color: var(--text-secondary);
 }

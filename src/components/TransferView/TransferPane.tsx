@@ -287,7 +287,7 @@ export function TransferPane({
         </div>
       )}
       {placeholder ? (
-        <div className="transfer-pane__placeholder">{placeholder}</div>
+        <EmptyState title={placeholder} data-testid={`transfer-pane-${side}-placeholder`} />
       ) : (
         <div
           ref={listRef}

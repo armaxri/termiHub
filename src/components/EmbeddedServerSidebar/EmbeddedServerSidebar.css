@@ -209,11 +209,6 @@
   min-width: 0;
 }
 
-.server-activity__empty {
-  color: var(--text-muted);
-  padding: var(--spacing-xs) 0;
-}
-
 .server-activity__log {
   list-style: none;
   margin: 0;

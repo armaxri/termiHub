@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { FileDown, Server, AlertTriangle } from "lucide-react";
-import { Modal } from "@/components/ui";
+import { Modal, EmptyState } from "@/components/ui";
 import type { JumpHostConfig, SshConfigImportConnection } from "@/types/connection";
 import { importSshConfigConnections } from "@/services/api";
 import "./SshConfigImportDialog.css";
@@ -86,17 +86,22 @@ export function SshConnectionImportDialog({
       )}
 
       {state.status === "error" && (
-        <div className="ssh-config-import__empty" data-testid="ssh-connection-import-error">
-          <AlertTriangle size={20} aria-hidden />
-          <p>Could not read ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<AlertTriangle size={20} aria-hidden />}
+          title="Could not read ~/.ssh/config."
+          role="alert"
+          data-testid="ssh-connection-import-error"
+        />
       )}
 
       {state.status === "ready" && state.connections.length === 0 && (
-        <div className="ssh-config-import__empty" data-testid="ssh-connection-import-empty">
-          <Server size={20} aria-hidden />
-          <p>No hosts were found in ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<Server size={20} aria-hidden />}
+          title="No hosts were found in ~/.ssh/config."
+          data-testid="ssh-connection-import-empty"
+        />
       )}
 
       {state.status === "ready" && state.connections.length > 0 && (

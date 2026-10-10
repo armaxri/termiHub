@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Loader2, CheckCircle2, XCircle, Ban, X, Square, Terminal } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, EmptyState } from "@/components/ui";
 import type { WorkflowRunOutputState } from "@/store/appStore";
 import "./WorkflowRunOutput.css";
 
@@ -131,9 +131,11 @@ export function WorkflowRunOutput() {
         aria-live="polite"
       >
         {lineCount === 0 ? (
-          <div className="workflow-run-output__empty" data-testid="workflow-run-output-empty">
-            {isRunning ? "Waiting for output…" : "No output"}
-          </div>
+          <EmptyState
+            title={isRunning ? "Waiting for output…" : "No output"}
+            role={null}
+            data-testid="workflow-run-output-empty"
+          />
         ) : (
           run.lines.map((line) => (
             <div

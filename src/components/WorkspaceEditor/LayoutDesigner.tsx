@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { SplitSquareHorizontal, SplitSquareVertical, Plus, X, RotateCcw } from "lucide-react";
-import { Button, NumberInput, Tooltip } from "@/components/ui";
+import { Button, NumberInput, Tooltip, EmptyState } from "@/components/ui";
 import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
@@ -429,7 +429,11 @@ function LeafPanel({
       </div>
       <div className="layout-leaf__tabs">
         {node.tabs.length === 0 ? (
-          <span className="layout-leaf__empty">Click + to add a connection</span>
+          <EmptyState
+            title="Click + to add a connection"
+            role={null}
+            data-testid="layout-leaf-empty"
+          />
         ) : (
           node.tabs.map((tab, tabIdx) => (
             <div key={tabIdx} className="layout-tab">

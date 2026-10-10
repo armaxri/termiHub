@@ -72,12 +72,6 @@
   margin-bottom: var(--spacing-xs);
 }
 
-.syntax-custom-rule__empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-muted);
-  padding: var(--spacing-xs) var(--spacing-sm);
-}
-
 .syntax-custom-rule {
   display: flex;
   align-items: center;

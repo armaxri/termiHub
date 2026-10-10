@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Server } from "lucide-react";
-import { Button, Checkbox, Modal, Select } from "@/components/ui";
+import { Button, Checkbox, Modal, Select, EmptyState } from "@/components/ui";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type { JumpHostConfig, SshConfigImportConnection } from "@/types/connection";
 import { importSshConfigConnections } from "@/services/api";
@@ -144,17 +144,22 @@ export function BulkSshImportDialog({
       )}
 
       {state.status === "error" && (
-        <div className="ssh-config-import__empty" data-testid="bulk-ssh-import-error">
-          <AlertTriangle size={20} aria-hidden />
-          <p>Could not read ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<AlertTriangle size={20} aria-hidden />}
+          title="Could not read ~/.ssh/config."
+          role="alert"
+          data-testid="bulk-ssh-import-error"
+        />
       )}
 
       {state.status === "ready" && connections.length === 0 && (
-        <div className="ssh-config-import__empty" data-testid="bulk-ssh-import-empty">
-          <Server size={20} aria-hidden />
-          <p>No hosts were found in ~/.ssh/config.</p>
-        </div>
+        <EmptyState
+          variant="panel"
+          icon={<Server size={20} aria-hidden />}
+          title="No hosts were found in ~/.ssh/config."
+          data-testid="bulk-ssh-import-empty"
+        />
       )}
 
       {state.status === "ready" && connections.length > 0 && (

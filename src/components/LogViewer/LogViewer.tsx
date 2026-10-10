@@ -6,7 +6,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogEntry } from "@/types/terminal";
-import { Button, SearchInput, toast } from "@/components/ui";
+import { Button, SearchInput, toast, EmptyState } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import {
@@ -273,7 +273,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       </div>
       <div className="log-viewer__list" ref={listRef}>
         {filteredEntries.length === 0 ? (
-          <div className="log-viewer__empty">No log entries</div>
+          <EmptyState title="No log entries" data-testid="log-viewer-empty" />
         ) : (
           filteredEntries.map((entry, i) => (
             <ContextMenu.Root key={i}>

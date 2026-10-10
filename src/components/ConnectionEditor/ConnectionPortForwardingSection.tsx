@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Toggle, toast } from "@/components/ui";
+import { Button, Toggle, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { TunnelConfig } from "@/types/tunnel";
@@ -95,12 +95,10 @@ export function ConnectionPortForwardingSection({
             come up whenever a terminal to this host connects.
           </p>
           {bound.length === 0 ? (
-            <p
-              className="settings-form__hint port-forwarding__empty"
+            <EmptyState
+              title="No port forwards are attached to this connection yet."
               data-testid="connection-port-forwarding-empty"
-            >
-              No port forwards are attached to this connection yet.
-            </p>
+            />
           ) : (
             <ul className="port-forwarding__list">
               {bound.map((tunnel) => {

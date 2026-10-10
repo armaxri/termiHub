@@ -25,13 +25,6 @@
   border-radius: var(--radius-sm);
 }
 
-.workflow-editor__empty {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-md);
-  text-align: center;
-}
-
 /* ── Step row ───────────────────────────────────────────────────────── */
 .workflow-step {
   display: flex;

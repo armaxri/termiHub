@@ -95,13 +95,6 @@
   color: var(--text-secondary);
 }
 
-.spawn-picker__empty {
-  margin: 0;
-  padding-top: var(--spacing-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-}
-
 .spawn-picker__footer {
   display: flex;
   align-items: center;

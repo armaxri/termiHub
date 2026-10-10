@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Modal, Button, Checkbox } from "@/components/ui";
+import { Modal, Button, Checkbox, EmptyState } from "@/components/ui";
 import { WORKFLOW_FANOUT_CONCURRENCY, type RunnableTarget } from "@/store/slices/workflowFanout";
 import "./WorkflowRunTargetsDialog.css";
 
@@ -99,9 +99,10 @@ export function WorkflowRunTargetsDialog({
       }
     >
       {candidates.length === 0 ? (
-        <p className="workflow-run-targets__empty" role="status">
-          No connected terminals. Open a terminal session to run the workflow on it.
-        </p>
+        <EmptyState
+          title="No connected terminals. Open a terminal session to run the workflow on it."
+          data-testid="workflow-run-targets-empty"
+        />
       ) : (
         <>
           <div className="workflow-run-targets__shortcuts">

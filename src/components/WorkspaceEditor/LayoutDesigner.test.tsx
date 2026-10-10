@@ -175,7 +175,7 @@ describe("LayoutDesigner", () => {
       root.render(withTooltip(<LayoutDesigner layout={leaf()} onChange={onChange} />));
     });
 
-    const emptyEl = container.querySelector(".layout-leaf__empty");
+    const emptyEl = container.querySelector('[data-testid="layout-leaf-empty"]');
     expect(emptyEl?.textContent).toContain("Click + to add a connection");
   });
 
