@@ -7,10 +7,13 @@
 //! - [`DaemonSpawner`] spawns processes through daemon processes with Unix
 //!   socket IPC.
 
+use std::sync::Arc;
+
 use base64::Engine;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::session::output_budget::OutputBudget;
 use crate::protocol::methods::{
     ConnectionErrorNotification, ConnectionExitNotification, ConnectionOutputNotification,
     CONNECTION_ERROR, CONNECTION_EXIT, CONNECTION_OUTPUT,
@@ -25,12 +28,29 @@ use termihub_core::session::traits::OutputSink;
 /// a JSON-RPC notification and sends it through the transport loop.
 pub struct JsonRpcOutputSink {
     notification_tx: NotificationSender,
+    /// Charged for every output chunk queued, until the transport wrote it
+    /// (#4439). `None` queues without a bound.
+    budget: Option<OutputBudget>,
 }
 
 impl JsonRpcOutputSink {
-    /// Create a new output sink backed by the given notification channel.
+    /// Create a new output sink backed by the given notification channel,
+    /// queueing without a byte budget.
+    #[cfg(test)]
     pub fn new(notification_tx: NotificationSender) -> Self {
-        Self { notification_tx }
+        Self {
+            notification_tx,
+            budget: None,
+        }
+    }
+
+    /// An output sink that charges each queued chunk to `budget`: the chunk's
+    /// bytes count against it until the transport has written the notification.
+    pub fn with_budget(notification_tx: NotificationSender, budget: OutputBudget) -> Self {
+        Self {
+            notification_tx,
+            budget: Some(budget),
+        }
     }
 }
 
@@ -41,13 +61,17 @@ impl OutputSink for JsonRpcOutputSink {
         for chunk in data.chunks(65536) {
             // `into_params` moves the encoded chunk into the params object, so
             // this builds no more than the old `json!` did (#3759).
-            let notification = JsonRpcNotification::new(
-                CONNECTION_OUTPUT,
-                ConnectionOutputNotification {
-                    session_id: session_id.to_owned(),
-                    data: b64.encode(chunk),
-                }
-                .into_params(),
+            let notification = charged(
+                JsonRpcNotification::new(
+                    CONNECTION_OUTPUT,
+                    ConnectionOutputNotification {
+                        session_id: session_id.to_owned(),
+                        data: b64.encode(chunk),
+                    }
+                    .into_params(),
+                ),
+                self.budget.as_ref(),
+                chunk.len(),
             );
             self.notification_tx.send(notification).map_err(|e| {
                 SessionError::Io(std::io::Error::new(
@@ -91,6 +115,20 @@ impl OutputSink for JsonRpcOutputSink {
             ))
         })?;
         Ok(())
+    }
+}
+
+/// Charge `bytes` of output to `budget`, if any, for as long as `notification`
+/// is queued: the credit rides on the notification and is released when the
+/// transport has written (or dropped) it (#4439).
+pub(crate) fn charged(
+    notification: JsonRpcNotification,
+    budget: Option<&OutputBudget>,
+    bytes: usize,
+) -> JsonRpcNotification {
+    match budget {
+        Some(budget) => notification.with_release_guard(Arc::new(budget.charge(bytes))),
+        None => notification,
     }
 }
 
