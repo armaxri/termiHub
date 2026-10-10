@@ -935,7 +935,18 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 /// Registry of cancellation tokens for in-flight (still connecting) agents,
 /// keyed by `agent_id`. Lets a Cancel while connecting abort the blocking
 /// handshake promptly instead of waiting out the connect timeout (G1, #1235).
-type ConnectingRegistry = Arc<Mutex<HashMap<String, CancellationToken>>>;
+type ConnectingRegistry = Arc<Mutex<HashMap<String, ConnectingEntry>>>;
+
+/// One in-flight connect's entry in the [`ConnectingRegistry`].
+#[derive(Clone)]
+struct ConnectingEntry {
+    /// The token a Cancel / Disconnect fires (G1, #1235).
+    token: CancellationToken,
+    /// Set by a user Disconnect/Shutdown that cancelled this connect (#4678):
+    /// that end emits the one "disconnected" event itself, listing the tabs it
+    /// ended, so the unwinding connect must not emit a second one.
+    end_claimed: Arc<AtomicBool>,
+}
 
 /// Sender for an agent-hosted monitor's `connection.monitoring.status`
 /// reports (#3321).
@@ -964,32 +975,57 @@ impl From<MonitoringSender> for MonitoringRoute {
 /// (CONC2-001, #4304): it succeeds only when no connect for `agent_id` is in
 /// flight, so the check and the insert are one atomic step and two concurrent
 /// connects to the same agent can never both run their handshake. Returns
-/// `false` (registering nothing) when a connect is already in flight. A
-/// poisoned registry is recovered rather than treated as "busy", so a panic
-/// elsewhere cannot lock an agent out of connecting for good.
+/// `None` (registering nothing) when a connect is already in flight, else the
+/// connect's end-claimed flag (#4678). A poisoned registry is recovered rather
+/// than treated as "busy", so a panic elsewhere cannot lock an agent out of
+/// connecting for good.
 fn register_connecting_token(
     registry: &ConnectingRegistry,
     agent_id: &str,
     token: CancellationToken,
-) -> bool {
+) -> Option<Arc<AtomicBool>> {
     let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
     if map.contains_key(agent_id) {
-        return false;
+        return None;
     }
-    map.insert(agent_id.to_string(), token);
-    true
+    let end_claimed = Arc::new(AtomicBool::new(false));
+    map.insert(
+        agent_id.to_string(),
+        ConnectingEntry {
+            token,
+            end_claimed: end_claimed.clone(),
+        },
+    );
+    Some(end_claimed)
 }
 
 /// Fire the cancellation token for an in-flight agent connect, if one is
 /// registered. Returns `true` when a matching connect was in flight.
 fn cancel_connect_token(registry: &ConnectingRegistry, agent_id: &str) -> bool {
-    let token = registry
+    fire_connect_token(registry, agent_id, false)
+}
+
+/// [`cancel_connect_token`] for a user Disconnect/Shutdown (#4678): claim the
+/// cancelled connect's "disconnected" event before firing its token, so the
+/// end emits it — listing the tabs it ended — and the unwinding connect emits
+/// none.
+fn claim_and_cancel_connect(registry: &ConnectingRegistry, agent_id: &str) -> bool {
+    fire_connect_token(registry, agent_id, true)
+}
+
+fn fire_connect_token(registry: &ConnectingRegistry, agent_id: &str, claim: bool) -> bool {
+    let entry = registry
         .lock()
         .ok()
         .and_then(|map| map.get(agent_id).cloned());
-    match token {
-        Some(token) => {
-            token.cancel();
+    match entry {
+        Some(entry) => {
+            if claim {
+                // Stored before the token fires: the connect reads the flag only
+                // after it observes the cancellation.
+                entry.end_claimed.store(true, Ordering::SeqCst);
+            }
+            entry.token.cancel();
             true
         }
         None => false,
@@ -1024,6 +1060,8 @@ where
 struct ConnectingGuard {
     map: ConnectingRegistry,
     id: String,
+    /// The connect's end-claimed flag (#4678), see [`ConnectingEntry`].
+    end_claimed: Arc<AtomicBool>,
 }
 
 impl Drop for ConnectingGuard {
@@ -1036,6 +1074,14 @@ impl Drop for ConnectingGuard {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.id);
     }
+}
+
+/// TEST-ONLY (#4678): a connect reserved by
+/// [`AgentConnectionManager::begin_connect_for_test`], still in flight.
+#[cfg(test)]
+pub(crate) struct InFlightConnectForTest {
+    guard: ConnectingGuard,
+    token: CancellationToken,
 }
 
 /// Shared, reference-countable map of connected agents keyed by `agent_id`.
@@ -1235,12 +1281,14 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // handshake. Reserved under the `agents` lock (lock order `agents` →
         // `connecting`, as in `disconnect_agent`) so a Disconnect either sees
         // the reservation and cancels it, or runs before it exists.
-        if !register_connecting_token(&self.connecting, agent_id, cancel_token.clone()) {
+        let Some(end_claimed) =
+            register_connecting_token(&self.connecting, agent_id, cancel_token.clone())
+        else {
             return Err(TerminalError::already_connected(format!(
                 "Agent {} is already connecting",
                 agent_id
             )));
-        }
+        };
 
         // CONC-009: force-stop the outgoing task as a fallback. A "dead" entry
         // usually means the task already returned (abort is then a harmless
@@ -1262,7 +1310,46 @@ impl<R: Runtime> AgentConnectionManager<R> {
         Ok(ConnectingGuard {
             map: self.connecting.clone(),
             id: agent_id.to_string(),
+            end_claimed,
         })
+    }
+
+    /// Emit the "disconnected" a cancelled connect owes (G1, #1235) — unless a
+    /// user Disconnect/Shutdown claimed it (#4678): that end emits the one event
+    /// itself, listing the tabs it ended, so a Disconnect while connecting
+    /// presents exactly like one of a connected agent.
+    fn emit_cancelled_connect_disconnected(&self, agent_id: &str, end_claimed: &AtomicBool) {
+        if !end_claimed.load(Ordering::SeqCst) {
+            emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User, None);
+        }
+    }
+
+    /// TEST-ONLY (#4678): reserve `agent_id` the way an in-flight connect does,
+    /// so a test can drive a user end while the agent is still connecting.
+    #[cfg(test)]
+    pub(crate) fn begin_connect_for_test(&self, agent_id: &str) -> InFlightConnectForTest {
+        let token = CancellationToken::new();
+        let guard = self
+            .reserve_connect(agent_id, &token)
+            .expect("the agent can be reserved for a connect");
+        InFlightConnectForTest { guard, token }
+    }
+
+    /// TEST-ONLY (#4678): unwind a connect begun by
+    /// [`begin_connect_for_test`](Self::begin_connect_for_test) the way a
+    /// cancelled `connect_agent` does — emitting its "disconnected" unless a
+    /// user end claimed it — and release its reservation.
+    #[cfg(test)]
+    pub(crate) fn unwind_cancelled_connect_for_test(
+        &self,
+        agent_id: &str,
+        connect: InFlightConnectForTest,
+    ) {
+        assert!(
+            connect.token.is_cancelled(),
+            "only a cancelled connect unwinds through the cancel path"
+        );
+        self.emit_cancelled_connect_disconnected(agent_id, &connect.guard.end_claimed);
     }
 
     /// Connect to a remote agent via SSH.
@@ -1293,7 +1380,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
         let cancel_token = CancellationToken::new();
         // The guard releases the reservation when this connect finishes
         // (success, failure or cancellation), even on an early `?` return.
-        let _connecting_guard = self.reserve_connect(agent_id, &cancel_token)?;
+        let connecting_guard = self.reserve_connect(agent_id, &cancel_token)?;
+        let end_claimed = connecting_guard.end_claimed.clone();
 
         // Emit connecting state
         emit_agent_state(&self.app_handle, agent_id, "connecting");
@@ -1624,7 +1712,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             Err(e) => {
                 if cancel_token.is_cancelled() {
                     // Only a user Cancel / Disconnect fires the token.
-                    emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User, None);
+                    self.emit_cancelled_connect_disconnected(agent_id, &end_claimed);
                 }
                 return Err(e);
             }
@@ -1649,7 +1737,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 alive.stop();
                 io_task.abort();
                 io_budget.close();
-                emit_agent_disconnected(&self.app_handle, agent_id, AgentEndReason::User, None);
+                self.emit_cancelled_connect_disconnected(agent_id, &end_claimed);
                 return Err(TerminalError::RemoteError("Connect cancelled".to_string()));
             }
             // Paired with the map entry under the same `agents` lock (#3018).
@@ -1734,12 +1822,19 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
         let live = agents.remove(agent_id);
+        let user_end = matches!(reason, AgentEndReason::User | AgentEndReason::Shutdown);
         // #4304: the connect handshake runs off the `agents` lock, so a
         // Disconnect can now arrive while the agent is still connecting. Cancel
         // that connect — under the `agents` lock, which its publish step checks
         // the token under — so it aborts (or tears down a connection it just
-        // finished) and emits `disconnected` instead of publishing it.
-        let cancelled_connect = cancel_connect_token(&self.connecting, agent_id);
+        // finished) instead of publishing it. A user end claims the cancelled
+        // connect's `disconnected` (#4678) and emits it below with the tabs it
+        // ended; any other end leaves it to the unwinding connect.
+        let cancelled_connect = if user_end {
+            claim_and_cancel_connect(&self.connecting, agent_id)
+        } else {
+            cancel_connect_token(&self.connecting, agent_id)
+        };
         // #3018: drop the budget with its entry, under the same lock that pairs
         // them, and close it now: a producer waiting for queue credit fails at
         // once instead of waiting on the ending I/O task (whose own drop guard
@@ -1766,8 +1861,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // so a hosted session closing afterwards cannot arm a redrive (the store
         // refuses to reconnect a `Disconnected(User)` tab) — and before the
         // event below, which lists the tabs it ended.
-        let ended_tabs = matches!(reason, AgentEndReason::User | AgentEndReason::Shutdown)
-            .then(|| fold_agent_hosted_user_ended(&self.app_handle, agent_id));
+        let ended_tabs = user_end.then(|| fold_agent_hosted_user_ended(&self.app_handle, agent_id));
 
         if let Some(conn) = live {
             // Cooperative shutdown first: a live task processes `Disconnect` and
@@ -1784,7 +1878,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
             emit_agent_disconnected(&self.app_handle, agent_id, reason, ended_tabs);
             Ok(Some(conn.reattach_config.clone()))
         } else if cancelled_connect {
-            // The in-flight connect emits `disconnected` itself once it unwinds.
+            // A user end claimed the cancelled connect's event (#4678): emit it
+            // here, listing the tabs it ended, so a Disconnect while connecting
+            // presents like one of a connected agent. Any other end leaves it to
+            // the in-flight connect, which emits `disconnected` as it unwinds.
+            if user_end {
+                emit_agent_disconnected(&self.app_handle, agent_id, reason, ended_tabs);
+            }
             Ok(None)
         } else {
             Err(TerminalError::RemoteError(format!(

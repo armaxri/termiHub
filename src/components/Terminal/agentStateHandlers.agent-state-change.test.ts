@@ -683,6 +683,42 @@ describe("handleAgentStateChange (real handler, #4309)", () => {
       expect(currentSessionView()[tab.id]?.status).toBe("disconnected");
     });
 
+    // #4678: a user Disconnect while the agent is still connecting. The backend
+    // cancels the connect, folds the hosted tabs `disconnected` / `user`, and
+    // emits one "disconnected" listing them — the same as for a connected agent.
+    it("a user end while connecting shows the 'Agent disconnected' banner once", async () => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, reconnecting());
+      await handleAgentStateChange(
+        { session_id: AGENT, state: "connecting" },
+        { listAgentSessions, getAllTabs: allTabs }
+      );
+      // The backend fold reaches the region before the event.
+      harness.transport.setSession(tab.id, disconnected("user"));
+
+      await userEndListing([tab.id]);
+
+      expect(useAppStore.getState().terminalViewMode[tab.id]).toBe(true);
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBe(true);
+      expect(intents("session.exited", tab.id)).toHaveLength(1);
+      expect(intents("session.reconnect", tab.id)).toHaveLength(0);
+      expect(currentSessionView()[tab.id]?.status).toBe("disconnected");
+    });
+
+    it("the pre-#4678 mid-connect event without ended tabs showed no banner", async () => {
+      // Pins why the backend must list the tabs: a user end that does not list
+      // an already-folded tab treats it as ended earlier and leaves it alone.
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, disconnected("user"));
+
+      await handleAgentStateChange(
+        { session_id: AGENT, state: "disconnected", reason: "user" },
+        { listAgentSessions, getAllTabs: allTabs }
+      );
+
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
+    });
+
     it("leaves a listed tab the user is killing to its own exit", async () => {
       const tab = openAgentTab("session-123");
       harness.transport.setSession(tab.id, disconnected("user"));
