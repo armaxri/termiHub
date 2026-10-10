@@ -488,3 +488,127 @@ pub async fn run_sftp_remote_copy(
     )
     .await;
 }
+
+#[cfg(test)]
+mod tests {
+    //! A cancel while the SFTP executor waits on a dead connection — the
+    //! up-front probe or a per-attempt channel open — settles promptly (#4672).
+
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::config::SshConfig;
+    use crate::files::transfer::attempt::CLEANUP_TIMEOUT;
+    use crate::files::transfer::scheduler::Admission;
+    use crate::files::transfer::{TransferProgress, TransferStateTag};
+
+    /// An SSH server that accepts every connection and never sends its banner,
+    /// so a connect parks until its (long) connect timeout. Reports each accept.
+    async fn silent_ssh_server() -> (u16, mpsc::UnboundedReceiver<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+                let _ = tx.send(());
+            }
+        });
+        (port, rx)
+    }
+
+    fn browser(port: u16) -> Arc<SftpFileBrowser> {
+        Arc::new(SftpFileBrowser::new(SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "tester".to_string(),
+            auth_method: "password".to_string(),
+            connect_timeout_secs: Some(120),
+            ..SshConfig::default()
+        }))
+    }
+
+    fn recording_sink() -> (ProgressSink, Arc<Mutex<Vec<TransferPhase>>>) {
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let rec = phases.clone();
+        let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+            rec.lock().expect("lock").push(p.phase);
+        });
+        (sink, phases)
+    }
+
+    /// Start a transfer against the silent server, cancel it once its first
+    /// connection is parked, and assert it settles as cancelled within
+    /// `deadline`, exactly once, with no slot left held.
+    async fn cancel_while_connecting(direction: TransferDirection, deadline: Duration) {
+        let (port, mut accepts) = silent_ssh_server().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let local = dir.path().join("file.bin");
+        std::fs::write(&local, b"payload").expect("write local");
+        let local = local.to_string_lossy().into_owned();
+        let reg = TransferRegistry::with_max_concurrent(1);
+        let handle = reg.enqueue("parked", "s1", direction, "file.bin", "/srv/file.bin", 0);
+        let peer = reg.enqueue("peer", "s1", direction, "other.bin", "/srv/other.bin", 0);
+        let (sink, phases) = recording_sink();
+        let task = tokio::spawn(run_sftp_transfer(
+            browser(port),
+            direction,
+            "/srv/file.bin".to_string(),
+            local,
+            handle.clone(),
+            reg.clone(),
+            sink,
+            DEFAULT_RESUME_MODE,
+            0,
+        ));
+        tokio::time::timeout(Duration::from_secs(10), accepts.recv())
+            .await
+            .expect("the transfer connects")
+            .expect("server alive");
+
+        let start = Instant::now();
+        assert!(reg.cancel("parked"));
+        tokio::time::timeout(deadline, task)
+            .await
+            .unwrap_or_else(|_| panic!("cancel did not settle within {deadline:?}"))
+            .expect("task");
+
+        assert!(start.elapsed() < deadline);
+        assert_eq!(handle.state().tag(), TransferStateTag::Cancelled);
+        let phases = phases.lock().expect("lock");
+        let cancelled = phases
+            .iter()
+            .filter(|p| **p == TransferPhase::Cancelled)
+            .count();
+        assert_eq!(cancelled, 1, "exactly one terminal emit: {phases:?}");
+        assert_eq!(phases.last(), Some(&TransferPhase::Cancelled));
+        assert!(reg.get("parked").is_none(), "registry entry dropped");
+        assert!(
+            peer.state().is_active() || reg.request_slot(&peer) == Admission::Run,
+            "the session's slot is free again"
+        );
+    }
+
+    /// A download probes the source up front over a dedicated channel.
+    #[tokio::test]
+    async fn cancel_during_the_up_front_probe_settles_promptly() {
+        cancel_while_connecting(TransferDirection::Download, Duration::from_secs(3)).await;
+    }
+
+    /// An upload fingerprints its local source up front, so the first
+    /// connection is the per-attempt channel open; the partial cleanup after
+    /// the cancel dials the dead server again and is cut off by its bound.
+    #[tokio::test]
+    async fn cancel_during_the_per_attempt_channel_open_settles_promptly() {
+        cancel_while_connecting(
+            TransferDirection::Upload,
+            CLEANUP_TIMEOUT + Duration::from_secs(3),
+        )
+        .await;
+    }
+}
