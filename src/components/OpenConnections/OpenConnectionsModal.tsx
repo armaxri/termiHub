@@ -152,6 +152,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const closeTab = useAppStore((s) => s.closeTab);
   const markSessionKilled = useAppStore((s) => s.markSessionKilled);
+  const consumeSessionKilled = useAppStore((s) => s.consumeSessionKilled);
   // Embedded HTTP/FTP/TFTP servers. The Services sidebar owns the same
   // `embeddedServers` config list + keyed `embeddedServerStates` runtime map and
   // the `stopEmbeddedServer` action; the panel reads them directly (single
@@ -453,7 +454,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       setLocalSessions((prev) => prev.filter((s) => s.id !== id));
     } catch (err) {
       // The session is still live — surface the failure and keep the row so the
-      // user is not misled into believing a leaked session is gone (UX-033).
+      // user is not misled into believing a leaked session is gone (UX-033), and
+      // clear the stale kill marker so a later genuine drop is not misread as a
+      // user kill (FES2-003).
+      consumeSessionKilled(id);
       frontendError("open_connections", `Failed to kill local session ${id}: ${errorMessage(err)}`);
       toast.error(`Failed to kill session: ${errorMessage(err)}`);
     }
@@ -469,6 +473,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     results.forEach((r, i) => {
       if (r.status === "rejected") {
         failedIds.add(sessions[i].id);
+        // Still live: drop the stale intentional-kill marker (FES2-003).
+        consumeSessionKilled(sessions[i].id);
         frontendError(
           "open_connections",
           `Failed to kill local session ${sessions[i].id}: ${r.reason}`
@@ -552,6 +558,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
       }));
     } catch (err) {
+      // Still live: drop the stale intentional-kill marker (FES2-003).
+      consumeSessionKilled(id);
       frontendError(
         "open_connections",
         `Failed to kill session ${id} via agent ${agentId}: ${errorMessage(err)}`
@@ -568,6 +576,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     results.forEach((r, i) => {
       if (r.status === "rejected") {
         failedIds.add(sessions[i].id);
+        // Still live: drop the stale intentional-kill marker (FES2-003).
+        consumeSessionKilled(sessions[i].id);
         frontendError(
           "open_connections",
           `Failed to kill session ${sessions[i].id} via agent ${agentId}: ${r.reason}`

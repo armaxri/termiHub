@@ -14,8 +14,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1076
   - src/components/OpenConnections/OpenConnectionsModal.tsx:436
   - src/components/OpenConnections/OpenConnectionsModal.tsx:452
-status: open
-resolution: ""
+status: fixed
+resolution: "#4388 — a rejected kill/detach now clears the intentional-kill marker (disconnectTerminal + Open Connections)"
 audit: 2026-10
 commit: 663465d52
 relation: new
