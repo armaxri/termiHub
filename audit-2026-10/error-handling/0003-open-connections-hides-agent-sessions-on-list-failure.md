@@ -14,8 +14,8 @@ evidence:
   - src/components/OpenConnections/OpenConnectionsModal.tsx:508
   - src/components/OpenConnections/OpenConnectionsModal.tsx:509
   - src/components/OpenConnections/OpenConnectionsModal.tsx:589
-status: open
-resolution: ""
+status: fixed
+resolution: "#4377 — failed agent session lists show an inline error row with Retry; kill-all agents reports failures"
 audit: "2026-10"
 commit: "663465d52"
 relation: new
