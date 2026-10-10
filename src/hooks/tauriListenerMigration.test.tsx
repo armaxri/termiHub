@@ -77,7 +77,7 @@ const cases: Array<[string, React.FC]> = [
   ["useMonitorLayoutRefresh", hookHost(() => void useMonitorLayoutRefresh("s1", true, null))],
   ["usePluginEvents", hookHost(usePluginEvents)],
   ["useTransferEvents", hookHost(useTransferEvents)],
-  ["LogViewer", LogViewer],
+  ["LogViewer", () => <LogViewer isVisible />],
 ];
 
 async function flush(): Promise<void> {
