@@ -298,7 +298,8 @@ export class OutputTriggerEngine {
       try {
         fresh += this.decode(chunk, state.decoder);
       } catch {
-        // A malformed chunk is skipped; it must never break matching.
+        // Hot path (every output chunk): a malformed chunk is skipped silently;
+        // it must never break matching or flood the Log Viewer (#4520).
       }
       if (fresh.length > OUTPUT_TRIGGER_LIMITS.scanChars * 2) {
         fresh = fresh.slice(fresh.length - OUTPUT_TRIGGER_LIMITS.scanChars);

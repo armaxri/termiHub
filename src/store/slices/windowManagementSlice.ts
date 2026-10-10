@@ -222,11 +222,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     })),
   refreshSessionOwners: async () => {
     try {
-      const owners = await listSessionOwners();
-      // Coerce a missing/non-object result (e.g. an unmocked IPC bridge in
-      // tests returning `undefined`) to an empty map so the fold gate never
-      // reads through `undefined`.
-      get().setSessionOwners(owners ?? {});
+      get().setSessionOwners(await listSessionOwners());
     } catch (err) {
       // Ownership is advisory (see `bestEffortOwnership`): a failed refetch must
       // never disrupt the transfer UI — the stale map keeps the previous scoping.

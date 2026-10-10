@@ -54,6 +54,7 @@ import {
   type PaneRemote,
 } from "@/services/paneTransfer";
 import { seedTransferQueueRow } from "./transferFeedback";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /**
  * Link a file transfer to the recorded folder paste it belongs to (#3643), so
@@ -192,7 +193,9 @@ async function prepareDestFolder(t: PasteTransport, destPath: string): Promise<F
     try {
       return await sessionListFiles(t.destSession, destPath);
     } catch {
-      // Not there yet: create it below and treat it as empty.
+      // Control-flow probe: a failed list means "not there yet", so create it
+      // below and treat it as empty. Any other cause (permissions, a dropped
+      // session) makes the mkdir below fail, and that error is surfaced.
     }
   }
   await sessionMkdir(t.destSession, destPath);
@@ -410,9 +413,13 @@ export class FolderPasteEndpointUnavailable extends Error {
 }
 
 async function probeSftp(sessionId: string): Promise<boolean> {
-  return sessionHasExecCapability(sessionId)
-    .then(() => true)
-    .catch(() => false);
+  return withLoggedFallback(
+    sessionHasExecCapability(sessionId).then(() => true),
+    false,
+    "folder_paste",
+    `probe SFTP exec capability of session ${sessionId}`,
+    "debug"
+  );
 }
 
 /**
@@ -420,7 +427,13 @@ async function probeSftp(sessionId: string): Promise<boolean> {
  * probe means it cannot.
  */
 export async function probeRemoteCopy(sessionId: string): Promise<boolean> {
-  return sessionSupportsRemoteCopy(sessionId).catch(() => false);
+  return withLoggedFallback(
+    sessionSupportsRemoteCopy(sessionId),
+    false,
+    "folder_paste",
+    `probe remote-copy support of session ${sessionId}`,
+    "debug"
+  );
 }
 
 /**
@@ -462,7 +475,13 @@ export async function retryInterruptedFolderPaste(paste: InterruptedFolderPaste)
     probeSftp(destSession),
     probeRemoteCopy(destSession),
     srcSession ? probeRemoteCopy(srcSession) : Promise.resolve(false),
-    sessionSupportsTransferQueue(destSession).catch(() => false),
+    withLoggedFallback(
+      sessionSupportsTransferQueue(destSession),
+      false,
+      "folder_paste",
+      `probe transfer-queue support of session ${destSession}`,
+      "debug"
+    ),
   ]);
   const t: PasteTransport = {
     operation: paste.operation,

@@ -8,13 +8,21 @@
  * dialog without opening one. This mounts the real `App` shell (as the smoke test
  * does) and drives the dialog through the store action the save flow calls.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { layoutState } from "@/test/layoutState";
 import App from "./App";
+
+// The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
+// backend's session-ownership map is never undefined: stub it as the real
+// empty map so `refreshSessionOwners` sees a faithful value (#4520).
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+}));
 
 const SAVED_PATH = "/tmp/termihub-test/terminal-output.txt";
 

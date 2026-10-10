@@ -160,7 +160,8 @@ export function createWebglRenderer(options: WebglRendererOptions): WebglRendere
       try {
         created.dispose();
       } catch {
-        // Already broken; nothing more to release.
+        // A half-initialised addon may throw on dispose. The load failure that
+        // got us here is logged just below; a second line adds nothing.
       }
       unavailable = true;
       log?.(`webgl renderer unavailable tab=${id}, using DOM renderer: ${errorMessage(err)}`);

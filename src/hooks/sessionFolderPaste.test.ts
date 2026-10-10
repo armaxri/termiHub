@@ -50,12 +50,14 @@ import {
 } from "@/services/api";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import type { FileEntry } from "@/types/connection";
-import type { TerminalTab } from "@/types/terminal";
+import type { LogEntry, TerminalTab } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import {
   FolderPasteEndpointUnavailable,
   pasteFileLeg,
   pasteFolderRecorded,
   pasteFolderTree,
+  probeRemoteCopy,
   resolveLiveSession,
   retryInterruptedFolderPaste,
   type PasteTransport,
@@ -486,5 +488,18 @@ describe("retryInterruptedFolderPaste — remote → local (#3912)", () => {
     const download = vi.mocked(sessionDownload).mock.invocationCallOrder[0];
     const del = vi.mocked(sessionDeleteFile).mock.invocationCallOrder[0];
     expect(download).toBeLessThan(del);
+  });
+});
+
+describe("probeRemoteCopy (#4520)", () => {
+  it("a failed probe means no remote copy, and leaves a DEBUG trace", async () => {
+    vi.mocked(sessionSupportsRemoteCopy).mockRejectedValueOnce(new Error("session gone"));
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
+    await expect(probeRemoteCopy("s1")).resolves.toBe(false);
+    unsubscribe();
+    const trace = entries.find((e) => e.message.includes("remote-copy support of session s1"));
+    expect(trace?.level).toBe("DEBUG");
+    expect(trace?.message).toContain("session gone");
   });
 });

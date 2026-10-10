@@ -248,7 +248,9 @@ function mirrorRestore(
       frontendLog("restore_cohort", `keep-warm subscribe failed: ${errorMessage(err)}`)
     );
   } catch {
-    /* handled by the dispatch try/catch below */
+    // Not logged here: the same synchronous transport-construction failure is
+    // thrown again by the dispatch below, which logs it. Logging both would
+    // duplicate every line (#4520).
   }
   let dispatchPromise: Promise<IntentAck>;
   try {

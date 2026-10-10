@@ -306,7 +306,11 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     if (shared) return shared;
     // One prompt slot: queue behind any prompt a concurrent target has open.
     const decision = authPromptQueue.then(() => askAuthorization(program, args));
-    authPromptQueue = decision.catch(() => undefined);
+    // The caller awaiting `decision` handles its rejection; the queue only has to
+    // settle so the next prompt is not blocked. Trace it here too (#4520).
+    authPromptQueue = decision.catch((err: unknown) =>
+      frontendLog("workflow", `local-process authorization prompt failed: ${errorMessage(err)}`)
+    );
     fanout?.authDecisions?.set(key, decision);
     return decision;
   };
@@ -479,7 +483,9 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
     );
   } catch {
-    /* non-Tauri env without a socket — dispatch logs + no-ops */
+    // Not logged here: a non-Tauri env without a socket throws synchronously
+    // from transport construction, and dispatchWorkflowRunStarted below hits
+    // the same failure and logs it (#4520).
   }
   await dispatchWorkflowRunStarted({
     runId,
