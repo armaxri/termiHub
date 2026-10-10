@@ -184,3 +184,165 @@ fn data_listener_fallbacks_cover_small_ranges_without_repeats() {
         assert!(ports.iter().all(|p| range.contains(p)));
     }
 }
+
+// ── Pre-login timeout (#4398) ─────────────────────────────────────────────────
+
+#[test]
+fn login_completion_codes() {
+    assert!(is_login_complete(230));
+    assert!(is_login_complete(232));
+    assert!(!is_login_complete(331));
+    assert!(!is_login_complete(530));
+}
+
+/// A relay session between a test client and a scripted fake backend.
+struct ScriptedRelay {
+    client: TcpStream,
+    backend: TcpStream,
+    activity: Arc<ServerActivity>,
+    relay: tokio::task::JoinHandle<io::Result<()>>,
+}
+
+async fn scripted_relay(prelogin_timeout: Duration) -> ScriptedRelay {
+    let activity = ServerActivity::new();
+    let backend_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend");
+    let dialer = BackendDialer::new(
+        backend_listener.local_addr().expect("addr"),
+        Arc::clone(&activity),
+    );
+    let upstream = dialer.connect().await.expect("dial backend");
+    let (mut backend, _) = backend_listener.accept().await.expect("accept backend");
+
+    let public = TcpListener::bind("127.0.0.1:0").await.expect("bind public");
+    let client = TcpStream::connect(public.local_addr().expect("addr"))
+        .await
+        .expect("connect");
+    let (accepted, peer) = public.accept().await.expect("accept client");
+    let session = RelaySession {
+        client: accepted,
+        peer,
+        upstream,
+        dialer,
+        public_port: 21,
+        passive_ports: 49152..=65534,
+        activity: Arc::clone(&activity),
+        prelogin_timeout,
+    };
+    let relay = tokio::spawn(session.run());
+
+    // Consume the PROXY header the relay sends first.
+    let mut header = Vec::new();
+    let mut byte = [0u8; 1];
+    while !header.ends_with(b"\r\n") {
+        backend.read_exact(&mut byte).await.expect("header byte");
+        header.push(byte[0]);
+    }
+    assert!(header.starts_with(b"PROXY TCP4 "));
+    ScriptedRelay {
+        client,
+        backend,
+        activity,
+        relay,
+    }
+}
+
+/// Read one `\n`-terminated line, bounded by a generous timeout.
+async fn read_line(stream: &mut TcpStream) -> Vec<u8> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !line.ends_with(b"\n") {
+            if stream.read(&mut byte).await.expect("read") == 0 {
+                break;
+            }
+            line.push(byte[0]);
+        }
+    })
+    .await
+    .expect("line within the timeout");
+    line
+}
+
+/// Regression for #4398: a connection that never logs in gets `421` and is
+/// closed by the relay, and the timeout is recorded.
+#[tokio::test]
+async fn relay_closes_a_connection_that_does_not_log_in_in_time() {
+    let ScriptedRelay {
+        mut client,
+        activity,
+        relay,
+        backend: _backend,
+    } = scripted_relay(Duration::from_millis(100)).await;
+
+    let reply = read_line(&mut client).await;
+    assert!(
+        reply.starts_with(b"421"),
+        "{:?}",
+        String::from_utf8_lossy(&reply)
+    );
+    assert!(
+        read_line(&mut client).await.is_empty(),
+        "closed after the 421"
+    );
+    tokio::time::timeout(Duration::from_secs(10), relay)
+        .await
+        .expect("relay ends")
+        .expect("no panic")
+        .expect("clean end");
+
+    let entries = activity
+        .snapshot(
+            None,
+            &crate::embedded_servers::config::ServerStats::default(),
+        )
+        .entries;
+    let timeout = entries
+        .iter()
+        .find(|e| e.status == "timeout")
+        .expect("timeout record");
+    assert_eq!(timeout.method, "CONTROL");
+    assert_eq!(timeout.client.as_deref(), Some("127.0.0.1"));
+}
+
+/// Once libunftp confirms the login (`230`), the pre-login timeout no longer
+/// applies: the session keeps relaying well past it.
+#[tokio::test]
+async fn relay_keeps_a_logged_in_connection_past_the_timeout() {
+    let timeout = Duration::from_millis(300);
+    let ScriptedRelay {
+        mut client,
+        mut backend,
+        activity,
+        relay,
+    } = scripted_relay(timeout).await;
+
+    // A multi-line 230 completes the login only on its final line.
+    backend
+        .write_all(b"230-Welcome\r\n230 Logged in\r\n")
+        .await
+        .expect("send 230");
+    assert!(read_line(&mut client).await.starts_with(b"230-"));
+    assert!(read_line(&mut client).await.starts_with(b"230 "));
+
+    tokio::time::sleep(timeout * 3).await;
+    client.write_all(b"NOOP\r\n").await.expect("send NOOP");
+    assert_eq!(read_line(&mut backend).await, b"NOOP\r\n");
+    backend.write_all(b"200 OK\r\n").await.expect("send 200");
+    assert!(read_line(&mut client).await.starts_with(b"200"));
+
+    let entries = activity
+        .snapshot(
+            None,
+            &crate::embedded_servers::config::ServerStats::default(),
+        )
+        .entries;
+    assert!(entries.iter().all(|e| e.status != "timeout"));
+    drop(backend);
+    tokio::time::timeout(Duration::from_secs(10), relay)
+        .await
+        .expect("relay ends when the backend closes")
+        .expect("no panic")
+        .expect("clean end");
+}

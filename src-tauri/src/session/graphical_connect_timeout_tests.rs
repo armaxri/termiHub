@@ -209,3 +209,20 @@ fn connect_timeout_honours_the_unified_setting_and_defaults_otherwise() {
         MAX_GRAPHICAL_CONNECT_TIMEOUT
     );
 }
+
+#[test]
+fn connect_timeout_bounds_match_the_editor_schema() {
+    // #4402: the editor's connectTimeoutSecs default/max (shared graphical
+    // schema) must agree with what the desktop connect actually enforces.
+    use termihub_core::connection::graphical::{
+        GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS, GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS,
+    };
+    assert_eq!(
+        DEFAULT_GRAPHICAL_CONNECT_TIMEOUT,
+        Duration::from_secs(GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS)
+    );
+    assert_eq!(
+        MAX_GRAPHICAL_CONNECT_TIMEOUT,
+        Duration::from_secs(GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS)
+    );
+}

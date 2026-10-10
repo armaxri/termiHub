@@ -265,3 +265,46 @@ describe("ConnectionSettingsForm — VNC file-transfer host notice (#4198)", () 
     );
   });
 });
+
+/**
+ * #4402: the shared graphical field base (`shared_field_base`, used by both
+ * VNC and RDP) carries the unified `connectTimeoutSecs` row. The editor is
+ * schema-driven, so the row renders as a number input and edits flow into the
+ * settings the desktop's graphical connect reads.
+ */
+const CONNECT_TIMEOUT_SCHEMA: SettingsSchema = {
+  groups: [
+    {
+      key: "connection",
+      label: "Connection",
+      fields: [
+        { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+        { key: "port", label: "Port", fieldType: { type: "port" }, required: true, default: 5900 },
+        {
+          key: "connectTimeoutSecs",
+          label: "Connect Timeout (s)",
+          fieldType: { type: "number", min: 1, max: 600 },
+          required: false,
+          default: 30,
+          placeholder: "30",
+        },
+      ],
+    },
+  ],
+};
+
+describe("ConnectionSettingsForm — graphical connect timeout (#4402)", () => {
+  it("renders the connect timeout row with its saved value", () => {
+    renderForm({ host: "h", port: 5900, connectTimeoutSecs: 30 }, CONNECT_TIMEOUT_SCHEMA);
+    const input = query("field-connectTimeoutSecs") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("30");
+    expect(container.textContent).toContain("Connect Timeout (s)");
+  });
+
+  it("writes an edited timeout back to the unified settings key", async () => {
+    renderForm({ host: "h", port: 5900, connectTimeoutSecs: 30 }, CONNECT_TIMEOUT_SCHEMA);
+    await typeInto("field-connectTimeoutSecs", "45");
+    expect(lastSettings.connectTimeoutSecs).toBe(45);
+  });
+});

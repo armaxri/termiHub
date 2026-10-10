@@ -2719,6 +2719,13 @@ flowchart LR
   After the `500`, the relay discards (never buffers) up to 64 KiB of client bytes for up to
   500 ms. This keeps the client's in-flight data from turning the close into a reset that would
   drop the reply. The rejection is recorded in the access log (`CONTROL` / `rejected`).
+- **Pre-login timeout.** A control connection that has not completed login (no final `230` or
+  `232` from libunftp) within 30 s (`PRELOGIN_TIMEOUT`) gets `421` and is closed, so an idle
+  unauthenticated connection does not hold a session slot. The close is recorded in the access
+  log (`CONTROL` / `timeout`).
+- **Session caps.** The accept loop admits at most `maxConcurrentSessions` sessions (default 32),
+  and at most a quarter of that (at least 2) from one client IP, so one client cannot take every
+  slot. A connection over either cap gets `421` and is recorded as `CONNECT` / `busy`.
 - **One libunftp server per session.** For each accepted control connection, the relay starts a
   libunftp server in proxy mode on a loopback listener it binds. It connects to that server and sends a
   PROXY v1 header carrying the real client address before any client byte. The per-session
