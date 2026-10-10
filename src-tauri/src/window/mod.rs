@@ -33,6 +33,8 @@
 //! decides "a window owns whole tab groups", that layer can be added on top
 //! without reshaping this map.
 
+#[cfg(target_os = "macos")]
+pub mod macos_terminate;
 pub mod quit;
 
 use std::collections::HashMap;

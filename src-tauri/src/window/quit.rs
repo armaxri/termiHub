@@ -37,12 +37,23 @@
 //!   hung or crashed webview) stops blocking the quit when the timeout fires
 //!   ([`QuitCoordinator::ack_timeout`]), so Cmd+Q never becomes a no-op. A window
 //!   that *is* showing the dialog waits for the user, however long that takes.
-//! * **OS shutdown / logout.** These never reach this flow. On macOS they arrive
-//!   as `-[NSApp terminate:]` (as does the Dock's Quit), which ends the process
-//!   with `RunEvent::Exit` and no chance to prevent it. On Windows and Linux the
-//!   session manager closes the windows itself and bounds any app that holds a
-//!   close open. Either way shutdown proceeds without waiting on a dialog; the
-//!   synchronous part of the app teardown still runs from `RunEvent::Exit`.
+//! * **OS shutdown / logout.** These never wait on this flow. On macOS they
+//!   arrive as `-[NSApp terminate:]` driven by a quit Apple Event that carries a
+//!   `kAEQuitReason`; [`decide_should_terminate`] lets them terminate at once
+//!   (`RunEvent::Exit`). On Windows and Linux the session manager closes the
+//!   windows itself and bounds any app that holds a close open. Either way
+//!   shutdown proceeds without waiting on a dialog; the synchronous part of the
+//!   app teardown still runs from `RunEvent::Exit`.
+//!
+//! # Other macOS quits (#4456)
+//!
+//! The Dock icon's Quit and AppleScript (`osascript -e 'quit app "termiHub"'`)
+//! send `-[NSApp terminate:]` too. tao does not implement
+//! `applicationShouldTerminate:`, so `window::macos_terminate` adds it to tao's
+//! app delegate at startup. For a user quit it answers `NSTerminateCancel` and
+//! calls `AppHandle::exit(0)`, exactly like the custom menu Quit, so the same
+//! dialog appears. A system quit (logout, restart, shutdown), a confirmed quit
+//! and a quit with no window open terminate at once.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -118,6 +129,65 @@ pub fn decide_exit_request(
         Some(_) if open_windows == 0 => ExitDecision::Proceed,
         Some(_) if phase == QuitPhase::Prompting => ExitDecision::PreventWhilePrompting,
         Some(_) => ExitDecision::PreventAndPrompt,
+    }
+}
+
+/// `kAEQuitReason` values (four-char codes) a system-initiated quit Apple Event
+/// carries: logout, restart and shutdown, with or without their confirmation
+/// dialog. Any non-zero reason counts as system-initiated (see
+/// [`is_system_quit_reason`]); these are listed for documentation and tests.
+#[cfg(any(target_os = "macos", test))]
+pub const SYSTEM_QUIT_REASONS: [u32; 6] = [
+    u32::from_be_bytes(*b"logo"), // kAELogOut
+    u32::from_be_bytes(*b"rlgo"), // kAEReallyLogOut
+    u32::from_be_bytes(*b"rrst"), // kAEShowRestartDialog
+    u32::from_be_bytes(*b"rsdn"), // kAEShowShutdownDialog
+    u32::from_be_bytes(*b"rest"), // kAERestart
+    u32::from_be_bytes(*b"shut"), // kAEShutDown
+];
+
+/// Whether a quit Apple Event's `kAEQuitReason` marks a system-initiated quit.
+///
+/// A quit from the Dock or from AppleScript carries no reason (`None` or `0`).
+/// Logout, restart and shutdown always carry one, so any non-zero reason is
+/// treated as system-initiated: such a quit must never wait on a dialog.
+#[cfg(any(target_os = "macos", test))]
+pub fn is_system_quit_reason(reason: Option<u32>) -> bool {
+    reason.is_some_and(|r| r != 0)
+}
+
+/// What macOS `applicationShouldTerminate:` must answer (#4456).
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminateDecision {
+    /// `NSTerminateNow`: let `-[NSApp terminate:]` end the app.
+    TerminateNow,
+    /// `NSTerminateCancel`, then raise the same preventable quit the menu Quit
+    /// raises (`AppHandle::exit(0)`), so the windows show the quit dialog.
+    CancelAndRequestQuit,
+}
+
+/// Decide a macOS `-[NSApp terminate:]`, given the quit Apple Event's
+/// `kAEQuitReason` (`None` when there is none, or no quit Apple Event at all),
+/// how many windows are open, and the current [`QuitPhase`].
+///
+/// * A system quit (logout, restart, shutdown) terminates at once, even while
+///   a quit dialog is open, so it is never blocked.
+/// * A confirmed quit terminates.
+/// * With no window open there is nothing to ask about, so it terminates.
+/// * Otherwise (Dock Quit, AppleScript quit) it is cancelled and routed through
+///   the quit decision. A repeat while the dialog is open just re-asks, which
+///   [`decide_exit_request`] turns into [`ExitDecision::PreventWhilePrompting`].
+#[cfg(any(target_os = "macos", test))]
+pub fn decide_should_terminate(
+    quit_reason: Option<u32>,
+    open_windows: usize,
+    phase: QuitPhase,
+) -> TerminateDecision {
+    if is_system_quit_reason(quit_reason) || phase == QuitPhase::Confirmed || open_windows == 0 {
+        TerminateDecision::TerminateNow
+    } else {
+        TerminateDecision::CancelAndRequestQuit
     }
 }
 
@@ -482,6 +552,69 @@ mod tests {
         assert_eq!(
             decide_exit_request(None, true, 0, QuitPhase::Prompting),
             ExitDecision::Proceed
+        );
+    }
+
+    // ── decide_should_terminate (macOS terminate:, #4456) ───────────────
+
+    #[test]
+    fn dock_or_applescript_quit_with_windows_is_cancelled_and_prompted() {
+        for reason in [None, Some(0)] {
+            for phase in [QuitPhase::Idle, QuitPhase::Prompting] {
+                assert_eq!(
+                    decide_should_terminate(reason, 1, phase),
+                    TerminateDecision::CancelAndRequestQuit
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn system_quit_is_never_blocked() {
+        for reason in SYSTEM_QUIT_REASONS {
+            for phase in [QuitPhase::Idle, QuitPhase::Prompting, QuitPhase::Confirmed] {
+                assert_eq!(
+                    decide_should_terminate(Some(reason), 3, phase),
+                    TerminateDecision::TerminateNow
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_non_zero_reason_counts_as_system() {
+        assert!(is_system_quit_reason(Some(u32::from_be_bytes(*b"zzzz"))));
+        assert!(!is_system_quit_reason(Some(0)));
+        assert!(!is_system_quit_reason(None));
+    }
+
+    #[test]
+    fn confirmed_quit_terminates() {
+        assert_eq!(
+            decide_should_terminate(None, 2, QuitPhase::Confirmed),
+            TerminateDecision::TerminateNow
+        );
+    }
+
+    #[test]
+    fn user_quit_with_no_windows_terminates() {
+        assert_eq!(
+            decide_should_terminate(None, 0, QuitPhase::Idle),
+            TerminateDecision::TerminateNow
+        );
+    }
+
+    #[test]
+    fn cancelled_terminate_raises_a_prompting_exit_request() {
+        // The cancel path calls `AppHandle::exit(0)`; its `ExitRequested` must
+        // then prompt (first time) or re-ask (dialog already open).
+        assert_eq!(
+            decide_exit_request(Some(0), true, 1, QuitPhase::Idle),
+            ExitDecision::PreventAndPrompt
+        );
+        assert_eq!(
+            decide_exit_request(Some(0), true, 1, QuitPhase::Prompting),
+            ExitDecision::PreventWhilePrompting
         );
     }
 
