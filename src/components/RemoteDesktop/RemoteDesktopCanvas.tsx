@@ -143,6 +143,11 @@ export function RemoteDesktopCanvas({
   onFirstFrameRef.current = onFirstFrame;
   const onDimensionsRef = useRef(onDimensions);
   onDimensionsRef.current = onDimensions;
+  // Whether the draw geometry / visible canvas size must be recomputed before
+  // the next repaint (container, scale mode, viewport or framebuffer changed).
+  const layoutDirtyRef = useRef(true);
+  // The pending coalesced repaint's requestAnimationFrame id (PERF2-005).
+  const rafRef = useRef<number | null>(null);
   // Pressed pointer-button bitmask (DOM MouseEvent.buttons convention).
   const buttonsRef = useRef(0);
   // Held modifier keys, released on focus loss to avoid stuck keys.
@@ -168,6 +173,66 @@ export function RemoteDesktopCanvas({
     return fb;
   }, []);
 
+  /**
+   * Recompute the draw geometry for the current container size, scale mode and
+   * viewport, and size the visible canvas to it. Assigning `canvas.width` /
+   * `height` resets the 2D context and clears (possibly reallocates) its
+   * backing store, so it only happens when the target size really changed — and
+   * this only runs when the layout is dirty, never on a plain repaint
+   * (PERF2-005).
+   */
+  const applyLayout = useCallback(
+    (canvas: HTMLCanvasElement, container: HTMLDivElement, fb: HTMLCanvasElement) => {
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      // The shown region: the whole framebuffer, or one monitor of it (#3696).
+      const {
+        x: srcX,
+        y: srcY,
+        width: fbW,
+        height: fbH,
+      } = sourceRegion(viewport, fb.width, fb.height);
+      let width = cw;
+      let height = ch;
+      let geom: Geometry;
+      if (scaleMode === "pixel") {
+        // Native 1:1; the canvas is the region size and the container scrolls.
+        width = fbW;
+        height = fbH;
+        geom = { srcX, srcY, fbW, fbH, drawX: 0, drawY: 0, scaleX: 1, scaleY: 1 };
+      } else if (scaleMode === "match") {
+        // Stretch to fill; a debounced resize request keeps the remote in step.
+        geom = {
+          srcX,
+          srcY,
+          fbW,
+          fbH,
+          drawX: 0,
+          drawY: 0,
+          scaleX: cw / fbW,
+          scaleY: ch / fbH,
+        };
+      } else {
+        // Fit to Tab: uniform scale, letterboxed and centered.
+        const s = Math.min(cw / fbW, ch / fbH);
+        geom = {
+          srcX,
+          srcY,
+          fbW,
+          fbH,
+          drawX: (cw - fbW * s) / 2,
+          drawY: (ch - fbH * s) / 2,
+          scaleX: s,
+          scaleY: s,
+        };
+      }
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      geometryRef.current = geom;
+    },
+    [scaleMode, viewport]
+  );
+
   /** Repaint the visible canvas from the offscreen framebuffer. */
   const repaint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -176,52 +241,12 @@ export function RemoteDesktopCanvas({
     if (!canvas || !container || !fb || fb.width === 0) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    // The shown region: the whole framebuffer, or one monitor of it (#3696).
-    const src = sourceRegion(viewport, fb.width, fb.height);
-    const { x: srcX, y: srcY, width: fbW, height: fbH } = src;
-
-    let geom: Geometry;
-    if (scaleMode === "pixel") {
-      // Native 1:1; the canvas is the region size and the container scrolls.
-      canvas.width = fbW;
-      canvas.height = fbH;
-      geom = { srcX, srcY, fbW, fbH, drawX: 0, drawY: 0, scaleX: 1, scaleY: 1 };
-    } else if (scaleMode === "match") {
-      // Stretch to fill; a debounced resize request keeps the remote in step.
-      canvas.width = cw;
-      canvas.height = ch;
-      geom = {
-        srcX,
-        srcY,
-        fbW,
-        fbH,
-        drawX: 0,
-        drawY: 0,
-        scaleX: cw / fbW,
-        scaleY: ch / fbH,
-      };
-    } else {
-      // Fit to Tab: uniform scale, letterboxed and centered.
-      canvas.width = cw;
-      canvas.height = ch;
-      const s = Math.min(cw / fbW, ch / fbH);
-      const drawW = fbW * s;
-      const drawH = fbH * s;
-      geom = {
-        srcX,
-        srcY,
-        fbW,
-        fbH,
-        drawX: (cw - drawW) / 2,
-        drawY: (ch - drawH) / 2,
-        scaleX: s,
-        scaleY: s,
-      };
+    if (layoutDirtyRef.current) {
+      layoutDirtyRef.current = false;
+      applyLayout(canvas, container, fb);
     }
-    geometryRef.current = geom;
+    const geom = geometryRef.current;
+    const { srcX, srcY, fbW, fbH } = geom;
 
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -248,9 +273,36 @@ export function RemoteDesktopCanvas({
       ctx.arc(sx, sy, 4, 0, Math.PI * 2);
       ctx.stroke();
     }
-  }, [scaleMode, viewport]);
+  }, [applyLayout]);
   const repaintRef = useRef(repaint);
   repaintRef.current = repaint;
+
+  /**
+   * Coalesce repaints into one per animation frame (PERF2-005): a burst of
+   * small updates in one frame is already applied to the offscreen framebuffer
+   * in arrival order, so only the final blit is deferred and no rect is lost.
+   */
+  const scheduleRepaint = useCallback(() => {
+    if (rafRef.current !== null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      repaintRef.current();
+      // First frame painted: clear the cross-window reconnecting placeholder.
+      if (!firstFramePaintedRef.current) {
+        firstFramePaintedRef.current = true;
+        onFirstFrameRef.current?.();
+      }
+    });
+  }, []);
+
+  // Drop a pending animation-frame repaint on unmount.
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    },
+    []
+  );
 
   // Subscribe to this session's binary frame + cursor channel (#4291).
   useEffect(() => {
@@ -266,7 +318,11 @@ export function RemoteDesktopCanvas({
       const prev = fbRef.current;
       const changed = !prev || prev.width !== frame.width || prev.height !== frame.height;
       const fb = ensureFramebuffer(frame.width, frame.height);
-      if (changed) onDimensionsRef.current?.(frame.width, frame.height);
+      if (changed) {
+        // A new remote resolution changes the draw geometry.
+        layoutDirtyRef.current = true;
+        onDimensionsRef.current?.(frame.width, frame.height);
+      }
       const ctx = fb.getContext("2d");
       if (!ctx) return;
       for (const rect of frame.rects) {
@@ -274,12 +330,7 @@ export function RemoteDesktopCanvas({
         // `rect.data` is already a Uint8ClampedArray view onto the IPC buffer.
         ctx.putImageData(new ImageData(rect.data, rect.width, rect.height), rect.x, rect.y);
       }
-      repaintRef.current();
-      // First frame painted: clear the cross-window reconnecting placeholder.
-      if (!firstFramePaintedRef.current) {
-        firstFramePaintedRef.current = true;
-        onFirstFrameRef.current?.();
-      }
+      scheduleRepaint();
     };
 
     const onCursor = (cursor: DecodedCursor): void => {
@@ -318,13 +369,19 @@ export function RemoteDesktopCanvas({
       disposed = true;
       unsubscribe?.();
     };
-  }, [sessionId, ensureFramebuffer]);
+  }, [sessionId, ensureFramebuffer, scheduleRepaint]);
 
-  // Repaint + (for Match Window) request a resolution change on container resize.
+  // Re-lay out + repaint now when the scale mode or viewport changes (a new
+  // `repaint`), and on every container resize; for Match Window also request a
+  // resolution change. Only these (and a new framebuffer size) resize the
+  // visible canvas (PERF2-005).
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    layoutDirtyRef.current = true;
+    repaint();
     const observer = new ResizeObserver(() => {
+      layoutDirtyRef.current = true;
       repaint();
       if (scaleMode === "match") {
         debouncedResize();

@@ -11,7 +11,7 @@ evidence:
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:203
   - src/hooks/useRemoteDesktopSession.ts:214
 status: fixed
-resolution: "#2777"
+resolution: "#4378 — corrected from #2777 (which changed useLocalDirWatch); remote-desktop events now go through one shared RemoteDesktopDispatcher, frames through a per-session channel (#4291)"
 ---
 
 ## What
