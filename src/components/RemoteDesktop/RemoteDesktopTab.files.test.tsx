@@ -379,7 +379,7 @@ describe("RemoteDesktopTab — linked SSH route without a saved password (#4265)
       "other.example",
     ]);
     useAppStore.getState().submitPassword("bob-pw");
-    await expect(other).resolves.toBe("bob-pw");
+    await expect(other).resolves.toEqual({ password: "bob-pw", shouldSave: false });
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     // Remount so the shared afterEach unmount has a live root.
     root = createRoot(container);

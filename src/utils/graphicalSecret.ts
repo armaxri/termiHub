@@ -12,8 +12,7 @@
  * computer's remote-desktop backend; it is never logged.
  */
 import { resolveCredential, storeCredential } from "@/services/api";
-import { useAppStore } from "@/store/appStore";
-import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
+import type { RequestPassword } from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { frontendLog, frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -23,14 +22,7 @@ export type GraphicalSettingsResult =
   | { status: "resolved"; settings: Record<string, unknown> }
   | { status: "canceled" };
 
-/** The store's promise-based prompt (`useAppStore().requestPassword`). */
-export type RequestPassword = (
-  host: string,
-  username: string,
-  notice?: string,
-  kind?: PasswordPromptKind,
-  options?: PasswordPromptOptions
-) => Promise<string | null>;
+export type { RequestPassword };
 
 export interface ResolveGraphicalSettingsOptions {
   /**
@@ -43,6 +35,11 @@ export interface ResolveGraphicalSettingsOptions {
   /** The connection's settings. Never mutated. */
   settings: Record<string, unknown>;
   requestPassword: RequestPassword;
+  /**
+   * Connection name for the prompt title, so a queued prompt says which
+   * connect it belongs to (#4312, #4475). Omitted keeps the generic title.
+   */
+  label?: string;
 }
 
 function readString(settings: Record<string, unknown>, key: string): string {
@@ -59,6 +56,7 @@ export async function resolveGraphicalSettings({
   sourceFile = null,
   settings,
   requestPassword,
+  label,
 }: ResolveGraphicalSettingsOptions): Promise<GraphicalSettingsResult> {
   if (readString(settings, "password").length > 0) {
     return { status: "resolved", settings };
@@ -67,14 +65,18 @@ export async function resolveGraphicalSettings({
     status: "resolved",
     settings: { ...settings, password },
   });
+  const labelOption = label ? { label } : {};
   const host = readString(settings, "host");
   const username = readString(settings, "username");
 
   // Without an id there is no stored secret, and a prompted one could not be
   // stored either.
   if (credentialId === null) {
-    const entered = await requestPassword(host, username, "", "password", { allowSave: false });
-    return entered === null ? { status: "canceled" } : withPassword(entered);
+    const answer = await requestPassword(host, username, "", "password", {
+      allowSave: false,
+      ...labelOption,
+    });
+    return answer === null ? { status: "canceled" } : withPassword(answer.password);
   }
 
   // A locked master-password store must be unlocked before the lookup (#1144).
@@ -96,9 +98,12 @@ export async function resolveGraphicalSettings({
   }
   if (stored) return withPassword(stored);
 
-  const entered = await requestPassword(host, username, notice, "password");
-  if (entered === null) return { status: "canceled" };
-  if (entered && useAppStore.getState().passwordPromptShouldSave) {
+  const answer = label
+    ? await requestPassword(host, username, notice, "password", labelOption)
+    : await requestPassword(host, username, notice, "password");
+  if (answer === null) return { status: "canceled" };
+  const entered = answer.password;
+  if (entered && answer.shouldSave) {
     await storeCredential(credentialId, "password", entered, sourceFile).catch((err) =>
       frontendLog(
         "graphical_secret",

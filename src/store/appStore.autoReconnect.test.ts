@@ -123,6 +123,19 @@ class FakeTransport implements Transport {
     return this.dispatched.map((i) => i.kind);
   }
 
+  /**
+   * Seed a `waiting` reconnect entry for an arbitrary session-region key — e.g.
+   * a tab owned by ANOTHER window (the region is shared across windows).
+   */
+  setWaiting(id: string): void {
+    this.sessions[id] = {
+      status: "reconnecting",
+      reconnect: { phase: "waiting", attempt: 0, delayMs: 1000 },
+    };
+    this.version += 1;
+    this.fan();
+  }
+
   /** Simulate the backend timer firing the Waiting→Connecting edge. */
   fireAttempt(id: string, attempt: number): void {
     this.sessions[id] = {
@@ -240,6 +253,27 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     // The region observer re-drives the tab (bumps its retry counter) so the
     // Terminal effect re-runs and re-attaches to the fresh backend session id.
     expect(useAppStore.getState().terminalRetryCounters[tabId] ?? 0).toBe(retryBefore + 1);
+  });
+
+  it("does NOT re-drive another window's tab on its Waiting→Connecting edge (FES2-004)", async () => {
+    // A local drop wires this window's region subscription; the foreign tab id
+    // lives only in the shared region (it belongs to another window's layout).
+    const localTab = makeSshTab(true);
+    useAppStore.getState().setTerminalExited(localTab, { code: null, reason: "dropped" });
+    await flush();
+    const foreign = "tab-in-another-window";
+    fake.setWaiting(foreign);
+    await flush();
+
+    fake.fireAttempt(foreign, 1);
+    await flush();
+
+    // This window never re-drives (nor creates per-tab bookkeeping for) a tab it
+    // does not own — the owning window's observer handles it.
+    const s = useAppStore.getState();
+    expect(s.terminalRetryCounters[foreign]).toBeUndefined();
+    expect(foreign in s.terminalViewMode).toBe(false);
+    expect(foreign in s.terminalConnectDeadline).toBe(false);
   });
 
   it("cancel dispatches session.cancelReconnect (the region folds it to disconnected server-side)", async () => {

@@ -34,6 +34,8 @@ export interface ResolveAgentGraphicalSettingsOptions {
   settings: Record<string, unknown>;
   /** The store's promise-based prompt (`useAppStore().requestPassword`). */
   requestPassword: RequestPassword;
+  /** The definition's name, shown in the prompt title (#4475). */
+  label?: string;
 }
 
 /**
@@ -45,10 +47,12 @@ export function resolveAgentGraphicalSettings({
   definitionId,
   settings,
   requestPassword,
+  label,
 }: ResolveAgentGraphicalSettingsOptions): Promise<AgentGraphicalSettingsResult> {
   return resolveGraphicalSettings({
     credentialId: definitionId === null ? null : agentGraphicalCredentialId(agentId, definitionId),
     settings,
     requestPassword,
+    ...(label ? { label } : {}),
   });
 }

@@ -58,7 +58,7 @@ export function isFitReady(el: HTMLElement | null | undefined): boolean {
  * Guarding on the **proposed** dimensions — the exact value that reaches the
  * PTY — catches every reparent path regardless of which element the px guards
  * measured, and accounts for the scrollbar reservation the px floor ignores.
- * Aligned with `MIN_REATTACH_COLS` in `Terminal.tsx`, which already treats
+ * Aligned with `MIN_REATTACH_COLS` in `waitForUsableDimensions.ts`, which already treats
  * fewer than 20 columns as "not usable dimensions".
  */
 export const MIN_SAFE_FIT_COLS = 20;

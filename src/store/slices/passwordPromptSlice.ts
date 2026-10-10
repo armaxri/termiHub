@@ -6,11 +6,12 @@ import type { AppState } from "../appStore";
  * Password-prompt domain slice (extracted under #2077 via #2300): the
  * promise-based interactive SSH/host password prompt — a FIFO queue of pending
  * requests (#4312) whose head is shown, the head's host/username mirrored for
- * the UI, and the last settled "Save password" choice, together with the {@link PasswordPromptSlice.requestPassword}
+ * the UI, together with the {@link PasswordPromptSlice.requestPassword}
  * /{@link PasswordPromptSlice.submitPassword}/{@link PasswordPromptSlice.dismissPasswordPrompt}
  * actions that drive it. `requestPassword` returns a promise that settles when
- * the user submits (with the password) or dismisses (with `null`) the prompt,
- * or rejects when the caller aborts it. Concurrent requests queue instead of
+ * the user submits (with a {@link PasswordPromptAnswer}: the password and that
+ * prompt's own "Save password" choice, #4474) or dismisses (with `null`) the
+ * prompt, or rejects when the caller aborts it. Concurrent requests queue instead of
  * replacing each other, so no request's promise is ever orphaned (FES2-001).
  * Extracted verbatim from the monolithic root store as a behavior-preserving
  * Zustand slice — every action still receives the shared `set`/`get` typed
@@ -53,6 +54,27 @@ export interface PasswordPromptOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * The answer to one password prompt (#4474): the entered secret and that
+ * prompt's own "Save password" choice. Each request carries its own choice, so
+ * a caller may await anything else before acting on it without ever seeing
+ * another queued prompt's choice. `shouldSave` is always `false` for a prompt
+ * that offered no Save control (#3316).
+ */
+export interface PasswordPromptAnswer {
+  password: string;
+  shouldSave: boolean;
+}
+
+/** The store's promise-based prompt (`useAppStore().requestPassword`). */
+export type RequestPassword = (
+  host: string,
+  username: string,
+  notice?: string,
+  kind?: PasswordPromptKind,
+  options?: PasswordPromptOptions
+) => Promise<PasswordPromptAnswer | null>;
+
 /** One queued password-prompt request, as the prompt UI sees it (#4312). */
 export interface PasswordPromptRequest {
   /** Unique, increasing request id — lets the UI reset its fields per prompt. */
@@ -67,7 +89,7 @@ export interface PasswordPromptRequest {
 
 /** A queued request together with the private handles that settle it. */
 export interface PendingPasswordPrompt extends PasswordPromptRequest {
-  resolve: (password: string | null) => void;
+  resolve: (answer: PasswordPromptAnswer | null) => void;
   reject: (reason: unknown) => void;
   /** Removes the abort listener, if any. */
   detach: () => void;
@@ -94,14 +116,6 @@ export interface PasswordPromptSlice {
   /** Username of the prompt on screen (the queue head). */
   passwordPromptUsername: string;
   /**
-   * The "Save password" choice of the most recently settled request — set
-   * synchronously as that request settles, before its promise's continuations
-   * run. A caller reads it right after awaiting its own `requestPassword`
-   * (without awaiting anything else in between) and so sees its own choice
-   * even when several prompts are queued (#4312).
-   */
-  passwordPromptShouldSave: boolean;
-  /**
    * Optional context line explaining *why* the prompt appeared — e.g. a stored
    * credential that the server just rejected (UX-013). Rendered as a subtitle in
    * the prompt so a re-prompt is never unexplained. Empty string when the prompt
@@ -122,13 +136,7 @@ export interface PasswordPromptSlice {
   passwordPromptAllowSave: boolean;
   /** Connection name of the prompt on screen, or `""` (#4312). */
   passwordPromptLabel: string;
-  requestPassword: (
-    host: string,
-    username: string,
-    notice?: string,
-    kind?: PasswordPromptKind,
-    options?: PasswordPromptOptions
-  ) => Promise<string | null>;
+  requestPassword: RequestPassword;
   /** Answers the prompt on screen and shows the next queued one, if any. */
   submitPassword: (password: string, shouldSave?: boolean) => void;
   /** Cancels the prompt on screen only (resolving it with `null`). */
@@ -157,24 +165,19 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
   get
 ) => {
   /** Remove the head request and show the next one; returns the removed head. */
-  const shiftHead = (shouldSave: boolean): PendingPasswordPrompt | undefined => {
+  const shiftHead = (): PendingPasswordPrompt | undefined => {
     const [head, ...rest] = get().passwordPromptQueue;
     if (!head) return undefined;
     head.detach();
-    set({
-      ...headFields(rest),
-      // A prompt that offered no Save control can never report a save (#3316).
-      passwordPromptShouldSave: head.allowSave && shouldSave,
-    });
+    set(headFields(rest));
     return head;
   };
 
   return {
     ...headFields([]),
-    passwordPromptShouldSave: false,
 
     requestPassword: (host, username, notice = "", kind = "password", options = {}) => {
-      return new Promise<string | null>((resolve, reject) => {
+      return new Promise<PasswordPromptAnswer | null>((resolve, reject) => {
         const { signal } = options;
         if (signal?.aborted) {
           reject(new DOMException(ABORT_MESSAGE, "AbortError"));
@@ -202,21 +205,18 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
           detach: () => signal?.removeEventListener("abort", onAbort),
         };
         const queue = [...get().passwordPromptQueue, request];
-        set(
-          queue.length === 1
-            ? // A fresh prompt starts with Save unchecked until answered.
-              { ...headFields(queue), passwordPromptShouldSave: false }
-            : { passwordPromptQueue: queue }
-        );
+        set(queue.length === 1 ? headFields(queue) : { passwordPromptQueue: queue });
       });
     },
 
     submitPassword: (password, shouldSave = false) => {
-      shiftHead(shouldSave)?.resolve(password);
+      const head = shiftHead();
+      // A prompt that offered no Save control can never report a save (#3316).
+      head?.resolve({ password, shouldSave: head.allowSave && shouldSave });
     },
 
     dismissPasswordPrompt: () => {
-      shiftHead(false)?.resolve(null);
+      shiftHead()?.resolve(null);
     },
   };
 };
