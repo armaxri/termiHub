@@ -58,12 +58,6 @@ import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflow
  */
 const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
 
-/** How often (ms) a running local process polls the workflow cancel signal. */
-const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
-
-/** How often (ms) a `wait-for-output` step polls the workflow cancel signal. */
-const WAIT_FOR_OUTPUT_CANCEL_POLL_MS = 200;
-
 /**
  * Max characters of recent terminal output a `wait-for-output` step retains
  * while matching, so a chatty session cannot grow the match buffer without
@@ -351,13 +345,14 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       // store (bounded there), not the projection.
       appendWorkflowOutputLine(nextLine, runId);
     });
-    // Poll the run's cancel signal and forward it to the backend so a
-    // long-running process is killed when the run is cancelled.
-    const poll = window.setInterval(() => {
-      if (options.signal?.isCancelled()) {
-        void cancelLocalProcess(processRunId);
-      }
-    }, LOCAL_PROCESS_CANCEL_POLL_MS);
+    // Forward the run's cancel to the backend the moment it is signalled, so a
+    // long-running process is killed when the run is cancelled. Event-driven
+    // off `whenCancelled` rather than polling `isCancelled()` (#4381); the
+    // `processSettled` flag drops a cancel that arrives after the process ended.
+    let processSettled = false;
+    void options.signal?.whenCancelled?.then(() => {
+      if (!processSettled) void cancelLocalProcess(processRunId);
+    });
 
     try {
       const outcome = await invokeRunLocalProcess({
@@ -385,7 +380,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       setWorkflowOutputProcessResult(1, false, runId);
       return { exitCode: 1, timedOut: false, cancelled: false };
     } finally {
-      window.clearInterval(poll);
+      processSettled = true;
       unlisten();
     }
   };
@@ -413,7 +408,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         if (settled) return;
         settled = true;
         window.clearTimeout(timer);
-        window.clearInterval(poll);
         unlisten?.();
         resolve(result);
       };
@@ -428,14 +422,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         }
       };
 
-      const poll = window.setInterval(() => {
-        if (options.signal?.isCancelled()) {
-          finish({ matched: false, timedOut: false, cancelled: true });
-        }
-      }, WAIT_FOR_OUTPUT_CANCEL_POLL_MS);
       const timer = window.setTimeout(
         () => finish({ matched: false, timedOut: true, cancelled: false }),
         timeoutMs
+      );
+      // End the wait the moment the run is cancelled — event-driven off
+      // `whenCancelled` instead of polling `isCancelled()` (#4381). `finish`
+      // is guarded by `settled`, so a late cancel after a match is a no-op.
+      void options.signal?.whenCancelled?.then(() =>
+        finish({ matched: false, timedOut: false, cancelled: true })
       );
 
       void onTerminalOutput((sid, data) => {

@@ -12,6 +12,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { storeCredential } from "@/services/api";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -119,7 +120,9 @@ setupAgentsRegion();
 
 describe("AgentNode — keyboard-interactive agent host (#3377)", () => {
   const mockConnect = vi.fn().mockResolvedValue(undefined);
-  const mockRequestPassword = vi.fn().mockResolvedValue("typed-pw");
+  const mockRequestPassword = vi
+    .fn()
+    .mockResolvedValue({ password: "typed-pw", shouldSave: false });
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -163,7 +166,50 @@ describe("AgentNode — keyboard-interactive agent host (#3377)", () => {
 
     await clickConnect();
 
-    expect(mockRequestPassword).toHaveBeenCalledWith("bastion.example.com", "ops");
+    // The agent's name titles the prompt (#4475).
+    expect(mockRequestPassword).toHaveBeenCalledWith("bastion.example.com", "ops", "", "password", {
+      label: "Bastion Agent",
+    });
     expect(mockConnect).toHaveBeenCalledWith(AGENT_ID, "typed-pw");
+  });
+
+  it("saves by its own prompt's choice, even if another prompt settles during the connect (#4474)", async () => {
+    let finishConnect: () => void = () => {};
+    const slowConnect = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishConnect = resolve;
+        })
+    );
+    // The real queued prompt, so another caller's prompt can settle in between.
+    useAppStore.setState({
+      connectRemoteAgent: slowConnect,
+      requestPassword: useAppStore.getInitialState().requestPassword,
+    });
+    vi.mocked(storeCredential).mockClear();
+    renderAgent(
+      makeAgent({ host: "bastion.example.com", port: 22, username: "ops", authMethod: "password" })
+    );
+
+    await clickConnect();
+    expect(useAppStore.getState().passwordPromptLabel).toBe("Bastion Agent");
+    const other = useAppStore.getState().requestPassword("other.example", "bob");
+    await act(async () => {
+      useAppStore.getState().submitPassword("agent-pw", true);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(slowConnect).toHaveBeenCalledWith(AGENT_ID, "agent-pw");
+
+    // While the agent connect is still running, the other prompt is answered
+    // without saving — that must not change this connect's choice.
+    useAppStore.getState().submitPassword("other-pw", false);
+    await expect(other).resolves.toEqual({ password: "other-pw", shouldSave: false });
+    await act(async () => {
+      finishConnect();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+
+    expect(storeCredential).toHaveBeenCalledTimes(1);
+    expect(storeCredential).toHaveBeenCalledWith(AGENT_ID, "password", "agent-pw");
   });
 });

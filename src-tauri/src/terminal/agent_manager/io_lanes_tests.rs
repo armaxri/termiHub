@@ -640,7 +640,8 @@ fn connection(
             output_flow: false,
             host_file_attribute_ops: None,
             agent_version: String::new(),
-        },
+        }
+        .into(),
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
         reattach_config: crate::terminal::agent_config_store::RetainedAgentConfig {

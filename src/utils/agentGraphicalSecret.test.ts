@@ -72,10 +72,7 @@ describe("resolveAgentGraphicalSettings", () => {
 
   it("prompts when nothing is stored and saves the answer when asked to", async () => {
     mockedResolve.mockResolvedValue(null);
-    const requestPassword = vi.fn(async () => {
-      useAppStore.setState({ passwordPromptShouldSave: true });
-      return "entered";
-    });
+    const requestPassword = vi.fn(async () => ({ password: "entered", shouldSave: true }));
     const result = await resolveAgentGraphicalSettings({
       agentId: AGENT,
       definitionId: DEF,
@@ -94,7 +91,7 @@ describe("resolveAgentGraphicalSettings", () => {
 
   it("does not save a prompted answer when the Save box is left unchecked", async () => {
     mockedResolve.mockResolvedValue(null);
-    const requestPassword = vi.fn(async () => "entered");
+    const requestPassword = vi.fn(async () => ({ password: "entered", shouldSave: false }));
     await resolveAgentGraphicalSettings({
       agentId: AGENT,
       definitionId: DEF,
@@ -102,6 +99,21 @@ describe("resolveAgentGraphicalSettings", () => {
       requestPassword,
     });
     expect(mockedStore).not.toHaveBeenCalled();
+  });
+
+  it("names the definition in the prompt title (#4475)", async () => {
+    mockedResolve.mockResolvedValue(null);
+    const requestPassword = vi.fn(async () => ({ password: "entered", shouldSave: false }));
+    await resolveAgentGraphicalSettings({
+      agentId: AGENT,
+      definitionId: DEF,
+      settings: SETTINGS,
+      requestPassword,
+      label: "Lab VNC",
+    });
+    expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "alice", "", "password", {
+      label: "Lab VNC",
+    });
   });
 
   it("reports a dismissed prompt as canceled", async () => {
@@ -116,7 +128,7 @@ describe("resolveAgentGraphicalSettings", () => {
   });
 
   it("prompts without a Save box for a definition that has no id yet", async () => {
-    const requestPassword = vi.fn(async () => "entered");
+    const requestPassword = vi.fn(async () => ({ password: "entered", shouldSave: false }));
     await resolveAgentGraphicalSettings({
       agentId: AGENT,
       definitionId: null,

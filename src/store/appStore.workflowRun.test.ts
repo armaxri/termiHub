@@ -1167,7 +1167,7 @@ describe("appStore — workflow run slice (#1852)", () => {
         workflowLocalProcessAllowlist: ["sleep"],
       });
       useAppStore.setState({ workflows: [workflow("w1", [lp("sleep", ["100"])])] });
-      // Hold the process open so the cancel-poll has time to fire.
+      // Hold the process open so the cancel is observed while it runs.
       let releaseProc!: (r: {
         exitCode: number | null;
         timedOut: boolean;
@@ -1184,8 +1184,12 @@ describe("appStore — workflow run slice (#1852)", () => {
       await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalled());
 
       useAppStore.getState().cancelWorkflowRun();
-      // The 200ms poll observes the cancel and kills the backend process.
-      await vi.waitFor(() => expect(cancelLocalProcess).toHaveBeenCalled(), { timeout: 3000 });
+      // The cancel is forwarded off `whenCancelled` the moment it is signalled —
+      // well inside the old 200ms poll interval, which no longer exists (#4381).
+      await vi.waitFor(() => expect(cancelLocalProcess).toHaveBeenCalled(), {
+        timeout: 100,
+        interval: 5,
+      });
 
       releaseProc({ exitCode: null, timedOut: false, cancelled: true });
       await done;

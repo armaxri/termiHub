@@ -29,7 +29,6 @@ describe("resolveGraphicalSettings — stored password lookup", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       credentialStoreStatus: { mode: "os_keychain", status: "unlocked" },
-      passwordPromptShouldSave: false,
     } as never);
     requestPassword = vi.fn<ResolveGraphicalSettingsOptions["requestPassword"]>();
     entries = [];
@@ -56,7 +55,7 @@ describe("resolveGraphicalSettings — stored password lookup", () => {
 
   it("with no stored password, prompts with no notice", async () => {
     mockedResolve.mockResolvedValue(null);
-    requestPassword.mockResolvedValue("typed");
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
     const r = await run();
     expect(r).toEqual({ status: "resolved", settings: { ...SETTINGS, password: "typed" } });
     expect(requestPassword).toHaveBeenCalledWith("desk", "alice", "", "password");
@@ -64,7 +63,7 @@ describe("resolveGraphicalSettings — stored password lookup", () => {
 
   it("a failed read logs a WARN and prompts, saying the saved password could not be read", async () => {
     mockedResolve.mockRejectedValue({ code: "E", message: "keychain unavailable" });
-    requestPassword.mockResolvedValue("typed");
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
     const r = await run();
     expect(r).toEqual({ status: "resolved", settings: { ...SETTINGS, password: "typed" } });
     const warn = entries.find((e) => e.level === "WARN");
@@ -72,5 +71,33 @@ describe("resolveGraphicalSettings — stored password lookup", () => {
       "Failed to read the saved remote-desktop password: keychain unavailable"
     );
     expect(requestPassword.mock.calls[0][2]).toMatch(/could not be read/);
+  });
+
+  it("names the connection in the prompt when given a label (#4475)", async () => {
+    mockedResolve.mockResolvedValue(null);
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
+    await resolveGraphicalSettings({
+      credentialId: "vnc-1",
+      settings: SETTINGS,
+      requestPassword,
+      label: "Office desktop",
+    });
+    expect(requestPassword).toHaveBeenCalledWith("desk", "alice", "", "password", {
+      label: "Office desktop",
+    });
+  });
+
+  it("names the connection in a prompt without a Save box too (#4475)", async () => {
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
+    await resolveGraphicalSettings({
+      credentialId: null,
+      settings: SETTINGS,
+      requestPassword,
+      label: "Office desktop",
+    });
+    expect(requestPassword).toHaveBeenCalledWith("desk", "alice", "", "password", {
+      allowSave: false,
+      label: "Office desktop",
+    });
   });
 });

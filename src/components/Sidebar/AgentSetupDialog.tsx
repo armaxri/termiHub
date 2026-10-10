@@ -128,12 +128,16 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       const config: RemoteAgentConfig = { ...agent.config };
 
       if (config.authMethod === "password" && !config.password) {
-        const pw = await requestPassword(config.host, config.username);
-        if (!pw) {
+        // The agent's name titles the prompt, so a queued prompt says which
+        // agent it is for (#4475).
+        const answer = await requestPassword(config.host, config.username, "", "password", {
+          label: agent.name,
+        });
+        if (!answer || !answer.password) {
           onOpenChange(false);
           return;
         }
-        config.password = pw;
+        config.password = answer.password;
       }
 
       configRef.current = config;

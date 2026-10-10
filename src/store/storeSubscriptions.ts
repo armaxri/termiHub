@@ -54,9 +54,17 @@ function wireSessionReconnectObserver(): void {
   if (!sessionReconnectObserverWired) {
     sessionReconnectObserverWired = true;
     onSessionView((next, prev) => {
+      let ownTabIds: Set<string> | null = null;
       for (const [tabId, life] of Object.entries(next)) {
         const before = prev[tabId];
         if (life.reconnect.phase === "connecting" && before?.reconnect.phase === "waiting") {
+          // The region is shared across windows, so it carries other windows'
+          // tabs too. Only re-drive a tab this window owns (FES2-004, #4388):
+          // re-driving a foreign tab would arm a connecting deadline and bump
+          // per-tab maps for a tab id this window never closes or prunes. The
+          // owning window's observer handles its own tabs.
+          ownTabIds ??= new Set(collectLiveTabs(useAppStore.getState()).map((t) => t.id));
+          if (!ownTabIds.has(tabId)) continue;
           useAppStore.getState().reconnectTerminal(tabId);
         }
       }

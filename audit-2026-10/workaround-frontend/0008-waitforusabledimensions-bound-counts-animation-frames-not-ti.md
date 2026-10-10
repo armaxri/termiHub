@@ -14,8 +14,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:182
   - src/components/Terminal/Terminal.tsx:662
   - src/components/Terminal/safeFit.ts:74
-status: open
-resolution: ""
+status: fixed
+resolution: "#4381 — reattach fit wait bounded by wall-clock time, rAF raced with a fallback timer, fit gated on isProposedFitSafe"
 audit: 2026-10
 commit: 663465d52
 relation: new

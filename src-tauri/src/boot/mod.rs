@@ -36,6 +36,13 @@ pub(crate) fn init_platform_and_capture(
         if let Err(e) = macos_services::register(app.handle().clone()) {
             tracing::warn!("could not register macOS Services provider: {e}");
         }
+
+        // Route the Dock's Quit and AppleScript quits (`-[NSApp terminate:]`)
+        // through the same quit dialog as Cmd+Q; logout/shutdown still
+        // terminate at once (#4456). Best-effort, never blocks startup.
+        if let Err(e) = crate::window::macos_terminate::install(app.handle().clone()) {
+            tracing::warn!("could not hook applicationShouldTerminate: {e}");
+        }
     }
 
     // Inject AppHandle into the log capture layer so it can emit events
