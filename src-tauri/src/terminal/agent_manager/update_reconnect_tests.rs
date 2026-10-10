@@ -3,7 +3,7 @@
 //! Every timing test runs on paused tokio time, so the restart window, the
 //! backoff and the deadline are asserted exactly without real waiting.
 
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::Value;
 use tauri::Listener;
@@ -501,4 +501,120 @@ async fn no_live_connection_to_suspend_reports_failed() {
     assert_eq!(outcomes[0]["outcome"], "failed");
     assert_eq!(outcomes[0]["attempts"], 0);
     assert!(!h.manager.update_reconnects.is_active("agent-1"));
+}
+
+// ── A manual connect during an attempt (#4621) ───────────────────────
+
+/// A scripted, slow connect attempt that holds the agent's real connect
+/// reservation, as the agent's own connect does: it takes 60 s, unless its
+/// connect is cancelled, which aborts it at once.
+fn slow_reserving_attempt(
+    manager: &Arc<AgentConnectionManager<tauri::test::MockRuntime>>,
+) -> impl Fn(
+    String,
+    RetainedAgentConfig,
+) -> std::pin::Pin<
+    Box<dyn Future<Output = Result<Option<AgentCapabilities>, String>> + Send>,
+> + Send
+       + Sync
+       + 'static {
+    let manager = Arc::clone(manager);
+    move |agent_id, _| {
+        let manager = Arc::clone(&manager);
+        Box::pin(async move {
+            let cancel = CancellationToken::new();
+            let _reservation = manager
+                .reserve_connect(&agent_id, &cancel)
+                .map_err(|e| e.to_string())?;
+            tokio::select! {
+                _ = cancel.cancelled() => Err("Connect cancelled".to_string()),
+                _ = tokio::time::sleep(Duration::from_secs(60)) => {
+                    Ok(Some(capabilities("1.4.0")))
+                }
+            }
+        })
+    }
+}
+
+/// A manual connect while an update-reconnect attempt is in flight takes the
+/// agent over at once: the attempt is cancelled and its reservation released
+/// before the manual connect reserves the agent, which then connects with no
+/// "already connecting" refusal.
+#[tokio::test(start_paused = true)]
+async fn a_manual_connect_takes_over_an_attempt_in_flight() {
+    let h = harness();
+    let attempt = slow_reserving_attempt(&h.manager);
+    assert!(h
+        .manager
+        .begin_update_reconnect_with("agent-1", "1.4.0", 5, attempt));
+    // Past the 8 s restart window: the first attempt holds the reservation.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert!(h.manager.connecting.lock().unwrap().contains_key("agent-1"));
+
+    let start = Instant::now();
+    let rpc: &dyn AgentRpcClient = h.manager.as_ref();
+    await_update_reconnect_takeover(rpc, "agent-1").await;
+    // The cancelled attempt settled at once, not after its 60 s.
+    assert_eq!(start.elapsed(), Duration::ZERO);
+
+    // The manual connect's own reservation succeeds, and it connects.
+    let reservation = h
+        .manager
+        .reserve_connect("agent-1", &CancellationToken::new())
+        .expect("the manual connect is not refused as already connecting");
+    h.manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), make_agent_connection(true));
+    drop(reservation);
+    assert!(h.manager.is_connected("agent-1"));
+
+    // The backend reconnect never comes back over it, and the windows drop
+    // the notice quietly.
+    tokio::time::sleep(AGENT_UPDATE_RECONNECT_DEADLINE).await;
+    assert!(h.manager.is_connected("agent-1"));
+    let outcomes = h.outcomes();
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(outcomes[0]["outcome"], "superseded");
+    assert_eq!(outcomes[0]["attempts"], 1);
+    assert!(!h.manager.update_reconnects.is_active("agent-1"));
+}
+
+/// Waiting between attempts there is nothing to settle: the takeover returns
+/// at once and the manual connect reserves the agent.
+#[tokio::test(start_paused = true)]
+async fn a_manual_connect_in_the_restart_window_takes_over_at_once() {
+    let h = harness();
+    let attempt = slow_reserving_attempt(&h.manager);
+    h.manager
+        .begin_update_reconnect_with("agent-1", "1.4.0", 5, attempt);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(h.manager.take_over_update_reconnect("agent-1").is_none());
+    assert!(h
+        .manager
+        .reserve_connect("agent-1", &CancellationToken::new())
+        .is_ok());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(h.outcomes()[0]["outcome"], "superseded");
+    assert_eq!(h.outcomes()[0]["attempts"], 0);
+}
+
+/// The user's Cancel still aborts an attempt in flight at once and releases
+/// its reservation.
+#[tokio::test(start_paused = true)]
+async fn user_cancel_aborts_an_attempt_in_flight() {
+    let h = harness();
+    let attempt = slow_reserving_attempt(&h.manager);
+    h.manager
+        .begin_update_reconnect_with("agent-1", "1.4.0", 5, attempt);
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert!(h.manager.connecting.lock().unwrap().contains_key("agent-1"));
+    assert!(h.manager.cancel_update_reconnect("agent-1", false));
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert!(!h.manager.connecting.lock().unwrap().contains_key("agent-1"));
+    let outcomes = h.outcomes();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0]["outcome"], "cancelled");
+    assert_eq!(outcomes[0]["attempts"], 1);
 }

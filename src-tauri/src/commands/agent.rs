@@ -17,8 +17,8 @@ use crate::terminal::agent_cancel::AgentDeployCancellation;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, ConnectedHost};
 use crate::terminal::agent_graphical_secrets;
 use crate::terminal::agent_manager::{
-    AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo, AgentFolderInfo,
-    AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
+    await_update_reconnect_takeover, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+    AgentFolderInfo, AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{AgentEndReason, RemoteAgentConfig, UpdateStrategy};
@@ -162,8 +162,10 @@ pub async fn connect_agent(
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
     // A manual connect supersedes a coordinated-update reconnect the backend
-    // is driving for this agent (#4489): this connect owns the agent now.
-    manager.cancel_update_reconnect(&agent_id, true);
+    // is driving for this agent (#4489): this connect owns the agent now. An
+    // attempt of it in flight is cancelled and awaited, so its connect
+    // reservation is gone before this connect reserves the agent (#4621).
+    await_update_reconnect_takeover(manager.as_ref(), &agent_id).await;
     tauri::async_runtime::spawn_blocking(move || {
         manager.connect_agent(&agent_id, &config, agent_settings.as_ref())
     })
