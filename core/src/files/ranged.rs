@@ -140,6 +140,20 @@ pub async fn fs_write_range(
     .map_err(|e| FileError::OperationFailed(e.to_string()))?
 }
 
+/// Map a refused exclusive create. Windows answers `ERROR_ACCESS_DENIED`
+/// (not "already exists") for a directory in `path`'s place, so a refusal of
+/// any other kind is re-checked with a non-following `symlink_metadata`: an
+/// entry there now — file, directory or symlink — is
+/// [`FileError::AlreadyExists`], anything else keeps its own mapping. The
+/// check only refines the error after the create was refused; it never
+/// creates or truncates anything.
+fn create_new_error(e: std::io::Error, path: &std::path::Path, label: &str) -> FileError {
+    if e.kind() != std::io::ErrorKind::AlreadyExists && std::fs::symlink_metadata(path).is_ok() {
+        return FileError::AlreadyExists(label.to_string());
+    }
+    io_error(e, label)
+}
+
 /// [`RangedFileAccess::create_new`] for a filesystem path (local disk, a WSL
 /// UNC share): `O_CREAT | O_EXCL` via [`OpenOptions::create_new`], which also
 /// refuses a symlink in `path`'s place without following it. `label` names
@@ -152,7 +166,7 @@ pub async fn fs_create_new(path: PathBuf, label: String, data: Vec<u8>) -> Resul
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(|e| io_error(e, &label))?;
+            .map_err(|e| create_new_error(e, &path, &label))?;
         file.write_all(&data).map_err(|e| io_error(e, &label))?;
         file.flush().map_err(|e| io_error(e, &label))
     })
@@ -308,6 +322,50 @@ mod tests {
             Err(FileError::AlreadyExists(_))
         ));
         assert!(!target.exists(), "the symlink target must not be created");
+    }
+
+    /// Windows refuses an exclusive create over a directory with "access
+    /// denied"; an entry in the path's place still reads as "already exists",
+    /// on every platform.
+    #[test]
+    fn a_refused_create_over_an_existing_entry_is_already_exists() {
+        let (dir, file) = temp("file");
+        std::fs::write(&file, b"x").unwrap();
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        for path in [dir.path().to_path_buf(), file] {
+            assert!(matches!(
+                create_new_error(denied(), &path, "p"),
+                FileError::AlreadyExists(l) if l == "p"
+            ));
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("dangling");
+            std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).unwrap();
+            assert!(matches!(
+                create_new_error(denied(), &link, "p"),
+                FileError::AlreadyExists(_)
+            ));
+        }
+    }
+
+    /// With nothing in the path's place, a refusal keeps its own mapping.
+    #[test]
+    fn a_refused_create_of_a_missing_path_keeps_its_error() {
+        let (_dir, missing) = temp("missing");
+        let err = |kind| create_new_error(std::io::Error::from(kind), &missing, "p");
+        assert!(matches!(
+            err(std::io::ErrorKind::PermissionDenied),
+            FileError::PermissionDenied(_)
+        ));
+        assert!(matches!(
+            err(std::io::ErrorKind::NotFound),
+            FileError::NotFound(_)
+        ));
+        assert!(matches!(
+            err(std::io::ErrorKind::AlreadyExists),
+            FileError::AlreadyExists(_)
+        ));
     }
 
     /// A backend without an atomic exclusive create says so, rather than
