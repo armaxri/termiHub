@@ -152,6 +152,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const closeTab = useAppStore((s) => s.closeTab);
   const markSessionKilled = useAppStore((s) => s.markSessionKilled);
+  const consumeSessionKilled = useAppStore((s) => s.consumeSessionKilled);
   // Embedded HTTP/FTP/TFTP servers. The Services sidebar owns the same
   // `embeddedServers` config list + keyed `embeddedServerStates` runtime map and
   // the `stopEmbeddedServer` action; the panel reads them directly (single
@@ -189,6 +190,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
   const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
   const [agentSessions, setAgentSessions] = useState<AgentSessionsState>({});
+  // Per-agent session-list failure reason (#4377). A failed list must not look
+  // like "no sessions" — the agent's section renders an inline error + Retry.
+  const [agentSessionErrors, setAgentSessionErrors] = useState<Record<string, string>>({});
   const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
   const [xServerSetupOpen, setXServerSetupOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -255,14 +259,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           "open_connections",
           "list session owners"
         ),
-        ...connectedAgents.map((a) =>
-          withLoggedFallback(
-            listAgentSessions(a.id),
-            [],
-            "open_connections",
-            `list sessions of agent ${a.id}`
-          )
-        ),
+        ...connectedAgents.map((a) => fetchAgentSessions(a.id)),
       ]);
 
       setLocalSessions(locals.filter((s) => !s.agentId));
@@ -278,14 +275,37 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       setProxySessions(byProxy);
 
       const byAgent: AgentSessionsState = {};
+      const errorsByAgent: Record<string, string> = {};
       connectedAgents.forEach((a, i) => {
-        byAgent[a.id] = agentSessionArrays[i] as AgentSessionInfo[];
+        const result = agentSessionArrays[i] as AgentSessionsResult;
+        if (result.ok) {
+          byAgent[a.id] = result.sessions;
+        } else {
+          errorsByAgent[a.id] = result.error;
+        }
       });
       setAgentSessions(byAgent);
+      setAgentSessionErrors(errorsByAgent);
     } finally {
       setLoading(false);
     }
   }, [connectedAgents]);
+
+  // Retry a single agent's session list after a failed load (#4377). Updates only
+  // that agent's entries so the rest of the panel is left untouched.
+  const retryAgentSessions = async (agentId: string) => {
+    const result = await fetchAgentSessions(agentId);
+    if (result.ok) {
+      setAgentSessions((prev) => ({ ...prev, [agentId]: result.sessions }));
+      setAgentSessionErrors((prev) => {
+        const { [agentId]: _cleared, ...rest } = prev;
+        return rest;
+      });
+    } else {
+      setAgentSessionErrors((prev) => ({ ...prev, [agentId]: result.error }));
+      toast.error(`Could not list sessions: ${result.error}`);
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -453,7 +473,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       setLocalSessions((prev) => prev.filter((s) => s.id !== id));
     } catch (err) {
       // The session is still live — surface the failure and keep the row so the
-      // user is not misled into believing a leaked session is gone (UX-033).
+      // user is not misled into believing a leaked session is gone (UX-033), and
+      // clear the stale kill marker so a later genuine drop is not misread as a
+      // user kill (FES2-003).
+      consumeSessionKilled(id);
       frontendError("open_connections", `Failed to kill local session ${id}: ${errorMessage(err)}`);
       toast.error(`Failed to kill session: ${errorMessage(err)}`);
     }
@@ -469,6 +492,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     results.forEach((r, i) => {
       if (r.status === "rejected") {
         failedIds.add(sessions[i].id);
+        // Still live: drop the stale intentional-kill marker (FES2-003).
+        consumeSessionKilled(sessions[i].id);
         frontendError(
           "open_connections",
           `Failed to kill local session ${sessions[i].id}: ${r.reason}`
@@ -519,8 +544,24 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     );
   };
 
+  // Report every failed disconnect instead of rejecting on the first and
+  // swallowing the rest (#4377) — same pattern as the session kill-alls.
   const handleKillAllAgents = async () => {
-    await Promise.all(connectedAgents.map((a) => disconnectRemoteAgent(a.id)));
+    const agents = connectedAgents;
+    const results = await Promise.allSettled(agents.map((a) => disconnectRemoteAgent(a.id)));
+    let failed = 0;
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        failed++;
+        frontendError(
+          "open_connections",
+          `Failed to disconnect agent ${agents[i].id}: ${errorMessage(r.reason)}`
+        );
+      }
+    });
+    if (failed > 0) {
+      toast.error(`Failed to disconnect ${failed} agent${failed === 1 ? "" : "s"}`);
+    }
   };
 
   /**
@@ -552,6 +593,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
       }));
     } catch (err) {
+      // Still live: drop the stale intentional-kill marker (FES2-003).
+      consumeSessionKilled(id);
       frontendError(
         "open_connections",
         `Failed to kill session ${id} via agent ${agentId}: ${errorMessage(err)}`
@@ -568,6 +611,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     results.forEach((r, i) => {
       if (r.status === "rejected") {
         failedIds.add(sessions[i].id);
+        // Still live: drop the stale intentional-kill marker (FES2-003).
+        consumeSessionKilled(sessions[i].id);
         frontendError(
           "open_connections",
           `Failed to kill session ${sessions[i].id} via agent ${agentId}: ${r.reason}`
@@ -999,15 +1044,36 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         {/* Native sessions on each agent (reported by the agent itself) */}
         {connectedAgents.map((a) => {
           const sessions = agentSessions[a.id] ?? [];
-          if (sessions.length === 0) return null;
+          const loadError = agentSessionErrors[a.id];
+          if (sessions.length === 0 && !loadError) return null;
           return (
             <Section
               key={`agent-sessions-${a.id}`}
               title={`Sessions on ${a.name}`}
               icon={<Terminal size={14} />}
               count={sessions.length}
-              onKillAll={() => handleKillAllAgentSessions(a.id)}
+              onKillAll={sessions.length > 0 ? () => handleKillAllAgentSessions(a.id) : undefined}
             >
+              {loadError && (
+                <ConnectionRow
+                  icon={<Terminal size={14} />}
+                  title={`Could not list sessions: ${loadError}`}
+                  badge="error"
+                  data-testid={`oc-agent-sessions-error-${a.id}`}
+                  actions={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<RotateCw size={14} />}
+                      onClick={() => retryAgentSessions(a.id)}
+                      aria-label={`Retry listing sessions on ${a.name}`}
+                      data-testid={`oc-agent-sessions-retry-${a.id}`}
+                    >
+                      Retry
+                    </Button>
+                  }
+                />
+              )}
               {sessions.map((s) => (
                 <ConnectionRow
                   key={s.sessionId}
@@ -1346,6 +1412,25 @@ function ConfirmButton({
       />
     </>
   );
+}
+
+/** Outcome of listing one agent's sessions: the list, or the failure reason (#4377). */
+type AgentSessionsResult =
+  | { ok: true; sessions: AgentSessionInfo[] }
+  | { ok: false; error: string };
+
+/**
+ * List an agent's sessions, capturing a failure as its reason (and logging it)
+ * rather than collapsing it to an empty list that hides live sessions (#4377).
+ */
+async function fetchAgentSessions(agentId: string): Promise<AgentSessionsResult> {
+  try {
+    return { ok: true, sessions: await listAgentSessions(agentId) };
+  } catch (err) {
+    const reason = errorMessage(err);
+    frontendError("open_connections", `Failed to list sessions of agent ${agentId}: ${reason}`);
+    return { ok: false, error: reason };
+  }
 }
 
 interface SectionProps {

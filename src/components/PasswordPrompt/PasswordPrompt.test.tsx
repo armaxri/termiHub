@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { PasswordPrompt } from "./PasswordPrompt";
 
 let container: HTMLDivElement;
@@ -154,39 +155,29 @@ describe("PasswordPrompt", () => {
     expect(checkbox?.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("sets passwordPromptShouldSave=true when submitting with checkbox checked", async () => {
+  it("answers shouldSave=true when submitting with checkbox checked (#4474)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
-    useAppStore.getState().requestPassword("example.com", "alice");
+    const promise = useAppStore.getState().requestPassword("example.com", "alice");
     // Simulate submit with shouldSave=true (checkbox is checked by default when store is active)
     act(() => {
       useAppStore.getState().submitPassword("secret", true);
     });
 
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(true);
+    await expect(promise).resolves.toEqual({ password: "secret", shouldSave: true });
   });
 
-  it("sets passwordPromptShouldSave=false when submitting with checkbox unchecked", async () => {
+  it("answers shouldSave=false when submitting with checkbox unchecked (#4474)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
-    useAppStore.getState().requestPassword("example.com", "alice");
+    const promise = useAppStore.getState().requestPassword("example.com", "alice");
     act(() => {
       useAppStore.getState().submitPassword("secret", false);
     });
 
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
-  });
-
-  it("resets passwordPromptShouldSave on dismiss", async () => {
-    void useAppStore.getState().requestPassword("example.com", "alice");
-    useAppStore.setState({ passwordPromptShouldSave: true });
-    act(() => {
-      useAppStore.getState().dismissPasswordPrompt();
-    });
-
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    await expect(promise).resolves.toEqual({ password: "secret", shouldSave: false });
   });
 
   it("resolves the requestPassword promise with the entered password", async () => {
@@ -196,7 +187,7 @@ describe("PasswordPrompt", () => {
     });
 
     const result = await promise;
-    expect(result).toBe("my-secret");
+    expect(result?.password).toBe("my-secret");
   });
 
   it("resolves requestPassword with null on dismiss", async () => {
@@ -229,7 +220,7 @@ describe("PasswordPrompt", () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
-    let resolved: Promise<string | null> = Promise.resolve(null);
+    let resolved: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
     await act(async () => {
       resolved = useAppStore
         .getState()
@@ -241,8 +232,7 @@ describe("PasswordPrompt", () => {
       query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    await expect(resolved).resolves.toBe("");
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    await expect(resolved).resolves.toEqual({ password: "", shouldSave: false });
   });
 
   describe("concurrent prompts (#4312)", () => {
@@ -289,8 +279,8 @@ describe("PasswordPrompt", () => {
     });
 
     it("answers the first prompt, then shows the next with a fresh input", async () => {
-      let first: Promise<string | null> = Promise.resolve(null);
-      let second: Promise<string | null> = Promise.resolve(null);
+      let first: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+      let second: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
       await act(async () => {
         first = useAppStore.getState().requestPassword("a.example", "alice");
         second = useAppStore
@@ -301,7 +291,7 @@ describe("PasswordPrompt", () => {
 
       typePassword("pw-a");
       clickConnect();
-      await expect(first).resolves.toBe("pw-a");
+      await expect(first).resolves.toMatchObject({ password: "pw-a" });
 
       expect(query("password-prompt-description")?.textContent).toContain("bob@b.example");
       expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
@@ -312,12 +302,12 @@ describe("PasswordPrompt", () => {
 
       typePassword("pw-b");
       clickConnect();
-      await expect(second).resolves.toBe("pw-b");
+      await expect(second).resolves.toMatchObject({ password: "pw-b" });
       expect(query("password-prompt-input")).toBeNull();
     });
 
     it("cancel dismisses only the prompt on screen", async () => {
-      let first: Promise<string | null> = Promise.resolve(null);
+      let first: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
       await act(async () => {
         first = useAppStore.getState().requestPassword("a.example", "alice");
         void useAppStore.getState().requestPassword("b.example", "bob");

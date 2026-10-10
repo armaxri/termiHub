@@ -20,7 +20,8 @@ import {
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
 import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
-import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import {
   currentSessionView,
   mirrorSessionExited,
@@ -535,7 +536,16 @@ export const createTerminalSessionStateSlice: StateCreator<
     const drop = tab.persistentConnectionId
       ? apiDetachPersistentTab(sessionId, tabId)
       : apiCloseTerminal(sessionId, true);
-    fireAndForget(drop, `disconnect session ${sessionId} for tab ${tabId}`, "error");
+    // A rejected close/detach leaves the session live, so clear the intentional-
+    // kill marker (FES2-003, #4388): otherwise a later genuine drop would consume
+    // it, be folded as a user kill, and silently skip auto-reconnect.
+    void Promise.resolve(drop).catch((err: unknown) => {
+      get().consumeSessionKilled(sessionId);
+      frontendError(
+        "terminal",
+        `Failed to disconnect session ${sessionId} for tab ${tabId}: ${errorMessage(err)}`
+      );
+    });
   },
   reconnectTerminal: (tabId) =>
     set((state) => {

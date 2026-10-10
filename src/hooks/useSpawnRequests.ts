@@ -131,7 +131,7 @@ export async function resolveSpawnSecret(
   });
   if (secret.status === "canceled") return null;
   if (secret.status === "none") return spawn;
-  if (secret.source === "prompt" && saved && useAppStore.getState().passwordPromptShouldSave) {
+  if (secret.source === "prompt" && saved && secret.shouldSave) {
     await storeCredential(saved.id, secret.credentialType, secret.secret, sourceFile).catch(
       (err: unknown) => frontendLog("spawn", `Failed to store credential: ${errorMessage(err)}`)
     );

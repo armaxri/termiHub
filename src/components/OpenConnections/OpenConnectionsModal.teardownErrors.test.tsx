@@ -138,6 +138,9 @@ describe("OpenConnectionsModal — swallowed teardown failures are surfaced", ()
     expect(closeTerminal).toHaveBeenCalledWith("sess-1", true);
     // ...but since it rejected, the row is NOT dropped (the session is still live).
     expect(rowsMatching("My Shell")).toHaveLength(1);
+    // ...and the intentional-kill marker is cleared (FES2-003, #4388): the session
+    // is still live, so a later genuine drop must not be misread as a user kill.
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-1"]).toBeUndefined();
     // And the failure is surfaced both ways.
     expect(frontendErrorMock).toHaveBeenCalledWith(
       "open_connections",
@@ -175,6 +178,10 @@ describe("OpenConnectionsModal — swallowed teardown failures are surfaced", ()
     // The succeeded session is gone; the failed one is still listed + killable.
     expect(rowsMatching("Good Shell")).toHaveLength(0);
     expect(rowsMatching("Bad Shell")).toHaveLength(1);
+    // The failed kill's marker is cleared (FES2-003, #4388); the succeeded one
+    // stays armed for the exit handler to consume.
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-bad"]).toBeUndefined();
+    expect(useAppStore.getState().intentionallyKilledSessions["sess-ok"]).toBe(true);
     expect(frontendErrorMock).toHaveBeenCalledWith(
       "open_connections",
       expect.stringContaining("sess-bad")

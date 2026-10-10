@@ -260,7 +260,10 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     await flush();
 
     expect(updateAgentDef).toHaveBeenCalledTimes(1);
-    expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "", "", "password");
+    // The definition's name titles the prompt (#4475).
+    expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "", "", "password", {
+      label: "Lab desktop",
+    });
     expect(addTab).not.toHaveBeenCalled();
   });
 

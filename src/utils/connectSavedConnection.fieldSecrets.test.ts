@@ -19,7 +19,7 @@ vi.mock("@/services/api", () => ({
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn(), frontendError: vi.fn() }));
 
 import { toast } from "@/components/ui";
-import { resolveFieldSecrets, storeFieldSecrets } from "@/services/api";
+import { resolveFieldSecrets, storeCredential, storeFieldSecrets } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/types/generated/ConnectionTypeInfo";
@@ -104,7 +104,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   addTabSpy = vi.fn(() => "tab-new");
   requestUnlockSpy = vi.fn(() => Promise.resolve(true));
-  requestPasswordSpy = vi.fn(() => Promise.resolve("typed-gateway"));
+  requestPasswordSpy = vi.fn(() =>
+    Promise.resolve({ password: "typed-gateway", shouldSave: false })
+  );
   mockedResolveFieldSecrets.mockResolvedValue({});
   vi.spyOn(toast, "loading").mockReturnValue("toast");
   vi.spyOn(toast, "dismiss").mockImplementation(() => {});
@@ -125,7 +127,8 @@ describe("connectSavedConnection — schema field secrets (#4429)", () => {
       "ops",
       expect.stringContaining("SSH Password"),
       "password",
-      { allowSave: false }
+      // The connection's name titles the prompt (#4475).
+      { allowSave: false, label: "Desk" }
     );
     expect(openedSettings().sshPassword).toBe("typed-gateway");
     expect(mockedResolveFieldSecrets).not.toHaveBeenCalled();
@@ -157,5 +160,32 @@ describe("connectSavedConnection — schema field secrets (#4429)", () => {
     expect(result.status).toBe("refused");
     expect(requestPasswordSpy).not.toHaveBeenCalled();
     expect(addTabSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectSavedConnection — remote-desktop password prompt (#4474, #4475)", () => {
+  const SAVED_VNC: SavedConnection = {
+    id: "Office",
+    name: "Office desktop",
+    folderId: null,
+    config: { type: "vnc", config: { host: "office", username: "me", savePassword: true } },
+  };
+
+  it("names the connection in the prompt and stores by that prompt's own Save choice", async () => {
+    setup("master_password", "unlocked");
+    requestPasswordSpy.mockResolvedValue({ password: "typed-vnc", shouldSave: true });
+    const result = await connectSavedConnection(SAVED_VNC);
+
+    expect(result.status).toBe("opened");
+    expect(requestPasswordSpy).toHaveBeenCalledWith("office", "me", "", "password", {
+      label: "Office desktop",
+    });
+    expect(vi.mocked(storeCredential)).toHaveBeenCalledWith(
+      "Office",
+      "password",
+      "typed-vnc",
+      null
+    );
+    expect(openedSettings().password).toBe("typed-vnc");
   });
 });

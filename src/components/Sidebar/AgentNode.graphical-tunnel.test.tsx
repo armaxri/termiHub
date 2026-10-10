@@ -194,14 +194,19 @@ describe("AgentNode — VNC/RDP connections tunnelled through the agent (#3241)"
     renderAndOpen("Build server");
     await flush();
 
-    expect(requestPassword).toHaveBeenCalledWith("win-build", "ci", "", "password");
+    // The definition's name titles the prompt (#4475).
+    expect(requestPassword).toHaveBeenCalledWith("win-build", "ci", "", "password", {
+      label: "Build server",
+    });
     expect(addTab).not.toHaveBeenCalled();
   });
 
   it("connects with the prompted password", async () => {
     vi.mocked(resolveCredential).mockResolvedValueOnce(null);
     const addTab = vi.fn();
-    const requestPassword = vi.fn(() => Promise.resolve("typed-pw"));
+    const requestPassword = vi.fn(() =>
+      Promise.resolve({ password: "typed-pw", shouldSave: false })
+    );
     useAppStore.setState({ addTab, requestPassword });
 
     renderAndOpen("Lab desktop");

@@ -12,6 +12,7 @@ import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import type { ConnectedHost } from "@/services/api";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -220,6 +221,21 @@ describe("AgentNode — Update Agent... (#4038)", () => {
     expect(agentId).toBe(AGENT_ID);
     expect(config).toMatchObject({ host: "build.example.com", password: "stored-pw" });
     expect(document.querySelector('[data-testid="update-agent-dialog"]')).toBeNull();
+  });
+
+  it("names the agent in the password prompt when no password is stored (#4475)", async () => {
+    vi.mocked(resolveConnectionCredential).mockResolvedValueOnce({
+      usedStoredCredential: false,
+      password: null,
+    } as never);
+    const requestPassword = vi.fn(() => Promise.resolve({ password: "typed", shouldSave: false }));
+    useAppStore.setState({ requestPassword });
+    render("0.4.0");
+    await clickUpdate();
+
+    expect(requestPassword).toHaveBeenCalledWith("build.example.com", "user", "", "password", {
+      label: "Build Box",
+    });
   });
 
   it("runs the plain update when no other host is connected", async () => {

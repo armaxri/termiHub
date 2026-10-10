@@ -295,11 +295,8 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
   it("prompts for a passphrase-protected key and never stores the entry", async () => {
     mockBackend({ keyEncrypted: true });
-    requestPassword.mockImplementation(async () => {
-      // Even with the prompt's "Save" box checked, Test must not store it.
-      useAppStore.setState({ passwordPromptShouldSave: true });
-      return "key-pass";
-    });
+    // Even with the prompt's "Save" box checked, Test must not store it.
+    requestPassword.mockResolvedValue({ password: "key-pass", shouldSave: true });
     render(CONN_KEY.id);
     await flush();
 
@@ -307,6 +304,8 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
     expect(requestPassword).toHaveBeenCalledWith("10.0.0.2", "admin", "", "key_passphrase", {
       allowSave: false,
+      // The form's name titles the prompt (#4475).
+      label: "Key Server",
     });
     expect(testedSettings().password).toBe("key-pass");
     expect(toastSuccess).toHaveBeenCalledTimes(1);
@@ -315,7 +314,7 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
   it("prompts on an unsaved (new) connection without a vault lookup", async () => {
     mockBackend({ stored: "should-not-be-used" });
-    requestPassword.mockResolvedValue("entered");
+    requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
     render("new");
     await flush();
     const ssh = openTypeOptions().find((o) => o.getAttribute("data-value") === "ssh");
@@ -332,6 +331,7 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
     expect(commandCalls("resolve_credential")).toHaveLength(0);
     expect(requestPassword).toHaveBeenCalledWith("10.0.0.9", "root", "", "password", {
       allowSave: false,
+      label: "Brand New",
     });
     expect(testedSettings().password).toBe("entered");
     expectNothingPersisted();
@@ -432,7 +432,6 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
     act(() => useAppStore.getState().submitPassword("key-pass", true));
     await flush();
 
-    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
     expect(testedSettings().password).toBe("key-pass");
     expectNothingPersisted();
   });
@@ -446,5 +445,23 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
 
     expect(promptInput()).not.toBeNull();
     expect(saveBox()).not.toBeNull();
+    // The connection's name titles the prompt (#4475).
+    expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
+
+    // That prompt's own Save choice decides the store (#4474).
+    act(() => useAppStore.getState().submitPassword("key-pass", true));
+    await flush();
+    expect(commandCalls("store_credential")).toHaveLength(1);
+  });
+
+  it("names the connection in the prompt opened by Test (#4475)", async () => {
+    mockBackend({ keyEncrypted: true });
+    render(CONN_KEY.id, { withPrompt: true });
+    await flush();
+
+    await clickTest();
+
+    expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
+    expect(document.querySelector(".ui-modal__title")?.textContent).toContain("Key Server");
   });
 });
