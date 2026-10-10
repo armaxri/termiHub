@@ -170,7 +170,8 @@ async function waitForUsableDimensions(
       try {
         fitAddon.fit();
       } catch {
-        // Container not measurable yet — retry on the next frame.
+        // Per-frame retry loop (up to MAX_REATTACH_FIT_FRAMES): silent so it
+        // cannot flood the Log Viewer; the next frame retries (#4520).
       }
       if (xterm.cols >= MIN_REATTACH_COLS) return;
     }
@@ -501,8 +502,12 @@ export function Terminal({
         // calculation, which must know how many lines the echo occupies.
         try {
           fitAddon.fit();
-        } catch {
-          // Container not yet sized; fall back to current xterm dimensions
+        } catch (err) {
+          // Once per connect: fall back to the current xterm dimensions.
+          frontendLog(
+            "terminal",
+            `pre-connect fit failed, using ${xterm.cols}x${xterm.rows} tab=${tabId}: ${errorMessage(err)}`
+          );
         }
         // Build a config that carries the actual terminal dimensions so the
         // backend creates the PTY at the right size and calculates the OSC 7
@@ -1220,8 +1225,9 @@ export function Terminal({
         // unless an onResize above already pushed the current dims.
         try {
           fitAddon.fit();
-        } catch {
-          // Container might not have dimensions yet
+        } catch (err) {
+          // Once per connect; the ResizeObserver re-fits once the container is sized.
+          frontendLog("terminal", `post-connect fit failed tab=${tabId}: ${errorMessage(err)}`);
         }
         if (xterm.cols !== lastSentCols || xterm.rows !== lastSentRows) {
           lastSentCols = xterm.cols;
@@ -1266,7 +1272,8 @@ export function Terminal({
             try {
               xterm.write(rest);
             } catch {
-              // xterm is past its own overflow guard; nothing more to do here.
+              // Teardown: xterm is past its own overflow guard or already being
+              // disposed; the bytes have nowhere to go and the tab is closing.
             }
           }
           outputFlow.dispose();
@@ -1535,8 +1542,12 @@ export function Terminal({
           if (connectAbort.signal.aborted || horizontalScrollingRef.current) return;
           try {
             if (isProposedFitSafe(fitAddon)) fitAddon.fit();
-          } catch {
-            // Container not sized (parked); the next ResizeObserver fit re-fits.
+          } catch (err) {
+            // Once per renderer swap; the next ResizeObserver fit re-fits.
+            frontendLog(
+              "terminal",
+              `re-fit after renderer swap failed tab=${tabId}: ${errorMessage(err)}`
+            );
           }
         });
       },
@@ -1681,7 +1692,9 @@ export function Terminal({
     try {
       fitAddon.fit();
     } catch {
-      // Container might not have dimensions yet
+      // Expected: the element is still parked (zero-size) here, so this fails
+      // on most mounts. The pre-connect fit and the ResizeObserver re-fit, and
+      // a trace per mount would be noise (#4520).
     }
 
     xtermRef.current = xterm;
@@ -1711,8 +1724,12 @@ export function Terminal({
           if (connectAbort.signal.aborted) return;
           try {
             fitAddon.fit();
-          } catch {
-            // Container not sized yet; the next ResizeObserver fit will catch it.
+          } catch (err) {
+            // Once per terminal; the next ResizeObserver fit will catch it.
+            frontendLog(
+              "terminal",
+              `re-fit after font load failed tab=${tabId}: ${errorMessage(err)}`
+            );
           }
         });
     }
@@ -1790,7 +1807,9 @@ export function Terminal({
         // The gutter height tracks the container, so re-render the thumb.
         scrollbar.update();
       } catch {
-        // Ignore fit errors during transitions
+        // Hot path (every ResizeObserver fire): fit() throws while the container
+        // is parked or mid-transition, and the next fire re-fits. A log line per
+        // fire would flood the Log Viewer, so this stays silent (#4520).
       }
     });
     resizeObserver.observe(el);
@@ -1819,7 +1838,11 @@ export function Terminal({
       // Capture the marks for the scrollback snapshot taken below (#3420).
       try {
         commandMarksSnapshotRef.current = commandMarks.exportSnapshot();
-      } catch {
+      } catch (err) {
+        frontendLog(
+          "terminal",
+          `command marks not captured for the scrollback snapshot tab=${tabId}: ${errorMessage(err)}`
+        );
         commandMarksSnapshotRef.current = null;
       }
       commandMarks.dispose();
@@ -1939,13 +1962,18 @@ export function Terminal({
             // let the ResizeObserver re-fit once real width lands.
             fitAddonRef.current.fit();
           }
-        } catch {
-          // Ignore
+        } catch (err) {
+          // Once per visibility change, so a trace is cheap; the ResizeObserver
+          // re-fits once the panel has real dimensions.
+          frontendLog(
+            "terminal",
+            `fit on becoming visible failed tab=${tabId}: ${errorMessage(err)}`
+          );
         }
       }
       xtermRef.current.focus();
     }
-  }, [isVisible]);
+  }, [isVisible, tabId]);
 
   // React to horizontal scrolling state changes
   const horizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling[tabId] ?? false);
@@ -1965,8 +1993,11 @@ export function Terminal({
       scrollViewport.classList.add("terminal-horizontal-scroll");
       try {
         applyHorizontalScrollResize(xterm, fitAddon, el);
-      } catch {
-        // Ignore resize errors
+      } catch (err) {
+        frontendLog(
+          "terminal",
+          `horizontal-scroll resize failed tab=${tabId}: ${errorMessage(err)}`
+        );
       }
       scrollbarRef.current?.update();
 
@@ -1984,7 +2015,9 @@ export function Terminal({
           try {
             updateHorizontalScrollWidth(xterm, fitAddon, el);
           } catch {
-            // Ignore errors during transitions
+            // Polled every CHECK_INTERVAL_MS: a measure fails while the terminal
+            // is parked or mid-transition and the next tick retries. Silent so a
+            // hidden tab cannot flood the Log Viewer (#4520).
           }
         }
       }, CHECK_INTERVAL_MS);
@@ -1998,8 +2031,11 @@ export function Terminal({
       scrollViewport.classList.remove("terminal-horizontal-scroll");
       try {
         removeHorizontalScrollResize(xterm, fitAddon);
-      } catch {
-        // Ignore fit errors
+      } catch (err) {
+        frontendLog(
+          "terminal",
+          `leaving horizontal scroll: re-fit failed tab=${tabId}: ${errorMessage(err)}`
+        );
       }
       scrollbarRef.current?.update();
     }
@@ -2037,8 +2073,12 @@ export function Terminal({
         if (!horizontalScrollingRef.current) {
           fitAddon.fit();
         }
-      } catch {
-        // Ignore fit errors
+      } catch (err) {
+        // Once per settings change; a parked terminal re-fits when shown.
+        frontendLog(
+          "terminal",
+          `re-fit after a font change failed tab=${tabId}: ${errorMessage(err)}`
+        );
       }
     }
   }, [

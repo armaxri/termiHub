@@ -193,7 +193,9 @@ async function prepareDestFolder(t: PasteTransport, destPath: string): Promise<F
     try {
       return await sessionListFiles(t.destSession, destPath);
     } catch {
-      // Not there yet: create it below and treat it as empty.
+      // Control-flow probe: a failed list means "not there yet", so create it
+      // below and treat it as empty. Any other cause (permissions, a dropped
+      // session) makes the mkdir below fail, and that error is surfaced.
     }
   }
   await sessionMkdir(t.destSession, destPath);

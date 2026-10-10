@@ -309,8 +309,12 @@ export function useSessionFileSystem() {
       let entry: FileEntry | null = null;
       try {
         entry = await localStat(localPath);
-      } catch {
+      } catch (err) {
         // Unknown kind: take the single-file upload (see above).
+        frontendLog(
+          "session_file_browser",
+          `stat of ${localPath} failed, uploading as a single file: ${errorMessage(err)}`
+        );
       }
       let ok: boolean;
       if (entry?.isDirectory) {

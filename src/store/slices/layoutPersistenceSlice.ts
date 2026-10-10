@@ -297,8 +297,13 @@ export const createLayoutPersistenceSlice: StateCreator<
                     : undefined;
                 await get().connectRemoteAgent(agent.id, password);
                 justConnectedAgentIds.add(agent.id);
-              } catch {
-                // Connection failure is surfaced as agent-error tabs below
+              } catch (err) {
+                // Connection failure is surfaced as agent-error tabs below; keep
+                // the cause, which those tabs do not carry (#4520).
+                frontendLog(
+                  "workspace",
+                  `restore: agent ${agent.id} did not connect: ${errorMessage(err)}`
+                );
               }
             })
           );

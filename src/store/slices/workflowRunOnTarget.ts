@@ -483,7 +483,9 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
       frontendLog("workflow_run", `keep-warm subscribe failed: ${errorMessage(err)}`)
     );
   } catch {
-    /* non-Tauri env without a socket — dispatch logs + no-ops */
+    // Not logged here: a non-Tauri env without a socket throws synchronously
+    // from transport construction, and dispatchWorkflowRunStarted below hits
+    // the same failure and logs it (#4520).
   }
   await dispatchWorkflowRunStarted({
     runId,
