@@ -688,7 +688,10 @@ describe("handleAgentStateChange (real handler, #4309)", () => {
     // emits one "disconnected" listing them — the same as for a connected agent.
     it("a user end while connecting shows the 'Agent disconnected' banner once", async () => {
       const tab = openAgentTab("session-123");
-      harness.transport.setSession(tab.id, reconnecting());
+      harness.transport.setSession(
+        tab.id,
+        reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
+      );
       await handleAgentStateChange(
         { session_id: AGENT, state: "connecting" },
         { listAgentSessions, getAllTabs: allTabs }
