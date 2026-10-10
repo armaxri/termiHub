@@ -368,6 +368,13 @@ describe("catalog helpers", () => {
     expect(entryMatches(v, "nothing")).toBe(false);
   });
 
+  it("matches search diacritic-insensitively (#4582)", () => {
+    const v = view("beta", {}, { author: "Jürgen Müller" });
+    expect(entryMatches(v, "muller")).toBe(true);
+    expect(entryMatches(v, "  JURGEN ")).toBe(true);
+    expect(entryMatches(v, "meier")).toBe(false);
+  });
+
   it("validates URL and checksum fields", () => {
     expect(urlFieldError("")).toBeNull();
     expect(urlFieldError("https://e.com/x")).toBeNull();

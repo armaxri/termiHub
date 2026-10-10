@@ -102,6 +102,10 @@ export function OpenPortsPanel() {
   const filtered = ports.filter((p) => {
     if (protocolFilter !== "All" && p.protocol !== protocolFilter) return false;
     if (filter) {
+      // Deliberately exact substring matching rather than the shared
+      // diacritic-insensitive `itemMatchesQuery` (#4582, as LIBFE2-005 allows):
+      // addresses, ports, PIDs and process names are literal technical tokens,
+      // and `:80` must not be widened by any normalization.
       const q = filter.toLowerCase();
       return (
         p.localAddr.toLowerCase().includes(q) ||
