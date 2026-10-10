@@ -3999,6 +3999,8 @@ Agent → desktop. A chunk of the ssh-agent-protocol **request** bytes the targe
 
 The desktop's reply bytes travel back via the [`agent.forward.data` **method**](#agentforwarddata).
 
+The agent writes `agent.forward.data` and `agent.forward.close` notifications on a lower-priority queue than every other notification (#4480): terminal output, control notifications and `agent.forward.ack` go first, and forward notifications get one slot after every few others, so a busy port forward (VNC/RDP over an agent) cannot hold up terminal output yet is never starved. Data and close for one stream keep their order. The desktop must not rely on forward notifications keeping their position relative to other notifications.
+
 ### `agent.forward.close` (notification)
 
 Agent → desktop. A forwarded ssh-agent stream ended on the agent host (the target closed its agent connection). The desktop drops its local-agent bridge for the stream (#1727).
