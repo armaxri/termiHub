@@ -30,6 +30,7 @@ import {
   type ScheduleFormValues,
 } from "./scheduleForm";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { t } from "@/i18n/catalog";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
@@ -56,6 +57,8 @@ const ACTION_OPTIONS = [
   { value: "workflow", label: "Workflow" },
   { value: "macro", label: "Macro" },
 ];
+/** Workflows are experimental: with the toggle off only macros are offered (#4629). */
+const NON_EXPERIMENTAL_ACTION_OPTIONS = ACTION_OPTIONS.filter((o) => o.value !== "workflow");
 const TARGET_OPTIONS = [
   { value: "connections", label: "Saved connections" },
   { value: "broadcast-group", label: "Broadcast group" },
@@ -76,6 +79,11 @@ const MISSED_OPTIONS = [
  * daily, or on chosen weekdays at a local time). New schedules are saved
  * **disabled**; they are enabled from the schedules list, which asks for
  * confirmation of the target hosts first.
+ *
+ * Workflows are experimental, so the Workflow action is offered only while
+ * experimental features are on (#4629). An existing workflow schedule opened
+ * with the toggle off keeps its action, shown read-only, so saving it never
+ * drops or rewrites the workflow.
  */
 export function ScheduleEditorDialog({
   open,
@@ -89,6 +97,13 @@ export function ScheduleEditorDialog({
   onOpenChange,
   onSave,
 }: ScheduleEditorDialogProps) {
+  const experimental = useExperimentalFeatures();
+  // An existing workflow schedule opened with experimental features off: its
+  // action stays as-is and is shown read-only rather than dropped (#4629).
+  const workflowActionLocked = !experimental && schedule?.action.kind === "workflow";
+  const actionOptions =
+    experimental || workflowActionLocked ? ACTION_OPTIONS : NON_EXPERIMENTAL_ACTION_OPTIONS;
+
   // The shared RHF + zod scaffold (UISF2-003): `watched` is a complete, stable
   // snapshot of the form, and `errors` / `canSave` update on the same render as
   // the edit.
@@ -106,15 +121,19 @@ export function ScheduleEditorDialog({
   // — keyed on the ids, not the objects, so a refresh of the schedules list (a
   // run, or the backend following a connection rename) never clobbers the
   // unsaved edits (#3603).
-  const latest = useRef({ schedule, initialAction });
+  const latest = useRef({ schedule, initialAction, experimental });
   // The loaded values, to tell an edited form from an untouched one (UX2-004).
   const [baselineKey, setBaselineKey] = useState<string | null>(null);
-  latest.current = { schedule, initialAction };
+  latest.current = { schedule, initialAction, experimental };
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
-    const { schedule: current, initialAction: action } = latest.current;
-    const initial = current ? scheduleToForm(current) : blankScheduleForm(action);
+    const { schedule: current, initialAction: action, experimental: exp } = latest.current;
+    let initial = current ? scheduleToForm(current) : blankScheduleForm(action);
+    // A new schedule must not start on the hidden experimental Workflow action.
+    if (!current && !exp && initial.actionKind === "workflow") {
+      initial = { ...initial, actionKind: "macro", workflowId: "" };
+    }
     reset(initial);
     setBaselineKey(draftKey(initial));
   }, [open, scheduleId, loadedId, reset]);
@@ -141,7 +160,11 @@ export function ScheduleEditorDialog({
       onOpenChange={onOpenChange}
       dirty={isDirty}
       title={schedule ? "Edit Schedule" : "New Schedule"}
-      description="Run a workflow or macro on saved connections at set times, while termiHub is running"
+      description={
+        experimental || workflowActionLocked
+          ? "Run a workflow or macro on saved connections at set times, while termiHub is running"
+          : "Run a macro on saved connections at set times, while termiHub is running"
+      }
       size="md"
       data-testid="schedule-editor-dialog"
       footer={
@@ -186,12 +209,21 @@ export function ScheduleEditorDialog({
           name="actionKind"
           control={control}
           render={({ field }) => (
-            <Field label="Run" htmlFor="schedule-editor-action-kind">
+            <Field
+              label="Run"
+              htmlFor="schedule-editor-action-kind"
+              hint={
+                workflowActionLocked
+                  ? "Workflows are experimental. Turn on experimental features to change this action."
+                  : undefined
+              }
+            >
               <Select
                 id="schedule-editor-action-kind"
                 value={field.value}
                 onChange={field.onChange}
-                options={ACTION_OPTIONS}
+                options={actionOptions}
+                disabled={workflowActionLocked}
                 data-testid="schedule-editor-action-kind"
               />
             </Field>
@@ -212,6 +244,7 @@ export function ScheduleEditorDialog({
                   value={field.value || undefined}
                   onChange={field.onChange}
                   placeholder="Pick a workflow"
+                  disabled={workflowActionLocked}
                   options={workflows.map((w) => ({ value: w.id, label: w.name }))}
                   data-testid="schedule-editor-workflow"
                 />
