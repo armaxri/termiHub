@@ -54,6 +54,14 @@ import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import type { TransferProgress } from "@/services/api";
 
+// The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
+// backend's session-ownership map is never undefined: stub it as the real
+// empty map so `refreshSessionOwners` sees a faithful value (#4520).
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+}));
+
 function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
   return {
     transferId: "t1",
