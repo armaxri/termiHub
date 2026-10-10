@@ -29,7 +29,7 @@
 
 import { readFileSync } from "node:fs";
 import { isMainModule } from "./is-main-module.mjs";
-import { SECURITY_MARKER, hasSecuritySection } from "./emit-release-notes.mjs";
+import { SECURITY_MARKER, hasSecuritySection, isSecurityMarked } from "./emit-release-notes.mjs";
 
 /** GitHub rejects a release body longer than this many characters. */
 export const GITHUB_RELEASE_BODY_LIMIT = 125_000;
@@ -109,8 +109,7 @@ export function capReleaseBody(body, { url, limit = RELEASE_BODY_BUDGET }) {
   }
   kept = kept.replace(/\s+$/, "");
 
-  const needsMarker =
-    marker !== "" && !hasSecuritySection(kept) && !kept.startsWith(SECURITY_MARKER);
+  const needsMarker = marker !== "" && !hasSecuritySection(kept) && !isSecurityMarked(kept);
   return `${needsMarker ? marker : ""}${kept}${notice}`;
 }
 

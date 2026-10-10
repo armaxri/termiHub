@@ -1,0 +1,56 @@
+[
+  {
+    "name": "pipeline-emitted marker before notes",
+    "body": "<!-- security -->\n\n### Security\n\n- patched a CVE",
+    "marked": true
+  },
+  { "name": "marker alone (forced, empty notes)", "body": "<!-- security -->", "marked": true },
+  {
+    "name": "marker at start with text on the same line",
+    "body": "<!-- security --> Fixes CVE-2026-0001",
+    "marked": true
+  },
+  {
+    "name": "marker after leading blank lines",
+    "body": "\n\n<!-- security -->\n\nnotes",
+    "marked": true
+  },
+  {
+    "name": "marker with CRLF line endings",
+    "body": "<!-- security -->\r\n\r\n### Security\r\n\r\n- patch\r\n",
+    "marked": true
+  },
+  { "name": "marker after a leading BOM", "body": "﻿<!-- security -->\n\nnotes", "marked": true },
+  {
+    "name": "marker alone on its own line mid-body",
+    "body": "### Security\n\n<!-- security -->\n\n- patch",
+    "marked": true
+  },
+  {
+    "name": "marker alone on a CRLF line mid-body with indentation",
+    "body": "notes\r\n  <!-- security -->  \r\nmore",
+    "marked": true
+  },
+  {
+    "name": "changelog prose quoting the marker inline (#4389)",
+    "body": "### Added\n\n- Update checker: Security releases (marked `<!-- security -->` in the release notes) show a red dot.",
+    "marked": false
+  },
+  {
+    "name": "inline marker without backticks",
+    "body": "### Fixed\n\n- the <!-- security --> marker is now emitted",
+    "marked": false
+  },
+  {
+    "name": "inline marker with CRLF line endings",
+    "body": "### Fixed\r\n\r\n- see <!-- security --> docs\r\n",
+    "marked": false
+  },
+  { "name": "no marker at all", "body": "### Added\n\n- a new feature", "marked": false },
+  { "name": "empty body", "body": "", "marked": false },
+  {
+    "name": "Security section without the marker",
+    "body": "### Security\n\n- patch",
+    "marked": false
+  }
+]
