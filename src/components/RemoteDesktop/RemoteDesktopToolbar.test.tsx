@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { RemoteDesktopToolbar, type FilesButtonState } from "./RemoteDesktopToolbar";
 import type { MonitorRect, ScaleMode } from "@/types/remoteDesktop";
+import { RELEASE_CHORD_ACTION, clearOverrides, setOverride } from "@/services/keybindings";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -80,8 +81,22 @@ describe("RemoteDesktopToolbar", () => {
   it("discloses the keyboard release chord (#4328)", () => {
     render();
     const hint = query("remote-desktop-release-hint");
-    expect(hint?.textContent).toContain("Ctrl+Alt+Shift");
+    expect(hint?.textContent).toContain("Ctrl+Shift+Alt");
     expect(hint?.getAttribute("title")).toMatch(/return keyboard focus to termiHub/i);
+  });
+
+  it("shows a rebound release chord in the hint and its title (#4524)", () => {
+    setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
+    try {
+      render();
+      const hint = query("remote-desktop-release-hint");
+      expect(hint?.querySelector("kbd")?.textContent).toBe("Ctrl+Alt");
+      expect(hint?.getAttribute("title")).toBe(
+        "Press Ctrl+Alt to return keyboard focus to termiHub"
+      );
+    } finally {
+      clearOverrides();
+    }
   });
 
   it("omits the resolution span before the first frame", () => {

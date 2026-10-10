@@ -13,6 +13,7 @@ import type {
 import { remoteDesktopRequestFullFrame } from "@/services/api";
 import { MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
 import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
+import { RELEASE_CHORD_ACTION, clearOverrides, setOverride } from "@/services/keybindings";
 
 /** A decoded frame addressed to a session, as the tests drive it. */
 interface TestFrame {
@@ -561,7 +562,7 @@ describe("RemoteDesktopCanvas", () => {
       const id = canvasEl().getAttribute("aria-describedby");
       expect(id).toBeTruthy();
       const description = document.getElementById(id as string);
-      expect(description?.textContent).toContain("Ctrl+Alt+Shift");
+      expect(description?.textContent).toContain("Ctrl+Shift+Alt");
       expect(description?.textContent).toMatch(/return focus to termiHub/i);
     });
 
@@ -601,9 +602,46 @@ describe("RemoteDesktopCanvas", () => {
       expect(region?.getAttribute("aria-live")).toBe("polite");
       expect(liveRegionText()).toBe("");
       act(() => canvasEl().focus());
-      expect(liveRegionText()).toBe("Keyboard captured — press Ctrl+Alt+Shift to release");
+      expect(liveRegionText()).toBe("Keyboard captured — press Ctrl+Shift+Alt to release");
       act(() => canvasEl().blur());
       expect(liveRegionText()).toBe("Keyboard released to termiHub");
+    });
+  });
+
+  describe("rebound release chord (#4524)", () => {
+    afterEach(() => clearOverrides());
+
+    function pressChord(init: KeyboardEventInit): void {
+      act(() => {
+        canvasEl().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, ...init }));
+      });
+    }
+
+    it("releases focus on the custom chord", () => {
+      setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, meta: true });
+      render();
+      act(() => canvasEl().focus());
+      pressChord({ code: "MetaLeft", ctrlKey: true, metaKey: true });
+      expect(document.activeElement).not.toBe(canvasEl());
+    });
+
+    it("forwards the old default chord to the remote once rebound", () => {
+      setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, meta: true });
+      const { onInput } = render();
+      act(() => canvasEl().focus());
+      pressChord({ code: "ShiftLeft", ctrlKey: true, altKey: true, shiftKey: true });
+      expect(document.activeElement).toBe(canvasEl());
+      expect(onInput).toHaveBeenCalledWith({ kind: "key", code: "ShiftLeft", pressed: true });
+    });
+
+    it("discloses the custom chord in the description and on-focus hint", () => {
+      setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
+      render();
+      const id = canvasEl().getAttribute("aria-describedby");
+      expect(document.getElementById(id as string)?.textContent).toContain("Press Ctrl+Alt to");
+      act(() => canvasEl().focus());
+      const hint = container.querySelector('[data-testid="remote-desktop-capture-hint"]');
+      expect(hint?.querySelector("kbd")?.textContent).toBe("Ctrl+Alt");
     });
   });
 
