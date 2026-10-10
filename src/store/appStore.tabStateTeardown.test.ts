@@ -7,6 +7,8 @@
  *   without any of `closeTab`'s teardown, leaking every per-tab map entry, the
  *   session-lifecycle record, broadcast membership and the persistent-session
  *   attachment for a tab id that no longer exists in any window.
+ * - #4453: `closeTabGroup` removed a whole group's tabs without running any of
+ *   that teardown for them.
  * - FES2-007: the session-keyed `sessionCapabilities` / `sessionHighlighting`
  *   maps were never pruned, so they grew with every connect / reconnect.
  */
@@ -43,6 +45,7 @@ const openWindow = vi.fn();
 const sendHandoffToWindow = vi.fn();
 const claimSession = vi.fn();
 const releaseSession = vi.fn();
+const closeTerminal = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -55,6 +58,7 @@ vi.mock("@/services/api", () => ({
   sendHandoffToWindow: (...args: unknown[]) => sendHandoffToWindow(...args),
   claimSession: (...args: unknown[]) => claimSession(...args),
   releaseSession: (...args: unknown[]) => releaseSession(...args),
+  closeTerminal: (...args: unknown[]) => closeTerminal(...args),
 }));
 
 const mirrorSessionIntent = vi.fn();
@@ -75,7 +79,7 @@ import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBrid
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { seedLayoutState, layoutState } from "@/test/layoutState";
 import { getAllLeaves } from "@/utils/panelTree";
-import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import type { LeafPanel, TabGroup, TerminalTab } from "@/types/terminal";
 import type { TabHandoffRecord } from "@/types/window";
 
 /**
@@ -197,6 +201,7 @@ describe("per-tab / per-session state teardown (#4313)", () => {
     claimSession.mockReset().mockResolvedValue(null);
     releaseSession.mockReset().mockResolvedValue(true);
     mirrorSessionIntent.mockClear();
+    closeTerminal.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -345,6 +350,181 @@ describe("per-tab / per-session state teardown (#4313)", () => {
       for (const key of PER_TAB_MAPS) {
         expect((s[key] as Record<string, unknown>)["a"]).toBeUndefined();
       }
+    });
+  });
+
+  describe("closeTabGroup (#4453)", () => {
+    /** One leaf of `tabs`, re-panelled onto `leafId`. */
+    function leaf(leafId: string, tabs: TerminalTab[]): LeafPanel {
+      return {
+        type: "leaf",
+        id: leafId,
+        tabs: tabs.map((t) => ({ ...t, panelId: leafId })),
+        activeTabId: tabs[0]?.id ?? null,
+      };
+    }
+
+    /**
+     * Seed two groups: "g-keep" holding `keep` (sess-keep) and "g-close" holding
+     * `c1` (sess-c1) and `c2` (sess-c2) split across two leaves. `active` picks
+     * which group is the live one.
+     */
+    function seedGroups(active: "g-keep" | "g-close", closeTabs?: TerminalTab[]) {
+      const keepLeaf = leaf("leaf-keep", [makeTab("keep", "sess-keep")]);
+      const [first, ...rest] = closeTabs ?? [makeTab("c1", "sess-c1"), makeTab("c2", "sess-c2")];
+      const closeRoot: TabGroup["rootPanel"] =
+        rest.length > 0
+          ? {
+              type: "split",
+              id: "split-close",
+              direction: "horizontal",
+              children: [leaf("leaf-c1", [first]), leaf("leaf-c2", rest)],
+            }
+          : leaf("leaf-c1", [first]);
+      const groups: TabGroup[] = [
+        { id: "g-keep", name: "Keep", rootPanel: keepLeaf, activePanelId: "leaf-keep" },
+        { id: "g-close", name: "Close", rootPanel: closeRoot, activePanelId: "leaf-c1" },
+      ];
+      const activeGroup = groups.find((g) => g.id === active)!;
+      seedLayoutState({
+        tabGroups: groups,
+        activeTabGroupId: active,
+        rootPanel: activeGroup.rootPanel,
+        activePanelId: activeGroup.activePanelId,
+      });
+      for (const id of ["keep", "c1", "c2"]) seedPerTabState(id);
+    }
+
+    for (const active of ["g-keep", "g-close"] as const) {
+      describe(`closing the ${active === "g-close" ? "active" : "inactive"} group`, () => {
+        beforeEach(() => seedGroups(active));
+
+        it("leaves no per-tab map entry for any tab of the closed group", () => {
+          expect(leftoverMapsFor("c1").length).toBeGreaterThan(0);
+
+          useAppStore.getState().closeTabGroup("g-close");
+
+          expect(layoutState().tabGroups.map((g) => g.id)).toEqual(["g-keep"]);
+          expect(leftoverMapsFor("c1")).toEqual([]);
+          expect(leftoverMapsFor("c2")).toEqual([]);
+        });
+
+        it("keeps the per-tab entries of tabs in surviving groups", () => {
+          useAppStore.getState().closeTabGroup("g-close");
+
+          expect(leftoverMapsFor("keep")).toEqual([...PER_TAB_MAPS, "tabContent"]);
+        });
+
+        it("drops each closed tab's session-lifecycle record exactly once", () => {
+          useAppStore.getState().closeTabGroup("g-close");
+
+          expect(sessionRemoveCallsFor("c1")).toBe(1);
+          expect(sessionRemoveCallsFor("c2")).toBe(1);
+          expect(sessionRemoveCallsFor("keep")).toBe(0);
+        });
+
+        it("removes the closed tabs from persistent attachedTabIds", () => {
+          seedPersistentAttachment(["c1", "keep", "c2"]);
+
+          useAppStore.getState().closeTabGroup("g-close");
+
+          expect(useAppStore.getState().persistentSessions["conn-1"].attachedTabIds).toEqual([
+            "keep",
+          ]);
+        });
+
+        it("drops the closed sessions' session-keyed entries", () => {
+          for (const sid of ["sess-keep", "sess-c1", "sess-c2"]) seedSessionState(sid);
+
+          useAppStore.getState().closeTabGroup("g-close");
+
+          const s = useAppStore.getState();
+          for (const sid of ["sess-c1", "sess-c2"]) {
+            expect(s.sessionCapabilities[sid]).toBeUndefined();
+            expect(s.sessionHighlighting[sid]).toBeUndefined();
+          }
+          expect(s.sessionCapabilities["sess-keep"]).toBeDefined();
+          expect(s.sessionHighlighting["sess-keep"]).toBe(false);
+        });
+
+        it("releases backend ownership once per closed session and closes none itself", () => {
+          useAppStore.getState().closeTabGroup("g-close");
+
+          expect(releaseSession).toHaveBeenCalledTimes(2);
+          expect(releaseSession.mock.calls.map((c) => c[0]).sort()).toEqual(["sess-c1", "sess-c2"]);
+          // The backend close itself runs once per session from the unmounting
+          // Terminal view (as for a single-tab close); the store must not add a
+          // second close.
+          expect(closeTerminal).not.toHaveBeenCalled();
+        });
+      });
+    }
+
+    it("ends broadcast when a closed tab was the broadcast source", () => {
+      seedGroups("g-keep");
+      useAppStore.getState().startBroadcast("all", "c1", ["keep"]);
+
+      useAppStore.getState().closeTabGroup("g-close");
+
+      expect(currentBroadcastView().active).toBe(false);
+    });
+
+    it("drops closed tabs from the broadcast targets", () => {
+      seedGroups("g-keep");
+      useAppStore.getState().startBroadcast("all", "keep", ["c1", "c2"]);
+
+      useAppStore.getState().closeTabGroup("g-close");
+
+      const v = currentBroadcastView();
+      expect(v.active).toBe(true);
+      expect(v.sourceTabId).toBe("keep");
+      expect(v.targetTabIds).not.toContain("c1");
+      expect(v.targetTabIds).not.toContain("c2");
+    });
+
+    it("drops a session-keyed entry shown only by several tabs of the closed group", () => {
+      seedGroups("g-keep", [makeTab("c1", "sess-dup"), makeTab("c2", "sess-dup")]);
+      seedSessionState("sess-dup");
+
+      useAppStore.getState().closeTabGroup("g-close");
+
+      const s = useAppStore.getState();
+      expect(s.sessionCapabilities["sess-dup"]).toBeUndefined();
+      expect(s.sessionHighlighting["sess-dup"]).toBeUndefined();
+      // One session, one ownership release.
+      expect(releaseSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps session-keyed entries a surviving group's tab still shows", () => {
+      seedGroups("g-keep", [makeTab("c1", "sess-keep")]);
+      seedSessionState("sess-keep");
+
+      useAppStore.getState().closeTabGroup("g-close");
+
+      const s = useAppStore.getState();
+      expect(s.sessionCapabilities["sess-keep"]).toBeDefined();
+      expect(s.sessionHighlighting["sess-keep"]).toBe(false);
+    });
+
+    it("does not release ownership of a session that is mid-move", () => {
+      seedGroups("g-keep");
+      useAppStore.setState({ movingSessionIds: ["sess-c1"] });
+
+      useAppStore.getState().closeTabGroup("g-close");
+
+      expect(releaseSession.mock.calls.map((c) => c[0])).toEqual(["sess-c2"]);
+    });
+
+    it("is a no-op (no teardown) for the sole group", () => {
+      seedTabs([makeTab("a", "sess-a")]);
+      seedPerTabState("a");
+      const groupId = layoutState().tabGroups[0].id;
+
+      useAppStore.getState().closeTabGroup(groupId);
+
+      expect(leftoverMapsFor("a")).toEqual([...PER_TAB_MAPS, "tabContent"]);
+      expect(sessionRemoveCallsFor("a")).toBe(0);
+      expect(releaseSession).not.toHaveBeenCalled();
     });
   });
 
