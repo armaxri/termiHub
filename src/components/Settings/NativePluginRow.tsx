@@ -205,8 +205,9 @@ export function NativePluginRow({
         title={`Load ${name} with reduced isolation?`}
         message={
           <>
-            {missingLayerWarning(missing)} The plugin can reach more of your system than a fully
-            isolated plugin. termiHub remembers this choice for this exact plugin build only.
+            {missingLayerWarning(missing, status?.enforced ?? [])} The plugin can reach more of your
+            system than a fully isolated plugin. termiHub remembers this choice for this exact
+            plugin build only.
           </>
         }
         description={`Missing sandbox layers: ${missing.map(layerName).join(", ")}`}
@@ -244,7 +245,7 @@ export function NativePluginRow({
           className="native-plugin-review__access"
           data-testid={`native-plugin-review-access-${id}`}
         >
-          {accessChips(plugin)
+          {accessChips(plugin, status)
             .filter((chip) => !chip.denied)
             .map((chip) => (
               <li key={chip.id}>

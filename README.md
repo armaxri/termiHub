@@ -177,7 +177,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Error handling** — Per step, retry a failing step (up to 10 retries, fixed or exponential back-off) and/or mark it _continue on error_ so the run carries on past an expected failure; tolerated failures are shown in the run toast and history
 - **Run on many terminals** — "Run on…" in the Workflows panel runs a workflow on a chosen set of connected terminals (or the current broadcast group) in parallel (up to 8 at a time, or one after another), with per-terminal progress, per-terminal or all-at-once Stop, and a per-terminal summary
 - **Sidebar + editor** — Manage, edit, and organize workflows from the Workflows panel; import and export workflows as portable JSON
-- **Schedules** — Run a workflow or macro every N minutes, daily, or on chosen weekdays at a local time (DST-aware) on chosen saved connections or a broadcast group, while termiHub is open. Schedules start disabled, the first enable asks you to confirm the target hosts, the status bar shows how many are active, and one switch pauses them all. A scheduled run only types into terminals that are already connected, never prompts, never overlaps its previous run, and is recorded in the run history as `scheduled`; runs missed while termiHub was closed or the computer slept are skipped (or run once, per schedule)
+- **Schedules** — Run a workflow or macro every N minutes, daily, or on chosen weekdays at a local time (DST-aware) on chosen saved connections or a broadcast group, while termiHub is open. Schedules start disabled, the first enable asks you to confirm the target hosts, the status bar shows how many are active, and one switch pauses them all. **Settings → Schedules** lists every schedule and lets you turn one off, pause them all, or delete one, even with experimental features off (the status-bar indicator opens it then; with them on it opens the Workflows view, where schedules are also created and edited). A scheduled run only types into terminals that are already connected, never prompts, never overlaps its previous run, and is recorded in the run history as `scheduled`; runs missed while termiHub was closed or the computer slept are skipped (or run once, per schedule)
 
 > ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type works through the terminal session: it sends text into it (i.e. runs on the remote host when you are connected), reads its output, or only controls the run. `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
 >
@@ -396,6 +396,8 @@ Click the **gear icon** > **Settings** to open the settings tab. termiHub stores
 ```bash
 TERMIHUB_CONFIG_DIR=./my-project/termihub-config pnpm tauri dev
 ```
+
+**Settings → Schedules** shows every scheduled workflow and macro run with its rule, target hosts, next run and last result. Turn a schedule off or on, pause all schedules with one switch, or delete a schedule. This category is always available, including with experimental features off. To create or edit a schedule, use the Workflows view (experimental) or schedule a macro from the Macros view.
 
 ### Tips and Tricks
 
