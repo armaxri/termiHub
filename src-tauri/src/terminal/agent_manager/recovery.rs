@@ -23,7 +23,7 @@ use super::{empty_params, read_handshake_line, serialize_request, MonitoringRout
 use crate::session::manager::{AgentHostedSession, SessionManager};
 use crate::session_projection::projection::{
     fold_agent_reconnect_failed, fold_agent_session_evicted, fold_agent_session_lost,
-    fold_agent_session_recovered, fold_agent_session_unconfirmed,
+    fold_agent_session_recovered, fold_agent_session_unconfirmed, fold_agent_session_user_ended,
     fold_agent_transport_reconnecting,
 };
 use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
@@ -71,6 +71,27 @@ pub(crate) async fn fold_agent_hosted_reconnect_failed<R: tauri::Runtime>(
     for hosted in manager.agent_hosted_sessions(agent_id).await {
         fold_agent_reconnect_failed(app_handle, &hosted.tab_id, Some(error));
     }
+}
+
+/// End every tab the agent hosts at the backend source because the user
+/// disconnected or shut the agent down (#4459): fold each live tab to
+/// `Disconnected(User)`, cancel its redrive timer and scrub its retained request.
+/// Returns the tabs it ended (sorted); tabs that had already ended are left as
+/// they are and not returned. Synchronous — it reads the identity bridge, not the
+/// async `sessions` map — so the agent manager runs it inline before emitting
+/// "disconnected". Empty when the `SessionManager` is not managed.
+pub(super) fn fold_agent_hosted_user_ended<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+) -> Vec<String> {
+    let Some(manager) = app_handle.try_state::<SessionManager>() else {
+        return Vec::new();
+    };
+    manager
+        .agent_hosted_tab_ids(agent_id)
+        .into_iter()
+        .filter(|tab_id| fold_agent_session_user_ended(app_handle, tab_id))
+        .collect()
 }
 
 /// The agent's hosted-session identity tuples, or an empty vec when the

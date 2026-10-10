@@ -426,6 +426,12 @@ pub struct RemoteStateChangeEvent {
     /// Why the connection ended; set only when `state` is "disconnected" (#4447).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<AgentEndReason>,
+    /// The tabs the backend ended for a user Disconnect/Shutdown (#4459): their
+    /// `session-lifecycle` entries were live and are now folded to
+    /// `Disconnected(User)`. Absent on every other event; tabs that had already
+    /// ended are not listed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_tabs: Option<Vec<String>>,
 }
 
 /// Bounded channel capacity for output data from backends. Re-exported from

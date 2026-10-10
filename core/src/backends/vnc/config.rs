@@ -1221,6 +1221,30 @@ mod tests {
     }
 
     #[test]
+    fn schema_exposes_unified_connect_timeout() {
+        // #4402: same key/label/bounds as the unified field, and the schema
+        // default matches the timeout the backend falls back to.
+        let schema = vnc_settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| &g.fields)
+            .find(|f| f.key == crate::connection::CONNECT_TIMEOUT_KEY)
+            .expect("VNC schema must expose connectTimeoutSecs");
+        assert_eq!(field.key, "connectTimeoutSecs");
+        assert_eq!(field.label, "Connect Timeout (s)");
+        assert!(!field.required);
+        assert_eq!(field.default, Some(serde_json::json!(30)));
+        match field.field_type {
+            FieldType::Number { min, max } => {
+                assert_eq!(min, Some(1.0));
+                assert_eq!(max, Some(600.0));
+            }
+            ref other => panic!("expected a number field, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn schema_port_defaults_to_5900() {
         let schema = vnc_settings_schema();
         let port = schema.groups[0]

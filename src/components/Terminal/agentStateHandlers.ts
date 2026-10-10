@@ -263,6 +263,12 @@ export interface AgentStateChangePayload {
   error?: string;
   /** Set on "disconnected" only. */
   reason?: AgentEndReason;
+  /**
+   * The tabs the backend ended for a user Disconnect/Shutdown (#4459): their
+   * region entries were live and are already folded `disconnected` / `user`.
+   * Absent on older events and on every other end.
+   */
+  ended_tabs?: string[];
 }
 
 /** Injectable collaborators of the state-change handlers (defaults: the real ones). */
@@ -301,6 +307,19 @@ function tabStillLive(tab: TerminalTab): boolean {
   if (useAppStore.getState().intentionallyKilledSessions[tab.sessionId]) return false;
   const status = currentSessionView()[tab.id]?.status;
   return status === undefined || !ENDED_STATUSES.has(status);
+}
+
+/**
+ * Whether a user end may present itself on `tab`: the backend just ended it
+ * (#4459 — its region already reads `disconnected`, so {@link tabStillLive}
+ * would skip it), or the event predates that list and the tab is still live.
+ * A tab the user is killing, and one that ended before this event, are left
+ * alone, so the presentation and the on-disconnect triggers run exactly once.
+ */
+function userEndApplies(tab: TerminalTab, endedTabs: readonly string[] | undefined): boolean {
+  if (!endedTabs?.includes(tab.id)) return tabStillLive(tab);
+  if (!tab.sessionId) return false;
+  return !useAppStore.getState().intentionallyKilledSessions[tab.sessionId];
 }
 
 /** Terminal tabs whose connection config names `agentId`. */
@@ -360,7 +379,8 @@ function isUserEnd(agentId: string, reason: AgentEndReason | undefined): boolean
 
 /**
  * The agent's transport ended. A user Disconnect/Shutdown ends each live tab
- * cleanly (#4309, in every window since #4447); an unexpected loss or a suspend
+ * cleanly (#4309, in every window since #4447; the backend folds the region
+ * itself since #4459, and this applies the presentation); an unexpected loss or a suspend
  * arms the backend reconnect; a backend give-up (`error`) reflects the
  * server-folded `failed` state.
  */
@@ -368,7 +388,8 @@ function applyAgentDisconnected(
   agentId: string,
   agentTerminalTabs: TerminalTab[],
   error: string | undefined,
-  reason: AgentEndReason | undefined
+  reason: AgentEndReason | undefined,
+  endedTabs: readonly string[] | undefined
 ): void {
   const store = useAppStore.getState();
   const intentional = isUserEnd(agentId, reason);
@@ -376,8 +397,11 @@ function applyAgentDisconnected(
   for (const tab of agentTerminalTabs) {
     if (intentional) {
       // The disconnect deleted the agent's retained config, so a reconnect loop
-      // could never succeed: end the tab with a manual Reconnect instead.
-      if (!tabStillLive(tab)) continue;
+      // could never succeed: end the tab with a manual Reconnect instead. The
+      // backend already folded the region for the tabs it lists (#4459); the
+      // `session.disconnect` this mirrors again is idempotent, and the view mode
+      // and banner are this window's own presentation.
+      if (!userEndApplies(tab, endedTabs)) continue;
       store.setTerminalAgentDisconnected(tab.id);
     } else if (error) {
       // Backend gave up (#2612/#2564): it folded `failed` at the source; only
@@ -407,7 +431,7 @@ export async function handleAgentStateChange(
   deps: Partial<StateChangeDeps> = {}
 ): Promise<void> {
   const { listAgentSessions, getAllTabs } = { ...DEFAULT_DEPS, ...deps };
-  const { session_id: agentId, state, error, reason } = payload;
+  const { session_id: agentId, state, error, reason, ended_tabs: endedTabs } = payload;
   frontendLog("disconnect", `agent-state-change agent=${agentId} state=${state}`);
   const store = useAppStore.getState();
   store.setAgentConnectionState(agentId, state as RemoteAgentDefinition["connectionState"], error);
@@ -422,6 +446,6 @@ export async function handleAgentStateChange(
   } else if (state === "reconnecting") {
     applyAgentReconnecting(agentId, agentTerminalTabs, error);
   } else if (state === "disconnected") {
-    applyAgentDisconnected(agentId, agentTerminalTabs, error, reason);
+    applyAgentDisconnected(agentId, agentTerminalTabs, error, reason, endedTabs);
   }
 }

@@ -498,6 +498,10 @@ pub(super) struct TabBinding {
     /// backend (#2439). Decides a genuine drop's server-side fold:
     /// `reconnect` when `true`, `dropped` when `false`.
     pub(super) resilient: bool,
+    /// The agent hosting the session, `None` for a direct session (#4459). Lets
+    /// a user agent Disconnect find the agent's tabs without awaiting the
+    /// async `sessions` lock.
+    pub(super) agent_id: Option<String>,
 }
 
 /// The session-lifecycle transition to fold for a **genuine** (non-killed) exit
@@ -1311,6 +1315,7 @@ impl SessionManager {
                     TabBinding {
                         tab_id: tab_id.clone(),
                         resilient: resilient_reconnect,
+                        agent_id: agent_id.map(str::to_string),
                     },
                 );
 
@@ -1701,6 +1706,25 @@ impl SessionManager {
                 })
             })
             .collect()
+    }
+
+    /// The frontend tab ids of every session `agent_id` hosts (#4459), read from
+    /// the identity bridge alone so a synchronous caller — the agent manager's
+    /// user Disconnect — can fold their region entries before it emits the
+    /// "disconnected" event. Sorted, so the event lists them deterministically.
+    pub fn agent_hosted_tab_ids(&self, agent_id: &str) -> Vec<String> {
+        let tab_ids = self
+            .session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut hosted: Vec<String> = tab_ids
+            .values()
+            .filter(|b| b.agent_id.as_deref() == Some(agent_id))
+            .map(|b| b.tab_id.clone())
+            .collect();
+        hosted.sort();
+        hosted.dedup();
+        hosted
     }
 
     /// The agent-hosted session bound to a frontend tab, if any (SM-003): its
@@ -2191,6 +2215,7 @@ impl SessionManager {
                 TabBinding {
                     tab_id: tab_id.to_string(),
                     resilient: true,
+                    agent_id: Some(agent_id.to_string()),
                 },
             );
 

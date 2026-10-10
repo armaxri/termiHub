@@ -29,6 +29,10 @@
 //!   on demand keeps one listener per pending `PASV` instead of pre-binding the
 //!   whole 16k-port range, and the rewrite removes any collision between a port
 //!   libunftp reserved and one another process already holds.
+//! * **Pre-login timeout.** A control connection that has not completed login
+//!   (no `230`/`232` reply from libunftp) within the session's pre-login
+//!   timeout ([`PRELOGIN_TIMEOUT`] by default) gets `421` and is closed, so an
+//!   idle unauthenticated connection cannot keep a session slot (#4398).
 //! * **EPSV.** libunftp answers `EPSV` with `502` in proxy mode, so the relay
 //!   sends libunftp `PASV` instead and turns the `227` into a `229`.
 //! * **Data source check.** The relay itself only forwards a data connection
@@ -77,6 +81,13 @@ const DATA_ACCEPT_TIMEOUT: Duration = Duration::from_secs(15);
 const OVERFLOW_DRAIN_TIME: Duration = Duration::from_millis(500);
 /// Most client bytes discarded (never buffered) after an overlong line.
 const OVERFLOW_DRAIN_BYTES: usize = 64 * 1024;
+/// How long a control connection may stay open without completing login
+/// before the relay answers `421` and closes it (#4398). Long enough for a
+/// person typing credentials into an interactive client; short enough that an
+/// idle unauthenticated connection frees its session slot quickly.
+pub(super) const PRELOGIN_TIMEOUT: Duration = Duration::from_secs(30);
+/// Reply sent before closing a connection that did not log in in time.
+const PRELOGIN_TIMEOUT_REPLY: &[u8] = b"421 Login timeout, closing control connection.\r\n";
 /// Spread-out fallback ports tried for a passive listener before answering `425`.
 const DATA_BIND_ATTEMPTS: u32 = 64;
 
@@ -331,6 +342,15 @@ pub(super) struct RelaySession {
     pub passive_ports: RangeInclusive<u16>,
     /// The server's access log, for rejected connections.
     pub activity: Arc<ServerActivity>,
+    /// How long the client has to complete login before the relay answers
+    /// `421` and closes the connection ([`PRELOGIN_TIMEOUT`] in production).
+    pub prelogin_timeout: Duration,
+}
+
+/// Whether `code` is a final reply that completes a login (`230` logged in,
+/// `232` logged in with security data).
+fn is_login_complete(code: u16) -> bool {
+    matches!(code, 230 | 232)
 }
 
 /// A passive data connection accepted from the right client, ready to forward.
@@ -366,6 +386,9 @@ impl RelaySession {
         let mut forwarders: JoinSet<()> = JoinSet::new();
         let mut cbuf = [0u8; READ_CHUNK];
         let mut ubuf = [0u8; READ_CHUNK];
+        let mut logged_in = false;
+        let prelogin_deadline = tokio::time::sleep(self.prelogin_timeout);
+        tokio::pin!(prelogin_deadline);
 
         loop {
             tokio::select! {
@@ -410,6 +433,9 @@ impl RelaySession {
                         .map_err(|_| io::Error::other("FTP reply line from libunftp too long"))?;
                     for line in lines {
                         let code = tracker.final_code(&line);
+                        if code.is_some_and(is_login_complete) {
+                            logged_in = true;
+                        }
                         let out = match code {
                             Some(227) => match parse_pasv_port(&line) {
                                 Some(reserved) => {
@@ -439,6 +465,17 @@ impl RelaySession {
                     }
                 }
                 Some(_) = forwarders.join_next(), if !forwarders.is_empty() => {}
+                () = &mut prelogin_deadline, if !logged_in => {
+                    tracing::info!(peer = %self.peer, "FTP client did not log in in time; closing");
+                    self.activity.record(
+                        AccessRecord::new("CONTROL", "timeout", false)
+                            .client(self.peer.ip())
+                            .detail("no login within the pre-login timeout"),
+                    );
+                    let _ = client_tx.write_all(PRELOGIN_TIMEOUT_REPLY).await;
+                    let _ = client_tx.shutdown().await;
+                    return Ok(());
+                }
             }
         }
         let _ = client_tx.shutdown().await;

@@ -315,8 +315,32 @@ async fn wait_for(cond: impl Fn() -> bool) {
 
 #[tokio::test]
 async fn cancelling_one_file_cancels_the_rest_of_its_folder() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    cancel_one_and_expect_whole_folder_cancelled(TransferRegistry::new()).await;
+}
+
+/// A quit-style `cancel_all` on some *other* registry must not leak its
+/// teardown flag into this one (#4675): while the flag was a process-wide
+/// static, the group cancel below was skipped and the sibling hung forever
+/// whenever a `cancel_all` test had run earlier in the same test binary.
+#[tokio::test]
+async fn another_registrys_cancel_all_does_not_suppress_the_folder_cancel() {
+    let other = TransferRegistry::new();
+    other.cancel_all();
+    assert!(other.is_queue_teardown());
     let reg = TransferRegistry::new();
+    assert!(!reg.is_queue_teardown(), "teardown is scoped per registry");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        cancel_one_and_expect_whole_folder_cancelled(reg),
+    )
+    .await
+    .expect("the folder cancel must not hang after another registry's cancel_all");
+}
+
+/// Run a two-file folder copy held paused, cancel the first file, and assert
+/// the group cancel settles both files cancelled with nothing left behind.
+async fn cancel_one_and_expect_whole_folder_cancelled(reg: TransferRegistry) {
+    let dir = tempfile::tempdir().expect("tempdir");
     let ids: Arc<[String]> = Arc::from(vec!["g-1".to_string(), "g-2".to_string()]);
     let mut tasks = Vec::new();
     let mut handles = Vec::new();

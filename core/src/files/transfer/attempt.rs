@@ -18,17 +18,20 @@
 //!
 //! Every backend keeps only its own streaming primitive and its error type.
 
+use std::any::Any;
 use std::fmt::Display;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::registry::{TransferHandle, TransferRegistry};
 use super::retry::{decide_resume, ResumeDecision, SourceFingerprint};
-use super::state::TransferEvent;
+use super::state::{TransferEvent, TransferStateTag};
 use super::{ProgressSink, ThroughputMeter, TransferPhase, TransferProgress, PROGRESS_THROTTLE};
 use crate::files::copy::ChunkedCopyOutcome;
 
@@ -658,16 +661,109 @@ async fn finish_cancelled<C, CFut>(
     registry.drop_entry(&handle.transfer_id);
 }
 
+/// User-facing prefix of the terminal message emitted when a transfer's
+/// executor task panics (#4671).
+pub(super) const CRASH_MESSAGE: &str = "transfer task crashed";
+
+/// Poll `fut` to completion, catching a panic raised while polling it — the
+/// async counterpart of [`std::panic::catch_unwind`], without pulling in
+/// `futures-util` (optional in core).
+async fn catch_unwind<F: Future>(fut: F) -> std::thread::Result<F::Output> {
+    let mut fut = Box::pin(fut);
+    std::future::poll_fn(move |cx| {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| fut.as_mut().poll(cx))) {
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(panic) => Poll::Ready(Err(panic)),
+        }
+    })
+    .await
+}
+
+/// The human-readable message of a caught panic payload.
+fn panic_message(panic: &(dyn Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
+}
+
+/// Settle a transfer whose executor panicked (#4671): move the handle to a
+/// terminal state, emit it once with a clear message, and drop the registry
+/// entry so its concurrency slot is released and a queued peer is promoted.
+///
+/// Exactly once: when the handle no longer owns its registry entry the
+/// executor already emitted its terminal state and dropped it (the panic came
+/// later), so nothing is emitted again.
+fn settle_crashed(
+    handle: &Arc<TransferHandle>,
+    registry: &TransferRegistry,
+    sink: &ProgressSink,
+    backend: &'static str,
+    panic: &(dyn Any + Send),
+) {
+    let reason = panic_message(panic);
+    let owns_entry = registry
+        .get(&handle.transfer_id)
+        .is_some_and(|live| Arc::ptr_eq(&live, handle));
+    error!(backend, transfer_id = %handle.transfer_id, reason, owns_entry, "transfer task panicked");
+    if !owns_entry {
+        return;
+    }
+    let phase = match handle.settle_crashed() {
+        TransferStateTag::Completed => TransferPhase::Done,
+        TransferStateTag::Cancelled => TransferPhase::Cancelled,
+        _ => TransferPhase::Error,
+    };
+    let message = format!("{CRASH_MESSAGE}: {reason}");
+    // A panicking sink must not keep the slot leaked: drop the entry regardless.
+    if std::panic::catch_unwind(AssertUnwindSafe(|| {
+        emit(handle, sink, phase, None, Some(message));
+    }))
+    .is_err()
+    {
+        error!(backend, transfer_id = %handle.transfer_id, "progress sink panicked settling a crashed transfer");
+    }
+    registry.drop_entry(&handle.transfer_id);
+}
+
 /// Drive a queued transfer to a terminal state: acquire (or re-acquire) a
 /// concurrency slot, run one Active stint via `stint`, and settle the result —
 /// done, cancelled (with `cleanup` of the partial destination), paused (slot
 /// released until a resume), or permanently failed (slot released, handle kept
 /// for a manual retry). Consumes the handle's registry entry on exit.
 ///
+/// A panic anywhere in the stint loop (a stint, the cleanup, a wait) is caught
+/// and settles the transfer as failed with a [`CRASH_MESSAGE`], releasing its
+/// slot — otherwise the row would stay `queued`/`active` forever and block
+/// every later transfer on the session (#4671).
+///
 /// The cursor is threaded through `stint` by value (it is `Copy`), which keeps
 /// the stint future free of higher-ranked borrows so the whole transfer future
 /// stays `Send` for `tokio::spawn`.
 pub(super) async fn drive_transfer<S, SFut, C, CFut>(
+    handle: &Arc<TransferHandle>,
+    registry: &TransferRegistry,
+    sink: &ProgressSink,
+    backend: &'static str,
+    cursor: ResumeCursor,
+    stint: S,
+    cleanup: C,
+) where
+    S: FnMut(ResumeCursor) -> SFut,
+    SFut: Future<Output = (AttemptsResult, ResumeCursor)>,
+    C: Fn() -> CFut,
+    CFut: Future<Output = ()>,
+{
+    let driven = drive_stints(handle, registry, sink, backend, cursor, stint, cleanup);
+    if let Err(panic) = catch_unwind(driven).await {
+        settle_crashed(handle, registry, sink, backend, &*panic);
+    }
+}
+
+/// The stint loop of [`drive_transfer`], run under its panic guard.
+async fn drive_stints<S, SFut, C, CFut>(
     handle: &Arc<TransferHandle>,
     registry: &TransferRegistry,
     sink: &ProgressSink,
@@ -762,6 +858,189 @@ mod tests {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(&self.0)
         }
+    }
+
+    // ── a panicking executor settles exactly once (#4671) ────────────────────
+
+    /// A sink recording every emitted `(phase, state, message)`.
+    type CrashLog = Arc<
+        Mutex<
+            Vec<(
+                TransferPhase,
+                crate::files::transfer::TransferStateTag,
+                Option<String>,
+            )>,
+        >,
+    >;
+
+    fn crash_sink() -> (ProgressSink, CrashLog) {
+        let log: CrashLog = Arc::new(Mutex::new(Vec::new()));
+        let rec = log.clone();
+        let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+            rec.lock()
+                .expect("lock")
+                .push((p.phase, p.state, p.message.clone()));
+        });
+        (sink, log)
+    }
+
+    fn explode() -> AttemptsResult {
+        panic!("stint exploded")
+    }
+
+    fn crash_cursor() -> ResumeCursor {
+        ResumeCursor {
+            offset: 0,
+            total: 10,
+            baseline: None,
+        }
+    }
+
+    async fn no_cleanup_needed() {}
+
+    #[tokio::test]
+    async fn a_panicking_stint_settles_failed_once_and_frees_its_slot() {
+        use crate::files::transfer::scheduler::Admission;
+        use crate::files::transfer::TransferStateTag;
+        let reg = TransferRegistry::with_max_concurrent(1);
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let peer = reg.enqueue("t2", "s1", TransferDirection::Upload, "g", "/g", 10);
+        let (sink, log) = crash_sink();
+        let (reg2, peer2) = (reg.clone(), peer.clone());
+        drive_transfer(
+            &h,
+            &reg,
+            &sink,
+            "test",
+            crash_cursor(),
+            move |c| {
+                // The peer queues behind the slot this transfer now holds.
+                assert_eq!(reg2.request_slot(&peer2), Admission::Queue);
+                async move { (explode(), c) }
+            },
+            no_cleanup_needed,
+        )
+        .await;
+
+        let log = log.lock().expect("lock");
+        let terminal: Vec<_> = log
+            .iter()
+            .filter(|(phase, ..)| *phase != TransferPhase::Transferring)
+            .collect();
+        assert_eq!(terminal.len(), 1, "exactly one terminal emit: {log:?}");
+        let (phase, state, message) = log.last().expect("an emit").clone();
+        assert_eq!(phase, TransferPhase::Error);
+        assert_eq!(state, TransferStateTag::Failed);
+        let message = message.expect("a crash message");
+        assert!(message.starts_with(CRASH_MESSAGE), "{message}");
+        assert!(message.contains("stint exploded"), "{message}");
+        assert!(reg.get("t1").is_none(), "the crashed entry is dropped");
+        let retained = reg
+            .list(Some("s1"))
+            .into_iter()
+            .find(|s| s.transfer_id == "t1")
+            .expect("settled snapshot retained");
+        assert!(retained.settled);
+        assert_eq!(retained.state, TransferStateTag::Failed);
+        assert!(
+            peer.state().is_active(),
+            "the released slot promotes the queued peer"
+        );
+    }
+
+    /// A panic after the executor already moved to a terminal state (here: in
+    /// the cleanup after a cancel) keeps that state and still settles once.
+    #[tokio::test]
+    async fn a_panicking_cleanup_after_cancel_settles_cancelled_once() {
+        use crate::files::transfer::TransferStateTag;
+        let reg = TransferRegistry::with_max_concurrent(1);
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, log) = crash_sink();
+        let h2 = h.clone();
+        drive_transfer(
+            &h,
+            &reg,
+            &sink,
+            "test",
+            crash_cursor(),
+            move |c| {
+                h2.transition(TransferEvent::Cancel);
+                async move { (AttemptsResult::Cancelled, c) }
+            },
+            || async {
+                explode();
+            },
+        )
+        .await;
+
+        let log = log.lock().expect("lock");
+        let terminal: Vec<_> = log
+            .iter()
+            .filter(|(phase, ..)| *phase != TransferPhase::Transferring)
+            .collect();
+        assert_eq!(terminal.len(), 1, "exactly one terminal emit: {log:?}");
+        let (phase, state, message) = terminal[0].clone();
+        assert_eq!(phase, TransferPhase::Cancelled);
+        assert_eq!(state, TransferStateTag::Cancelled);
+        assert!(message.expect("crash message").starts_with(CRASH_MESSAGE));
+        assert!(reg.get("t1").is_none());
+    }
+
+    /// The app-quit `cancel_all` sweep settles a queued transfer cancelled
+    /// (#4387). It used to set a process-wide teardown flag, so this test hung
+    /// the folder group-cancel test whenever it ran first; the flag is now
+    /// scoped to this registry (#4675).
+    #[tokio::test]
+    async fn cancel_all_settles_a_queued_transfer_cancelled() {
+        use crate::files::transfer::TransferStateTag;
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, log) = crash_sink();
+        assert_eq!(reg.cancel_all(), 1);
+        assert!(reg.is_queue_teardown());
+        let h2 = h.clone();
+        drive_transfer(
+            &h,
+            &reg,
+            &sink,
+            "test",
+            crash_cursor(),
+            // Like a real stint: the copy loop sees the tripped token and stops.
+            move |c| {
+                assert!(h2.is_cancelled(), "cancel_all tripped the token");
+                h2.transition(TransferEvent::Cancel);
+                async move { (AttemptsResult::Cancelled, c) }
+            },
+            no_cleanup_needed,
+        )
+        .await;
+        let (phase, state, _) = log.lock().expect("lock").last().expect("emit").clone();
+        assert_eq!(phase, TransferPhase::Cancelled);
+        assert_eq!(state, TransferStateTag::Cancelled);
+        assert!(reg.get("t1").is_none());
+        assert!(
+            !TransferRegistry::new().is_queue_teardown(),
+            "teardown does not leak to other registries"
+        );
+    }
+
+    /// A panic after the terminal emit and entry drop must not emit again.
+    #[tokio::test]
+    async fn a_panic_after_settling_emits_nothing_more() {
+        let reg = TransferRegistry::new();
+        let h = reg.enqueue("t1", "s1", TransferDirection::Upload, "f", "/f", 10);
+        let (sink, log) = crash_sink();
+        h.transition(TransferEvent::Activate);
+        h.transition(TransferEvent::Complete);
+        emit(&h, &sink, TransferPhase::Done, None, None);
+        reg.drop_entry("t1");
+        let panic: Box<dyn Any + Send> = Box::new("late panic");
+        settle_crashed(&h, &reg, &sink, "test", &*panic);
+        assert_eq!(
+            log.lock().expect("lock").len(),
+            1,
+            "no second terminal emit"
+        );
     }
 
     #[test]

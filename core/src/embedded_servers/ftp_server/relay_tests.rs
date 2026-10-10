@@ -32,12 +32,29 @@ impl RunningServer {
 
     /// Start a server for an explicit `config`.
     pub(super) fn start_config(config: EmbeddedServerConfig) -> Self {
+        let limits = FtpLimits::for_config(&config);
+        Self::start_limits(config, limits)
+    }
+
+    /// Start a server for `config` with explicit connection `limits` (for
+    /// example a short pre-login timeout).
+    pub(super) fn start_limits(config: EmbeddedServerConfig, limits: FtpLimits) -> Self {
         let stats = AtomicServerStats::new();
         let shutdown = ShutdownSignal::new();
         let (ready, ready_rx) = BindSignal::for_test();
         let (server_stats, server_shutdown) = (Arc::clone(&stats), shutdown.clone());
         let handle = std::thread::spawn(move || {
-            start_ftp_server(&config, server_shutdown, server_stats, ready)
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(run_ftp_server(
+                    &config,
+                    limits,
+                    server_shutdown,
+                    server_stats,
+                    ready,
+                ))
         });
         let addr = ready_rx
             .recv_timeout(Duration::from_secs(5))
@@ -362,7 +379,10 @@ fn relay_attributes_the_client_ip_and_refuses_data_from_another_ip() {
             Arc::new(LoginThrottle::new()),
             stream,
             claimed,
-            addr.port(),
+            RelayParams {
+                public_port: addr.port(),
+                prelogin_timeout: crate::embedded_servers::ftp_relay::PRELOGIN_TIMEOUT,
+            },
             session_shutdown,
         )
         .await;

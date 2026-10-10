@@ -52,6 +52,44 @@ fn opt(value: &str, label: &str) -> SelectOption {
     }
 }
 
+/// Default connect timeout, in seconds, for a graphical (VNC/RDP) connect when
+/// the settings carry no usable `connectTimeoutSecs` (#4298). The desktop's
+/// VNC connect and the RDP sidecar both fall back to this value.
+pub const GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS: u64 = 30;
+
+/// Upper cap, in seconds, on a configured graphical connect timeout, so a typo
+/// can never make the connect effectively unbounded (#4298).
+pub const GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS: u64 = 600;
+
+/// The unified `connectTimeoutSecs` editor row (#2901) for graphical
+/// connections (#4402): same key and label as SSH/telnet, bounded by the
+/// graphical default and cap the backends already enforce.
+fn connect_timeout_field() -> SettingsField {
+    SettingsField {
+        default: Some(serde_json::json!(GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS)),
+        placeholder: Some(GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS.to_string()),
+        description: Some(
+            "Seconds to wait for the connection and protocol handshake before giving up"
+                .to_string(),
+        ),
+        help_text: Some(format!(
+            "Bounds how long a connection to an unreachable or unresponsive host \
+             blocks before failing. The budget covers the TCP connect (or SSH tunnel), \
+             TLS and the protocol handshake. Leave empty to use the default \
+             ({GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS} s); values above \
+             {GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS} s are capped."
+        )),
+        ..field(
+            super::connect_timeout::CONNECT_TIMEOUT_KEY,
+            "Connect Timeout (s)",
+            FieldType::Number {
+                min: Some(1.0),
+                max: Some(GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS as f64),
+            },
+        )
+    }
+}
+
 /// The **shared field base** every graphical remote-desktop connection editor
 /// renders, identically, through the existing `DynamicForm`.
 ///
@@ -62,7 +100,8 @@ fn opt(value: &str, label: &str) -> SelectOption {
 /// list of groups so a backend can append its protocol-specific group in the
 /// natural position.
 ///
-/// Groups: **Connection** (host, port, username, password + save password),
+/// Groups: **Connection** (host, port, username, password + save password,
+/// connect timeout),
 /// **Display** (scale mode), **Features** (view only, clipboard sync,
 /// auto-reconnect).
 ///
@@ -109,6 +148,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                         FieldType::Boolean,
                     )
                 },
+                connect_timeout_field(),
             ],
         },
         SettingsGroup {
@@ -1268,6 +1308,7 @@ mod tests {
             "viewOnly",
             "clipboardSync",
             "autoReconnect",
+            "connectTimeoutSecs",
         ] {
             assert!(
                 all_field_keys.contains(&expected),
@@ -1277,6 +1318,35 @@ mod tests {
         // One save option, the key every other type uses (#3818): the legacy
         // `saveToStore` row was never read, so it must not come back.
         assert!(!all_field_keys.contains(&"saveToStore"));
+    }
+
+    #[test]
+    fn shared_field_base_exposes_unified_connect_timeout() {
+        // #4402: the graphical editor exposes the unified connect timeout under
+        // the same key and label as SSH/telnet, bounded like the backends.
+        let groups = shared_field_base(5900);
+        let field = groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == super::super::CONNECT_TIMEOUT_KEY)
+            .expect("connection group must expose connectTimeoutSecs");
+        assert_eq!(field.key, "connectTimeoutSecs");
+        assert_eq!(field.label, "Connect Timeout (s)");
+        assert!(!field.required);
+        assert_eq!(field.default, Some(serde_json::json!(30)));
+        assert!(
+            matches!(
+                field.field_type,
+                FieldType::Number {
+                    min: Some(min),
+                    max: Some(max),
+                } if min == 1.0 && max == 600.0
+            ),
+            "unexpected field type: {:?}",
+            field.field_type
+        );
+        assert_eq!(GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS, 30);
+        assert_eq!(GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS, 600);
     }
 
     #[test]

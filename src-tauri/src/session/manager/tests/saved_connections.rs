@@ -94,6 +94,7 @@ fn retain_for_tab(manager: &SessionManager, session_id: &str, tab_id: &str) {
         TabBinding {
             tab_id: tab_id.to_string(),
             resilient: true,
+            agent_id: None,
         },
     );
     manager.retained_requests.retain(

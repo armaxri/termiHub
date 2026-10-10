@@ -168,11 +168,13 @@ pub struct RdpConfig {
 /// Default bound on the sidecar's TCP connect and RDP negotiation when the
 /// settings carry no usable `connectTimeoutSecs` — the same 30 s every other
 /// graphical connect uses (#4298).
-pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 =
+    crate::connection::graphical::GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS;
 
 /// Upper cap on a configured connect timeout, so a typo can never make the
 /// connect effectively unbounded.
-pub const MAX_CONNECT_TIMEOUT_SECS: u64 = 600;
+pub const MAX_CONNECT_TIMEOUT_SECS: u64 =
+    crate::connection::graphical::GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS;
 
 /// Read `connectTimeoutSecs` leniently: a whole number is kept, anything else
 /// (`null`, a string, a fraction) is treated as unset rather than failing the
@@ -1224,6 +1226,30 @@ mod tests {
         let group = schema.groups.iter().find(|g| g.key == "rdp").unwrap();
         assert!(group.fields.iter().any(|f| f.key == "securityMode"));
         assert!(group.fields.iter().any(|f| f.key == "ignoreCertErrors"));
+    }
+
+    #[test]
+    fn schema_exposes_unified_connect_timeout() {
+        // #4402: same key/label/bounds as the unified field, and the schema
+        // default matches the timeout the backend falls back to.
+        let schema = rdp_settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| &g.fields)
+            .find(|f| f.key == crate::connection::CONNECT_TIMEOUT_KEY)
+            .expect("RDP schema must expose connectTimeoutSecs");
+        assert_eq!(field.key, "connectTimeoutSecs");
+        assert_eq!(field.label, "Connect Timeout (s)");
+        assert!(!field.required);
+        assert_eq!(field.default, Some(serde_json::json!(30)));
+        match field.field_type {
+            FieldType::Number { min, max } => {
+                assert_eq!(min, Some(1.0));
+                assert_eq!(max, Some(600.0));
+            }
+            ref other => panic!("expected a number field, got {other:?}"),
+        }
     }
 
     #[test]
