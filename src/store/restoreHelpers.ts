@@ -85,13 +85,6 @@ export function beginRestoreGuard(setState: (partial: Partial<AppState>) => void
   }, RESTORE_GUARD_SAFETY_TIMEOUT_MS);
 }
 
-/** Test-only: drop a raised guard and its safety timer without touching state. */
-export function resetRestoreGuardForTest(): void {
-  raisedGuardSetState = null;
-  if (restoreSafetyTimer) clearTimeout(restoreSafetyTimer);
-  restoreSafetyTimer = null;
-}
-
 /**
  * Probe reachability for a pending restore prompt and patch its tabs with the
  * results (#1931). Runs in the background after the dialog opens so the prompt

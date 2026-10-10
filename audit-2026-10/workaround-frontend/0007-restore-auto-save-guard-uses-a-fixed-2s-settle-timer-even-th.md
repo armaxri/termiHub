@@ -14,8 +14,8 @@ evidence:
   - src/store/slices/layoutPersistenceSlice.ts:498
   - src/store/slices/restoreCohortSlice.ts:28
   - src/store/slices/restoreCohortSlice.ts:47
-status: open
-resolution: ""
+status: fixed
+resolution: "#4387 — guard lowers when the newest restore cohort settles; 30s safety timeout only as backstop"
 audit: 2026-10
 commit: 663465d52
 relation: new
