@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useId } from "react";
-import { ServerCrash, RefreshCw, Loader2, Zap, Ban, Copy } from "lucide-react";
+import { ServerCrash, RefreshCw, Zap, Ban, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
-import { ContentOverlay, toast } from "@/components/ui";
+import { ContentOverlay, Spinner, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
@@ -29,6 +29,18 @@ interface TerminalConnectionOverlayProps {
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
+
+/**
+ * The shared spinner for every busy state (restoring, waiting, connecting).
+ * Decorative: the overlay's `busy` live region announces the steady heading.
+ */
+const busyIcon = (
+  <Spinner
+    size={32}
+    label={null}
+    className="terminal-connection-overlay__icon terminal-connection-overlay__icon--busy"
+  />
+);
 
 /**
  * Copy a suggested fix command to the clipboard so the user can paste and run it
@@ -190,12 +202,7 @@ export function TerminalConnectionOverlay({
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
         <ContentOverlay
-          icon={
-            <Loader2
-              size={32}
-              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-            />
-          }
+          icon={busyIcon}
           busy
           heading="Restoring session…"
           subheading="Loading cached scrollback from the persistent session."
@@ -208,12 +215,7 @@ export function TerminalConnectionOverlay({
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
         <ContentOverlay
-          icon={
-            <Loader2
-              size={32}
-              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-            />
-          }
+          icon={busyIcon}
           busy
           heading="Waiting for agent…"
           subheading="Waiting for the agent to connect before starting the session."
@@ -263,12 +265,7 @@ export function TerminalConnectionOverlay({
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
         <ContentOverlay
-          icon={
-            <Loader2
-              size={32}
-              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-            />
-          }
+          icon={busyIcon}
           busy
           heading={`Connecting… (attempt ${autoRetryCount + 1})`}
           subheading={tabTitle}
@@ -323,12 +320,7 @@ export function TerminalConnectionOverlay({
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
         <ContentOverlay
-          icon={
-            <Loader2
-              size={32}
-              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-            />
-          }
+          icon={busyIcon}
           busy
           heading="Connecting…"
           subheading={tabTitle}
