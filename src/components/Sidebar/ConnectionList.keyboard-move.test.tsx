@@ -7,7 +7,7 @@
  * the Menu key) offers Move to Folder, Move Up and Move Down. All of them route
  * through the store actions the drag-and-drop path uses.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
@@ -76,9 +76,9 @@ const FOLDERS = [folder("work", "Work"), folder("dev", "Dev", "work")];
 describe("ConnectionList — move connections without dragging (#4528)", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let reorderConnections: ReturnType<typeof vi.fn>;
-  let moveConnectionToFolder: ReturnType<typeof vi.fn>;
-  let bulkMoveConnectionsToFolder: ReturnType<typeof vi.fn>;
+  let reorderConnections: Mock<(oldIndex: number, newIndex: number) => void>;
+  let moveConnectionToFolder: Mock<(id: string, folderId: string | null) => void>;
+  let bulkMoveConnectionsToFolder: Mock<(ids: string[], folderId: string | null) => void>;
 
   beforeEach(() => {
     container = document.createElement("div");
