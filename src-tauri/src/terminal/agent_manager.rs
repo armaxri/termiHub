@@ -3558,6 +3558,9 @@ mod fake_agent_sshd;
 // Output flow control + lossless output delivery for agent sessions (#4416).
 #[cfg(test)]
 mod output_flow_tests;
+// Capability refresh across an in-place reconnect (#4440).
+#[cfg(test)]
+mod capability_refresh_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //
