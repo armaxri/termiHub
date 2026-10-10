@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { redactLogText, REDACTION_MARKER } from "./redactLogText";
+import secretTextVectors from "@/test/fixtures/redaction/secret-text-vectors.json";
 
 const MARK = REDACTION_MARKER;
 
@@ -153,5 +154,28 @@ describe("redactLogText — general properties", () => {
     expect(redactLogText(input)).toBe(
       [`password=${MARK}`, "harmless line", `api_key=${MARK}`].join("\n")
     );
+  });
+});
+
+describe("redactLogText — shared secret-key vectors (#4430)", () => {
+  // The same vectors run against the Rust diagnostics redactor
+  // (core/src/diagnostics/redact_tests.rs), so the two key lists cannot drift.
+  const cases = secretTextVectors.cases.map(
+    (c) => [c.input, c.expected.replaceAll("{R}", MARK)] as [string, string]
+  );
+
+  it("has vectors", () => {
+    expect(cases.length).toBeGreaterThan(100);
+  });
+
+  it.each(cases)("%s", (input, expected) => {
+    expect(redactLogText(input)).toBe(expected);
+  });
+
+  it("is idempotent on every vector", () => {
+    for (const [input] of cases) {
+      const once = redactLogText(input);
+      expect(redactLogText(once)).toBe(once);
+    }
   });
 });
