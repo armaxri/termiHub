@@ -621,6 +621,79 @@ describe("handleAgentStateChange (real handler, #4309)", () => {
       expect(intents("session.reconnect", tab.id)).toHaveLength(1);
     });
   });
+
+  // ── the backend ends the hosted tabs itself (#4459) ──────────────────────
+
+  describe("'disconnected' listing the tabs the backend ended", () => {
+    /** Deliver a user-end "disconnected" event listing `endedTabs`. */
+    function userEndListing(endedTabs: string[]): Promise<void> {
+      return handleAgentStateChange(
+        { session_id: AGENT, state: "disconnected", reason: "user", ended_tabs: endedTabs },
+        { listAgentSessions, getAllTabs: allTabs }
+      );
+    }
+
+    it("presents a tab the backend already folded disconnected, once", async () => {
+      const tab = openAgentTab("session-123");
+      // The backend fold reached the region before the event.
+      harness.transport.setSession(tab.id, disconnected("user"));
+
+      await userEndListing([tab.id]);
+
+      expect(useAppStore.getState().terminalViewMode[tab.id]).toBe(true);
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBe(true);
+      expect(intents("session.exited", tab.id)).toHaveLength(1);
+      expect(intents("session.reconnect", tab.id)).toHaveLength(0);
+      expect(currentSessionView()[tab.id]?.status).toBe("disconnected");
+    });
+
+    it("presents a listed tab whose region fold has not arrived yet", async () => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, connected());
+
+      await userEndListing([tab.id]);
+
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBe(true);
+      expect(intents("session.exited", tab.id)).toHaveLength(1);
+    });
+
+    it("leaves a tab that ended before the disconnect alone", async () => {
+      const listed = openAgentTab("session-1");
+      const earlier = openAgentTab("session-2");
+      harness.transport.setSession(listed.id, disconnected("user"));
+      // Stopped by the user before the agent was disconnected: not listed.
+      harness.transport.setSession(earlier.id, disconnected("user"));
+
+      await userEndListing([listed.id]);
+
+      expect(useAppStore.getState().terminalAgentDisconnected[listed.id]).toBe(true);
+      expect(useAppStore.getState().terminalAgentDisconnected[earlier.id]).toBeUndefined();
+      expect(useAppStore.getState().terminalViewMode[earlier.id]).toBeUndefined();
+      expect(intents("session.exited", earlier.id)).toHaveLength(0);
+    });
+
+    it("a late drop of a backend-ended tab never shows it reconnecting", () => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, disconnected("user"));
+
+      // The hosted session's exit arrives after the backend ended the tab.
+      useAppStore.getState().setTerminalExited(tab.id, { code: null, reason: "dropped" });
+
+      // The optimistic twin of the backend guard keeps the region view ended.
+      expect(currentSessionView()[tab.id]?.status).toBe("disconnected");
+    });
+
+    it("leaves a listed tab the user is killing to its own exit", async () => {
+      const tab = openAgentTab("session-123");
+      harness.transport.setSession(tab.id, disconnected("user"));
+      useAppStore.getState().markSessionKilled("session-123");
+
+      await userEndListing([tab.id]);
+
+      expect(useAppStore.getState().terminalAgentDisconnected[tab.id]).toBeUndefined();
+      expect(intents("session.exited", tab.id)).toHaveLength(0);
+    });
+  });
 });
 
 /** Inject a tab into a named leaf panel. */
