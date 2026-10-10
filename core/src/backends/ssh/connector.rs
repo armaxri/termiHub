@@ -430,7 +430,8 @@ impl SshConnector for RusshSshConnector {
         // embed env values and the MIT-MAGIC-COOKIE-1 secret. A PowerShell
         // login shell gets them only once its first prompt is up (#4148,
         // #4604), and the user's input only once they have run: the gate holds
-        // both until then.
+        // both until then. A cmd.exe host with env or X11 setup is held the
+        // same way (#4610).
         let integration_line = if detect_remote_shell {
             remote_shell::integration_setup_line(remote_shell)
         } else {
@@ -441,11 +442,6 @@ impl SshConnector for RusshSshConnector {
         } else {
             remote_shell::SetupDone::OutputSettled
         };
-        let mut gate = SetupGate::new(
-            remote_shell::defers_setup_until_prompt(remote_shell),
-            setup_done,
-            shell_requested_at,
-        );
         let integration_typed = integration_line.is_some();
         let mut setup: Vec<(&str, String)> = Vec::new();
         if let Some(line) = remote_shell::env_setup_line(remote_shell, &config.env) {
@@ -461,6 +457,12 @@ impl SshConnector for RusshSshConnector {
         if let Some(line) = integration_line {
             setup.push(("shell integration", line));
         }
+        // A cmd.exe host is held only when it has something to set up (#4610).
+        let mut gate = SetupGate::new(
+            remote_shell::defers_setup_until_prompt(remote_shell, !setup.is_empty()),
+            setup_done,
+            shell_requested_at,
+        );
         for (what, line) in setup {
             if let Some(data) = gate.setup(line.into_bytes()) {
                 if let Err(e) = channel.data(&data[..]).await {
@@ -474,7 +476,9 @@ impl SshConnector for RusshSshConnector {
             }
         }
         if gate.is_holding() {
-            tracing::debug!("holding the session setup until the remote PowerShell prompt is up");
+            tracing::debug!(
+                "holding the session setup until the remote shell's first prompt is up"
+            );
         }
 
         // ── Async→sync bridge ──────────────────────────────────────────

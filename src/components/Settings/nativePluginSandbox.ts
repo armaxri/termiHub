@@ -38,7 +38,7 @@ export interface AccessChip {
   label: string;
   /** The exact rule, shown on hover. */
   rule: string;
-  /** Something no native plugin may ever do: rendered struck through. */
+  /** Something the plugin cannot do: rendered struck through. */
   denied: boolean;
 }
 
@@ -70,19 +70,41 @@ export function layerName(layer: string): string {
   return LAYER_NAMES[layer] ?? layer;
 }
 
+/** Linux-only sandbox layers: their presence in a status row means a Linux host. */
+const LINUX_LAYERS = new Set(["landlock", "seccomp", "netns"]);
+
+/** Whether a status row comes from a Linux host (any Linux layer enforced or missing). */
+function isLinuxSandbox(status: Pick<PluginSandboxStatus, "enforced" | "missing">): boolean {
+  return [...status.enforced, ...status.missing].some((l) => LINUX_LAYERS.has(l));
+}
+
+/**
+ * What a plugin can still do to the user's files when Landlock is missing
+ * (#4605, matching #4342's sandbox): the namespace layer masks the home folder,
+ * otherwise nothing stops it from changing the user's files — startup scripts
+ * included, which amounts to running programs as the user.
+ */
+function landlockMissingConsequence(enforced: string[]): string {
+  return enforced.includes("netns")
+    ? "Your home folder stays hidden, but the plugin can read and change other files on this system."
+    : "The plugin can read and change any of your files, including startup scripts, so it can effectively run programs as you.";
+}
+
 /**
  * The plain-language warning for reduced isolation (concept callout E): names
- * what this system cannot restrict and which layer is missing.
+ * what this system cannot restrict and which layer is missing, and — for a
+ * missing Landlock — what the plugin can then reach, which depends on whether
+ * the namespace layer is among the `enforced` layers (#4605).
  */
-export function missingLayerWarning(missing: string[]): string {
+export function missingLayerWarning(missing: string[], enforced: string[] = []): string {
   if (missing.length === 0) return "This system cannot apply every sandbox layer.";
   const restricts = missing.map((l) => LAYER_RESTRICTS[l] ?? l).join(" and ");
   const names = missing.map(layerName).join(", ");
   const verb = missing.length === 1 ? "is" : "are";
-  const stillApplies = missing.includes("landlock")
-    ? " Network and program limits still apply."
+  const consequence = missing.includes("landlock")
+    ? ` ${landlockMissingConsequence(enforced)}`
     : "";
-  return `This system cannot restrict ${restricts} (${names} ${verb} unavailable).${stillApplies}`;
+  return `This system cannot restrict ${restricts} (${names} ${verb} unavailable).${consequence}`;
 }
 
 /** Whether an installed plugin was auto-disabled after repeated crashes. */
@@ -174,11 +196,57 @@ export function processLabel(status: PluginSandboxStatus | undefined): string | 
 }
 
 /**
- * The access summary (concept callout D), derived from the manifest
- * permissions: what the plugin may reach through termiHub, and what no native
- * plugin may ever do (struck through).
+ * The "files" chip: what the plugin can reach outside its own folders. Off
+ * Linux (or before the sandbox reports) the OS sandbox denies it outright. On
+ * Linux it depends on the layers #4342 enforces (#4605):
+ * - Landlock + namespace layer: denied, and the masked home folder hides even
+ *   file names;
+ * - Landlock only: contents denied, but `stat` is not mediated, so file names
+ *   and sizes stay visible;
+ * - namespace layer only (reduced): the home folder is hidden, other files are
+ *   readable and writable;
+ * - neither (reduced, Yama-guarded): any of the user's files is reachable.
  */
-export function accessChips(plugin: InstalledPlugin): AccessChip[] {
+function filesChip(hasDeclared: boolean, status: PluginSandboxStatus | undefined): AccessChip {
+  const id = "files";
+  const label = hasDeclared ? "Other files" : "Your files";
+  // Declared folders may lie inside the home folder, so the denial must not
+  // claim the home folder is out of reach (#4293).
+  const scope = hasDeclared
+    ? "files outside the declared folders"
+    : "your home folder or other files";
+  const linux = status !== undefined && isLinuxSandbox(status);
+  const landlock = linux && status.enforced.includes("landlock");
+  const netns = linux && status.enforced.includes("netns");
+  if (!linux || (landlock && netns)) {
+    return { id, label, rule: `No access to ${scope}`, denied: true };
+  }
+  if (landlock) {
+    return {
+      id,
+      label,
+      rule: `Cannot open ${scope}, but can see their names and sizes`,
+      denied: true,
+    };
+  }
+  if (netns) {
+    return {
+      id,
+      label,
+      rule: "Your home folder stays hidden; other files on this system can be read and changed",
+      denied: false,
+    };
+  }
+  return { id, label, rule: "Can read and change any of your files", denied: false };
+}
+
+/**
+ * The access summary (concept callout D), derived from the manifest
+ * permissions and — for what the OS sandbox actually enforces — the plugin's
+ * `plugin-sandbox` status: what the plugin may reach through termiHub, and
+ * what it cannot do (struck through).
+ */
+export function accessChips(plugin: InstalledPlugin, status?: PluginSandboxStatus): AccessChip[] {
   const { permissions, filesystemPaths, connectionPolicy } = plugin.manifest;
   const chips: AccessChip[] = [];
   if (permissions.includes("network")) {
@@ -226,23 +294,7 @@ export function accessChips(plugin: InstalledPlugin): AccessChip[] {
       denied: false,
     });
   }
-  chips.push(
-    declared.length > 0
-      ? {
-          // Declared folders may lie inside the home folder, so the denial
-          // must not claim the home folder is out of reach (#4293).
-          id: "files",
-          label: "Other files",
-          rule: "No access to files outside the declared folders",
-          denied: true,
-        }
-      : {
-          id: "files",
-          label: "Your files",
-          rule: "No access to your home folder or other files",
-          denied: true,
-        }
-  );
+  chips.push(filesChip(declared.length > 0, status));
   chips.push({
     id: "programs",
     label: "Run programs",
