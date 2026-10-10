@@ -69,6 +69,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     echo ""
     echo "=== Building agent binaries for Linux ==="
     agent_built=0
+    agent_failed=0
 
     for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
         arch="${target%%-*}"   # aarch64 or x86_64
@@ -89,9 +90,27 @@ if [ "$(uname -s)" = "Darwin" ]; then
         env "$linker_env=$linker" \
             cargo build --release --target "$target" -p termihub-agent
 
-        echo "  -> target/$target/release/termihub-agent"
+        # A release agent without the test-hooks feature: it must embed neither
+        # the TEST-ONLY update-signing key (#4083) nor the env-armed test hooks
+        # (#4362), since this is the path developers upload (#4554). Same guards
+        # as build-agents.sh and CI (agent.yml, release.yml).
+        binary="target/$target/release/termihub-agent"
+        if ! scripts/internal/assert-no-test-signing-key.sh "$binary" ||
+            ! scripts/internal/assert-no-agent-test-hooks.sh "$binary"; then
+            echo "  FAILED: $binary embeds test-only artifacts and must never be uploaded"
+            agent_failed=$((agent_failed + 1))
+            continue
+        fi
+
+        echo "  -> $binary"
         agent_built=$((agent_built + 1))
     done
+
+    if [ "$agent_failed" -gt 0 ]; then
+        echo ""
+        echo "ERROR: $agent_failed agent binary(ies) failed the test-only artifact guard."
+        exit 1
+    fi
 
     if [ "$agent_built" -eq 0 ]; then
         echo ""
