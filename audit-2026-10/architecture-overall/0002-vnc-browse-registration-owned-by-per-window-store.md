@@ -16,8 +16,8 @@ evidence:
   - src-tauri/src/commands/remote_desktop_browse.rs:96
   - src-tauri/src/session/graphical_browse.rs:70
   - src-tauri/src/commands/remote_desktop.rs:752
-status: open
-resolution: ""
+status: fixed
+resolution: "#4384 — the graphical session owns its browse side channel: re-opened on auto-reconnect, dropped at session end; windows only read it back"
 audit: 2026-10
 commit: 663465d52
 relation: new

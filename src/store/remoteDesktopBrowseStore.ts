@@ -6,8 +6,10 @@
  * the session's file side channel with the backend (under the graphical
  * session id) and records it here, keyed by the tab. While that tab is active
  * the File Browser sidebar shows the side channel through the ordinary session
- * pane; the route line names the host. The entry lives until the graphical
- * session closes. Session-only, never persisted.
+ * pane; the route line names the host. This is a per-window mirror only: the
+ * backend owns the registration (re-opened on reconnect, dropped when the
+ * session ends, #4384), and a tab moved in or a reloaded window reads it back.
+ * Session-only, never persisted.
  */
 
 import { create } from "zustand";

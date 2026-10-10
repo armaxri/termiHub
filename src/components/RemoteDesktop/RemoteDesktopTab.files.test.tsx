@@ -29,7 +29,7 @@ const hoisted = vi.hoisted(() => ({
   channel: vi.fn(),
   upload: vi.fn(),
   openBrowser: vi.fn(),
-  closeBrowser: vi.fn(),
+  browserSource: vi.fn(),
   info: vi.fn(),
   error: vi.fn(),
   storeCredential: vi.fn(),
@@ -51,7 +51,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopFileChannel: hoisted.channel,
   remoteDesktopUpload: hoisted.upload,
   remoteDesktopOpenFileBrowser: hoisted.openBrowser,
-  remoteDesktopCloseFileBrowser: hoisted.closeBrowser,
+  remoteDesktopFileBrowserSource: hoisted.browserSource,
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   storeCredential: hoisted.storeCredential,
   // Opening the File Browser switches the sidebar view, whose layout is saved
@@ -118,7 +118,7 @@ beforeEach(() => {
       startDir: dir ?? "/home/arne/Desktop",
     })
   );
-  hoisted.closeBrowser.mockResolvedValue(undefined);
+  hoisted.browserSource.mockResolvedValue(null);
   hoisted.upload.mockResolvedValue({
     destDir: "/home/arne/Desktop",
     host: "tiger-box",
@@ -296,23 +296,51 @@ describe("RemoteDesktopTab — browse remote files (#4193)", () => {
     expect(useRemoteDesktopBrowseStore.getState().sources[tabId]).toBeUndefined();
   });
 
-  it("re-attaches the browser after a reconnect, keeping its folder", async () => {
+  it("refreshes the backend-reopened source after a reconnect, keeping its folder", async () => {
     await render("active");
     await openBrowse();
     hoisted.openBrowser.mockClear();
+    hoisted.browserSource.mockResolvedValue({
+      channel: { kind: "ssh", host: "tiger-box", user: "root", sameHost: true },
+      startDir: "/elsewhere",
+    });
     await render("reconnecting");
     await render("active");
-    expect(hoisted.openBrowser).toHaveBeenCalledWith(SID);
-    expect(useRemoteDesktopBrowseStore.getState().sources[tabId]?.openCount).toBe(1);
+    // The backend re-opened it on the new tunnel itself (#4384): the tab only
+    // reads it back, it never re-registers.
+    expect(hoisted.openBrowser).not.toHaveBeenCalled();
+    expect(hoisted.browserSource).toHaveBeenCalledWith(SID);
+    const source = useRemoteDesktopBrowseStore.getState().sources[tabId];
+    expect(source?.channel.user).toBe("root");
+    expect(source?.dir).toBe("/home/arne/Desktop");
+    expect(source?.openCount).toBe(1);
   });
 
-  it("closes the browser source with the session", async () => {
+  it("forgets its source on unmount without closing the session's side channel", async () => {
     await render("active");
     await openBrowse();
     act(() => root.unmount());
     root = createRoot(container);
-    expect(hoisted.closeBrowser).toHaveBeenCalledWith(SID);
+    // A cross-window move or a stale window's close must not take the side
+    // channel away: the backend drops it when the session ends (#4384).
     expect(useRemoteDesktopBrowseStore.getState().sources[tabId]).toBeUndefined();
+  });
+
+  it("renders the session's open source in a tab moved in from another window (#4384)", async () => {
+    hoisted.browserSource.mockResolvedValue({
+      channel: READY.status === "ready" ? READY.channel : null,
+      startDir: "/home/arne/in",
+    });
+    await render("active");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(hoisted.browserSource).toHaveBeenCalledWith(SID);
+    expect(hoisted.openBrowser).not.toHaveBeenCalled();
+    expect(useRemoteDesktopBrowseStore.getState().sources[tabId]).toMatchObject({
+      sessionId: SID,
+      dir: "/home/arne/in",
+    });
   });
 });
 

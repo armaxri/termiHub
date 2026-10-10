@@ -503,6 +503,10 @@ pub(crate) fn init_session_managers(
     session_manager.set_session_opened_hook(std::sync::Arc::new(move |trigger| {
         crate::files::transfer::relaunch_auto::spawn_resume_waiting(&opened_app, trigger);
     }));
+    // The graphical sessions own their File Browser side channels (#4384):
+    // re-opened after an automatic reconnect, dropped when the session ends.
+    let side_channel_browsers = session_manager.side_channels.clone();
+    let side_channel_agents = agent_manager.clone();
     app.manage(session_manager);
     app.manage(agent_manager);
 
@@ -544,7 +548,15 @@ pub(crate) fn init_session_managers(
         crate::session::graphical_linked_ssh::AppLinkedSsh {
             app: app.handle().clone(),
         },
-    ));
+    ))
+    .with_side_channels(
+        side_channel_browsers,
+        std::sync::Arc::new(
+            crate::commands::remote_desktop_browse::AppSideChannelOpener {
+                agents: side_channel_agents,
+            },
+        ),
+    );
     app.manage(graphical_manager);
 
     // SSH host-key verification (#1959): register the process-wide
