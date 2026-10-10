@@ -569,5 +569,6 @@ fn load_prepared(
     })
 }
 
-#[cfg(test)]
+// The load path and `PluginLibrary` teardown: runner-only, like the code.
+#[cfg(all(test, feature = "runner"))]
 mod tests;
