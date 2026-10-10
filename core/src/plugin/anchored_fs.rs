@@ -680,6 +680,9 @@ mod tests {
     struct Tree {
         _tmp: tempfile::TempDir,
         root: std::path::PathBuf,
+        /// Only the symlink-swap tests point a link here, and they are
+        /// Unix-only (creating symlinks needs privileges on Windows).
+        #[cfg(unix)]
         outside: std::path::PathBuf,
     }
 
@@ -695,6 +698,7 @@ mod tests {
         Tree {
             _tmp: tmp,
             root,
+            #[cfg(unix)]
             outside,
         }
     }
