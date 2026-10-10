@@ -27,6 +27,7 @@ import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/p
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { findKeyPassphrasePromptInfo, findPasswordPromptInfo } from "@/utils/schemaDefaults";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** Outcome of {@link resolveConnectSecret}. */
 export type ConnectSecretResult =
@@ -101,7 +102,13 @@ export async function resolveConnectSecret({
   // savePassword flag (#885). If the file can't be read, default to prompting.
   let keyEncrypted = false;
   if (settings.authMethod === "key") {
-    keyEncrypted = await isSshKeyEncrypted((settings.keyPath as string) ?? "").catch(() => true);
+    keyEncrypted = await withLoggedFallback(
+      isSshKeyEncrypted((settings.keyPath as string) ?? ""),
+      true,
+      "connect",
+      "inspect the SSH key (assuming it is encrypted)",
+      "debug"
+    );
   }
   const keyPrompt = findKeyPassphrasePromptInfo(schema, settings, keyEncrypted);
   const promptInfo = findPasswordPromptInfo(schema, settings) ?? keyPrompt;

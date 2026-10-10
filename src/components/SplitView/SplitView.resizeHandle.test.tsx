@@ -7,13 +7,21 @@
  * split-border CSS keys off the separator's `aria-orientation`; this pins both
  * by mounting the real App shell over a seeded two-panel split.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import type { LeafPanel, SplitContainer } from "@/types/terminal";
 import App from "@/App";
+
+// The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
+// backend's session-ownership map is never undefined: stub it as the real
+// empty map so `refreshSessionOwners` sees a faithful value (#4520).
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+}));
 
 /** A leaf holding one Settings tab — an all-empty layout renders the empty-window
  * state instead of the split, and Settings needs no session. */

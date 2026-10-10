@@ -24,6 +24,8 @@
  * and every action is a no-op, so terminal behaviour is unchanged.
  */
 import type { IDecoration, IDisposable, IMarker, Terminal } from "@xterm/xterm";
+import { errorMessage } from "@/utils/errorMessage";
+import { frontendWarn } from "@/utils/frontendLog";
 
 /** The OSC identifier xterm hands the payload for. */
 export const OSC_133 = 133;
@@ -199,7 +201,9 @@ export class CommandMarkTracker implements IDisposable {
       const event = parseOsc133(data);
       if (event) this.apply(event);
     } catch {
-      // A malformed mark must never break terminal output.
+      // Hot path (every OSC 133 sequence in the output stream): a malformed
+      // mark is dropped silently so it can neither break output nor flood the
+      // Log Viewer (#4520).
     }
     return true;
   };
@@ -410,8 +414,10 @@ export class CommandMarkTracker implements IDisposable {
       this.records = [...restored, ...this.records];
       for (const record of restored) this.decorate(record);
       this.enforceCap();
-    } catch {
-      // Restoring marks is best effort; it must never break the terminal.
+    } catch (err) {
+      // Best effort, once per restore: it must never break the terminal, but a
+      // lost set of marks should leave a trace (#4520).
+      frontendWarn("command_marks", `Failed to restore command marks: ${errorMessage(err)}`);
     }
   }
 

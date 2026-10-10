@@ -15,7 +15,7 @@ import { resolveCredential, storeCredential } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendLog, frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 
 /** Outcome of {@link resolveGraphicalSettings}. */
@@ -81,10 +81,22 @@ export async function resolveGraphicalSettings({
   if (!(await ensureCredentialStoreUnlocked({ authMethod: "password" }))) {
     return { status: "canceled" };
   }
-  const stored = await resolveCredential(credentialId, "password", sourceFile).catch(() => null);
+  let stored: string | null = null;
+  let notice = "";
+  try {
+    stored = await resolveCredential(credentialId, "password", sourceFile);
+  } catch (err) {
+    // Fall back to prompting, but do not make a failed read look like "no
+    // saved password": log it and say why the user is asked (#4520).
+    frontendWarn(
+      "graphical_secret",
+      `Failed to read the saved remote-desktop password: ${errorMessage(err)}`
+    );
+    notice = "The saved password could not be read — enter it for this connection.";
+  }
   if (stored) return withPassword(stored);
 
-  const entered = await requestPassword(host, username, "", "password");
+  const entered = await requestPassword(host, username, notice, "password");
   if (entered === null) return { status: "canceled" };
   if (entered && useAppStore.getState().passwordPromptShouldSave) {
     await storeCredential(credentialId, "password", entered, sourceFile).catch((err) =>

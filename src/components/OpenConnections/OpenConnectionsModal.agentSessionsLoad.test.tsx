@@ -39,6 +39,9 @@ vi.mock("@/services/networkApi", () => ({
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
+import { xServerStatus } from "@/services/api";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 function agent(id: string, name: string): RemoteAgentDefinition {
@@ -112,6 +115,24 @@ describe("OpenConnectionsModal — agent session load (WA-FE-011)", () => {
     render(true);
     await flush();
     expect(listAgentSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs a failed load instead of dropping it, and still loads the rest (#4520)", async () => {
+    seedAgentsRegion({ remoteAgents: [agent("a1", "build-box"), agent("a2", "nas")] });
+    listAgentSessions.mockImplementation((id: string) =>
+      id === "a1" ? Promise.reject(new Error("agent gone")) : Promise.resolve([])
+    );
+    vi.mocked(xServerStatus).mockRejectedValueOnce(new Error("no X server probe"));
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
+    render(true);
+    await flush();
+    await flush();
+    unsubscribe();
+    const warnings = entries.filter((e) => e.level === "WARN").map((e) => e.message);
+    expect(warnings).toContain("Failed to list sessions of agent a1: agent gone");
+    expect(warnings).toContain("Failed to read X server status: no X server probe");
+    expect(listAgentSessions).toHaveBeenCalledWith("a2");
   });
 
   it("does not fetch agent sessions while the panel is closed", async () => {

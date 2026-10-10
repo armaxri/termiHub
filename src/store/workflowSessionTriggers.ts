@@ -199,14 +199,24 @@ export function notifyWorkflowSessionStarted(tabId: string): void {
 // ── On-output-match ──────────────────────────────────────────────────────────
 
 let outputEngine: OutputTriggerEngine | null = null;
+/** Whether an output-tap failure was already logged (log once, see {@link outputTap}). */
+let outputTapFaultLogged = false;
 let outputStore: WorkflowTriggerStore | null = null;
 
 /** The raw-output tap: O(1), defers all work to the engine's batch. */
 function outputTap(sessionId: string, encoded: string): void {
   try {
     outputEngine?.enqueue(sessionId, encoded);
-  } catch {
-    // Never let trigger bookkeeping disturb terminal output delivery.
+  } catch (err) {
+    // Never let trigger bookkeeping disturb terminal output delivery. This runs
+    // per output chunk, so only the first failure is logged (#4520).
+    if (!outputTapFaultLogged) {
+      outputTapFaultLogged = true;
+      frontendLog(
+        "workflow_trigger",
+        `output-match tap failed (further failures not logged): ${errorMessage(err)}`
+      );
+    }
   }
 }
 

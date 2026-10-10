@@ -134,5 +134,8 @@ function defineNavigatorGetter(prop: "language" | "languages", value: unknown): 
     Object.defineProperty(navigator, prop, { configurable: true, get: () => value });
   } catch {
     // Some engines expose these as non-configurable; nothing more we can do.
+    // Not logged: this runs once at startup, before the logging module graph
+    // is loaded (see ensureValidNavigatorLocale), and the effect is only that
+    // the engine default locale stays in place.
   }
 }

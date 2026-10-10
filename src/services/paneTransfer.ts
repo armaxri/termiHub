@@ -36,6 +36,7 @@ import {
 import { runMaybeTrackedTransfer, seedTransferQueueRow } from "@/hooks/transferFeedback";
 import type { FileEntry } from "@/types/connection";
 import { joinPath } from "@/utils/paths";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** Which pane of the transfer view. */
 export type PaneSide = "local" | "remote";
@@ -135,7 +136,13 @@ export async function downloadToLocal(
  * the safe byte-based fallback.
  */
 export async function probePaneRemote(sessionId: string): Promise<PaneRemote> {
-  const queueCapable = await sessionSupportsTransferQueue(sessionId).catch(() => false);
+  const queueCapable = await withLoggedFallback(
+    sessionSupportsTransferQueue(sessionId),
+    false,
+    "pane_transfer",
+    `probe transfer-queue support of session ${sessionId}`,
+    "debug"
+  );
   return { sessionId, queueCapable };
 }
 
@@ -203,7 +210,9 @@ async function prepareDestFolder(
     try {
       return await listSide(to, dest, remote);
     } catch {
-      // Not there yet: create it below and treat it as empty.
+      // Control-flow probe: a failed list means "not there yet", so create it
+      // below and treat it as empty. Any other cause (permissions, a dropped
+      // session) makes the mkdir below fail, and that error is surfaced.
     }
   }
   await ensureDir(to, dest, remote);

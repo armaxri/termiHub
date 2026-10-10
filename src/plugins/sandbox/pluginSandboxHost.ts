@@ -233,9 +233,11 @@ function handleWorkerFault(
       quarantineCulprits(attribution);
       scheduleRebuild(attribution);
     }
-  } catch {
+  } catch (err) {
     // The fault handler is a liveness guard — swallow anything it hits so it can
-    // never itself break the terminal it exists to protect.
+    // never itself break the terminal it exists to protect. It runs only on a
+    // worker fault (bounded by MAX_WORKER_ERRORS), so a trace is cheap (#4520).
+    frontendLog("plugin_sandbox", `Sandbox fault handler failed: ${errorMessage(err)}`);
   }
 }
 

@@ -6,8 +6,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import type { LogEntry } from "@/types/terminal";
+import { onFrontendLog } from "@/utils/frontendLog";
 import {
   type CommandMarkTerminal,
+  type CommandMarksSnapshot,
   CommandMarkTracker,
   COMMAND_MARK_ACTIONS,
   DEFAULT_MAX_COMMAND_RECORDS,
@@ -660,6 +663,19 @@ describe("CommandMarkTracker across reset / snapshot replay (#3420)", () => {
     tracker.restoreSnapshot(null);
     tracker.restoreSnapshot({ commands: [] });
     expect(tracker.hasMarks()).toBe(false);
+  });
+
+  it("a failing restore never throws but leaves a Log Viewer trace (#4520)", async () => {
+    const { term, tracker } = makeTerminal();
+    await write(term, "$ ");
+    const entries: LogEntry[] = [];
+    const unsubscribe = onFrontendLog((e) => entries.push(e));
+    const malformed = { commands: [null] } as unknown as CommandMarksSnapshot;
+    expect(() => tracker.restoreSnapshot(malformed)).not.toThrow();
+    unsubscribe();
+    expect(tracker.hasMarks()).toBe(false);
+    const warn = entries.find((e) => e.level === "WARN");
+    expect(warn?.message).toMatch(/^Failed to restore command marks: /);
   });
 
   it("exports nothing while the alternate buffer is active", async () => {
