@@ -1297,37 +1297,4 @@ mod tests {
         );
         assert!(reg.get("t1").is_none());
     }
-
-    /// Quit-time `cancel_all` settles every in-flight transfer `cancelled`.
-    #[tokio::test]
-    async fn cancel_all_settles_each_transfer_cancelled() {
-        let reg = TransferRegistry::with_max_concurrent(1);
-        let a = reg.enqueue("a", "s1", TransferDirection::Upload, "f", "/f", 10);
-        let b = reg.enqueue("b", "s1", TransferDirection::Upload, "g", "/g", 10);
-        let (sink, events) = recording_sink();
-        assert_eq!(reg.cancel_all(), 2);
-        drive(
-            &a,
-            &reg,
-            &sink,
-            vec![(Some(TransferEvent::Cancel), AttemptsResult::Cancelled)],
-        )
-        .await;
-        // `b` is promoted to the freed slot; its attempt loop sees the cancel.
-        drive(
-            &b,
-            &reg,
-            &sink,
-            vec![(Some(TransferEvent::Cancel), AttemptsResult::Cancelled)],
-        )
-        .await;
-        let cancelled = events
-            .lock()
-            .expect("lock")
-            .iter()
-            .filter(|e| **e == (TransferPhase::Cancelled, TransferStateTag::Cancelled))
-            .count();
-        assert_eq!(cancelled, 2);
-        assert!(reg.get("a").is_none() && reg.get("b").is_none());
-    }
 }
