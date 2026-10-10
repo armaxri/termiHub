@@ -2780,7 +2780,10 @@ fn only_an_agent_file_not_found_maps_to_a_missing_file() {
         FileError::AlreadyExists(p) if p == "/d/a.txt"
     ));
     // An agent that does not know or cannot serve the request (#4433).
-    for code in [errors::METHOD_NOT_FOUND, errors::FILE_BROWSING_NOT_SUPPORTED] {
+    for code in [
+        errors::METHOD_NOT_FOUND,
+        errors::FILE_BROWSING_NOT_SUPPORTED,
+    ] {
         assert!(matches!(
             agent(code).into_file_error(),
             FileError::NotSupported
