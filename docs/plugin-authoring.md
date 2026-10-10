@@ -729,7 +729,8 @@ there is no fallback to running it without a sandbox, and no setting to turn the
 sandbox off.
 
 **What users see.** Settings → Plugins shows each plugin's isolation, process
-status and access summary; a crash ends the plugin's sessions with an overlay
+status and access summary (on Linux, the warning and the files chip say exactly
+which of the user's files stay reachable in the current configuration); a crash ends the plugin's sessions with an overlay
 that names the cause, and a refused bridge request shows a rate-limited toast
 plus a Log Viewer entry.
 
