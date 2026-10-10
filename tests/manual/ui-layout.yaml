@@ -276,3 +276,22 @@ tests:
       - "The breadcrumb row scrolls and shows the same thin scrollbar as the rest of the app."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-52
+    release_gate: true
+    manual_reason: "Monaco paints its editor background on a real DOM in a WebView; the token patch is unit-tested in monacoCustomLanguages.theme.test.ts"
+    name: "File editor background matches the surrounding panes in every theme"
+    pr: 4599
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Split the view: a local terminal in one panel, any text file open in the file editor in the other."
+      - "In Settings > Appearance, switch the theme to Dark, then Light, then Solarized Dark, then Solarized Light."
+      - "Create a custom theme, change its Terminal background colour, and watch the open editor while editing."
+    expected:
+      - "In every theme the editor, its line-number gutter and its minimap share the terminal pane's background; no lighter or darker block."
+      - "Syntax colours stay the same as before (only the background changes)."
+      - "The custom-theme edit repaints the open editor background live, without reopening the file."
+    verification: manual
+    tags: [visual]

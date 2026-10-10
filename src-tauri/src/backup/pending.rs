@@ -16,8 +16,10 @@
 //! Credentials (#4295): the restore imported them before it was committed. A
 //! failed swap puts the credential vault back from the copy the restore took
 //! before importing — but only while the vault is still exactly as the import
-//! left it. A store without a vault file (the OS keychain) cannot be reverted,
-//! and the warning then says the backup's credentials were kept.
+//! left it. A store without a vault file (the OS keychain) imported nothing
+//! yet (#4414): its credentials are sealed in the pending directory, so a
+//! failed swap just deletes them and a successful one hands them on to be
+//! imported once the credential store is available (see [`super::deferred`]).
 
 use std::path::Path;
 
@@ -29,7 +31,7 @@ use super::commit::{
     MANIFEST_FORMAT_FILES_ONLY, MANIFEST_FORMAT_WITH_PLUGINS,
 };
 use super::restore::{PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
-use super::{plugins, sections};
+use super::{deferred, plugins, sections};
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::fs::write_atomic;
 
@@ -133,9 +135,11 @@ fn revert_credentials(config_dir: &Path, pending: &Path) -> CredentialRevert {
     }
 }
 
-/// Revert the credential import, then build the warning for a failed restore.
-/// The message only promises unchanged data when that is true.
+/// Revert the credential import (or drop a deferred one), then build the
+/// warning for a failed restore. The message only promises unchanged data when
+/// that is true.
 fn failure_warning(config_dir: &Path, pending: &Path, mut details: String) -> RecoveryWarning {
+    deferred::discard(config_dir, pending);
     let message = match revert_credentials(config_dir, pending) {
         CredentialRevert::NothingImported | CredentialRevert::Reverted => {
             "Restoring the backup failed. Your previous data was kept unchanged.".to_string()
@@ -340,7 +344,9 @@ fn roll_back(config_dir: &Path, rollback: &Path, snapshot: &RollbackManifest) ->
 
 /// Apply a committed restore, if one is pending. Must run before any store in
 /// `config_dir` is loaded. Returns a warning to surface when the restore
-/// failed (and was rolled back).
+/// failed (and was rolled back), or when its deferred credential import could
+/// not be kept. A deferred import is applied later, by
+/// [`deferred::apply_deferred_import`].
 pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
     // An uncommitted staging directory is an abandoned restore attempt.
     remove_dir(&config_dir.join(STAGING_DIR));
@@ -414,8 +420,10 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
         }
     }
 
+    // Hand a deferred credential import on before the pending dir goes.
+    let warning = deferred::promote(config_dir, &pending);
     remove_dir(&pending);
     remove_dir(&rollback);
     info!(files = ?manifest.files, dirs = ?manifest.dirs, "Backup restore applied");
-    None
+    warning
 }

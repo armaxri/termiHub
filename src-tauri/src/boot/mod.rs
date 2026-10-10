@@ -316,6 +316,34 @@ pub(crate) fn init_network(
     app.manage(Arc::new(network_manager));
 }
 
+/// Import the credentials of a backup restore whose startup swap succeeded
+/// (#4414), now that the credential store exists. Only a store without a vault
+/// file defers its import — the OS keychain, which also holds the seal key —
+/// so when the restored settings switched to another mode the import still
+/// goes to the OS keychain it was made for. Reads no keychain unless a
+/// deferred import or seal-key cleanup is waiting.
+fn apply_deferred_credential_import(
+    config_dir: &std::path::Path,
+    storage_mode: &StorageMode,
+    credential_manager: &CredentialManager,
+) -> Option<crate::connection::recovery::RecoveryWarning> {
+    if !crate::backup::deferred::has_deferred_work(config_dir) {
+        return None;
+    }
+    let warning = if *storage_mode == StorageMode::OsKeychain {
+        crate::backup::deferred::apply_deferred_import(config_dir, credential_manager)
+    } else {
+        let keychain = credential::OsKeychainStore::with_index_file(
+            config_dir.join(credential::keychain_index::FILE_NAME),
+        );
+        crate::backup::deferred::apply_deferred_import(config_dir, &keychain)
+    };
+    if let Some(w) = &warning {
+        warn!("{} ({})", w.message, w.details.as_deref().unwrap_or(""));
+    }
+    warning
+}
+
 pub(crate) fn init_credentials_and_connections(
     app: &tauri::App,
     config_dir: std::path::PathBuf,
@@ -363,7 +391,12 @@ pub(crate) fn init_credentials_and_connections(
     recovery_warnings.extend(named_warnings);
     app.manage(Arc::new(named_credentials));
 
-    let credential_manager = CredentialManager::new(storage_mode.clone(), config_dir);
+    let credential_manager = CredentialManager::new(storage_mode.clone(), config_dir.clone());
+    recovery_warnings.extend(apply_deferred_credential_import(
+        &config_dir,
+        &storage_mode,
+        &credential_manager,
+    ));
 
     // If master password mode with an existing credentials file,
     // the store starts locked — emit an event so the UI can prompt

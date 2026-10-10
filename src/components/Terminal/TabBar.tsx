@@ -18,6 +18,7 @@ import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
 import { macroReceivingInfo } from "@/utils/macroTabMarker";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
+import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
 import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
 import { ConfirmDialog } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -48,7 +49,6 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
-  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const setPendingAttachedTabCloseConfirm = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
@@ -123,7 +123,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     void moveTabToWindow(tabId, panelId, target);
   };
   // Tab awaiting confirmation in the shared unsaved-changes dialog (fallback for
-  // dirty tabs whose editor does not route through `setPendingCloseRequest`).
+  // dirty tabs whose editor does not render its own prompt, see `routeDirtyTabClose`).
   const [unsavedCloseTabId, setUnsavedCloseTabId] = useState<string | null>(null);
 
   // Continue the close flow once any unsaved-changes gate has been cleared:
@@ -171,27 +171,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   };
 
   const handleCloseTab = (tabId: string) => {
-    // Read fresh state directly from the store to avoid stale closure values:
-    // the render-time editorDirtyTabs snapshot may lag behind a setEditorDirty
-    // call that hasn't caused a re-render yet (e.g. the user reverted changes).
-    const state = useAppStore.getState();
+    // The shared single-tab guard (#4410), also used by the close-tab shortcut.
+    // It reads editorDirtyTabs fresh from the store, since the render-time
+    // snapshot may lag behind a setEditorDirty call that hasn't re-rendered yet.
+    // Self-prompting editors show their own unsaved-changes dialog off
+    // pendingCloseRequest; any other dirty tab gets the shared confirm below,
+    // and the actual close is deferred to `finishCloseTab`.
     const tab = tabs.find((t) => t.id === tabId);
-    const isDirty = state.editorDirtyTabs[tabId];
-    if (isDirty) {
-      // These tabs render their own unsaved-changes prompt off
-      // pendingCloseRequest (the tunnel and workspace editors since UX2-004).
-      if (
-        tab?.contentType === "connection-editor" ||
-        tab?.contentType === "settings" ||
-        tab?.contentType === "editor" ||
-        tab?.contentType === "tunnel-editor" ||
-        tab?.contentType === "workspace-editor"
-      ) {
-        setPendingCloseRequest({ tabId, panelId });
-        return;
-      }
-      // Any other dirty tab is gated by the shared confirm dialog; the actual
-      // close is deferred to `finishCloseTab` once the user confirms.
+    const route = routeDirtyTabClose(tab ?? { id: tabId }, panelId);
+    if (route === "self-prompt") return;
+    if (route === "generic-prompt") {
       setUnsavedCloseTabId(tabId);
       return;
     }

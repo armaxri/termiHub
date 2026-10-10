@@ -224,15 +224,14 @@ pub fn plan_import(
     Ok(preview)
 }
 
-/// Import `vault` into `store` using `strategy` for conflicts.
-///
-/// All selected entries are written through [`CredentialStore::set_many`] as
-/// one all-or-nothing batch: on failure nothing is changed.
-pub fn apply_import(
+/// The entries an import of `vault` into `store` with `strategy` would write,
+/// and the result it would report. Nothing is written. The caller must zeroize
+/// the returned values.
+pub fn select_import(
     vault: &OpenedVault,
     store: &dyn CredentialStore,
     strategy: ConflictStrategy,
-) -> Result<VaultImportResult, VaultError> {
+) -> Result<(VaultImportResult, Vec<(CredentialKey, String)>), VaultError> {
     let states = classify(vault, store)?;
     let mut result = VaultImportResult {
         imported_count: 0,
@@ -256,7 +255,19 @@ pub fn apply_import(
             (EntryState::Conflict, ConflictStrategy::Skip) => result.skipped_count += 1,
         }
     }
+    Ok((result, batch))
+}
 
+/// Import `vault` into `store` using `strategy` for conflicts.
+///
+/// All selected entries are written through [`CredentialStore::set_many`] as
+/// one all-or-nothing batch: on failure nothing is changed.
+pub fn apply_import(
+    vault: &OpenedVault,
+    store: &dyn CredentialStore,
+    strategy: ConflictStrategy,
+) -> Result<VaultImportResult, VaultError> {
+    let (result, mut batch) = select_import(vault, store, strategy)?;
     let outcome = if batch.is_empty() {
         Ok(())
     } else {

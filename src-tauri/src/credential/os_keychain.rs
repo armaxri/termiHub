@@ -17,6 +17,12 @@ use super::CredentialStore;
 /// a unique keychain entry.
 const SERVICE_NAME: &str = "termiHub";
 
+/// Service name of the keys that seal a backup restore's deferred credential
+/// import (#4414). Distinct from [`SERVICE_NAME`], so a seal key is never
+/// mistaken for a credential.
+#[cfg(not(test))]
+const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
+
 /// Credential store backed by the native OS credential store via the
 /// [`keyring`](https://crates.io/crates/keyring) crate.
 ///
@@ -162,6 +168,23 @@ impl CredentialStore for OsKeychainStore {
             warn!(key = %key, error = %e, "Failed to drop a deleted OS keychain key from the index");
         }
         Ok(())
+    }
+
+    fn restore_seal_slot(&self, id: &str) -> Option<Box<dyn super::biometric_slot::SecretSlot>> {
+        // Unit tests never touch the real OS keyring (and the `keyring` mock
+        // keeps state per entry handle), so a test build imports right away.
+        #[cfg(not(test))]
+        {
+            Some(Box::new(super::biometric_slot::KeyringSlot::new(
+                RESTORE_SEAL_SERVICE,
+                id,
+            )))
+        }
+        #[cfg(test)]
+        {
+            let _ = id;
+            None
+        }
     }
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {

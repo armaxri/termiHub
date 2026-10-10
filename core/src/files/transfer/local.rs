@@ -1,7 +1,7 @@
 //! Local transfer executor — drives the queue state machine around a chunked
 //! host-filesystem copy (PARITY-004, #3567).
 //!
-//! The local counterpart of [`run_docker_transfer`](super::docker) and
+//! The local counterpart of `super::docker::run_docker_transfer` and
 //! `run_sftp_transfer`: the same shared orchestration (`super::attempt`) —
 //! per-session slot, throttled progress + ETA, pause/resume, cancel, auto-retry
 //! with backoff, the stall watchdog — around a plain `tokio::fs` copy. It backs
