@@ -906,7 +906,8 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             output_flow: false,
             host_file_attribute_ops: None,
             agent_version: String::new(),
-        },
+        }
+        .into(),
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
         reattach_config: test_reattach_config(Some("secret")),
@@ -1109,7 +1110,8 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             output_flow: false,
             host_file_attribute_ops: None,
             agent_version: String::new(),
-        },
+        }
+        .into(),
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
         reattach_config: test_reattach_config(Some("secret")),

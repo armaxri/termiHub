@@ -18,7 +18,7 @@ fn no_jitter() -> f64 {
 }
 
 fn capabilities(agent_version: &str) -> AgentCapabilities {
-    let mut caps = make_agent_connection(true).capabilities;
+    let mut caps = make_agent_connection(true).capabilities.get();
     caps.agent_version = agent_version.to_string();
     caps
 }

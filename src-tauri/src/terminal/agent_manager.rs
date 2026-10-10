@@ -103,6 +103,7 @@ use notifications::{
 /// [`agent_io_task`] and emits through [`emit_agent_state`].
 mod agent_stderr;
 mod alive;
+mod capabilities;
 pub(crate) mod files_only;
 mod io_lanes;
 mod io_task;
@@ -113,6 +114,7 @@ mod state_events;
 mod stdout_reader;
 mod update_reconnect;
 use alive::AgentAlive;
+use capabilities::SharedCapabilities;
 pub(crate) use io_lanes::AgentIoSender;
 use io_lanes::{GateError, IoBudget, AGENT_IO_DATA_BUDGET, AGENT_IO_MAX_CHUNK};
 use io_task::agent_io_task;
@@ -417,7 +419,10 @@ struct AgentConnection {
     /// framing on a healthy agent. Dropping the handle (self-reap) does not abort
     /// the task, so the task's own self-termination paths are unaffected.
     io_task: AbortHandle,
-    capabilities: AgentCapabilities,
+    /// The capabilities the agent's last `initialize` reported. Shared with the
+    /// I/O task, which replaces them on every in-task reconnect (#4440) so the
+    /// desktop never decides by a previous agent binary's flags.
+    capabilities: SharedCapabilities,
     /// Agent-relayed SSH keyboard-interactive prompts open on this desktop
     /// (#3375). A `connection.create` excludes their time from its timeout.
     ki_activity: Arc<AgentPromptActivity>,
@@ -1544,6 +1549,10 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let config_task = config_clone.clone();
             let settings_task = settings_clone.clone();
             let reaper_task = reaper.clone();
+            // Shared with the task, which refreshes it on every in-task
+            // reconnect (#4440).
+            let capabilities = SharedCapabilities::from(capabilities);
+            let capabilities_task = capabilities.clone();
             let ki_activity = AgentPromptActivity::new();
             let ki_activity_task = ki_activity.clone();
 
@@ -1575,6 +1584,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     pending_notifications,
                     ki_activity_task,
                     update_auth_token_path,
+                    capabilities_task,
                 )
                 .await;
             })
@@ -1621,7 +1631,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         };
 
         let result = AgentConnectResult {
-            capabilities: capabilities.clone(),
+            capabilities: capabilities.get(),
             agent_version: agent_version.clone(),
             protocol_version: protocol_version.clone(),
         };
@@ -1824,7 +1834,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     /// Get the capabilities of a connected agent.
     pub fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
-        agents.get(agent_id).map(|c| c.capabilities.clone())
+        agents.get(agent_id).map(|c| c.capabilities.get())
     }
 
     /// Retain a connected agent's SSH transport config for backend-driven
@@ -1921,7 +1931,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
             ))),
             ReattachDecision::Reconnect(retained) => {
                 match self.connect_agent(agent_id, &retained.config, Some(&retained.settings)) {
-                    Ok(_) => Ok(()),
+                    // The re-established agent may be another binary: record
+                    // what it reports in the agents region too (#4440).
+                    Ok(connected) => {
+                        capabilities::record_capabilities_in_region(
+                            &self.app_handle,
+                            agent_id,
+                            &connected.capabilities,
+                        );
+                        Ok(())
+                    }
                     // A concurrent redrive won the connect race and already
                     // re-established the transport — treat that as success, not a
                     // failure to fold.
@@ -2959,7 +2978,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // Gone already: nothing streams, so there is nothing to pause.
             return Ok(());
         };
-        if !conn.capabilities.output_flow {
+        if !conn.capabilities.output_flow() {
             return Ok(());
         }
         conn.command_tx
