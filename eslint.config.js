@@ -5,6 +5,70 @@ import reactHooks from "eslint-plugin-react-hooks";
 import { importX } from "eslint-plugin-import-x";
 import { createTypeScriptImportResolver } from "eslint-import-resolver-typescript";
 
+/**
+ * Silent value-fallback policy (#4520): `.catch(() => null)` (or `undefined`,
+ * `false`, `[]`, `{}`, …) turns a rejection into a default with no trace, so a
+ * failed read looks identical to "nothing there". Log it in the handler, or use
+ * withLoggedFallback(p, fallback, target, reason) from @/utils/loggedFallback.
+ */
+const SILENT_FALLBACK_CATCH = {
+  selector:
+    "CallExpression[callee.property.name='catch'] > ArrowFunctionExpression:matches([params.length=0], [params.0.name=/^_/]):matches([body.type='Literal'], [body.type='Identifier'][body.name='undefined'], [body.type='ArrayExpression'][body.elements.length=0], [body.type='ObjectExpression'][body.properties.length=0], [body.type='TSAsExpression'][body.expression.type='ObjectExpression'][body.expression.properties.length=0], [body.type='TSAsExpression'][body.expression.type='ArrayExpression'][body.expression.elements.length=0])",
+  message:
+    "Do not turn a rejection into a fallback value silently (#4520). Use withLoggedFallback(p, fallback, target, reason) from @/utils/loggedFallback, or log in the handler.",
+};
+
+/**
+ * The shared `no-restricted-syntax` policies for production frontend code
+ * (#4104, #4333, #4374). Kept in one list so a per-file override can reuse it.
+ */
+const RESTRICTED_SYNTAX = [
+  {
+    selector:
+      "CallExpression[callee.name='String'][arguments.length=1][arguments.0.name=/^(e|err|error|ex|exc)$/]",
+    message:
+      'Use errorMessage(err) from @/utils/errorMessage — String() of a structured IPC error renders "[object Object]" (#4104).',
+  },
+  {
+    // `${err}` has the same "[object Object]" failure as String(err).
+    selector: "TemplateLiteral > Identifier[name=/^(e|err|error|ex|exc)$/]",
+    message:
+      'Interpolate errorMessage(err) from @/utils/errorMessage — "${err}" of a structured IPC error renders "[object Object]" (#4104).',
+  },
+  {
+    // Silent-catch policy (#4333): `.catch(() => {})` swallows a rejection
+    // with no trace. A comment-only body counts as empty too.
+    selector:
+      "CallExpression[callee.property.name='catch'] > :matches(ArrowFunctionExpression, FunctionExpression)[body.type='BlockStatement'][body.body.length=0]",
+    message:
+      'Do not swallow a rejection silently (#4333). Use fireAndForget(p, "<reason>") for best-effort work, or log/toast the error in the handler.',
+  },
+  {
+    // Name sorting policy (#4374, I18N-014): raw localeCompare uses the
+    // engine-default locale and no natural numeric ordering.
+    selector: "CallExpression[callee.property.name='localeCompare']",
+    message:
+      "Sort names with compareNames from @/utils/locale — the shared UI-locale collator with natural number ordering (#4374).",
+  },
+  {
+    // Date formatting policy (#4374, I18N-015): a bare toLocale*String()
+    // (or one given `undefined`) uses the engine default — possibly "C".
+    selector:
+      "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/]:matches([arguments.length=0], [arguments.0.type='Identifier'][arguments.0.name='undefined'])",
+    message:
+      "Pass resolveUiLocale() or use the shared helpers in @/utils/formatters (formatAbsoluteTime, formatClockTime, …) (#4374).",
+  },
+  {
+    // Shortcut-hint policy (#4374, WA-FE2-003): a hand-built "Ctrl+X" /
+    // "Cmd+X" hint goes stale on the other platform and ignores user
+    // overrides. "Ctrl+Alt+Del" names a key sequence sent to a remote host.
+    selector:
+      "JSXAttribute[name.name=/^(title|aria-label|content)$/] :matches(Literal[value=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/], TemplateElement[value.raw=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/])",
+    message:
+      "Build shortcut hints with withActionAccelerator / getActionAccelerator from @/services/keybindings (#4374).",
+  },
+];
+
 export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -49,53 +113,16 @@ export default tseslint.config(
     files: ["src/**/*.{ts,tsx}"],
     ignores: ["src/utils/errorMessage.ts", "src/**/*.test.{ts,tsx}", "src/test/**"],
     rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "CallExpression[callee.name='String'][arguments.length=1][arguments.0.name=/^(e|err|error|ex|exc)$/]",
-          message:
-            'Use errorMessage(err) from @/utils/errorMessage — String() of a structured IPC error renders "[object Object]" (#4104).',
-        },
-        {
-          // `${err}` has the same "[object Object]" failure as String(err).
-          selector: "TemplateLiteral > Identifier[name=/^(e|err|error|ex|exc)$/]",
-          message:
-            'Interpolate errorMessage(err) from @/utils/errorMessage — "${err}" of a structured IPC error renders "[object Object]" (#4104).',
-        },
-        {
-          // Silent-catch policy (#4333): `.catch(() => {})` swallows a rejection
-          // with no trace. A comment-only body counts as empty too.
-          selector:
-            "CallExpression[callee.property.name='catch'] > :matches(ArrowFunctionExpression, FunctionExpression)[body.type='BlockStatement'][body.body.length=0]",
-          message:
-            'Do not swallow a rejection silently (#4333). Use fireAndForget(p, "<reason>") for best-effort work, or log/toast the error in the handler.',
-        },
-        {
-          // Name sorting policy (#4374, I18N-014): raw localeCompare uses the
-          // engine-default locale and no natural numeric ordering.
-          selector: "CallExpression[callee.property.name='localeCompare']",
-          message:
-            "Sort names with compareNames from @/utils/locale — the shared UI-locale collator with natural number ordering (#4374).",
-        },
-        {
-          // Date formatting policy (#4374, I18N-015): a bare toLocale*String()
-          // (or one given `undefined`) uses the engine default — possibly "C".
-          selector:
-            "CallExpression[callee.property.name=/^toLocale(Date|Time)?String$/]:matches([arguments.length=0], [arguments.0.type='Identifier'][arguments.0.name='undefined'])",
-          message:
-            "Pass resolveUiLocale() or use the shared helpers in @/utils/formatters (formatAbsoluteTime, formatClockTime, …) (#4374).",
-        },
-        {
-          // Shortcut-hint policy (#4374, WA-FE2-003): a hand-built "Ctrl+X" /
-          // "Cmd+X" hint goes stale on the other platform and ignores user
-          // overrides. "Ctrl+Alt+Del" names a key sequence sent to a remote host.
-          selector:
-            "JSXAttribute[name.name=/^(title|aria-label|content)$/] :matches(Literal[value=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/], TemplateElement[value.raw=/\\b(Ctrl|Cmd)\\+(?!Alt\\+Del)/])",
-          message:
-            "Build shortcut hints with withActionAccelerator / getActionAccelerator from @/services/keybindings (#4374).",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...RESTRICTED_SYNTAX, SILENT_FALLBACK_CATCH],
+    },
+  },
+  {
+    // The durable-log forwarder in frontendLog.ts must stay silent: logging its
+    // own failure would recurse into the forwarder (#4520). Exempt only that
+    // file from the silent value-fallback rule; every other policy still applies.
+    files: ["src/utils/frontendLog.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...RESTRICTED_SYNTAX],
     },
   },
   {

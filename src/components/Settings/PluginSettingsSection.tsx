@@ -10,6 +10,7 @@ import { ConnectionSettingsForm } from "@/components/DynamicForm";
 import { hasSettings, pluginTypeIcon } from "@/components/Plugins/pluginPresentation";
 import { pluginSettingsDefaults, pluginSettingsToSchema } from "./pluginSettingsSchema";
 import "./PluginSettingsSection.css";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** Debounce before a plugin's edited settings are persisted. */
 const SAVE_DEBOUNCE_MS = 300;
@@ -54,12 +55,15 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
     for (const p of configurable) {
       const { id, settings } = p.manifest;
       const defaults = pluginSettingsDefaults(settings ?? {});
-      getPluginSettings(id)
-        .catch(() => ({}) as Record<string, JsonValue>)
-        .then((stored) => {
-          if (cancelled) return;
-          setValues((prev) => ({ ...prev, [id]: { ...defaults, ...stored } }));
-        });
+      void withLoggedFallback(
+        getPluginSettings(id),
+        {} as Record<string, JsonValue>,
+        "plugin_settings",
+        `read the settings of plugin ${id}`
+      ).then((stored) => {
+        if (cancelled) return;
+        setValues((prev) => ({ ...prev, [id]: { ...defaults, ...stored } }));
+      });
     }
     return () => {
       cancelled = true;

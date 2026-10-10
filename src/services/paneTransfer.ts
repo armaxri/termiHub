@@ -36,6 +36,7 @@ import {
 import { runMaybeTrackedTransfer, seedTransferQueueRow } from "@/hooks/transferFeedback";
 import type { FileEntry } from "@/types/connection";
 import { joinPath } from "@/utils/paths";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** Which pane of the transfer view. */
 export type PaneSide = "local" | "remote";
@@ -135,7 +136,13 @@ export async function downloadToLocal(
  * the safe byte-based fallback.
  */
 export async function probePaneRemote(sessionId: string): Promise<PaneRemote> {
-  const queueCapable = await sessionSupportsTransferQueue(sessionId).catch(() => false);
+  const queueCapable = await withLoggedFallback(
+    sessionSupportsTransferQueue(sessionId),
+    false,
+    "pane_transfer",
+    `probe transfer-queue support of session ${sessionId}`,
+    "debug"
+  );
   return { sessionId, queueCapable };
 }
 

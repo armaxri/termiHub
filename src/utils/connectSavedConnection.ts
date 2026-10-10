@@ -68,6 +68,7 @@ import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { neededFieldSecrets, resolveFieldSecrets } from "@/utils/fieldSecrets";
 import { errorMessage } from "@/utils/errorMessage";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** Options for {@link connectSavedConnection}. */
 export interface ConnectSavedConnectionOptions {
@@ -307,9 +308,13 @@ export async function connectSavedConnection(
     // Unattended, an agent-hosted target's key lives on the agent host: the
     // agent reports a missing passphrase itself, typed (#3877).
     if (authMethod === "key" && !(unattended && agentHosted)) {
-      keyEncrypted = await isSshKeyEncrypted(
-        readConfigString(connection.config, "keyPath") ?? ""
-      ).catch(() => true);
+      keyEncrypted = await withLoggedFallback(
+        isSshKeyEncrypted(readConfigString(connection.config, "keyPath") ?? ""),
+        true,
+        "connect",
+        "inspect the SSH key (assuming it is encrypted)",
+        "debug"
+      );
     }
     // Password auth always needs a credential; key auth only when encrypted.
     const needsCredential = authMethod === "password" || (authMethod === "key" && keyEncrypted);

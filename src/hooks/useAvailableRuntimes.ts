@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { checkDockerAvailable, checkPodmanAvailable } from "@/services/api";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 interface AvailableRuntimes {
   dockerAvailable: boolean;
@@ -35,8 +36,8 @@ export function useAvailableRuntimes(): AvailableRuntimes {
 
     async function probe() {
       const [docker, podman] = await Promise.all([
-        checkDockerAvailable().catch(() => false),
-        checkPodmanAvailable().catch(() => false),
+        withLoggedFallback(checkDockerAvailable(), false, "runtimes", "probe Docker", "debug"),
+        withLoggedFallback(checkPodmanAvailable(), false, "runtimes", "probe Podman", "debug"),
       ]);
       cachedResult = { docker, podman };
       if (!cancelled) {

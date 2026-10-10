@@ -54,6 +54,7 @@ import {
   type PaneRemote,
 } from "@/services/paneTransfer";
 import { seedTransferQueueRow } from "./transferFeedback";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /**
  * Link a file transfer to the recorded folder paste it belongs to (#3643), so
@@ -410,9 +411,13 @@ export class FolderPasteEndpointUnavailable extends Error {
 }
 
 async function probeSftp(sessionId: string): Promise<boolean> {
-  return sessionHasExecCapability(sessionId)
-    .then(() => true)
-    .catch(() => false);
+  return withLoggedFallback(
+    sessionHasExecCapability(sessionId).then(() => true),
+    false,
+    "folder_paste",
+    `probe SFTP exec capability of session ${sessionId}`,
+    "debug"
+  );
 }
 
 /**
@@ -420,7 +425,13 @@ async function probeSftp(sessionId: string): Promise<boolean> {
  * probe means it cannot.
  */
 export async function probeRemoteCopy(sessionId: string): Promise<boolean> {
-  return sessionSupportsRemoteCopy(sessionId).catch(() => false);
+  return withLoggedFallback(
+    sessionSupportsRemoteCopy(sessionId),
+    false,
+    "folder_paste",
+    `probe remote-copy support of session ${sessionId}`,
+    "debug"
+  );
 }
 
 /**
@@ -462,7 +473,13 @@ export async function retryInterruptedFolderPaste(paste: InterruptedFolderPaste)
     probeSftp(destSession),
     probeRemoteCopy(destSession),
     srcSession ? probeRemoteCopy(srcSession) : Promise.resolve(false),
-    sessionSupportsTransferQueue(destSession).catch(() => false),
+    withLoggedFallback(
+      sessionSupportsTransferQueue(destSession),
+      false,
+      "folder_paste",
+      `probe transfer-queue support of session ${destSession}`,
+      "debug"
+    ),
   ]);
   const t: PasteTransport = {
     operation: paste.operation,

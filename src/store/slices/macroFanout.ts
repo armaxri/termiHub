@@ -13,6 +13,7 @@ import type {
   MacroPlaybackStatus,
   TerminalInputInjector,
 } from "@/services/macroPlayback";
+import { withLoggedFallback } from "@/utils/loggedFallback";
 
 /** A fan-out injector plus accessors for which targets are still receiving. */
 export interface MacroFanoutInjector {
@@ -50,7 +51,9 @@ export function createMacroFanoutInjector(
     for (const id of [...live]) if (!connectedNow.has(id)) drop(id);
     const ids = [...live];
     const results = await Promise.all(
-      ids.map((id) => injector(id, data).catch((): boolean => false))
+      ids.map((id) =>
+        withLoggedFallback(injector(id, data), false, "macro", `inject into target ${id}`)
+      )
     );
     ids.forEach((id, i) => {
       if (!results[i]) drop(id);
