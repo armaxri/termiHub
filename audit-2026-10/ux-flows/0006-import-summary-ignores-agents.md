@@ -11,8 +11,8 @@ evidence:
   - src/components/ExportImport/ImportDialog.tsx:199-206
   - src-tauri/src/connection/manager.rs:1216-1221
   - src/types/generated/ConnectionImportResult.ts:7-25
-status: open
-resolution: ""
+status: fixed
+resolution: "#4380 — import result counts agentsImported/agentsSkipped and the summary reports them"
 audit: 2026-10
 commit: 663465d52
 relation: new

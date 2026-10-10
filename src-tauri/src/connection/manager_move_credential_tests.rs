@@ -559,3 +559,45 @@ fn an_encrypted_import_counts_only_the_connections_it_added() {
     assert_eq!(result.connections_skipped, 1);
     assert_eq!(main_ids(&dst), vec!["a", "b", "c"]);
 }
+
+fn agent(id: &str) -> SavedRemoteAgent {
+    serde_json::from_value(serde_json::json!({
+        "id": id,
+        "name": id,
+        "config": { "host": "agent.example.com", "port": 22, "username": "u" },
+    }))
+    .expect("valid agent fixture")
+}
+
+/// Agents are counted like connections: added ones as imported, ones the
+/// store already holds as skipped — so a file with only agents is not
+/// reported as "Nothing imported" (#4380).
+#[test]
+fn an_import_counts_the_agents_it_added_and_skipped() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let (src, _r) = manager(src_dir.path(), Arc::new(RecordingStore::default()));
+    src.save_agent(agent("a1")).unwrap();
+    src.save_agent(agent("a2")).unwrap();
+    src.save_agent(agent("a3")).unwrap();
+    let json = src.export_encrypted_json(None, None).unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let (dst, _r) = manager(dst_dir.path(), Arc::new(RecordingStore::default()));
+    dst.save_agent(agent("a2")).unwrap();
+
+    let result = dst.import_encrypted_json(&json, None).unwrap();
+
+    assert_eq!(result.connections_imported, 0);
+    assert_eq!(result.connections_skipped, 0);
+    assert_eq!(result.agents_imported, 2);
+    assert_eq!(result.agents_skipped, 1);
+    let mut agent_ids: Vec<String> = dst
+        .get_all()
+        .unwrap()
+        .agents
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    agent_ids.sort();
+    assert_eq!(agent_ids, vec!["a1", "a2", "a3"]);
+}
