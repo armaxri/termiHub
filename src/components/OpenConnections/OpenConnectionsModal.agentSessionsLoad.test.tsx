@@ -130,7 +130,9 @@ describe("OpenConnectionsModal — agent session load (WA-FE-011)", () => {
     await flush();
     unsubscribe();
     const warnings = entries.filter((e) => e.level === "WARN").map((e) => e.message);
-    expect(warnings).toContain("Failed to list sessions of agent a1: agent gone");
+    // A failed agent list is now a user-visible error (#4377), logged at ERROR.
+    const errors = entries.filter((e) => e.level === "ERROR").map((e) => e.message);
+    expect(errors).toContain("Failed to list sessions of agent a1: agent gone");
     expect(warnings).toContain("Failed to read X server status: no X server probe");
     expect(listAgentSessions).toHaveBeenCalledWith("a2");
   });
