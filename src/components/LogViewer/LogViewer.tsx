@@ -18,6 +18,7 @@ import {
 import { errorMessage } from "@/utils/errorMessage";
 import { subscribeGuarded } from "@/hooks/useTauriListener";
 import { redactLogText } from "@/utils/redactLogText";
+import { displayTimestamp, exportTimestamp, mergeChronological } from "./logTime";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
@@ -103,9 +104,10 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     getLogs(MAX_ENTRIES)
       .then((buffered) => {
         if (!cancelled) {
-          // Prepend the backend backlog to the frontend entries already shown.
+          // Interleave the backend backlog with the frontend entries already
+          // shown by capture time, so the merged list is chronological (#4536).
           const backend = buffered.filter((entry) => !isOwnEcho(entry));
-          setEntries((prev) => capEntries([...backend, ...prev]));
+          setEntries((prev) => capEntries(mergeChronological(backend, prev)));
         }
       })
       .catch((err: unknown) => {
@@ -277,7 +279,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
             <ContextMenu.Root key={i}>
               <ContextMenu.Trigger asChild>
                 <div className="log-viewer__entry">
-                  <span className="log-viewer__timestamp">{entry.timestamp}</span>
+                  <span className="log-viewer__timestamp">{displayTimestamp(entry)}</span>
                   <span className={`log-viewer__level log-viewer__level--${entry.level}`}>
                     {entry.level}
                   </span>
@@ -331,6 +333,11 @@ function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
   );
 }
 
+/**
+ * One exported (saved/copied) log line. Exports use ISO-8601 UTC timestamps so
+ * a log attached to a bug report is unambiguous across time zones (#4536); the
+ * on-screen rows show the locale-formatted local time instead.
+ */
 function formatEntry(entry: LogEntry): string {
-  return `${entry.timestamp} [${entry.level}] ${displayTarget(entry)}: ${entry.message}`;
+  return `${exportTimestamp(entry)} [${entry.level}] ${displayTarget(entry)}: ${entry.message}`;
 }

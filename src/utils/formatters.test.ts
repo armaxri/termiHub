@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   formatAbsoluteTime,
   formatClockTime,
+  formatLogTime,
   formatRelativeDay,
   formatShortDate,
   truncate,
@@ -212,6 +213,27 @@ describe("UI-locale date helpers (#4374, I18N2-004)", () => {
   it("formatClockTime never throws under a C locale", () => {
     setLocale("C");
     expect(formatClockTime(at)).toBe(at.toLocaleTimeString(locale.DEFAULT_UI_LOCALE));
+  });
+
+  it("formatLogTime renders 24-hour time with milliseconds in the UI locale (#4536)", () => {
+    const ms = new Date(2026, 5, 5, 18, 5, 7, 42);
+    setLocale("en-US");
+    expect(formatLogTime(ms)).toBe("18:05:07.042");
+    expect(formatLogTime(ms.getTime())).toBe("18:05:07.042");
+    setLocale("de-DE");
+    expect(formatLogTime(ms.toISOString())).toBe(
+      new Intl.DateTimeFormat("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        fractionalSecondDigits: 3,
+        hourCycle: "h23",
+      }).format(ms)
+    );
+  });
+
+  it("formatLogTime returns an empty string for an unparseable input", () => {
+    expect(formatLogTime("not a date")).toBe("");
   });
 
   it("formatRelativeDay names today/tomorrow in the UI locale", () => {

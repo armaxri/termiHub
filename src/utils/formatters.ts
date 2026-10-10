@@ -199,6 +199,25 @@ export function formatClockTime(value: DateInput): string {
 }
 
 /**
+ * Format the time-of-day of `value` for a log row: 24-hour `HH:MM:SS` plus
+ * milliseconds, with the UI locale's separators ({@link resolveUiLocale}), e.g.
+ * `18:05:07.123` in `en-US` and `de-DE` (#4536). Log rows need sub-second
+ * precision and a fixed width, which {@link formatClockTime} lacks. Returns an
+ * empty string for an unparseable input.
+ */
+export function formatLogTime(value: DateInput): string {
+  const date = toValidDate(value);
+  if (!date) return "";
+  return new Intl.DateTimeFormat(resolveUiLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hourCycle: "h23",
+  }).format(date);
+}
+
+/**
  * Format a compact date (short weekday, day, short month) in the UI locale,
  * e.g. `Fri, Jun 5` in `en-US` or `Fr., 5. Juni` in `de-DE` (#4374). Returns an
  * empty string for an unparseable input.
