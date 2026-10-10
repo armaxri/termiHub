@@ -36,9 +36,16 @@ impl Gate {
 /// A connection whose writes park on `gate` while the written bytes start with
 /// `block_prefix`. Every write is recorded (in completion order); `entered` is
 /// notified when a write starts parking; `disconnected` records teardown.
+///
+/// `interrupted` records [`ConnectionType::interrupt_io`] calls. When
+/// `interruptible` the call behaves like a real PTY / socket backend (#4394):
+/// it opens the gate and the parked write fails; otherwise it has no effect,
+/// like the trait's default.
 struct StallingConnection {
     gate: Arc<Gate>,
     block_prefix: Option<Vec<u8>>,
+    interruptible: bool,
+    interrupted: Arc<AtomicBool>,
     entered: Arc<tokio::sync::Notify>,
     writes: Arc<StdMutex<Vec<u8>>>,
     resizes: Arc<StdMutex<Vec<(u16, u16)>>>,
@@ -47,6 +54,7 @@ struct StallingConnection {
 
 struct Probe {
     gate: Arc<Gate>,
+    interrupted: Arc<AtomicBool>,
     entered: Arc<tokio::sync::Notify>,
     writes: Arc<StdMutex<Vec<u8>>>,
     resizes: Arc<StdMutex<Vec<(u16, u16)>>>,
@@ -54,8 +62,16 @@ struct Probe {
 }
 
 fn stalling(block_prefix: Option<&[u8]>) -> (Box<dyn ConnectionType>, Probe) {
+    stalling_with(block_prefix, false)
+}
+
+fn stalling_with(
+    block_prefix: Option<&[u8]>,
+    interruptible: bool,
+) -> (Box<dyn ConnectionType>, Probe) {
     let probe = Probe {
         gate: Arc::new(Gate::default()),
+        interrupted: Arc::new(AtomicBool::new(false)),
         entered: Arc::new(tokio::sync::Notify::new()),
         writes: Arc::default(),
         resizes: Arc::default(),
@@ -64,6 +80,8 @@ fn stalling(block_prefix: Option<&[u8]>) -> (Box<dyn ConnectionType>, Probe) {
     let conn = StallingConnection {
         gate: probe.gate.clone(),
         block_prefix: block_prefix.map(<[u8]>::to_vec),
+        interruptible,
+        interrupted: probe.interrupted.clone(),
         entered: probe.entered.clone(),
         writes: probe.writes.clone(),
         resizes: probe.resizes.clone(),
@@ -104,6 +122,12 @@ impl ConnectionType for StallingConnection {
     fn is_connected(&self) -> bool {
         true
     }
+    fn interrupt_io(&self) {
+        self.interrupted.store(true, Ordering::SeqCst);
+        if self.interruptible {
+            self.gate.release();
+        }
+    }
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         if self
             .block_prefix
@@ -112,6 +136,11 @@ impl ConnectionType for StallingConnection {
         {
             self.entered.notify_one();
             self.gate.wait();
+            if self.interruptible && self.interrupted.load(Ordering::SeqCst) {
+                return Err(SessionError::Io(std::io::Error::from(
+                    std::io::ErrorKind::BrokenPipe,
+                )));
+            }
         }
         self.writes.lock().unwrap().extend_from_slice(data);
         Ok(())
@@ -140,11 +169,22 @@ async fn manager_with_parked_write() -> (
     Probe,
     tokio::task::JoinHandle<Result<(), TerminalError>>,
 ) {
+    manager_with_parked_write_in(stalling(Some(b"STALL"))).await
+}
+
+/// [`manager_with_parked_write`] with a caller-built stalled connection.
+async fn manager_with_parked_write_in(
+    (stuck_conn, stuck): (Box<dyn ConnectionType>, Probe),
+) -> (
+    Arc<SessionManager>,
+    Probe,
+    Probe,
+    tokio::task::JoinHandle<Result<(), TerminalError>>,
+) {
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
         Arc::new(NullAgent),
     ));
-    let (stuck_conn, stuck) = stalling(Some(b"STALL"));
     let (other_conn, other) = stalling(None);
     manager.insert_test_session("stuck", stuck_conn).await;
     manager.insert_test_session("other", other_conn).await;
@@ -220,8 +260,14 @@ async fn stalled_write_does_not_block_list_or_close() {
     );
     // The stalled backend cannot be disconnected while its write is still in
     // flight (`disconnect` needs exclusive access); teardown is deferred until
-    // the write returns, then still runs.
+    // the write returns, then still runs. Close asked it to interrupt that
+    // write first (#4394); this backend keeps the trait's no-op.
     assert!(!stuck_disconnected_while_parked);
+    assert!(stuck.interrupted.load(Ordering::SeqCst));
+    assert!(
+        !other.interrupted.load(Ordering::SeqCst),
+        "a close with no I/O in flight disconnects directly, without interrupting"
+    );
     parked.await.unwrap().unwrap();
     tokio::time::timeout(BOUND, async {
         while !stuck.disconnected.load(Ordering::SeqCst) {
@@ -277,4 +323,40 @@ async fn input_to_a_closed_session_reports_not_found() {
         manager.resize("gone", 80, 24).await,
         Err(TerminalError::SessionNotFound(_))
     ));
+}
+
+/// #4394: closing a session whose write is parked interrupts that write, so the
+/// backend is torn down at once instead of only once the write returns on its
+/// own — which, for a PTY whose program never reads stdin, is never.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_a_stalled_session_interrupts_its_write_and_disconnects() {
+    let (manager, stuck, _other, mut parked) =
+        manager_with_parked_write_in(stalling_with(Some(b"STALL"), true)).await;
+
+    let closed = tokio::time::timeout(BOUND, manager.close_session("stuck")).await;
+    // Nothing but close's interrupt releases the gate here, so the write
+    // returning proves close interrupted it.
+    let write = tokio::time::timeout(BOUND, &mut parked).await;
+    let disconnected = tokio::time::timeout(BOUND, async {
+        while !stuck.disconnected.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    // Unpark a write a regression left blocked, so the runtime can shut down
+    // and the assertions below fail instead of hanging the test.
+    stuck.gate.release();
+
+    closed
+        .expect("closing the stalled session must not wait behind its write")
+        .unwrap();
+    assert!(
+        stuck.interrupted.load(Ordering::SeqCst),
+        "close interrupts the parked write"
+    );
+    let write = write
+        .expect("the interrupted write must return promptly")
+        .unwrap();
+    assert!(write.is_err(), "the interrupted write reports its failure");
+    disconnected.expect("the backend must be disconnected promptly after the interrupt");
 }
