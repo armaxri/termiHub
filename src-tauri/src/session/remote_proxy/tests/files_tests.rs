@@ -151,6 +151,8 @@ async fn a_local_session_on_an_older_agent_still_browses() {
 /// Chmod / chown / symlink are offered for an agent-hosted session exactly
 /// when its hosted backend performs them (#4353): SSH (SFTP) and local do;
 /// Docker, FTP and WSL answer `NotSupported` on the agent, so they do not.
+/// The mock agent predates `hostFileAttributeOps` (#4601), so this is also
+/// the older-agent fallback for a local session.
 #[tokio::test]
 async fn attribute_ops_follow_the_hosted_session_type() {
     use termihub_core::files::FileAttributeOps;
@@ -166,6 +168,72 @@ async fn attribute_ops_follow_the_hosted_session_type() {
         let browser = proxy.file_browser().expect("file browser");
         assert_eq!(browser.attribute_ops(), expected, "{session_type}");
         proxy.disconnect().await.ok();
+    }
+}
+
+/// A local session's filesystem is the agent host's own (#4601): a Windows
+/// agent host reports no chmod / chown / symlink, so none is offered instead
+/// of failing on use. Only the local session follows the host report — an SSH
+/// session's SFTP server is not the agent host.
+#[tokio::test]
+async fn a_local_session_on_a_windows_agent_host_offers_no_attribute_ops() {
+    use termihub_core::files::FileAttributeOps;
+    for (session_type, expected) in [
+        ("local", FileAttributeOps::NONE),
+        ("ssh", FileAttributeOps::ALL),
+    ] {
+        let mut mock = MockAgentRpcClient::with_capabilities(json!({
+            "types": [{
+                "typeId": session_type,
+                "displayName": session_type,
+                "icon": "terminal",
+                "schema": {"groups": []},
+                "capabilities": {
+                    "monitoring": false,
+                    "fileBrowser": true,
+                    "resize": true,
+                    "persistent": true
+                }
+            }]
+        }));
+        mock.session_files = Some(true);
+        mock.host_file_attribute_ops = Some(FileAttributeOps::NONE);
+        let mock = Arc::new(mock);
+        let mut proxy = connected_proxy(&mock, session_type).await;
+        let browser = proxy.file_browser().expect("file browser");
+        assert_eq!(browser.attribute_ops(), expected, "{session_type}");
+        proxy.disconnect().await.ok();
+    }
+}
+
+/// The host report is used as given (#4601): a Unix agent host that performs
+/// only some of the three offers exactly those on a local session.
+#[test]
+fn hosted_attribute_ops_use_the_agent_host_report_for_local_sessions() {
+    use termihub_core::files::FileAttributeOps;
+    let partial = FileAttributeOps {
+        permissions: true,
+        owner: false,
+        symlink: true,
+    };
+    assert_eq!(hosted_attribute_ops("local", false, Some(partial)), partial);
+    // Older agent (no report): the session-type answer.
+    assert_eq!(
+        hosted_attribute_ops("local", false, None),
+        FileAttributeOps::ALL
+    );
+    // Too old to browse the session: nothing, whatever the report says.
+    assert_eq!(
+        hosted_attribute_ops("local", true, Some(FileAttributeOps::ALL)),
+        FileAttributeOps::NONE
+    );
+    // Non-host sessions ignore the host report.
+    for session_type in ["docker", "ftp", "wsl"] {
+        assert_eq!(
+            hosted_attribute_ops(session_type, false, Some(FileAttributeOps::ALL)),
+            FileAttributeOps::NONE,
+            "{session_type}"
+        );
     }
 }
 
