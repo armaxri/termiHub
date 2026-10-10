@@ -1424,7 +1424,8 @@ where
 /// It carries no logon semantics: xrdp sends the same `rn-user-requested`
 /// ultimatum for a rejected login as for any other end of session, with no Set
 /// Error Info PDU before it, so the sidecar cannot tell a wrong password from a
-/// logoff here (#3612) and reports a plain server close.
+/// logoff here (#3612) — nor from an xrdp service restart (#4529, evidence on
+/// [`failure::SERVER_CLOSE_ERROR_INFO`]) — and reports a plain server close.
 fn disconnect_ultimatum_reason(
     action: ironrdp::pdu::Action,
     frame: &[u8],
