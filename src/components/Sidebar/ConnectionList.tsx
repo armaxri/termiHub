@@ -65,6 +65,7 @@ import {
   jumpHostTooltip,
   jumpHostGatewayConnection,
   findJumpHostDependents,
+  findFileRouteDependents,
 } from "@/utils/jumpHost";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
@@ -1169,12 +1170,21 @@ export function ConnectionList() {
         ? `Delete ${targetIds.length} connections? This cannot be undone.`
         : `Delete “${target?.name ?? "this connection"}”? This cannot be undone.`;
 
+      const subject = bulk ? "These connections are" : "This connection is";
       const dependents = findJumpHostDependents(connections, targetIds);
       let message = baseMessage;
       if (dependents.length > 0) {
         const names = dependents.map((d) => d.name).join(", ");
-        const subject = bulk ? "These connections are" : "This connection is";
-        message = `${baseMessage} ${subject} used as a jump host by ${dependents.length} other connection(s): ${names}.`;
+        message = `${message} ${subject} used as a jump host by ${dependents.length} other connection(s): ${names}.`;
+      }
+      // A connection linked as another's file-transfer route (#4194) would leave
+      // that connection with "no route" for file transfer once deleted (#4380).
+      const routeDependents = findFileRouteDependents(connections, targetIds);
+      if (routeDependents.length > 0) {
+        const names = routeDependents.map((d) => d.name).join(", ");
+        const also = bulk ? "They are also" : "It is also";
+        const lead = dependents.length > 0 ? also : subject;
+        message = `${message} ${lead} used as the file-transfer route by ${routeDependents.length} other connection(s): ${names}.`;
       }
 
       setDeleteConfirm({

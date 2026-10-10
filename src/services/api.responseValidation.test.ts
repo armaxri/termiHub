@@ -136,6 +136,8 @@ describe("api response-validation (TFE-004)", () => {
       const importResult = {
         connectionsImported: 3,
         connectionsSkipped: 0,
+        agentsImported: 0,
+        agentsSkipped: 0,
         credentialsImported: 2,
         sharedCredentialsImported: 1,
         warnings: [],
@@ -170,6 +172,8 @@ describe("api response-validation (TFE-004)", () => {
       mockedInvoke.mockResolvedValue({
         connectionsImported: 1,
         connectionsSkipped: 0,
+        agentsImported: 0,
+        agentsSkipped: 0,
         credentialsImported: 0,
         sharedCredentialsImported: 0,
         warnings: [],

@@ -14,6 +14,7 @@ import { ConnectionConfig } from "@/types/terminal";
 import type { SettingsField, SettingsSchema } from "@/types/schema";
 import { compareNames } from "@/utils/locale";
 import { isSshConnectionConfig } from "@/utils/typedConnectionConfig";
+import { readConfigString } from "@/utils/connectionConfigFields";
 
 /**
  * Extract the jump-host chain from a connection config.
@@ -188,6 +189,25 @@ export function findJumpHostDependents(
       !targets.has(c.id) &&
       getJumpHosts(c.config).some((hop) => hop.connectionId && targets.has(hop.connectionId))
   );
+}
+
+/**
+ * Find connections that use any of `targetIds` as their linked file-transfer
+ * route (`fileTransferVia`, #4194) — e.g. a VNC connection that transfers files
+ * through a saved SSH connection. Connections in the target set are excluded,
+ * as in {@link findJumpHostDependents}. Deleting the route would silently turn
+ * their file transfer into "no route", so the delete confirmation warns (#4380).
+ */
+export function findFileRouteDependents(
+  connections: SavedConnection[],
+  targetIds: string[]
+): SavedConnection[] {
+  const targets = new Set(targetIds);
+  return connections.filter((c) => {
+    if (targets.has(c.id)) return false;
+    const via = readConfigString(c.config, "fileTransferVia");
+    return via !== undefined && targets.has(via);
+  });
 }
 
 /** A saved SSH connection offered as a jump-host hop in the editor dropdown. */
