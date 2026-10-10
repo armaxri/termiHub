@@ -219,6 +219,59 @@ describe("FileBrowser — list accessibility (#4349)", () => {
   });
 });
 
+describe("FileBrowser — rename inside the listbox (#4637)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(entries);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  async function startRename(name: string) {
+    await act(async () => {
+      byTestId(`file-row-${name}`).click();
+    });
+    await act(async () => {
+      byTestId("file-browser-list").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "F2", bubbles: true })
+      );
+    });
+    await flushAsync();
+  }
+
+  it("has no axe violations while a rename is in progress", async () => {
+    await renderLocal();
+    await startRename("report.pdf");
+    const input = byTestId("file-row-rename-input");
+    expect(document.activeElement).toBe(input);
+    expect(await checkA11y(byTestId("file-browser-list"))).toHaveNoViolations();
+  });
+
+  it("keeps the rename text box out of the listbox and labelled", async () => {
+    await renderLocal();
+    await startRename("report.pdf");
+    const input = byTestId("file-row-rename-input");
+    expect(input.closest('[role="listbox"]')).toBe(null);
+    expect(input.closest('[role="option"]')).toBe(null);
+    expect(input.getAttribute("aria-label")).toBe("Rename report.pdf");
+    // The listbox still holds only options: the other rows stay options.
+    const listbox = byTestId("file-browser-list").querySelector('[role="listbox"]');
+    const options = listbox?.querySelectorAll('[role="option"]') ?? [];
+    expect(options).toHaveLength(entries.length - 1);
+    expect(listbox?.querySelector("input")).toBe(null);
+  });
+});
+
 /** Fire a keydown on `el` and return the event (to inspect defaultPrevented). */
 function keyDown(el: HTMLElement, init: KeyboardEventInit): KeyboardEvent {
   const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });

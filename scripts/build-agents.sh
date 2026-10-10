@@ -118,6 +118,59 @@ write_signature() {
     fi
 }
 
+# True if the --features list enables the agent's `test-hooks` feature (as
+# `test-hooks` or `termihub-agent/test-hooks`, comma- or space-separated).
+features_enable_test_hooks() {
+    local feature
+    local -a features=()
+    IFS=', ' read -ra features <<<"$FEATURES"
+    for feature in ${features[@]+"${features[@]}"}; do
+        case "$feature" in
+        test-hooks | termihub-agent/test-hooks) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Post-build guard (#4554): a built agent must not carry test-only artifacts,
+# because it lands in target/<triple>/<profile>/, the path developers upload.
+# - scripts/internal/assert-no-test-signing-key.sh: the TEST-ONLY update-signing
+#   key (#4083), compiled in only by `--features test-hooks`. Anyone can sign an
+#   update with its committed private half.
+# - scripts/internal/assert-no-agent-test-hooks.sh: the env-armed test hooks
+#   (#4362), compiled in by test-hooks AND by every debug build, so --dev skips
+#   it (a debug agent is a local dev build by definition).
+# A `--features test-hooks` build is the system-test agent and is not checked.
+# CI (agent.yml, release.yml) runs the same two scripts on its own builds.
+# Returns non-zero -- and the caller FAILS the target -- if a guard fires; the
+# caller then removes the binary's sidecars so no checksum or signature vouches
+# for it.
+assert_shippable_agent() {
+    local binary="$1"
+    if [ "$CHECK_TEST_ARTIFACTS" = false ]; then
+        return 0
+    fi
+    scripts/internal/assert-no-test-signing-key.sh "$binary" || return 1
+    if [ "$DEV" = false ]; then
+        scripts/internal/assert-no-agent-test-hooks.sh "$binary" || return 1
+    fi
+}
+
+# Run assert_shippable_agent on a built binary. On failure, record the target
+# as failed and remove any .sha256/.sig sidecar left from an earlier build.
+# Returns non-zero when the target failed.
+#   $1 = target triple, $2 = binary path
+guard_built_agent() {
+    if assert_shippable_agent "$2"; then
+        return 0
+    fi
+    rm -f "$2.sha256" "$2.sig"
+    results+=("  FAIL  $1  (embeds test-only artifacts)")
+    echo "  FAILED: $2 embeds test-only artifacts and must never be uploaded"
+    failed=$((failed + 1))
+    return 1
+}
+
 # True if the current host is Windows (Git Bash / MSYS / Cygwin).
 host_is_windows() {
     case "$(uname -s)" in
@@ -194,6 +247,10 @@ Options:
                      private key (must match agent/keys/update-signing.pub.pem;
                      AGT-005). Without it any stale .sig next to the binary is removed.
   --help, -h         Show this help message
+
+Every built agent is checked for test-only artifacts (#4554): the TEST-ONLY
+update-signing key and, outside --dev, the env-armed test hooks. A target whose
+binary carries one FAILS. A --features test-hooks build is not checked.
 
 Linux targets (cross-rs mode, require setup-agent-cross.sh):
   x86_64-unknown-linux-musl       Static x64 binaries (musl)
@@ -276,6 +333,16 @@ if [ -n "$FEATURES" ]; then
     FEATURES_FLAG="--features $FEATURES"
 else
     FEATURES_FLAG=""
+fi
+
+# --- Test-artifact guard setup (#4554) ---
+if features_enable_test_hooks; then
+    CHECK_TEST_ARTIFACTS=false
+    echo "NOTE: --features test-hooks: skipping the test-only artifact guard."
+    echo "  This agent trusts the TEST-ONLY update-signing key; never upload or ship it."
+    echo ""
+else
+    CHECK_TEST_ARTIFACTS=true
 fi
 
 # --- Detect cross-rs (skipped for --native) ---
@@ -398,7 +465,9 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
             binary="target/$target/$PROFILE_DIR/$(agent_binary_name "$target")"
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
-                if ! write_checksum "$binary"; then
+                if ! guard_built_agent "$target" "$binary"; then
+                    :
+                elif ! write_checksum "$binary"; then
                     results+=("  FAIL  $target  (checksum failed)")
                     echo "  FAILED: could not write $binary.sha256"
                     failed=$((failed + 1))
@@ -525,7 +594,9 @@ else
                 mkdir -p "$dst_dir"
                 cp "$src_binary" "$dst_binary"
                 size=$(du -h "$dst_binary" | cut -f1)
-                if ! write_checksum "$dst_binary"; then
+                if ! guard_built_agent "$target" "$dst_binary"; then
+                    :
+                elif ! write_checksum "$dst_binary"; then
                     results+=("  FAIL  $target  (checksum failed)")
                     echo "  FAILED: could not write $dst_binary.sha256"
                     failed=$((failed + 1))

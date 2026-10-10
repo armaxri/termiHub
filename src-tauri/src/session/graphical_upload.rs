@@ -36,7 +36,7 @@ use termihub_core::errors::FileError;
 use termihub_core::files::transfer::ranged::RangedTransferTarget;
 use termihub_core::files::transfer::registry::TransferRegistry;
 use termihub_core::files::transfer::{ProgressSink, TransferDirection};
-use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
+use termihub_core::files::{FileAttributeOps, FileBrowser, FileEntry, RangedFileAccess};
 use termihub_core::protocol::methods::{
     FilesDeleteParams, FilesMkdirParams, FilesReadRangeParams, FilesReadRangeResult,
     FilesStatParams, FilesWriteRangeParams, CONNECTION_FILES_DELETE, CONNECTION_FILES_MKDIR,
@@ -419,11 +419,24 @@ pub(crate) async fn place(
 /// permission error or a timeout (#4299).
 pub(crate) trait AgentRequests: Send + Sync {
     fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, FileError>;
+
+    /// Which of chmod / chown / symlink the agent host's own file system
+    /// performs, as the agent reported in `initialize`
+    /// (`capabilities.hostFileAttributeOps`, protocol 0.29.0, #4601). `None`
+    /// when the agent is older or not connected.
+    fn host_file_attribute_ops(&self, _agent_id: &str) -> Option<FileAttributeOps> {
+        None
+    }
 }
 
 impl AgentRequests for Arc<dyn AgentRpcClient> {
     fn request(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, FileError> {
         self.send_file_request(agent_id, method, params)
+    }
+
+    fn host_file_attribute_ops(&self, agent_id: &str) -> Option<FileAttributeOps> {
+        self.get_capabilities(agent_id)
+            .and_then(|caps| caps.host_file_attribute_ops)
     }
 }
 
@@ -444,6 +457,12 @@ impl AgentHostFiles {
     /// The agent whose host file system this addresses.
     pub(crate) fn agent_id(&self) -> &str {
         &self.agent_id
+    }
+
+    /// The chmod / chown / symlink support the agent reports for its host's
+    /// own file system (#4601); `None` for an older agent.
+    pub(super) fn host_file_attribute_ops(&self) -> Option<FileAttributeOps> {
+        self.agents.host_file_attribute_ops(&self.agent_id)
     }
 
     /// Run one request on the blocking pool (agent RPCs park their thread).

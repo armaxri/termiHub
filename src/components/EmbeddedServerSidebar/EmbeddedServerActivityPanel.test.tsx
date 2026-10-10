@@ -251,6 +251,13 @@ describe("entryMatches / entryToTsv", () => {
     expect(entryMatches(entries[0], "  ")).toBe(true);
   });
 
+  it("matches diacritic-insensitively (#4582)", () => {
+    const entry = { ...entries[1], user: "Müller" };
+    expect(entryMatches(entry, "muller")).toBe(true);
+    expect(entryMatches(entry, "MÜLL")).toBe(true);
+    expect(entryMatches(entry, "meier")).toBe(false);
+  });
+
   it("renders one tab-separated line per entry", () => {
     const line = entryToTsv(entries[0]);
     expect(line.split("\t")).toHaveLength(9);

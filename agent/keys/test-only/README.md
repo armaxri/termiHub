@@ -35,7 +35,10 @@ instead of any "skip signature" path:
   `#[cfg(feature = "test-hooks")]`, and `test-hooks` is off for every release build path.
   `scripts/internal/assert-no-test-signing-key.sh` enforces this. It runs on every agent
   build in `.github/workflows/agent.yml` (including the per-PR Linux builds) and on every
-  release asset in `.github/workflows/release.yml` before it is signed.
+  release asset in `.github/workflows/release.yml` before it is signed. The local
+  builders (`scripts/build-agents.sh`/`.cmd` and `scripts/build.sh`) run it too, on
+  every agent they build without `--features test-hooks`, and fail that target if it
+  fires (#4554).
 - To rotate: generate a new pair with
   `openssl genpkey -algorithm ed25519 -out key.pem && openssl pkey -in key.pem -pubout`,
   replace both files (keep the header comments), and rebuild the system-test agent.

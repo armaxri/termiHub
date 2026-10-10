@@ -77,6 +77,7 @@ const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
 import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import { errorMessage } from "@/utils/errorMessage";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -1353,6 +1354,24 @@ function MonitoringDetailDropdown({
 }
 
 /**
+ * Languages whose name or id matches the search text (case- and
+ * diacritic-insensitive substring, through the shared {@link itemMatchesQuery},
+ * #4582). An empty search keeps every language.
+ */
+export function filterLanguages<L extends { id: string; name: string }>(
+  languages: L[],
+  search: string
+): L[] {
+  const q = search.trim();
+  if (!q) return languages;
+  return languages.filter((l) => itemMatchesQuery(l, languageFields, q));
+}
+
+function languageFields(l: { id: string; name: string }): ReadonlyArray<string> {
+  return [l.name, l.id];
+}
+
+/**
  * Language selector dropdown with search filtering.
  */
 function LanguageSelector({
@@ -1369,13 +1388,7 @@ function LanguageSelector({
 
   const displayName = languages.find((l) => l.id === currentLanguage)?.name ?? currentLanguage;
 
-  const filtered = useMemo(() => {
-    if (!search) return languages;
-    const lower = search.toLowerCase();
-    return languages.filter(
-      (l) => l.name.toLowerCase().includes(lower) || l.id.toLowerCase().includes(lower)
-    );
-  }, [languages, search]);
+  const filtered = useMemo(() => filterLanguages(languages, search), [languages, search]);
 
   return (
     <DropdownMenu.Root

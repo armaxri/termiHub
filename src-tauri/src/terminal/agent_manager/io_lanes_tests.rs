@@ -638,6 +638,7 @@ fn connection(
             unattended_connect: false,
             file_ranges: false,
             output_flow: false,
+            host_file_attribute_ops: None,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),

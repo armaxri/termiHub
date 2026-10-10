@@ -192,6 +192,11 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.availableShells).toEqual(["/bin/bash", "/bin/zsh"]);
     expect(result.capabilities.dockerAvailable).toBe(true);
     expect(result.capabilities.toolStreaming).toBe(true);
+    expect(result.capabilities.hostFileAttributeOps).toEqual({
+      permissions: false,
+      owner: false,
+      symlink: false,
+    });
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local Shell",
