@@ -705,6 +705,35 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
     }
 
+    /// Kill the child so a PTY write it stopped reading returns (#4394).
+    ///
+    /// A `write` parks in the kernel once the PTY input queue is full and the
+    /// foreground program never reads stdin again. Closing our master fd from
+    /// another thread does not wake that write, but ending the other side
+    /// does:
+    ///
+    /// - **Unix** — `kill` sends `SIGHUP` to the shell (the session leader);
+    ///   the kernel then hangs up the terminal and signals its foreground
+    ///   process group. Once the slave side is closed the parked master write
+    ///   fails with `EIO`.
+    /// - **Windows** — the console host drains the ConPTY input pipe into its
+    ///   own buffer whether or not the child reads, so a write parks only if
+    ///   the host itself stops reading. `kill` is `TerminateProcess` on the
+    ///   shell; that returns the child-exit watcher from `wait_for_exit`, and
+    ///   the watcher then runs `close_pty`, which drops the master
+    ///   (`ClosePseudoConsole`). The host exits, the input pipe loses its
+    ///   reader, and a parked `WriteFile` fails with a broken pipe (notes #3
+    ///   and #4 on `NativeLocalShellSpawner`).
+    ///
+    /// `disconnect` kills again afterwards; a second kill of a dead child is
+    /// harmless (the killer swallows the error).
+    fn interrupt_io(&self) {
+        if let Some(state) = self.state.as_ref() {
+            state.alive.store(false, Ordering::SeqCst);
+            (state.kill)();
+        }
+    }
+
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         let state = self
             .state
