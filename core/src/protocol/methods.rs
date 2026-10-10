@@ -355,6 +355,15 @@ pub struct Capabilities {
     /// desktop keeps treating by session type (a local session offers all
     /// three).
     pub host_file_attribute_ops: crate::files::FileAttributeOps,
+    /// Whether [`CONNECTION_FILES_WRITE_RANGE`] honors
+    /// [`FilesWriteRangeParams::create_new`] on the agent host's own file
+    /// system — requests without a `connection_id` — as an atomic exclusive
+    /// create that refuses an existing path with
+    /// [`FILE_ALREADY_EXISTS`](super::errors::FILE_ALREADY_EXISTS) (protocol
+    /// 0.30.0, #4433). Absent (read as `false`) on older agents, which would
+    /// ignore the unknown field and truncate: the desktop never sends it to
+    /// them.
+    pub file_create_new: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -1290,7 +1299,9 @@ pub struct FilesReadRangeResult {
 /// Params for [`CONNECTION_FILES_WRITE_RANGE`] (#3587).
 ///
 /// `offset == 0` creates or truncates the file; a larger `offset` appends and
-/// requires the file to hold exactly `offset` bytes already.
+/// requires the file to hold exactly `offset` bytes already. With
+/// [`create_new`](Self::create_new) (protocol 0.30.0, #4433) an `offset == 0`
+/// write is an exclusive create instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesWriteRangeParams {
     pub connection_id: Option<String>,
@@ -1300,6 +1311,15 @@ pub struct FilesWriteRangeParams {
     /// Base64-encoded bytes, at most
     /// [`MAX_RANGE_BYTES`](crate::files::MAX_RANGE_BYTES) once decoded.
     pub data: String,
+    /// Exclusive create (protocol 0.30.0, #4433): only with `offset == 0`,
+    /// create the file only if nothing holds `path` yet, answering
+    /// [`FILE_ALREADY_EXISTS`](super::errors::FILE_ALREADY_EXISTS) — without
+    /// writing — otherwise. Omitted when `false`, so the request is unchanged
+    /// for older agents; send it only to an agent that advertises
+    /// [`Capabilities::file_create_new`], since an older one ignores it and
+    /// truncates.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub create_new: bool,
 }
 
 // ── connection.processes.* (PROD-0028) ──────────────────────────────
@@ -2649,6 +2669,7 @@ mod tests {
                     owner: false,
                     symlink: true,
                 },
+                file_create_new: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2682,6 +2703,8 @@ mod tests {
             v["capabilities"]["hostFileAttributeOps"],
             json!({ "permissions": true, "owner": false, "symlink": true })
         );
+        // #4433: the host-level exclusive create.
+        assert_eq!(v["capabilities"]["fileCreateNew"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3501,6 +3524,24 @@ mod tests {
         let p: FilesWriteRangeParams = serde_json::from_value(json).unwrap();
         assert!(p.connection_id.is_none());
         assert_eq!(p.data, "aGk=");
+        assert!(!p.create_new, "absent create_new reads as a plain write");
+
+        // #4433: `create_new` is snake_case on the wire and omitted when
+        // false, so a plain write is byte-identical for an older agent.
+        let mut p = FilesWriteRangeParams {
+            connection_id: None,
+            path: "/a".into(),
+            offset: 0,
+            data: String::new(),
+            create_new: false,
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(v.get("create_new").is_none(), "{v}");
+        p.create_new = true;
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["create_new"], true);
+        let back: FilesWriteRangeParams = serde_json::from_value(v).unwrap();
+        assert!(back.create_new);
 
         let v = serde_json::to_value(FilesReadRangeResult {
             data: "aGk=".into(),

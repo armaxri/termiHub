@@ -537,6 +537,13 @@ impl super::RangedFileAccess for LocalFileBrowser {
         let path = expand_tilde_only(path);
         super::ranged::fs_write_range(path.clone().into(), path, offset, data.to_vec()).await
     }
+
+    /// An atomic `O_CREAT | O_EXCL` create (#4433): what the agent's
+    /// host-level exclusive create, used to claim an upload's name, runs on.
+    async fn create_new(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let path = expand_tilde_only(path);
+        super::ranged::fs_create_new(path.clone().into(), path, data.to_vec()).await
+    }
 }
 
 /// Apply Unix permission bits to a local path (Unix only).
