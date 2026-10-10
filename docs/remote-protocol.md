@@ -1146,6 +1146,8 @@ The desktop sends `paused: true` when the session's terminal has fallen behind (
 
 A persistent (daemon-backed) session forwards the pause to its session daemon, which stops reading its backend's output the same way while the worker that holds it is paused. A daemon started by an older agent does not advertise the frame and keeps streaming. The pause belongs to the desktop that sent it: `connection.detach`, a dropped transport, a re-attach, or another desktop taking the session over all resume it.
 
+Independently of this method, the agent bounds how much of one session's output it holds queued for the transport but not yet written (#4439): at 512 KiB the session pauses itself exactly as above, and it resumes once the queue has drained to 256 KiB (unless the desktop still holds its pause). So the output read before a pause arrives is bounded in bytes, not by link latency. The bound is per session — other sessions' output, responses and other notifications are never held back by it — and needs no protocol change. For a daemon-backed session it also covers what the daemon had already queued for the worker; a daemon started by an older agent is not bounded.
+
 The desktop does not wait for the response; it sends pause and resume in order.
 
 **Request:**
