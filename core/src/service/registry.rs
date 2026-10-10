@@ -104,11 +104,6 @@ impl ServiceRegistry {
             .ok_or_else(|| ServiceError::Unknown(service_id.to_string()))
     }
 
-    /// Whether a service type with the given id is registered.
-    pub fn has_service(&self, service_id: &str) -> bool {
-        self.factories.contains_key(service_id)
-    }
-
     /// Remove a previously-registered service type. Returns `true` if removed.
     pub fn unregister(&mut self, service_id: &str) -> bool {
         if self.factories.remove(service_id).is_some() {
@@ -224,7 +219,7 @@ mod tests {
         registry.register("a", "A", "i", mock_factory("a", false));
         registry.register("b", "B", "i", mock_factory("b", false));
         assert!(registry.unregister("a"));
-        assert!(!registry.has_service("a"));
+        assert!(registry.create("a").is_err());
         assert!(!registry.unregister("a"));
         let ids: Vec<String> = registry
             .available_services()

@@ -433,18 +433,6 @@ impl HttpMonitorService {
         self.last_result.lock().ok().and_then(|g| g.clone())
     }
 
-    /// How many observers currently hold this monitor's event channel — the
-    /// input to the poll loop's observer gate (PERF-008, #2811).
-    ///
-    /// While this is zero a running monitor idles (no HTTP checks); a check
-    /// resumes on the next interval tick once an observer subscribes. A host
-    /// bridge that forwards results to a user-visible consumer (the desktop's
-    /// up/down notifications and check history, or the agent's `service.status`
-    /// slot) counts as an observer for as long as it is subscribed.
-    pub fn observer_count(&self) -> usize {
-        self.events.subscriber_count()
-    }
-
     /// Test-only: construct a service in the `Running` state with `config` but
     /// **without** spawning a real poll loop, so host-level bookkeeping tests
     /// (stop / remove / pause / list) need no Tokio runtime or network.
@@ -1486,17 +1474,6 @@ mod tests {
             !calls.lock().unwrap().is_empty(),
             "checks must resume once a subscriber is present"
         );
-    }
-
-    #[test]
-    fn observer_count_tracks_event_subscribers() {
-        // The gate's input is exposed so a host can assert what it observes.
-        let svc = HttpMonitorService::stopped_with(sample_config());
-        assert_eq!(svc.observer_count(), 0);
-        let rx = svc.subscribe_events();
-        assert_eq!(svc.observer_count(), 1);
-        drop(rx);
-        assert_eq!(svc.observer_count(), 0);
     }
 
     #[tokio::test(start_paused = true)]
