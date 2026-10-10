@@ -36,6 +36,7 @@ import {
   monitorModeOf,
 } from "@/components/RemoteDesktop/monitorLayout";
 import { useMonitorLayoutRefresh } from "./useMonitorLayoutRefresh";
+import { subscribeGuarded } from "./useTauriListener";
 import { toast } from "@/components/ui";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
@@ -376,18 +377,22 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   // events for a not-yet-known session are buffered while a connect is pending.
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void onRemoteDesktopState((payload) => {
-      if (disposed) return;
-      if (payload.session_id === sessionIdRef.current) {
-        applyState(payload);
-      } else if (connectPendingRef.current) {
-        earlyStatesRef.current.set(payload.session_id, payload);
-      }
-    }).then((un) => (disposed ? un() : (unlisten = un)));
+    const dispose = subscribeGuarded(
+      () =>
+        onRemoteDesktopState((payload) => {
+          if (disposed) return;
+          if (payload.session_id === sessionIdRef.current) {
+            applyState(payload);
+          } else if (connectPendingRef.current) {
+            earlyStatesRef.current.set(payload.session_id, payload);
+          }
+        }),
+      "remote_desktop",
+      "remote desktop state events"
+    );
     return () => {
       disposed = true;
-      unlisten?.();
+      dispose();
     };
   }, [applyState]);
 
@@ -397,34 +402,45 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     let disposed = false;
     const unlisteners: Array<() => void> = [];
 
-    void onRemoteDesktopClipboard((payload) => {
-      if (disposed || payload.session_id !== sessionId) return;
-      setRemoteClipboard(payload.text);
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+    unlisteners.push(
+      subscribeGuarded(
+        () =>
+          onRemoteDesktopClipboard((payload) => {
+            if (disposed || payload.session_id !== sessionId) return;
+            setRemoteClipboard(payload.text);
+          }),
+        "remote_desktop",
+        "remote desktop clipboard events"
+      )
+    );
 
     void onRemoteDesktopCertPrompt((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
       setCertPrompt(payload);
       frontendLog("remote_desktop", `cert prompt for ${payload.host} (changed=${payload.changed})`);
-    }).then((un) => {
-      if (disposed) {
-        un();
-        return;
-      }
-      unlisteners.push(un);
-      // The backend raises the prompt as soon as the connect returns — before
-      // this listener existed — and then waits for a verdict: fetch a prompt
-      // that is already pending so it is never missed (#4004).
-      void remoteDesktopPendingCertPrompt(sessionId)
-        .then((pending) => {
-          if (disposed || pending === null || pending.session_id !== sessionId) return;
-          setCertPrompt((current) => current ?? pending);
-          frontendLog("remote_desktop", `pending cert prompt for ${pending.host} picked up`);
-        })
-        .catch((err) =>
-          frontendLog("remote_desktop", `pending cert prompt fetch failed: ${errorMessage(err)}`)
-        );
-    });
+    })
+      .then((un) => {
+        if (disposed) {
+          un();
+          return;
+        }
+        unlisteners.push(un);
+        // The backend raises the prompt as soon as the connect returns — before
+        // this listener existed — and then waits for a verdict: fetch a prompt
+        // that is already pending so it is never missed (#4004).
+        void remoteDesktopPendingCertPrompt(sessionId)
+          .then((pending) => {
+            if (disposed || pending === null || pending.session_id !== sessionId) return;
+            setCertPrompt((current) => current ?? pending);
+            frontendLog("remote_desktop", `pending cert prompt for ${pending.host} picked up`);
+          })
+          .catch((err) =>
+            frontendLog("remote_desktop", `pending cert prompt fetch failed: ${errorMessage(err)}`)
+          );
+      })
+      .catch((err: unknown) =>
+        frontendLog("remote_desktop", `cert prompt subscribe failed: ${errorMessage(err)}`)
+      );
 
     return () => {
       disposed = true;

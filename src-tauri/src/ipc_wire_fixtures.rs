@@ -173,7 +173,8 @@ fn session_fixture() -> Value {
 
 fn agent_fixture() -> Value {
     // An older agent: it omits every `#[serde(default)]` capability, which the
-    // backend nonetheless re-serializes explicitly (empty list / false / "").
+    // backend nonetheless re-serializes explicitly (empty list / false / ""),
+    // except the optional `hostFileAttributeOps` (#4601), which stays absent.
     let legacy_caps: AgentCapabilities = from_json(
         "legacy capabilities",
         json!({ "connectionTypes": [], "maxSessions": 4 }),
@@ -201,6 +202,8 @@ fn agent_fixture() -> Value {
             "monitoringSupported": true,
             "toolStreaming": true,
             "embeddedServerActivity": false,
+            // A Windows agent host: no chmod / chown / symlink (#4601).
+            "hostFileAttributeOps": { "permissions": false, "owner": false, "symlink": false },
             "agentVersion": "1.4.2"
         }),
     );

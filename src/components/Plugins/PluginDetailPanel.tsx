@@ -64,6 +64,12 @@ function useActiveSessionCount(plugin: InstalledPlugin | undefined): number {
  * settings — deep-links into the Plugins settings category, #2000), and Uninstall.
  * Uninstall warns first when the plugin has live sessions.
  *
+ * A plugin whose `manifest.json` no longer validates (`invalidManifest`, #4392)
+ * is listed under a placeholder manifest and can never be enabled, so the panel
+ * shows only its name, whatever version/author could be read, the rejection
+ * reason and Uninstall — no Retry, no empty meta fragments or Extension Points
+ * (#4578).
+ *
  * The plugin is looked up live from the store by {@link PluginDetailMeta.pluginId},
  * so enabling/disabling/uninstalling it (here or elsewhere) reflects immediately.
  */
@@ -98,6 +104,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
   const TypeIcon = pluginTypeIcon(manifest.extensions);
   const points = extensionPoints(manifest.extensions);
   const isError = dot === "error";
+  const isInvalidManifest = plugin.invalidManifest === true;
   const isEnabled = dot === "enabled";
   const showSettings = hasSettings(manifest);
   const platforms = pluginPlatformSupport(manifest, hostPlatform);
@@ -121,10 +128,14 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
               {pluginStatusLabel(state)}
             </span>
           </div>
-          <div className="plugin-detail__meta">
-            v{manifest.version} · by {manifest.author} ·{" "}
-            <code>{pluginTypeLabel(manifest.extensions)}</code>
-          </div>
+          {isInvalidManifest ? (
+            <InvalidManifestMeta version={manifest.version} author={manifest.author} />
+          ) : (
+            <div className="plugin-detail__meta">
+              v{manifest.version} · by {manifest.author} ·{" "}
+              <code>{pluginTypeLabel(manifest.extensions)}</code>
+            </div>
+          )}
         </div>
       </div>
 
@@ -133,32 +144,42 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
       {isError && errorMessage && (
         <div className="plugin-detail__error" data-testid="plugin-detail-error">
           <CircleAlert className="plugin-detail__error-icon" aria-hidden="true" />
-          <div>{errorMessage}</div>
+          <div>
+            {errorMessage}
+            {isInvalidManifest && (
+              <div data-testid="plugin-detail-invalid-hint">
+                This plugin's manifest is invalid, so it cannot be enabled. Uninstall it or install
+                a fixed version.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      <div className="plugin-detail__block">
-        <div className="plugin-detail__section-title">Extension Points</div>
-        <div className="plugin-detail__list">
-          {points.map((point) => {
-            const Icon = point.icon;
-            return (
-              <div className="plugin-detail__item" key={point.key}>
-                <Icon className="plugin-detail__item-icon" aria-hidden="true" />
-                <span>
-                  {point.label}
-                  {point.detail && (
-                    <>
-                      {" — "}
-                      <code>{point.detail}</code>
-                    </>
-                  )}
-                </span>
-              </div>
-            );
-          })}
+      {!isInvalidManifest && (
+        <div className="plugin-detail__block" data-testid="plugin-detail-extension-points">
+          <div className="plugin-detail__section-title">Extension Points</div>
+          <div className="plugin-detail__list">
+            {points.map((point) => {
+              const Icon = point.icon;
+              return (
+                <div className="plugin-detail__item" key={point.key}>
+                  <Icon className="plugin-detail__item-icon" aria-hidden="true" />
+                  <span>
+                    {point.label}
+                    {point.detail && (
+                      <>
+                        {" — "}
+                        <code>{point.detail}</code>
+                      </>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {platforms && (
         <div className="plugin-detail__block">
@@ -188,7 +209,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
       {(manifest.updateUrl || hasIndexOffer) && <PluginUpdateSection plugin={plugin} />}
 
       <div className="plugin-detail__actions">
-        {isError ? (
+        {isInvalidManifest ? null : isError ? (
           <Button
             variant="primary"
             icon={<Power size={14} />}
@@ -255,6 +276,24 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
         onCancel={() => setConfirmUninstall(false)}
         testIdBase="plugin-uninstall"
       />
+    </div>
+  );
+}
+
+/**
+ * The meta line for an invalid-manifest plugin (#4578): only the version and
+ * author that could be read leniently from the rejected manifest, omitting
+ * empty fragments (and the meaningless type label) instead of rendering
+ * `v · by  · plugin`. Renders nothing when neither is known.
+ */
+function InvalidManifestMeta({ version, author }: { version: string; author: string }) {
+  const parts: string[] = [];
+  if (version) parts.push(`v${version}`);
+  if (author) parts.push(`by ${author}`);
+  if (parts.length === 0) return null;
+  return (
+    <div className="plugin-detail__meta" data-testid="plugin-detail-meta">
+      {parts.join(" · ")}
     </div>
   );
 }

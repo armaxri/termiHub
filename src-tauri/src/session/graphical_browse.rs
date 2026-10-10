@@ -319,9 +319,14 @@ impl FileBrowser for AgentHostFiles {
     }
 
     /// The agent forwards chmod / chown / symlink to its host's filesystem,
-    /// exactly as for an agent-hosted local session (#4353).
+    /// exactly as for an agent-hosted local session (#4353): what the agent
+    /// reports its host performs (#4601), else all three for an older agent.
     fn attribute_ops(&self) -> FileAttributeOps {
-        crate::session::remote_proxy::hosted_attribute_ops("local", false)
+        crate::session::remote_proxy::hosted_attribute_ops(
+            "local",
+            false,
+            self.host_file_attribute_ops(),
+        )
     }
 }
 

@@ -5,6 +5,7 @@ import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
 import { useEmbeddedServerActivity } from "@/hooks/useEmbeddedServerActivity";
 import { formatBytes, formatClockTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
 
 /** The agent a server is hosted on, when it runs on one (#3453). */
@@ -42,13 +43,17 @@ export function unavailableMessage(hostAgent?: ActivityHostAgent): {
   };
 }
 
-/** Case-insensitive match of `query` against an entry's visible fields. */
+/** The visible, searchable fields of an access-log entry. */
+function accessLogEntryFields(entry: AccessLogEntry): ReadonlyArray<string | null | undefined> {
+  return [entry.client, entry.user, entry.method, entry.path, entry.status, entry.detail];
+}
+
+/**
+ * Case- and diacritic-insensitive substring match of `query` against an entry's
+ * visible fields, through the shared {@link itemMatchesQuery} (#4582).
+ */
 export function entryMatches(entry: AccessLogEntry, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [entry.client, entry.user, entry.method, entry.path, entry.status, entry.detail].some(
-    (field) => field?.toLowerCase().includes(q)
-  );
+  return itemMatchesQuery(entry, accessLogEntryFields, query.trim());
 }
 
 /** Render one entry as a tab-separated line for export. */

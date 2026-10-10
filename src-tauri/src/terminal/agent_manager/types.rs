@@ -102,6 +102,16 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub output_flow: bool,
+    /// Which of chmod / chown / symlink the agent host's own file system
+    /// performs (protocol 0.29.0, #4601) — what an agent-hosted local session
+    /// and the remote-desktop agent-host file channel offer. `None` for older
+    /// agents, whose local sessions keep the session-type answer (all three).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./FileAttributeOps\").FileAttributeOps", optional)
+    )]
+    pub host_file_attribute_ops: Option<termihub_core::files::FileAttributeOps>,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<String>", optional))]

@@ -1,6 +1,7 @@
 import type { FileEntry } from "@/types/connection";
 import { compareNames } from "@/utils/locale";
 import { parentDir } from "@/utils/paths";
+import { textFieldsMatchQuery } from "@/utils/searchMatching";
 
 /** Column a file list can be sorted by. */
 export type FileSortKey = "name" | "size" | "modified";
@@ -89,11 +90,14 @@ export function sortEntries(
   });
 }
 
-/** Filter entries to those whose name contains `query` (case-insensitive). */
+/**
+ * Filter entries to those whose name contains `query`, case- and
+ * diacritic-insensitively, through the shared {@link textFieldsMatchQuery} (#4582).
+ */
 export function filterEntries(entries: FileEntry[], query: string): FileEntry[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return entries;
-  return entries.filter((e) => e.name.toLowerCase().includes(q));
+  return entries.filter((e) => textFieldsMatchQuery([e.name], q));
 }
 
 /**

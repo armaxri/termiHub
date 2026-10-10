@@ -72,6 +72,13 @@ fileRanges?: boolean,
  */
 outputFlow?: boolean, 
 /**
+ * Which of chmod / chown / symlink the agent host's own file system
+ * performs (protocol 0.29.0, #4601) — what an agent-hosted local session
+ * and the remote-desktop agent-host file channel offer. `None` for older
+ * agents, whose local sessions keep the session-type answer (all three).
+ */
+hostFileAttributeOps?: import("./FileAttributeOps").FileAttributeOps, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

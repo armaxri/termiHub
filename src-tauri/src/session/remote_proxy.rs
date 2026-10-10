@@ -726,7 +726,13 @@ impl RemoteProxy {
                         agent_outdated,
                         file_ranges,
                         definition_id: definition_id.clone(),
-                        attribute_ops: hosted_attribute_ops(&session_type, agent_outdated),
+                        attribute_ops: hosted_attribute_ops(
+                            &session_type,
+                            agent_outdated,
+                            agent_caps
+                                .as_ref()
+                                .and_then(|caps| caps.host_file_attribute_ops),
+                        ),
                     });
                 }
                 // Set up monitoring proxy if supported.
@@ -814,7 +820,8 @@ pub struct RemoteFileBrowserProxy {
     /// so a relaunch after a restart can find the reopened session (#4114).
     definition_id: Option<String>,
     /// Which of chmod / chown / symlink the hosted backend performs (#4353),
-    /// resolved from the hosted session type by [`hosted_attribute_ops`].
+    /// resolved from the hosted session type and the agent's reported host
+    /// support (#4601) by [`hosted_attribute_ops`].
     attribute_ops: FileAttributeOps,
 }
 
@@ -823,14 +830,26 @@ pub struct RemoteFileBrowserProxy {
 ///
 /// The agent forwards `connection.files.set_permissions`, `set_owner` and
 /// `create_symlink` to the hosted session's own file browser: an SSH session's
-/// SFTP browser and a local session's filesystem implement all three; the
-/// Docker, FTP and WSL browsers answer `NotSupported`, so they are not
-/// offered. A local session's filesystem is the agent host's: a Windows agent
-/// host answers `NotSupported`, which the file browser shows as an error —
-/// the agent does not report its host OS yet. Nothing is offered when the
-/// agent is too old to browse the session at all.
-pub(crate) fn hosted_attribute_ops(session_type: &str, agent_outdated: bool) -> FileAttributeOps {
-    FileAttributeOps::all_if(!agent_outdated && matches!(session_type, "ssh" | "local"))
+/// SFTP browser implements all three; the Docker, FTP and WSL browsers answer
+/// `NotSupported`, so they are not offered. A local session's filesystem is the
+/// agent host's own: a 0.29.0+ agent reports what it performs as
+/// `host_ops` (`capabilities.hostFileAttributeOps`, #4601) — none on a Windows
+/// host. For an older agent (`host_ops` is `None`) a local session falls back
+/// to all three. Nothing is offered when the agent is too old to browse the
+/// session at all.
+pub(crate) fn hosted_attribute_ops(
+    session_type: &str,
+    agent_outdated: bool,
+    host_ops: Option<FileAttributeOps>,
+) -> FileAttributeOps {
+    if agent_outdated {
+        return FileAttributeOps::NONE;
+    }
+    match session_type {
+        "ssh" => FileAttributeOps::ALL,
+        "local" => host_ops.unwrap_or(FileAttributeOps::ALL),
+        _ => FileAttributeOps::NONE,
+    }
 }
 
 mod ranged;
@@ -1840,6 +1859,8 @@ mod tests {
         /// When set, `get_capabilities` reports an agent with this
         /// `file_ranges` flag (#3587).
         file_ranges: Option<bool>,
+        /// `get_capabilities` reports this `host_file_attribute_ops` (#4601).
+        host_file_attribute_ops: Option<termihub_core::files::FileAttributeOps>,
         /// When set, answers `send_request` for the methods it handles
         /// (returning `Some`) before the canned reply (#3587).
         responder: Option<Box<Responder>>,
@@ -1863,6 +1884,7 @@ mod tests {
                 session_files: None,
                 unattended_connect: None,
                 file_ranges: None,
+                host_file_attribute_ops: None,
                 responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
@@ -1881,6 +1903,7 @@ mod tests {
                 session_files: None,
                 unattended_connect: None,
                 file_ranges: None,
+                host_file_attribute_ops: None,
                 responder: None,
                 created_unattended: Mutex::new(Vec::new()),
                 files_only_routes: Mutex::default(),
@@ -1912,6 +1935,7 @@ mod tests {
                     unattended_connect: false,
                     file_ranges: false,
                     output_flow: false,
+                    host_file_attribute_ops: None,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
@@ -1949,6 +1973,7 @@ mod tests {
             caps.session_files = self.session_files.unwrap_or(false);
             caps.unattended_connect = self.unattended_connect.unwrap_or(false);
             caps.file_ranges = self.file_ranges.unwrap_or(false);
+            caps.host_file_attribute_ops = self.host_file_attribute_ops;
             Some(caps)
         }
 

@@ -11,12 +11,12 @@ import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import {
   clearFrontendLogHistory,
-  fireAndForget,
   frontendError,
   frontendWarn,
   onFrontendLog,
 } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { subscribeGuarded } from "@/hooks/useTauriListener";
 import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
@@ -114,16 +114,18 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         frontendWarn("log_viewer", `loading buffered backend logs failed: ${errorMessage(err)}`);
       });
 
-    const unlistenPromise = onLogEntry((entry) => {
-      if (!isOwnEcho(entry)) addEntry(entry);
-    });
+    const unsubBackend = subscribeGuarded(
+      () =>
+        onLogEntry((entry) => {
+          if (!isOwnEcho(entry)) addEntry(entry);
+        }),
+      "log_viewer",
+      "backend log events"
+    );
 
     return () => {
       cancelled = true;
-      fireAndForget(
-        unlistenPromise.then((unlisten) => unlisten()),
-        "unsubscribe log viewer from backend log events"
-      );
+      unsubBackend();
       unsubFrontend();
     };
   }, []);
@@ -321,6 +323,14 @@ function reportFailure(title: string, action: string, err: unknown): void {
   toast.error(title, { description: message });
 }
 
+/**
+ * Deliberately exact (case-insensitive) substring matching rather than the shared
+ * diacritic-insensitive `itemMatchesQuery` (#4582, as LIBFE2-005 allows): log
+ * search is used to find literal tokens (error codes, paths, module targets) in
+ * a buffer that can hold thousands of lines and is re-filtered on every new entry,
+ * so the cheap `includes()` keeps the filter fast and never folds characters a
+ * user is grepping for.
+ */
 function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
   return (
     entry.message.toLowerCase().includes(searchLower) ||

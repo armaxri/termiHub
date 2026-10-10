@@ -52,6 +52,7 @@ fn trusted_plugin(root: &std::path::Path) -> InstalledPlugin {
         manifest,
         state: PluginState::Installed,
         error_message: None,
+        invalid_manifest: false,
         installed_at: 0,
     }
 }

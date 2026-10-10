@@ -10,6 +10,7 @@ import {
 } from "@/components/RemoteDesktop/monitorLayout";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
+import { subscribeGuarded } from "@/hooks/useTauriListener";
 
 /**
  * Keep an "all local displays" multi-monitor session (#3696) in step with the
@@ -55,12 +56,17 @@ export function useMonitorLayoutRefresh(
         frontendLog("remote_desktop", `set_monitor_layout failed: ${backendErrorMessage(err)}`);
       }
     };
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) void refresh();
-    });
+    const dispose = subscribeGuarded(
+      () =>
+        getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused) void refresh();
+        }),
+      "remote_desktop",
+      "window focus changes"
+    );
     return () => {
       disposed = true;
-      void unlisten.then((fn) => fn());
+      dispose();
     };
   }, [sessionId, enabled]);
 

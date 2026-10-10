@@ -4,6 +4,7 @@ import { onTransferProgress, onSessionOwnershipChanged } from "@/services/events
 import { toast } from "@/components/ui";
 import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
 import { isBatchTransfer } from "@/hooks/batchTransferToasts";
+import { subscribeGuarded } from "@/hooks/useTauriListener";
 
 /**
  * Raise the single terminal-phase toast for a settled transfer (#1286).
@@ -101,14 +102,11 @@ export function useTransferEvents(): void {
   const refreshSessionOwners = useAppStore((s) => s.refreshSessionOwners);
 
   useEffect(() => {
-    // `disposed` guards the async listener registration below: if the effect
-    // tears down before a registration's promise resolves, `unlisten` is still
-    // unassigned and the naive `unlisten?.()` cleanup would silently leak the
-    // listener that lands moments later. Following the known-good pattern in
-    // `useRemoteDesktopSession`, each registration checks `disposed` on resolve
-    // and unlistens immediately if the effect is already gone (FEC-017).
-    let disposed = false;
-    const unlisteners: Array<() => void> = [];
+    // Each registration goes through `subscribeGuarded`: if the effect tears
+    // down before a registration's promise resolves, the listener that lands
+    // moments later is unlistened at once instead of leaking (FEC-017), and a
+    // failed registration is logged (#4577).
+    const disposers: Array<() => void> = [];
 
     // Seed the ownership map so scoping is correct from the first event, before
     // any transfer has flowed.
@@ -119,25 +117,38 @@ export function useTransferEvents(): void {
     // reflected here immediately — no flash-then-prune waiting on the first
     // transfer-progress event. Debounced (shared coalescer) to avoid a storm
     // during multi-session restore.
-    void onSessionOwnershipChanged(() => {
-      scheduleOwnersRefresh(() => void refreshSessionOwners());
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+    disposers.push(
+      subscribeGuarded(
+        () =>
+          onSessionOwnershipChanged(() => {
+            scheduleOwnersRefresh(() => void refreshSessionOwners());
+          }),
+        "transfers",
+        "session ownership changes"
+      )
+    );
 
-    void onTransferProgress((progress) => {
-      // Keep the ownership map fresh while transfers flow (coalesced) so a
-      // session claimed by a sibling window is scoped out here (#1964).
-      scheduleOwnersRefresh(() => void refreshSessionOwners());
-      // Fold the event into the transient #1247 `transfers` map (clears
-      // terminal rows) that drives Open Connections / the footer / the status
-      // bar. The persistent #1337 Transfer Queue panel is fed server-side into
-      // the authoritative `transfers` region (#2229 / #2387) — no fold here.
-      applyTransferProgress(progress);
-      toastTerminalPhase(progress);
-    }).then((un) => (disposed ? un() : unlisteners.push(un)));
+    disposers.push(
+      subscribeGuarded(
+        () =>
+          onTransferProgress((progress) => {
+            // Keep the ownership map fresh while transfers flow (coalesced) so a
+            // session claimed by a sibling window is scoped out here (#1964).
+            scheduleOwnersRefresh(() => void refreshSessionOwners());
+            // Fold the event into the transient #1247 `transfers` map (clears
+            // terminal rows) that drives Open Connections / the footer / the status
+            // bar. The persistent #1337 Transfer Queue panel is fed server-side into
+            // the authoritative `transfers` region (#2229 / #2387) — no fold here.
+            applyTransferProgress(progress);
+            toastTerminalPhase(progress);
+          }),
+        "transfers",
+        "transfer progress"
+      )
+    );
 
     return () => {
-      disposed = true;
-      unlisteners.forEach((un) => un());
+      disposers.forEach((dispose) => dispose());
       // Drop any coalesced refresh still pending so it cannot fire post-unmount.
       cancelOwnersRefresh();
     };

@@ -62,6 +62,10 @@ fn root() -> (TempDir, PathBuf) {
 fn assert_placeholder(plugin: &InstalledPlugin, id: &str) {
     assert_eq!(plugin.manifest.id, id);
     assert_eq!(plugin.state, PluginState::Error);
+    assert!(
+        plugin.invalid_manifest,
+        "flagged as an invalid manifest (#4578)"
+    );
     // Nothing capability-bearing from the rejected manifest is carried over.
     assert!(plugin.manifest.extensions.is_empty());
     assert!(plugin.manifest.permissions.is_empty());
@@ -193,4 +197,42 @@ fn invalid_plugin_can_be_uninstalled() {
         mgr.get("old-plugin"),
         Err(PluginManagerError::NotFound(_))
     ));
+}
+
+#[test]
+fn invalid_manifest_flag_is_set_only_for_a_rejected_manifest() {
+    // A load failure: a valid manifest whose host hook refuses to load it.
+    struct FailingHook;
+    impl PluginLifecycleHook for FailingHook {
+        fn on_enable(&self, _plugin: &InstalledPlugin) -> Result<(), String> {
+            Err("backend failed to load".into())
+        }
+    }
+
+    let (_tmp, root) = root();
+    let mgr = PluginManager::with_hook(&root, Arc::new(FailingHook));
+    let pkg_dir = TempDir::new().unwrap();
+    let pkg = make_package(pkg_dir.path(), &manifest("broken", "Broken", ""));
+    let installed = mgr.install(&pkg, true, false).unwrap();
+    assert_eq!(installed.state, PluginState::Error);
+    assert!(
+        !installed.invalid_manifest,
+        "a load failure is not an invalid manifest"
+    );
+    let failed = mgr.load_enabled_plugins().unwrap();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].state, PluginState::Error);
+    assert!(!failed[0].invalid_manifest);
+    // A valid manifest is never flagged when listed either.
+    assert!(!mgr.get("broken").unwrap().invalid_manifest);
+
+    // The rejected manifest is flagged, and the flag reaches the wire.
+    let bad = manifest("old-plugin", "Old Plugin", r#","filesystemPaths":["/"]"#);
+    let mgr = install_then_corrupt(&root, "old-plugin", &bad);
+    let invalid = mgr.get("old-plugin").unwrap();
+    assert!(invalid.invalid_manifest);
+    let wire = serde_json::to_value(&invalid).unwrap();
+    assert_eq!(wire["invalidManifest"], serde_json::json!(true));
+    let wire = serde_json::to_value(mgr.get("broken").unwrap()).unwrap();
+    assert!(wire.get("invalidManifest").is_none(), "omitted when false");
 }
