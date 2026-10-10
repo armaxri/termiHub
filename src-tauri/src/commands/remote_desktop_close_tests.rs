@@ -112,7 +112,9 @@ impl crate::session::graphical_browse::SideChannelOpener for NoReopen {
         _: &GraphicalSessionManager,
         _: &str,
     ) -> Result<crate::session::graphical_browse::ReopenedSideChannel, TerminalError> {
-        Err(TerminalError::InternalError("no reconnect here".to_string()))
+        Err(TerminalError::InternalError(
+            "no reconnect here".to_string(),
+        ))
     }
 }
 

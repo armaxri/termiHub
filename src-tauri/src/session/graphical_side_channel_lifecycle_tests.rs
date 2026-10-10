@@ -183,8 +183,15 @@ async fn a_session_resting_for_good_drops_its_side_channel() {
     })
     .await;
     wait_until("dropped", || t.browsers.get(&t.h.sid).is_none()).await;
-    assert_eq!(t.opener.reopens(), 0, "nothing re-opened without a reconnect");
-    t.h.mgr.disconnect(&t.h.sid, t.h.sink.clone()).await.unwrap();
+    assert_eq!(
+        t.opener.reopens(),
+        0,
+        "nothing re-opened without a reconnect"
+    );
+    t.h.mgr
+        .disconnect(&t.h.sid, t.h.sink.clone())
+        .await
+        .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -196,7 +203,10 @@ async fn a_reconnect_without_an_open_side_channel_opens_none() {
     idle().await;
     assert_eq!(t.opener.reopens(), 0);
     assert!(t.browsers.get(&t.h.sid).is_none());
-    t.h.mgr.disconnect(&t.h.sid, t.h.sink.clone()).await.unwrap();
+    t.h.mgr
+        .disconnect(&t.h.sid, t.h.sink.clone())
+        .await
+        .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -208,6 +218,9 @@ async fn a_failed_reopen_keeps_the_registration() {
     idle().await;
     // The File Browser shows the route's error on its next listing instead.
     assert_eq!(registered(&t.browsers, &t.h.sid).as_deref(), Some("gen-0"));
-    t.h.mgr.disconnect(&t.h.sid, t.h.sink.clone()).await.unwrap();
+    t.h.mgr
+        .disconnect(&t.h.sid, t.h.sink.clone())
+        .await
+        .unwrap();
     assert!(t.browsers.get(&t.h.sid).is_none());
 }
