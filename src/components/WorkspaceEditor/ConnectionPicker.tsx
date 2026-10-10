@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect, useId, useRef } from "react";
+import { useState, useMemo, useId, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { Modal, SearchInput } from "@/components/ui";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { WorkspaceTabDef } from "@/types/workspace";
-import { isImeComposing } from "@/utils/imeComposition";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { useComboboxListNav } from "@/hooks/useComboboxListNav";
 
 interface ConnectionPickerProps {
   onSelect: (tab: WorkspaceTabDef) => void;
@@ -41,11 +41,8 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
   const { connections, folders } = useProjectedConnections();
   const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const [search, setSearch] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const baseId = useId();
-  const listId = `${baseId}-listbox`;
-  const optionId = (key: string) => `${baseId}-option-${idPart(key)}`;
 
   const filtered = useMemo(() => {
     const term = search.trim();
@@ -99,48 +96,20 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
   }, [grouped, filteredAgents, agentDefinitions]);
 
   const indexByKey = useMemo(() => new Map(options.map((o, i) => [o.key, i])), [options]);
-  const active = options[Math.min(activeIndex, options.length - 1)];
-  const activeId = active ? optionId(active.key) : undefined;
-
-  // A new query re-targets the top hit.
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [search]);
-
-  // Keep the active option scrolled into view while navigating by keyboard.
-  useEffect(() => {
-    if (!activeId) return;
-    // jsdom has no scrollIntoView, hence the optional call.
-    document.getElementById(activeId)?.scrollIntoView?.({ block: "nearest" });
-  }, [activeId]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (isImeComposing(e)) return;
-    const count = options.length;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIndex((i) => (Math.min(i, count - 1) + 1) % count);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIndex((i) => (Math.min(i, count - 1) - 1 + count) % count);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (active) onSelect(active.tab);
-    }
-  };
+  const nav = useComboboxListNav({
+    items: options,
+    onSelect: (option) => onSelect(option.tab),
+    resetKey: search,
+    listId: `${baseId}-listbox`,
+    getItemKey: (option) => option.key,
+  });
 
   /** Props for an enabled option row. */
   const optionProps = (key: string) => {
-    const index = indexByKey.get(key) ?? -1;
-    const option = options[index];
-    const isActive = option !== undefined && option === active;
+    const props = nav.getOptionProps(indexByKey.get(key) ?? -1);
     return {
-      id: optionId(key),
-      role: "option" as const,
-      "aria-selected": isActive,
-      className: `connection-picker__item${isActive ? " connection-picker__item--active" : ""}`,
-      onMouseMove: () => setActiveIndex(index),
-      onClick: () => option && onSelect(option.tab),
+      ...props,
+      className: `connection-picker__item${props["aria-selected"] ? " connection-picker__item--active" : ""}`,
     };
   };
 
@@ -162,23 +131,18 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
           className="connection-picker__search"
           value={search}
           onValueChange={setSearch}
-          onKeyDown={handleKeyDown}
           placeholder="Search connections…"
           clearLabel="Clear connection search"
           aria-label="Search connections"
-          role="combobox"
+          {...nav.inputProps}
           aria-expanded
-          aria-autocomplete="list"
-          aria-controls={listId}
-          aria-activedescendant={activeId}
           ref={searchRef}
           data-testid="connection-picker-search"
         />
 
         <div
-          id={listId}
+          {...nav.listboxProps}
           className="connection-picker__list"
-          role="listbox"
           aria-label="Connections"
           data-testid="connection-picker-list"
         >
