@@ -250,4 +250,44 @@ mod tests {
         assert!(head.starts_with("HTTP/1.1 503 "));
         assert!(head.contains(&format!("Content-Length: {}", body.len())));
     }
+
+    /// One client IP at its sub-cap is refused with a per-client detail while
+    /// another IP is still admitted, and the global cap is refused with the
+    /// server-wide detail (#4686).
+    #[test]
+    fn admit_enforces_the_per_client_cap_before_the_global_cap() {
+        let slots = Arc::new(Semaphore::new(3));
+        let clients = ClientConnections::new(2);
+        let stats = AtomicServerStats::new();
+        let a: SocketAddr = "192.0.2.1:1000".parse().expect("addr");
+        let b: SocketAddr = "192.0.2.2:1000".parse().expect("addr");
+        let details = |stats: &AtomicServerStats| -> Vec<String> {
+            stats
+                .activity
+                .snapshot(None, &stats.snapshot())
+                .entries
+                .into_iter()
+                .filter_map(|e| e.detail)
+                .collect()
+        };
+
+        let a1 = admit(a, &slots, &clients, &stats).expect("first from a");
+        let a2 = admit(a, &slots, &clients, &stats).expect("second from a");
+        assert!(admit(a, &slots, &clients, &stats).is_none());
+        assert_eq!(
+            details(&stats),
+            ["too many concurrent connections from this client"]
+        );
+        // The refused attempt took no global slot: b still gets the third.
+        let b1 = admit(b, &slots, &clients, &stats).expect("another client");
+        assert!(admit(b, &slots, &clients, &stats).is_none());
+        assert_eq!(
+            details(&stats).last().map(String::as_str),
+            Some("too many concurrent connections")
+        );
+        drop(a1);
+        assert_eq!(clients.held(a.ip()), 1);
+        drop((a2, b1));
+        assert_eq!(clients.tracked(), 0);
+    }
 }
