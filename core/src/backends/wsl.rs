@@ -1326,6 +1326,27 @@ impl ConnectionType for Wsl {
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
     }
 
+    /// Kill `wsl.exe` so a tab close is not held up by a parked ConPTY write
+    /// (#4394), mirroring the local shell's `interrupt_io`.
+    ///
+    /// The console host drains the ConPTY input pipe into its own buffer, so
+    /// a write parks only if the host itself stops reading. Terminating the
+    /// child ends the session's only client; `disconnect`, which runs as soon
+    /// as the write returns, then drops the master (`ClosePseudoConsole`),
+    /// which closes the input pipe and fails any write still parked on it.
+    /// The master is not closed here: `ClosePseudoConsole` can block until
+    /// the host drains its output, and this hook must not block.
+    ///
+    /// `disconnect` kills again afterwards; killing a dead child is harmless.
+    fn interrupt_io(&self) {
+        if let Some(state) = self.state.as_ref() {
+            state.alive.store(false, Ordering::SeqCst);
+            if let Ok(mut child) = state.child.lock() {
+                let _ = child.kill();
+            }
+        }
+    }
+
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
         let state = self
             .state
@@ -1832,6 +1853,36 @@ mod tests {
             alive.load(Ordering::SeqCst),
             "Drop with the disconnected flag set must not touch alive"
         );
+    }
+
+    /// #4394: a tab close calls `interrupt_io` (through `&self`, while a write
+    /// may still hold the connection) before the exclusive disconnect. It must
+    /// kill the child and mark the session dead; the later `disconnect` still
+    /// runs its own teardown.
+    #[tokio::test]
+    async fn interrupt_io_kills_the_child_through_a_shared_ref() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let kills = Arc::new(AtomicUsize::new(0));
+        let mut wsl = Wsl::new();
+        wsl.state = Some(drop_test_state(false, alive.clone(), kills.clone()));
+
+        wsl.interrupt_io();
+
+        assert_eq!(kills.load(Ordering::SeqCst), 1, "interrupt_io kills");
+        assert!(!alive.load(Ordering::SeqCst), "and marks the session dead");
+        assert!(!wsl.is_connected());
+
+        wsl.disconnect().await.expect("disconnect");
+        assert_eq!(
+            kills.load(Ordering::SeqCst),
+            2,
+            "disconnect still kills (idempotent) and the Drop guard does not"
+        );
+    }
+
+    #[tokio::test]
+    async fn interrupt_io_when_not_connected_is_noop() {
+        Wsl::new().interrupt_io();
     }
 
     // -----------------------------------------------------------------------
