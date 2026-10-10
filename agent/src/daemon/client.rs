@@ -29,7 +29,8 @@ use crate::protocol::methods::{
     ConnectionFilesOnlyNotification, ConnectionOutputNotification, CONNECTION_ERROR,
     CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_FILES_ONLY, CONNECTION_OUTPUT,
 };
-use crate::transport::to_params;
+use crate::session::output_budget::OutputBudget;
+use crate::transport::{charged, to_params};
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -221,6 +222,9 @@ pub(crate) struct FeatureChannels {
     pub files: Arc<FileChannel>,
     /// Whether the daemon honors [`MSG_OUTPUT_FLOW`] (#4416).
     pub output_flow: Arc<AtomicBool>,
+    /// The session's output flow: the desktop's pause plus the byte budget of
+    /// output queued on the transport (#4439). Outlives reconnects.
+    pub output_budget: OutputBudget,
 }
 
 impl FeatureChannels {
@@ -235,6 +239,10 @@ impl FeatureChannels {
         self.files.set_ranges_supported(false);
         self.files.fail_all();
         self.output_flow.store(false, Ordering::SeqCst);
+        // The desktop's pause belonged to the previous connection; a newly
+        // attached worker starts flowing (#4416). A budget pause stays until
+        // the output already queued has been written (#4439).
+        self.output_budget.resume();
     }
 
     /// Apply the daemon's [`MSG_CAPABILITIES`] flags.
@@ -347,6 +355,11 @@ impl DaemonClient {
             features.clone(),
         )
         .await?;
+        spawn_output_flow_forwarder(
+            writer.clone(),
+            features.output_flow.clone(),
+            features.output_budget.subscribe(),
+        );
 
         Ok(Self {
             session_id,
@@ -438,27 +451,37 @@ impl DaemonClient {
         self.features.output_flow.load(Ordering::SeqCst)
     }
 
+    /// The session's output flow state: the desktop's pause and the byte
+    /// budget of output queued on the transport (#4439).
+    pub fn output_budget(&self) -> &OutputBudget {
+        &self.features.output_budget
+    }
+
     /// Pause (`true`) or resume (`false`) reading the session's output on the
     /// daemon (#4416). A no-op on a daemon that does not support it. The
     /// session manager sends through a cloned handle instead, outside its lock.
     #[cfg(test)]
     pub async fn set_output_paused(&self, paused: bool) -> Result<(), anyhow::Error> {
+        self.output_budget().set_paused(paused);
         if !self.output_flow_supported() {
             return Ok(());
         }
-        Self::output_flow_via_handle(&self.writer, paused).await
+        Self::output_flow_via_handle(&self.writer, self.output_budget()).await
     }
 
-    /// Send [`MSG_OUTPUT_FLOW`] through a previously cloned writer handle. The
-    /// caller checks [`output_flow_supported`](Self::output_flow_supported).
+    /// Send the session's current paused state ([`MSG_OUTPUT_FLOW`]) through a
+    /// previously cloned writer handle. The state is read while holding the
+    /// writer, so concurrent senders always leave the daemon on the latest one.
+    /// The caller checks [`output_flow_supported`](Self::output_flow_supported).
     pub async fn output_flow_via_handle(
         handle: &DaemonWriterHandle,
-        paused: bool,
+        budget: &OutputBudget,
     ) -> Result<(), anyhow::Error> {
         let mut guard = handle.lock().await;
         let writer = guard
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
+        let paused = budget.is_paused();
         write_frame_timed(writer, MSG_OUTPUT_FLOW, &[u8::from(paused)]).await?;
         Ok(())
     }
@@ -1092,7 +1115,12 @@ async fn connect_and_start_reader(
                 MSG_BUFFER_REPLAY => {
                     // Send as connection.output if non-empty
                     if !frame.payload.is_empty() {
-                        send_output_notification(&notification_tx, session_id, &frame.payload);
+                        send_output_notification(
+                            &notification_tx,
+                            session_id,
+                            &frame.payload,
+                            Some(&features.output_budget),
+                        );
                     }
                 }
                 MSG_READY => {
@@ -1139,7 +1167,16 @@ async fn connect_and_start_reader(
 
     // Publish the writer before the reader starts so an eviction observed by the
     // reader always clears *this* connection's writer (SM-003).
-    *eviction.writer.lock().await = Some(writer);
+    {
+        let mut slot = eviction.writer.lock().await;
+        // Output queued over the previous connection may still hold the budget
+        // (#4439): a new connection starts flowing on the daemon, so re-apply
+        // the pause before the reader takes more output.
+        if daemon_flags & CAP_OUTPUT_FLOW != 0 && features.output_budget.is_paused() {
+            write_frame_timed(&mut writer, MSG_OUTPUT_FLOW, &[1]).await?;
+        }
+        *slot = Some(writer);
+    }
 
     // #3140: arm heartbeat reaping only if the daemon answers probes.
     let heartbeat = heartbeat::negotiated(daemon_flags);
@@ -1396,7 +1433,12 @@ async fn read_frames(
         match next {
             Ok(Some(frame)) => match frame.msg_type {
                 MSG_OUTPUT => {
-                    send_output_notification(notification_tx, session_id, &frame.payload);
+                    send_output_notification(
+                        notification_tx,
+                        session_id,
+                        &frame.payload,
+                        features.map(|f| &f.output_budget),
+                    );
                 }
                 MSG_BUFFER_REPLAY => {
                     // If there is a pending query_buffer call, deliver to it.
@@ -1408,7 +1450,12 @@ async fn read_frames(
                     if let Some(sender) = pending {
                         let _ = sender.send(frame.payload);
                     } else if !frame.payload.is_empty() {
-                        send_output_notification(notification_tx, session_id, &frame.payload);
+                        send_output_notification(
+                            notification_tx,
+                            session_id,
+                            &frame.payload,
+                            features.map(|f| &f.output_budget),
+                        );
                     }
                 }
                 MSG_EXITED => {
@@ -1518,22 +1565,61 @@ async fn read_frames(
 
 /// Send output data as a base64-encoded `connection.output` notification.
 ///
-/// Chunks large payloads to stay under the 1 MiB NDJSON line limit.
-pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
+/// Chunks large payloads to stay under the 1 MiB NDJSON line limit. Each chunk
+/// is charged to `budget` until the transport has written it (#4439).
+pub(crate) fn send_output_notification(
+    tx: &NotificationSender,
+    session_id: &str,
+    data: &[u8],
+    budget: Option<&OutputBudget>,
+) {
     let b64 = base64::engine::general_purpose::STANDARD;
     for chunk in data.chunks(65536) {
         // `into_params` moves the encoded chunk into the params object, so
         // this builds no more than the old `json!` did (#3759).
-        let notification = JsonRpcNotification::new(
-            CONNECTION_OUTPUT,
-            ConnectionOutputNotification {
-                session_id: session_id.to_owned(),
-                data: b64.encode(chunk),
-            }
-            .into_params(),
+        let notification = charged(
+            JsonRpcNotification::new(
+                CONNECTION_OUTPUT,
+                ConnectionOutputNotification {
+                    session_id: session_id.to_owned(),
+                    data: b64.encode(chunk),
+                }
+                .into_params(),
+            ),
+            budget,
+            chunk.len(),
         );
         let _ = tx.send(notification);
     }
+}
+
+/// Forward the session's output flow state to its daemon whenever it changes
+/// (#4439): a budget exhausted by output queued on the transport pauses the
+/// daemon's output reading, and the queue draining resumes it — the same
+/// [`MSG_OUTPUT_FLOW`] the desktop's pause uses (#4416). Sent only to a daemon
+/// that honors it; ends once the budget (the client) is gone.
+fn spawn_output_flow_forwarder(
+    writer: DaemonWriterHandle,
+    supported: Arc<AtomicBool>,
+    mut paused: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        while paused.changed().await.is_ok() {
+            if !supported.load(Ordering::SeqCst) {
+                paused.mark_unchanged();
+                continue;
+            }
+            let mut guard = writer.lock().await;
+            // Read under the writer lock, so the last frame written is the
+            // latest state (a later change wakes this loop again).
+            let state = *paused.borrow_and_update();
+            if let Some(w) = guard.as_mut() {
+                if let Err(e) = write_frame_timed(w, MSG_OUTPUT_FLOW, &[u8::from(state)]).await {
+                    debug!("Output flow frame not sent: {e:#}");
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -2243,7 +2329,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let b64 = base64::engine::general_purpose::STANDARD;
         let data: Vec<u8> = (0..65536 * 2 + 3).map(|i| (i % 253) as u8).collect();
-        send_output_notification(&tx, "sess-\"x\"", &data);
+        send_output_notification(&tx, "sess-\"x\"", &data, None);
         for chunk in data.chunks(65536) {
             let legacy =
                 serde_json::json!({ "session_id": "sess-\"x\"", "data": b64.encode(chunk) });

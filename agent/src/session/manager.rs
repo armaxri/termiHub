@@ -34,7 +34,7 @@ use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputRe
 use termihub_core::errors::SessionError;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
-use termihub_core::session::pump::{run_output_pump, OutputFlowGate, PumpEnd, PumpOptions};
+use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
 use termihub_core::session::traits::OutputSink;
 
@@ -44,6 +44,7 @@ use crate::daemon::client::{
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::session::orphan_sweep::{self, OrphanSweepConfig, OrphanSweepReport};
+use crate::session::output_budget::OutputBudget;
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     cleanup_stale_update_backup, confine_to_staging, discard_applied_upload,
@@ -1395,7 +1396,7 @@ impl SessionManager {
 
         let output_rx = connection.subscribe_output();
         let alive = Arc::new(AtomicBool::new(true));
-        let flow = OutputFlowGate::new();
+        let flow = OutputBudget::new();
         let output_task = spawn_output_forwarder(
             output_rx,
             session_id.to_string(),
@@ -2145,13 +2146,14 @@ impl SessionManager {
             let mut sessions = self.sessions.lock().await;
             let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             match &info.backend {
-                // An evicted client no longer holds the daemon: nothing to pause.
-                SessionBackend::Daemon(client)
-                    if client.output_flow_supported() && !client.is_evicted() =>
-                {
-                    Some(client.writer_handle())
+                // The daemon is sent the combined state: the desktop's pause or
+                // the transport byte budget (#4439). An evicted client no longer
+                // holds the daemon: nothing to send.
+                SessionBackend::Daemon(client) => {
+                    client.output_budget().set_paused(paused);
+                    (client.output_flow_supported() && !client.is_evicted())
+                        .then(|| (client.writer_handle(), client.output_budget().clone()))
                 }
-                SessionBackend::Daemon(_) => None,
                 SessionBackend::InProcess { flow, .. } => {
                     flow.set_paused(paused);
                     None
@@ -2160,8 +2162,8 @@ impl SessionManager {
                 SessionBackend::Stub { .. } => None,
             }
         };
-        if let Some(handle) = daemon_handle {
-            DaemonClient::output_flow_via_handle(&handle, paused)
+        if let Some((handle, budget)) = daemon_handle {
+            DaemonClient::output_flow_via_handle(&handle, &budget)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -2802,9 +2804,10 @@ fn spawn_output_forwarder(
     notification_tx: NotificationSender,
     alive: Arc<AtomicBool>,
     manager: Weak<SessionManager>,
-    flow: OutputFlowGate,
+    flow: OutputBudget,
 ) -> tokio::task::JoinHandle<()> {
-    let sink = JsonRpcOutputSink::new(notification_tx);
+    // Every queued chunk is charged to the session's budget (#4439).
+    let sink = JsonRpcOutputSink::with_budget(notification_tx, flow.clone());
     // The mechanical recv→send_output loop now lives in the shared core pump
     // (finding DUP-011). The agent forwards each received chunk as its own
     // `connection.output` notification, so `coalesce: false` keeps exactly one
@@ -2820,9 +2823,10 @@ fn spawn_output_forwarder(
         // Desktop flow control (#4416): `connection.output_flow` pauses the
         // pump, which then stops reading `output_rx`. The connection's PTY
         // reader blocks on the full bounded channel, so the program on this
-        // host is backpressured; the unbounded notification queue only ever
-        // holds what was read before the pause.
-        flow: Some(flow),
+        // host is backpressured. The byte budget (#4439) pauses the same gate
+        // once the session has `OUTPUT_BUDGET_BYTES` queued but unwritten on the
+        // transport, so that queue stays bounded whatever the pause latency.
+        flow: Some(flow.gate()),
     };
     // Run under the caller's span: for a `connection.create` that is the
     // session's `agent_session` span carrying the desktop correlation id
@@ -4888,7 +4892,7 @@ mod tests {
                 test_notification_tx(),
                 alive.clone(),
                 Arc::downgrade(&mgr),
-                OutputFlowGate::new(),
+                OutputBudget::new(),
             );
 
             drop(tx); // model the backend exiting / EOF
@@ -5121,7 +5125,7 @@ mod tests {
             test_notification_tx(),
             alive.clone(),
             Weak::new(),
-            OutputFlowGate::new(),
+            OutputBudget::new(),
         );
 
         assert!(alive.load(Ordering::SeqCst), "alive before channel closes");
@@ -5161,7 +5165,7 @@ mod tests {
             notif_tx,
             alive.clone(),
             Weak::new(),
-            OutputFlowGate::new(),
+            OutputBudget::new(),
         );
         handle.await.expect("forwarder task joins cleanly");
 
