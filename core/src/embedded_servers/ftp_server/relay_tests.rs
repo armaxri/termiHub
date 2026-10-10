@@ -362,7 +362,10 @@ fn relay_attributes_the_client_ip_and_refuses_data_from_another_ip() {
             Arc::new(LoginThrottle::new()),
             stream,
             claimed,
-            addr.port(),
+            RelayParams {
+                public_port: addr.port(),
+                prelogin_timeout: crate::embedded_servers::ftp_relay::PRELOGIN_TIMEOUT,
+            },
             session_shutdown,
         )
         .await;
