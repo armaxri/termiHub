@@ -2,17 +2,14 @@
 //!
 //! Drives the store directly and asserts on the typed [`TransferEntry`] records,
 //! covering the `queued → active → completed | failed | cancelled` lifecycle, the
-//! derived percent/throughput folds (mirroring `src/types/transfer.ts`), the
-//! reconcile backstop, and the whole-slice `replace` mirror.
+//! derived percent/throughput folds (mirroring `src/types/transfer.ts`), and the
+//! whole-slice `replace` mirror.
 
 use std::collections::HashMap;
 
 use serde_json::json;
 
-use super::{
-    TransferDirection, TransferProgress, TransferQueueState, TransferSeed, TransferSnapshot,
-    TransferStore,
-};
+use super::{TransferDirection, TransferProgress, TransferQueueState, TransferSeed, TransferStore};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -334,74 +331,6 @@ fn set_minimized_toggles_the_panel_flag() {
     assert_eq!(store.snapshot()["minimized"], json!(true));
     store.set_minimized(false);
     assert_eq!(store.snapshot()["minimized"], json!(false));
-}
-
-fn snapshot_of(id: &str, state: TransferQueueState, settled: bool) -> TransferSnapshot {
-    TransferSnapshot {
-        transfer_id: id.to_string(),
-        session_id: "sess-1".to_string(),
-        direction: TransferDirection::Download,
-        file_name: "data.csv".to_string(),
-        path: None,
-        state,
-        settled,
-        transferred: 1_000,
-        total: 1_000,
-        speed: 0,
-        attempt: 0,
-        max_attempts: 0,
-    }
-}
-
-#[test]
-fn reconcile_settles_a_stuck_row_from_a_settled_terminal_snapshot() {
-    let store = TransferStore::new();
-    // A row stuck `active` because its terminal event was dropped.
-    store.progress(&progress("t1", TransferQueueState::Active, 1_000), 1_000);
-
-    store.reconcile(
-        &[snapshot_of("t1", TransferQueueState::Completed, true)],
-        2_000,
-    );
-    assert_eq!(
-        store.get("t1").unwrap().state,
-        TransferQueueState::Completed
-    );
-}
-
-#[test]
-fn reconcile_ignores_unsettled_and_non_terminal_and_missing_rows() {
-    let store = TransferStore::new();
-    store.progress(&progress("t1", TransferQueueState::Active, 1_000), 1_000);
-
-    // Unsettled terminal snapshot (mid auto-retry) must not settle the row.
-    store.reconcile(
-        &[snapshot_of("t1", TransferQueueState::Failed, false)],
-        2_000,
-    );
-    assert_eq!(store.get("t1").unwrap().state, TransferQueueState::Active);
-
-    // A snapshot for a row the user already removed must not resurrect it.
-    store.reconcile(
-        &[snapshot_of("ghost", TransferQueueState::Completed, true)],
-        2_000,
-    );
-    assert!(store.get("ghost").is_none());
-}
-
-#[test]
-fn reconcile_never_regresses_an_already_terminal_row() {
-    let store = TransferStore::new();
-    store.progress(&progress("t1", TransferQueueState::Completed, 1_000), 1_000);
-    store.reconcile(
-        &[snapshot_of("t1", TransferQueueState::Failed, true)],
-        2_000,
-    );
-    // Already terminal → untouched.
-    assert_eq!(
-        store.get("t1").unwrap().state,
-        TransferQueueState::Completed
-    );
 }
 
 #[test]

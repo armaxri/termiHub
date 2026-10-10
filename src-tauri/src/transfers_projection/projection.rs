@@ -24,7 +24,6 @@
 //! | -------------------------- | -------------------------- | -------------------------------------------- |
 //! | `transfer.seed`            | `{ seed }`                 | enqueue a `queued` row (idempotent)          |
 //! | `transfer.progress`        | `{ progress }`             | fold a `transfer-progress` event             |
-//! | `transfer.reconcile`       | `{ snapshots }`            | settle stuck rows from a `transfer_list`     |
 //! | `transfer.remove`          | `{ id }`                   | drop one queue row                           |
 //! | `transfer.clearCompleted`  | `{}`                       | drop every `completed` row                   |
 //! | `transfer.setMinimized`    | `{ minimized }`            | collapse/expand the panel                    |
@@ -32,7 +31,7 @@
 //!
 //! `transfer.replace` is the whole-slice seed that keeps the shared region a
 //! faithful copy of the transfer-queue slice — the analog of the system-monitor
-//! bridge's `monitor.replace`. The granular `seed` / `progress` / `reconcile` /
+//! bridge's `monitor.replace`. The granular `seed` / `progress` /
 //! `remove` / `clearCompleted` / `setMinimized` transitions drive the store,
 //! which is authoritative (the former `appStore` transfer reducers were removed,
 //! #2229 / #2283).
@@ -53,13 +52,14 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
+use crate::files::transfer::TransferRegistry;
 use crate::projection::{
     compute_ops, perf006_divergence, pick_keys, report_perf006_divergence, required_bool,
     required_str, splice_subtrees, subtree_map, DiffOp, HandlerRegistry, Intent, ProducedRegion,
     Projector,
 };
 use crate::transfers_projection::store::{
-    RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
+    RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferStore,
 };
 
 /// The projection region id for the transfer-queue domain (shared, per Open
@@ -255,6 +255,25 @@ pub fn fold_transfer_progress<R: tauri::Runtime>(
     }
 }
 
+/// Whether a client `transfer.seed` for transfer `id` may insert a `queued` row
+/// (#4387).
+///
+/// The frontend seeds a row only after the start command returned, so by the time
+/// the seed lands a fast transfer may already have finished, had its terminal state
+/// folded server-side, and been removed by the user (or cleared from another
+/// window). Inserting the seed then would resurrect a `queued` row that no engine
+/// will ever settle — the stuck row the retired client reconcile poll used to heal.
+/// So a seed is honoured only while the engine still holds a live, non-terminal
+/// handle for the transfer. With no registry managed (a headless harness) the seed
+/// is applied as before.
+pub(crate) fn seed_target_is_live(registry: Option<&TransferRegistry>, id: &str) -> bool {
+    registry.is_none_or(|registry| {
+        registry
+            .get(id)
+            .is_some_and(|handle| !handle.state().tag().is_terminal())
+    })
+}
+
 /// Register the `transfer.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`TransferStore`] lazily (so it rejects
@@ -266,7 +285,10 @@ pub fn register_transfer_intents(registry: &mut HandlerRegistry, app_handle: App
     registry.route("transfer.seed", move |intent, projector| {
         let store = store_of(&handle)?;
         let seed = parse_field::<TransferSeed>(intent, "seed")?;
-        store.seed(&seed, now_ms());
+        let transfers = handle.try_state::<TransferRegistry>();
+        if seed_target_is_live(transfers.as_deref(), &seed.id) {
+            store.seed(&seed, now_ms());
+        }
         Ok(publish_transfers(projector, &store))
     });
 
@@ -275,14 +297,6 @@ pub fn register_transfer_intents(registry: &mut HandlerRegistry, app_handle: App
         let store = store_of(&handle)?;
         let progress = parse_field::<TransferProgress>(intent, "progress")?;
         store.progress(&progress, now_ms());
-        Ok(publish_transfers(projector, &store))
-    });
-
-    let handle = app_handle.clone();
-    registry.route("transfer.reconcile", move |intent, projector| {
-        let store = store_of(&handle)?;
-        let snapshots = parse_field::<Vec<TransferSnapshot>>(intent, "snapshots")?;
-        store.reconcile(&snapshots, now_ms());
         Ok(publish_transfers(projector, &store))
     });
 
