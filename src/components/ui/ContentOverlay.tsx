@@ -18,10 +18,13 @@ export interface ContentOverlayProps {
   /** Primary heading line (e.g. "Connecting…", "Connection failed"). */
   heading: React.ReactNode;
   /**
-   * Marks an in-progress screen (connecting, reconnecting, restoring). The
-   * heading becomes a polite live `status` region, so the steady text label —
-   * which carries the progress signal next to a static spinner under reduced
-   * motion (#4039) — is always announced to screen readers too.
+   * Marks an in-progress screen (connecting, reconnecting, restoring). Implies
+   * `announce="polite"` (unless `announce` is passed explicitly), so the steady
+   * text label — which carries the progress signal next to a static spinner
+   * under reduced motion (#4039) — is announced to screen readers through the
+   * always-mounted {@link LiveRegion} (#4512). The heading itself carries no
+   * live attributes: a live region inserted together with its text is often
+   * not announced, and two announcing nodes would speak the state twice.
    */
   busy?: boolean;
   /** Optional secondary line under the heading. */
@@ -37,7 +40,7 @@ export interface ContentOverlayProps {
    * Announce the screen to assistive tech through an always-mounted live region
    * (#4331): `assertive` for failures the user must act on (an `alert`),
    * `polite` for disconnects and other state changes (a `status`). Omit for
-   * screens that need no announcement.
+   * screens that need no announcement. `busy` screens default to `polite`.
    */
   announce?: LiveRegionPoliteness;
   /**
@@ -96,6 +99,7 @@ export function ContentOverlay({
   const headingId = useId();
   const subheadingId = useId();
   const spoken = announcement ?? defaultAnnouncement(heading, subheading);
+  const politeness: LiveRegionPoliteness | undefined = announce ?? (busy ? "polite" : undefined);
 
   useEffect(() => {
     if (!autoFocusPrimaryAction) return;
@@ -121,16 +125,11 @@ export function ContentOverlay({
       aria-describedby={describedByIds}
       aria-busy={busy || undefined}
     >
-      {announce && spoken && (
-        <LiveRegion message={spoken} politeness={announce} data-testid="content-overlay-live" />
+      {politeness && (
+        <LiveRegion message={spoken} politeness={politeness} data-testid="content-overlay-live" />
       )}
       {icon}
-      <p
-        id={headingId}
-        className="ui-content-overlay__heading"
-        role={busy ? "status" : undefined}
-        aria-live={busy ? "polite" : undefined}
-      >
+      <p id={headingId} className="ui-content-overlay__heading">
         {heading}
       </p>
       {subheading != null && (
@@ -148,8 +147,13 @@ export function ContentOverlay({
   );
 }
 
-/** Heading + subheading as one sentence pair, when both are plain text. */
+/**
+ * Heading + subheading as one sentence pair, when both are plain text. A heading
+ * that already ends in punctuation ("Connecting…") is not given a second stop.
+ */
 function defaultAnnouncement(heading: React.ReactNode, subheading: React.ReactNode): string {
   if (typeof heading !== "string") return "";
-  return typeof subheading === "string" ? `${heading}. ${subheading}` : heading;
+  if (typeof subheading !== "string") return heading;
+  const separator = /[.…!?:]$/.test(heading) ? " " : ". ";
+  return `${heading}${separator}${subheading}`;
 }
