@@ -437,6 +437,11 @@ struct StallState {
     /// Every write and resize, in the order the backends ran them.
     ops: std::sync::Mutex<Vec<String>>,
     disconnects: AtomicUsize,
+    /// `interrupt_io` calls (#4394).
+    interrupts: AtomicUsize,
+    /// When set, `interrupt_io` releases the stalled writes, as a real PTY or
+    /// socket backend ends its parked write; otherwise it has no effect.
+    interruptible: AtomicBool,
 }
 
 impl StallState {
@@ -485,6 +490,12 @@ impl termihub_core::connection::ConnectionType for StallConnection {
     }
     fn is_connected(&self) -> bool {
         true
+    }
+    fn interrupt_io(&self) {
+        self.state.interrupts.fetch_add(1, Ordering::SeqCst);
+        if self.state.interruptible.load(Ordering::SeqCst) {
+            self.state.released.store(true, Ordering::SeqCst);
+        }
     }
     fn write(&self, data: &[u8]) -> Result<(), termihub_core::errors::SessionError> {
         if data == STALL {
@@ -831,4 +842,39 @@ async fn closing_an_idle_in_process_session_disconnects_at_once() {
 
     assert!(mgr.close(&id).await, "closed");
     assert_eq!(state.disconnects.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        state.interrupts.load(Ordering::SeqCst),
+        0,
+        "nothing in flight, nothing to interrupt"
+    );
+}
+
+/// #4394: such a close also interrupts the stalled write, so a backend that can
+/// end it (a PTY killing its child, telnet shutting its socket) is disconnected
+/// promptly instead of only once the write returns on its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn closing_a_stalled_in_process_session_interrupts_its_write() {
+    let state = Arc::new(StallState::default());
+    state.interruptible.store(true, Ordering::SeqCst);
+    let _release = ReleaseOnDrop(state.clone());
+    let (mgr, id, writing) = stalled_session(&state).await;
+
+    assert!(
+        tokio::time::timeout(HANG_GUARD, mgr.close(&id))
+            .await
+            .expect("close waited behind the stalled write"),
+        "closed"
+    );
+    assert_eq!(state.interrupts.load(Ordering::SeqCst), 1, "interrupted");
+
+    // Nothing but the interrupt releases the write here.
+    tokio::time::timeout(HANG_GUARD, writing)
+        .await
+        .expect("the interrupted write returns")
+        .unwrap()
+        .expect("the stall backend lets the released write complete");
+    until("the deferred disconnect", || {
+        state.disconnects.load(Ordering::SeqCst) == 1
+    })
+    .await;
 }
