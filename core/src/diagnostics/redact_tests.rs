@@ -80,6 +80,41 @@ fn shared_secret_key_vectors_match() {
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FieldVectors {
+    secret: Vec<String>,
+    not_secret: Vec<String>,
+}
+
+/// The shared field-name vectors (#4701), also run against the frontend
+/// `redactLogText` and the structured `log_frame::is_secret_field`.
+#[test]
+fn shared_secret_field_vectors_match_free_text() {
+    let raw = include_str!("../../../src/test/fixtures/redaction/secret-field-vectors.json");
+    let vectors: FieldVectors = serde_json::from_str(raw).unwrap();
+    let r = plain();
+    for name in &vectors.secret {
+        // Dotted names (`key.passphrase`) also trip the host masking, so check
+        // the value rather than the whole line.
+        let out = r.redact(&format!("{name}=hunter2"));
+        assert!(out.ends_with(&format!("={REDACTED}")), "{name}: {out}");
+        assert!(is_secret_key_name(name), "{name}");
+    }
+    for name in &vectors.not_secret {
+        let input = format!("{name}=hunter2");
+        assert_eq!(r.redact(&input), input, "{name}");
+        assert!(!is_secret_key_name(name), "{name}");
+    }
+}
+
+#[test]
+fn secret_key_terms_come_from_the_shared_list() {
+    let terms = secret_key_terms();
+    assert!(terms.iter().any(|t| t == &["pin"]));
+    assert!(terms.iter().any(|t| t == &["api", "key"]));
+}
+
 #[test]
 fn secret_key_pattern_builds_from_the_shared_list() {
     let pattern = secret_key_pattern().expect("shared secret-key list parses");
