@@ -12,8 +12,10 @@ export type FieldHintVariant = "default" | "warning";
 
 /** Field layout. `"stack"` renders label above control (the default);
  * `"checkbox"` renders a single-row `<label>` with the control first and the
- * label text beside it, so clicking the text toggles the control. */
-export type FieldLayout = "stack" | "checkbox";
+ * label text beside it, so clicking the text toggles the control; `"inline"`
+ * renders a settings row with the label (and its hint below it) on the left and
+ * a compact control (toggle, action button) right-aligned beside them. */
+export type FieldLayout = "stack" | "checkbox" | "inline";
 
 /** Where the hint renders: below the control (default) or directly under the
  * label, e.g. for a list whose description belongs above its rows. */
@@ -103,6 +105,9 @@ const VARIANT_CLASSES: Record<
   {
     field: string;
     checkbox: string;
+    inline: string;
+    text: string;
+    control: string;
     label: string;
     labelRow: string;
     required: string;
@@ -114,6 +119,9 @@ const VARIANT_CLASSES: Record<
   default: {
     field: "ui-field",
     checkbox: "ui-field--checkbox",
+    inline: "ui-field--inline",
+    text: "ui-field__text",
+    control: "ui-field__control",
     label: "ui-field__label",
     labelRow: "ui-field__label-row",
     required: "ui-field__required",
@@ -124,6 +132,9 @@ const VARIANT_CLASSES: Record<
   settings: {
     field: "settings-form__field",
     checkbox: "settings-form__field--checkbox",
+    inline: "settings-form__field--inline",
+    text: "settings-form__field-text",
+    control: "settings-form__field-control",
     label: "settings-form__label",
     labelRow: "settings-form__label-row",
     required: "settings-form__required",
@@ -207,9 +218,9 @@ export function Field({
   }
 
   const isCheckbox = layout === "checkbox";
-  const wrapperClasses = [classes.field, isCheckbox ? classes.checkbox : "", className ?? ""]
-    .filter(Boolean)
-    .join(" ");
+  const isInline = layout === "inline";
+  const layoutClass = isCheckbox ? classes.checkbox : isInline ? classes.inline : "";
+  const wrapperClasses = [classes.field, layoutClass, className ?? ""].filter(Boolean).join(" ");
   const hintClasses = [classes.hint, hintVariant === "warning" ? classes.hintWarning : ""]
     .filter(Boolean)
     .join(" ");
@@ -263,16 +274,35 @@ export function Field({
     <span className={labelClasses}>{labelContent}</span>
   );
 
+  const labelBlock =
+    labelAccessory !== undefined && labelAccessory !== null && labelAccessory !== false ? (
+      <div className={classes.labelRow}>
+        {labelNode}
+        {labelAccessory}
+      </div>
+    ) : (
+      labelNode
+    );
+
+  if (isInline) {
+    // Settings row: the label with its hint directly beneath it on the left,
+    // the compact control right-aligned beside them. A long hint wraps within
+    // the text column and never sits between the label and the control.
+    return (
+      <div className={wrapperClasses} {...rest}>
+        <div className={classes.text}>
+          {labelBlock}
+          {hintNode}
+        </div>
+        <div className={classes.control}>{control}</div>
+        {errorNode}
+      </div>
+    );
+  }
+
   return (
     <div className={wrapperClasses} {...rest}>
-      {labelAccessory !== undefined && labelAccessory !== null && labelAccessory !== false ? (
-        <div className={classes.labelRow}>
-          {labelNode}
-          {labelAccessory}
-        </div>
-      ) : (
-        labelNode
-      )}
+      {labelBlock}
       {hintPosition === "afterLabel" ? hintNode : null}
       {control}
       {hintPosition === "afterControl" ? hintNode : null}

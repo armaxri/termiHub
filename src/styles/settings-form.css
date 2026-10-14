@@ -1,0 +1,311 @@
+/* Shared settings-form helpers (#4708).
+
+   Rules used by both the Settings panel and the connection editor (DynamicForm
+   list/notice/file widgets, the key-path browse button, collapsible groups).
+   They live in always-loaded global CSS: the connection editor and the Settings
+   panel are lazy chunks, so styles shared between them must not ride along in
+   either chunk or a surface renders unstyled until the other one has opened.
+   The Field primitive's own `settings-form__field*` rules live in ui.css.
+
+   This file loads before the primitives' ui.css, so a rule that overrides a
+   primitive's skin is compounded with the primitive class (`.ui-input`,
+   `.ui-btn`) to win regardless of stylesheet order. */
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+/* Display-only callout rendered by a `notice` schema field (e.g. the plain-FTP
+   insecure-connection warning shown only while TLS Mode is None). */
+.settings-form__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin: 0 0 var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.settings-form__notice svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.settings-form__notice--warning {
+  color: var(--color-warning);
+  background-color: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 28%, transparent);
+}
+
+.settings-form__notice--info {
+  color: var(--color-info);
+  background-color: color-mix(in srgb, var(--color-info) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-info) 28%, transparent);
+}
+
+.settings-form__field input.settings-form__input--error,
+.settings-form__field select.settings-form__input--error {
+  border-color: var(--color-error);
+}
+
+.settings-form__hint--error {
+  color: var(--color-error);
+}
+
+.settings-form__hint--success,
+.settings-form__hint--valid {
+  color: var(--color-success);
+}
+
+.settings-form__hint-action {
+  background: none;
+  border: none;
+  color: var(--focus-border);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: var(--spacing-xs);
+}
+
+.settings-form__list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+}
+
+.settings-form__list-input,
+.settings-form__list-input.ui-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: var(--font-size-sm);
+}
+
+.settings-form__list-remove,
+.ui-btn.settings-form__list-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-xl);
+  padding: 0;
+}
+
+.settings-form__list-remove:hover,
+.ui-btn.settings-form__list-remove:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.settings-form__file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/* Docker container picker (PROD-017): the runtime's containers listed below the
+   name/ID input, running first; stopped ones are dimmed. */
+.settings-form__container-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.settings-form__container-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xxs);
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-form__container-option:hover {
+  background: var(--bg-hover);
+}
+
+.settings-form__container-option:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -1px;
+}
+
+.settings-form__container-option--selected {
+  background: var(--bg-secondary);
+  box-shadow: inset 2px 0 0 var(--accent-color);
+}
+
+.settings-form__container-option--stopped {
+  color: var(--text-secondary);
+}
+
+.settings-form__container-name {
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+}
+
+.settings-form__container-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+/* Compose awareness (#3425): containers grouped under their Compose project,
+   with the service name shown next to the container name. */
+.settings-form__container-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.settings-form__container-group-label {
+  position: sticky;
+  top: 0;
+  padding: var(--spacing-xxs) var(--spacing-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.settings-form__container-service {
+  margin-left: var(--spacing-xs);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.settings-form__file-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-form__list-checkbox {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-form__list-checkbox input[type="checkbox"] {
+  width: auto;
+  height: auto;
+}
+
+.settings-form__list-add {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--focus-border);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xs) 0;
+}
+
+.settings-form__list-add:hover {
+  text-decoration: underline;
+}
+
+/* Help icon Button next to boolean field labels: skin comes from the ghost
+   Button primitive; only the inline spacing/alignment is bespoke here. */
+.settings-form__help,
+.ui-btn.settings-form__help {
+  margin-left: var(--spacing-xs);
+  vertical-align: middle;
+}
+
+/* === Collapsible settings group (progressive disclosure, UX-008) === */
+
+/* The expander header for a collapsed-by-default group (e.g. SSH "Advanced").
+   A real <button> so it is keyboard-focusable and announces aria-expanded;
+   styled to read like the static category heading it replaces. */
+.settings-panel__category-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: 0 0 var(--spacing-xs);
+  margin: 0 0 var(--spacing-md);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-secondary);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-panel__category-toggle:hover {
+  color: var(--text-primary);
+}
+
+/* The group label inside the expander button. Explicit type styling so it does
+   not depend on the static category-title rule being loaded in this context. */
+.settings-panel__category-title--button {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-panel__category-chevron {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+/* Rotate the chevron from pointing right (collapsed) to down (expanded). */
+.settings-panel__category-chevron[data-open] {
+  transform: rotate(90deg);
+}
+
+/* Gentle reveal when the group opens; the fields stay mounted while hidden. */
+.settings-panel__category-content:not([hidden]) {
+  animation: settings-group-reveal var(--transition-normal);
+}
+
+@keyframes settings-group-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel__category-chevron {
+    transition: none;
+  }
+
+  .settings-panel__category-content:not([hidden]) {
+    animation: none;
+  }
+}
