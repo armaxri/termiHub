@@ -1477,3 +1477,55 @@
     transition: none;
   }
 }
+
+/* ── Responsive toolbar (#4709) ─────────────────────────────────────── */
+/* A width-responsive action strip: labelled → icon-only → overflow "…" menu.
+   The ResponsiveToolbar component decides the layout from a ResizeObserver;
+   this sheet only keeps the strip on one line and never lets it clip. */
+.ui-toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.ui-toolbar > .ui-btn {
+  flex-shrink: 0;
+}
+
+/* Leading content (a section title) takes the leftover width and truncates. */
+.ui-toolbar__leading {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Invisible measuring copy of every labelled action: out of flow, zero
+   height, never painted or hit — it only lends its natural widths. */
+.ui-toolbar__measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  gap: var(--spacing-xs);
+  width: max-content;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.ui-toolbar__sub-chevron {
+  margin-left: auto;
+}
+
+/* ── Truncated text (#4709) ─────────────────────────────────────────── */
+.ui-truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
