@@ -173,7 +173,7 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
     // then the hosted tab had folded `Failed` at the backend source with the
     // same error. Read at the emit: the hosted session's own late drop (its
     // output channel closes when the task ends) refolds the tab afterwards —
-    // see the follow-up filed from #4404.
+    // #4713.
     let disconnects = disconnects.lock().unwrap().clone();
     assert_eq!(
         disconnects.len(),
