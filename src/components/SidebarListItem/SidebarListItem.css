@@ -3,6 +3,9 @@
    follow). */
 
 .sidebar-list-item {
+  /* The surface the hover-revealed actions paint over the name with — kept in
+     step with the row's own background so the overlay reads as part of it. */
+  --sidebar-list-item-surface: var(--sidebar-bg);
   display: flex;
   flex-direction: column;
   padding: var(--spacing-xs-sm) var(--spacing-md);
@@ -11,19 +14,16 @@
 }
 
 .sidebar-list-item:hover {
+  --sidebar-list-item-surface: var(--bg-hover);
   background: var(--bg-hover);
 }
 
-/* Errored rows keep their recovery actions visible without a hover so the user
-   always has a way out (mirrors the tunnel row, issue 1240). */
-.sidebar-list-item--error .sidebar-list-item__actions {
-  opacity: 1;
-}
-
 .sidebar-list-item__header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--spacing-xs-sm);
+  min-width: 0;
 }
 
 /* The leading status dot now comes from the shared StatusDot primitive
@@ -31,6 +31,12 @@
    colours live in ui.css, not here. */
 
 .sidebar-list-item__badge {
+  /* A long status badge ("Next: tomorrow 09:00") may shrink and ellipsize, but
+     never past half the row — the name keeps the larger share (#4709). */
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-xs);
   padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
@@ -38,11 +44,12 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   font-weight: 500;
-  flex-shrink: 0;
+  flex-shrink: 1;
 }
 
 .sidebar-list-item__name {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   overflow: hidden;
@@ -50,15 +57,42 @@
   white-space: nowrap;
 }
 
+/* Hover/focus actions overlay the trailing edge of the header instead of
+   sitting in the flex row: while hidden they reserve no width, so the name
+   gets the whole row (#4709 — names used to truncate to two letters behind
+   four invisible buttons). They stay in the DOM and focusable; keyboard focus
+   reveals them through :focus-within. */
 .sidebar-list-item__actions {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
   display: flex;
+  align-items: center;
   gap: var(--spacing-xxs);
+  padding-left: var(--spacing-xs);
+  background: var(--sidebar-list-item-surface);
   opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-list-item:hover .sidebar-list-item__actions,
 .sidebar-list-item:focus-within .sidebar-list-item__actions {
   opacity: 1;
+  pointer-events: auto;
+}
+
+/* Errored rows keep their recovery actions visible without a hover so the user
+   always has a way out (mirrors the tunnel row, issue 1240) — in the flow, so
+   the name ellipsizes before them instead of hiding under them. */
+.sidebar-list-item--error .sidebar-list-item__actions {
+  position: static;
+  transform: none;
+  flex-shrink: 0;
+  padding-left: 0;
+  background: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .sidebar-list-item__details {
