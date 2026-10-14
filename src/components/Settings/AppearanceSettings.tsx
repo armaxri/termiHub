@@ -1,5 +1,4 @@
 import { useState } from "react";
-import * as RadixSelect from "@radix-ui/react-select";
 import { Puzzle } from "lucide-react";
 import { open, save } from "@/services/nativeDialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
@@ -11,6 +10,9 @@ import {
   NumberInput,
   Select,
   SelectItem,
+  SelectGroup,
+  SelectSeparator,
+  SelectLabel,
   Tooltip,
   TooltipProvider,
   toast,
@@ -209,11 +211,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
                   </Tooltip>
                 ))}
                 {pluginThemes.length > 0 && (
-                  <RadixSelect.Group data-testid="appearance-theme-plugins-group">
-                    <RadixSelect.Separator className="ui-select__separator" />
-                    <RadixSelect.Label className="ui-select__group-label">
-                      Plugins
-                    </RadixSelect.Label>
+                  <SelectGroup data-testid="appearance-theme-plugins-group">
+                    <SelectSeparator />
+                    <SelectLabel>Plugins</SelectLabel>
                     {pluginThemes.map((theme) => (
                       <Tooltip
                         key={theme.id}
@@ -234,7 +234,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
                         </SelectItem>
                       </Tooltip>
                     ))}
-                  </RadixSelect.Group>
+                  </SelectGroup>
                 )}
               </Select>
             </TooltipProvider>
