@@ -1,12 +1,22 @@
 import { useCallback, useState } from "react";
 import { Plus, ChevronDown, Play } from "lucide-react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { resolveConnectedTargets, type RunnableTarget } from "@/store/slices/workflowFanout";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, SearchInput, toast, EmptyState } from "@/components/ui";
+import {
+  Button,
+  SearchInput,
+  toast,
+  EmptyState,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+} from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
@@ -299,8 +309,8 @@ export function WorkflowSidebar() {
   return (
     <div className="workflow-sidebar" data-testid="workflow-sidebar">
       <SidebarToolbar align="center">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
+        <DropdownMenuRoot>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
@@ -311,39 +321,30 @@ export function WorkflowSidebar() {
               New
               <ChevronDown size={12} />
             </Button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-              <DropdownMenu.Item
-                className="settings-menu__item"
-                onSelect={handleNew}
-                data-testid="workflow-new-blank"
-              >
-                <Plus size={14} />
-                Blank workflow
-              </DropdownMenu.Item>
-              {macros.length > 0 ? (
-                <>
-                  <DropdownMenu.Separator className="settings-menu__separator" />
-                  <DropdownMenu.Label className="settings-menu__label">
-                    Promote a macro
-                  </DropdownMenu.Label>
-                  {macros.map((macro) => (
-                    <DropdownMenu.Item
-                      key={macro.id}
-                      className="settings-menu__item"
-                      onSelect={() => handlePromoteMacro(macro.id)}
-                      data-testid={`workflow-promote-macro-${macro.id}`}
-                    >
-                      <Play size={14} />
-                      {macro.name}
-                    </DropdownMenu.Item>
-                  ))}
-                </>
-              ) : null}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" sideOffset={4}>
+            <MenuItem onSelect={handleNew} data-testid="workflow-new-blank">
+              <Plus size={14} />
+              Blank workflow
+            </MenuItem>
+            {macros.length > 0 ? (
+              <>
+                <MenuSeparator />
+                <MenuLabel>Promote a macro</MenuLabel>
+                {macros.map((macro) => (
+                  <MenuItem
+                    key={macro.id}
+                    onSelect={() => handlePromoteMacro(macro.id)}
+                    data-testid={`workflow-promote-macro-${macro.id}`}
+                  >
+                    <Play size={14} />
+                    {macro.name}
+                  </MenuItem>
+                ))}
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenuRoot>
         <ExportImportButtons
           onExport={handleExportAll}
           onImport={handleImport}

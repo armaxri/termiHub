@@ -1,6 +1,5 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   X,
   Settings as SettingsIcon,
@@ -21,7 +20,6 @@ import {
   ExternalLink,
   AppWindow,
   Plus,
-  ChevronRight,
   Radio,
   Circle,
   LoaderCircle,
@@ -37,7 +35,19 @@ import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip } from "@/components/ui";
+import {
+  Tooltip,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuItemIndicator,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+} from "@/components/ui";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
@@ -151,30 +161,24 @@ function TabMoveItems({
 }: Pick<TabProps, "onMoveLeft" | "onMoveRight" | "onMoveToNewPanel">) {
   return (
     <>
-      <ContextMenu.Item
-        className="context-menu__item"
+      <MenuItem
         disabled={!onMoveLeft}
         onSelect={() => onMoveLeft?.()}
         data-testid="tab-context-move-left"
       >
         <ArrowLeft size={14} /> Move Left
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuItem
         disabled={!onMoveRight}
         onSelect={() => onMoveRight?.()}
         data-testid="tab-context-move-right"
       >
         <ArrowRight size={14} /> Move Right
-      </ContextMenu.Item>
+      </MenuItem>
       {onMoveToNewPanel && (
-        <ContextMenu.Item
-          className="context-menu__item"
-          onSelect={() => onMoveToNewPanel()}
-          data-testid="tab-context-move-new-panel"
-        >
+        <MenuItem onSelect={() => onMoveToNewPanel()} data-testid="tab-context-move-new-panel">
           <SquareSplitHorizontal size={14} /> Move to New Panel
-        </ContextMenu.Item>
+        </MenuItem>
       )}
     </>
   );
@@ -398,157 +402,103 @@ export function Tab({
 
   if (!isTerminalTab) {
     return (
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onSetColor?.()}
-              data-testid="tab-context-set-color"
-            >
-              <Palette size={14} /> Set Color...
-            </ContextMenu.Item>
-            <ContextMenu.Separator className="context-menu__separator" />
-            {moveItems}
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+      <ContextMenuRoot>
+        <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
+        <ContextMenuContent>
+          <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
+            <Palette size={14} /> Set Color...
+          </MenuItem>
+          <MenuSeparator />
+          {moveItems}
+        </ContextMenuContent>
+      </ContextMenuRoot>
     );
   }
 
   return (
-    <ContextMenu.Root onOpenChange={(open) => onContextMenuOpenChange?.(open)}>
-      <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onRename?.()}
-            data-testid="tab-context-rename"
-          >
-            <Pencil size={14} /> Rename
-          </ContextMenu.Item>
-          {onDisconnect && (
-            <>
-              <ContextMenu.Separator className="context-menu__separator" />
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => onDisconnect()}
-                data-testid="tab-context-disconnect"
+    <ContextMenuRoot onOpenChange={(open) => onContextMenuOpenChange?.(open)}>
+      <ContextMenuTrigger asChild>{tabElement}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <MenuItem onSelect={() => onRename?.()} data-testid="tab-context-rename">
+          <Pencil size={14} /> Rename
+        </MenuItem>
+        {onDisconnect && (
+          <>
+            <MenuSeparator />
+            <MenuItem onSelect={() => onDisconnect()} data-testid="tab-context-disconnect">
+              <Unplug size={14} /> Disconnect
+            </MenuItem>
+          </>
+        )}
+        <MenuSeparator />
+        {moveItems}
+        <MenuItem onSelect={() => onMoveToNewWindow?.()} data-testid="tab-context-move-new-window">
+          <ExternalLink size={14} /> Move to New Window
+        </MenuItem>
+        {showMoveToExisting && (
+          <MenuSub>
+            <MenuSubTrigger data-testid="tab-context-move-window">
+              <AppWindow size={14} /> Move to Window
+            </MenuSubTrigger>
+            <MenuSubContent data-testid="tab-context-move-window-submenu">
+              <MenuItem
+                onSelect={() => onMoveToNewWindow?.()}
+                data-testid="tab-context-move-window-new"
               >
-                <Unplug size={14} /> Disconnect
-              </ContextMenu.Item>
-            </>
-          )}
-          <ContextMenu.Separator className="context-menu__separator" />
-          {moveItems}
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onMoveToNewWindow?.()}
-            data-testid="tab-context-move-new-window"
-          >
-            <ExternalLink size={14} /> Move to New Window
-          </ContextMenu.Item>
-          {showMoveToExisting && (
-            <ContextMenu.Sub>
-              <ContextMenu.SubTrigger
-                className="context-menu__item context-menu__sub-trigger"
-                data-testid="tab-context-move-window"
-              >
-                <AppWindow size={14} /> Move to Window
-                <ChevronRight size={14} className="context-menu__sub-arrow" />
-              </ContextMenu.SubTrigger>
-              <ContextMenu.Portal>
-                <ContextMenu.SubContent
-                  className="context-menu__content"
-                  data-testid="tab-context-move-window-submenu"
+                <Plus size={14} /> New Window
+              </MenuItem>
+              <MenuSeparator />
+              {pickerEntries.map((entry) => (
+                <MenuItem
+                  key={entry.label}
+                  disabled={entry.isCurrent}
+                  onSelect={() => {
+                    if (!entry.isCurrent) onMoveToWindow?.(entry.label);
+                  }}
+                  data-testid={`tab-context-move-window-${entry.label}`}
                 >
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => onMoveToNewWindow?.()}
-                    data-testid="tab-context-move-window-new"
-                  >
-                    <Plus size={14} /> New Window
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  {pickerEntries.map((entry) => (
-                    <ContextMenu.Item
-                      key={entry.label}
-                      className="context-menu__item"
-                      disabled={entry.isCurrent}
-                      onSelect={() => {
-                        if (!entry.isCurrent) onMoveToWindow?.(entry.label);
-                      }}
-                      data-testid={`tab-context-move-window-${entry.label}`}
-                    >
-                      <AppWindow size={14} /> {entry.name}
-                      {entry.isCurrent ? (
-                        <span className="context-menu__sub-label">current</span>
-                      ) : (
-                        tabCountHint(entry.tabCount) && (
-                          <span className="context-menu__sub-label">
-                            {tabCountHint(entry.tabCount)}
-                          </span>
-                        )
-                      )}
-                    </ContextMenu.Item>
-                  ))}
-                </ContextMenu.SubContent>
-              </ContextMenu.Portal>
-            </ContextMenu.Sub>
-          )}
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onSave?.()}
-            data-testid="tab-context-save"
-          >
-            <FileDown size={14} /> Save to File
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onOpenInEditor?.()}
-            data-testid="tab-context-open-in-editor"
-          >
-            <FileSearch size={14} /> Open in Editor
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onCopyToClipboard?.()}
-            data-testid="tab-context-copy"
-          >
-            <ClipboardCopy size={14} /> Copy to Clipboard
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onClear?.()}
-            data-testid="tab-context-clear"
-          >
-            <Eraser size={14} /> Clear Terminal
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.CheckboxItem
-            className="context-menu__item"
-            checked={horizontalScrolling}
-            onSelect={() => onToggleHorizontalScrolling?.()}
-            data-testid="tab-context-horizontal-scroll"
-          >
-            <ContextMenu.ItemIndicator className="context-menu__indicator">
-              <Check size={14} />
-            </ContextMenu.ItemIndicator>
-            <ArrowRightLeft size={14} /> Horizontal Scrolling
-          </ContextMenu.CheckboxItem>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onSetColor?.()}
-            data-testid="tab-context-set-color"
-          >
-            <Palette size={14} /> Set Color...
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+                  <AppWindow size={14} /> {entry.name}
+                  {entry.isCurrent ? (
+                    <span className="ui-menu__hint">current</span>
+                  ) : (
+                    tabCountHint(entry.tabCount) && (
+                      <span className="ui-menu__hint">{tabCountHint(entry.tabCount)}</span>
+                    )
+                  )}
+                </MenuItem>
+              ))}
+            </MenuSubContent>
+          </MenuSub>
+        )}
+        <MenuSeparator />
+        <MenuItem onSelect={() => onSave?.()} data-testid="tab-context-save">
+          <FileDown size={14} /> Save to File
+        </MenuItem>
+        <MenuItem onSelect={() => onOpenInEditor?.()} data-testid="tab-context-open-in-editor">
+          <FileSearch size={14} /> Open in Editor
+        </MenuItem>
+        <MenuItem onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
+          <ClipboardCopy size={14} /> Copy to Clipboard
+        </MenuItem>
+        <MenuItem onSelect={() => onClear?.()} data-testid="tab-context-clear">
+          <Eraser size={14} /> Clear Terminal
+        </MenuItem>
+        <MenuSeparator />
+        <MenuCheckboxItem
+          checked={horizontalScrolling}
+          onSelect={() => onToggleHorizontalScrolling?.()}
+          data-testid="tab-context-horizontal-scroll"
+        >
+          <MenuItemIndicator>
+            <Check size={14} />
+          </MenuItemIndicator>
+          <ArrowRightLeft size={14} /> Horizontal Scrolling
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
+          <Palette size={14} /> Set Color...
+        </MenuItem>
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }

@@ -10,7 +10,6 @@ import { useState, useCallback, useMemo, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   ChevronDown,
   ChevronRight,
@@ -52,7 +51,20 @@ import {
   isAgentTunnelledGraphicalType,
 } from "@/utils/agentGraphicalTunnel";
 import { resolveAgentGraphicalSettings } from "@/utils/agentGraphicalSecret";
-import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
+import {
+  Button,
+  StatusDot,
+  Tooltip,
+  toast,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+} from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
@@ -233,8 +245,8 @@ function AgentConnectionItem({
   const isRunning = runState === "running" || runState === "attached";
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <TreeItemRow
           buttonRef={setRowNode}
           indentPx={treeRowPaddingLeft(depth)}
@@ -350,83 +362,70 @@ function AgentConnectionItem({
             <span className="connection-tree__type">{definition.sessionType}</span>
           )}
         </TreeItemRow>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          {definition.persistent &&
-            (!runState || runState === "stopped" || runState === "error") && (
-              <>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => onStartPersistent(agentId, definition)}
-                  data-testid="context-agent-def-start-persistent"
-                >
-                  <Play size={14} />
-                  Start Session
-                </ContextMenu.Item>
-                <ContextMenu.Separator className="context-menu__separator" />
-              </>
-            )}
-          {definition.persistent && isRunning && (
-            <>
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => onAttachPersistent(agentId, definition)}
-                data-testid="context-agent-def-attach-persistent"
-              >
-                <Link size={14} />
-                Attach New Tab
-              </ContextMenu.Item>
-              <ContextMenu.Item
-                className="context-menu__item context-menu__item--danger"
-                onSelect={() => onStopPersistent(agentId, definition)}
-                data-testid="context-agent-def-stop-persistent"
-              >
-                <Square size={14} />
-                Stop Session
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="context-menu__separator" />
-            </>
-          )}
-          {!definition.persistent && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onOpen(definition)}>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {definition.persistent && (!runState || runState === "stopped" || runState === "error") && (
+          <>
+            <MenuItem
+              onSelect={() => onStartPersistent(agentId, definition)}
+              data-testid="context-agent-def-start-persistent"
+            >
               <Play size={14} />
-              Connect
-            </ContextMenu.Item>
-          )}
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onEdit(definition)}
-            data-testid="context-agent-def-edit"
-          >
-            <Pencil size={14} />
-            Edit
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onDuplicate(definition)}
-            data-testid="context-agent-def-duplicate"
-          >
-            <Copy size={14} />
-            Duplicate
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <AgentDefMoveToFolder
-            definition={definition}
-            folderTargets={folderTargets}
-            onMoveToFolder={onMoveToFolder}
-          />
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item context-menu__item--danger"
-            onSelect={() => deleteAgentDef(agentId, definition.id)}
-          >
-            <Trash2 size={14} />
-            Delete
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+              Start Session
+            </MenuItem>
+            <MenuSeparator />
+          </>
+        )}
+        {definition.persistent && isRunning && (
+          <>
+            <MenuItem
+              onSelect={() => onAttachPersistent(agentId, definition)}
+              data-testid="context-agent-def-attach-persistent"
+            >
+              <Link size={14} />
+              Attach New Tab
+            </MenuItem>
+            <MenuItem
+              danger
+              onSelect={() => onStopPersistent(agentId, definition)}
+              data-testid="context-agent-def-stop-persistent"
+            >
+              <Square size={14} />
+              Stop Session
+            </MenuItem>
+            <MenuSeparator />
+          </>
+        )}
+        {!definition.persistent && (
+          <MenuItem onSelect={() => onOpen(definition)}>
+            <Play size={14} />
+            Connect
+          </MenuItem>
+        )}
+        <MenuItem onSelect={() => onEdit(definition)} data-testid="context-agent-def-edit">
+          <Pencil size={14} />
+          Edit
+        </MenuItem>
+        <MenuItem
+          onSelect={() => onDuplicate(definition)}
+          data-testid="context-agent-def-duplicate"
+        >
+          <Copy size={14} />
+          Duplicate
+        </MenuItem>
+        <MenuSeparator />
+        <AgentDefMoveToFolder
+          definition={definition}
+          folderTargets={folderTargets}
+          onMoveToFolder={onMoveToFolder}
+        />
+        <MenuSeparator />
+        <MenuItem danger onSelect={() => deleteAgentDef(agentId, definition.id)}>
+          <Trash2 size={14} />
+          Delete
+        </MenuItem>
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }
 
@@ -446,49 +445,36 @@ function AgentDefMoveToFolder({
   const currentFolderId = definition.folderId ?? null;
   const atRoot = currentFolderId === null;
   return (
-    <ContextMenu.Sub>
-      <ContextMenu.SubTrigger
-        className="context-menu__item context-menu__sub-trigger"
-        data-testid="context-agent-def-move-folder"
-      >
+    <MenuSub>
+      <MenuSubTrigger data-testid="context-agent-def-move-folder">
         <FolderInput size={14} /> Move to Folder
-        <ChevronRight size={14} className="context-menu__sub-arrow" />
-      </ContextMenu.SubTrigger>
-      <ContextMenu.Portal>
-        <ContextMenu.SubContent
-          className="context-menu__content"
-          data-testid="context-agent-def-move-folder-submenu"
+      </MenuSubTrigger>
+      <MenuSubContent data-testid="context-agent-def-move-folder-submenu">
+        <MenuItem
+          disabled={atRoot}
+          onSelect={() => onMoveToFolder(definition.id, null)}
+          data-testid="context-agent-def-move-folder-root"
         >
-          <ContextMenu.Item
-            className="context-menu__item"
-            disabled={atRoot}
-            onSelect={() => onMoveToFolder(definition.id, null)}
-            data-testid="context-agent-def-move-folder-root"
-          >
-            <Folder size={14} /> Top Level
-            {atRoot && <span className="context-menu__sub-label">current</span>}
-          </ContextMenu.Item>
-          {folderTargets.length > 0 && (
-            <ContextMenu.Separator className="context-menu__separator" />
-          )}
-          {folderTargets.map((target) => {
-            const isCurrent = currentFolderId === target.id;
-            return (
-              <ContextMenu.Item
-                key={target.id}
-                className="context-menu__item"
-                disabled={isCurrent}
-                onSelect={() => onMoveToFolder(definition.id, target.id)}
-                data-testid={`context-agent-def-move-folder-${target.id}`}
-              >
-                <Folder size={14} /> {target.label}
-                {isCurrent && <span className="context-menu__sub-label">current</span>}
-              </ContextMenu.Item>
-            );
-          })}
-        </ContextMenu.SubContent>
-      </ContextMenu.Portal>
-    </ContextMenu.Sub>
+          <Folder size={14} /> Top Level
+          {atRoot && <span className="ui-menu__hint">current</span>}
+        </MenuItem>
+        {folderTargets.length > 0 && <MenuSeparator />}
+        {folderTargets.map((target) => {
+          const isCurrent = currentFolderId === target.id;
+          return (
+            <MenuItem
+              key={target.id}
+              disabled={isCurrent}
+              onSelect={() => onMoveToFolder(definition.id, target.id)}
+              data-testid={`context-agent-def-move-folder-${target.id}`}
+            >
+              <Folder size={14} /> {target.label}
+              {isCurrent && <span className="ui-menu__hint">current</span>}
+            </MenuItem>
+          );
+        })}
+      </MenuSubContent>
+    </MenuSub>
   );
 }
 
@@ -587,8 +573,8 @@ function AgentFolderNode({
 
   return (
     <div>
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>
+      <ContextMenuRoot>
+        <ContextMenuTrigger asChild>
           <TreeFolderRow
             buttonRef={setRowNode}
             label={folder.name}
@@ -601,34 +587,23 @@ function AgentFolderNode({
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
             onFocus={() => onRowFocus(rowIndex)}
           />
-        </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onNewConnection(folder.id)}
-            >
-              <Plus size={14} />
-              New Connection
-            </ContextMenu.Item>
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => setCreatingSubfolder(true)}
-            >
-              <FolderPlus size={14} />
-              New Subfolder
-            </ContextMenu.Item>
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ContextMenu.Item
-              className="context-menu__item context-menu__item--danger"
-              onSelect={() => deleteAgentFolder(agentId, folder.id)}
-            >
-              <Trash2 size={14} />
-              Delete Folder
-            </ContextMenu.Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <MenuItem onSelect={() => onNewConnection(folder.id)}>
+            <Plus size={14} />
+            New Connection
+          </MenuItem>
+          <MenuItem onSelect={() => setCreatingSubfolder(true)}>
+            <FolderPlus size={14} />
+            New Subfolder
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem danger onSelect={() => deleteAgentFolder(agentId, folder.id)}>
+            <Trash2 size={14} />
+            Delete Folder
+          </MenuItem>
+        </ContextMenuContent>
+      </ContextMenuRoot>
 
       {expanded && (
         <div className="connection-tree__children" role="group">
@@ -1457,8 +1432,8 @@ export function AgentNode({
       style={sortableStyle}
       data-testid={`agent-node-${agent.id}`}
     >
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>
+      <ContextMenuRoot>
+        <ContextMenuTrigger asChild>
           <div
             className="connection-list__group-header connection-list__group-header--agent"
             data-testid={`agent-header-${agent.id}`}
@@ -1574,167 +1549,129 @@ export function AgentNode({
               </div>
             )}
           </div>
-        </ContextMenu.Trigger>
+        </ContextMenuTrigger>
 
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            {isConnecting ? (
-              // A connecting agent is no longer a dead-end: offer Cancel, which
-              // aborts the in-flight handshake (G1, #1235).
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => void handleCancelConnect()}
-                data-testid="context-agent-cancel-connect"
+        <ContextMenuContent>
+          {isConnecting ? (
+            // A connecting agent is no longer a dead-end: offer Cancel, which
+            // aborts the in-flight handshake (G1, #1235).
+            <MenuItem
+              onSelect={() => void handleCancelConnect()}
+              data-testid="context-agent-cancel-connect"
+            >
+              <XCircle size={14} />
+              Cancel Connect
+            </MenuItem>
+          ) : !isConnected && !isReconnecting ? (
+            <>
+              <MenuItem onSelect={handleConnect} data-testid="context-agent-connect">
+                <Play size={14} />
+                Connect
+              </MenuItem>
+              <MenuItem onSelect={() => setSetupDialogOpen(true)} data-testid="context-agent-setup">
+                <Upload size={14} />
+                Setup Agent...
+              </MenuItem>
+            </>
+          ) : (
+            <>
+              <MenuItem onSelect={handleDisconnect} data-testid="context-agent-disconnect">
+                <Unplug size={14} />
+                Disconnect (detach)
+              </MenuItem>
+              <MenuItem onSelect={() => void handleShutdown()} data-testid="context-agent-shutdown">
+                <Power size={14} />
+                Shutdown (stop remote)
+              </MenuItem>
+              <MenuItem onSelect={handleRefresh} data-testid="context-agent-refresh">
+                <RefreshCw size={14} />
+                Refresh Sessions
+              </MenuItem>
+              <MenuItem
+                onSelect={() => setRunningSessionsOpen(true)}
+                data-testid="context-agent-running-sessions"
               >
-                <XCircle size={14} />
-                Cancel Connect
-              </ContextMenu.Item>
-            ) : !isConnected && !isReconnecting ? (
-              <>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={handleConnect}
-                  data-testid="context-agent-connect"
+                <Terminal size={14} />
+                Running Sessions...
+              </MenuItem>
+              {isConnected && canUpdateAgent && (
+                <MenuItem
+                  onSelect={() => void handleOpenUpdate()}
+                  data-testid="context-agent-update"
                 >
-                  <Play size={14} />
-                  Connect
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => setSetupDialogOpen(true)}
-                  data-testid="context-agent-setup"
-                >
-                  <Upload size={14} />
-                  Setup Agent...
-                </ContextMenu.Item>
-              </>
-            ) : (
-              <>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={handleDisconnect}
-                  data-testid="context-agent-disconnect"
-                >
-                  <Unplug size={14} />
-                  Disconnect (detach)
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => void handleShutdown()}
-                  data-testid="context-agent-shutdown"
-                >
-                  <Power size={14} />
-                  Shutdown (stop remote)
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={handleRefresh}
-                  data-testid="context-agent-refresh"
-                >
-                  <RefreshCw size={14} />
-                  Refresh Sessions
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => setRunningSessionsOpen(true)}
-                  data-testid="context-agent-running-sessions"
-                >
-                  <Terminal size={14} />
-                  Running Sessions...
-                </ContextMenu.Item>
-                {isConnected && canUpdateAgent && (
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => void handleOpenUpdate()}
-                    data-testid="context-agent-update"
-                  >
-                    <ArrowUpCircle size={14} />
-                    Update Agent...
-                  </ContextMenu.Item>
-                )}
-                <ContextMenu.Separator className="context-menu__separator" />
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={handleNewShellSession}
-                  data-testid="context-agent-new-shell"
-                >
-                  <Terminal size={14} />
-                  New Shell Session
-                </ContextMenu.Item>
-                {(agent.capabilities?.availableSerialPorts?.length ?? 0) > 0 && (
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={handleNewSerialSession}
-                    data-testid="context-agent-new-serial"
-                  >
-                    <Cable size={14} />
-                    New Serial Session
-                  </ContextMenu.Item>
-                )}
-                <ContextMenu.Separator className="context-menu__separator" />
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => handleNewConnection(null)}
-                  data-testid="context-agent-new-connection"
-                >
-                  <Plus size={14} />
-                  New Connection
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => setCreatingFolder(true)}
-                  data-testid="context-agent-new-folder"
-                >
-                  <FolderPlus size={14} />
-                  New Folder
-                </ContextMenu.Item>
-              </>
-            )}
-            {onMoveBy && (
-              <>
-                <ContextMenu.Separator className="context-menu__separator" />
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  disabled={!canMoveUp}
-                  onSelect={() => onMoveBy(agent.id, -1)}
-                  data-testid="context-agent-move-up"
-                >
-                  <ArrowUp size={14} />
-                  Move Up
-                  <span className="context-menu__sub-label">{moveShortcutHint("Up")}</span>
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  disabled={!canMoveDown}
-                  onSelect={() => onMoveBy(agent.id, 1)}
-                  data-testid="context-agent-move-down"
-                >
-                  <ArrowDown size={14} />
-                  Move Down
-                  <span className="context-menu__sub-label">{moveShortcutHint("Down")}</span>
-                </ContextMenu.Item>
-              </>
-            )}
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => openConnectionEditorTab(agent.id)}
-              data-testid="context-agent-edit"
-            >
-              <Pencil size={14} />
-              Edit
-            </ContextMenu.Item>
-            <ContextMenu.Item
-              className="context-menu__item context-menu__item--danger"
-              onSelect={() => deleteRemoteAgent(agent.id)}
-              data-testid="context-agent-delete"
-            >
-              <Trash2 size={14} />
-              Delete
-            </ContextMenu.Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+                  <ArrowUpCircle size={14} />
+                  Update Agent...
+                </MenuItem>
+              )}
+              <MenuSeparator />
+              <MenuItem onSelect={handleNewShellSession} data-testid="context-agent-new-shell">
+                <Terminal size={14} />
+                New Shell Session
+              </MenuItem>
+              {(agent.capabilities?.availableSerialPorts?.length ?? 0) > 0 && (
+                <MenuItem onSelect={handleNewSerialSession} data-testid="context-agent-new-serial">
+                  <Cable size={14} />
+                  New Serial Session
+                </MenuItem>
+              )}
+              <MenuSeparator />
+              <MenuItem
+                onSelect={() => handleNewConnection(null)}
+                data-testid="context-agent-new-connection"
+              >
+                <Plus size={14} />
+                New Connection
+              </MenuItem>
+              <MenuItem
+                onSelect={() => setCreatingFolder(true)}
+                data-testid="context-agent-new-folder"
+              >
+                <FolderPlus size={14} />
+                New Folder
+              </MenuItem>
+            </>
+          )}
+          {onMoveBy && (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                disabled={!canMoveUp}
+                onSelect={() => onMoveBy(agent.id, -1)}
+                data-testid="context-agent-move-up"
+              >
+                <ArrowUp size={14} />
+                Move Up
+                <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
+              </MenuItem>
+              <MenuItem
+                disabled={!canMoveDown}
+                onSelect={() => onMoveBy(agent.id, 1)}
+                data-testid="context-agent-move-down"
+              >
+                <ArrowDown size={14} />
+                Move Down
+                <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
+              </MenuItem>
+            </>
+          )}
+          <MenuSeparator />
+          <MenuItem
+            onSelect={() => openConnectionEditorTab(agent.id)}
+            data-testid="context-agent-edit"
+          >
+            <Pencil size={14} />
+            Edit
+          </MenuItem>
+          <MenuItem
+            danger
+            onSelect={() => deleteRemoteAgent(agent.id)}
+            data-testid="context-agent-delete"
+          >
+            <Trash2 size={14} />
+            Delete
+          </MenuItem>
+        </ContextMenuContent>
+      </ContextMenuRoot>
 
       {/* Deferred-update banner: only for a connected agent with a staged update
           (the banner self-gates on the store's staged/dismissed state, #1352). */}
