@@ -1,7 +1,14 @@
 import type React from "react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import { Pin, PinOff, Plug, Save, Copy, Trash2, Star, SplitSquareHorizontal } from "lucide-react";
-import { Button, Tooltip } from "@/components/ui";
+import {
+  Button,
+  Tooltip,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { formatRelativeTime } from "@/utils/formatters";
@@ -42,8 +49,8 @@ export function RecentSessionItem({
   const key = entry.dedupKey;
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <SidebarListItem
           ref={rowRef}
           {...rowProps}
@@ -119,56 +126,48 @@ export function RecentSessionItem({
             </span>
           }
         />
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onConnect(entry)}
-            data-testid={`recent-session-menu-connect-${key}`}
-          >
-            <Plug size={14} /> Connect
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onConnectInNewPanel(entry)}
-            data-testid={`recent-session-menu-connect-new-panel-${key}`}
-          >
-            <SplitSquareHorizontal size={14} /> Connect in New Panel
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onTogglePin(entry)}
-            data-testid={`recent-session-menu-pin-${key}`}
-          >
-            {entry.pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
-            {entry.pinned ? "Unpin" : "Pin to Top"}
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onSaveAsConnection(entry)}
-            data-testid={`recent-session-menu-save-${key}`}
-          >
-            <Save size={14} /> Save as Connection…
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onCopyString(entry)}
-            data-testid={`recent-session-menu-copy-${key}`}
-          >
-            <Copy size={14} /> Copy Connection String
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onRemove(entry)}
-            data-testid={`recent-session-menu-remove-${key}`}
-          >
-            <Trash2 size={14} /> Remove from History
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <MenuItem
+          onSelect={() => onConnect(entry)}
+          data-testid={`recent-session-menu-connect-${key}`}
+        >
+          <Plug size={14} /> Connect
+        </MenuItem>
+        <MenuItem
+          onSelect={() => onConnectInNewPanel(entry)}
+          data-testid={`recent-session-menu-connect-new-panel-${key}`}
+        >
+          <SplitSquareHorizontal size={14} /> Connect in New Panel
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          onSelect={() => onTogglePin(entry)}
+          data-testid={`recent-session-menu-pin-${key}`}
+        >
+          {entry.pinned ? <PinOff size={14} /> : <Pin size={14} />}{" "}
+          {entry.pinned ? "Unpin" : "Pin to Top"}
+        </MenuItem>
+        <MenuItem
+          onSelect={() => onSaveAsConnection(entry)}
+          data-testid={`recent-session-menu-save-${key}`}
+        >
+          <Save size={14} /> Save as Connection…
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          onSelect={() => onCopyString(entry)}
+          data-testid={`recent-session-menu-copy-${key}`}
+        >
+          <Copy size={14} /> Copy Connection String
+        </MenuItem>
+        <MenuItem
+          onSelect={() => onRemove(entry)}
+          data-testid={`recent-session-menu-remove-${key}`}
+        >
+          <Trash2 size={14} /> Remove from History
+        </MenuItem>
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }

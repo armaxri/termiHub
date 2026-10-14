@@ -22,7 +22,6 @@ import {
   Package,
   AppWindow,
 } from "lucide-react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Modal,
   Button,
@@ -32,6 +31,13 @@ import {
   EmptyState,
   toast,
   useModalPortalContainer,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItemIndicator,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
 } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import {
@@ -1718,9 +1724,9 @@ function MonitorRowActions({
           {paused ? <Play size={14} /> : <Pause size={14} />}
         </Button>
       </Tooltip>
-      <DropdownMenu.Root>
+      <DropdownMenuRoot>
         <Tooltip content="Refresh interval" side="top">
-          <DropdownMenu.Trigger asChild>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="secondary"
               size="sm"
@@ -1730,44 +1736,41 @@ function MonitorRowActions({
               <Timer size={14} />
               {formatMonitorInterval(entry.intervalMs)}
             </Button>
-          </DropdownMenu.Trigger>
+          </DropdownMenuTrigger>
         </Tooltip>
-        <DropdownMenu.Portal container={portalContainer}>
-          <DropdownMenu.Content
-            className="monitoring-menu__content"
-            side="bottom"
-            align="end"
-            sideOffset={4}
+        <DropdownMenuContent
+          container={portalContainer}
+          width="wide"
+          side="bottom"
+          align="end"
+          sideOffset={4}
+        >
+          <MenuLabel className="monitoring-menu__interval-label">Refresh interval</MenuLabel>
+          <MenuRadioGroup
+            value={String(entry.intervalMs)}
+            onValueChange={(v) => onSetInterval(entry.key, Number(v))}
           >
-            <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
-              Refresh interval
-            </DropdownMenu.Label>
-            <DropdownMenu.RadioGroup
-              value={String(entry.intervalMs)}
-              onValueChange={(v) => onSetInterval(entry.key, Number(v))}
-            >
-              {MONITORING_INTERVAL_OPTIONS.map((opt) => (
-                <DropdownMenu.RadioItem
-                  key={opt}
-                  className="monitoring-menu__action monitoring-menu__radio"
-                  value={String(opt)}
-                  data-testid={`monitor-interval-${entry.key}-${opt}`}
-                >
-                  <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
-                    <Check size={14} />
-                  </DropdownMenu.ItemIndicator>
-                  <span className="monitoring-menu__radio-label">
-                    Refresh every {formatMonitorInterval(opt)}
-                  </span>
-                  {opt === DEFAULT_MONITORING_INTERVAL_MS && (
-                    <span className="monitoring-menu__radio-default">default</span>
-                  )}
-                </DropdownMenu.RadioItem>
-              ))}
-            </DropdownMenu.RadioGroup>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+            {MONITORING_INTERVAL_OPTIONS.map((opt) => (
+              <MenuRadioItem
+                key={opt}
+                className="monitoring-menu__radio"
+                value={String(opt)}
+                data-testid={`monitor-interval-${entry.key}-${opt}`}
+              >
+                <MenuItemIndicator className="monitoring-menu__radio-indicator">
+                  <Check size={14} />
+                </MenuItemIndicator>
+                <span className="monitoring-menu__radio-label">
+                  Refresh every {formatMonitorInterval(opt)}
+                </span>
+                {opt === DEFAULT_MONITORING_INTERVAL_MS && (
+                  <span className="monitoring-menu__radio-default">default</span>
+                )}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenuRoot>
     </span>
   );
 }

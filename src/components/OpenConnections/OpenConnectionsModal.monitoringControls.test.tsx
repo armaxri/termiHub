@@ -214,7 +214,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     });
     await flushAsync();
 
-    const menu = document.querySelector<HTMLElement>(".monitoring-menu__content");
+    const menu = document.querySelector<HTMLElement>(".ui-menu__content");
     expect(menu, "the interval menu should be open").not.toBeNull();
     // Portaled into the modal's own content node, so the modal's pointer-events
     // lock does not make it unclickable and it stacks with the dialog surface,

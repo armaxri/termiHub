@@ -1,12 +1,21 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Trash2, Pause, Play, Save, ClipboardCopy, FileDown } from "lucide-react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogEntry } from "@/types/terminal";
-import { Button, SearchInput, toast, EmptyState } from "@/components/ui";
+import {
+  Button,
+  SearchInput,
+  toast,
+  EmptyState,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import {
@@ -276,8 +285,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           <EmptyState title="No log entries" data-testid="log-viewer-empty" />
         ) : (
           filteredEntries.map((entry, i) => (
-            <ContextMenu.Root key={i}>
-              <ContextMenu.Trigger asChild>
+            <ContextMenuRoot key={i}>
+              <ContextMenuTrigger asChild>
                 <div className="log-viewer__entry">
                   <span className="log-viewer__timestamp">{displayTimestamp(entry)}</span>
                   <span className={`log-viewer__level log-viewer__level--${entry.level}`}>
@@ -286,31 +295,20 @@ export function LogViewer({ isVisible }: LogViewerProps) {
                   <span className="log-viewer__target">{displayTarget(entry)}</span>
                   <span className="log-viewer__message">{entry.message}</span>
                 </div>
-              </ContextMenu.Trigger>
-              <ContextMenu.Portal>
-                <ContextMenu.Content className="context-menu__content">
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => handleCopyEntry(entry)}
-                  >
-                    <ClipboardCopy size={14} /> Copy Entry
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => handleCopyAll(filteredEntries)}
-                  >
-                    <ClipboardCopy size={14} /> Copy All Logs
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => handleSave(filteredEntries)}
-                  >
-                    <FileDown size={14} /> Save All Logs
-                  </ContextMenu.Item>
-                </ContextMenu.Content>
-              </ContextMenu.Portal>
-            </ContextMenu.Root>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <MenuItem onSelect={() => handleCopyEntry(entry)}>
+                  <ClipboardCopy size={14} /> Copy Entry
+                </MenuItem>
+                <MenuItem onSelect={() => handleCopyAll(filteredEntries)}>
+                  <ClipboardCopy size={14} /> Copy All Logs
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem onSelect={() => handleSave(filteredEntries)}>
+                  <FileDown size={14} /> Save All Logs
+                </MenuItem>
+              </ContextMenuContent>
+            </ContextMenuRoot>
           ))
         )}
       </div>

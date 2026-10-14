@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react"
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
-import * as RadixSelect from "@radix-ui/react-select";
 import {
   PlugZap,
   TerminalSquare,
@@ -70,6 +69,9 @@ import {
   Input,
   Select,
   SelectItem,
+  SelectGroup,
+  SelectSeparator,
+  SelectLabel,
   Toggle,
   UnsavedChangesDialog,
   toast,
@@ -1607,9 +1609,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 </SelectItem>
               ))}
               {pluginTypes.length > 0 && (
-                <RadixSelect.Group data-testid="connection-type-plugins-group">
-                  <RadixSelect.Separator className="ui-select__separator" />
-                  <RadixSelect.Label className="ui-select__group-label">Plugins</RadixSelect.Label>
+                <SelectGroup data-testid="connection-type-plugins-group">
+                  <SelectSeparator />
+                  <SelectLabel>Plugins</SelectLabel>
                   {pluginTypes.map((type) => (
                     <SelectItem
                       key={type.typeId}
@@ -1627,7 +1629,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                       </span>
                     </SelectItem>
                   ))}
-                </RadixSelect.Group>
+                </SelectGroup>
               )}
             </Select>
           </Field>
