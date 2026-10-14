@@ -135,22 +135,6 @@ pub fn select_windows_default_shell(
         .unwrap_or_else(|| WINDOWS_FALLBACK_SHELL.to_string())
 }
 
-/// The shell kind of [`select_windows_default_shell`]'s pick: `"pwsh"`,
-/// `"powershell"` or `"cmd"`. Pure (probes injected) so the preference order is
-/// testable on every platform (#3728).
-pub fn windows_default_shell_kind(
-    find_on_path: impl Fn(&str) -> Option<PathBuf>,
-    comspec: Option<&str>,
-    is_file: impl Fn(&Path) -> bool,
-) -> String {
-    shell_kind(&select_windows_default_shell(
-        find_on_path,
-        comspec,
-        is_file,
-    ))
-    .to_string()
-}
-
 /// The shell kinds offered on a Windows desktop, most preferred first.
 ///
 /// `pwsh` leads when PowerShell 7 was found among `candidates` (the paths from
@@ -2564,29 +2548,6 @@ mod tests {
         let (cmd, args) = shell_to_command("/bin/bash");
         assert_eq!(cmd, "/bin/bash");
         assert!(args.is_empty());
-    }
-
-    #[test]
-    fn windows_default_kind_prefers_pwsh() {
-        let kind = windows_default_shell_kind(
-            stub_path(&[("pwsh.exe", PWSH), ("powershell.exe", WINPS)]),
-            Some(CMD),
-            |_| true,
-        );
-        assert_eq!(kind, "pwsh");
-    }
-
-    #[test]
-    fn windows_default_kind_falls_back_in_order() {
-        let kind =
-            windows_default_shell_kind(stub_path(&[("powershell.exe", WINPS)]), Some(CMD), |_| {
-                true
-            });
-        assert_eq!(kind, "powershell");
-        let kind = windows_default_shell_kind(stub_path(&[]), Some(CMD), |_| true);
-        assert_eq!(kind, "cmd");
-        let kind = windows_default_shell_kind(stub_path(&[]), None, |_| true);
-        assert_eq!(kind, "cmd");
     }
 
     #[test]

@@ -939,10 +939,10 @@ const BESPOKE_EMPTY_CLASS_RE = /[a-z0-9-]+__(?:empty|placeholder)(?![\w-])/;
  * motion-essential-spinner">`. Files that render ContentOverlay must not carry
  * the hand-rolled spinner marker.
  *
- * Allowlist (shrinking): RemoteDesktopOverlay's reconnecting glyph is left for
- * after the in-flight canvas/frame-path change in that directory lands.
+ * Allowlist: empty since #4699 migrated RemoteDesktopOverlay's reconnecting
+ * glyph to `<Spinner icon={RefreshCw} />`. Keep it empty.
  */
-const OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST = ["components/RemoteDesktop/RemoteDesktopOverlay.tsx"];
+const OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST: readonly string[] = [];
 
 describe("shared EmptyState / Spinner adoption (#4382)", () => {
   const componentSources = collectFiles(

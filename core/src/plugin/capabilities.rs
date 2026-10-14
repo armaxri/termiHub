@@ -7,8 +7,10 @@
 //! ([`crate::plugin::sandbox`]) answers it with the guarded operations in this
 //! module, which route every mediated operation through the session's
 //! [`PermissionSet`] — [`PermissionSet::require`] for network, and
-//! [`FilesystemScope::check`](super::FilesystemScope::check) (via
-//! [`PermissionSet::check_path`]) for filesystem — and its [`ConnectionPolicy`].
+//! the [`FilesystemScope::check`](super::FilesystemScope::check) scope check
+//! (the root-anchored form of [`PermissionSet::check_path`]) for filesystem —
+//! and its [`ConnectionPolicy`]. These are the one enforcement path: there is no
+//! second, per-connection permission seam.
 //! So `network`/`filesystem` are enforced **at runtime**, not merely validated at
 //! load (concept §13; the runtime half of the primitives added in #2001).
 //!

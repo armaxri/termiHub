@@ -26,7 +26,6 @@
 //! plugin verbatim at connect time.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use termihub_plugin_api::PluginError;
@@ -41,8 +40,7 @@ use crate::monitoring::MonitoringProvider;
 
 use super::capabilities::ConnectionPolicy;
 use super::sandbox::{BridgeGrant, SandboxedPluginHandle, SandboxedSession};
-use super::security::{PermissionError, PermissionSet};
-use super::PluginPermission;
+use super::security::PermissionSet;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
 use tokio_util::sync::CancellationToken;
@@ -147,20 +145,6 @@ impl PluginConnectionType {
     #[must_use]
     pub fn permissions(&self) -> &PermissionSet {
         &self.permissions
-    }
-
-    /// Require that this plugin holds `permission` before a host-mediated
-    /// capability acts on its behalf. Returns [`PermissionError::Denied`]
-    /// otherwise (e.g. a backend without `network` cannot open connections).
-    pub fn require_permission(&self, permission: PluginPermission) -> Result<(), PermissionError> {
-        self.permissions.require(permission)
-    }
-
-    /// Resolve and authorize a plugin-supplied filesystem path against this
-    /// plugin's declared scope, rejecting paths outside it (concept §13). This is
-    /// the guard a host-mediated filesystem bridge routes plugin paths through.
-    pub fn resolve_scoped_path(&self, requested: &Path) -> Result<PathBuf, PermissionError> {
-        self.permissions.check_path(requested)
     }
 }
 
