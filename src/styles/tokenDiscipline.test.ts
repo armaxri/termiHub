@@ -677,15 +677,7 @@ describe("z-index scale (UI-002)", () => {
 
     it("finds the known portaled menu content classes", () => {
       // Sanity check that the scan is not silently matching nothing.
-      for (const cls of [
-        "context-menu__content",
-        "settings-menu__content",
-        "indent-menu__content",
-        "lang-menu__content",
-        "monitoring-menu__content",
-        "ui-select__content",
-        "ui-tooltip__content",
-      ]) {
+      for (const cls of ["ui-select__content", "ui-tooltip__content"]) {
         expect(classes.has(cls), `expected a Radix Content using .${cls}`).toBe(true);
       }
     });
@@ -706,6 +698,14 @@ describe("z-index scale (UI-002)", () => {
         offenders,
         "Portaled Radix content must use --z-popover or higher, or it opens behind modals"
       ).toEqual([]);
+    });
+
+    it("stacks the shared ui/Menu surface (ContextMenu, DropdownMenu, submenus) on the popover tier", () => {
+      // ui/Menu builds its className dynamically, so the JSX scan above cannot
+      // see it; every app menu renders through `.ui-menu__content` (#4383).
+      const used = zTokensForClass("ui-menu__content");
+      expect(used.length, ".ui-menu__content must set a --z-* token").toBeGreaterThan(0);
+      for (const token of used) expect(z(token)).toBeGreaterThanOrEqual(z("--z-popover"));
     });
 
     it("keeps menus above the modal scrim, the modal and the update banner", () => {
@@ -992,5 +992,51 @@ describe("shared EmptyState / Spinner adoption (#4382)", () => {
     for (const allowed of OVERLAY_HAND_ROLLED_SPINNER_ALLOWLIST) {
       expect(componentSources.some((file) => toPosix(file).endsWith(allowed))).toBe(true);
     }
+  });
+});
+
+/**
+ * UISF2-008 / UISF2-009 (#4383): menus and selects are composed from the
+ * shared `ui/Menu` and `ui/Select` primitives. Importing the Radix menu or
+ * select packages directly outside `src/components/ui/` would fork the skin,
+ * the `--z-popover` tier and the modal-portal handling again.
+ */
+describe("Radix menu/select parts are only imported inside ui/ (#4383)", () => {
+  const RADIX_WRAPPED = /from\s+["']@radix-ui\/react-(?:context-menu|dropdown-menu|select)["']/;
+
+  it("has no direct @radix-ui/react-{context-menu,dropdown-menu,select} import outside ui/", () => {
+    const sources = collectFiles(
+      SRC_DIR,
+      (name) => /\.(ts|tsx)$/.test(name) && name !== "tokenDiscipline.test.ts",
+      UI_DIR
+    );
+    const offenders = sources
+      .filter((file) => RADIX_WRAPPED.test(readFileSync(file, "utf8")))
+      .map(toPosix);
+    expect(
+      offenders,
+      "Compose menus from ui/Menu (ContextMenuContent, DropdownMenuContent, MenuItem, …) and " +
+        "selects from ui/Select (SelectItem, SelectGroup, …) instead of importing Radix in: " +
+        offenders.join(", ")
+    ).toEqual([]);
+  });
+
+  it("detects a direct Radix menu import (guard self-check)", () => {
+    expect(RADIX_WRAPPED.test('import * as ContextMenu from "@radix-ui/react-context-menu";')).toBe(
+      true
+    );
+    expect(RADIX_WRAPPED.test('import * as S from "@radix-ui/react-select";')).toBe(true);
+    expect(RADIX_WRAPPED.test('import * as T from "@radix-ui/react-tooltip";')).toBe(false);
+  });
+
+  it("keeps the retired per-feature menu skins out of component CSS", () => {
+    const retired = /\.(?:context|settings|indent)-menu__|\.lang-menu__(?:content|item)\b(?!-)/;
+    const offenders = cssFiles
+      .filter((file) => retired.test(stripCssComments(readFileSync(file, "utf8"))))
+      .map(toPosix);
+    expect(
+      offenders,
+      "Use the shared .ui-menu__* skin from ui.css instead in: " + offenders
+    ).toEqual([]);
   });
 });
