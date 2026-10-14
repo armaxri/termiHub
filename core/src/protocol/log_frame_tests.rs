@@ -120,7 +120,10 @@ fn shared_secret_field_vectors_match() {
         assert!(is_secret_field(name), "{name} should be a secret field");
     }
     for name in &vectors.not_secret {
-        assert!(!is_secret_field(name), "{name} should not be a secret field");
+        assert!(
+            !is_secret_field(name),
+            "{name} should not be a secret field"
+        );
     }
 }
 
