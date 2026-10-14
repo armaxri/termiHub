@@ -65,7 +65,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 
 use super::live_channel_support::{channel_rpc, read_counter_until};
-use super::{read_handshake_line, reconnect_agent, serialize_request, AgentAlive};
+use super::{read_handshake_line, reconnect_agent, serialize_request, AgentAlive, ReconnectTuning};
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
@@ -576,7 +576,13 @@ async fn establish(
     let settings = AgentSettings::default();
     let established = tokio::time::timeout(
         ESTABLISH_CEILING,
-        reconnect_agent(config, &settings, request_id, &alive),
+        reconnect_agent(
+            config,
+            &settings,
+            request_id,
+            &alive,
+            &ReconnectTuning::PRODUCTION,
+        ),
     )
     .await
     .unwrap_or_else(|_| panic!("agent establishment did not finish in {ESTABLISH_CEILING:?}"))
