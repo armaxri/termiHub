@@ -1472,20 +1472,27 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    [release integration gate](#release-integration-gate)), if the
    [agent update signing key](#agent-update-signing-key) is not configured, or if the tag
    cannot be mapped to a [Windows MSI version](#prerelease-tags-and-the-windows-msi-version)
-2. Create a GitHub Release with notes extracted from `CHANGELOG.md`
-3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
-4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`
-   checksum and a `.sig` update signature
+2. Create a **draft** GitHub Release with notes extracted from `CHANGELOG.md`
+   (`scripts/internal/release-draft.sh`); nobody sees it until step 7
+3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb).
+   The macOS legs re-sign the app ad-hoc and swap it back into Tauri's own DMG, so the
+   drag-to-install `Applications` link and volume layout are kept
+   (`scripts/internal/macos-dmg-layout.sh`)
+4. Upload all artifacts to the draft release, each agent binary with a `.sha256`
+   checksum and a `.sig` update signature. Every upload replaces an existing asset of the
+   same name (`--clobber`), so `gh run rerun <run-id> --failed` can finish a leg that
+   failed after uploading
 5. Attest build provenance for every installer, agent binary and SBOM, and publish
    CycloneDX SBOMs (see [Verifying release artifacts](#verifying-release-artifacts))
    plus the generated third-party license notices, which every installer also bundles
    (see [Licensing](licensing.md#generated-third-party-notices))
 6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
-   (`verify-release`) — a release missing either fails here
-7. Install and launch the published artifacts on every platform (the
+   (`verify-release`) — a release missing either fails here and stays a draft
+7. Publish the draft (`publish-release`), still not marked latest
+8. Install and launch the published artifacts on every platform (the
    [install smokes](#release-install-smokes)) — a release that does not install or launch
    fails here
-8. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
+9. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
    `verify-release` and every install smoke pass
 
 There is no `latest` git tag. The desktop update check and the agent self-updater
@@ -1609,7 +1616,7 @@ and this gate catch those before they ship.
 
 ### Release Install Smokes
 
-After `verify-release`, the Release workflow calls five reusable workflows that install
+After `verify-release` and `publish-release`, the Release workflow calls five reusable workflows that install
 and launch (or, for the Windows arm64 agent, execute) the just-published artifacts on
 hosted runners, prereleases included. `mark-latest` needs every one of them (#4281), so a
 release whose installer fails is never promoted to GitHub's **Latest release**: it stays

@@ -119,7 +119,12 @@ describe("release.yml install-smoke gate on mark-latest (#4281)", () => {
     const edits = RELEASE.split("\n").filter((l) => /gh release edit\b.*--latest\b/.test(l));
     expect(edits).toHaveLength(1);
     expect(jobBody(RELEASE, "mark-latest")).toContain(edits[0]);
-    expect(jobBody(RELEASE, "create-release")).toMatch(/^\s+--latest=false \\$/m);
+    // The release starts as a non-latest draft and is published non-latest
+    // (release-draft.sh, #4361); only mark-latest promotes it.
+    expect(jobBody(RELEASE, "create-release")).toContain("release-draft.sh create");
+    const helper = read("scripts/internal/release-draft.sh");
+    expect(helper).toMatch(/--draft --latest=false/);
+    expect(helper).toMatch(/-F draft=false -f make_latest=false/);
   });
 });
 

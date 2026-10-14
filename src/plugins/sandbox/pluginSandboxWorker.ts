@@ -98,6 +98,10 @@ function loadPlugin(pluginId: string, entryUrls: string[]): void {
 
 ctx.addEventListener("message", (e: MessageEvent<HostToWorkerMessage>) => {
   const msg = e.data;
+  // Drop junk data rather than throw: an exception escaping this handler reaches
+  // the host as a worker `error` event, which it treats as a sandbox fault and
+  // tears every loaded plugin down (#4385).
+  if (typeof msg !== "object" || msg === null) return;
   switch (msg.t) {
     case "load":
       loadPlugin(msg.pluginId, msg.entryUrls);

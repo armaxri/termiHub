@@ -325,6 +325,7 @@ fn missing_required_layers_are_named() {
     );
 }
 
+#[cfg(feature = "runner")]
 #[test]
 fn an_invalid_policy_is_reported_as_failed_not_ignored() {
     let report = apply(&SandboxPolicy::default());

@@ -393,8 +393,12 @@ jobs:
           codesign -dv "$APP" 2>&1
           find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
 
-          rm "$DMG"
-          hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          # Swap the re-signed .app into Tauri's own image instead of rebuilding
+          # it from the bare .app, which dropped the /Applications drag-to-install
+          # link, volume icon and layout (PKG2-009, #4361). The helper rewrites
+          # $DMG only after the new image verifies, then `check` re-asserts it.
+          scripts/internal/macos-dmg-layout.sh replace-app "$DMG" "$APP"
+          scripts/internal/macos-dmg-layout.sh check "$DMG"
           rm -rf "$WORKDIR"
 
       - name: Collect primary artifact

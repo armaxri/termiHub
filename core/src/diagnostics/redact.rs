@@ -46,12 +46,100 @@ pub const IP: &str = "[ip]";
 /// Placeholder for a MAC address.
 pub const MAC: &str = "[mac]";
 
-/// Secret-bearing field names (case-insensitive, whole word). Kept in step with
-/// `SECRET_KEY_PATTERN` in `src/utils/redactLogText.ts`.
-const SECRET_KEYS: &str = "(?:passwords?|ssh[-_ ]?passwords?|passphrases?|passwd|pwd|secrets?|\
-tokens?|access[-_ ]?tokens?|auth[-_ ]?tokens?|id[-_ ]?tokens?|refresh[-_ ]?tokens?|\
-api[-_ ]?keys?|access[-_ ]?keys?|secret[-_ ]?keys?|private[-_ ]?keys?|\
-client[-_ ]?secrets?|credentials?|cookies?|otp|totp)";
+/// The shared secret key-name list (#4430), also read by the frontend
+/// `redactLogText` (`src/utils/redactLogText.ts`). Both build their key pattern
+/// from it with the same algorithm and are pinned by the shared vectors in
+/// `src/test/fixtures/redaction/secret-text-vectors.json`, so they cannot drift.
+const SECRET_KEY_WORDS_JSON: &str = include_str!("../../../src/data/secret-key-words.json");
+
+/// Longest identifier prefix scanned before a secret word.
+const MAX_KEY_PREFIX: usize = 64;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretKeyWords {
+    words: Vec<String>,
+    compound_words: Vec<Vec<String>>,
+    glued_prefixes: Vec<String>,
+}
+
+/// `abc` → `[aA][bB][cC]`: case-insensitive inside an otherwise case-sensitive
+/// pattern.
+fn any_case(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())
+            } else {
+                regex::escape(&c.to_string())
+            }
+        })
+        .collect()
+}
+
+/// The secret key-name pattern, built from [`SECRET_KEY_WORDS_JSON`] exactly as
+/// `secretKeyPattern` in `src/utils/redactLogText.ts` builds it.
+///
+/// It has no capture groups and is **case-sensitive by construction** (no
+/// `(?i)` around it): the camelCase alternative relies on the case of the first
+/// letter, so `sshPassword` matches while `spinner` and `SPIN` do not. A key
+/// matches when a secret term is its whole name or its last component — after a
+/// `_`/`-` separator in any case (`ssh_password`, `MY_API_KEY`), at a camelCase
+/// boundary (`keyPassphrase`, `clientSecret`) or glued to a listed prefix in any
+/// case (`sshpassword`, `accesstoken`). A trailing plural `s` is allowed.
+fn secret_key_pattern() -> Option<String> {
+    let spec: SecretKeyWords = serde_json::from_str(SECRET_KEY_WORDS_JSON).ok()?;
+    let terms: Vec<Vec<String>> = spec
+        .words
+        .iter()
+        .map(|w| vec![w.clone()])
+        .chain(spec.compound_words.iter().cloned())
+        .collect();
+    if terms
+        .iter()
+        .any(|t| t.is_empty() || t.iter().any(String::is_empty))
+    {
+        return None;
+    }
+    let sep = "[-_ ]?";
+    let term_any_case = terms
+        .iter()
+        .map(|parts| {
+            parts
+                .iter()
+                .map(|p| any_case(p))
+                .collect::<Vec<_>>()
+                .join(sep)
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    let term_camel = terms
+        .iter()
+        .map(|parts| {
+            let mut chars = parts[0].chars();
+            let first = chars
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+                .unwrap_or_default();
+            let head = regex::escape(&format!("{first}{}", chars.as_str()));
+            std::iter::once(head)
+                .chain(parts[1..].iter().map(|p| any_case(p)))
+                .collect::<Vec<_>>()
+                .join(sep)
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    let glued = spec
+        .glued_prefixes
+        .iter()
+        .map(|p| any_case(p))
+        .collect::<Vec<_>>()
+        .join("|");
+    let ident = format!("[A-Za-z0-9_-]{{0,{MAX_KEY_PREFIX}}}");
+    Some(format!(
+        r"\b(?:(?:{ident}[_-])?(?:{term_any_case})|{ident}[A-Za-z0-9](?:{term_camel})|(?:{glued})(?:{term_any_case}))[sS]?\b"
+    ))
+}
 
 /// Host-bearing field names.
 const HOST_KEYS: &str = "(?:host|hostname|host[-_]name|remote[-_]host|server[-_]host)";
@@ -253,7 +341,8 @@ fn patterns() -> Option<&'static Patterns> {
 
 fn build_patterns() -> Option<Patterns> {
     let r = |s: &str| Regex::new(s).ok();
-    let value_prefix = r#"["']?\s*[:=]\s*(?:Some\()?"#;
+    let value_prefix = r#"["']?\s*[:=]\s*(?:(?i:some)\()?"#;
+    let secret_keys = secret_key_pattern()?;
     Some(Patterns {
         pem_block: r(
             r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
@@ -264,10 +353,10 @@ fn build_patterns() -> Option<Patterns> {
             r#"(?i)(\bauthorization\b["']?\s*[:=]\s*["']?)(?:(bearer|basic|digest|negotiate|token)\s+)?([^\s"',;}\])]+)"#,
         )?,
         bearer: r(r"(?i)\b(bearer)\s+[A-Za-z0-9\-._~+/]+=*")?,
-        secret_dq: r(&format!(r#"(?i)(\b{SECRET_KEYS}\b{value_prefix})"[^"]*""#))?,
-        secret_sq: r(&format!(r#"(?i)(\b{SECRET_KEYS}\b{value_prefix})'[^']*'"#))?,
+        secret_dq: r(&format!(r#"({secret_keys}{value_prefix})"[^"]*""#))?,
+        secret_sq: r(&format!(r#"({secret_keys}{value_prefix})'[^']*'"#))?,
         secret_bare: r(&format!(
-            r#"(?i)(\b{SECRET_KEYS}\b{value_prefix})([^\s"',;}})\]]+)"#
+            r#"({secret_keys}{value_prefix})([^\s"',;}})\]]+)"#
         ))?,
         jwt: r(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*")?,
         prefixed_token: r(

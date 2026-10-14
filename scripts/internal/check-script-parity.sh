@@ -109,6 +109,12 @@ ALLOWLIST=(
   # Dev release publisher (#4471): CI-only `gh` helper run by dev-build.yml's
   # Ubuntu publish job; never run by hand, so a `.cmd` twin would be dead weight.
   "scripts/internal/dev-release-publish.sh" # CI-only staged dev release swap (Ubuntu)
+  # Tag release draft/publish (#4361): CI-only `gh` helper run by release.yml's
+  # Ubuntu create-release and publish-release jobs; never run by hand.
+  "scripts/internal/release-draft.sh" # CI-only draft-then-publish tag release (Ubuntu)
+  # DMG layout keeper (#4361): wraps hdiutil, which exists only on macOS; run by
+  # the macOS re-sign step and the macOS install smoke.
+  "scripts/internal/macos-dmg-layout.sh" # CI-only macOS DMG swap/check (hdiutil)
   # Docker Hub resilience (#4614): configures the Linux runner's Docker/Podman
   # registry mirror (writes /etc, systemctl) and retries image pulls for the
   # fixture jobs and tests/docker/polkit/run.sh; a .cmd twin has no runner to serve.
