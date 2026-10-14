@@ -389,12 +389,6 @@ impl FilesystemScope {
             .zip(self.roots.iter().map(PathBuf::as_path))
     }
 
-    /// Whether the plugin holds the `filesystem` permission.
-    #[must_use]
-    pub fn is_granted(&self) -> bool {
-        self.granted
-    }
-
     /// The normalized roots this scope permits.
     #[must_use]
     pub fn roots(&self) -> &[PathBuf] {

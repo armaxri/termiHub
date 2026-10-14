@@ -9,6 +9,7 @@ use termihub_core::protocol::methods::SSH_KEYBOARD_INTERACTIVE_RESPOND;
 use zeroize::Zeroize;
 
 use crate::handler::dispatch::AgentHandler;
+use crate::io::notification_queue::NotificationQueues;
 use crate::ki_prompt::is_secret_bearing_request;
 use crate::protocol::messages::JsonRpcNotification;
 
@@ -76,6 +77,13 @@ const MAX_READ_AHEAD: usize = 256;
 ///
 /// Respond requests carry secrets: they are never logged and their line
 /// buffers are zeroized once dispatched.
+///
+/// Ordinary notifications are written by class, not strictly in arrival order
+/// (#4480): port-forward stream data and close (`agent.forward.data` /
+/// `.close`) wait on a low-priority queue behind terminal output and control
+/// notifications, with a guaranteed share so they are never starved. Order
+/// within each class — and so within each forward stream — is preserved. See
+/// [`NotificationQueues`].
 pub async fn run_transport_loop_with_priority<R, W>(
     reader: &mut R,
     writer: &mut W,
@@ -97,6 +105,11 @@ where
         read_ahead: VecDeque::new(),
         reader_eof: false,
     };
+    // Ordinary notifications pulled off `notification_rx`, split into a normal
+    // and a low-priority bulk (port-forward data) class (#4480). Local to this
+    // loop: what is still queued when the client goes away is dropped with it,
+    // releasing any output credit it carried (#4439).
+    let mut queues = NotificationQueues::default();
 
     loop {
         // Serve requests read ahead during an earlier in-flight request first,
@@ -111,6 +124,14 @@ where
             debug!("Reader closed (EOF), exiting transport loop");
             break;
         }
+
+        // Take everything already waiting before choosing what to write, so a
+        // terminal line emitted just after a burst of forward data still goes
+        // out ahead of that burst.
+        while let Ok(notification) = notification_rx.try_recv() {
+            queues.push(notification);
+        }
+        let has_queued = !queues.is_empty();
 
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -140,8 +161,16 @@ where
                 write_notification(writer, &notification).await?;
             }
 
-            Some(notification) = notification_rx.recv() => {
-                write_notification(writer, &notification).await?;
+            // Ready whenever something is queued; the unbiased `select!` still
+            // gives reads and priority notifications their turn.
+            () = std::future::ready(()), if has_queued => {
+                if let Some(notification) = queues.pop() {
+                    write_notification(writer, &notification).await?;
+                }
+            }
+
+            Some(notification) = notification_rx.recv(), if !has_queued => {
+                queues.push(notification);
             }
         }
     }
@@ -478,5 +507,161 @@ mod tests {
 
         shutdown.cancel();
         let _ = loop_handle.await;
+    }
+
+    /// Build an [`AgentHandler`] over fresh managers for loop-level tests.
+    fn priority_test_handler() -> AgentHandler {
+        use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
+        use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
+        use crate::session::manager::{SessionManager, SessionManagerApi};
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tmp = std::env::temp_dir().join(format!("termihub-prio-{}.json", uuid::Uuid::new_v4()));
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(SessionManager::new(tx.clone(), registry));
+        let monitoring = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        AgentHandler::new(
+            session_manager as Arc<dyn SessionManagerApi>,
+            conn_store as Arc<dyn ConnectionStoreApi>,
+            monitoring as Arc<dyn MonitoringManagerApi>,
+        )
+        .unwrap()
+    }
+
+    /// Run the loop over `queued` notifications (all sent before it starts, as
+    /// a saturated forward window and a busy terminal leave them) and return the
+    /// `(method, params)` of the first `expect` lines it writes.
+    async fn written_order(
+        queued: Vec<JsonRpcNotification>,
+        expect: usize,
+    ) -> Vec<(String, serde_json::Value)> {
+        let handler = priority_test_handler();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        for n in queued {
+            tx.send(n).unwrap();
+        }
+        let (client, server) = tokio::io::duplex(16 * 1024 * 1024);
+        let (server_rd, mut server_wr) = tokio::io::split(server);
+        let (client_rd, _client_wr) = tokio::io::split(client);
+        let mut reader = BufReader::new(server_rd);
+        let shutdown = CancellationToken::new();
+        let loop_shutdown = shutdown.clone();
+        let handle = tokio::spawn(async move {
+            run_transport_loop(
+                &mut reader,
+                &mut server_wr,
+                &handler,
+                &mut rx,
+                loop_shutdown,
+            )
+            .await
+        });
+
+        let mut lines = BufReader::new(client_rd);
+        let mut out = Vec::with_capacity(expect);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while out.len() < expect {
+                let mut line = String::new();
+                assert!(
+                    lines.read_line(&mut line).await.unwrap() > 0,
+                    "loop ended early"
+                );
+                let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                out.push((
+                    v["method"].as_str().unwrap().to_string(),
+                    v["params"].clone(),
+                ));
+            }
+        })
+        .await
+        .expect("notifications written in time");
+        shutdown.cancel();
+        let _ = handle.await;
+        drop(tx);
+        out
+    }
+
+    fn forward_data(stream: &str, seq: u64) -> JsonRpcNotification {
+        JsonRpcNotification::new(
+            crate::protocol::methods::AGENT_FORWARD_DATA,
+            serde_json::json!({"stream_id": stream, "seq": seq, "data": "A".repeat(4096)}),
+        )
+    }
+
+    fn terminal_output(seq: u64) -> JsonRpcNotification {
+        JsonRpcNotification::new(
+            "connection.output",
+            serde_json::json!({"session_id": "term", "seq": seq}),
+        )
+    }
+
+    /// #4480: with a forward stream's whole window queued, a terminal output
+    /// notification emitted afterwards is written before that forward data.
+    #[tokio::test]
+    async fn terminal_output_is_written_before_queued_forward_data() {
+        let mut queued: Vec<_> = (0..128).map(|i| forward_data("vnc#1", i)).collect();
+        queued.push(terminal_output(0));
+        let order = written_order(queued, 129).await;
+        assert_eq!(order[0].0, "connection.output");
+        assert!(order[1..]
+            .iter()
+            .all(|(m, _)| m == crate::protocol::methods::AGENT_FORWARD_DATA));
+        let seqs: Vec<u64> = order[1..]
+            .iter()
+            .map(|(_, p)| p["seq"].as_u64().unwrap())
+            .collect();
+        assert_eq!(seqs, (0..128).collect::<Vec<_>>(), "stream order kept");
+    }
+
+    /// #4480: forward data still drains while terminal output keeps coming —
+    /// it gets one slot after every `BULK_EVERY` output lines.
+    #[tokio::test]
+    async fn forward_data_drains_under_sustained_terminal_output() {
+        use crate::io::notification_queue::BULK_EVERY;
+        let mut queued: Vec<_> = (0..3).map(|i| forward_data("vnc#1", i)).collect();
+        queued.extend((0..200).map(terminal_output));
+        let order = written_order(queued, 3 * (BULK_EVERY + 1)).await;
+        let data_positions: Vec<usize> = order
+            .iter()
+            .enumerate()
+            .filter(|(_, (m, _))| m == crate::protocol::methods::AGENT_FORWARD_DATA)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            data_positions,
+            vec![BULK_EVERY, 2 * BULK_EVERY + 1, 3 * BULK_EVERY + 2]
+        );
+    }
+
+    /// #4480: a stream's close never overtakes its data, and acks are prompt.
+    #[tokio::test]
+    async fn forward_close_follows_its_data_and_acks_go_first() {
+        use crate::protocol::methods::{AGENT_FORWARD_ACK, AGENT_FORWARD_CLOSE};
+        let queued = vec![
+            forward_data("vnc#1", 0),
+            forward_data("vnc#1", 1),
+            JsonRpcNotification::new(
+                AGENT_FORWARD_CLOSE,
+                serde_json::json!({"stream_id": "vnc#1"}),
+            ),
+            JsonRpcNotification::new(
+                AGENT_FORWARD_ACK,
+                serde_json::json!({"stream_id": "vnc#2", "bytes": 10}),
+            ),
+        ];
+        let order = written_order(queued, 4).await;
+        let methods: Vec<&str> = order.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(
+            methods,
+            vec![
+                AGENT_FORWARD_ACK,
+                crate::protocol::methods::AGENT_FORWARD_DATA,
+                crate::protocol::methods::AGENT_FORWARD_DATA,
+                AGENT_FORWARD_CLOSE,
+            ]
+        );
+        assert_eq!(order[1].1["seq"], 0);
+        assert_eq!(order[2].1["seq"], 1);
     }
 }

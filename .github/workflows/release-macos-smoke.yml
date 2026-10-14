@@ -7,7 +7,9 @@ name: Release macOS Smoke
 # architecture:
 #
 #   1. verifies the DMG's build-provenance attestation (the same check users run),
-#   2. mounts it with hdiutil and copies termiHub.app out,
+#   2. asserts the image keeps Tauri's drag-to-install layout (one .app and an
+#      Applications link, scripts/internal/macos-dmg-layout.sh check, #4361),
+#      then mounts it with hdiutil and copies termiHub.app out,
 #   3. asserts the bundle is consistently ad-hoc signed
 #      (`codesign --verify --deep --strict`) — the "damaged" guard (PKG-005),
 #   4. asserts Info.plist carries the release version and the main executable is
@@ -103,8 +105,8 @@ jobs:
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
-        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011) and
-        # verify-rdp-helper-bundle.sh (#4222).
+        # Only for scripts/internal/release-smoke-app-lifecycle.* (#4011),
+        # verify-rdp-helper-bundle.sh (#4222) and macos-dmg-layout.sh (#4361).
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: scripts/internal
@@ -160,6 +162,14 @@ jobs:
           done
           # The agent's .sha256 sidecar is what the desktop checks before install.
           ( cd "$(dirname "$AGENT")" && shasum -a 256 -c "$(basename "$AGENT").sha256" )
+
+      # The re-signed DMG must keep Tauri's drag-to-install layout: one .app and
+      # an Applications link (PKG2-009, #4361). The install below copies the app
+      # with ditto, so it would not notice a missing link on its own.
+      - name: Check the DMG keeps the drag-to-install layout
+        env:
+          DMG: ${{ steps.download.outputs.dmg }}
+        run: scripts/internal/macos-dmg-layout.sh check "$DMG"
 
       - name: Mount DMG and copy the app bundle
         id: app

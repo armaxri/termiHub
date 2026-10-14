@@ -60,11 +60,6 @@ impl SessionScheduler {
         self.max_concurrent
     }
 
-    /// Whether this session has no active or waiting transfers (safe to drop).
-    pub fn is_idle(&self) -> bool {
-        self.active == 0 && self.waiting.is_empty()
-    }
-
     /// Request a slot for `id`. Grants it ([`Admission::Run`]) if under the cap,
     /// otherwise enqueues `id` at the back and returns [`Admission::Queue`].
     pub fn request(&mut self, id: &str) -> Admission {
@@ -210,18 +205,5 @@ mod tests {
         // Auto-retry re-queues it; a slot is free so it runs.
         assert_eq!(s.requeue("a"), Admission::Run);
         assert_eq!(s.active(), 1);
-    }
-
-    #[test]
-    fn is_idle_reflects_active_and_waiting() {
-        let mut s = SessionScheduler::new(1);
-        assert!(s.is_idle());
-        s.request("a");
-        assert!(!s.is_idle());
-        s.request("b"); // queued
-        assert!(!s.is_idle());
-        s.remove_waiting("b");
-        s.release();
-        assert!(s.is_idle());
     }
 }
