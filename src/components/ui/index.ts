@@ -26,8 +26,51 @@ export type { TextareaProps } from "./Textarea";
 export { Field } from "./Field";
 export type { FieldProps } from "./Field";
 
-export { Select, SelectItem } from "./Select";
-export type { SelectProps, SelectOption, SelectItemProps } from "./Select";
+export { Select, SelectItem, SelectGroup, SelectSeparator, SelectLabel } from "./Select";
+export type {
+  SelectProps,
+  SelectOption,
+  SelectItemProps,
+  SelectGroupProps,
+  SelectSeparatorProps,
+  SelectLabelProps,
+} from "./Select";
+
+export {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  MenuItem,
+  MenuCheckboxItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuItemIndicator,
+  MenuSeparator,
+  MenuLabel,
+  MenuGroup,
+  MenuSub,
+  MenuSubTrigger,
+  MenuSubContent,
+} from "./Menu";
+export type {
+  MenuWidth,
+  ContextMenuContentProps,
+  DropdownMenuContentProps,
+  MenuItemProps,
+  MenuCheckboxItemProps,
+  MenuRadioGroupProps,
+  MenuRadioItemProps,
+  MenuItemIndicatorProps,
+  MenuSeparatorProps,
+  MenuLabelProps,
+  MenuGroupProps,
+  MenuSubProps,
+  MenuSubTriggerProps,
+  MenuSubContentProps,
+} from "./Menu";
 
 export { Modal, ModalClose, UnsavedChangesDialog, useModalPortalContainer } from "./Modal";
 export type { ModalProps, UnsavedChangesDialogProps, UnsavedChangesSubject } from "./Modal";
