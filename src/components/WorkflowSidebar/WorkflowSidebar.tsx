@@ -1,15 +1,14 @@
 import { useCallback, useState } from "react";
-import { Plus, ChevronDown, Play } from "lucide-react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Plus, Play } from "lucide-react";
 import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { resolveConnectedTargets, type RunnableTarget } from "@/store/slices/workflowFanout";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, SearchInput, toast, EmptyState } from "@/components/ui";
+import { SearchInput, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
-import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
+import { exportImportActions } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useListFilter, nameDescriptionTagsFields } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -298,62 +297,52 @@ export function WorkflowSidebar() {
 
   return (
     <div className="workflow-sidebar" data-testid="workflow-sidebar">
-      <SidebarToolbar align="center">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<Plus size={12} />}
-              aria-label="New Workflow"
-              data-testid="workflow-new-btn"
-            >
-              New
-              <ChevronDown size={12} />
-            </Button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-              <DropdownMenu.Item
-                className="settings-menu__item"
-                onSelect={handleNew}
-                data-testid="workflow-new-blank"
-              >
-                <Plus size={14} />
-                Blank workflow
-              </DropdownMenu.Item>
-              {macros.length > 0 ? (
-                <>
-                  <DropdownMenu.Separator className="settings-menu__separator" />
-                  <DropdownMenu.Label className="settings-menu__label">
-                    Promote a macro
-                  </DropdownMenu.Label>
-                  {macros.map((macro) => (
-                    <DropdownMenu.Item
-                      key={macro.id}
-                      className="settings-menu__item"
-                      onSelect={() => handlePromoteMacro(macro.id)}
-                      data-testid={`workflow-promote-macro-${macro.id}`}
-                    >
-                      <Play size={14} />
-                      {macro.name}
-                    </DropdownMenu.Item>
-                  ))}
-                </>
-              ) : null}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-        <ExportImportButtons
-          onExport={handleExportAll}
-          onImport={handleImport}
-          exportLabel="Export All Workflows"
-          importLabel="Import Workflows"
-          exportDisabled={workflows.length === 0}
-          exportTestId="workflow-export-all-btn"
-          importTestId="workflow-import-btn"
-        />
-      </SidebarToolbar>
+      <SidebarToolbar
+        align="center"
+        aria-label="Workflow actions"
+        overflowLabel="More workflow actions"
+        overflowTestId="workflow-toolbar-overflow"
+        actions={[
+          {
+            id: "new",
+            label: "New Workflow",
+            shortLabel: "New",
+            icon: <Plus size={12} />,
+            testId: "workflow-new-btn",
+            menu: [
+              {
+                id: "blank",
+                label: "Blank workflow",
+                icon: <Plus size={14} />,
+                onSelect: handleNew,
+                testId: "workflow-new-blank",
+              },
+              ...(macros.length > 0
+                ? [
+                    { type: "separator" as const, id: "promote-sep" },
+                    { type: "label" as const, id: "promote-label", label: "Promote a macro" },
+                    ...macros.map((macro) => ({
+                      id: `promote-${macro.id}`,
+                      label: macro.name,
+                      icon: <Play size={14} />,
+                      onSelect: () => handlePromoteMacro(macro.id),
+                      testId: `workflow-promote-macro-${macro.id}`,
+                    })),
+                  ]
+                : []),
+            ],
+          },
+          ...exportImportActions({
+            onExport: handleExportAll,
+            onImport: handleImport,
+            exportLabel: "Export All Workflows",
+            importLabel: "Import Workflows",
+            exportDisabled: workflows.length === 0,
+            exportTestId: "workflow-export-all-btn",
+            importTestId: "workflow-import-btn",
+          }),
+        ]}
+      />
       <div className="workflow-sidebar__search">
         <SearchInput
           value={query}

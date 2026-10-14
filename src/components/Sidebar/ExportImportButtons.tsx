@@ -1,5 +1,6 @@
 import { Download, Upload } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
+import type { ToolbarAction } from "@/components/ui";
 
 /**
  * Shared export / import icon-button pair (UISF-019).
@@ -68,4 +69,39 @@ export function ExportImportButtons({
       </Tooltip>
     </>
   );
+}
+
+/**
+ * The same Download/Upload pair as {@link ExportImportButtons}, expressed as
+ * icon-only {@link ToolbarAction}s for a width-responsive `SidebarToolbar`
+ * (#4709) — so the pair collapses into the overflow menu instead of clipping.
+ */
+export function exportImportActions({
+  onExport,
+  onImport,
+  exportLabel,
+  importLabel,
+  exportDisabled = false,
+  exportTestId,
+  importTestId,
+}: ExportImportButtonsProps): ToolbarAction[] {
+  return [
+    {
+      id: "export",
+      label: exportLabel,
+      icon: <Download size={14} />,
+      onClick: onExport,
+      disabled: exportDisabled,
+      iconOnly: true,
+      testId: exportTestId,
+    },
+    {
+      id: "import",
+      label: importLabel,
+      icon: <Upload size={14} />,
+      onClick: onImport,
+      iconOnly: true,
+      testId: importTestId,
+    },
+  ];
 }
