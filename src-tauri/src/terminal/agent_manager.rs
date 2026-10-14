@@ -1254,8 +1254,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
     /// TEST-ONLY: run every in-task reconnect of agents connected after this
     /// call with `tuning` — a short handshake bound and a fast, few-attempt
     /// policy — so a test can drive the loop through to give-up (#4404).
-    #[cfg(test)]
-    pub(super) fn set_reconnect_tuning_for_test(&mut self, tuning: ReconnectTuning) {
+    #[cfg(all(test, unix))]
+    fn set_reconnect_tuning_for_test(&mut self, tuning: ReconnectTuning) {
         self.reconnect_tuning = tuning;
     }
 
@@ -3716,6 +3716,10 @@ mod output_flow_tests;
 // Capability refresh across an in-place reconnect (#4440).
 #[cfg(test)]
 mod capability_refresh_tests;
+// End-to-end give-up of a never-answering in-task reconnect (#4404); unix-only
+// like the transport sever it drives.
+#[cfg(all(test, unix))]
+mod reconnect_give_up_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //
