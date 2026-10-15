@@ -274,43 +274,6 @@ impl From<&crate::files::transfer::TransferProgress> for TransferProgress {
     }
 }
 
-/// A snapshot of one queued transfer from `transfer_list` — the wire shape the
-/// frontend reads. The Rust twin is compiled only in tests (#4387): it exports
-/// this type and pins that the wire JSON decodes into it (`ipc_wire_fixtures`).
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "decode-only wire mirror; fields are checked by serde, not read"
-)]
-#[derive(Deserialize, Clone, Debug, ts_rs::TS)]
-#[ts(export, export_to = "../../src/types/generated/")]
-#[serde(rename_all = "camelCase")]
-pub struct TransferSnapshot {
-    pub transfer_id: String,
-    pub session_id: String,
-    pub direction: TransferDirection,
-    pub file_name: String,
-    #[serde(default)]
-    #[cfg_attr(test, ts(optional))]
-    pub path: Option<String>,
-    pub state: TransferQueueState,
-    /// Whether this is a genuinely settled outcome (#1657) — stricter than a
-    /// terminal `state` (a mid-auto-retry failure is terminal but unsettled).
-    pub settled: bool,
-    #[cfg_attr(test, ts(type = "number"))]
-    pub transferred: u64,
-    #[serde(default)]
-    #[cfg_attr(test, ts(type = "number"))]
-    pub total: u64,
-    #[serde(default)]
-    #[cfg_attr(test, ts(type = "number"))]
-    pub speed: u64,
-    #[serde(default)]
-    pub attempt: u32,
-    #[serde(default)]
-    pub max_attempts: u32,
-}
-
 /// Time constant (ms) of the time-weighted EMA applied to the delta-derived
 /// throughput fallback (PROD-038) — mirror of `RATE_TAU_MS` in
 /// `src/utils/byteRate.ts`. A burst of events milliseconds apart barely moves

@@ -763,7 +763,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::transfer::transfer_resume,
             commands::transfer::transfer_cancel,
             commands::transfer::transfer_retry,
-            commands::transfer::transfer_list,
             commands::transfer::session_copy_remote,
             commands::transfer::session_supports_remote_copy,
             commands::transfer::folder_paste_begin,
@@ -845,11 +844,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::diagnostics::get_agent_crash_notices,
             commands::diagnostics::acknowledge_agent_crash_notice,
             commands::diagnostics::read_agent_crash_report,
-            // Tunnels
-            commands::tunnel::save_tunnel,
-            commands::tunnel::delete_tunnel,
-            commands::tunnel::start_tunnel,
-            commands::tunnel::stop_tunnel,
             // Workspaces
             commands::workspace::get_workspaces,
             commands::workspace::load_workspace,

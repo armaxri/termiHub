@@ -5,9 +5,7 @@
 //! only moves the *serialized* JSON: a `skip_serializing_if` that turns `null`
 //! into an absent key, a serde `rename` of an enum variant, a flattened map that
 //! starts or stops spilling keys, or a mirror type whose `Deserialize`-side shape
-//! drifts from the type that actually serializes (the `transfer_list` DTO is a
-//! live example: ts-rs types it from the `transfers_projection` mirror while the
-//! command returns core's registry snapshot).
+//! drifts from the type that actually serializes.
 //!
 //! This test serializes representative, edge-case-rich instances of the key IPC
 //! DTOs — through the exact types the Tauri commands return — into committed
@@ -40,9 +38,6 @@ use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
 };
 use crate::workspace::config::WorkspaceDefinition;
-use termihub_core::files::transfer::progress::TransferDirection;
-use termihub_core::files::transfer::registry::TransferSnapshot;
-use termihub_core::files::transfer::state::TransferStateTag;
 use termihub_core::network::{OpenPort, Protocol};
 
 /// Directory (relative to the repo root) the fixtures are written to.
@@ -328,59 +323,6 @@ fn workspace_fixture() -> Value {
     json!({ "loadWorkspace": wire("WorkspaceDefinition", &definition) })
 }
 
-// ── transfer snapshot (`transfer_list`) ───────────────────────────────────────
-
-fn transfer_fixture(drift: &mut Vec<String>) -> Value {
-    // The command returns core's registry snapshot (not the ts-rs-typed
-    // `transfers_projection` mirror), so that is what is serialized here.
-    let snapshots = vec![
-        TransferSnapshot {
-            transfer_id: "tx-1".into(),
-            session_id: "sess-1".into(),
-            direction: TransferDirection::Download,
-            file_name: "disk.img".into(),
-            path: "/var/tmp/disk.img".into(),
-            state: TransferStateTag::Active,
-            settled: false,
-            // > 2^32: a u64 byte count must survive as an exact JS number.
-            transferred: 4_294_967_296 + 17,
-            total: 6_442_450_944,
-            speed: 12_582_912,
-            attempt: 2,
-            max_attempts: 5,
-        },
-        TransferSnapshot {
-            transfer_id: "tx-2".into(),
-            session_id: "sess-1".into(),
-            direction: TransferDirection::Upload,
-            file_name: "notes.txt".into(),
-            // Empty path is skipped on the wire (`skip_serializing_if`).
-            path: String::new(),
-            state: TransferStateTag::Cancelled,
-            settled: true,
-            transferred: 0,
-            total: 0,
-            speed: 0,
-            attempt: 1,
-            max_attempts: 3,
-        },
-    ];
-    let wire_value = wire("TransferSnapshot[]", &snapshots);
-    // The generated TS type comes from the `transfers_projection` mirror; check
-    // the producer's JSON decodes into it, so the two Rust sides cannot drift.
-    // Reported after every fixture is written, so the frontend suite sees the
-    // drifted wire shape too.
-    if let Err(e) = serde_json::from_value::<
-        Vec<crate::transfers_projection::store::TransferSnapshot>,
-    >(wire_value.clone())
-    {
-        drift.push(format!(
-            "transfer_list JSON does not decode into the ts-rs mirror: {e}"
-        ));
-    }
-    json!({ "transferList": wire_value })
-}
-
 // ── open ports (`network_open_ports`) ─────────────────────────────────────────
 
 fn open_ports_fixture() -> Value {
@@ -464,10 +406,7 @@ fn write_ipc_wire_fixtures() {
     write_fixture("agent.json", agent_fixture());
     write_fixture("settings.json", settings_fixture());
     write_fixture("workspace.json", workspace_fixture());
-    let mut drift = Vec::new();
-    write_fixture("transfers.json", transfer_fixture(&mut drift));
     write_fixture("open_ports.json", open_ports_fixture());
     write_fixture("projection.json", projection_fixture());
     write_fixture("events.json", events_fixture());
-    assert!(drift.is_empty(), "wire drift: {drift:#?}");
 }

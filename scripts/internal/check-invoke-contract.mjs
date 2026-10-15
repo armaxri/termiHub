@@ -63,9 +63,6 @@ export const INJECTED_TYPES = new Set([
   "GlobalScope",
 ]);
 
-const DEAD_WRAPPER_4371 =
-  "frontend wrapper deleted as production-dead in #4371; command removal tracked in #4785";
-
 /**
  * Registered commands with no production caller in src/ that are kept on
  * purpose, each with the reason. Keep this list short: a command that nothing
@@ -73,17 +70,7 @@ const DEAD_WRAPPER_4371 =
  *
  * @type {Map<string, string>}
  */
-export const ORPHAN_ALLOWLIST = new Map([
-  // Tunnels go through the `tunnel.*` projection intents; the typed wrappers
-  // (src/services/tunnelApi.ts) were dead and the same-named tunnelSlice actions
-  // hid the orphans from this name-based check until they were deleted.
-  ["save_tunnel", DEAD_WRAPPER_4371],
-  ["delete_tunnel", DEAD_WRAPPER_4371],
-  ["start_tunnel", DEAD_WRAPPER_4371],
-  ["stop_tunnel", DEAD_WRAPPER_4371],
-  // The transfer queue is fed by the transfers projection region.
-  ["transfer_list", DEAD_WRAPPER_4371],
-]);
+export const ORPHAN_ALLOWLIST = new Map([]);
 
 /**
  * Convert a Rust parameter name to the invoke key Tauri expects (heck's
