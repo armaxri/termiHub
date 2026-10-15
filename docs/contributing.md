@@ -1822,7 +1822,7 @@ binary's **build id**. The release workflow verifies every symbol file against t
 actually shipped (inside the installer for the desktop) before anything is published, and
 `check-release-assets` re-checks every archive.
 
-A crash report (`crash-reports/crash-*.txt`) gives you three things to symbolize it:
+A crash report (`crash-reports/crash-*.txt`) gives you four things to symbolize it:
 
 ```text
 version:   0.2.0
@@ -1830,6 +1830,11 @@ commit:    663465d52
 image:     base 0x0000000102b40000, uuid 4C4C44A3-5555-3144-A1B2-0123456789AB
 backtrace:
    1:        0x102b59a84 - <termihub_core[…]::diagnostics::crash_report::CrashDetails>::capture
+  14:        0x18300af14 - <unknown>
+modules:   412 loaded (base, size, name, build id; * = holds a backtrace frame)
+* 0x0000000102b40000 0x0018c000 termihub uuid 4C4C44A3-5555-3144-A1B2-0123456789AB
+  0x0000000182fa9000 0x0003c2b0 libsystem_kernel.dylib uuid FCA53B98-…
+* 0x0000000182fe6000 0x0002d5a0 libsystem_pthread.dylib uuid 1F8B2C3D-…
 ```
 
 - `image:` is where the module was loaded (ASLR) and its build id: `uuid …` (macOS,
@@ -1837,6 +1842,15 @@ backtrace:
   report's redaction keeps it, drop the spaces to compare) or `pdb <GUID> age <N>`
   (Windows).
 - Every backtrace frame starts with its instruction address.
+- `modules:` lists every image loaded into the process
+  ([#4795](https://github.com/armaxri/termiHub/issues/4795)), sorted by base: base (same
+  meaning as on the `image:` line), size, file name (never a directory, so no home path)
+  and build id. An address belongs to the module whose `base <= address < base + size`;
+  `address - base` is its offset into that module. Modules holding at least one backtrace
+  frame are marked `*`. The section is capped (1024 modules, 64 KiB); when a process has
+  more, the `*` modules are kept first and a final line counts the omitted ones. The size
+  is the `__TEXT` segment on macOS, the end of the last loaded segment on Linux and
+  `SizeOfImage` on Windows. dyld itself is not in macOS's image list.
 
 Download the archive for the report's version, platform and app, unpack it, and confirm
 the build id with `node scripts/internal/debug-symbols.mjs id <symbol file>` (or the
@@ -1855,6 +1869,20 @@ addr2line -f -C -i -e syms/termihub.debug $(printf '0x%x' $((0x7f1a2b459a84 - 0x
 # llvm-symbolizer (put termihub.exe from the installer next to termihub.pdb) at the
 # image's preferred base (0x140000000 for x64):
 llvm-symbolizer --obj=termihub.exe $(printf '0x%x' $((0x140000000 + 0x7ff6a1b39a84 - 0x7ff6a1b20000)))
+```
+
+A frame outside termiHub's own binary (`<unknown>`, or a system function name without a
+line) belongs to whichever `modules:` entry contains its address. Symbolize it the same way,
+with that module's base, against **that** module's symbols once its build id matches: the
+OS vendor's (on macOS, `atos` against the library on a machine with the same OS build; on
+Linux, the distribution's `-dbgsym` / debuginfod package for the listed `build-id`; on
+Windows, the Microsoft symbol server for the listed `pdb … age …`) or a native plugin's own
+debug files. Even without symbols, module plus offset says which library a crash happened
+in:
+
+```bash
+# 0x18300af14 lies in libsystem_pthread.dylib (base 0x0000000182fe6000)
+atos -o /usr/lib/system/libsystem_pthread.dylib -l 0x0000000182fe6000 0x18300af14
 ```
 
 A frame's address is a return address, so subtract 1 when a line looks one statement too

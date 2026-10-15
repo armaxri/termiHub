@@ -208,18 +208,27 @@ fn a_report_lists_the_loaded_modules_sorted_and_marks_frame_holders() {
         [
             "modules:   5 loaded (base, size, name, build id; * = holds a backtrace frame)"
                 .to_string(),
-            format!("* 0x{:0w$x} 0x00100000 termihub no build id", 0x1_0000_0000_u64),
+            format!(
+                "* 0x{:0w$x} 0x00100000 termihub no build id",
+                0x1_0000_0000_u64
+            ),
             format!(
                 "  0x{:0w$x} 0x00001000 libsystem_kernel.dylib no build id",
                 0x1_9000_0000_u64
             ),
-            format!("  0x{:0w$x} 0x00001000 libssl.so.3 no build id", 0x7e00_0000_0000_u64),
+            format!(
+                "  0x{:0w$x} 0x00001000 libssl.so.3 no build id",
+                0x7e00_0000_0000_u64
+            ),
             format!(
                 "* 0x{:0w$x} 0x00200000 libc.so.6 build-id 00010203 04050607 08090a0b 0c0d0e0f \
                  10111213",
                 0x7f00_0000_0000_u64
             ),
-            format!("  0x{:0w$x} 0x00001000 ntdll.dll no build id", 0x7ffd_0000_0000_u64),
+            format!(
+                "  0x{:0w$x} 0x00001000 ntdll.dll no build id",
+                0x7ffd_0000_0000_u64
+            ),
         ],
         "{text}"
     );
@@ -231,17 +240,31 @@ fn the_module_list_is_capped_and_keeps_frame_holders() {
     // More modules than either cap allows; the one holding the frame is last.
     let n = MAX_MODULES * 2;
     d.modules = (0..n)
-        .map(|i| module(&format!("libmodule{i:05}.so"), 0x1000_0000 + i * 0x1_0000, 0x1000))
+        .map(|i| {
+            module(
+                &format!("libmodule{i:05}.so"),
+                0x1000_0000 + i * 0x1_0000,
+                0x1000,
+            )
+        })
         .collect();
     let last = 0x1000_0000 + (n - 1) * 0x1_0000;
     d.backtrace = format!("   0:     {:#x} - <unknown>", last + 0x10);
     let section = render_modules(&d.modules, &d.backtrace);
-    assert!(section.len() <= MAX_MODULES_BYTES + 200, "{}", section.len());
+    assert!(
+        section.len() <= MAX_MODULES_BYTES + 200,
+        "{}",
+        section.len()
+    );
     let listed = section.lines().filter(|l| l.contains("libmodule")).count();
     assert!(listed <= MAX_MODULES, "{listed}");
     assert!(listed > 100, "{listed}");
     assert!(
-        section.contains(&format!("* {:#0w$x}", last, w = 2 + 2 * std::mem::size_of::<usize>())),
+        section.contains(&format!(
+            "* {:#0w$x}",
+            last,
+            w = 2 + 2 * std::mem::size_of::<usize>()
+        )),
         "the frame-holding module was dropped"
     );
     assert!(section.ends_with(&format!("[{} more modules omitted]", n - listed)));
@@ -249,7 +272,11 @@ fn the_module_list_is_capped_and_keeps_frame_holders() {
     d.backtrace = "x".repeat(MAX_BACKTRACE_BYTES * 2);
     d.message = "m".repeat(MAX_MESSAGE_BYTES * 2);
     let text = render_report(&d, at(0), &redactor());
-    assert!((text.len() as u64) < MAX_REMOTE_REPORT_BYTES, "{}", text.len());
+    assert!(
+        (text.len() as u64) < MAX_REMOTE_REPORT_BYTES,
+        "{}",
+        text.len()
+    );
 }
 
 #[test]
@@ -258,14 +285,28 @@ fn module_names_are_redaction_safe() {
 
     let mut d = details("boom");
     d.modules = vec![
-        module(&module_file_name("/Users/alice/Library/plugin.dylib"), 0x1000, 0x10),
-        module(&module_file_name(r"C:\Users\alice\AppData\x.dll"), 0x2000, 0x10),
+        module(
+            &module_file_name("/Users/alice/Library/plugin.dylib"),
+            0x1000,
+            0x10,
+        ),
+        module(
+            &module_file_name(r"C:\Users\alice\AppData\x.dll"),
+            0x2000,
+            0x10,
+        ),
         module(&module_file_name("/home/alice/alice-tool"), 0x3000, 0x10),
     ];
     let text = render_report(&d, at(0), &redactor());
     assert!(!text.contains("alice"), "{text}");
-    assert!(!text.contains("/Users") && !text.contains("AppData"), "{text}");
-    assert!(text.contains(" plugin.dylib ") && text.contains(" x.dll "), "{text}");
+    assert!(
+        !text.contains("/Users") && !text.contains("AppData"),
+        "{text}"
+    );
+    assert!(
+        text.contains(" plugin.dylib ") && text.contains(" x.dll "),
+        "{text}"
+    );
 }
 
 #[cfg(any(target_vendor = "apple", target_os = "linux", windows))]

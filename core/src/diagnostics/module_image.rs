@@ -257,11 +257,7 @@ pub(crate) mod macho {
             let at = off?;
             let cmd = rd_u32(image, at)?;
             let size = usize::try_from(rd_u32(image, at + 4)?).ok()?;
-            off = if size < 8 {
-                None
-            } else {
-                at.checked_add(size)
-            };
+            off = if size < 8 { None } else { at.checked_add(size) };
             Some((at, cmd))
         })
     }
@@ -651,7 +647,12 @@ mod platform {
     ///
     /// # Safety
     /// `base` must be a loaded image of at least `mapped` mapped bytes.
-    unsafe fn bytes<'a>(base: *const u8, mapped: usize, rva: usize, len: usize) -> Option<&'a [u8]> {
+    unsafe fn bytes<'a>(
+        base: *const u8,
+        mapped: usize,
+        rva: usize,
+        len: usize,
+    ) -> Option<&'a [u8]> {
         if rva.checked_add(len)? > mapped {
             return None;
         }

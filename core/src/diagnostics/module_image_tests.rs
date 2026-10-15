@@ -75,7 +75,10 @@ fn macho_with_segments(text_vmsize: u64) -> Vec<u8> {
 
 #[test]
 fn reads_the_macho_text_segment_size() {
-    assert_eq!(macho_text_size(&macho_with_segments(0x4_8000)), Some(0x4_8000));
+    assert_eq!(
+        macho_text_size(&macho_with_segments(0x4_8000)),
+        Some(0x4_8000)
+    );
     // The UUID-only image has a filler 0x19 command but no __TEXT segment.
     assert_eq!(macho_text_size(&macho(true)), None);
     let image = macho_with_segments(0x4_8000);
@@ -272,7 +275,10 @@ fn module_names_keep_only_the_file_name() {
         module_file_name(r"C:\Users\alice\AppData\Local\termiHub\WebView2Loader.dll"),
         "WebView2Loader.dll"
     );
-    assert_eq!(module_file_name("Google Chrome\tHelper\n"), "Google_Chrome_Helper_");
+    assert_eq!(
+        module_file_name("Google Chrome\tHelper\n"),
+        "Google_Chrome_Helper_"
+    );
     assert_eq!(module_file_name(""), "<unnamed>");
     assert_eq!(module_file_name("/trailing/"), "<unnamed>");
     let long = format!("/x/{}", "é".repeat(MAX_MODULE_NAME_BYTES));
