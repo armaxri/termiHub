@@ -72,6 +72,12 @@ node scripts\internal\check-uv-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === cross-rs pin consistency ===
+REM .github/cross-version is the only cross-rs pin; CI installs via setup-cross (#4360).
+node scripts\internal\check-cross-version.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === Doc code-reference drift ===
 REM Symbol-based file-to-symbol references in reference docs resolve (#4369).
 node scripts\internal\check-doc-symbols.mjs

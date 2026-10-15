@@ -110,6 +110,15 @@ else
 fi
 
 echo ""
+echo "=== cross-rs pin consistency ==="
+# .github/cross-version is the only cross-rs pin; CI installs via setup-cross (#4360).
+if node scripts/internal/check-cross-version.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== Doc code-reference drift ==="
 # Symbol-based `file` -> `Symbol` references in reference docs resolve (#4369).
 if node scripts/internal/check-doc-symbols.mjs; then

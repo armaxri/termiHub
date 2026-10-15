@@ -30,6 +30,8 @@ on:
       - 'rust-toolchain*'
       - '.github/rust-version'
       - '.github/actions/setup-rust/**'
+      - '.github/cross-version'
+      - '.github/actions/setup-cross/**'
       # Re-run the cross-compile legs when the build workflow itself changes, so
       # edits to the musl build (e.g. the cross-image hardening in #2056) are
       # exercised on their own PR instead of shipping unvalidated.
@@ -54,6 +56,8 @@ on:
       - 'rust-toolchain*'
       - '.github/rust-version'
       - '.github/actions/setup-rust/**'
+      - '.github/cross-version'
+      - '.github/actions/setup-cross/**'
       - '.github/workflows/agent.yml'
       - 'scripts/internal/assert-no-test-signing-key.sh'
       - 'scripts/internal/assert-no-agent-test-hooks.sh'
