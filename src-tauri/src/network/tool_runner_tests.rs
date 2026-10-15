@@ -256,7 +256,8 @@ async fn a_local_port_scan_streams_results_then_the_summary() {
         }),
         "the per-port payload shape is unchanged"
     );
-    assert!(all[0].1["latencyMs"].is_u64());
+    // #4542: fractional milliseconds, so a sub-ms loopback connect is not 0.
+    assert!(all[0].1["latencyMs"].is_f64(), "{all:?}");
     assert_eq!(all[1].0, name::SCAN_COMPLETE);
     assert_eq!(all[1].1["taskId"], "task-1");
     assert_eq!(all[1].1["summary"]["total"], 1);
