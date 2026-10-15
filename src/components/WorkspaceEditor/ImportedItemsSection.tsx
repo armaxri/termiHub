@@ -4,65 +4,17 @@ import { Button, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
-  describeImportedConnection,
-  importedCommandKey,
-  importedConnectionKey,
+  collectImportedItems,
   isImportConfirmed,
   withImportConfirmed,
+  type ImportedItem,
 } from "@/services/workspaceImportTrust";
-import { getWorkspaceLeaves } from "@/utils/workspaceLayout";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import "./ImportedItemsSection.css";
 
 interface ImportedItemsSectionProps {
   /** The workspace's tab groups as currently edited. */
   tabGroupDefs: WorkspaceTabGroupDef[];
-}
-
-interface ImportedItem {
-  id: string;
-  kind: "command" | "connection";
-  tabLabel: string;
-  /** What runs or opens, shown verbatim. */
-  text: string;
-  /** Resolves to the allowlist key for this item. */
-  key: () => Promise<string>;
-}
-
-function collectItems(groups: WorkspaceTabGroupDef[]): ImportedItem[] {
-  const items: ImportedItem[] = [];
-  groups.forEach((group, g) => {
-    getWorkspaceLeaves(group.layout).forEach((leaf, l) => {
-      leaf.tabs.forEach((tab, t) => {
-        const tabLabel = `${tab.title ?? "Tab"} (${group.name})`;
-        const base = `${g}-${l}-${t}`;
-        if (tab.inlineConfigUnconfirmed && tab.inlineConfig) {
-          const inline = tab.inlineConfig;
-          const summary = describeImportedConnection(inline);
-          const parts = [summary.type, summary.target].filter(Boolean).join(" ");
-          const runs = summary.embeddedCommand ? ` (runs "${summary.embeddedCommand}")` : "";
-          items.push({
-            id: `${base}-conn`,
-            kind: "connection",
-            tabLabel,
-            text: parts + runs,
-            key: () => importedConnectionKey(inline),
-          });
-        }
-        if (tab.pendingInitialCommand) {
-          const command = tab.pendingInitialCommand;
-          items.push({
-            id: `${base}-cmd`,
-            kind: "command",
-            tabLabel,
-            text: command,
-            key: () => importedCommandKey(command),
-          });
-        }
-      });
-    });
-  });
-  return items;
 }
 
 /**
@@ -76,7 +28,7 @@ function collectItems(groups: WorkspaceTabGroupDef[]): ImportedItem[] {
 export function ImportedItemsSection({ tabGroupDefs }: ImportedItemsSectionProps) {
   const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const items = useMemo(() => collectItems(tabGroupDefs), [tabGroupDefs]);
+  const items = useMemo(() => collectImportedItems(tabGroupDefs), [tabGroupDefs]);
   // The resolved keys, tagged with the item list they were hashed for. Row ids
   // are positional, so keys hashed for a previous list (e.g. before the command
   // text was edited) must not be read for the current one (#4483).

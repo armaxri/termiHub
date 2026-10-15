@@ -10,6 +10,7 @@ import { SettingsField } from "./SettingsField";
 import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
+import { ImportedWorkspaceConfirmations } from "./ImportedWorkspaceConfirmations";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
 
@@ -642,6 +643,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           )}
         </div>
       )}
+
+      {show("workspaceImportConfirmations") && <ImportedWorkspaceConfirmations />}
     </div>
   );
 }
