@@ -240,7 +240,7 @@ jobs:
       - name: Install cargo-machete
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-machete
+          tool: cargo-machete@0.9.2
 
       - name: Check for unused dependencies (cargo-machete)
         run: cargo machete
@@ -408,7 +408,7 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       # Supply-chain gate over the sidecar's OWN lockfile. Config:
       # rdp-sidecar/deny.toml. Covers RUSTSEC vulnerability + yanked-crate
@@ -885,6 +885,12 @@ jobs:
       # (#4360, WA-CI2-006). Plain Node, preinstalled on the runner.
       - name: Check cross-rs pin consistency
         run: node scripts/internal/check-cross-version.mjs
+
+      # Fails if a taiki-e/install-action step installs a cargo tool without an
+      # exact @X.Y.Z or with a version other than .github/cargo-tools.json's,
+      # so the Security Audit and the release gate run the same tools (#4406).
+      - name: Check cargo tool pin consistency
+        run: node scripts/internal/check-cargo-tool-pins.mjs
 
       # Fails if a third-party action is pinned to a tag/branch instead of a
       # full commit SHA, lacks its "# vX.Y.Z" comment, or is pinned to two

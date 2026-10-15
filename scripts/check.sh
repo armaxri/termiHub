@@ -119,6 +119,15 @@ else
 fi
 
 echo ""
+echo "=== cargo tool pin consistency ==="
+# Every taiki-e/install-action tool pinned to its version in .github/cargo-tools.json (#4406).
+if node scripts/internal/check-cargo-tool-pins.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== GitHub Actions pin consistency ==="
 # Every third-party action pinned to ONE full commit SHA with a version comment (#4360).
 if node scripts/internal/check-action-pins.mjs; then
