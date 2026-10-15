@@ -70,6 +70,29 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
 - Marks live in the terminal buffer: a prompt that scrolls out of the scrollback
   (or is cleared) is forgotten, and marks are not restored after a reconnect.
 
+## Moving between regions (F6)
+
+<kbd>F6</kbd> moves keyboard focus to the next region of the window and
+<kbd>Shift</kbd>+<kbd>F6</kbd> to the previous one, wrapping around — the same
+keys VS Code and browsers use. The regions are the app shell's landmarks, in
+this order:
+
+| Region        | Landmark | Focus lands on                                   |
+| ------------- | -------- | ------------------------------------------------ |
+| Activity bar  | `nav`    | The active activity-bar item                     |
+| Sidebar       | `aside`  | The sidebar's first control                      |
+| Terminal area | `main`   | The active terminal, or the active tab otherwise |
+| Status bar    | `footer` | The first status-bar control                     |
+
+- Regions that are not on screen — a collapsed sidebar, a hidden activity bar
+  or status bar — are skipped.
+- Focus inside a dialog stays there; F6 does nothing until the dialog closes.
+- Both keys are rebindable as **Focus Next Region** / **Focus Previous Region**
+  in **Settings → Keyboard Shortcuts**, on every platform.
+- Function keys are not shell-reserved, so F6 is taken by termiHub even while a
+  terminal has focus. A terminal app that needs F6 itself (Midnight Commander,
+  for example) gets it back once you unbind or rebind **Focus Next Region**.
+
 ## Moving items without dragging
 
 Tabs, saved connections and remote agents can be moved from the keyboard as
