@@ -341,6 +341,9 @@ fn stays_inside_anchor(root: &Path, anchor: &Path) -> bool {
 ///   normalisation;
 /// * carrying a `.` or `..` segment — a declared path must already be in its
 ///   final, normalised form, so what the user approved is what is granted;
+/// * in Windows form, carrying a folder name Win32 would rewrite or treat as
+///   a device or stream (a trailing `.` or space, `:`, a reserved name such
+///   as `CON`; see `check_windows_segment`);
 /// * a filesystem root (`/`, `C:\`) or a bare network share (`\\server\share`),
 ///   which would grant everything on that volume.
 ///
@@ -384,8 +387,95 @@ pub fn check_declared_filesystem_path(raw: &str) -> Result<(), &'static str> {
     if segments.iter().any(|s| *s == "." || *s == "..") {
         return Err("contains a `.` or `..` segment");
     }
+    if separators == WINDOWS_SEPARATORS {
+        for segment in &segments {
+            check_windows_segment(segment)?;
+        }
+    }
     if segments.len() < min_segments {
         return Err(root_reason);
+    }
+    Ok(())
+}
+
+/// Device names Win32 reserves in every folder, compared case-insensitively
+/// against a segment's name up to its first `.` (so `nul.txt` is `NUL`).
+const WINDOWS_RESERVED_NAMES: &[&str] = &[
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CONIN$",
+    "CONOUT$",
+    "COM0",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "COM\u{b9}",
+    "COM\u{b2}",
+    "COM\u{b3}",
+    "LPT0",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "LPT\u{b9}",
+    "LPT\u{b2}",
+    "LPT\u{b3}",
+];
+
+/// Why one folder name of a declared path could mean something other than
+/// what it says once Win32 opens it, or `Ok` if it is taken literally (#4762).
+///
+/// Applied to every segment of a Windows-form entry (drive letter or UNC) and
+/// to every segment after a `${home}`/`${config}` placeholder, which may
+/// resolve onto a Windows folder. The check is textual, so a manifest is
+/// rejected on every OS. It refuses:
+///
+/// * a `.` or `..` segment;
+/// * a name ending in `.` or a space — Win32 strips them, so `.. ` becomes
+///   `..` and `x.` becomes `x`;
+/// * a `:` — after the drive letter it names an alternate data stream;
+/// * a character Win32 does not allow in a name (`<>"|?*` and control
+///   characters), some of which are wildcards to Win32 file APIs;
+/// * a reserved device name (`CON`, `NUL`, `COM1`, `LPT1`, …), with or
+///   without an extension, which opens the device instead of a folder.
+///
+/// POSIX-form entries are not passed through it: POSIX does not rewrite
+/// names, and such an entry grants nothing on Windows.
+pub(crate) fn check_windows_segment(segment: &str) -> Result<(), &'static str> {
+    if segment == "." || segment == ".." {
+        return Err("contains a `.` or `..` segment");
+    }
+    if segment.ends_with('.') || segment.ends_with(' ') {
+        return Err("has a folder name that ends in `.` or a space");
+    }
+    if segment.contains(':') {
+        return Err("contains `:` after the drive, which names an alternate data stream");
+    }
+    if segment
+        .chars()
+        .any(|c| c.is_ascii_control() || matches!(c, '<' | '>' | '"' | '|' | '?' | '*'))
+    {
+        return Err("contains a character Windows does not allow in a folder name");
+    }
+    let stem = segment.split('.').next().unwrap_or_default().trim_end();
+    if WINDOWS_RESERVED_NAMES
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(stem))
+    {
+        return Err("names a reserved Windows device such as `CON`, `NUL` or `COM1`");
     }
     Ok(())
 }
@@ -1321,6 +1411,79 @@ mod tests {
             );
         }
         for ok in ["/a", "/a/b/", "C:\\a", "c:/a", "\\\\srv\\share\\a"] {
+            assert_eq!(check_declared_filesystem_path(ok), Ok(()), "{ok:?}");
+        }
+    }
+
+    /// #4762: a Windows-form entry whose meaning changes under Win32 name
+    /// rewriting is refused, on every OS.
+    #[test]
+    fn windows_entries_reject_names_win32_rewrites() {
+        const TRAILING: &str = "has a folder name that ends in `.` or a space";
+        const STREAM: &str = "contains `:` after the drive, which names an alternate data stream";
+        const CHAR: &str = "contains a character Windows does not allow in a folder name";
+        const DEVICE: &str = "names a reserved Windows device such as `CON`, `NUL` or `COM1`";
+        for (path, reason) in [
+            (r"C:\data\.. \tools", TRAILING),
+            (r"C:\data\... \tools", TRAILING),
+            (r"C:\data\x.", TRAILING),
+            (r"C:\data\x ", TRAILING),
+            (r"C:\data\x.\y", TRAILING),
+            ("D:/captures/x /y", TRAILING),
+            (r"\\server.\share\x", TRAILING),
+            (r"\\server\share \x", TRAILING),
+            (r"C:\data\x:stream", STREAM),
+            (r"C:\data\x::$DATA", STREAM),
+            (r"C:\a\C:\b", STREAM),
+            (r"C:\data\*", CHAR),
+            (r"C:\data\what?", CHAR),
+            (r"C:\data\a<b", CHAR),
+            ("C:\\data\\a\tb", CHAR),
+            (r"C:\data\CON", DEVICE),
+            (r"C:\data\nul", DEVICE),
+            (r"C:\data\nul.txt", DEVICE),
+            (r"C:\data\Aux.tar.gz\x", DEVICE),
+            (r"C:\data\COM1", DEVICE),
+            (r"C:\data\lpt9.log", DEVICE),
+            ("C:\\data\\COM\u{b9}", DEVICE),
+            (r"C:\data\CON .txt", DEVICE),
+            (r"C:\data\CONOUT$", DEVICE),
+            (r"\\srv\share\PRN", DEVICE),
+            (r"\\?\C:\data", "uses a Windows verbatim or device prefix"),
+            ("//./COM1", "uses a Windows verbatim or device prefix"),
+        ] {
+            assert_eq!(
+                check_declared_filesystem_path(path),
+                Err(reason),
+                "{path:?}"
+            );
+        }
+        for ok in [
+            r"C:\data\.config",
+            r"C:\data\x.y",
+            r"C:\data\.x",
+            r"C:\data\a b",
+            r"C:\data\ x",
+            r"C:\data\CONSOLE",
+            r"C:\data\console.log",
+            r"C:\data\COM10",
+            r"C:\data\LPT",
+            r"C:\data\NULL",
+            r"C:\data\x.CON",
+            r"C:\data\con-x",
+            r"\\srv\share\data.v2",
+            "D:/captures/app",
+        ] {
+            assert_eq!(check_declared_filesystem_path(ok), Ok(()), "{ok:?}");
+        }
+        // POSIX names are taken literally, so POSIX-form entries keep them.
+        for ok in [
+            "/data/x.",
+            "/data/x ",
+            "/data/CON",
+            "/data/a:b",
+            "/data/what?",
+        ] {
             assert_eq!(check_declared_filesystem_path(ok), Ok(()), "{ok:?}");
         }
     }

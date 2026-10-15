@@ -183,11 +183,11 @@ pub(crate) fn parse(raw: &str) -> Result<Option<PlaceholderPath<'_>>, &'static s
 }
 
 /// Reject a segment after a placeholder that could change the path's meaning
-/// on some OS once joined to the base folder.
+/// on some OS once joined to the base folder. Beyond the placeholder-only
+/// rules, it applies the same Windows folder-name rule as a plain Windows
+/// entry ([`check_windows_segment`](super::security::check_windows_segment)),
+/// since the base may be a Windows folder.
 fn check_segment(segment: &str) -> Result<(), &'static str> {
-    if segment == "." || segment == ".." {
-        return Err("contains a `.` or `..` segment");
-    }
     if segment.contains('\0') {
         return Err("contains a NUL byte");
     }
@@ -197,10 +197,7 @@ fn check_segment(segment: &str) -> Result<(), &'static str> {
     if segment.contains(':') {
         return Err("contains `:` after a placeholder");
     }
-    if segment.ends_with('.') || segment.ends_with(' ') {
-        return Err("has a folder name after a placeholder that ends in `.` or a space");
-    }
-    Ok(())
+    super::security::check_windows_segment(segment)
 }
 
 /// The manifest-level check for one `filesystemPaths` entry: a valid
@@ -449,6 +446,11 @@ mod tests {
             "${home}/.. ",
             "${home}/... ",
             "${home}/x.",
+            "${home}/x ",
+            "${home}/CON",
+            "${home}/nul.txt",
+            "${home}/a/LPT1/b",
+            "${home}/what?",
             "${home}/x\0y",
         ] {
             assert!(
@@ -457,6 +459,25 @@ mod tests {
             );
             assert!(resolve(bad, &bases(WINDOWS)).is_err(), "{bad:?}");
         }
+    }
+
+    /// #4762: a folder name after a placeholder and the same name in a plain
+    /// Windows entry are judged by one rule, with the same reason.
+    #[test]
+    fn placeholder_and_plain_windows_segments_share_one_rule() {
+        for segment in [
+            ".. ", "... ", "x.", "x ", "CON", "nul.txt", "COM1", "lpt9.log", "what?", "a<b", "a|b",
+            "x.y", ".kube", "CONSOLE", "COM10", "a b",
+        ] {
+            let placeholder = check_manifest_filesystem_path(&format!("${{home}}/{segment}"));
+            let plain = check_manifest_filesystem_path(&format!(r"C:\data\{segment}"));
+            assert_eq!(placeholder, plain, "{segment:?}");
+            // And the resolved Windows path agrees with the manifest check.
+            let resolved = resolve(&format!("${{home}}/{segment}"), &bases(WINDOWS)).map(|_| ());
+            assert_eq!(resolved.is_ok(), plain.is_ok(), "{segment:?}");
+        }
+        assert!(check_manifest_filesystem_path("${home}/CON").is_err());
+        assert_eq!(check_manifest_filesystem_path("${home}/x.y"), Ok(()));
     }
 
     #[test]
