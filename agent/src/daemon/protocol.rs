@@ -100,7 +100,9 @@ pub const MSG_OUTPUT_FLOW: u8 = 0x0E;
 /// written to its transport (or discarded) since its last ack. Sent only when
 /// both sides advertised [`CAP_OUTPUT_CREDIT`]; the daemon then keeps at most
 /// [`OUTPUT_CREDIT_WINDOW`] output bytes sent but unacknowledged, and stops
-/// reading its backend's output while the window is used up.
+/// reading its backend's output while the window is used up. The window holds
+/// from attach: until the worker's capabilities arrive, the daemon assumes it
+/// takes credit (#4768).
 pub const MSG_OUTPUT_ACK: u8 = 0x0F;
 
 /// Output bytes a daemon keeps sent but unacknowledged to a worker that
