@@ -426,14 +426,15 @@ with another parallel checkout. Only `./scripts/dev.sh` starts the `dev_agent_po
 
 ---
 
-## Adding a New Terminal Backend
+## Adding a New Connection Type
 
-1. Implement the backend in `core/src/backends/` (follow existing patterns like `local_shell.rs`, `telnet.rs`)
-2. Add config types in `core/src/config/` (Rust) and `src/types/terminal.ts` (TypeScript)
-3. Wire up in `src-tauri/src/terminal/` and add Tauri commands in `src-tauri/src/commands/` if needed
-4. Create settings UI in `src/components/Settings/` — compose from the shared `src/components/ui/` primitives (Button, Input, Field, Select, Modal, Toggle); never hand-roll button/input/dialog CSS
-5. Add to connection type selector in `src/components/ConnectionEditor/ConnectionEditor.tsx`
-6. Test on target platform, run `./scripts/check.sh`
+See [Contributing → Adding a New Connection Type](../docs/contributing.md#adding-a-new-connection-type). In short:
+
+1. Implement the `ConnectionType` trait (`core/src/connection/mod.rs`) in `core/src/backends/` (follow existing patterns like `local_shell.rs`, `telnet.rs`)
+2. Gate it behind a cargo feature in `core/Cargo.toml` and enable it in `src-tauri/Cargo.toml` / `agent/Cargo.toml`
+3. Register the factory — `register_core_backends()` in `core/src/connection/registry.rs` (shared), or `src-tauri/src/session/registry.rs` / `agent/src/registry.rs`
+4. No frontend changes — the settings form is rendered from the backend's `SettingsSchema`
+5. Test on target platform, run `./scripts/check.sh`
 
 ---
 

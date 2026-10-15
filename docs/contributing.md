@@ -12,10 +12,10 @@ For the full architecture documentation (building blocks, runtime views, data fl
 
 #### Node.js
 
-Install [Node.js](https://nodejs.org/) v18 or later.
+Install [Node.js](https://nodejs.org/) v20.19 or later (v22 recommended — CI uses Node 22).
 
 ```bash
-node --version   # v18.x or later
+node --version   # v20.19 or later
 ```
 
 #### pnpm
@@ -819,44 +819,35 @@ See [Architecture Documentation](architecture.md) for detailed diagrams and patt
 
 ---
 
-## Adding a New Terminal Backend
+## Adding a New Connection Type
 
-To add a new connection type (e.g., a new protocol):
+To add a new connection type (e.g., a new protocol), follow the four steps described in [Architecture → Adding a New Connection Type](architecture.md#5-building-block-view). Every connection backend implements the unified `ConnectionType` trait from `termihub-core`; the desktop and the agent share the same implementations.
 
-### 1. Implement the Backend (Rust)
+### 1. Implement `ConnectionType` (Rust, core)
 
-Create a new file in `src-tauri/src/terminal/` (e.g., `my_protocol.rs`):
+Create a new module in `core/src/backends/` (e.g., `my_protocol.rs`, or a `my_protocol/` directory for larger backends):
 
-- Implement the `TerminalBackend` trait
-- Handle spawning, input/output, resize, and close
-- Use `anyhow::Result` for error handling
+- Implement the `ConnectionType` trait (`core/src/connection/mod.rs`): metadata (`type_id`, `display_name`), `settings_schema()`, `capabilities()`, the lifecycle (`connect` / `disconnect`), and terminal I/O (`write`, `resize`, `subscribe_output`)
+- Describe the settings with a `SettingsSchema` (`core/src/connection/schema.rs`) — this is what the frontend renders
+- Use `OUTPUT_CHANNEL_CAPACITY` (`core/src/output/mod.rs`) for the output channel instead of a hard-coded bound
 
-### 2. Register with TerminalManager
+### 2. Add a Cargo Feature
 
-Update `src-tauri/src/terminal/manager.rs` to:
+Gate the module behind a new feature in `core/Cargo.toml` (like `serial`, `telnet`, `ssh`, `docker`) and add a `#[cfg(feature = "...")]` `pub mod` line in `core/src/backends/mod.rs`. Enable the feature in the `termihub-core` dependency of `src-tauri/Cargo.toml` and/or `agent/Cargo.toml`.
 
-- Add a match arm for the new connection type
-- Instantiate your backend when a session is created
+### 3. Register the Factory
 
-### 3. Add Tauri Commands
+- **Shared by desktop and agent**: add a `registry.register(...)` call to `register_core_backends()` in `core/src/connection/registry.rs`
+- **Desktop only**: register it in `src-tauri/src/session/registry.rs`
+- **Agent only**: register it in `agent/src/registry.rs`
 
-Update `src-tauri/src/commands/` if any new IPC commands are needed beyond the standard terminal lifecycle.
+### 4. Frontend — No Changes Needed
 
-### 4. Add Configuration Types
+The frontend discovers connection types from the registry and renders the settings form from the schema (`src/components/DynamicForm/`). The generic `{type, config}` `ConnectionConfig` stores the settings, so no new TypeScript types, settings components, or dropdown entries are needed.
 
-- **Rust**: Add a config struct in `src-tauri/src/connection/config.rs`
-- **TypeScript**: Add corresponding types in `src/types/terminal.ts`
+### 5. Test
 
-### 5. Create Settings UI
-
-Add a settings component in `src/components/Settings/` (e.g., `MyProtocolSettings.tsx`) and integrate it into the `ConnectionEditor`.
-
-### 6. Add to Connection Type Selector
-
-Update the connection type dropdown in `src/components/Sidebar/ConnectionEditor.tsx`.
-
-### 7. Test
-
+- Add unit tests next to the backend in `core/src/backends/`
 - Use the comprehensive test containers in `tests/docker/` for system testing, or the quick-start environment in `examples/` for basic dev testing
 - Test on your target platform
 - Run `cargo clippy` and `pnpm build` to check for errors
@@ -1390,7 +1381,7 @@ a warning:
 
 | Check                         | What it requires                                                                                                                                                                                                                                                                                                               |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Versions                      | All five version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                             |
+| Versions                      | All seven version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                            |
 | Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
 | Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
 | Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
@@ -1418,21 +1409,39 @@ dispatch the workflow on your branch to run the real build too.
 
 ### Version Bump
 
-Update the version number in all five locations:
+Update the version number in all seven locations:
 
 1. **`package.json`** — `"version": "X.Y.Z"`
 2. **`src-tauri/Cargo.toml`** — `version = "X.Y.Z"`
 3. **`src-tauri/tauri.conf.json`** — `"version": "X.Y.Z"`
 4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
 5. **`core/Cargo.toml`** — `version = "X.Y.Z"`
+6. **`plugin-runner/Cargo.toml`** — `version = "X.Y.Z"` (bundled as a sidecar; reports its
+   version to the host at runtime)
+7. **`rdp-sidecar/Cargo.toml`** — `version = "X.Y.Z"` (bundled as a sidecar)
+
+Then refresh both lockfiles so the release builds (which pass `--locked`) accept the new
+versions. The RDP sidecar is outside the workspace and has its own `rdp-sidecar/Cargo.lock`,
+which also records `termihub-core`:
+
+```bash
+cargo update --workspace
+cargo update --workspace --manifest-path rdp-sidecar/Cargo.toml
+```
+
+**`plugin-api/Cargo.toml` is not bumped.** It is the native-plugin ABI crate and is
+independently versioned on purpose: its compatibility promise is
+`CURRENT_PLUGIN_ABI_VERSION`, not the app version (see the comment in its manifest and
+[#3367](https://github.com/armaxri/termiHub/issues/3367)). The version check prints its
+version for the record but never compares it.
 
 Check them before tagging with `./scripts/release-check.sh --versions-only --expect-version X.Y.Z`
 — the same check the Release workflow runs as its first gate.
 
 The version check runs in two places (CI-009, #3901):
 
-- **On every PR** that touches the frontend or Rust areas (which cover all five version
-  files, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
+- **On every PR** that touches the frontend or Rust areas (which cover all version
+  files except `rdp-sidecar/Cargo.toml`, checked at the tag push only, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
   `release-check.sh --versions-only`. A PR whose version sources disagree, or whose
   `@tauri-apps/*` npm packages drift from their Rust crates on major/minor, fails there
   and blocks the PR Gate. That PR check has no tag, so it cannot compare against one.
@@ -1489,9 +1498,10 @@ the _net_ user-facing change, not the development path:
 ### Commit, Tag, and Push
 
 ```bash
-# Commit the version bump and changelog (all five version files + CHANGELOG)
+# Commit the version bump and changelog (all seven version files + CHANGELOG)
 git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json agent/Cargo.toml \
-  core/Cargo.toml CHANGELOG.md
+  core/Cargo.toml plugin-runner/Cargo.toml rdp-sidecar/Cargo.toml rdp-sidecar/Cargo.lock \
+  Cargo.lock CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 
 # Create an annotated tag
@@ -2037,8 +2047,8 @@ termiHub targets 40 concurrent terminal sessions. This section covers how to pro
 
 - **Singleton Event Dispatcher** — A single global Tauri event listener per event type (`terminal-output`, `terminal-exit`) instead of per-terminal listeners. Events are routed via O(1) `Map` lookup by `session_id`. Location: `src/services/events.ts`.
 - **Output Batching (requestAnimationFrame)** — Terminal output chunks are buffered and flushed in a single `requestAnimationFrame` callback. Location: `src/components/Terminal/Terminal.tsx`.
-- **Backend Output Coalescing** — The Rust backend coalesces pending output chunks (up to 32 KB) into a single Tauri event emission. Location: `src-tauri/src/terminal/manager.rs`.
-- **Bounded Channels** — Backend output channels use `sync_channel(64)` for backpressure. Location: `src-tauri/src/terminal/backend.rs`.
+- **Backend Output Coalescing** — The Rust backend coalesces pending output chunks (up to 32 KB) into a single Tauri event emission. Location: `core/src/output/coalescer.rs`, driven by the session output pump in `core/src/session/pump.rs`.
+- **Bounded Channels** — Backend output channels are bounded at `OUTPUT_CHANNEL_CAPACITY` (64) for backpressure. Location: `core/src/output/mod.rs`.
 
 ### Profiling with Chrome DevTools
 
@@ -2083,4 +2093,4 @@ The suite covers: PERF-01 (create 40 terminals), PERF-02 (UI responsiveness), PE
 
 ### Session Limit
 
-The backend enforces a maximum of 50 concurrent sessions (`MAX_SESSIONS` in `manager.rs`). Attempting to create more returns an error displayed in the terminal.
+The backend enforces a maximum of 50 concurrent sessions (`MAX_SESSIONS` in `src-tauri/src/session/manager.rs`). Attempting to create more returns an error displayed in the terminal.
