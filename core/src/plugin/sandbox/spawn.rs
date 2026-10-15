@@ -31,7 +31,7 @@ use std::path::Path;
 use termihub_plugin_runner::ipc::ResourceLimits;
 use termihub_plugin_runner::sandbox::SandboxPolicy;
 
-use super::locate::{check_runner, confirm_runner};
+use super::locate::{check_runner, confirm_runner, occupies_channel_fd};
 
 use crate::plugin::HostError;
 
@@ -126,6 +126,14 @@ fn spawn_checked(
     // re-checked to still be the hashed file (Windows: the held pin denies
     // writes to it until the spawn is done).
     let exec_path = match &pinned {
+        // The child's `dup2` onto the channel descriptor would replace the
+        // image before `exec` (failing with a bare `EACCES`); [`check_runner`]
+        // never pins there, so refuse loudly rather than spawn something else.
+        Some(pinned) if occupies_channel_fd(pinned) => {
+            return Err(unavailable(
+                "the pinned runner handle occupies the channel descriptor".to_owned(),
+            ));
+        }
         Some(pinned) => pinned.load_path().map_err(|e| unavailable(e.to_string()))?,
         None => runner.to_owned(),
     };
@@ -583,11 +591,15 @@ mod tests {
 
     /// Spawn through the pinned handle, retrying the Linux `ETXTBSY` race a
     /// freshly written executable can hit while other test threads fork.
+    ///
+    /// The handle is pinned the way [`check_runner`] pins it ([`super::super::locate::pin`]):
+    /// a bare `PinnedLibrary::open_verified` lands on descriptor 3 whenever it
+    /// happens to be free, and the child's `dup2` of the channel onto 3 then
+    /// replaced the image before `exec` — the `EACCES` flake of #4737.
     #[cfg(unix)]
     fn spawn_pinned(path: &Path, digest: &str) -> Result<Spawned, HostError> {
-        use termihub_plugin_runner::loader::PinnedLibrary;
         for _ in 0..50 {
-            let pinned = PinnedLibrary::open_verified(path, digest).unwrap();
+            let pinned = super::super::locate::pin(path, digest).unwrap();
             match spawn_checked(path, Some(pinned), &ResourceLimits::default(), None) {
                 Err(HostError::RunnerUnavailable { detail, .. })
                     if detail.contains("Text file busy") =>

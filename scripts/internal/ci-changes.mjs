@@ -19,8 +19,9 @@
  *
  * Areas:
  *   rust      workspace crates, manifests, toolchain/cargo config, ts-rs output
- *   frontend  React/TS app, JS toolchain config, and ALL of scripts/** (the
- *             scripts/internal vitest suite reads files across it, #3942)
+ *   frontend  React/TS app, JS toolchain config, the rendered visual check
+ *             (tests/visual), and ALL of scripts/** (the scripts/internal
+ *             vitest suite reads files across it, #3942)
  *   sidecar   the workspace-excluded rdp-sidecar crate (own lockfile), plus
  *             what it compiles from outside rdp-sidecar/: termihub-core (a path
  *             dependency), core's path dependency win-security, and the
@@ -145,7 +146,8 @@ const PLUGIN_FUZZ_FILES = new Set(["Cargo.toml"]);
 const SIDECAR_ROOTS = ["core/", "win-security/"];
 const SIDECAR_FILES = new Set(["Cargo.toml"]);
 
-const FRONTEND_ROOTS = ["src/", "public/"];
+// tests/visual/ is the rendered visual check (#4712), run with the frontend.
+const FRONTEND_ROOTS = ["src/", "public/", "tests/visual/"];
 const FRONTEND_FILES = new Set([
   "index.html",
   "package.json",

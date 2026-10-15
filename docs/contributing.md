@@ -197,6 +197,7 @@ each job runs only if the PR can affect it:
 | Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                                         |
 | Rust Code Quality (Windows) (clippy)                      | Rust changed                                                           |
 | Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                               |
+| Rendered Visual Checks (headless Chromium, screenshots)   | frontend changed (incl. `tests/visual/`)                               |
 | Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half              |
 | Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                             |
 | Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)                  |
@@ -514,16 +515,24 @@ CI builds the static-musl Linux agents with [cross-rs](https://github.com/cross-
 line and the `sha256=` of that release's `cross-x86_64-unknown-linux-gnu.tar.gz`. Every workflow
 installs it through the [`setup-cross`](../.github/actions/setup-cross/action.yml) composite
 action, which verifies the hash before extracting; `scripts/internal/build-system-test-agent.sh
---install-cross` reads the same file.
+--install-cross` reads the same file. So do the local setup scripts `scripts/setup-agent-cross.sh` /
+`.cmd`, so local agent builds use the same cross-rs as CI (#4731). On x86_64 Linux they install the
+SHA256-verified tarball; on other hosts they run
+`cargo install cross --locked --git https://github.com/cross-rs/cross --tag v<version>`. If a
+`cross` is already installed they leave it alone and warn when its version differs from the pin.
+Run either script with `--dry-run` to see the pinned version and the install method without
+changing anything.
 
 [`scripts/internal/check-cross-version.mjs`](../scripts/internal/check-cross-version.mjs) (run by
 the Workflow Lint job and `./scripts/check.sh`) fails if the file is malformed or if any workflow,
 composite action or script downloads cross-rs or hard-codes a `CROSS_VERSION`/`CROSS_SHA256`
-itself (#4360).
+itself (#4360). It also fails if a reader stops reading the pin file, or if any script runs
+`cargo install cross` without `--tag`, `--rev` or `--version` (#4731).
 
 **Bumping cross-rs**: write the new version and the SHA256 of its x86_64 Linux tarball to
 `.github/cross-version`, run `node scripts/internal/check-cross-version.mjs`, and let the Agent
-workflow's Linux legs (which run on any change to the pin file) prove it.
+workflow's Linux legs (which run on any change to the pin file) prove it. Developers with an older
+`cross` installed see a warning from `setup-agent-cross` until they reinstall it.
 
 ### GitHub Actions pins
 
@@ -998,6 +1007,8 @@ scripts\build-agents.cmd          # Windows
 
 **All platforms:**
 
+- `setup-agent-cross` installs cross-rs at the version pinned in `.github/cross-version`, the same
+  one CI uses (see [cross-rs version](#cross-rs-version)); `--dry-run` prints the plan
 - All targets use `cross-rs` (Docker/Podman-based) which builds inside containers with the correct musl toolchain and libudev-dev
 - Docker Desktop or Podman Desktop must be running before building
 

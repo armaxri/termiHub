@@ -46,6 +46,10 @@ describe("classify", () => {
     expect(on(classify(["src/components/Foo.tsx", "src/store/appStore.ts"]))).toEqual(["frontend"]);
   });
 
+  it("runs the frontend lanes for a rendered-visual-check change (#4712)", () => {
+    expect(on(classify(["tests/visual/surfaces.spec.ts"]))).toEqual(["frontend"]);
+  });
+
   it("treats a Rust-only PR as rust (no frontend)", () => {
     expect(on(classify(["src-tauri/src/lib.rs"]))).toEqual(["rust", "rustdoc"]);
   });
