@@ -121,7 +121,7 @@ const CA_BUNDLES: &[&str] = &[
 /// symlink into `/usr/share/ca-certificates` on Debian-likes). Empty on a
 /// system without a CA bundle.
 #[cfg(target_os = "linux")]
-fn trust_store_reads() -> Vec<(&'static str, String)> {
+fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
     let mut reads: Vec<(&'static str, String)> = CA_BUNDLES
         .iter()
         .find(|path| Path::new(path).is_file())
@@ -148,20 +148,97 @@ fn trust_store_reads() -> Vec<(&'static str, String)> {
 
 /// macOS: the CA bundle and the platform certificate verifier (`trustd`).
 #[cfg(target_os = "macos")]
-fn trust_store_reads() -> Vec<(&'static str, String)> {
+fn trust_store_reads(_data_dir: &Path) -> Vec<(&'static str, String)> {
     vec![
         ("read", "/etc/ssl/cert.pem".to_owned()),
         ("trust", String::new()),
     ]
 }
 
-/// Windows (#4606): the `ROOT` system store and the CryptoAPI chain engine
-/// (`CertGetCertificateChain` + `CertVerifyCertificateChainPolicy`), the
-/// path `rustls-platform-verifier`, `native-tls` and `rustls-native-certs`
-/// take, from inside the Less-Privileged AppContainer.
+/// Windows (#4606): the CryptoAPI chain engine (`CertGetCertificateChain` +
+/// `CertVerifyCertificateChainPolicy` on the default engine), the path
+/// `rustls-platform-verifier` and `native-tls` take, from inside the
+/// Less-Privileged AppContainer. The probe gets the certificates the way a
+/// TLS client does — as bytes, here the machine's roots exported by this
+/// (unconfined) test into the plugin's data folder — and must find one of
+/// them trusted by the system trust store.
 #[cfg(windows)]
-fn trust_store_reads() -> Vec<(&'static str, String)> {
-    vec![("trust", String::new())]
+fn trust_store_reads(data_dir: &Path) -> Vec<(&'static str, String)> {
+    let folder = data_dir.join("trust-roots");
+    export_machine_roots(&folder);
+    vec![("trust", folder.display().to_string())]
+}
+
+/// Write up to 64 roots of the local machine's `ROOT` store into `folder`,
+/// one DER file each.
+#[cfg(windows)]
+fn export_machine_roots(folder: &Path) {
+    use std::ffi::c_void;
+    #[repr(C)]
+    struct CertContextHead {
+        encoding: u32,
+        der: *const u8,
+        len: u32,
+    }
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CertOpenStore(
+            provider: *const i8,
+            encoding: u32,
+            crypt_provider: usize,
+            flags: u32,
+            para: *const c_void,
+        ) -> *mut c_void;
+        fn CertEnumCertificatesInStore(
+            store: *mut c_void,
+            previous: *const CertContextHead,
+        ) -> *const CertContextHead;
+        fn CertFreeCertificateContext(cert: *const CertContextHead) -> i32;
+        fn CertCloseStore(store: *mut c_void, flags: u32) -> i32;
+    }
+    /// `CERT_STORE_PROV_SYSTEM_W`.
+    const CERT_STORE_PROV_SYSTEM_W: *const i8 = std::ptr::without_provenance(10);
+    /// `CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_READONLY_FLAG |
+    /// CERT_STORE_OPEN_EXISTING_FLAG`.
+    const LOCAL_MACHINE_READ_ONLY: u32 = 0x2_0000 | 0x8000 | 0x4000;
+    std::fs::create_dir_all(folder).unwrap();
+    let name = wide("ROOT");
+    // SAFETY: the system-store provider with a NUL-terminated store name;
+    // the store is closed below.
+    let store = unsafe {
+        CertOpenStore(
+            CERT_STORE_PROV_SYSTEM_W,
+            0,
+            0,
+            LOCAL_MACHINE_READ_ONLY,
+            name.as_ptr().cast(),
+        )
+    };
+    assert!(
+        !store.is_null(),
+        "open the machine ROOT store: {}",
+        std::io::Error::last_os_error()
+    );
+    let mut cert: *const CertContextHead = std::ptr::null();
+    for i in 0..64 {
+        // SAFETY: `store` is open; `cert` is NULL or the previous context,
+        // which this call frees.
+        cert = unsafe { CertEnumCertificatesInStore(store, cert) };
+        if cert.is_null() {
+            break;
+        }
+        // SAFETY: a context from the enumeration: `der` holds `len` bytes.
+        let der = unsafe { std::slice::from_raw_parts((*cert).der, (*cert).len as usize) };
+        std::fs::write(folder.join(format!("root-{i:02}.der")), der).unwrap();
+    }
+    // SAFETY: `cert` is NULL or a context the enumeration handed out; the
+    // store is closed once.
+    unsafe {
+        if !cert.is_null() {
+            CertFreeCertificateContext(cert);
+        }
+        CertCloseStore(store, 0);
+    }
 }
 
 /// A file in the user's home folder whose metadata the plugin must not see
@@ -648,7 +725,7 @@ async fn escape_attempts_fail_and_positive_controls_work() {
     }
     // TLS needs the trust store (#4342, PLG2-004).
     if expect_confined() {
-        for (op, arg) in trust_store_reads() {
+        for (op, arg) in trust_store_reads(&data_dir) {
             let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
             println!("{line}");
             assert!(allowed, "trust-store control failed: {line}");
