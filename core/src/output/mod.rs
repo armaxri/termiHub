@@ -1,4 +1,5 @@
 pub mod coalescer;
+pub mod early;
 pub mod prompt_mark;
 pub mod session_log;
 

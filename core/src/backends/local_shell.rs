@@ -26,7 +26,7 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
-use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
 /// Parse the `envVars` key-value list from connection settings into a map of
@@ -310,6 +310,9 @@ pub struct LocalShell<S: LocalShellSpawner = NativeLocalShellSpawner> {
     /// the channel. The reader thread also holds a reference and picks up
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Holds the output produced between `connect` and the first
+    /// `subscribe_output()`, so it reaches that subscriber (#4719).
+    early_output: EarlyOutput,
     /// Local file browser capability.
     file_backend: LocalFileBrowser,
     /// Local-machine monitoring provider (PROD-0022). Held in an `Arc` so
@@ -342,6 +345,7 @@ impl<S: LocalShellSpawner> LocalShell<S> {
         Self {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            early_output: EarlyOutput::new(),
             file_backend: LocalFileBrowser::new(),
             monitor: Arc::new(LocalMonitoringProvider::new()),
             spawner,
@@ -599,15 +603,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 
         let alive = Arc::new(AtomicBool::new(true));
 
-        // Set up output channel.
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            *guard = Some(tx);
-        }
+        // Set up the output channel. Its receiver is kept for the first subscriber, so output produced
+        // before anyone subscribes waits there instead of being dropped (#4719).
+        self.early_output.open(&self.output_tx);
 
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
         let mut reader = spawned.reader;
@@ -724,6 +722,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
+            self.early_output.clear();
             debug!("Local shell disconnected");
         }
         Ok(())
@@ -789,11 +788,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        if let Ok(mut guard) = self.output_tx.lock() {
-            *guard = Some(tx);
-        }
-        rx
+        self.early_output.subscribe(&self.output_tx)
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
@@ -863,6 +858,7 @@ fn apply_shell_integration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::OUTPUT_CHANNEL_CAPACITY;
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -2089,6 +2085,32 @@ mod tests {
             String::from_utf8_lossy(&output).contains("TEST_REPLACE"),
             "expected output on second subscriber"
         );
+
+        shell.disconnect().await.ok();
+    }
+
+    /// Regression for #4719: output the shell writes before the first
+    /// `subscribe_output()` (its first prompt, say) reaches that subscriber
+    /// instead of a channel whose receiver `connect` had already dropped.
+    #[tokio::test]
+    async fn output_before_the_first_subscribe_is_delivered() {
+        let mock = MockLocalShellSpawner::new();
+        let reader_tx = mock.reader_tx.clone();
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+
+        let sender = reader_tx.lock().unwrap().clone().expect("mock reader");
+        sender
+            .send(b"early-prompt$ ".to_vec())
+            .expect("feed reader");
+        // Let the reader thread forward it before anyone subscribes.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let mut rx = shell.subscribe_output();
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            .await
+            .expect("early output must arrive");
+        assert_eq!(chunk.as_deref(), Some(&b"early-prompt$ "[..]));
 
         shell.disconnect().await.ok();
     }
