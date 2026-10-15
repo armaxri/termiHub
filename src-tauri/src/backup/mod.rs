@@ -82,6 +82,8 @@ mod tests_named_credentials;
 #[cfg(test)]
 mod tests_plugins;
 #[cfg(test)]
+mod tests_real_keychain;
+#[cfg(test)]
 mod tests_restart;
 #[cfg(test)]
 mod tests_trust;

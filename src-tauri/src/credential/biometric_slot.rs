@@ -12,20 +12,10 @@ use zeroize::Zeroizing;
 
 use super::keyring_thread::off_runtime;
 
-// The keyring slot is only constructed by production builds (tests use
-// `MemorySlot`), hence the test-only dead-code expectations below.
 /// OS credential-store service name for the wrapping key. Distinct from the
 /// `termiHub` service used by OS-keychain credential storage.
-#[cfg_attr(
-    test,
-    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
-)]
 const KEYRING_SERVICE: &str = "termiHub-biometric-unlock";
 /// OS credential-store account name for the wrapping key.
-#[cfg_attr(
-    test,
-    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
-)]
 const KEYRING_ACCOUNT: &str = "master-password-store";
 /// Where the wrapping key is kept. Abstracted so tests never touch the real
 /// OS credential store.
@@ -55,13 +45,10 @@ impl<T: SecretSlot + ?Sized> SecretSlot for Arc<T> {
 /// [`SecretSlot`] in the native OS credential store via `keyring`.
 ///
 /// The default slot holds the biometric-unlock wrapping key; [`Self::new`]
-/// names any other entry (a backup restore's seal key, #4414).
-#[cfg_attr(
-    test,
-    expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
-)]
+/// names any other entry (a backup restore's seal key, #4414). Unit tests use
+/// `MemorySlot` instead, except the opt-in real-keychain tests (#4659).
 pub struct KeyringSlot {
-    service: &'static str,
+    service: String,
     account: String,
     entry: Mutex<Option<Arc<keyring::Entry>>>,
 }
@@ -74,29 +61,21 @@ impl Default for KeyringSlot {
 
 impl KeyringSlot {
     /// A slot for the OS credential-store entry `service`/`account`.
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
-    )]
-    pub fn new(service: &'static str, account: &str) -> Self {
+    pub fn new(service: &str, account: &str) -> Self {
         Self {
-            service,
+            service: service.to_string(),
             account: account.to_string(),
             entry: Mutex::new(None),
         }
     }
 
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "tests use MemorySlot, never the OS keyring")
-    )]
     fn entry(&self) -> Result<Arc<keyring::Entry>> {
         let mut guard = self.entry.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.as_ref() {
             return Ok(entry.clone());
         }
         let entry = Arc::new(
-            keyring::Entry::new(self.service, &self.account).with_context(|| {
+            keyring::Entry::new(&self.service, &self.account).with_context(|| {
                 format!(
                     "Failed to open the OS credential store entry {}",
                     self.service
