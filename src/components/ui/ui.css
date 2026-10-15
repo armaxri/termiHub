@@ -400,6 +400,11 @@
   background: var(--border-secondary);
 }
 
+/* A labelled group of options; its rows stack like the ungrouped list. */
+.ui-select__group {
+  display: block;
+}
+
 .ui-select__group-label {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
