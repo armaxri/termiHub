@@ -170,7 +170,7 @@ fn check_runner_with(
 /// Open and hash `runner`, requiring `expected` (`sha256:<hex>`). On Linux the
 /// pinned handle is exec'd as `/proc/self/fd/<n>`; it must not be the
 /// runner's channel descriptor, which the child's `dup2` replaces before exec.
-fn pin(runner: &Path, expected: &str) -> Result<PinnedLibrary, HostError> {
+pub(super) fn pin(runner: &Path, expected: &str) -> Result<PinnedLibrary, HostError> {
     let map = |e: LoadError| match e {
         LoadError::LibraryDigestMismatch {
             expected, actual, ..
@@ -192,7 +192,7 @@ fn pin(runner: &Path, expected: &str) -> Result<PinnedLibrary, HostError> {
 
 /// Whether `pinned` would be exec'd through the runner's channel descriptor
 /// (only Linux / Android exec through a descriptor).
-fn occupies_channel_fd(pinned: &PinnedLibrary) -> bool {
+pub(super) fn occupies_channel_fd(pinned: &PinnedLibrary) -> bool {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let channel = format!("/proc/self/fd/{}", termihub_plugin_runner::ipc::IPC_FD);
