@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -89,6 +91,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -145,6 +149,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       # node is preinstalled on the runner (as for emit-release-notes.mjs below).
       - name: Require green full integration lanes on the release commit
@@ -173,6 +179,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       # node is preinstalled on the runner (as for emit-release-notes.mjs below).
       - name: Summarize unified + integration coverage for the release commit
@@ -207,6 +215,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
           fetch-depth: 0  # Get all history for changelog
 
       # Fail the release BEFORE anything is built or published when agent update
@@ -388,6 +397,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -425,7 +436,11 @@ jobs:
             libarchive-tools
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        # --ignore-scripts (CI2-007, #4360): no dependency lifecycle script runs
+        # on this build runner. The only allowed one (pnpm.onlyBuiltDependencies)
+        # is esbuild's postinstall, an optional speed-up: esbuild resolves its
+        # platform binary from the installed optional dependency without it.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # The RDP sidecar (#1747) is a workspace-excluded crate with its own
       # Cargo.lock. It ships next to the desktop binary via Tauri `externalBin`
@@ -798,6 +813,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
@@ -810,19 +827,9 @@ jobs:
           key: release-agent-${{ matrix.target }}
 
       - name: Install cross-rs
-        # Pinned to a specific cross-rs release and SHA256-verified before extract
-        # (was: curl releases/latest | sudo tar — an unpinned arbitrary binary on
-        # the agent/release build path). See CI-004 / WA-CI-019.
-        env:
-          CROSS_VERSION: "0.2.5"
-          CROSS_SHA256: "642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad"
-        run: |
-          set -euo pipefail
-          url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
-          curl -fsSL "$url" -o /tmp/cross.tar.gz
-          echo "${CROSS_SHA256}  /tmp/cross.tar.gz" | sha256sum -c -
-          sudo tar xz -f /tmp/cross.tar.gz -C /usr/local/bin
-          rm -f /tmp/cross.tar.gz
+        # Pinned + SHA256-verified (CI-004 / WA-CI-019); the version lives only in
+        # .github/cross-version (#4360).
+        uses: ./.github/actions/setup-cross
 
       # No Docker Buildx / custom cross image on CI: the flaky "Set up Docker
       # Buildx" step pulled moby/buildkit from Docker Hub (registry-1.docker.io),
@@ -878,6 +885,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
@@ -944,6 +953,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
@@ -1013,6 +1024,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -1095,6 +1108,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -1229,6 +1244,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Sign, verify and upload agent signatures
         env:
@@ -1459,6 +1476,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          persist-credentials: false
           sparse-checkout: scripts/internal
 
       - name: Publish the draft release (not latest)

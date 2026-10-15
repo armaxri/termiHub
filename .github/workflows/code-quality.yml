@@ -742,7 +742,7 @@ jobs:
   # PR lane only when .github/ changes (the `workflows` area), post-merge always.
   #
   # Both binaries are pinned and SHA256-verified (same rationale as the
-  # shellcheck pin above and the cross-rs pin in release.yml, CI-004): a floating
+  # shellcheck pin above and the cross-rs pin in .github/cross-version, CI-004): a floating
   # version would let a new release add a finding that reds every workflow PR.
   # shellcheck matches the Shell Script Quality job's v0.11.0. Fix findings; an
   # inline `# shellcheck disable=` needs a written reason next to it.
@@ -786,6 +786,19 @@ jobs:
           # -shellcheck pins the binary we verified above rather than whatever
           # the runner image has on PATH first.
           actionlint -color -shellcheck "$RUNNER_TEMP/lint-bin/shellcheck"
+
+      # Fails if .github/cross-version is malformed or a workflow / composite
+      # action / script pins or downloads cross-rs itself instead of reading it
+      # (#4360, WA-CI2-006). Plain Node, preinstalled on the runner.
+      - name: Check cross-rs pin consistency
+        run: node scripts/internal/check-cross-version.mjs
+
+      # Fails if a third-party action is pinned to a tag/branch instead of a
+      # full commit SHA, lacks its "# vX.Y.Z" comment, or is pinned to two
+      # different SHAs across workflows/composite actions (#4360). Dependabot
+      # bumps the pins; this catches hand-edited drift.
+      - name: Check GitHub Actions pin consistency
+        run: node scripts/internal/check-action-pins.mjs
 
   # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
   # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This

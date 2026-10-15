@@ -1,0 +1,50 @@
+name: "Setup cross-rs (pinned version)"
+description: >-
+  Install the ONE cross-rs release every CI job uses (#4360, WA-CI2-006). The
+  version and the SHA256 of its x86_64 Linux tarball are read from
+  `.github/cross-version` — the single source of truth, shared with
+  scripts/internal/build-system-test-agent.sh — and the download is verified
+  before it is extracted (CI-004 / WA-CI-019: never an unpinned arbitrary binary
+  on the agent/release build path). `scripts/internal/check-cross-version.mjs`
+  fails if a workflow downloads cross-rs itself. x86_64 Linux runners only.
+  Bump procedure: docs/contributing.md -> "cross-rs version".
+
+outputs:
+  version:
+    description: 'The pinned cross-rs version that was installed, e.g. "0.2.5"'
+    value: ${{ steps.pin.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Read pinned cross-rs version
+      id: pin
+      shell: bash
+      run: |
+        set -euo pipefail
+        file="$GITHUB_ACTION_PATH/../../cross-version"
+        version="$(sed -n 's/^version=//p' "$file" | tr -d '[:space:]')"
+        sha256="$(sed -n 's/^sha256=//p' "$file" | tr -d '[:space:]')"
+        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error file=.github/cross-version::expected version=X.Y.Z, got '$version'"
+          exit 1
+        fi
+        if ! [[ "$sha256" =~ ^[0-9a-f]{64}$ ]]; then
+          echo "::error file=.github/cross-version::expected sha256=<64 hex chars>, got '$sha256'"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+
+    - name: Install cross-rs ${{ steps.pin.outputs.version }}
+      shell: bash
+      env:
+        CROSS_VERSION: ${{ steps.pin.outputs.version }}
+        CROSS_SHA256: ${{ steps.pin.outputs.sha256 }}
+      run: |
+        set -euo pipefail
+        url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
+        curl -fsSL "$url" -o /tmp/cross.tar.gz
+        echo "${CROSS_SHA256}  /tmp/cross.tar.gz" | sha256sum -c -
+        sudo tar xz -f /tmp/cross.tar.gz -C /usr/local/bin
+        rm -f /tmp/cross.tar.gz
