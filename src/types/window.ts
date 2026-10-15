@@ -66,9 +66,8 @@ export interface HandoffTab {
   editorDirty?: boolean;
   /**
    * The metadata a moved non-session tab needs to reopen in the destination
-   * window (#4501). Only the tab's target travels (which connection, tunnel,
-   * workspace, plugin or diagnostic tool), never unsaved form state: a form
-   * editor with unsaved changes blocks the move instead (see #4500).
+   * window (#4501): which connection, tunnel, workspace, plugin or diagnostic
+   * tool it shows. A form editor's unsaved values travel in `formDraft`.
    */
   connectionEditorMeta?: ConnectionEditorMeta;
   tunnelEditorMeta?: TunnelEditorMeta;
@@ -78,6 +77,30 @@ export interface HandoffTab {
   agentErrorMeta?: AgentErrorMeta;
   /** The agent definition a workspace-restored agent tab points at. */
   workspaceAgentRef?: { agentId: string; definitionId: string };
+  /**
+   * A moved form editor's unsaved values (#4500), restored into the editor in
+   * the destination window, which stays dirty. Never holds a typed secret:
+   * secret fields travel empty (see `src/utils/formDraftSecrets.ts`).
+   */
+  formDraft?: FormDraftSnapshot;
+}
+
+/** The form editors that can hand their unsaved draft to another window (#4500). */
+export type FormDraftKind = "connection-editor" | "tunnel-editor" | "workspace-editor";
+
+/**
+ * A snapshot of one form editor's unsaved draft at the moment it is read
+ * (#4500). Secrets typed into the form never appear in `values`: the editor
+ * clears them before returning the snapshot and names them in
+ * `clearedSecrets`, so the user can be told to type them again.
+ */
+export interface FormDraftSnapshot {
+  /** Which editor the draft belongs to; a draft only restores into the same kind. */
+  kind: FormDraftKind;
+  /** The editor's form values, JSON-serialisable, without secrets. */
+  values: Record<string, unknown>;
+  /** User-facing labels of the non-empty secret fields left out of `values`. */
+  clearedSecrets?: string[];
 }
 
 /**
@@ -180,12 +203,18 @@ export interface WindowCloseDirtyEditor {
   tabId: string;
   title: string;
   /**
-   * Whether "Move tabs" can carry this editor's unsaved buffer to another
-   * window (#4412). A file editor can; the form editors (connection, tunnel,
-   * workspace, settings) cannot, so they block the move until saved or
-   * discarded. Absent means not movable.
+   * Whether "Move tabs" can carry this editor's unsaved state to another
+   * window: a file editor's buffer (#4412), or a connection, tunnel or
+   * workspace editor's form draft (#4500). The Settings panel cannot, so it
+   * blocks the move until saved or discarded. Absent means not movable.
    */
   movable?: boolean;
+  /**
+   * Labels of the secrets typed into this form editor that do not move with it
+   * (#4500): the editor reopens in the other window with them empty, and the
+   * dialog asks the user to type them again there. Absent when there are none.
+   */
+  clearedSecrets?: string[];
 }
 
 /** One tab without a session or unsaved changes in a closing window (#4501). */

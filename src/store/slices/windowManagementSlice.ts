@@ -7,6 +7,7 @@ import {
   canMoveTabWithoutSession,
   currentWindowLabel,
   pruneForeignTransfers,
+  readTabFormDraft,
 } from "../windowHelpers";
 import { collectWindowTabs, getComposedLayout, withComposedLayout } from "../layoutHelpers";
 import { dirtyEditorTabs } from "@/utils/tabLiveSession";
@@ -187,7 +188,9 @@ export interface WindowManagementSlice {
   /**
    * Safe close outcome (#1903): re-parent every owned live session tab into
    * another window so nothing is lost, reusing the #1900 hand-off seam. Dirty
-   * file editors move too, carrying their unsaved buffer (#4412), and so does
+   * file editors move too, carrying their unsaved buffer (#4412), dirty
+   * connection, tunnel and workspace editors carry their form draft without
+   * typed secrets (#4500), and so does
    * every other tab a hand-off can describe, such as saved file editors,
    * Settings or the log viewer (#4501, {@link canMoveTabWithoutSession}).
    * Rejects, moving nothing, while a dirty editor cannot carry its unsaved
@@ -198,17 +201,22 @@ export interface WindowManagementSlice {
 
 /**
  * The window-close dialog rows for this window's unsaved editors (UX2-003),
- * each flagged with whether "Move tabs" can carry its buffer (#4412).
+ * each flagged with whether "Move tabs" can carry its unsaved state (#4412,
+ * #4500) and, for a form editor, which typed secrets stay behind.
  */
 function dirtyEditorRows(
   tabs: TerminalTab[],
   editorDirty: Readonly<Record<string, boolean>>
 ): WindowCloseDirtyEditor[] {
-  return dirtyEditorTabs(tabs, editorDirty).map((tab) => ({
-    tabId: tab.id,
-    title: tab.title,
-    movable: canCarryEditorBuffer(tab),
-  }));
+  return dirtyEditorTabs(tabs, editorDirty).map((tab) => {
+    const clearedSecrets = readTabFormDraft(tab)?.clearedSecrets;
+    return {
+      tabId: tab.id,
+      title: tab.title,
+      movable: canCarryEditorBuffer(tab),
+      ...(clearedSecrets && clearedSecrets.length > 0 ? { clearedSecrets } : {}),
+    };
+  });
 }
 
 /**
