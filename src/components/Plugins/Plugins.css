@@ -456,6 +456,56 @@
   overflow-wrap: anywhere;
 }
 
+/* ── Install dialog — access diff against the installed copy (#4418) ───── */
+.plugin-access-diff__list {
+  list-style: none;
+  margin: var(--spacing-xs-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.plugin-access-diff__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs-sm);
+}
+
+.plugin-access-diff__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--banner-tone, var(--text-secondary));
+}
+
+.plugin-access-diff__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.plugin-access-diff__detail {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.plugin-access-diff__path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* Removed access is secondary: muted, no banner. */
+.plugin-access-diff__removed {
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-access-diff__removed .plugin-access-diff__name {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 /* ── Signer-change (publisher key changed) confirmation (#3489) ────────── */
 .plugin-signer-change__message {
   margin: 0 0 var(--spacing-md);
