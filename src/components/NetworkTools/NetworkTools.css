@@ -342,6 +342,7 @@
 /* A real <button> (#4349) — reset to the row's plain look. */
 .network-sidebar__monitor-info {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-xs);
   flex: 1;
@@ -364,7 +365,10 @@
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   color: var(--text-secondary);
-  flex: 1;
+  /* Keeps at least half the row; when the status and age no longer fit beside
+     it they wrap onto a second line instead of squeezing the URL away (#4709). */
+  flex: 1 1 auto;
+  min-width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
