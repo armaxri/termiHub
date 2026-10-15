@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   clearRegisteredPluginThemes,
   findRegisteredPluginTheme,
-  getRegisteredPluginThemes,
   isPluginThemeSetting,
   loadPluginThemes,
   parsePluginTheme,
@@ -166,7 +165,6 @@ describe("plugin theme registry + resolveTheme", () => {
     const theme = parsePluginTheme("acme", entry("midnight", "Midnight"), themeJson());
     setRegisteredPluginThemes([theme]);
     expect(findRegisteredPluginTheme("plugin:acme:midnight")).toBe(theme);
-    expect(getRegisteredPluginThemes()).toEqual([theme]);
     expect(resolveTheme("plugin:acme:midnight")).toBe(theme);
   });
 

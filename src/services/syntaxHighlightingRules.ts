@@ -178,20 +178,3 @@ export function getThemedRuleColor(ruleId: string): string {
   const key = RULE_COLOR_KEY[ruleId];
   return key ? colors[key] : colors.textPrimary;
 }
-
-/**
- * Returns the built-in rules with their `style.color` resolved against the
- * active theme. Enabled flags are left at their shipped defaults; callers layer
- * user preferences on top.
- */
-export function getThemedBuiltinRules(): HighlightRule[] {
-  return BUILTIN_RULES.map((rule) => ({
-    ...rule,
-    style: { ...rule.style, color: getThemedRuleColor(rule.id) },
-  }));
-}
-
-/** Returns a fresh, deeply-cloned copy of the built-in rules (mutable). */
-export function cloneBuiltinRules(): HighlightRule[] {
-  return BUILTIN_RULES.map((rule) => ({ ...rule, style: { ...rule.style } }));
-}

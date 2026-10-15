@@ -35,13 +35,6 @@ import { frontendLog } from "@/utils/frontendLog";
 /** Global settings a workspace can override (ids match `SETTINGS_REGISTRY`). */
 export type WorkspaceOverridableKey = "theme" | "fontFamily" | "fontSize";
 
-/** The global settings a workspace can override, in display order. */
-export const WORKSPACE_OVERRIDABLE_SETTINGS: readonly WorkspaceOverridableKey[] = [
-  "theme",
-  "fontFamily",
-  "fontSize",
-];
-
 export type { ActiveWorkspaceInfo };
 
 /** Accepted terminal font size override range (mirrors Settings and the backend). */

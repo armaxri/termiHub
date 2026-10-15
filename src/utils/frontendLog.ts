@@ -165,7 +165,12 @@ export function frontendLog(target: string, message: string): void {
   emitFrontendLog("DEBUG", target, message);
 }
 
-/** Emit an INFO log entry visible in the LogViewer. */
+/**
+ * Emit an INFO log entry visible in the LogViewer.
+ *
+ * @public Part of the per-level logger family (DEBUG/INFO/WARN/ERROR); kept even
+ * while no production call site logs at plain INFO.
+ */
 export function frontendInfo(target: string, message: string): void {
   emitFrontendLog("INFO", target, message);
 }

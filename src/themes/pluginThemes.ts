@@ -202,11 +202,6 @@ export function setRegisteredPluginThemes(themes: ThemeDefinition[]): void {
   registeredThemes = themes;
 }
 
-/** All currently registered plugin themes. */
-export function getRegisteredPluginThemes(): ThemeDefinition[] {
-  return registeredThemes;
-}
-
 /** Look up a registered plugin theme by its namespaced id, or `undefined`. */
 export function findRegisteredPluginTheme(id: string): ThemeDefinition | undefined {
   return registeredThemes.find((t) => t.id === id);

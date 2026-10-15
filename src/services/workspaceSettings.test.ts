@@ -14,7 +14,6 @@ import type { AppSettings } from "@/types/connection";
 import type { ActiveWorkspaceInfo, WorkspaceDefinition } from "@/types/workspace";
 import {
   ACTIVE_WORKSPACE_CHANGED_EVENT,
-  WORKSPACE_OVERRIDABLE_SETTINGS,
   __resetActiveWorkspaceForTest,
   activateWorkspace,
   applyEffectiveTheme,
@@ -31,6 +30,7 @@ import {
   resolveEffectiveSettings,
   setActiveWorkspaceLocal,
   subscribeActiveWorkspace,
+  type WorkspaceOverridableKey,
 } from "./workspaceSettings";
 
 vi.mock("@/themes", () => ({
@@ -247,8 +247,15 @@ describe("normalizeWorkspaceSettings", () => {
 
 describe("settings registry coverage", () => {
   it("every workspace-overridable key is a registered, searchable global setting", () => {
+    // A Record keyed by the union makes the type checker fail here when a key
+    // is added to `WorkspaceOverridableKey` without being listed.
+    const overridable: Record<WorkspaceOverridableKey, true> = {
+      theme: true,
+      fontFamily: true,
+      fontSize: true,
+    };
     const ids = new Set(SETTINGS_REGISTRY.map((s) => s.id));
-    for (const key of WORKSPACE_OVERRIDABLE_SETTINGS) {
+    for (const key of Object.keys(overridable)) {
       expect(ids.has(key), `${key} missing from SETTINGS_REGISTRY`).toBe(true);
     }
   });
