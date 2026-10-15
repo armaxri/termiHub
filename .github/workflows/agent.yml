@@ -8,6 +8,9 @@ name: Agent
 #     (`cargo test --workspace`), which still runs on every Rust PR;
 #   * macOS runners are the scarcest in the pool, and dev-build.yml also builds
 #     both macOS agent binaries on every push to develop/main.
+# The one Windows job on the PR lane is "Release crash-report symbols (Windows)"
+# (#4794): a small probe build, and the only per-PR proof that a Windows crash
+# report symbolizes offline with its .pdb.
 on:
   pull_request:
     branches: [ main, develop ]
@@ -225,6 +228,55 @@ jobs:
 
       # Also proves a report symbolizes offline with split debug symbols (#4504).
       - name: Forced panic in a release build names termiHub frames
+        run: scripts/internal/check-release-crash-symbols.sh
+
+  # The Windows half of the offline-symbolization proof (#4794): a release-style
+  # Windows report names no frame (a PE has no symbol table), so only its `.pdb`
+  # can. The same script, under Git Bash, builds the probe with strip = none,
+  # stages the `.pdb` with debug-symbols.mjs, runs the probe with the `.pdb`
+  # moved away, checks the report's `image:` PDB GUID/age, and resolves the
+  # CrashDetails::capture frame to crash_report.rs with llvm-symbolizer — the
+  # command docs/contributing.md -> "Symbolizing a Crash Report" documents. Runs
+  # on PRs too (unlike the post-merge Windows legs below), but only when the
+  # path filter matched: the crash reporter (core), the release profile
+  # (Cargo.toml), the probe, or this check.
+  release-crash-symbols-windows:
+    name: Release crash-report symbols (Windows)
+    runs-on: windows-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.tests != 'false' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release-crash-probe-windows
+          # Reader/writer split (#3328): only pushes to develop/main save.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      # windows-latest ships LLVM in C:\Program Files\LLVM; install it if an
+      # image ever drops it, so the check never silently loses its symbolizer.
+      - name: Ensure llvm-symbolizer
+        run: |
+          if command -v llvm-symbolizer >/dev/null; then
+            exit 0
+          fi
+          if [ ! -x "/c/Program Files/LLVM/bin/llvm-symbolizer.exe" ]; then
+            choco install llvm --no-progress -y
+          fi
+          cygpath -w "/c/Program Files/LLVM/bin" >> "$GITHUB_PATH"
+
+      - name: Windows crash report symbolizes offline with its .pdb
         run: scripts/internal/check-release-crash-symbols.sh
 
   # Build the Windows agent (MSVC) and run the agent/core test suites on a

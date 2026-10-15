@@ -1887,8 +1887,9 @@ atos -o /usr/lib/system/libsystem_pthread.dylib -l 0x0000000182fe6000 0x18300af1
 
 A frame's address is a return address, so subtract 1 when a line looks one statement too
 late. `scripts/internal/check-release-crash-symbols.sh` runs exactly this flow on a
-forced panic (Linux `addr2line`, macOS `atos`) on every PR that touches the release
-profile, the crash reporter or the symbol tooling (agent.yml).
+forced panic (Linux `addr2line`, macOS `atos`, Windows `llvm-symbolizer` against the
+`.pdb`) on every PR that touches the release profile, the crash reporter or the symbol
+tooling (agent.yml).
 
 How the symbols are produced (release.yml, `debug = "line-tables-only"` in the root
 `Cargo.toml`): macOS builds use `split-debuginfo = "packed"` (rustc runs `dsymutil`);
