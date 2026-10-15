@@ -5,10 +5,49 @@
 //! fields serialize as `null` when unset, so they are typed `field?: T | null`
 //! via `ts(optional = nullable)` (#3821) and consumers must treat `null` and
 //! `undefined` alike.
+//!
+//! Latencies (`latency_ms`) are fractional milliseconds (`f64`, microsecond
+//! precision) so sub-millisecond LAN round trips survive the wire (#4542). A
+//! peer that predates this still reads them: an older agent sends whole
+//! numbers, which deserialize into `f64` unchanged, and an agent rounds back to
+//! whole numbers for an older desktop with [`round_latency_for_legacy_client`].
+
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::util::entry_extra::{EntryExtra, StoreEntry};
+
+// ── Latency ──────────────────────────────────────────────────────────────────
+
+/// A measured round trip as fractional milliseconds, rounded to whole
+/// microseconds (#4542) — fine enough for a LAN reply (`0.42` ms) without
+/// carrying float noise like `0.41966700000000004` onto the wire.
+pub fn duration_to_latency_ms(duration: Duration) -> f64 {
+    (duration.as_secs_f64() * 1_000_000.0).round() / 1000.0
+}
+
+/// Rewrite a serialized result's `latencyMs` as whole milliseconds, for a
+/// desktop that predates fractional latencies (#4542).
+///
+/// Such a desktop deserializes `latencyMs` as an unsigned integer and rejects
+/// `0.42` outright, so an agent applies this to every streamed result unless
+/// the desktop advertised `clientCapabilities.fractionalLatency`. Rounds to
+/// nearest (a 0.6 ms reply reads 1 ms, as before #4542), clamps negatives to 0
+/// and leaves `null`, integers and payloads without the key untouched.
+pub fn round_latency_for_legacy_client(payload: &mut Value) {
+    let Some(latency) = payload.get_mut("latencyMs") else {
+        return;
+    };
+    if latency.is_u64() {
+        return;
+    }
+    if let Some(ms) = latency.as_f64() {
+        // `as` saturates: NaN → 0, negatives → 0, huge → u64::MAX.
+        *latency = Value::from(ms.round() as u64);
+    }
+}
 
 // ── Port Scanner ─────────────────────────────────────────────────────────────
 
@@ -38,9 +77,9 @@ pub struct PortScanResult {
     pub host: String,
     pub port: u16,
     pub state: PortState,
-    /// Round-trip latency in milliseconds for open ports.
+    /// Round-trip latency in (fractional) milliseconds for open ports.
     #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
-    pub latency_ms: Option<u64>,
+    pub latency_ms: Option<f64>,
 }
 
 /// Summary emitted when a port scan completes.
@@ -67,9 +106,10 @@ pub struct PortScanSummary {
 pub struct PingResult {
     /// Sequence number (starts at 1).
     pub seq: u32,
-    /// Round-trip time in milliseconds. `None` when the packet timed out.
+    /// Round-trip time in (fractional) milliseconds. `None` when the packet
+    /// timed out.
     #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
-    pub latency_ms: Option<u64>,
+    pub latency_ms: Option<f64>,
     /// IP time-to-live (IPv4) or hop limit (IPv6) from the echo reply.
     ///
     /// `None` on timeout, on TCP fallback (a TCP connect exposes no TTL), and
@@ -111,9 +151,9 @@ pub struct PingStats {
 pub struct PingSweepResult {
     /// The probed address (an IP string, or the original hostname token).
     pub host: String,
-    /// Round-trip time in milliseconds for the reply.
+    /// Round-trip time in (fractional) milliseconds for the reply.
     #[cfg_attr(test, ts(optional = nullable, type = "number | null"))]
-    pub latency_ms: Option<u64>,
+    pub latency_ms: Option<f64>,
     /// Best-effort reverse-DNS hostname for the address, if resolvable.
     #[cfg_attr(test, ts(optional = nullable))]
     pub hostname: Option<String>,
@@ -314,5 +354,109 @@ mod tests {
         let err = "nonsense".parse::<DnsRecordType>().unwrap_err();
         assert_eq!(err.input, "nonsense");
         assert!(err.to_string().contains("nonsense"));
+    }
+
+    // ── Fractional latency (#4542) ──────────────────────────────────────────
+
+    use serde_json::json;
+
+    #[test]
+    fn duration_to_latency_ms_has_microsecond_precision() {
+        assert_eq!(duration_to_latency_ms(Duration::from_micros(420)), 0.42);
+        assert_eq!(duration_to_latency_ms(Duration::from_nanos(1_500)), 0.002);
+        assert_eq!(duration_to_latency_ms(Duration::from_secs(2)), 2000.0);
+        assert_eq!(duration_to_latency_ms(Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn ping_result_round_trips_a_fractional_latency() {
+        let r = PingResult {
+            seq: 1,
+            latency_ms: Some(0.42),
+            ttl: Some(64),
+            timed_out: false,
+            tcp_fallback: false,
+        };
+        let wire = serde_json::to_value(&r).unwrap();
+        assert_eq!(wire["latencyMs"], json!(0.42));
+        let back: PingResult = serde_json::from_value(wire).unwrap();
+        assert_eq!(back.latency_ms, Some(0.42));
+    }
+
+    #[test]
+    fn results_from_an_older_agent_with_integer_latency_still_parse() {
+        // An agent from before #4542 sends whole milliseconds.
+        let ping: PingResult = serde_json::from_value(json!({
+            "seq": 3, "latencyMs": 12, "ttl": 56, "timedOut": false, "tcpFallback": false
+        }))
+        .unwrap();
+        assert_eq!(ping.latency_ms, Some(12.0));
+
+        let sweep: PingSweepResult =
+            serde_json::from_value(json!({ "host": "10.0.0.1", "latencyMs": 1, "hostname": null }))
+                .unwrap();
+        assert_eq!(sweep.latency_ms, Some(1.0));
+
+        let scan: PortScanResult = serde_json::from_value(json!({
+            "host": "10.0.0.1", "port": 22, "state": "open", "latencyMs": 3
+        }))
+        .unwrap();
+        assert_eq!(scan.latency_ms, Some(3.0));
+
+        let timed_out: PingResult = serde_json::from_value(json!({
+            "seq": 4, "latencyMs": null, "timedOut": true, "tcpFallback": false
+        }))
+        .unwrap();
+        assert_eq!(timed_out.latency_ms, None);
+    }
+
+    /// Mirror of the result type a desktop from before #4542 deserializes.
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyPingResult {
+        latency_ms: Option<u64>,
+    }
+
+    #[test]
+    fn a_legacy_desktop_rejects_fractional_latency_unless_rounded() {
+        let r = PingResult {
+            seq: 1,
+            latency_ms: Some(0.6),
+            ttl: None,
+            timed_out: false,
+            tcp_fallback: false,
+        };
+        let mut wire = serde_json::to_value(&r).unwrap();
+        assert!(serde_json::from_value::<LegacyPingResult>(wire.clone()).is_err());
+
+        round_latency_for_legacy_client(&mut wire);
+        let legacy: LegacyPingResult = serde_json::from_value(wire).unwrap();
+        assert_eq!(legacy.latency_ms, Some(1));
+    }
+
+    #[test]
+    fn legacy_rounding_rounds_to_nearest_and_leaves_other_shapes_alone() {
+        let mut v = json!({ "latencyMs": 0.42 });
+        round_latency_for_legacy_client(&mut v);
+        assert_eq!(v, json!({ "latencyMs": 0 }));
+
+        let mut v = json!({ "latencyMs": 1.5 });
+        round_latency_for_legacy_client(&mut v);
+        assert_eq!(v, json!({ "latencyMs": 2 }));
+
+        let mut v = json!({ "latencyMs": -0.4 });
+        round_latency_for_legacy_client(&mut v);
+        assert_eq!(v, json!({ "latencyMs": 0 }));
+
+        for untouched in [
+            json!({ "latencyMs": 7 }),
+            json!({ "latencyMs": null }),
+            json!({ "hop": 1, "rttMs": 0.5 }),
+            json!("not an object"),
+        ] {
+            let mut v = untouched.clone();
+            round_latency_for_legacy_client(&mut v);
+            assert_eq!(v, untouched);
+        }
     }
 }

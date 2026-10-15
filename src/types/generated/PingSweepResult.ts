@@ -12,7 +12,7 @@ export type PingSweepResult = {
  */
 host: string, 
 /**
- * Round-trip time in milliseconds for the reply.
+ * Round-trip time in (fractional) milliseconds for the reply.
  */
 latencyMs?: number | null, 
 /**
