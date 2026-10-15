@@ -13,6 +13,7 @@ import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
 import { withTooltip } from "@/test/tooltip";
 import { usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
+import { ToastProvider, toast } from "@/components/ui";
 import { PluginManagerView } from "./PluginManagerView";
 
 const openMock = vi.fn();
@@ -280,6 +281,100 @@ describe("PluginManagerView (#1997)", () => {
 
     expect(validateMock).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="plugin-install-dialog"]')).toBeNull();
+  });
+
+  /**
+   * #4812: a preview that resolves at once used to leave "Validating plugin…"
+   * stuck over the install dialog — sonner dropped the dismiss because it
+   * landed before the loading toast mounted. Frames run as microtasks here so
+   * a dismiss always beats the toast's mount timer, as it can in a browser.
+   */
+  describe("validating toast with an instant preview (#4812)", () => {
+    let toastRoot: Root;
+    let toastContainer: HTMLDivElement;
+
+    beforeEach(() => {
+      vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+        queueMicrotask(() => cb(0));
+        return 0;
+      });
+      toastContainer = document.createElement("div");
+      document.body.appendChild(toastContainer);
+      toastRoot = createRoot(toastContainer);
+      act(() => toastRoot.render(React.createElement(ToastProvider)));
+      openMock.mockResolvedValue("/tmp/k8s-exec-1.2.0.termihub-plugin");
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      toast.dismiss();
+      act(() => toastRoot.unmount());
+      toastContainer.remove();
+    });
+
+    async function settle() {
+      for (let i = 0; i < 12; i++) {
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        });
+      }
+    }
+
+    async function pickFile() {
+      render();
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="plugin-install-from-file"]')!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+    }
+
+    const validatingToast = () =>
+      Array.from(document.querySelectorAll("[data-sonner-toast]")).find((el) =>
+        (el.textContent ?? "").includes("Validating plugin")
+      );
+
+    it("clears the validating toast when the preview resolves at once", async () => {
+      validateMock.mockResolvedValue({
+        manifest: plugin("k8s", "Kubernetes Exec", "1.2.0", "installed").manifest,
+        hostPlatform: "aarch64-apple-darwin",
+        platformSupported: true,
+      });
+      await pickFile();
+
+      expect(document.querySelector('[data-testid="plugin-install-dialog"]')).not.toBeNull();
+      expect(validatingToast()).toBeUndefined();
+    });
+
+    it("resolves the validating toast into the error when the preview fails at once", async () => {
+      validateMock.mockRejectedValue(new Error("bad manifest"));
+      await pickFile();
+
+      expect(document.querySelector('[data-testid="plugin-install-dialog"]')).toBeNull();
+      expect(validatingToast()).toBeUndefined();
+      expect(document.querySelector('[data-sonner-toast][data-type="loading"]')).toBeNull();
+      expect(document.body.textContent).toContain("Invalid plugin package: bad manifest");
+    });
+
+    it("leaves no toast behind when the install dialog is cancelled", async () => {
+      validateMock.mockResolvedValue({
+        manifest: plugin("k8s", "Kubernetes Exec", "1.2.0", "installed").manifest,
+        hostPlatform: "aarch64-apple-darwin",
+        platformSupported: true,
+      });
+      await pickFile();
+
+      await act(async () => {
+        document
+          .querySelector<HTMLButtonElement>('[data-testid="plugin-install-cancel"]')!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await settle();
+
+      expect(document.querySelector('[data-testid="plugin-install-dialog"]')).toBeNull();
+      expect(document.querySelector("[data-sonner-toast]")).toBeNull();
+    });
   });
 
   describe("update check (PROD-051)", () => {

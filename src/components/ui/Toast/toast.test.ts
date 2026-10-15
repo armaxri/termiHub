@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock sonner so tests exercise the wrapper's behavior, not real DOM toasts.
 const loading = vi.fn((_message: unknown, _opts?: unknown) => "toast-id");
@@ -120,5 +120,39 @@ describe("toast API", () => {
       })
       .catch(() => {});
     expect(error).toHaveBeenCalledWith("boom: x", { id: "toast-id", duration: Infinity });
+  });
+
+  describe("dismiss by id (#4812)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("repeats the dismiss after a pending mount so it cannot be lost", () => {
+      vi.useFakeTimers();
+      toast.dismiss("t1");
+      expect(dismiss).toHaveBeenCalledTimes(1);
+      expect(dismiss).toHaveBeenLastCalledWith("t1");
+
+      vi.runAllTimers();
+      expect(dismiss).toHaveBeenCalledTimes(2);
+      expect(dismiss).toHaveBeenLastCalledWith("t1");
+    });
+
+    it("cancels the repeat when the id is reused for a new toast", () => {
+      vi.useFakeTimers();
+      toast.dismiss("t2");
+      toast.error("Failed again", { id: "t2" });
+
+      vi.runAllTimers();
+      expect(dismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it("dismiss-all passes straight through", () => {
+      vi.useFakeTimers();
+      toast.dismiss();
+      vi.runAllTimers();
+      expect(dismiss).toHaveBeenCalledTimes(1);
+      expect(dismiss).toHaveBeenCalledWith(undefined);
+    });
   });
 });
