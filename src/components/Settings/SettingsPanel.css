@@ -464,7 +464,7 @@
 .settings-panel__list-item-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   min-width: 0;
 }
 
