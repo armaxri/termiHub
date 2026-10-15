@@ -542,3 +542,8 @@ rdp-sidecar = [
     # integrity check hashes the exact file that is spawned (CORE-011).
     "dep:which",
 ]
+
+# `cfg(coverage)` is set by cargo-llvm-cov only (#4693): coverage-only code
+# (the runner's LLVM profile output) compiles in nowhere else.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }

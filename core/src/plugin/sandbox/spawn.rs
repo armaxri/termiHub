@@ -21,7 +21,9 @@
 //!   pipe the host forwards into the plugin's rate-limited log (#4335). No
 //!   descriptor of the host's (its terminal, its journal stream) is inherited.
 //! * **Environment:** scrubbed to [`PASSED_ENV`] — no `SSH_AUTH_SOCK`, no
-//!   `TERMIHUB_*`, nothing else of the host's.
+//!   `TERMIHUB_*`, nothing else of the host's. A coverage build (the
+//!   `coverage` cfg cargo-llvm-cov sets) also passes `LLVM_PROFILE_FILE`
+//!   ([`COVERAGE_ENV`], #4693); no other build does.
 //! * **Integrity (#4202):** the bundled runner is hashed through a retained
 //!   handle and spawned through it before anything is sent to it
 //!   ([`super::locate`]).
@@ -43,6 +45,17 @@ pub(super) const PASSED_ENV: &[&str] = &["LANG", "TZ", "HOME", "TMPDIR"];
 /// temporary directory).
 #[cfg(windows)]
 pub(super) const PASSED_ENV: &[&str] = &["LANG", "TZ", "HOME", "SystemRoot", "TEMP", "TMP"];
+
+/// Coverage builds only (#4693): where the LLVM profile runtime writes the
+/// counters of an instrumented runner. Without it the runner drops a
+/// `default_*.profraw` into its working directory and its lines never reach
+/// the coverage report. `cfg(coverage)` is set by cargo-llvm-cov alone, so a
+/// release or ordinary debug build passes nothing extra.
+#[cfg(coverage)]
+pub(super) const COVERAGE_ENV: &[&str] = &["LLVM_PROFILE_FILE"];
+/// Coverage builds only (#4693): nothing outside a coverage build.
+#[cfg(not(coverage))]
+pub(super) const COVERAGE_ENV: &[&str] = &[];
 
 /// The runner process: `std`'s child on Unix, the job-object-bound child on
 /// Windows (same `id` / `kill` / `try_wait` / `wait` / `stderr` surface).
@@ -90,11 +103,19 @@ pub(super) struct Spawned {
 }
 
 /// The scrubbed environment handed to a runner: [`PASSED_ENV`] entries the
-/// host has set, nothing else.
+/// host has set (plus [`COVERAGE_ENV`] in a coverage build), nothing else.
 pub(super) fn scrubbed_env() -> Vec<(String, std::ffi::OsString)> {
+    scrubbed_env_from(|name| std::env::var_os(name))
+}
+
+/// [`scrubbed_env`] over `lookup` instead of the process environment.
+fn scrubbed_env_from(
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Vec<(String, std::ffi::OsString)> {
     PASSED_ENV
         .iter()
-        .filter_map(|name| std::env::var_os(name).map(|v| ((*name).to_owned(), v)))
+        .chain(COVERAGE_ENV)
+        .filter_map(|name| lookup(name).map(|v| ((*name).to_owned(), v)))
         .collect()
 }
 
@@ -551,8 +572,43 @@ mod tests {
     #[test]
     fn the_scrubbed_environment_only_carries_the_allow_list() {
         for (name, _) in scrubbed_env() {
-            assert!(PASSED_ENV.contains(&name.as_str()), "{name} leaked");
+            assert!(
+                PASSED_ENV.contains(&name.as_str()) || COVERAGE_ENV.contains(&name.as_str()),
+                "{name} leaked"
+            );
         }
+    }
+
+    /// A host environment that sets every variable asked for.
+    fn everything_set(name: &str) -> Option<std::ffi::OsString> {
+        Some(format!("value-of-{name}").into())
+    }
+
+    /// #4693: outside a coverage build the LLVM profile path is scrubbed like
+    /// any other host variable, even when the host has it set.
+    #[cfg(not(coverage))]
+    #[test]
+    fn a_normal_build_scrubs_the_llvm_profile_path() {
+        assert!(COVERAGE_ENV.is_empty());
+        let names: Vec<String> = scrubbed_env_from(everything_set)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(!names.iter().any(|n| n == "LLVM_PROFILE_FILE"), "{names:?}");
+        assert_eq!(names, PASSED_ENV);
+    }
+
+    /// #4693: a coverage build passes the LLVM profile path through, so an
+    /// instrumented runner writes its counters where the report reads them.
+    #[cfg(coverage)]
+    #[test]
+    fn a_coverage_build_passes_the_llvm_profile_path() {
+        let env = scrubbed_env_from(everything_set);
+        assert!(env.contains(&(
+            "LLVM_PROFILE_FILE".to_owned(),
+            "value-of-LLVM_PROFILE_FILE".into()
+        )));
+        assert_eq!(env.len(), PASSED_ENV.len() + 1);
     }
 
     #[test]

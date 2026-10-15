@@ -146,10 +146,17 @@ pub fn apply(policy: &SandboxPolicy, skip: Skip) -> Result<SandboxReport, Sandbo
     // Before landlock (which would deny writing the id maps under `/proc`)
     // and before seccomp (which kills `unshare` and `mount`).
     let namespaces = !skip.namespaces && {
-        let plan = mask::Plan::for_policy(policy).map_err(|e| SandboxError::Apply {
-            layer: layer::NETNS,
-            detail: format!("preparing the home-folder mask failed: {e}"),
-        })?;
+        // Coverage builds only (#4693): the instrumented runner's profile
+        // folder stays reachable under the home-folder mask.
+        #[cfg(coverage)]
+        let extra: Vec<std::path::PathBuf> = super::coverage_profile_dir().into_iter().collect();
+        #[cfg(not(coverage))]
+        let extra: Vec<std::path::PathBuf> = Vec::new();
+        let plan =
+            mask::Plan::for_policy_keeping(policy, &extra).map_err(|e| SandboxError::Apply {
+                layer: layer::NETNS,
+                detail: format!("preparing the home-folder mask failed: {e}"),
+            })?;
         namespaces::enter(&plan)?
     };
     let landlock = if skip.landlock {
@@ -286,6 +293,14 @@ fn apply_landlock(policy: &SandboxPolicy) -> Result<bool, SandboxError> {
                     .map_err(|e| failed(&e))?;
             }
         }
+    }
+    // Coverage builds only (#4693): let the instrumented runner save its
+    // profile at exit.
+    #[cfg(coverage)]
+    if let Some(fd) = super::coverage_profile_dir().and_then(|d| PathFd::new(d).ok()) {
+        ruleset = ruleset
+            .add_rule(PathBeneath::new(fd, AccessFs::from_all(abi)))
+            .map_err(|e| failed(&e))?;
     }
     // No TCP port rule: every bind / connect is denied (ABI v4+).
     let status = ruleset.restrict_self().map_err(|e| failed(&e))?;
