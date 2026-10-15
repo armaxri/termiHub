@@ -1001,6 +1001,37 @@ file) — not in the per-PR lane, since it needs a system bus. The real desktop
 agents' dialogs (GNOME Shell, KDE) remain a manual check — MT-CRED-14 on the
 [release-gating checklist](#release-gating-manual-checklist).
 
+### Real OS keychain: deferred backup-restore import (#4659)
+
+A backup restore into the OS-keychain store defers its credential import until
+the startup swap succeeded (#4414). Unit tests use the `keyring` mock or a fake
+store, and a unit-test `OsKeychainStore` imports right away, so the real path —
+the seal key in the OS credential store, the import applied after the swap, the
+key deleted afterwards, and a failed swap leaving the keychain unchanged — is
+covered by the opt-in tests in
+[`backup/tests_real_keychain.rs`](../src-tauri/src/backup/tests_real_keychain.rs).
+
+They touch the keyring only when `TERMIHUB_REAL_KEYCHAIN_TESTS=1`; otherwise
+they return immediately. They write under run-unique service names (never the
+real `termiHub` / `termiHub-backup-restore` entries) and a drop guard deletes
+every entry, even when an assertion fails. Run them through the wrapper, which
+provides a throwaway store and fails unless both tests ran:
+
+```bash
+scripts/internal/real-keychain-tests.sh
+```
+
+| Platform | Store used by the wrapper                                                                        |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| macOS    | a temporary keychain, made the default only while the tests run; the login keychain is untouched |
+| Linux    | a private `dbus-run-session` with its own `gnome-keyring-daemon` in a temporary directory        |
+| Windows  | the user's Credential Manager (no throwaway store), with the guarantees above                    |
+
+CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`),
+reusing the already-built lib test binary. The guided end-to-end check in the
+real app is MT-CRED-18 on the
+[release-gating checklist](#release-gating-manual-checklist).
+
 ### Live WSL distro lane (Windows, #4008)
 
 The WSL backend's pure logic is unit-tested on every platform, but the regular
