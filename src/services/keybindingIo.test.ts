@@ -92,4 +92,38 @@ describe("keybindingIo", () => {
     });
     expect(parseKeybindingEnvelope(json)).toEqual([{ action: "new-terminal", key: "" }]);
   });
+
+  it.each<[string, unknown, string]>([
+    [
+      "a non-object entry",
+      "Ctrl+b",
+      "Invalid keyboard-shortcuts file: binding at index 0 is not an object.",
+    ],
+    [
+      "a blank action",
+      { action: " ", key: "x" },
+      "Invalid keyboard-shortcuts file: binding at index 0 is missing an action.",
+    ],
+    [
+      "a missing key",
+      { action: "close-tab" },
+      'Invalid keyboard-shortcuts file: binding at index 0 ("close-tab") is missing its key.',
+    ],
+    [
+      "a non-string key",
+      { action: "close-tab", key: 3 },
+      'Invalid keyboard-shortcuts file: binding at index 0 ("close-tab") is missing its key.',
+    ],
+  ])("rejects %s with the exact message (#4386)", (_label, entry, message) => {
+    const json = JSON.stringify({ version: KEYBINDING_EXPORT_VERSION, bindings: [entry] });
+    expect(() => parseKeybindingEnvelope(json)).toThrow(message);
+  });
+
+  it("strips unknown keys from entries (#4386)", () => {
+    const json = JSON.stringify({
+      version: KEYBINDING_EXPORT_VERSION,
+      bindings: [{ action: "close-tab", key: "q", global: true }],
+    });
+    expect(parseKeybindingEnvelope(json)).toStrictEqual([{ action: "close-tab", key: "q" }]);
+  });
 });

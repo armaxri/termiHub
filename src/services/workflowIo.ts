@@ -2,9 +2,9 @@
  * Import/export of workflows as portable JSON files (#1852 foundation; the
  * file-dialog UI that drives these is #1856).
  *
- * Pure, dependency-free helpers: serialising workflows into a small versioned
- * envelope, validating/parsing an envelope back into workflows (including the
- * discriminated {@link WorkflowStep} / {@link WorkflowTrigger} unions), and
+ * Pure helpers: serialising workflows into a small versioned envelope,
+ * validating/parsing an envelope back into workflows (declaratively, with the
+ * zod schemas in {@link "@/services/workflowSchema"}, #4386), and
  * resolving id/name collisions when merging imported workflows into an existing
  * library. Mirrors {@link "@/services/macroIo"}; keeping the
  * serialise/validate/collision logic here makes it unit-testable in isolation.
@@ -12,19 +12,21 @@
 
 import type {
   Workflow,
-  WorkflowComparisonOp,
-  WorkflowCondition,
-  WorkflowLoopMode,
   WorkflowParameter,
-  WorkflowParameterType,
   WorkflowStep,
   WorkflowStepKind,
-  WorkflowDisconnectCause,
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "@/types/workflow";
+import {
+  child,
+  type ImportIssue,
+  isNonBlankString,
+  isRecord,
+  parseImportEnvelope,
+} from "@/services/importEnvelope";
 import { newId } from "@/services/transport/ids";
-import { validateOutputPattern } from "@/services/workflowOutputTriggers";
+import { importedWorkflowSchema } from "@/services/workflowSchema";
 
 /**
  * Current version of the workflow export envelope. Bump only on an incompatible
@@ -74,64 +76,6 @@ export interface WorkflowImportResult {
   removedScriptSourcePaths: string[];
 }
 
-/** All valid step-kind discriminants. */
-const STEP_KINDS: readonly WorkflowStepKind[] = [
-  "send-command",
-  "run-script",
-  "run-macro",
-  "wait",
-  "run-local-process",
-  "conditional",
-  "loop",
-  "wait-for-output",
-];
-
-/** All valid condition comparison operators (PROD-0044). */
-const CONDITION_OPS: readonly WorkflowComparisonOp[] = [
-  "eq",
-  "ne",
-  "gt",
-  "lt",
-  "gte",
-  "lte",
-  "contains",
-];
-
-/** All valid trigger-kind discriminants. */
-const TRIGGER_KINDS: readonly WorkflowTriggerKind[] = [
-  "manual",
-  "on-connect",
-  "hotkey",
-  "on-disconnect",
-  "on-output-match",
-];
-
-/** All valid on-disconnect `when` values (#3791). */
-const DISCONNECT_CAUSES: readonly WorkflowDisconnectCause[] = ["drop", "user-close", "any"];
-
-/** Validate a trigger's `connectionIds` array. */
-function validateConnectionIds(raw: Record<string, unknown>, at: string, kind: string): string[] {
-  if (!Array.isArray(raw.connectionIds) || raw.connectionIds.some((c) => typeof c !== "string")) {
-    throw new Error(`Invalid workflow file: ${at} (${kind}) has invalid "connectionIds".`);
-  }
-  return raw.connectionIds as string[];
-}
-
-/** Validate an optional non-negative number field of a trigger. */
-function optionalNonNegative(
-  raw: Record<string, unknown>,
-  field: string,
-  at: string,
-  kind: string
-): number | undefined {
-  const value = raw[field];
-  if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new Error(`Invalid workflow file: ${at} (${kind}) has an invalid "${field}".`);
-  }
-  return value;
-}
-
 /**
  * Serialise workflows into a pretty-printed export envelope string ready to
  * write to a `.json` file. Works for a single workflow (`[workflow]`) or the
@@ -145,372 +89,194 @@ export function serializeWorkflows(workflows: Workflow[]): string {
   return `${JSON.stringify(envelope, null, 2)}\n`;
 }
 
-/** Type guard: a JSON value is a non-null, non-array object. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+// ---------------------------------------------------------------------------
+// Human-readable error mapping for the zod import schema
+// ---------------------------------------------------------------------------
 
-/** Validate one raw step, throwing a clear error that names the offending step. */
-function validateStep(raw: unknown, where: string, stepIndex: number): WorkflowStep {
-  const step = validateStepBody(raw, where, stepIndex);
-  // `validateStepBody` already proved `raw` is a record.
-  applyErrorHandling(step, raw as Record<string, unknown>, `step ${stepIndex} of ${where}`);
-  return step;
-}
+/** The kind-specific fields of step kind `K` (the policy fields are shared). */
+type StepFieldOf<K extends WorkflowStepKind> = Exclude<
+  keyof Extract<WorkflowStep, { kind: K }>,
+  "kind" | "continueOnError" | "retry"
+>;
 
 /**
- * Copy a raw step's optional error-handling policy (PROD-045) onto the validated
- * step, type-checking each field. Out-of-range values are accepted here — the
- * runner clamps the retry count and delay to its safety caps at run time.
+ * What is wrong when a step's kind-specific field fails validation. Typed so a
+ * new field on any step kind is a compile error until it has a message.
  */
-function applyErrorHandling(step: WorkflowStep, raw: Record<string, unknown>, at: string): void {
-  if (raw.continueOnError !== undefined) {
-    if (typeof raw.continueOnError !== "boolean") {
-      throw new Error(`Invalid workflow file: ${at} has an invalid "continueOnError".`);
-    }
-    step.continueOnError = raw.continueOnError;
-  }
-  if (raw.retry === undefined) return;
-  const retry = raw.retry;
-  const isNonNegative = (v: unknown): v is number =>
-    typeof v === "number" && Number.isFinite(v) && v >= 0;
-  if (
-    !isRecord(retry) ||
-    !isNonNegative(retry.count) ||
-    !Number.isInteger(retry.count) ||
-    (retry.delayMs !== undefined && !isNonNegative(retry.delayMs)) ||
-    (retry.backoff !== undefined && retry.backoff !== "fixed" && retry.backoff !== "exponential")
-  ) {
-    throw new Error(`Invalid workflow file: ${at} has an invalid "retry" policy.`);
-  }
-  step.retry = { count: retry.count };
-  if (retry.delayMs !== undefined) step.retry.delayMs = retry.delayMs;
-  if (retry.backoff !== undefined) step.retry.backoff = retry.backoff;
+const STEP_FIELD_PROBLEMS: { [K in WorkflowStepKind]: Record<StepFieldOf<K>, string> } = {
+  "send-command": { command: 'is missing "command".' },
+  "run-script": {
+    script: 'is missing "script".',
+    perLineDelayMs: "has an invalid delay.",
+    sourcePath: "has an invalid sourcePath.",
+  },
+  "run-macro": { macroId: 'is missing "macroId".' },
+  wait: { delayMs: 'has an invalid "delayMs".' },
+  "run-local-process": { program: 'is missing "program".', args: 'has invalid "args".' },
+  conditional: {
+    condition: 'is missing "condition".',
+    then: 'is missing "then".',
+    else: 'has an invalid "else".',
+  },
+  loop: { loop: 'has an invalid "loop" mode.', body: 'has an invalid "body".' },
+  "wait-for-output": {
+    pattern: 'is missing "pattern".',
+    isRegex: 'has an invalid "isRegex".',
+    timeoutMs: 'has an invalid "timeoutMs".',
+  },
+};
+
+/** The kind-specific fields of trigger kind `K`. */
+type TriggerFieldOf<K extends WorkflowTriggerKind> = Exclude<
+  keyof Extract<WorkflowTrigger, { kind: K }>,
+  "kind"
+>;
+
+/** What is wrong when a trigger field fails validation (exhaustive, like steps). */
+const TRIGGER_FIELD_PROBLEMS: { [K in WorkflowTriggerKind]: Record<TriggerFieldOf<K>, string> } = {
+  manual: {},
+  "on-connect": { connectionIds: 'has invalid "connectionIds".' },
+  hotkey: { binding: 'is missing "binding".' },
+  "on-disconnect": {
+    connectionIds: 'has invalid "connectionIds".',
+    when: 'has an invalid "when".',
+  },
+  "on-output-match": {
+    connectionIds: 'has invalid "connectionIds".',
+    pattern: 'is missing "pattern".',
+    isRegex: 'has an invalid "isRegex".',
+    cooldownMs: 'has an invalid "cooldownMs".',
+    maxFiresPerSession: 'has an invalid "maxFiresPerSession".',
+  },
+};
+
+/** What is wrong when a parameter field fails validation (`type` is worded separately). */
+const PARAMETER_FIELD_PROBLEMS: Record<Exclude<keyof WorkflowParameter, "type">, string> = {
+  name: "is missing a name.",
+  label: 'has a non-string "label".',
+  default: 'has an invalid "default".',
+  required: 'has a non-boolean "required".',
+  options: 'has invalid "options".',
+};
+
+/** Look up `field` in a problem table, falling back to a generic message. */
+function problemFor(table: object, field: PropertyKey | undefined): string {
+  const problem: unknown = field === undefined ? undefined : child(table, String(field));
+  return typeof problem === "string" ? problem : "is malformed.";
 }
 
-/** Validate the kind-specific fields of one raw step. */
-function validateStepBody(raw: unknown, where: string, stepIndex: number): WorkflowStep {
-  const at = `step ${stepIndex} of ${where}`;
-  if (!isRecord(raw) || typeof raw.kind !== "string") {
-    throw new Error(`Invalid workflow file: ${at} is malformed.`);
-  }
+/** The message for a raw entry whose `kind` is missing, non-string, or unknown. */
+function describeKind(raw: unknown, at: string): string {
+  if (!isRecord(raw) || typeof raw.kind !== "string") return `${at} is malformed.`;
+  return `${at} has unknown kind "${raw.kind}".`;
+}
+
+/** The problem with a structured condition, given the issue path inside it. */
+function conditionProblem(path: PropertyKey[]): string {
+  const [field] = path;
+  if (field === undefined) return 'is missing "condition".';
+  if (field === "op") return "has an invalid condition operator.";
+  return "has invalid condition operands.";
+}
+
+/** The problem with a loop's mode, given the issue path inside it. */
+function loopModeProblem(path: PropertyKey[]): string {
+  const [field, ...rest] = path;
+  if (field === "count") return 'has an invalid "count".';
+  if (field === "condition") return conditionProblem(rest);
+  return 'has an invalid "loop" mode.';
+}
+
+/** Describe an issue inside one step at location `at` (recursing into containers). */
+function describeStepIssue(raw: unknown, at: string, path: PropertyKey[]): string {
+  const [field, ...rest] = path;
+  if (field === undefined || field === "kind" || !isRecord(raw)) return describeKind(raw, at);
+  if (field === "continueOnError") return `${at} has an invalid "continueOnError".`;
+  if (field === "retry") return `${at} has an invalid "retry" policy.`;
+
   const kind = raw.kind as WorkflowStepKind;
-  if (!STEP_KINDS.includes(kind)) {
-    throw new Error(`Invalid workflow file: ${at} has unknown kind "${raw.kind}".`);
+  const [index, ...inner] = rest;
+  const isContainer = field === "then" || field === "else" || field === "body";
+  if (isContainer && typeof index === "number") {
+    return describeStepIssue(child(raw[field], index), `step ${index} of ${at} ${field}`, inner);
   }
-
-  switch (kind) {
-    case "send-command":
-      if (typeof raw.command !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (send-command) is missing "command".`);
-      }
-      return { kind, command: raw.command };
-    case "run-script": {
-      if (typeof raw.script !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (run-script) is missing "script".`);
-      }
-      const step: WorkflowStep = { kind, script: raw.script };
-      if (raw.perLineDelayMs !== undefined) {
-        if (typeof raw.perLineDelayMs !== "number" || raw.perLineDelayMs < 0) {
-          throw new Error(`Invalid workflow file: ${at} (run-script) has an invalid delay.`);
-        }
-        step.perLineDelayMs = raw.perLineDelayMs;
-      }
-      if (raw.sourcePath !== undefined) {
-        if (typeof raw.sourcePath !== "string") {
-          throw new Error(`Invalid workflow file: ${at} (run-script) has an invalid sourcePath.`);
-        }
-        step.sourcePath = raw.sourcePath;
-      }
-      return step;
-    }
-    case "run-macro":
-      if (typeof raw.macroId !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (run-macro) is missing "macroId".`);
-      }
-      return { kind, macroId: raw.macroId };
-    case "wait":
-      if (typeof raw.delayMs !== "number" || !Number.isFinite(raw.delayMs) || raw.delayMs < 0) {
-        throw new Error(`Invalid workflow file: ${at} (wait) has an invalid "delayMs".`);
-      }
-      return { kind, delayMs: raw.delayMs };
-    case "run-local-process": {
-      if (typeof raw.program !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (run-local-process) is missing "program".`);
-      }
-      if (!Array.isArray(raw.args) || raw.args.some((a) => typeof a !== "string")) {
-        throw new Error(`Invalid workflow file: ${at} (run-local-process) has invalid "args".`);
-      }
-      return { kind, program: raw.program, args: raw.args as string[] };
-    }
-    case "conditional": {
-      const condition = validateCondition(raw.condition, at);
-      if (!Array.isArray(raw.then)) {
-        throw new Error(`Invalid workflow file: ${at} (conditional) is missing "then".`);
-      }
-      const thenSteps = raw.then.map((s, j) => validateStep(s, `${at} then`, j));
-      const step: WorkflowStep = { kind, condition, then: thenSteps };
-      if (raw.else !== undefined) {
-        if (!Array.isArray(raw.else)) {
-          throw new Error(`Invalid workflow file: ${at} (conditional) has an invalid "else".`);
-        }
-        step.else = raw.else.map((s, j) => validateStep(s, `${at} else`, j));
-      }
-      return step;
-    }
-    case "loop": {
-      const loop = validateLoopMode(raw.loop, at);
-      if (raw.body !== undefined && !Array.isArray(raw.body)) {
-        throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "body".`);
-      }
-      const body = Array.isArray(raw.body)
-        ? raw.body.map((s, j) => validateStep(s, `${at} body`, j))
-        : [];
-      return { kind, loop, body };
-    }
-    case "wait-for-output": {
-      if (typeof raw.pattern !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (wait-for-output) is missing "pattern".`);
-      }
-      const step: WorkflowStep = { kind, pattern: raw.pattern };
-      if (raw.isRegex !== undefined) {
-        if (typeof raw.isRegex !== "boolean") {
-          throw new Error(
-            `Invalid workflow file: ${at} (wait-for-output) has an invalid "isRegex".`
-          );
-        }
-        step.isRegex = raw.isRegex;
-      }
-      if (raw.timeoutMs !== undefined) {
-        if (
-          typeof raw.timeoutMs !== "number" ||
-          !Number.isFinite(raw.timeoutMs) ||
-          raw.timeoutMs < 0
-        ) {
-          throw new Error(
-            `Invalid workflow file: ${at} (wait-for-output) has an invalid "timeoutMs".`
-          );
-        }
-        step.timeoutMs = raw.timeoutMs;
-      }
-      return step;
-    }
-    default: {
-      const _exhaustive: never = kind;
-      throw new Error(`Invalid workflow file: ${at} has unknown kind ${String(_exhaustive)}.`);
-    }
+  if (kind === "conditional" && field === "condition") {
+    return `${at} (${kind}) ${conditionProblem(rest)}`;
   }
+  if (kind === "loop" && field === "loop") return `${at} (${kind}) ${loopModeProblem(rest)}`;
+  return `${at} (${kind}) ${problemFor(STEP_FIELD_PROBLEMS[kind], field)}`;
 }
 
-/** Validate a conditional step's structured condition (PROD-0044). */
-function validateCondition(raw: unknown, at: string): WorkflowCondition {
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid workflow file: ${at} (conditional) is missing "condition".`);
-  }
-  if (typeof raw.left !== "string" || typeof raw.right !== "string") {
-    throw new Error(`Invalid workflow file: ${at} (conditional) has invalid condition operands.`);
-  }
-  if (typeof raw.op !== "string" || !CONDITION_OPS.includes(raw.op as WorkflowComparisonOp)) {
-    throw new Error(
-      `Invalid workflow file: ${at} (conditional) has an invalid condition operator.`
-    );
-  }
-  return { left: raw.left, op: raw.op as WorkflowComparisonOp, right: raw.right };
-}
-
-/** Validate a loop step's mode — a fixed `count` or a `while` condition (PROD-044). */
-function validateLoopMode(raw: unknown, at: string): WorkflowLoopMode {
-  if (!isRecord(raw) || (raw.kind !== "count" && raw.kind !== "while")) {
-    throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "loop" mode.`);
-  }
-  if (raw.kind === "count") {
-    if (typeof raw.count !== "number" || !Number.isFinite(raw.count) || raw.count < 0) {
-      throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "count".`);
-    }
-    return { kind: "count", count: raw.count };
-  }
-  return { kind: "while", condition: validateCondition(raw.condition, at) };
-}
-
-/** Validate one raw trigger, throwing a clear error when a field is malformed. */
-function validateTrigger(raw: unknown, where: string, triggerIndex: number): WorkflowTrigger {
-  const at = `trigger ${triggerIndex} of ${where}`;
-  if (!isRecord(raw) || typeof raw.kind !== "string") {
-    throw new Error(`Invalid workflow file: ${at} is malformed.`);
-  }
+/** Describe an issue inside one trigger at location `at`. */
+function describeTriggerIssue(
+  issue: ImportIssue,
+  raw: unknown,
+  at: string,
+  path: PropertyKey[]
+): string {
+  const [field] = path;
+  if (field === undefined || field === "kind" || !isRecord(raw)) return describeKind(raw, at);
   const kind = raw.kind as WorkflowTriggerKind;
-  if (!TRIGGER_KINDS.includes(kind)) {
-    throw new Error(`Invalid workflow file: ${at} has unknown kind "${raw.kind}".`);
+  if (issue.code === "custom" && field === "pattern") {
+    // The output-pattern refinement: the issue message is the bare reason.
+    return `${at} (${kind}) has an unusable pattern (${issue.message}).`;
   }
-
-  switch (kind) {
-    case "manual":
-      return { kind };
-    case "on-connect":
-      return { kind, connectionIds: validateConnectionIds(raw, at, kind) };
-    case "hotkey":
-      if (typeof raw.binding !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (hotkey) is missing "binding".`);
-      }
-      return { kind, binding: raw.binding };
-    case "on-disconnect": {
-      const connectionIds = validateConnectionIds(raw, at, kind);
-      if (raw.when === undefined) return { kind, connectionIds };
-      if (!DISCONNECT_CAUSES.includes(raw.when as WorkflowDisconnectCause)) {
-        throw new Error(`Invalid workflow file: ${at} (on-disconnect) has an invalid "when".`);
-      }
-      return { kind, connectionIds, when: raw.when as WorkflowDisconnectCause };
-    }
-    case "on-output-match": {
-      const connectionIds = validateConnectionIds(raw, at, kind);
-      if (typeof raw.pattern !== "string") {
-        throw new Error(`Invalid workflow file: ${at} (on-output-match) is missing "pattern".`);
-      }
-      if (raw.isRegex !== undefined && typeof raw.isRegex !== "boolean") {
-        throw new Error(`Invalid workflow file: ${at} (on-output-match) has an invalid "isRegex".`);
-      }
-      const isRegex = raw.isRegex as boolean | undefined;
-      // An invalid or unbounded pattern is rejected here, never stored.
-      const patternError = validateOutputPattern(raw.pattern, isRegex);
-      if (patternError) {
-        throw new Error(
-          `Invalid workflow file: ${at} (on-output-match) has an unusable pattern (${patternError}).`
-        );
-      }
-      const trigger: WorkflowTrigger = { kind, connectionIds, pattern: raw.pattern };
-      if (isRegex !== undefined) trigger.isRegex = isRegex;
-      const cooldownMs = optionalNonNegative(raw, "cooldownMs", at, kind);
-      if (cooldownMs !== undefined) trigger.cooldownMs = cooldownMs;
-      const maxFires = optionalNonNegative(raw, "maxFiresPerSession", at, kind);
-      if (maxFires !== undefined) trigger.maxFiresPerSession = maxFires;
-      return trigger;
-    }
-    default: {
-      const _exhaustive: never = kind;
-      throw new Error(`Invalid workflow file: ${at} has unknown kind ${String(_exhaustive)}.`);
-    }
-  }
+  return `${at} (${kind}) ${problemFor(TRIGGER_FIELD_PROBLEMS[kind], field)}`;
 }
 
-/** The recognised parameter value types (PROD-0040). */
-const PARAMETER_TYPES: readonly WorkflowParameterType[] = [
-  "string",
-  "number",
-  "boolean",
-  "enum",
-] as const;
-
-/**
- * Validate one raw workflow parameter (PROD-0040), throwing a clear error that
- * names the offending parameter. Returns a normalised {@link WorkflowParameter}
- * with only the optional fields that were actually present, so an imported
- * parameter round-trips without gaining empty keys.
- */
-function validateParameter(raw: unknown, where: string, paramIndex: number): WorkflowParameter {
-  const at = `parameter ${paramIndex} of ${where}`;
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid workflow file: ${at} is malformed.`);
-  }
-  if (typeof raw.name !== "string" || raw.name.trim() === "") {
-    throw new Error(`Invalid workflow file: ${at} is missing a name.`);
-  }
-  const type = raw.type as WorkflowParameterType;
-  if (typeof raw.type !== "string" || !PARAMETER_TYPES.includes(type)) {
-    throw new Error(`Invalid workflow file: ${at} has unknown type "${String(raw.type)}".`);
-  }
-  const param: WorkflowParameter = { name: raw.name, type };
-  if (raw.label !== undefined) {
-    if (typeof raw.label !== "string") {
-      throw new Error(`Invalid workflow file: ${at} has a non-string "label".`);
-    }
-    param.label = raw.label;
-  }
-  if (raw.default !== undefined) {
-    if (
-      typeof raw.default !== "string" &&
-      typeof raw.default !== "number" &&
-      typeof raw.default !== "boolean"
-    ) {
-      throw new Error(`Invalid workflow file: ${at} has an invalid "default".`);
-    }
-    param.default = raw.default;
-  }
-  if (raw.required !== undefined) {
-    if (typeof raw.required !== "boolean") {
-      throw new Error(`Invalid workflow file: ${at} has a non-boolean "required".`);
-    }
-    param.required = raw.required;
-  }
-  if (raw.options !== undefined) {
-    if (!Array.isArray(raw.options) || raw.options.some((o) => typeof o !== "string")) {
-      throw new Error(`Invalid workflow file: ${at} has invalid "options".`);
-    }
-    param.options = raw.options as string[];
-  }
-  return param;
+/** Describe an issue inside one parameter at location `at`. */
+function describeParameterIssue(raw: unknown, at: string, path: PropertyKey[]): string {
+  const [field] = path;
+  if (field === undefined || !isRecord(raw)) return `${at} is malformed.`;
+  if (field === "type") return `${at} has unknown type "${String(raw.type)}".`;
+  return `${at} ${problemFor(PARAMETER_FIELD_PROBLEMS, field)}`;
 }
 
 /**
- * Validate one raw workflow entry from an imported file, throwing a clear error
- * that names the offending workflow (by index). Returns a normalised
- * {@link Workflow} — tolerant of a missing `description`/`tags`/`id`/timestamps
- * since the importer re-stamps those, but strict about the load-bearing `name`,
- * `steps`, and `triggers`.
+ * Describe an issue inside workflow `index` as `<location> <problem>`. The
+ * location names the workflow by index and — once its name is valid — by name,
+ * then the offending step / trigger / parameter.
  */
-function validateWorkflow(raw: unknown, index: number): Workflow {
+function describeWorkflowIssue(
+  issue: ImportIssue,
+  raw: unknown,
+  index: number,
+  path: PropertyKey[]
+): string {
   const where = `workflow at index ${index}`;
-  if (!isRecord(raw)) {
-    throw new Error(`Invalid workflow file: ${where} is not an object.`);
+  if (!isRecord(raw)) return `${where} is not an object.`;
+  const label = isNonBlankString(raw.name) ? `${where} ("${raw.name}")` : where;
+  const [field, entry, ...rest] = path;
+  const nested = typeof entry === "number";
+  switch (field) {
+    case "name":
+      return `${where} is missing a name.`;
+    case "steps":
+      return nested
+        ? describeStepIssue(child(raw.steps, entry), `step ${entry} of ${label}`, rest)
+        : `${label} is missing its steps.`;
+    case "triggers":
+      return nested
+        ? describeTriggerIssue(
+            issue,
+            child(raw.triggers, entry),
+            `trigger ${entry} of ${label}`,
+            rest
+          )
+        : `${label} has malformed triggers.`;
+    case "parameters":
+      return nested
+        ? describeParameterIssue(
+            child(raw.parameters, entry),
+            `parameter ${entry} of ${label}`,
+            rest
+          )
+        : `${label} has malformed parameters.`;
+    case "tags":
+      return `${label} has malformed tags.`;
+    default:
+      return `${label} is malformed.`;
   }
-  if (typeof raw.name !== "string" || raw.name.trim() === "") {
-    throw new Error(`Invalid workflow file: ${where} is missing a name.`);
-  }
-  if (!Array.isArray(raw.steps)) {
-    throw new Error(`Invalid workflow file: ${where} ("${raw.name}") is missing its steps.`);
-  }
-
-  const label = `${where} ("${raw.name}")`;
-  const steps = raw.steps.map((step, i) => validateStep(step, label, i));
-
-  let triggers: WorkflowTrigger[] = [];
-  if (raw.triggers !== undefined) {
-    if (!Array.isArray(raw.triggers)) {
-      throw new Error(`Invalid workflow file: ${label} has malformed triggers.`);
-    }
-    triggers = raw.triggers.map((trigger, i) => validateTrigger(trigger, label, i));
-  }
-
-  let tags: string[] = [];
-  if (raw.tags !== undefined) {
-    if (!Array.isArray(raw.tags) || raw.tags.some((tag) => typeof tag !== "string")) {
-      throw new Error(`Invalid workflow file: ${label} has malformed tags.`);
-    }
-    tags = raw.tags as string[];
-  }
-
-  let parameters: WorkflowParameter[] | undefined;
-  if (raw.parameters !== undefined) {
-    if (!Array.isArray(raw.parameters)) {
-      throw new Error(`Invalid workflow file: ${label} has malformed parameters.`);
-    }
-    // Preserve the field only when it carries entries, so a parameter-free
-    // workflow round-trips byte-identically (no empty `parameters` key).
-    if (raw.parameters.length > 0) {
-      parameters = raw.parameters.map((p, i) => validateParameter(p, label, i));
-    }
-  }
-
-  return {
-    id: typeof raw.id === "string" ? raw.id : "",
-    name: raw.name,
-    description: typeof raw.description === "string" ? raw.description : undefined,
-    tags,
-    steps,
-    triggers,
-    ...(parameters ? { parameters } : {}),
-    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
-    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
-  };
 }
 
 /**
@@ -518,28 +284,34 @@ function validateWorkflow(raw: unknown, index: number): Workflow {
  * contains. Throws an `Error` with a human-readable, recoverable message for
  * malformed JSON, a missing/unsupported envelope version, or any malformed
  * workflow — so a bad file never corrupts the library, it just surfaces a toast.
+ *
+ * Validation is the declarative {@link importedWorkflowSchema}: every field of
+ * every step / trigger / parameter kind is checked, unknown keys are stripped
+ * (a forged extra key never survives), and absent optional keys stay absent.
  */
 export function parseWorkflowEnvelope(json: string): Workflow[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error("Invalid workflow file: the file is not valid JSON.");
-  }
-
-  if (!isRecord(parsed)) {
-    throw new Error("Invalid workflow file: expected a workflow export object.");
-  }
-  if (parsed.version !== WORKFLOW_EXPORT_VERSION) {
-    throw new Error(
-      `Unsupported workflow file version: ${String(parsed.version)} (expected ${WORKFLOW_EXPORT_VERSION}).`
-    );
-  }
-  if (!Array.isArray(parsed.workflows)) {
-    throw new Error('Invalid workflow file: missing "workflows" array.');
-  }
-
-  return parsed.workflows.map((workflow, index) => validateWorkflow(workflow, index));
+  const workflows = parseImportEnvelope(json, {
+    label: "workflow",
+    version: WORKFLOW_EXPORT_VERSION,
+    listKey: "workflows",
+    entry: importedWorkflowSchema,
+    describeEntryIssue: describeWorkflowIssue,
+  });
+  // Normalise to the stable key order, and keep `parameters` only when it has
+  // entries so a parameter-free workflow round-trips without an empty key.
+  return workflows.map(
+    ({ id, name, description, tags, steps, triggers, parameters, createdAt, updatedAt }) => ({
+      id,
+      name,
+      description,
+      tags,
+      steps,
+      triggers,
+      ...(parameters && parameters.length > 0 ? { parameters } : {}),
+      createdAt,
+      updatedAt,
+    })
+  );
 }
 
 /**
