@@ -35,7 +35,13 @@ export function Sidebar({ width }: SidebarProps) {
   if (sidebarCollapsed) return null;
 
   return (
-    <div className="sidebar" data-testid="sidebar" style={width != null ? { width } : undefined}>
+    // Complementary landmark named after the active view (A11Y2-012).
+    <aside
+      className="sidebar"
+      data-testid="sidebar"
+      aria-label={VIEW_TITLES[sidebarView] ?? "Sidebar"}
+      style={width != null ? { width } : undefined}
+    >
       <div className="sidebar__header">
         <span className="sidebar__title">{VIEW_TITLES[sidebarView]}</span>
       </div>
@@ -51,6 +57,6 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "network-tools" && <NetworkToolsSidebar />}
         {sidebarView === "plugins" && <PluginManagerView />}
       </div>
-    </div>
+    </aside>
   );
 }

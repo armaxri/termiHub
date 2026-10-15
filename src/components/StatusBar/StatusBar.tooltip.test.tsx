@@ -28,6 +28,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
+import { getByRole } from "@/test/accessibleRoles";
 import type { EditorStatus, EditorActions } from "@/types/terminal";
 import { flushAsync } from "@/test/flushAsync";
 
@@ -117,5 +118,31 @@ describe("StatusBar — dropdown-trigger tooltip adoption (#1163)", () => {
     });
     // The menu items render into a portal on document.body once open.
     expect(document.body.querySelector('[data-testid="indent-spaces-4"]')).not.toBeNull();
+  });
+});
+
+describe("StatusBar landmark (A11Y2-012, #4351)", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("is a contentinfo landmark labelled 'Status bar'", async () => {
+    await act(async () => {
+      root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
+    });
+    await flushAsync();
+    const footer = getByRole("contentinfo", "Status bar", container);
+    expect(footer).toBe(container.querySelector('[data-testid="status-bar"]'));
   });
 });

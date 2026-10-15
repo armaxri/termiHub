@@ -13,6 +13,7 @@ import type { RemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import type { RemoteClipboardFile } from "@/types/remoteDesktop";
 import { remoteDesktopGetClipboard } from "@/services/api";
 import { RemoteDesktopTab } from "./RemoteDesktopTab";
+import { getByRole } from "@/test/accessibleRoles";
 
 const hoisted = vi.hoisted(() => ({
   session: null as unknown as RemoteDesktopSession,
@@ -203,5 +204,14 @@ describe("RemoteDesktopTab — remote clipboard files (#1804/#1814/#1815)", () =
       "Could not read the remote clipboard",
       expect.objectContaining({ description: "session closed", duration: Infinity })
     );
+  });
+});
+
+describe("RemoteDesktopTab — clipboard text box name (UISF2-010, #4351)", () => {
+  it("renders the clipboard text through ui/Textarea with an accessible name", async () => {
+    await openPanel([]);
+    const textbox = getByRole("textbox", "Remote clipboard text", container);
+    expect(textbox).toBe(byTestId("remote-desktop-clipboard-text"));
+    expect(textbox.classList.contains("ui-textarea")).toBe(true);
   });
 });

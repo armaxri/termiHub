@@ -173,6 +173,19 @@ describe("WorkspaceEditor — group chips are a keyboard tablist (#4349)", () =>
     expect(document.activeElement).toBe(tabs()[0]);
   });
 
+  it("leaves no <label> that labels nothing — 'Layout' is a heading text (UISF2-010, #4351)", async () => {
+    await render();
+    const heading = container.querySelector(
+      ".workspace-editor__layout-header .workspace-editor__label"
+    );
+    expect(heading?.tagName).toBe("SPAN");
+    expect(heading?.textContent).toBe("Layout");
+    const orphans = Array.from(container.querySelectorAll("label"))
+      .filter((label) => label.control === null)
+      .map((label) => label.outerHTML);
+    expect(orphans).toEqual([]);
+  });
+
   it("has no axe violations in the group strip", async () => {
     await render();
     const strip = container.querySelector('[data-testid="workspace-group-strip"]')!;

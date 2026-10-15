@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { getByRole } from "@/test/accessibleRoles";
 import type { RemoteArchInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
@@ -200,5 +201,45 @@ describe("AgentSetupDialog Windows support", () => {
     ) as HTMLInputElement;
     expect(pathInput.readOnly).toBe(true);
     expect(pathInput.value).toContain("termihub-agent.exe");
+  });
+});
+
+describe("AgentSetupDialog control names (UISF2-010, #4351)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    detectAgentArch.mockReset();
+    setupRemoteAgent.mockReset();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("names the install path input by its 'Remote Install Path' label", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    await renderAndDetect(makeAgent());
+    expect(getByRole("textbox", "Remote Install Path")).toBe(
+      document.querySelector('[data-testid="agent-setup-remote-path"]')
+    );
+  });
+
+  it("names the binary source radio group by its visible heading", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    await renderAndDetect(makeAgent());
+    expect(getByRole("radiogroup", "Binary Source")).not.toBeNull();
+  });
+
+  it("leaves no <label> in the dialog that labels nothing", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    await renderAndDetect(makeAgent());
+    const dialog = document.querySelector(".agent-setup-dialog") ?? document.body;
+    const orphans = Array.from(dialog.querySelectorAll("label"))
+      .filter((label) => label.control === null)
+      .map((label) => label.outerHTML);
+    expect(orphans).toEqual([]);
   });
 });

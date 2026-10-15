@@ -131,7 +131,8 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   return (
     <ContextMenuRoot>
       <ContextMenuTrigger asChild>
-        <div
+        <nav
+          aria-label="Activity bar"
           className={`activity-bar${activityBarPosition === "right" ? " activity-bar--right" : ""}${horizontal ? " activity-bar--horizontal" : ""}`}
         >
           <div className="activity-bar__top">
@@ -237,7 +238,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
               </DropdownMenuContent>
             </DropdownMenuRoot>
           </div>
-        </div>
+        </nav>
       </ContextMenuTrigger>
       <ContextMenuContent data-testid="activity-bar-context-menu">
         <MenuLabel>Activity Bar</MenuLabel>

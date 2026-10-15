@@ -453,12 +453,14 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
             </div>
 
             <div className="agent-setup-dialog__field">
-              <label className="agent-setup-dialog__label">Binary Source</label>
+              <span className="agent-setup-dialog__label" id="agent-setup-binary-source-label">
+                Binary Source
+              </span>
               <RadioGroup
                 className="agent-setup-dialog__source-selector"
                 value={binarySource}
                 onValueChange={(v) => setBinarySource(v as "github" | "branch" | "local")}
-                aria-label="Binary Source"
+                aria-labelledby="agent-setup-binary-source-label"
               >
                 <label
                   className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
@@ -535,8 +537,11 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
             </div>
 
             <div className="agent-setup-dialog__field">
-              <label className="agent-setup-dialog__label">Remote Install Path</label>
+              <label className="agent-setup-dialog__label" htmlFor="agent-setup-remote-path">
+                Remote Install Path
+              </label>
               <Input
+                id="agent-setup-remote-path"
                 value={remotePath}
                 onChange={(e) => setRemotePath(e.target.value)}
                 readOnly={isWindows}

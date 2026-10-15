@@ -15,6 +15,7 @@ import { useAppStore } from "@/store/appStore";
 import { getActionAccelerator } from "@/services/keybindings";
 import { withTooltip } from "@/test/tooltip";
 import { ActivityBar } from "./ActivityBar";
+import { getByRole } from "@/test/accessibleRoles";
 
 vi.mock("@/components/OpenConnections/OpenConnectionsModal", () => ({
   OpenConnectionsModal: () => null,
@@ -101,5 +102,20 @@ describe("ActivityBar Settings menu — shortcuts discoverability (#1353)", () =
     const accel = getActionAccelerator("open-settings")!;
     expect(accel).toBeTruthy();
     expect(item.textContent).toContain(accel);
+  });
+});
+
+describe("ActivityBar landmark (A11Y2-012, #4351)", () => {
+  it("is a navigation landmark labelled 'Activity bar'", () => {
+    render();
+    const nav = getByRole("navigation", "Activity bar", container);
+    expect(nav.classList.contains("activity-bar")).toBe(true);
+  });
+
+  it("keeps the landmark in the horizontal (top) layout", () => {
+    act(() => {
+      root.render(withTooltip(<ActivityBar horizontal />));
+    });
+    expect(getByRole("navigation", "Activity bar", container)).not.toBeNull();
   });
 });

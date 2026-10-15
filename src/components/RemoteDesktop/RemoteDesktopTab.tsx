@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileDown, X } from "lucide-react";
-import { Button, Spinner, ContentOverlay, toast } from "@/components/ui";
+import { Button, Spinner, ContentOverlay, Textarea, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
@@ -441,8 +441,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
               onClick={() => setClipboardOpen(false)}
             />
           </div>
-          <textarea
+          <Textarea
             className="rd-clipboard__text"
+            aria-label="Remote clipboard text"
             value={clipboardDraft}
             onChange={(e) => setClipboardDraft(e.target.value)}
             placeholder="Text synced with the remote clipboard…"
