@@ -204,3 +204,123 @@ describe("createWebglRenderer", () => {
     expect(t.addons).toHaveLength(1);
   });
 });
+
+// #4427: an evicted terminal that stays on screen gets WebGL back as soon as a
+// pool slot frees, instead of staying on the DOM renderer until a hide → show.
+describe("re-leasing freed slots to evicted on-screen terminals", () => {
+  const CAP = DEFAULT_WEBGL_CONTEXT_CAPACITY;
+
+  function showAll(count: number, pool: WebglContextPool) {
+    const terms = Array.from({ length: count }, (_, i) => makeTerminal(`t${i}`, pool));
+    terms.forEach((t) => t.controller.setVisible(true));
+    return terms;
+  }
+
+  it("gives a freed slot back to the evicted terminal when another is hidden", () => {
+    const pool = new WebglContextPool();
+    const terms = showAll(CAP + 1, pool);
+    expect(terms[0].controller.active).toBe(false);
+    expect(pool.size).toBe(CAP);
+
+    terms[5].controller.setVisible(false);
+
+    expect(terms[0].controller.active).toBe(true);
+    expect(last(terms[0].changes)).toEqual({ renderer: "webgl", reason: "reacquired" });
+    expect(terms[0].addons).toHaveLength(2);
+    expect(pool.size).toBe(CAP);
+    // Nobody else was evicted to make room.
+    expect(terms.filter((t) => t.controller.active)).toHaveLength(CAP);
+    expect(terms[5].controller.active).toBe(false);
+  });
+
+  it("serves the most recently shown waiter first, one per freed slot", () => {
+    const pool = new WebglContextPool(2);
+    const [a, b, c, d] = showAll(4, pool);
+    // a then b were evicted; b was shown more recently.
+    expect(a.controller.active).toBe(false);
+    expect(b.controller.active).toBe(false);
+
+    c.controller.setVisible(false);
+    expect(b.controller.active).toBe(true);
+    expect(a.controller.active).toBe(false);
+    expect(a.addons).toHaveLength(1);
+
+    d.controller.dispose();
+    expect(a.controller.active).toBe(true);
+    expect(pool.size).toBe(2);
+  });
+
+  it("drops a closed waiter from the queue", () => {
+    const pool = new WebglContextPool(2);
+    const [a, b, c] = showAll(3, pool);
+    expect(a.controller.active).toBe(false);
+
+    a.controller.dispose();
+    b.controller.setVisible(false);
+
+    expect(a.addons).toHaveLength(1);
+    expect(a.controller.active).toBe(false);
+    expect(c.controller.active).toBe(true);
+    expect(pool.size).toBe(1);
+  });
+
+  it("does not re-acquire for a waiter that was hidden", () => {
+    const pool = new WebglContextPool(2);
+    const [a, b] = showAll(3, pool);
+    a.controller.setVisible(false);
+    b.controller.setVisible(false);
+    expect(a.addons).toHaveLength(1);
+    expect(a.controller.active).toBe(false);
+    expect(pool.size).toBe(1);
+
+    // Shown again, it acquires normally.
+    a.controller.setVisible(true);
+    expect(a.controller.active).toBe(true);
+  });
+
+  it("hands a slot freed by a lost context to a waiter, not back to the lost terminal", () => {
+    const pool = new WebglContextPool(2);
+    const [a, b, c] = showAll(3, pool);
+    c.addons[0].loseContext();
+    expect(last(c.changes)).toEqual({ renderer: "dom", reason: "context-lost" });
+    expect(a.controller.active).toBe(true);
+    expect(b.controller.active).toBe(true);
+    expect(c.addons).toHaveLength(1);
+    // The lost terminal is retried only on its next show (#4308 / #4426).
+    c.controller.setVisible(false);
+    c.controller.setVisible(true);
+    expect(c.controller.active).toBe(true);
+  });
+
+  it("never thrashes: repeated visible updates from a waiter evict nobody", () => {
+    const pool = new WebglContextPool(2);
+    const [a, b, c] = showAll(3, pool);
+    a.controller.setVisible(true);
+    a.controller.setVisible(true);
+    expect(a.controller.active).toBe(false);
+    expect(b.controller.active).toBe(true);
+    expect(c.controller.active).toBe(true);
+    expect(b.addons).toHaveLength(1);
+    expect(c.addons).toHaveLength(1);
+  });
+
+  it("moves on to the next waiter when a re-acquire fails to load", () => {
+    const pool = new WebglContextPool(2);
+    let failB = false;
+    const a = makeTerminal("a", pool);
+    const b = makeTerminal("b", pool, {
+      loadAddon: () => {
+        if (failB) throw new Error("activate failed");
+      },
+    });
+    const c = makeTerminal("c", pool);
+    const d = makeTerminal("d", pool);
+    [a, b, c, d].forEach((t) => t.controller.setVisible(true));
+    failB = true;
+
+    c.controller.setVisible(false);
+    expect(b.controller.active).toBe(false);
+    expect(a.controller.active).toBe(true);
+    expect(pool.size).toBe(2);
+  });
+});
