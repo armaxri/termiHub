@@ -507,6 +507,33 @@ reintroduce a duplicated pin that drifts.
 to `.github/uv-version`, run `node scripts/internal/check-uv-version.mjs`, and let the harness jobs
 prove it. The harness's Python dependencies stay pinned separately in `tests/system/uv.lock`.
 
+### cross-rs version
+
+CI builds the static-musl Linux agents with [cross-rs](https://github.com/cross-rs/cross) at
+**one** release stored in [`.github/cross-version`](../.github/cross-version): a `version=X.Y.Z`
+line and the `sha256=` of that release's `cross-x86_64-unknown-linux-gnu.tar.gz`. Every workflow
+installs it through the [`setup-cross`](../.github/actions/setup-cross/action.yml) composite
+action, which verifies the hash before extracting; `scripts/internal/build-system-test-agent.sh
+--install-cross` reads the same file.
+
+[`scripts/internal/check-cross-version.mjs`](../scripts/internal/check-cross-version.mjs) (run by
+the Workflow Lint job and `./scripts/check.sh`) fails if the file is malformed or if any workflow,
+composite action or script downloads cross-rs or hard-codes a `CROSS_VERSION`/`CROSS_SHA256`
+itself (#4360).
+
+**Bumping cross-rs**: write the new version and the SHA256 of its x86_64 Linux tarball to
+`.github/cross-version`, run `node scripts/internal/check-cross-version.mjs`, and let the Agent
+workflow's Linux legs (which run on any change to the pin file) prove it.
+
+### GitHub Actions pins
+
+Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z` comment. Dependabot
+([`.github/dependabot.yml`](../.github/dependabot.yml)) opens a weekly grouped PR that bumps the
+SHAs and their comments together, in the workflows and in the composite actions under
+`.github/actions/`. Keep one SHA per action across the repo; `check-action-pins.mjs` (run by the
+Workflow Lint job and `./scripts/check.sh`) fails when the same action is pinned to two different
+SHAs or to a tag/branch instead of a SHA.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
