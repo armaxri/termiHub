@@ -197,6 +197,10 @@ struct Canaries {
     /// (stands in for the ADR-13 spawn pipe), kept listening.
     #[cfg(windows)]
     pipe: CanaryPipe,
+    /// Windows: a persisted CNG key of the test's user (#4606), standing in
+    /// for the user's private keys, which `lpacCryptoServices` must not open.
+    #[cfg(windows)]
+    cng_key: CanaryCngKey,
 }
 
 fn canaries(work: &Path) -> Canaries {
@@ -239,6 +243,158 @@ fn canaries(work: &Path) -> Canaries {
         unix_accepted,
         #[cfg(windows)]
         pipe: CanaryPipe::listen(),
+        #[cfg(windows)]
+        cng_key: CanaryCngKey::create(),
+    }
+}
+
+/// The user's certificate-store registry key a sandboxed plugin must not
+/// write (#4606): created here if missing, so the unconfined control's
+/// `ALLOWED` proves the probe can open it at all.
+#[cfg(windows)]
+const USER_CERT_STORE_KEY: &str = r"Software\Microsoft\SystemCertificates\My";
+
+#[cfg(windows)]
+#[link(name = "ncrypt")]
+extern "system" {
+    fn NCryptOpenStorageProvider(provider: *mut usize, name: *const u16, flags: u32) -> i32;
+    fn NCryptCreatePersistedKey(
+        provider: usize,
+        key: *mut usize,
+        algorithm: *const u16,
+        name: *const u16,
+        legacy_key_spec: u32,
+        flags: u32,
+    ) -> i32;
+    fn NCryptFinalizeKey(key: usize, flags: u32) -> i32;
+    fn NCryptOpenKey(
+        provider: usize,
+        key: *mut usize,
+        name: *const u16,
+        legacy_key_spec: u32,
+        flags: u32,
+    ) -> i32;
+    fn NCryptDeleteKey(key: usize, flags: u32) -> i32;
+    fn NCryptFreeObject(object: usize) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegCreateKeyExW(
+        key: isize,
+        subkey: *const u16,
+        reserved: u32,
+        class: *const u16,
+        options: u32,
+        desired: u32,
+        security: *const std::ffi::c_void,
+        result: *mut isize,
+        disposition: *mut u32,
+    ) -> u32;
+    fn RegCloseKey(key: isize) -> u32;
+}
+
+#[cfg(windows)]
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Make sure `HKCU\<USER_CERT_STORE_KEY>` exists (it does once any program
+/// opened the user's personal certificate store).
+#[cfg(windows)]
+fn ensure_user_cert_store_key() {
+    /// `HKEY_CURRENT_USER` (`0x80000001`, sign-extended).
+    const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
+    /// `KEY_READ`.
+    const KEY_READ: u32 = 0x2_0019;
+    let subkey = wide(USER_CERT_STORE_KEY);
+    let (mut key, mut disposition) = (0isize, 0u32);
+    // SAFETY: a predefined root key, a NUL-terminated subkey, out-pointers;
+    // the key is closed below.
+    let status = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            0,
+            std::ptr::null(),
+            0,
+            KEY_READ,
+            std::ptr::null(),
+            &mut key,
+            &mut disposition,
+        )
+    };
+    assert_eq!(status, 0, "create HKCU\\{USER_CERT_STORE_KEY}");
+    // SAFETY: the key opened above, closed once.
+    unsafe { RegCloseKey(key) };
+}
+
+/// Windows: a persisted RSA key in the user's Microsoft Software Key Storage
+/// Provider, deleted on drop.
+#[cfg(windows)]
+struct CanaryCngKey {
+    name: String,
+}
+
+#[cfg(windows)]
+impl CanaryCngKey {
+    const PROVIDER: &'static str = "Microsoft Software Key Storage Provider";
+
+    fn provider() -> usize {
+        let name = wide(Self::PROVIDER);
+        let mut provider = 0usize;
+        // SAFETY: a NUL-terminated provider name; the caller frees the handle.
+        let status = unsafe { NCryptOpenStorageProvider(&mut provider, name.as_ptr(), 0) };
+        assert_eq!(status, 0, "NCryptOpenStorageProvider: {status:#010x}");
+        provider
+    }
+
+    fn create() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = format!(
+            "termihub-escape-canary-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        );
+        let provider = Self::provider();
+        let (algorithm, key_name) = (wide("RSA"), wide(&name));
+        let mut key = 0usize;
+        // SAFETY: an open provider, NUL-terminated strings, an out-pointer for
+        // a key finalized and freed below; the provider is freed once.
+        unsafe {
+            let status = NCryptCreatePersistedKey(
+                provider,
+                &mut key,
+                algorithm.as_ptr(),
+                key_name.as_ptr(),
+                0,
+                0,
+            );
+            assert_eq!(status, 0, "NCryptCreatePersistedKey: {status:#010x}");
+            let status = NCryptFinalizeKey(key, 0);
+            NCryptFreeObject(key);
+            NCryptFreeObject(provider);
+            assert_eq!(status, 0, "NCryptFinalizeKey: {status:#010x}");
+        }
+        Self { name }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CanaryCngKey {
+    fn drop(&mut self) {
+        let provider = Self::provider();
+        let key_name = wide(&self.name);
+        let mut key = 0usize;
+        // SAFETY: an open provider and a NUL-terminated name; `NCryptDeleteKey`
+        // frees the key handle, the provider is freed once.
+        unsafe {
+            if NCryptOpenKey(provider, &mut key, key_name.as_ptr(), 0, 0) == 0 {
+                NCryptDeleteKey(key, 0);
+            }
+            NCryptFreeObject(provider);
+        }
     }
 }
 
@@ -619,13 +775,22 @@ fn linux_host_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
 
 /// The escape attempts only Windows has: `HKCU\Software`, where other
 /// applications keep saved sessions (an LPAC must not open it, a plain
-/// AppContainer could), the stand-in ADR-13 pipe, and a serial device.
+/// AppContainer could), the stand-in ADR-13 pipe, and a serial device. And
+/// what `lpacCryptoServices` (#4606) must not extend to: the user's private
+/// keys (a persisted CNG key) and writing the user's certificate stores.
 #[cfg(windows)]
 fn os_escape_attempts(canary: &Canaries) -> Vec<(&'static str, String)> {
+    ensure_user_cert_store_key();
     vec![
         ("reg", "Software".to_owned()),
         ("pipe", canary.pipe.name.clone()),
         ("read", r"\\.\COM1".to_owned()),
+        ("cngkey", canary.cng_key.name.clone()),
+        ("regw", USER_CERT_STORE_KEY.to_owned()),
+        (
+            "regw",
+            r"Software\Microsoft\SystemCertificates\Root".to_owned(),
+        ),
     ]
 }
 
@@ -656,10 +821,15 @@ async fn without_the_sandbox_the_probes_escape() {
         ("fork", String::new()),
     ]);
     #[cfg(windows)]
-    controls.extend([
-        ("reg", "Software".to_owned()),
-        ("pipe", canary.pipe.name.clone()),
-    ]);
+    {
+        ensure_user_cert_store_key();
+        controls.extend([
+            ("reg", "Software".to_owned()),
+            ("pipe", canary.pipe.name.clone()),
+            ("cngkey", canary.cng_key.name.clone()),
+            ("regw", USER_CERT_STORE_KEY.to_owned()),
+        ]);
+    }
     // The trust probe itself works outside the sandbox, so a denial inside
     // it is the sandbox's doing, not a broken probe (#4606).
     #[cfg(any(windows, target_os = "macos"))]

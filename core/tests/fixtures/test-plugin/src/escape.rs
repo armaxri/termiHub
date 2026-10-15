@@ -26,6 +26,10 @@
 //! | `env`   | read the environment variable `<arg>` (ALLOWED = set)     |
 //! | `tmp`   | write a file in `std::env::temp_dir()`                    |
 //! | `reg`   | open the registry key `HKCU\<arg>` for reading (Windows)  |
+//! | `regw`  | open the registry key `HKCU\<arg>` for writing (Windows;  |
+//! |         | #4606)                                                    |
+//! | `cngkey`| open the user's persisted CNG key named `<arg>` in the    |
+//! |         | Microsoft Software Key Storage Provider (Windows; #4606)  |
 //! | `pipe`  | open the named pipe `<arg>` for reading and writing       |
 //! | `sockets` | call `socket()` `<arg>` times (ALLOWED = any succeeded)   |
 //! | `sigsys`  | replace the `SIGSYS` handler (Linux; #4236)             |
@@ -109,7 +113,9 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
                 .map(|()| path.display().to_string())
                 .map_err(io)
         }
-        "reg" => open_hkcu_key(arg),
+        "reg" => open_hkcu_key(arg, false),
+        "regw" => open_hkcu_key(arg, true),
+        "cngkey" => open_cng_key(arg),
         "pipe" => std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -359,8 +365,57 @@ mod windows_trust {
     }
 }
 
+/// Open the user's persisted CNG key `name` (#4606): `lpacCryptoServices`
+/// opens the certificate stores, which must not extend to the user's private
+/// keys.
 #[cfg(windows)]
-fn open_hkcu_key(subkey: &str) -> Result<String, String> {
+fn open_cng_key(name: &str) -> Result<String, String> {
+    #[link(name = "ncrypt")]
+    extern "system" {
+        fn NCryptOpenStorageProvider(provider: *mut usize, name: *const u16, flags: u32) -> i32;
+        fn NCryptOpenKey(
+            provider: usize,
+            key: *mut usize,
+            name: *const u16,
+            legacy_key_spec: u32,
+            flags: u32,
+        ) -> i32;
+        fn NCryptFreeObject(object: usize) -> i32;
+    }
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    let ksp = wide("Microsoft Software Key Storage Provider");
+    let mut provider = 0usize;
+    // SAFETY: a NUL-terminated provider name; the handle is freed below.
+    let status = unsafe { NCryptOpenStorageProvider(&mut provider, ksp.as_ptr(), 0) };
+    if status != 0 {
+        return Err(format!("NCryptOpenStorageProvider: {status:#010x}"));
+    }
+    let key_name = wide(name);
+    let mut key = 0usize;
+    // SAFETY: an open provider, a NUL-terminated key name, an out-pointer
+    // for a key freed below.
+    let status = unsafe { NCryptOpenKey(provider, &mut key, key_name.as_ptr(), 0, 0) };
+    // SAFETY: handles opened above, each freed once.
+    unsafe {
+        if status == 0 {
+            NCryptFreeObject(key);
+        }
+        NCryptFreeObject(provider);
+    }
+    if status == 0 {
+        Ok("opened".to_owned())
+    } else {
+        Err(format!("NCryptOpenKey: {status:#010x}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn open_cng_key(_name: &str) -> Result<String, String> {
+    Err("no CNG on this platform".to_owned())
+}
+
+#[cfg(windows)]
+fn open_hkcu_key(subkey: &str, write: bool) -> Result<String, String> {
     #[link(name = "advapi32")]
     extern "system" {
         fn RegOpenKeyExW(
@@ -376,11 +431,14 @@ fn open_hkcu_key(subkey: &str) -> Result<String, String> {
     const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
     /// `KEY_READ`.
     const KEY_READ: u32 = 0x2_0019;
+    /// `KEY_WRITE`.
+    const KEY_WRITE: u32 = 0x2_0006;
     let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     let mut key = 0isize;
     // SAFETY: a predefined root key, a NUL-terminated subkey, an out-pointer
     // for a key closed below.
-    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, KEY_READ, &mut key) };
+    let access = if write { KEY_WRITE } else { KEY_READ };
+    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, access, &mut key) };
     if status != 0 {
         return Err(std::io::Error::from_raw_os_error(status as i32).to_string());
     }
@@ -390,7 +448,7 @@ fn open_hkcu_key(subkey: &str) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn open_hkcu_key(_subkey: &str) -> Result<String, String> {
+fn open_hkcu_key(_subkey: &str, _write: bool) -> Result<String, String> {
     Err("no registry on this platform".to_owned())
 }
 

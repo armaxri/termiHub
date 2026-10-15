@@ -38,7 +38,9 @@
 //! runner also starts confined, from its first instruction:
 //!
 //! * `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` — inside the plugin's
-//!   AppContainer with **zero capabilities** (no network, no user profile);
+//!   AppContainer with exactly the [`RUNNER_CAPABILITIES`]: only
+//!   `lpacCryptoServices`, for TLS certificate verification (#4606) — no
+//!   network, no user profile;
 //! * `PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY` = opt-out — a
 //!   **less-privileged** AppContainer (LPAC): what grants "ALL APPLICATION
 //!   PACKAGES" (e.g. `HKCU\Software`) is closed to it too;
@@ -47,6 +49,7 @@
 //!   process limit even applies.
 //!
 //! [`ResourceLimits`]: crate::ipc::ResourceLimits
+//! [`RUNNER_CAPABILITIES`]: crate::appcontainer::RUNNER_CAPABILITIES
 //! [`AppContainer`]: crate::appcontainer::AppContainer
 
 use std::ffi::{c_void, OsStr, OsString};
@@ -63,7 +66,9 @@ use windows_sys::Win32::Foundation::{
     GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0,
     WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+use windows_sys::Win32::Security::{
+    SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+};
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -88,7 +93,7 @@ use windows_sys::Win32::System::WindowsProgramming::{
     PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT, PROCESS_CREATION_CHILD_PROCESS_RESTRICTED,
 };
 
-use crate::appcontainer::AppContainer;
+use crate::appcontainer::{capability_sid, AppContainer, RUNNER_CAPABILITIES};
 use crate::ipc::pipe::handle_value;
 use crate::ipc::{ResourceLimits, IPC_HANDLE_ARG};
 use crate::win::{is_os_error, owned, to_wide};
@@ -174,7 +179,7 @@ impl RunnerCommand {
     }
 
     /// Start the runner confined to `container`: a less-privileged
-    /// AppContainer with zero capabilities that cannot create processes (see
+    /// AppContainer with only `lpacCryptoServices` that cannot create processes (see
     /// the module docs). Its SID must already be granted the runner's folder.
     pub fn app_container(&mut self, container: AppContainer) -> &mut Self {
         self.app_container = Some(container);
@@ -651,6 +656,9 @@ fn environment_block(vars: &[(OsString, OsString)]) -> io::Result<Vec<u16>> {
     Ok(block)
 }
 
+/// `SE_GROUP_ENABLED` (`winnt.h`): a capability entry is enabled.
+const SE_GROUP_ENABLED: u32 = 0x4;
+
 /// A `PROC_THREAD_ATTRIBUTE_LIST` carrying the `HANDLE_LIST` and, for an
 /// AppContainer, its security capabilities and the LPAC and child-process
 /// policies. The system keeps pointers to the values, not copies, so all of
@@ -660,6 +668,10 @@ struct AttributeList {
     handles: Box<[HANDLE]>,
     /// The AppContainer whose SID `capabilities` points to.
     container: Option<AppContainer>,
+    /// The capability SIDs `capability_entries` point to.
+    _capability_sids: Vec<Box<[u32]>>,
+    /// The `SID_AND_ATTRIBUTES` array `capabilities` points to.
+    _capability_entries: Box<[SID_AND_ATTRIBUTES]>,
     capabilities: Box<SECURITY_CAPABILITIES>,
     /// `[all-application-packages policy, child-process policy]`.
     policies: Box<[u32; 2]>,
@@ -676,13 +688,33 @@ impl AttributeList {
             return Err(io::Error::last_os_error());
         }
         let container = container.cloned();
+        // Exactly the runner capabilities (only `lpacCryptoServices`, #4606):
+        // no network, no user profile. The runner verifies the set.
+        let capability_sids = if container.is_some() {
+            RUNNER_CAPABILITIES
+                .iter()
+                .map(|name| capability_sid(name))
+                .collect::<io::Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        let mut capability_entries: Box<[SID_AND_ATTRIBUTES]> = capability_sids
+            .iter()
+            .map(|sid| SID_AND_ATTRIBUTES {
+                Sid: sid.as_ptr().cast_mut().cast(),
+                Attributes: SE_GROUP_ENABLED,
+            })
+            .collect();
         let capabilities = Box::new(SECURITY_CAPABILITIES {
             AppContainerSid: container
                 .as_ref()
                 .map_or(std::ptr::null_mut(), AppContainer::sid),
-            // Zero capabilities: no network, no user profile, nothing.
-            Capabilities: std::ptr::null_mut(),
-            CapabilityCount: 0,
+            Capabilities: if capability_entries.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                capability_entries.as_mut_ptr()
+            },
+            CapabilityCount: u32::try_from(capability_entries.len()).map_err(io::Error::other)?,
             Reserved: 0,
         });
         let mut list = Self {
@@ -690,6 +722,8 @@ impl AttributeList {
             buffer: vec![0usize; size.div_ceil(std::mem::size_of::<usize>())],
             handles: handles.into_boxed_slice(),
             container,
+            _capability_sids: capability_sids,
+            _capability_entries: capability_entries,
             capabilities,
             policies: Box::new([
                 PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT,
