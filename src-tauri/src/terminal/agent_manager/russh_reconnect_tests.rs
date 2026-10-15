@@ -1242,10 +1242,15 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
     // ── Initial establish: connect over russh, exec the agent, initialize.
     // `reconnect_agent` performs the full establishment, so it doubles as the
     // "before" connect here.
-    let (session, mut channel, _buffered, _token_path, _capabilities) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("initial agent establishment over local sshd failed");
+    let (session, mut channel, _buffered, _token_path, _capabilities) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("initial agent establishment over local sshd failed");
 
     // Pre-drop: a live, usable session (models the maintainer's connected tab).
     let deadline = Instant::now() + RECOVERY_CEILING;
@@ -1290,7 +1295,14 @@ async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create()
     // ── The layer under test: reconnect_agent must re-establish the real
     // russh transport now that the sshd is back, within the recovery ceiling.
     let reconnect_started = Instant::now();
-    let reconnected = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
+    let reconnected = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await;
     let reconnect_elapsed = reconnect_started.elapsed();
     let (session2, mut channel2, _buffered2, _token_path, _capabilities2) = reconnected
         .unwrap_or_else(|e| {
@@ -1367,10 +1379,15 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     // ── Establish, create a DAEMON-BACKED session ("local" is persistent, so the
     // agent runs it in a setsid'd daemon subprocess), attach, and start a
     // self-incrementing counter in it.
-    let (session, mut channel, _buffered, _token_path, _) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("initial agent establishment over local sshd failed");
+    let (session, mut channel, _buffered, _token_path, _) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("initial agent establishment over local sshd failed");
 
     let created = channel_rpc(
         &mut channel,
@@ -1453,10 +1470,15 @@ async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
     // ── Restore + reconnect: the fresh `--stdio` agent's startup recovery
     // re-adopts the surviving daemon session.
     sshd.start();
-    let (session2, mut channel2, _buffered2, _token_path, _) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("reconnect_agent failed to re-establish the russh transport");
+    let (session2, mut channel2, _buffered2, _token_path, _) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("reconnect_agent failed to re-establish the russh transport");
 
     // Same-session recovery: the SAME id must reappear (not a fresh one).
     let list = channel_rpc(
@@ -1576,10 +1598,15 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
     let mut request_id = 0u64;
 
     // Establish + a daemon-backed persistent session running a counter.
-    let (session, mut channel, _buffered, _token_path, _) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("initial agent establishment over local sshd failed");
+    let (session, mut channel, _buffered, _token_path, _) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("initial agent establishment over local sshd failed");
 
     let created = channel_rpc(
         &mut channel,
@@ -1646,10 +1673,15 @@ async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_runni
 
     // ── Reconnect over the still-listening sshd; the fresh `--stdio` agent's
     // startup recovery re-adopts the surviving daemon session.
-    let (session2, mut channel2, _buffered2, _token_path, _) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("reconnect_agent failed to re-establish after the in-process sever");
+    let (session2, mut channel2, _buffered2, _token_path, _) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("reconnect_agent failed to re-establish after the in-process sever");
 
     // Same-session recovery: the SAME id must reappear (never a fresh create).
     let list = channel_rpc(
@@ -1759,10 +1791,15 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
     let alive = AgentAlive::new();
     let mut request_id = 0u64;
 
-    let (session, channel, _buffered, _token_path, _) =
-        reconnect_agent(&config, &settings, &mut request_id, &alive)
-            .await
-            .expect("initial agent establishment over local sshd failed");
+    let (session, channel, _buffered, _token_path, _) = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    .expect("initial agent establishment over local sshd failed");
 
     // In-process sever, then take the endpoint permanently down.
     test_sever_desktop_transport(channel, Some(session));
@@ -1782,7 +1819,13 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
     // rather than assert-format.)
     match tokio::time::timeout(
         Duration::from_secs(6),
-        reconnect_agent(&config, &settings, &mut request_id, &alive),
+        reconnect_agent(
+            &config,
+            &settings,
+            &mut request_id,
+            &alive,
+            &ReconnectTuning::PRODUCTION,
+        ),
     )
     .await
     {
@@ -1798,7 +1841,15 @@ async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
     // User-cancel is the DISTINCT settle: with alive=false the next attempt
     // returns promptly with the stop signal — never a spurious Ok.
     alive.stop();
-    match reconnect_agent(&config, &settings, &mut request_id, &alive).await {
+    match reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await
+    {
         Err(e) => assert!(
             e.contains("stopped by user"),
             "a user-cancel must settle with the stop signal, got: {e}"

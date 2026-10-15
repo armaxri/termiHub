@@ -40,7 +40,32 @@ use crate::utils::ssh_auth::connect_and_authenticate_cancellable;
 /// shared [`reconnect_reducer`] engine.
 pub(crate) const AGENT_RECONNECT_POLICY: BackoffConfig = policy_for(ReconnectKind::AgentTransport);
 
+/// The knobs of one [`reconnect_agent`] run: the per-attempt handshake bound and
+/// the backoff policy (#4404).
+///
+/// Production always runs [`ReconnectTuning::PRODUCTION`]; a test swaps in a
+/// short handshake bound and a fast, few-attempt policy so the whole loop —
+/// every attempt through to give-up — finishes in a test's budget.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ReconnectTuning {
+    /// Bound on each attempt's post-auth handshake ([`reconnect_handshake`]).
+    pub(super) handshake_timeout: std::time::Duration,
+    /// Backoff delay, attempt budget and jitter of the loop.
+    pub(super) policy: BackoffConfig,
+}
+
+impl ReconnectTuning {
+    /// [`AGENT_HANDSHAKE_TIMEOUT`] on [`AGENT_RECONNECT_POLICY`].
+    pub(super) const PRODUCTION: Self = Self {
+        handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
+        policy: AGENT_RECONNECT_POLICY,
+    };
+}
+
 /// Attempt to reconnect to an agent with exponential backoff.
+///
+/// `tuning` carries the handshake bound and backoff policy;
+/// [`ReconnectTuning::PRODUCTION`] everywhere but tests (#4404).
 ///
 /// Respects the `alive` stop signal — if it fires during the inter-attempt
 /// delay the function returns at once so the caller can exit cleanly. The
@@ -53,6 +78,7 @@ pub(super) async fn reconnect_agent(
     agent_settings: &AgentSettings,
     request_id: &mut u64,
     alive: &AgentAlive,
+    tuning: &ReconnectTuning,
 ) -> Result<
     (
         SshSession,
@@ -65,15 +91,17 @@ pub(super) async fn reconnect_agent(
 > {
     // SM-020: the reconnect delay, attempt count, and give-up decision are driven
     // through the canonical reconnect engine ([`reconnect_backoff`]) on the
-    // shared policy ([`AGENT_RECONNECT_POLICY`], #3730), with production jitter.
+    // shared policy ([`AGENT_RECONNECT_POLICY`], #3730, unless a test tuned it),
+    // with production jitter.
     // The separate bounded `connection.list` re-probe budget and the
     // `fold_agent_session_*` paths are unchanged.
     let mut jitter = system_jitter;
+    let policy = &tuning.policy;
     // A fresh drop arms the first backoff window.
     let mut state = reconnect_reducer(
         &INITIAL_RECONNECT_STATE,
         ReconnectEvent::Drop,
-        &AGENT_RECONNECT_POLICY,
+        policy,
         &mut jitter,
     );
 
@@ -81,12 +109,7 @@ pub(super) async fn reconnect_agent(
         // The armed backoff delay for the attempt about to start.
         let backoff = tokio::time::Duration::from_millis(state.delay_ms.max(0) as u64);
         // The backoff timer fires: begin an attempt (advances the attempt count).
-        state = reconnect_reducer(
-            &state,
-            ReconnectEvent::Attempt,
-            &AGENT_RECONNECT_POLICY,
-            &mut jitter,
-        );
+        state = reconnect_reducer(&state, ReconnectEvent::Attempt, policy, &mut jitter);
         // 0-based attempt index, preserved for the existing `attempt + 1` logs.
         let attempt = state.attempt - 1;
 
@@ -117,12 +140,7 @@ pub(super) async fn reconnect_agent(
                     return Err("Reconnect stopped by user".to_string());
                 }
                 warn!("Reconnect attempt {} failed (SSH): {}", attempt + 1, e);
-                state = reconnect_reducer(
-                    &state,
-                    ReconnectEvent::Failure,
-                    &AGENT_RECONNECT_POLICY,
-                    &mut jitter,
-                );
+                state = reconnect_reducer(&state, ReconnectEvent::Failure, policy, &mut jitter);
                 continue;
             }
         };
@@ -130,14 +148,14 @@ pub(super) async fn reconnect_agent(
         // 2-4. The post-auth handshake, bounded as one step and raced against
         //    the same stop-signal-driven cancel token (CONC2-004, #4304): an agent
         //    that execs but never answers `initialize` fails this attempt after
-        //    `AGENT_HANDSHAKE_TIMEOUT`, so backoff and give-up proceed instead of
+        //    the tuned handshake bound, so backoff and give-up proceed instead of
         //    the task hanging in `reconnecting` forever.
         let handshake = reconnect_handshake(
             &session,
             config,
             agent_settings,
             request_id,
-            AGENT_HANDSHAKE_TIMEOUT,
+            tuning.handshake_timeout,
             &connect_token,
         )
         .await;
@@ -156,17 +174,12 @@ pub(super) async fn reconnect_agent(
         // The init handshake did not complete (channel closed / rejected / parse
         // failure): this attempt failed. Arm the next backoff window, or give up
         // once the attempt budget is spent (the `while` then exits).
-        state = reconnect_reducer(
-            &state,
-            ReconnectEvent::Failure,
-            &AGENT_RECONNECT_POLICY,
-            &mut jitter,
-        );
+        state = reconnect_reducer(&state, ReconnectEvent::Failure, policy, &mut jitter);
     }
 
     Err(format!(
         "Failed to reconnect after {} attempts",
-        AGENT_RECONNECT_POLICY.max_attempts
+        policy.max_attempts
     ))
 }
 
