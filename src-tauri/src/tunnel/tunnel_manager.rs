@@ -328,8 +328,8 @@ fn supervisor_cancel_token(tasks: &AppTasks) -> CancellationToken {
 /// [`poll_agent_tunnel_stats`]), and the write-back that refreshes each handle's
 /// stats then republishes the `tunnels` region (#2199). `bound_address` /
 /// `reachable_from` are fixed at bind time (from the start reply), so only the
-/// stats are refreshed. `publish_tunnels` runs every polled tick, matching the
-/// prior poller — its diff makes an unchanged tick a no-op.
+/// stats are refreshed. `publish_tunnel_stats` runs every polled tick — a
+/// stats-only delta (#4574) that is a no-op when no sample changed.
 struct AgentTunnelPoll {
     agent_tunnels: AgentInstances<AgentTunnelHandle>,
     app: AppHandle,
@@ -365,8 +365,9 @@ impl AgentStatusPollDelegate for AgentTunnelPoll {
                 }
             }
         }
-        // Project the refreshed stats onto the `tunnels` region (#2199).
-        crate::tunnel::projection::publish_tunnels(&self.app);
+        // Project the refreshed stats onto the `tunnels` region (#2199) as a
+        // stats-only delta (#4574): only `states.<id>.stats` changed.
+        crate::tunnel::projection::publish_tunnel_stats(&self.app);
     }
 }
 
@@ -767,6 +768,34 @@ impl TunnelManager {
         Ok(states)
     }
 
+    /// The live traffic stats of every running tunnel, keyed by tunnel id
+    /// (#4574).
+    ///
+    /// The stats-only slice of [`Self::get_statuses`], for the 1 Hz stats tick's
+    /// projection delta: a desktop tunnel reports its forwarder's counters, an
+    /// agent-hosted one the stats last sampled by the `tunnel.status` poller —
+    /// with the same desktop-first precedence `get_statuses` applies. Locks
+    /// `active_tunnels` then `agent_tunnels`, the same relative order as
+    /// `get_statuses`; a poisoned lock yields no samples for that track.
+    pub fn live_stats(&self) -> Vec<(String, TunnelStats)> {
+        let mut out = Vec::new();
+        if let Ok(active) = self.active_tunnels.lock() {
+            out.extend(
+                active
+                    .iter()
+                    .map(|(id, tunnel)| (id.clone(), tunnel.forwarder.get_stats())),
+            );
+        }
+        if let Ok(agent_tunnels) = self.agent_tunnels.lock() {
+            for (id, handle) in agent_tunnels.iter() {
+                if !out.iter().any(|(seen, _)| seen == id) {
+                    out.push((id.clone(), handle.stats.clone()));
+                }
+            }
+        }
+        out
+    }
+
     /// Start a tunnel by ID.
     pub fn start_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
         // Get tunnel config
@@ -1118,9 +1147,10 @@ impl TunnelManager {
             move || {
                 // Project live stats onto the `tunnels` region (#2150): the
                 // per-tick ↑/↓ + conn counts reach the frontend only this way.
-                // The active-tunnels lock is already released here, so the
-                // re-lock inside is safe.
-                crate::tunnel::projection::publish_tunnels(&app_handle);
+                // A stats-only delta (#4574) — status/config changes still go
+                // through the full `publish_tunnels`. The active-tunnels lock is
+                // already released here, so the re-lock inside is safe.
+                crate::tunnel::projection::publish_tunnel_stats(&app_handle);
             },
         );
 
