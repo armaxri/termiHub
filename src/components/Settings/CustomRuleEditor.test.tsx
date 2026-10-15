@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+// Pass-through spy on the preview compiler, to count preview recomputes (#4370).
+vi.mock("@/services/syntaxHighlighting", async (orig) => {
+  const actual = await orig<typeof import("@/services/syntaxHighlighting")>();
+  return { ...actual, compileRules: vi.fn(actual.compileRules) };
+});
+
+import { compileRules } from "@/services/syntaxHighlighting";
 import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { createCustomRule } from "@/services/customHighlightRules";
 import type { HighlightRule, SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
@@ -172,6 +179,31 @@ describe("CustomRuleEditor", () => {
       (s) => s.textContent === "ERROR" && s.style.color !== ""
     );
     expect(colored).toBeDefined();
+  });
+
+  describe("preview recompute (#4370)", () => {
+    it("recompiles the preview when a rule field changes", () => {
+      render();
+      vi.mocked(compileRules).mockClear();
+
+      setInput(byTestId("custom-rule-pattern"), "ERROR");
+
+      expect(compileRules).toHaveBeenCalled();
+      const rules = vi.mocked(compileRules).mock.calls.at(-1)![0];
+      expect(rules[0].pattern).toBe("ERROR");
+    });
+
+    it("does not recompile on a parent re-render with the same rule and config", () => {
+      const config = defaultHighlightingConfig();
+      const rule = createCustomRule();
+      render({ rule, config });
+      vi.mocked(compileRules).mockClear();
+
+      render({ rule, config });
+      render({ rule, config });
+
+      expect(compileRules).not.toHaveBeenCalled();
+    });
   });
 
   describe("zod field errors (UISF2-003)", () => {
