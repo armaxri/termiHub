@@ -977,6 +977,9 @@ describe("RemoteDesktopCanvas", () => {
       await settle();
       expect(order).toEqual(["jpeg@10", "raw@20"]);
       expect(bmp.close).toHaveBeenCalled();
+      // The system tests read the pass-through count off the canvas (#4821).
+      expect(canvasEl().getAttribute("data-jpeg-rects")).toBe("1");
+      expect(canvasEl().hasAttribute("data-jpeg-fallback")).toBe(false);
       expect(frameDisableJpeg).not.toHaveBeenCalled();
     });
 
@@ -997,6 +1000,8 @@ describe("RemoteDesktopCanvas", () => {
       expect(fbCtx.drawImage).not.toHaveBeenCalled();
       expect(frameDisableJpeg).toHaveBeenCalledOnce();
       expect(remoteDesktopRequestFullFrame).toHaveBeenCalledExactlyOnceWith(SESSION);
+      expect(canvasEl().getAttribute("data-jpeg-fallback")).toBe("true");
+      expect(canvasEl().getAttribute("data-jpeg-rects")).toBe("0");
     });
 
     it("tells the user when the frame wire versions do not match", async () => {

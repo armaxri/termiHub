@@ -317,6 +317,11 @@ export function RemoteDesktopCanvas({
     let subscription: RemoteDesktopFrameSubscription | null = null;
     // A fresh (re)attach has painted nothing yet.
     firstFramePaintedRef.current = false;
+    // Diagnostics the system tests read off the canvas (#4821): JPEG rects
+    // painted from pass-through, and whether this channel fell back to RGBA.
+    let jpegRectsPainted = 0;
+    canvasRef.current?.setAttribute("data-jpeg-rects", "0");
+    canvasRef.current?.removeAttribute("data-jpeg-fallback");
 
     const requestFullFrame = (why: string): void => {
       void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
@@ -339,7 +344,11 @@ export function RemoteDesktopCanvas({
       }
       const ctx = fb.getContext("2d");
       if (!ctx) return;
-      paintReadyRects(ctx, fb.width, fb.height, rects);
+      const painted = paintReadyRects(ctx, fb.width, fb.height, rects);
+      if (painted > 0) {
+        jpegRectsPainted += painted;
+        canvasRef.current?.setAttribute("data-jpeg-rects", String(jpegRectsPainted));
+      }
       scheduleRepaint();
     };
 
@@ -362,6 +371,7 @@ export function RemoteDesktopCanvas({
       paint,
       onDecodeFailure: (reason) => {
         frontendWarn("remote_desktop", `${reason}; falling back to RGBA frames`);
+        canvasRef.current?.setAttribute("data-jpeg-fallback", "true");
         if (disposed) return;
         if (subscription) fallBackToRgba(subscription);
         else fallbackPending = true;

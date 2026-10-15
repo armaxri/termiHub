@@ -157,17 +157,22 @@ export function createFramePaintQueue(options: FramePaintQueueOptions): FramePai
 /**
  * Blit ready rects into the offscreen framebuffer's context, in order. Invalid
  * RGBA rects and out-of-bounds JPEG rects are skipped; every bitmap is closed.
+ * Returns how many JPEG rects were drawn.
  */
 export function paintReadyRects(
   ctx: CanvasRenderingContext2D,
   fbWidth: number,
   fbHeight: number,
   rects: ReadyRect[]
-): void {
+): number {
+  let jpegDrawn = 0;
   for (const rect of rects) {
     if (rect.encoding === "jpeg") {
       // The queue checked the bitmap is exactly the rect's size.
-      if (isRectInBounds(rect, fbWidth, fbHeight)) ctx.drawImage(rect.bitmap, rect.x, rect.y);
+      if (isRectInBounds(rect, fbWidth, fbHeight)) {
+        ctx.drawImage(rect.bitmap, rect.x, rect.y);
+        jpegDrawn += 1;
+      }
       rect.bitmap.close();
       continue;
     }
@@ -175,6 +180,7 @@ export function paintReadyRects(
     // `rect.data` is already a Uint8ClampedArray view onto the IPC buffer.
     ctx.putImageData(new ImageData(rect.data, rect.width, rect.height), rect.x, rect.y);
   }
+  return jpegDrawn;
 }
 
 /**
