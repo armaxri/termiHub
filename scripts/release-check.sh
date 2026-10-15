@@ -10,7 +10,7 @@
 # lanes for HEAD (needs gh, logged in), a blocking TODO/FIXME/HACK scan with an
 # allowlist, and a real bundle build plus smoke test (needs a display). Slow.
 #
-#   --versions-only          Run only the version checks (5-file consistency, the
+#   --versions-only          Run only the version checks (7-file consistency, the
 #                            optional expected version, Tauri npm/crate drift) and
 #                            exit. No tests, no git/branch checks. This is the mode
 #                            the tag-triggered release workflow runs as its
@@ -247,11 +247,27 @@ TAURI_CARGO_VER=$(sed -n '3s/^version = "\([^"]*\)".*/\1/p' src-tauri/Cargo.toml
 AGENT_VER=$(sed -n '3s/^version = "\([^"]*\)".*/\1/p' agent/Cargo.toml)
 CORE_VER=$(sed -n '3s/^version = "\([^"]*\)".*/\1/p' core/Cargo.toml)
 
+# First top-level `version = "..."` line of a Cargo manifest (the [package]
+# version; comment lines start with `#` so they never match). `q` stops at the
+# first match instead of piping through `head`, which could SIGPIPE under
+# pipefail.
+cargo_pkg_version() {
+    sed -n '/^version = /{s/^version = "\([^"]*\)".*/\1/p;q;}' "$1"
+}
+
+# The plugin runner and the RDP sidecar ship inside every installer
+# (tauri.sidecar.conf.json externalBin) and report their own version at runtime
+# and in the release SBOMs, so they move in lockstep with the app (DOC2-007).
+PLUGIN_RUNNER_VER=$(cargo_pkg_version plugin-runner/Cargo.toml)
+RDP_SIDECAR_VER=$(cargo_pkg_version rdp-sidecar/Cargo.toml)
+
 ALL_MATCH=true
 for name_ver in "src-tauri/tauri.conf.json:$TAURI_VER" \
                 "src-tauri/Cargo.toml:$TAURI_CARGO_VER" \
                 "agent/Cargo.toml:$AGENT_VER" \
-                "core/Cargo.toml:$CORE_VER"; do
+                "core/Cargo.toml:$CORE_VER" \
+                "plugin-runner/Cargo.toml:$PLUGIN_RUNNER_VER" \
+                "rdp-sidecar/Cargo.toml:$RDP_SIDECAR_VER"; do
     file="${name_ver%%:*}"
     ver="${name_ver#*:}"
     if [ "$ver" != "$PKG_VER" ]; then
@@ -266,7 +282,18 @@ if [ -z "$PKG_VER" ]; then
 fi
 
 if [ "$ALL_MATCH" = true ]; then
-    pass "All 5 files agree on version $PKG_VER"
+    pass "All 7 files agree on version $PKG_VER"
+fi
+
+# plugin-api is versioned independently on purpose: it is the native-plugin ABI
+# contract, whose compatibility promise is CURRENT_PLUGIN_ABI_VERSION (#3367),
+# so it is NOT bumped with the app. Report it so the release log records it, and
+# fail only if it cannot be read at all.
+PLUGIN_API_VER=$(cargo_pkg_version plugin-api/Cargo.toml)
+if [ -n "$PLUGIN_API_VER" ]; then
+    echo "  - INFO: plugin-api/Cargo.toml is at $PLUGIN_API_VER (independently versioned ABI crate; not bumped with the app)"
+else
+    fail "Could not read a version from plugin-api/Cargo.toml"
 fi
 
 if [ -n "$EXPECT_VERSION" ]; then

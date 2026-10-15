@@ -9,7 +9,7 @@ REM ratchet, quality checks, a clean tree on main/release/*, green CI integratio
 REM lanes for HEAD (needs gh, logged in), a blocking TODO/FIXME/HACK scan with an
 REM allowlist, and a real bundle build plus smoke test (needs a display). Slow.
 REM
-REM   --versions-only         Run only the version checks (5-file consistency, the
+REM   --versions-only         Run only the version checks (7-file consistency, the
 REM                           optional expected version, Tauri npm/crate drift) and
 REM                           exit. Mirrors release-check.sh --versions-only, the
 REM                           release workflow's verify-version gate (PKG-007).
@@ -122,6 +122,30 @@ for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " core\Cargo.toml
 )
 :got_core_ver
 
+REM The plugin runner and the RDP sidecar ship inside every installer and move in
+REM lockstep with the app (DOC2-007). plugin-api is independently versioned on
+REM purpose (the plugin ABI contract, #3367): reported below, never compared.
+set "PLUGIN_RUNNER_VER="
+for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " plugin-runner\Cargo.toml') do (
+    set "PLUGIN_RUNNER_VER=%%~a"
+    goto :got_plugin_runner_ver
+)
+:got_plugin_runner_ver
+
+set "RDP_SIDECAR_VER="
+for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " rdp-sidecar\Cargo.toml') do (
+    set "RDP_SIDECAR_VER=%%~a"
+    goto :got_rdp_sidecar_ver
+)
+:got_rdp_sidecar_ver
+
+set "PLUGIN_API_VER="
+for /f "tokens=2 delims== " %%a in ('findstr /r /c:"^version = " plugin-api\Cargo.toml') do (
+    set "PLUGIN_API_VER=%%~a"
+    goto :got_plugin_api_ver
+)
+:got_plugin_api_ver
+
 set ALL_MATCH=1
 if not "%TAURI_VER%"=="%PKG_VER%" (
     echo   FAIL: src-tauri\tauri.conf.json has version '%TAURI_VER%', expected '%PKG_VER%'
@@ -143,13 +167,29 @@ if not "%CORE_VER%"=="%PKG_VER%" (
     set FAILED=1
     set ALL_MATCH=0
 )
+if not "%PLUGIN_RUNNER_VER%"=="%PKG_VER%" (
+    echo   FAIL: plugin-runner\Cargo.toml has version '%PLUGIN_RUNNER_VER%', expected '%PKG_VER%'
+    set FAILED=1
+    set ALL_MATCH=0
+)
+if not "%RDP_SIDECAR_VER%"=="%PKG_VER%" (
+    echo   FAIL: rdp-sidecar\Cargo.toml has version '%RDP_SIDECAR_VER%', expected '%PKG_VER%'
+    set FAILED=1
+    set ALL_MATCH=0
+)
 if "%PKG_VER%"=="" (
     echo   FAIL: Could not read a version from package.json
     set FAILED=1
     set ALL_MATCH=0
 )
 if %ALL_MATCH%==1 (
-    echo   PASS: All 5 files agree on version %PKG_VER%
+    echo   PASS: All 7 files agree on version %PKG_VER%
+)
+if "%PLUGIN_API_VER%"=="" (
+    echo   FAIL: Could not read a version from plugin-api\Cargo.toml
+    set FAILED=1
+) else (
+    echo   - INFO: plugin-api\Cargo.toml is at %PLUGIN_API_VER% ^(independently versioned ABI crate; not bumped with the app^)
 )
 
 if not defined EXPECT_VERSION goto :expect_done

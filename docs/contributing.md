@@ -1381,7 +1381,7 @@ a warning:
 
 | Check                         | What it requires                                                                                                                                                                                                                                                                                                               |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Versions                      | All five version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                             |
+| Versions                      | All seven version files agree and the Tauri npm packages match their Rust crates (`--versions-only` runs just this)                                                                                                                                                                                                            |
 | Changelog                     | A dated `## [X.Y.Z] - YYYY-MM-DD` section; stale `[Unreleased]` items and leftover `docs/changes/` fragments are warnings                                                                                                                                                                                                      |
 | Unit tests, coverage, quality | `pnpm test`, `cargo test --workspace`, the [coverage ratchet](testing.md#coverage-ratchet) and `scripts/check.sh`                                                                                                                                                                                                              |
 | Git state                     | A clean tree on `main` or `release/*`                                                                                                                                                                                                                                                                                          |
@@ -1409,21 +1409,39 @@ dispatch the workflow on your branch to run the real build too.
 
 ### Version Bump
 
-Update the version number in all five locations:
+Update the version number in all seven locations:
 
 1. **`package.json`** — `"version": "X.Y.Z"`
 2. **`src-tauri/Cargo.toml`** — `version = "X.Y.Z"`
 3. **`src-tauri/tauri.conf.json`** — `"version": "X.Y.Z"`
 4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
 5. **`core/Cargo.toml`** — `version = "X.Y.Z"`
+6. **`plugin-runner/Cargo.toml`** — `version = "X.Y.Z"` (bundled as a sidecar; reports its
+   version to the host at runtime)
+7. **`rdp-sidecar/Cargo.toml`** — `version = "X.Y.Z"` (bundled as a sidecar)
+
+Then refresh both lockfiles so the release builds (which pass `--locked`) accept the new
+versions. The RDP sidecar is outside the workspace and has its own `rdp-sidecar/Cargo.lock`,
+which also records `termihub-core`:
+
+```bash
+cargo update --workspace
+cargo update --workspace --manifest-path rdp-sidecar/Cargo.toml
+```
+
+**`plugin-api/Cargo.toml` is not bumped.** It is the native-plugin ABI crate and is
+independently versioned on purpose: its compatibility promise is
+`CURRENT_PLUGIN_ABI_VERSION`, not the app version (see the comment in its manifest and
+[#3367](https://github.com/armaxri/termiHub/issues/3367)). The version check prints its
+version for the record but never compares it.
 
 Check them before tagging with `./scripts/release-check.sh --versions-only --expect-version X.Y.Z`
 — the same check the Release workflow runs as its first gate.
 
 The version check runs in two places (CI-009, #3901):
 
-- **On every PR** that touches the frontend or Rust areas (which cover all five version
-  files, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
+- **On every PR** that touches the frontend or Rust areas (which cover all version
+  files except `rdp-sidecar/Cargo.toml`, checked at the tag push only, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
   `release-check.sh --versions-only`. A PR whose version sources disagree, or whose
   `@tauri-apps/*` npm packages drift from their Rust crates on major/minor, fails there
   and blocks the PR Gate. That PR check has no tag, so it cannot compare against one.
@@ -1480,9 +1498,10 @@ the _net_ user-facing change, not the development path:
 ### Commit, Tag, and Push
 
 ```bash
-# Commit the version bump and changelog (all five version files + CHANGELOG)
+# Commit the version bump and changelog (all seven version files + CHANGELOG)
 git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json agent/Cargo.toml \
-  core/Cargo.toml CHANGELOG.md
+  core/Cargo.toml plugin-runner/Cargo.toml rdp-sidecar/Cargo.toml rdp-sidecar/Cargo.lock \
+  Cargo.lock CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 
 # Create an annotated tag
