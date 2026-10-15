@@ -98,12 +98,22 @@
   margin-bottom: var(--spacing-xl);
 }
 
+/* The header wraps (#4728): when the title and its actions do not fit on one row
+   (the minimum 800x600 window with the default sidebar), the actions move below
+   the title, and a long action strip wraps its own buttons, so no control is ever
+   pushed past the panel edge. Every settings section header shares this rule. */
 .settings-panel__section-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--spacing-md);
+  gap: var(--spacing-xs) var(--spacing-md);
   margin-bottom: var(--spacing-sm);
+}
+
+.settings-panel__section-header > :is(h3, h4) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-panel__section-title {
@@ -116,6 +126,7 @@
 
 .settings-panel__section-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--spacing-xs);
 }
 
@@ -129,6 +140,7 @@
 /* === Create file prompt === */
 .settings-panel__create-prompt {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm);
@@ -149,7 +161,9 @@
    font that differ from the primitive default. The compound selector wins over
    `.ui-input` regardless of stylesheet order. */
 .settings-panel__create-input {
-  flex: 1;
+  /* A 10rem basis lets the wrapping create prompt drop Save/Cancel below the
+     input on a narrow panel instead of squeezing the input to nothing. */
+  flex: 1 1 10rem;
   min-width: 0;
 }
 

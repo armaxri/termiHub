@@ -197,6 +197,7 @@ each job runs only if the PR can affect it:
 | Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                                         |
 | Rust Code Quality (Windows) (clippy)                      | Rust changed                                                           |
 | Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                               |
+| Rendered Visual Checks (headless Chromium, screenshots)   | frontend changed (incl. `tests/visual/`)                               |
 | Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half              |
 | Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                             |
 | Agent Live Tests (Windows, serial)                        | anything the agent builds from changed (`agent` area)                  |

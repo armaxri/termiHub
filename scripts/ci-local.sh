@@ -156,6 +156,8 @@ gate_rdp_sidecar_deny() { (cd rdp-sidecar && cargo deny check advisories bans li
 gate_manual_inventory() { python3 scripts/manual-inventory.py --check; }
 gate_versions() { ./scripts/release-check.sh --versions-only; }
 gate_bundle_size() { pnpm build && pnpm size; }
+# Rendered visual checks (#4712): headless Chromium against the IPC mock.
+gate_visual_checks() { pnpm exec playwright install chromium && pnpm test:visual; }
 
 # rustdoc: default + --all-features, then each opt-in core feature alone (#4561)
 # so a link to an item gated behind another feature fails here, as in CI.
@@ -267,6 +269,7 @@ if [ "$MODE" = "full" ]; then
   run_gate "Frontend: manual-test inventory" gate_manual_inventory
   run_gate "Version sources + Tauri drift" gate_versions
   run_gate "Frontend: bundle size budget" gate_bundle_size
+  run_gate "Frontend: rendered visual checks" gate_visual_checks
 
   run_gate "Rust: rustdoc (-D warnings)" gate_rustdoc
   run_gate "Plugin IPC fuzz crate (fmt + clippy)" gate_plugin_fuzz

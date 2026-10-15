@@ -71,6 +71,7 @@ export const CI_LOCAL_JOBS = {
     ],
     omitted: "Frontend Code Quality: the advisory knip report",
   },
+  "visual-checks": { gates: ["Frontend: rendered visual checks"] },
   "bundle-size": { gates: ["Frontend: bundle size budget"] },
   rustdoc: { gates: ["Rust: rustdoc (-D warnings)"] },
   "plugin-fuzz-check": { gates: ["Plugin IPC fuzz crate (fmt + clippy)"] },
