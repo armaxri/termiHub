@@ -113,6 +113,14 @@ mod tests {
         }
     }
 
+    /// The photo-like fixture the desktop's wire-size test (#4424) sends as a
+    /// pass-through JPEG: it must be a real baseline JPEG of the claimed size.
+    #[test]
+    fn photo_fixture_is_a_256x256_baseline_jpeg() {
+        let img = decode_jpeg_rgba(include_bytes!("testdata/photo_256x256.jpg")).expect("decode");
+        assert_eq!((img.width, img.height), (256, 256));
+    }
+
     #[test]
     fn rejects_garbage_bytes() {
         assert!(decode_jpeg_rgba(&[0xde, 0xad, 0xbe, 0xef]).is_err());

@@ -52,9 +52,7 @@ use crate::session::graphical_supervisor::{
     Generation, LastSize, PumpEnd, Supervisor, RECONNECT_DIAL_TIMEOUT,
 };
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
-use crate::session::remote_desktop_frames::{
-    encode_cursor, encode_frame, RemoteDesktopFrameChannels,
-};
+use crate::session::remote_desktop_frames::{encode_cursor, RemoteDesktopFrameChannels};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
@@ -240,7 +238,7 @@ fn emit_owner_scoped<R: tauri::Runtime, P: Serialize + Clone>(
 fn send_binary_owner_scoped<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     session_id: &str,
-    encode: impl FnOnce() -> Vec<u8>,
+    send: impl FnOnce(&RemoteDesktopFrameChannels, &crate::window::OutputEmitTarget),
 ) {
     use crate::window::{OutputEmitTarget, WindowManager};
     use tauri::Manager;
@@ -255,17 +253,21 @@ fn send_binary_owner_scoped<R: tauri::Runtime>(
         .try_state::<WindowManager>()
         .map(|wm| wm.output_target(session_id))
         .unwrap_or(OutputEmitTarget::Broadcast);
-    channels.send(session_id, &target, encode());
+    send(&channels, &target);
 }
 
 impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
     /// Frames ride the session's binary channel, not a JSON event (#4291).
     fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
-        send_binary_owner_scoped(self, &event.session_id, || encode_frame(&event.frame));
+        send_binary_owner_scoped(self, &event.session_id, |channels, target| {
+            channels.send_frame(&event.session_id, target, &event.frame);
+        });
     }
     /// Cursor updates share the frame channel, so a shape is binary too.
     fn emit_cursor(&self, event: &RemoteDesktopCursorEvent) {
-        send_binary_owner_scoped(self, &event.session_id, || encode_cursor(&event.cursor));
+        send_binary_owner_scoped(self, &event.session_id, |channels, target| {
+            channels.send(&event.session_id, target, encode_cursor(&event.cursor));
+        });
     }
     fn emit_clipboard(&self, event: &RemoteDesktopClipboardEvent) {
         emit_owner_scoped(self, "remote-desktop-clipboard", &event.session_id, event);
