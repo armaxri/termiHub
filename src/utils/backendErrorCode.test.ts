@@ -5,7 +5,6 @@ import {
   isAuthFailure,
   isSecondFactorFailure,
   isAgentTransportClosed,
-  isAgentTimeout,
   isAgentReportedError,
   backendErrorMessage,
 } from "./backendErrorCode";
@@ -139,10 +138,6 @@ describe("backendErrorCode", () => {
     const reported = { code: "remote_error", message: "Remote agent error: update refused" };
 
     it("tells a timeout, a transport close and an agent-reported error apart by code", () => {
-      expect(isAgentTimeout(timedOut)).toBe(true);
-      expect(isAgentTimeout(closed)).toBe(false);
-      expect(isAgentTimeout(reported)).toBe(false);
-
       expect(isAgentReportedError(reported)).toBe(true);
       expect(isAgentReportedError(timedOut)).toBe(false);
       expect(isAgentReportedError(closed)).toBe(false);
@@ -150,12 +145,7 @@ describe("backendErrorCode", () => {
       expect(isAgentTransportClosed(timedOut)).toBe(false);
     });
 
-    it("does not treat the SSH-operation timeout code as an agent timeout", () => {
-      expect(isAgentTimeout({ code: "timeout", message: "Timed out: exec" })).toBe(false);
-    });
-
     it("never classifies by message text", () => {
-      expect(isAgentTimeout(new Error("Agent request timed out after 60s"))).toBe(false);
       expect(isAgentReportedError("Remote agent error: update refused")).toBe(false);
     });
   });

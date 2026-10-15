@@ -89,7 +89,10 @@ const clientId = newClientId();
 export const BROADCAST_REGION = `broadcast@${clientId}`;
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setBroadcastTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -187,7 +190,11 @@ export function ensureBroadcastSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopBroadcastSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -210,6 +217,8 @@ export function currentBroadcastView(): BroadcastView {
  * through the same guarded path a real diff takes, so a test can drive the
  * stale-drop / apply behaviour without a transport double. Never call from
  * production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitBroadcastViewForTest(view: BroadcastView, version: number): void {
   commitBroadcastView(view, version);

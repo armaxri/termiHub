@@ -3,25 +3,16 @@
  * session-lifecycle status (#2204 step 3, part of #2152 / #2139).
  *
  * The agentless auto-reconnect countdown overlay renders the loop's live detail
- * (phase, attempt, backoff countdown). Through step 2 that detail came straight
- * from `appStore.terminalAutoReconnect` (the local display record the imperative
- * backoff timer maintains). Step 3 makes the overlay source that detail from the
- * shared `session-lifecycle` projection region instead — the direct analog of the
- * layout render cut ({@link import("./useLayoutRenderTree").useLayoutRenderTree},
- * #2151 step 3).
+ * (phase, attempt, backoff countdown), sourced from the authoritative shared
+ * `session-lifecycle` projection region. The backend drives the loop (#2205
+ * PR-B); there is no local `appStore` record, mirror gate or fallback.
  *
  * The hook returns the {@link TerminalAutoReconnectState} the overlay renders:
- * the loop numbers from the projection, the per-client presentation (wall-clock
- * anchor, on-reconnect command) re-attached from the local record — the
- * partial-projection seam ({@link effectiveAutoReconnect}).
- *
- * # Safety
- *
- * - **Faithful-mirror gate.** The projection sources the render only when its
- *   `reconnect` detail mirrors the local record ({@link projectedReconnectMirrors});
- *   otherwise the hook falls back to the local record (never a stale one). The
- *   local record always seeds the effective view, so it is populated even before
- *   anything has written the backend region — making the cut parity-safe.
+ * the loop numbers from the region, plus the two per-client presentation values
+ * the region does not carry — the wall-clock countdown anchor (fixed once per
+ * backoff window) and the on-reconnect command from the tab's connection config
+ * ({@link effectiveAutoReconnect}). Until the region has a record for the tab (or
+ * when the transport cannot subscribe) the hook reports no active loop.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -55,11 +46,10 @@ import {
 import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
 
 /**
- * The auto-reconnect display record for one tab: loop numbers sourced from the
- * projected `session-lifecycle` region when it faithfully mirrors `appStore`,
- * otherwise `appStore`'s `terminalAutoReconnect` record verbatim (region not yet
- * populated / mirroring, or a transport that cannot subscribe).
- * `undefined` when no auto-reconnect loop is active for the tab.
+ * The auto-reconnect display record for one tab, sourced from the authoritative
+ * `session-lifecycle` region. `undefined` when no auto-reconnect loop is active
+ * for the tab, before the region has a record for it, or when the transport
+ * cannot subscribe.
  */
 export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectState | undefined {
   const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);

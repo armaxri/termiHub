@@ -18,7 +18,6 @@ import {
   transferResume,
   transferCancel,
   transferRetry,
-  transferList,
   sshHostKeyDecision,
   sshKeyboardInteractiveRespond,
   cancelConnectAgent,
@@ -237,39 +236,6 @@ describe("api response-validation (TFE-004)", () => {
         expect(result).toBe(false);
       });
     }
-
-    it("transferList forwards a session filter and returns snapshots", async () => {
-      const snapshots = [
-        {
-          transferId: "t1",
-          sessionId: "s1",
-          direction: "download",
-          fileName: "a.bin",
-          state: "active",
-          settled: false,
-          transferred: 10,
-          total: 100,
-          speed: 5,
-          attempt: 0,
-          maxAttempts: 3,
-        },
-      ];
-      mockedInvoke.mockResolvedValue(snapshots);
-
-      const result = await transferList("s1");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("transfer_list", { sessionId: "s1" });
-      expect(result).toEqual(snapshots);
-    });
-
-    it("transferList passes an undefined session filter when omitted", async () => {
-      mockedInvoke.mockResolvedValue([]);
-
-      const result = await transferList();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("transfer_list", { sessionId: undefined });
-      expect(result).toEqual([]);
-    });
   });
 
   // Boolean "was it found / did anything change" wrappers whose result gates UI.

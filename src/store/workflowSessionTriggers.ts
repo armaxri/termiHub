@@ -261,7 +261,11 @@ export function syncWorkflowOutputTriggers(
   terminalDispatcher.setOutputTap(outputEngine.active ? outputTap : null);
 }
 
-/** Drop all session-trigger state. Intended for tests. */
+/**
+ * Drop all session-trigger state. Intended for tests.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetWorkflowSessionTriggers(): void {
   outputEngine?.reset();
   outputEngine = null;

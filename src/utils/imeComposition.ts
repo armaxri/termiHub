@@ -85,7 +85,11 @@ function installImeCompositionTracker(): void {
   window.addEventListener("focusout", onFocusOut, true);
 }
 
-/** Test-only: clear tracked composition state between cases. */
+/**
+ * Test-only: clear tracked composition state between cases.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetImeCompositionTrackerForTests(): void {
   compositionTarget = null;
   compositionEndedAt = null;

@@ -67,8 +67,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   } = useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   // Broadcast participation (#1957): the badge shows on every tab in the target
-  // set, active or not, so participation is visible at a glance. Render cut
-  // (#2242): sourced from the projected broadcast region (falls back to appStore).
+  // set, active or not, so participation is visible at a glance. Sourced from the
+  // authoritative `broadcast` region (#2242).
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   const broadcastTargetTabIds = broadcast.targetTabIds;

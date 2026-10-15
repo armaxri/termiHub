@@ -72,16 +72,10 @@ vi.mock("@/services/api", () => ({
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  saveTunnel: vi.fn(),
-  deleteTunnel: vi.fn(),
-  startTunnel: vi.fn(),
-  stopTunnel: vi.fn(),
-}));
-
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import { extractTabContent, useAppStore } from "./appStore";
+import { useAppStore } from "./appStore";
+import { extractTabContent } from "./layoutHelpers";
 import { layoutState } from "@/test/layoutState";
 
 const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
@@ -296,19 +290,17 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
     expect(getAllLeaves(layoutState().rootPanel).length).toBe(2);
   });
 
-  it("a stale region view (missing a locally-added tab) fails the mirror gate", () => {
+  it("a locally-opened tab stays in the composed tree after a non-intent write", () => {
     const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.openSettingsTab();
 
-    // The stale view is the tree BEFORE the settings tab (what a late backend diff
-    // for the prior op would carry). `viewMatchesTree` (the mirror's gate) rejects
-    // it, so the mirror never composes it over appStore and the tab is not lost.
-    // Here we assert the gate primitive directly: the current appStore has a tab
-    // the stale view lacks, so composing that view is gated out upstream.
+    // Opening the settings tab is a non-intent structural write: it reseeds the
+    // region, so the composed tree keeps the tab rather than losing it to a view
+    // that predates the write.
     const withSettings = allTabs().map((t) => t.id);
     expect(withSettings.some((id) => id !== undefined)).toBe(true);
-    // The settings tab is present in appStore's live tree.
+    // The settings tab is present in the live composed tree.
     expect(allTabs().some((t) => t.contentType === "settings")).toBe(true);
   });
 

@@ -134,12 +134,20 @@ export function reconcileFrontendPlugins(plugins: InstalledPlugin[], enabled = t
   }
 }
 
-/** Ids of the plugins whose frontend entry points are currently loaded (testing/introspection). */
+/**
+ * Ids of the plugins whose frontend entry points are currently loaded (testing/introspection).
+ *
+ * @internal Test-only introspection.
+ */
 export function loadedFrontendPluginIds(): string[] {
   return [...loadedPlugins];
 }
 
-/** Forget all loaded-plugin bookkeeping without touching the sandbox (tests only). */
+/**
+ * Forget all loaded-plugin bookkeeping without touching the sandbox (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetLoadedFrontendPlugins(): void {
   loadedPlugins.clear();
 }

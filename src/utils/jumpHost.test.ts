@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   getJumpHosts,
-  hasJumpHost,
   jumpHostTooltip,
   jumpHostStatusLabel,
   jumpHostGatewayConnection,
@@ -48,13 +47,6 @@ describe("getJumpHosts", () => {
   it("is safe for undefined/null configs", () => {
     expect(getJumpHosts(undefined)).toEqual([]);
     expect(getJumpHosts(null)).toEqual([]);
-  });
-});
-
-describe("hasJumpHost", () => {
-  it("is true only when a chain is present", () => {
-    expect(hasJumpHost(sshConfig({ proxyJump: [hop("bastion")] }))).toBe(true);
-    expect(hasJumpHost(sshConfig({}))).toBe(false);
   });
 });
 

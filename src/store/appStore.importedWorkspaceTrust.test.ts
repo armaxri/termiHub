@@ -63,13 +63,6 @@ vi.mock("@/services/api", () => ({
   sendInput: (...args: unknown[]) => mockSendInput(...args),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  saveTunnel: vi.fn(),
-  deleteTunnel: vi.fn(),
-  startTunnel: vi.fn(),
-  stopTunnel: vi.fn(),
-}));
-
 import type { ConnectionConfig } from "@/types/terminal";
 import { useAppStore } from "./appStore";
 import { layoutState } from "@/test/layoutState";

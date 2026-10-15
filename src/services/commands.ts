@@ -1,8 +1,4 @@
-import {
-  getDefaultBindings,
-  getActionAccelerator,
-  RELEASE_CHORD_ACTION,
-} from "@/services/keybindings";
+import { getDefaultBindings, getActionAccelerator } from "@/services/keybindings";
 import { useAppStore } from "@/store/appStore";
 import { CONTEXT_COMMANDS, ContextCommand } from "@/services/contextCommands";
 
@@ -30,30 +26,6 @@ export interface PaletteCommand {
   /** Execute the command. */
   run: () => void;
 }
-
-/**
- * Keybinding actions deliberately left out of the command palette, with the
- * reason each is excluded. This is the allowlist the coverage test checks
- * against: any *other* action lacking a runner is a genuine gap (a surfaced
- * shortcut the palette silently drops), so adding an action without wiring a
- * runner — or listing it here — fails `commands.coverage.test.ts`.
- *
- * - `command-palette` — opens the palette itself; a self-referential entry is
- *   pointless inside the palette.
- * - `release-remote-desktop-keyboard` — the remote-desktop release chord
- *   (#4524) is read directly by the focused canvas; running it from the
- *   palette is meaningless because opening the palette already left the canvas.
- *
- * The clipboard actions (`copy` / `paste` / `select-all`) were previously excluded
- * for want of a focused-terminal command seam; they are now surfaced through
- * {@link CONTEXT_COMMANDS}, which routes them to the focused terminal via the
- * terminal command bridge (PROD-054), so they invoke the same registry handlers
- * the Cmd/Ctrl shortcuts use.
- */
-export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
-  "command-palette",
-  RELEASE_CHORD_ACTION,
-]);
 
 /**
  * Store-only runners: actions that operate purely on global store state and are

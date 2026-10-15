@@ -493,7 +493,7 @@ jobs:
         run: scripts/release-check.sh --versions-only
 
       # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
-      # knip statically finds unused files, exports, and dependencies; knip.jsonc
+      # knip statically finds unused files, exports, and dependencies; knip.ts
       # declares the real entrypoints (src/main.tsx, the vite/vitest configs, test
       # setup + test files, the dynamically-loaded testbridge) so the report is
       # useful-not-noisy. It is REPORT-ONLY: `continue-on-error` plus `|| true`
@@ -508,6 +508,15 @@ jobs:
         # non-blocking. Forcing function: the #3158 cleanup tracker.
         continue-on-error: true
         run: pnpm knip || true
+
+      # Second advisory knip run in production mode (DEAD2-006, #4371): test
+      # files are NOT entries here, so an export or module whose only importer
+      # is its own unit test is reported as dead production code (the run
+      # above counts the test as a use). Same report-only guarantees.
+      - name: Production-dead-code report (knip --production, advisory)
+        # advisory: same rationale as the step above (#3158).
+        continue-on-error: true
+        run: pnpm knip:prod || true
 
   # Rendered visual checks (#4712). Two UI audits read the code but never
   # rendered it, so an unstyled Settings page (#4708), clipped narrow sidebars

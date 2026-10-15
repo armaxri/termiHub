@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
-  useDebounce,
   useDebouncedCallback,
   useKeyedDebouncedCallback,
   type DebouncedCallback,
@@ -10,73 +9,6 @@ import {
   type KeyedDebouncedCallback,
   type KeyedDebounceOptions,
 } from "./useDebounce";
-
-// ── useDebounce (value) ────────────────────────────────────────────────────────
-
-/** Render useDebounce and expose its latest value + a way to change the source. */
-function renderValue<T>(initial: T, delayMs: number) {
-  const container = document.createElement("div");
-  const root: Root = createRoot(container);
-  let latest: T = initial;
-  let current: T = initial;
-
-  function Probe({ value }: { value: T }) {
-    latest = useDebounce(value, delayMs);
-    return null;
-  }
-
-  act(() => root.render(<Probe value={current} />));
-
-  return {
-    get: () => latest,
-    setValue: (v: T) => {
-      current = v;
-      act(() => root.render(<Probe value={current} />));
-    },
-    unmount: () => act(() => root.unmount()),
-  };
-}
-
-describe("useDebounce (value)", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("returns the initial value immediately", () => {
-    const hook = renderValue("a", 300);
-    expect(hook.get()).toBe("a");
-  });
-
-  it("does not surface a new value until the delay elapses", () => {
-    const hook = renderValue("a", 300);
-    hook.setValue("b");
-    expect(hook.get()).toBe("a");
-    act(() => vi.advanceTimersByTime(299));
-    expect(hook.get()).toBe("a");
-    act(() => vi.advanceTimersByTime(1));
-    expect(hook.get()).toBe("b");
-  });
-
-  it("restarts the timer on each change, surfacing only the last value", () => {
-    const hook = renderValue("a", 300);
-    hook.setValue("b");
-    act(() => vi.advanceTimersByTime(200));
-    hook.setValue("c");
-    act(() => vi.advanceTimersByTime(200));
-    // 400ms total elapsed, but only 200ms since the last change → still "a".
-    expect(hook.get()).toBe("a");
-    act(() => vi.advanceTimersByTime(100));
-    expect(hook.get()).toBe("c");
-  });
-
-  it("does not update after unmount", () => {
-    const hook = renderValue("a", 300);
-    hook.setValue("b");
-    hook.unmount();
-    // Advancing timers must not throw or fire a post-unmount state update.
-    act(() => vi.advanceTimersByTime(300));
-    expect(hook.get()).toBe("a");
-  });
-});
 
 // ── useDebouncedCallback ────────────────────────────────────────────────────────
 

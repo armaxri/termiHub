@@ -67,7 +67,11 @@ export function installCspViolationReporter(doc: Document = document): HTMLEleme
   return sink;
 }
 
-/** Reset installation state (tests only). */
+/**
+ * Reset installation state (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetCspViolationReporterForTests(): void {
   installed = false;
 }

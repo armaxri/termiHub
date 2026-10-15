@@ -103,14 +103,6 @@ export function findCompanion(tunnels: TunnelConfig[], parentId: string): Tunnel
   return tunnels.find((t) => t.companionOf === parentId);
 }
 
-/** The parent a companion is linked to, if `config` is a companion and it exists. */
-export function findParent(
-  tunnels: TunnelConfig[],
-  config: TunnelConfig
-): TunnelConfig | undefined {
-  return config.companionOf ? tunnels.find((t) => t.id === config.companionOf) : undefined;
-}
-
 /**
  * The combined status of a chained pair — the single value the UI shows so the
  * user reasons about "does `localhost:PORT` work?" rather than juggling two rows.

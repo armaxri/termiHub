@@ -8,17 +8,15 @@
  * makes that store authoritative for **session status**: `appStore`'s
  * connect / connected / disconnect / dropped / reconnect / error transitions
  * dispatch `session.*` intents instead of driving the lifecycle purely locally,
- * the backend timer driver drives the reconnect backoff loop's timing (replacing
- * the frontend `setTimeout`), and the projected status is reconciled back into
- * `appStore`'s existing fields so the terminal overlays render exactly as before
- * (the renderer cut is step 3, #2204).
+ * and the backend timer driver drives the reconnect backoff loop's timing
+ * (replacing the frontend `setTimeout`). The terminal overlays now render the
+ * projected status directly (#2204, #2625); there are no `appStore` status twins.
  *
  * # Session identity
  *
  * The frontend's stable lifecycle key is the **tab id** — it survives a reconnect
  * even as the backend session id changes or is briefly absent, which is exactly
- * why the auto-reconnect loop (`appStore.autoReconnectTimers`,
- * `terminalAutoReconnect`) is keyed by tab id. So the bridge uses the tab id as
+ * why the reconnect loop is keyed by tab id. So the bridge uses the tab id as
  * the region's opaque session key; the store treats it as an opaque string.
  *
  * # Backend-authoritative (migration flags removed, #2283)
@@ -191,7 +189,10 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setSessionTransportForTest(t: Transport | null): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -576,6 +577,8 @@ function fanOutSessionView(state: ProjectionCacheState): void {
  * through the same guarded path a real diff takes, so a test can drive the
  * stale-drop / apply behaviour without a transport double. Never call from
  * production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitSessionViewForTest(view: SessionLifecycleView, version: number): void {
   commitSessionView(view, version);
@@ -622,7 +625,11 @@ export function ensureSessionSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopSessionSubscription(): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -658,6 +665,8 @@ function awaitVersion(client: ProjectionClient, version: number, timeoutMs = 400
  * parity tests to assert the intent path reproduces the expected transition.
  *
  * @throws on a rejected intent (surfaced to the caller as a resilience event)
+ *
+ * @internal Parity tests drive session intents through it.
  */
 export async function runSessionIntent(
   kind: SessionIntentKind,
@@ -677,21 +686,19 @@ export async function runSessionIntent(
   return view?.sessions?.[sessionId];
 }
 
-// ── Projected status → appStore display fields (the reconcile mapping) ──────────
+// ── Projected status → overlay display record ───────────────────────────────────
 
-/** The backoff schedule the display mapping reports (matches the store's). */
+/** The backoff schedule the display mapping reports (the shared policy). */
 const displayBackoff: BackoffConfig = RECONNECT_POLICY;
 
 /**
- * Map a projected lifecycle to the `terminalAutoReconnect` display record the
- * overlay renders, or `null` when no loop is active (idle / connected / gaveup).
- * This reproduces exactly the record `appStore.driveAutoReconnect` builds locally
- * for the `waiting` / `connecting` phases, so reconciling the projected status
- * back into `appStore` is parity-identical to the local path.
+ * Map a projected lifecycle to the {@link TerminalAutoReconnectState} display
+ * record the overlay renders, or `null` when no loop is active (idle / connected /
+ * gaveup). Only the `waiting` / `connecting` phases produce a record.
  *
  * `now` and `onReconnectCommand` are injected: `nextAttemptAt` is derived from
- * `now + delayMs` (as the local path does with `Date.now()`), and the optional
- * on-reconnect command is echoed from the tab's connection config by the caller.
+ * `now + delayMs`, and the optional on-reconnect command is echoed from the tab's
+ * connection config by the caller.
  */
 export function projectedToAutoReconnect(
   projected: ProjectedSessionLifecycle,
@@ -723,7 +730,7 @@ export function projectedToAutoReconnect(
   return null;
 }
 
-// ── Render cut: faithful-mirror gate + effective display record (#2204) ─────────
+// ── Effective auto-reconnect display record (#2204) ────────────────────────────
 
 /**
  * The auto-reconnect display record the disconnect overlay renders, sourced
@@ -764,85 +771,6 @@ export function currentSessionView(): Record<string, ProjectedSessionLifecycle> 
   return lastSessions;
 }
 
-// ── Backend-reattach: resolve the backend session id to attach to (#2457) ───────
-
-/**
- * Resolve the **backend** session id a tab should re-attach terminal I/O to for a
- * backend-driven reconnect (#2457), reading it from the projected
- * `session-lifecycle` region. The server-side reconnect redrive (#2454) publishes
- * the new backend session id to the region keyed by tab id; this awaits that id
- * so the terminal can subscribe output/exit + `setTabSessionId` **without**
- * calling `create_connection`.
- *
- * Resolves with the region's `sessionId` for `tabId` as soon as it is present and
- * not equal to `excludeSessionId` (the prior, now-dead session id, so a stale
- * region value is never mistaken for the fresh one — the store also clears the id
- * on drop, so this is belt-and-suspenders). Resolves to `null` when `signal`
- * aborts (the effect torn down) or after `timeoutMs` with no id — the caller falls
- * back to the client redrive, which keeps a not-yet-driven reconnect from
- * stranding the terminal. With #2454 present the redrive publishes the id
- * promptly, so the wait settles at once and the timeout never bites.
- *
- * The region subscription is (re-)ensured so diffs arrive; the listener is
- * registered before the fast-path read so no diff in between is missed.
- */
-export function waitForBackendReattachSessionId(
-  tabId: string,
-  excludeSessionId: string | null | undefined,
-  signal: AbortSignal,
-  timeoutMs = 10000
-): Promise<string | null> {
-  const accept = (id: string | undefined): id is string =>
-    !!id && !(excludeSessionId != null && id === excludeSessionId);
-
-  return new Promise<string | null>((resolve) => {
-    let settled = false;
-    const cleanups: Array<() => void> = [];
-    const finish = (value: string | null) => {
-      if (settled) return;
-      settled = true;
-      for (const c of cleanups) c();
-      resolve(value);
-    };
-
-    // Register the listener first so a diff arriving between the fast-path read
-    // and the subscription is not lost.
-    cleanups.push(
-      onSessionView((next) => {
-        const id = next[tabId]?.sessionId;
-        if (accept(id)) finish(id);
-      })
-    );
-
-    // Ensure the region is subscribed; a subscribe failure leaves nothing to
-    // source the id, so fall back (null) rather than hang.
-    ensureSessionSubscribed().catch((err) => {
-      logSessionBridgeFallback("subscribe", err);
-      finish(null);
-    });
-
-    // Fast path: the id may already be in the last-known view.
-    const immediate = currentSessionView()[tabId]?.sessionId;
-    if (accept(immediate)) {
-      finish(immediate);
-      return;
-    }
-    if (signal.aborted) {
-      finish(null);
-      return;
-    }
-
-    const timer = setTimeout(() => finish(null), timeoutMs);
-    cleanups.push(() => clearTimeout(timer));
-    // Cancel promptly on effect teardown by listening for the AbortSignal's
-    // `abort` event rather than polling a flag: the promise frees on the event
-    // itself, with no up-to-100ms tick latency and no leaked interval timer.
-    const onAbort = () => finish(null);
-    signal.addEventListener("abort", onAbort);
-    cleanups.push(() => signal.removeEventListener("abort", onAbort));
-  });
-}
-
 /** The terminal outcome of a backend-driven **agent** reconnect wait (#2476). */
 export type BackendAgentReconnectOutcome =
   /** The redrive re-established the transport and published a fresh backend
@@ -865,14 +793,12 @@ export type BackendAgentReconnectOutcome =
  * Wait for the terminal outcome of a **backend-driven agent reconnect** (#2476),
  * reading the projected `session-lifecycle` region keyed by tab id.
  *
- * This is the agent counterpart to {@link waitForBackendReattachSessionId}, and
- * the crux of the double-drive fix. The direct-SSH wait times out after ~10 s and
- * the caller then falls through to the client redrive — safe for a direct
- * connection, but for an **agent** tab that fall-through re-enters the
+ * This is the crux of the double-drive fix: a wait that timed out and fell
+ * through to a client redrive would, for an **agent** tab, re-enter a
  * non-idempotent client agent engine (`connectRemoteAgent` + park + bounded
- * spawn retries), which double-drives the very transport the backend redrive is
+ * spawn retries) and double-drive the very transport the backend redrive is
  * re-establishing. A prolonged agent drop (the backend park/retry running for
- * minutes) makes that fall-through the common case, not an edge.
+ * minutes) would make that fall-through the common case, not an edge.
  *
  * So this wait instead **stays deferred to the backend loop for as long as the
  * loop is active**, resolving only on a genuine terminal outcome:

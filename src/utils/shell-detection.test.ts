@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   detectAvailableShells,
-  getDefaultShell,
-  isWslShell,
   getWslDistroName,
   wslToWindowsPath,
   windowsToWslPath,
@@ -51,29 +49,6 @@ describe("shell-detection", () => {
     });
   });
 
-  describe("getDefaultShell", () => {
-    it("returns the first available shell", async () => {
-      mockedListAvailableShells.mockResolvedValue(["zsh", "bash"]);
-
-      const result = await getDefaultShell();
-      expect(result).toBe("zsh");
-    });
-
-    it("returns bash when backend returns bash first", async () => {
-      mockedListAvailableShells.mockResolvedValue(["bash", "zsh"]);
-
-      const result = await getDefaultShell();
-      expect(result).toBe("bash");
-    });
-
-    it("falls back to bash when backend fails", async () => {
-      mockedListAvailableShells.mockRejectedValue(new Error("Backend unavailable"));
-
-      const result = await getDefaultShell();
-      expect(result).toBe("bash");
-    });
-  });
-
   describe("detectAvailableShells with WSL", () => {
     it("returns WSL distros from the backend", async () => {
       mockedListAvailableShells.mockResolvedValue([
@@ -88,22 +63,6 @@ describe("shell-detection", () => {
       expect(result).toContain("wsl:Ubuntu");
       expect(result).toContain("wsl:Debian");
       expect(result).toHaveLength(5);
-    });
-  });
-
-  describe("isWslShell", () => {
-    it("returns true for WSL shell types", () => {
-      expect(isWslShell("wsl:Ubuntu")).toBe(true);
-      expect(isWslShell("wsl:Debian")).toBe(true);
-      expect(isWslShell("wsl:Ubuntu-22.04")).toBe(true);
-    });
-
-    it("returns false for non-WSL shell types", () => {
-      expect(isWslShell("bash")).toBe(false);
-      expect(isWslShell("zsh")).toBe(false);
-      expect(isWslShell("powershell")).toBe(false);
-      expect(isWslShell("cmd")).toBe(false);
-      expect(isWslShell("gitbash")).toBe(false);
     });
   });
 

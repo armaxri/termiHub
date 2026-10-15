@@ -207,7 +207,10 @@ function attachLayoutMirrorHandlers(client: ProjectionClient): void {
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
  * drops any active subscription. Registered mirror handlers survive and re-attach
- * to the next client. */
+ * to the next client.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setLayoutTransportForTest(t: Transport | null): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -273,7 +276,11 @@ function ensureSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopLayoutSubscription(): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -285,6 +292,8 @@ export function stopLayoutSubscription(): void {
  * The layout region's current effective (optimistically-overlaid) view — for
  * synchronous test assertions on the projection. `undefined` before the client
  * exists / its first snapshot.
+ *
+ * @internal Test-only accessor for synchronous assertions on the projection.
  */
 export function currentLayoutView(): LayoutView | undefined {
   return (regionClient ?? creatingClient)?.state.view as LayoutView | undefined;
@@ -325,20 +334,6 @@ export function toMinimalNode(node: PanelNode): MinimalNode {
   if (node.sizes) split.sizes = node.sizes;
   if (node.lastActiveLeafId) split.lastActiveLeafId = node.lastActiveLeafId;
   return split;
-}
-
-/** Index every rich tab in a tree by id, for reconcile lookups. */
-export function collectTabs(node: PanelNode): Map<string, TerminalTab> {
-  const map = new Map<string, TerminalTab>();
-  const walk = (n: PanelNode): void => {
-    if (n.type === "leaf") {
-      for (const t of n.tabs) map.set(t.id, t);
-    } else {
-      n.children.forEach(walk);
-    }
-  };
-  walk(node);
-  return map;
 }
 
 /**
@@ -602,7 +597,10 @@ function sizesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
 
 /** Ensure the layout region client is subscribed; the renderer's entry point.
  * `async` so a synchronous transport-construction failure (e.g. non-Tauri, no
- * socket) surfaces as a rejection the caller can catch and fall back on. */
+ * socket) surfaces as a rejection the caller can catch and fall back on.
+ *
+ * @internal Tests subscribe the layout region through it; production subscribes on first dispatch.
+ */
 export async function ensureLayoutRegionClient(): Promise<ProjectionClient> {
   return ensureSubscribed();
 }
@@ -640,7 +638,11 @@ export function splitMarksOfTree(root: PanelNode): Record<string, string> {
   return Object.fromEntries(m);
 }
 
-/** Index every group's directional split marks by group id, then split id. */
+/**
+ * Index every group's directional split marks by group id, then split id.
+ *
+ * @internal Only the layout test helpers (src/test/layoutState.ts) call it.
+ */
 export function extractSplitMarks(snapshot: LayoutSnapshot): LayoutSplitMarks {
   const out: LayoutSplitMarks = {};
   for (const g of snapshot.groups) {

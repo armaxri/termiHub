@@ -41,8 +41,6 @@ vi.mock("@/services/api", () => ({
   setUpdateAutoCheck: vi.fn(),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({}));
-
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
 }));

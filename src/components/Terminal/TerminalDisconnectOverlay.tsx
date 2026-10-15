@@ -65,8 +65,8 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
  * without an agent, and a Cancel affordance that stops the loop.
  */
 function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
-  // The loop detail is sourced from the projected `session-lifecycle` region when
-  // it faithfully mirrors appStore, else from appStore verbatim (#2204).
+  // The loop detail is sourced from the authoritative `session-lifecycle` region
+  // (#2204).
   const auto = useSessionAutoReconnect(tabId);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   // Tick once a second so the countdown stays live.
@@ -161,9 +161,8 @@ export function TerminalDisconnectOverlay({
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   const startFreshShellForTab = useAppStore((s) => s.startFreshShellForTab);
-  // Render cut (#2205 PR-A / #2442): the disconnect error, reconnect flag and the
-  // reconnect-trigger error are all sourced from the projected `session-lifecycle`
-  // region (falls back to appStore when it does not mirror). #2442 added the
+  // The disconnect error, reconnect flag and the reconnect-trigger error are all
+  // sourced from the authoritative `session-lifecycle` region (#2205). #2442 added the
   // region's distinct `reconnectError` field + `session.reconnectTrigger` intent
   // so the trigger error is region-owned rather than read from appStore directly.
   const lifecycle = useProjectedSessionLifecycle(tabId);

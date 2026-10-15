@@ -35,13 +35,6 @@ import { frontendLog } from "@/utils/frontendLog";
 /** Global settings a workspace can override (ids match `SETTINGS_REGISTRY`). */
 export type WorkspaceOverridableKey = "theme" | "fontFamily" | "fontSize";
 
-/** The global settings a workspace can override, in display order. */
-export const WORKSPACE_OVERRIDABLE_SETTINGS: readonly WorkspaceOverridableKey[] = [
-  "theme",
-  "fontFamily",
-  "fontSize",
-];
-
 export type { ActiveWorkspaceInfo };
 
 /** Accepted terminal font size override range (mirrors Settings and the backend). */
@@ -222,7 +215,11 @@ export function looksLikeSecretName(name: string): boolean {
   return SECRET_NAME_RE.test(name);
 }
 
-/** Test-only: reset module state. */
+/**
+ * Test-only: reset module state.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function __resetActiveWorkspaceForTest(): void {
   active = null;
   listeners.clear();

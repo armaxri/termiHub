@@ -63,6 +63,9 @@ export const INJECTED_TYPES = new Set([
   "GlobalScope",
 ]);
 
+const DEAD_WRAPPER_4371 =
+  "frontend wrapper deleted as production-dead in #4371; command removal tracked in #4785";
+
 /**
  * Registered commands with no production caller in src/ that are kept on
  * purpose, each with the reason. Keep this list short: a command that nothing
@@ -70,7 +73,17 @@ export const INJECTED_TYPES = new Set([
  *
  * @type {Map<string, string>}
  */
-export const ORPHAN_ALLOWLIST = new Map();
+export const ORPHAN_ALLOWLIST = new Map([
+  // Tunnels go through the `tunnel.*` projection intents; the typed wrappers
+  // (src/services/tunnelApi.ts) were dead and the same-named tunnelSlice actions
+  // hid the orphans from this name-based check until they were deleted.
+  ["save_tunnel", DEAD_WRAPPER_4371],
+  ["delete_tunnel", DEAD_WRAPPER_4371],
+  ["start_tunnel", DEAD_WRAPPER_4371],
+  ["stop_tunnel", DEAD_WRAPPER_4371],
+  // The transfer queue is fed by the transfers projection region.
+  ["transfer_list", DEAD_WRAPPER_4371],
+]);
 
 /**
  * Convert a Rust parameter name to the invoke key Tauri expects (heck's
@@ -651,8 +664,13 @@ export function scanSources(sources) {
   return { calls, identifierCounts };
 }
 
-/** Run the whole-repo check. */
-export function checkRepo(root) {
+/**
+ * Run the whole-repo check.
+ *
+ * @param {string} root - repository root.
+ * @param {Map<string, string>} [allowlist] - orphan exemptions (fixture repos pass their own).
+ */
+export function checkRepo(root, allowlist = ORPHAN_ALLOWLIST) {
   const rustRoot = path.join(root, "src-tauri", "src");
   const rustFiles = {};
   for (const f of walk(rustRoot, (p) => p.endsWith(".rs"))) {
@@ -673,7 +691,7 @@ export function checkRepo(root) {
     problems: [
       ...problems,
       ...findMismatches(contract, calls),
-      ...findOrphans(contract, calls, identifierCounts),
+      ...findOrphans(contract, calls, identifierCounts, allowlist),
     ],
   };
 }
