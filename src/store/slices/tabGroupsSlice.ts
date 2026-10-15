@@ -49,7 +49,11 @@ import { createLayoutCommit } from "./layoutCommit";
 import { prunedTabState, prunedTabsState, releaseTabFromSharedRegions } from "../tabTeardown";
 import { notifyWorkflowTabClosing } from "../workflowSessionTriggers";
 import { errorMessage } from "@/utils/errorMessage";
-import { stashCarriedBuffer, stashCarriedFormDraft } from "@/utils/editorBufferRegistry";
+import {
+  deliverCarriedFormDraft,
+  stashCarriedBuffer,
+  stashCarriedFormDraft,
+} from "@/utils/editorBufferRegistry";
 
 /**
  * Tab-groups slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -552,9 +556,11 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       });
     },
 
-    hydrateHandoffTab: (record) =>
+    hydrateHandoffTab: (record) => {
+      const h = record.tab;
+      // The existing tab a moved dirty Settings panel merges into (#4760).
+      let mergedInto: string | null = null;
       setAndReseed((state) => {
-        const h = record.tab;
         const leaves = getAllLeaves(state.rootPanel);
         const targetLeaf = leaves[0];
         if (!targetLeaf) return state;
@@ -565,6 +571,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           const existing = leaf.tabs.find((t) => isSameReopenedTab(t, h));
           if (!existing) continue;
           noteHandoffTabId(h, existing.id);
+          if (h.formDraft) mergedInto = existing.id;
           const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
             ...l,
             tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
@@ -573,7 +580,15 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           const tabGroups = state.tabGroups.map((g) =>
             g.id === state.activeTabGroupId ? { ...g, rootPanel } : g
           );
-          return { rootPanel, tabGroups, activePanelId: leaf.id };
+          return {
+            rootPanel,
+            tabGroups,
+            activePanelId: leaf.id,
+            // The merged-in unsaved values make the existing tab dirty (#4760).
+            ...(mergedInto
+              ? { editorDirtyTabs: { ...state.editorDirtyTabs, [existing.id]: true } }
+              : {}),
+          };
         }
         const newTabId = newId("tab");
         // Map the source id to the new one for this move batch, so a transfer
@@ -654,7 +669,11 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
             ? { editorDirtyTabs: { ...state.editorDirtyTabs, [newTab.id]: true } }
             : {}),
         };
-      }),
+      });
+      // Outside the store update: the mounted Settings panel applies the moved
+      // values as an edit of its own, which writes the store again (#4760).
+      if (mergedInto && h.formDraft) deliverCarriedFormDraft(mergedInto, h.formDraft);
+    },
 
     receivePendingWindowRestore: async () => {
       let payload: WindowRestorePayload | null;
@@ -717,10 +736,15 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
  * Whether `tab` already shows what the moved, session-less hand-off `h` would
  * reopen (#4501): the one-per-window Settings and log viewer tabs, the same
  * plugin's details, or the same saved local file. Anything carrying a session
- * or unsaved changes always gets its own tab, so nothing is merged away.
+ * or unsaved changes gets its own tab, so nothing is merged away, except a
+ * Settings panel carrying its pending values as a draft: the draft is merged
+ * into the existing Settings tab field by field (#4760).
  */
 function isSameReopenedTab(tab: TerminalTab, h: HandoffTab): boolean {
-  if (h.sessionId || h.editorDirty || tab.contentType !== h.contentType) return false;
+  if (h.sessionId || tab.contentType !== h.contentType) return false;
+  if (h.editorDirty && !(h.contentType === "settings" && h.formDraft?.kind === "settings")) {
+    return false;
+  }
   switch (h.contentType) {
     case "settings":
     case "log-viewer":

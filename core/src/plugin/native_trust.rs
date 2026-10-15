@@ -26,7 +26,8 @@
 //!    ([`NativeTrustStore::is_acknowledged`]).
 //! 3. **…and to the access the user approved** (#4294). The acknowledgment also
 //!    records the [`ApprovedAccess`] the manifest requested when the user
-//!    trusted the plugin: its permissions, its normalised `filesystemPaths` and
+//!    trusted the plugin: its permissions, its normalised `filesystemPaths`
+//!    (with `${home}`/`${config}` placeholders resolved, #4533) and
 //!    its `connectionPolicy`. A load is authorized only when the installed
 //!    manifest still requests **exactly** that access, so an update or a
 //!    reinstall that widens it (adds `network`, a new folder, …) needs fresh
@@ -55,6 +56,7 @@ use thiserror::Error;
 
 use super::manifest::{parse_manifest, ConnectionPolicyManifest, PluginManifest, PluginPermission};
 use super::package::MANIFEST_FILE_NAME;
+use super::path_placeholders::PlaceholderBases;
 use super::signature::now_rfc3339;
 use crate::util::persist::{self, OverwriteError};
 
@@ -188,16 +190,35 @@ pub struct ApprovedAccess {
 }
 
 impl ApprovedAccess {
-    /// The access `manifest` requests, in canonical form.
+    /// The access `manifest` requests, in canonical form, with any
+    /// `${home}`/`${config}` placeholder expanded against this host's folders.
     #[must_use]
     pub fn from_manifest(manifest: &PluginManifest) -> Self {
+        Self::from_manifest_with_bases(manifest, &PlaceholderBases::host())
+    }
+
+    /// [`from_manifest`](Self::from_manifest), expanding placeholders against
+    /// explicit `bases`.
+    ///
+    /// Trust binds to the **resolved** folder, not the declared placeholder
+    /// form (#4533): what the user approves is the folder the plugin will
+    /// actually reach, as shown in the trust surface. If the placeholder later
+    /// resolves elsewhere (a different home or config folder), the access no
+    /// longer matches and the plugin needs fresh consent — the fail-closed
+    /// direction. An entry that cannot be resolved here is kept verbatim (the
+    /// loader refuses it anyway).
+    #[must_use]
+    pub fn from_manifest_with_bases(manifest: &PluginManifest, bases: &PlaceholderBases) -> Self {
         let mut permissions = manifest.permissions.clone();
         permissions.sort();
         permissions.dedup();
         let mut filesystem_paths: Vec<String> = manifest
             .filesystem_paths
             .iter()
-            .map(|p| normalize_declared_path(p))
+            .map(|p| match super::path_placeholders::resolve(p, bases) {
+                Ok(resolved) => normalize_declared_path(&resolved.path),
+                Err(_) => p.clone(),
+            })
             .collect();
         filesystem_paths.sort();
         filesystem_paths.dedup();

@@ -126,6 +126,7 @@ fn install(
         state: PluginState::Installed,
         error_message: None,
         invalid_manifest: false,
+        resolved_filesystem_paths: Vec::new(),
         installed_at: 0,
     }
 }
@@ -184,6 +185,7 @@ fn install_with_manifest(root: &Path, lib: &Path, id: &str, manifest_src: &str) 
         state: PluginState::Installed,
         error_message: None,
         invalid_manifest: false,
+        resolved_filesystem_paths: Vec::new(),
         installed_at: 0,
     }
 }

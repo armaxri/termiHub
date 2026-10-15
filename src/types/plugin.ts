@@ -59,6 +59,7 @@ export type { PluginState } from "./generated/PluginState";
 export type { InstalledPlugin } from "./generated/InstalledPlugin";
 export type { InstallPluginResult } from "./generated/InstallPluginResult";
 export type { PluginPackagePreview } from "./generated/PluginPackagePreview";
+export type { ResolvedFilesystemPath } from "./generated/ResolvedFilesystemPath";
 export type { TrustedPublisher } from "./generated/TrustedPublisher";
 export type { NativePluginTrust } from "./generated/NativePluginTrust";
 export type { PluginUpdateCheckOutcome } from "./generated/PluginUpdateCheckOutcome";

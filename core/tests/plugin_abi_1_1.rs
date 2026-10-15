@@ -166,6 +166,7 @@ fn install(root: &Path, lib: &Path, id: &str, api: &str) -> InstalledPlugin {
         state: PluginState::Installed,
         error_message: None,
         invalid_manifest: false,
+        resolved_filesystem_paths: Vec::new(),
         installed_at: 0,
     }
 }

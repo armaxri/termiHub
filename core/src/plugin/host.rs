@@ -1364,6 +1364,7 @@ mod tests {
             state: PluginState::Installed,
             error_message: None,
             invalid_manifest: false,
+            resolved_filesystem_paths: Vec::new(),
             installed_at: 0,
         }
     }

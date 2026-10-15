@@ -3626,7 +3626,8 @@ sandbox is a pre-v1.0 requirement and approved the concept
   gates of ADR-15 (now run by the runner's loader), the global native-plugins default-off toggle
   for 1.0, and the per-plugin trust acknowledgement — the sandbox limits what a plugin can reach,
   not what it draws in its own terminal. Since #4294 the acknowledgement binds to the library hash
-  **and** the approved access (`permissions`, normalised `filesystemPaths`, `connectionPolicy`);
+  **and** the approved access (`permissions`, normalised `filesystemPaths` with `${home}`/`${config}`
+  placeholders resolved (#4533), `connectionPolicy`);
   any change to that access, widening or narrowing, refuses the load until the user trusts the
   plugin again, and an acknowledgement recorded without approved access fails closed.
 
