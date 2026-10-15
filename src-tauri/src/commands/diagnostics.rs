@@ -19,6 +19,7 @@ use crate::utils::agent_crash_notice::{self, AgentCrashNotice, AgentCrashNoticeS
 use crate::utils::agent_crash_reports::{
     self, AgentCrashReportRef, AgentCrashReports, ConnectedAgents,
 };
+use crate::utils::agent_logs::{self, AgentLogRef, AgentLogs};
 use crate::utils::diagnostics_bundle::{self, BuildInfo, BundleEntryInfo};
 use crate::utils::file_log;
 
@@ -105,6 +106,21 @@ pub async fn list_agent_crash_reports(
     .map_err(|e| format!("listing agent crash reports failed: {e}"))
 }
 
+/// The log files of every **already connected** remote agent, for the export
+/// preview (#4519). An agent too old to share them is listed with
+/// `supported: false`; nothing connects to an agent that is not connected.
+#[tauri::command]
+pub async fn list_agent_logs(
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<Vec<AgentLogs>, String> {
+    let manager = agent_manager.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        agent_logs::list_connected_agent_logs(&ConnectedAgents(manager.as_ref()))
+    })
+    .await
+    .map_err(|e| format!("listing agent log files failed: {e}"))
+}
+
 /// Pending "agent crashed since last connect" notices (#3593). Changes are
 /// also pushed as the `agent-crash-notices-changed` event.
 #[tauri::command]
@@ -154,15 +170,19 @@ pub async fn read_agent_crash_report(
 /// `agent_reports` are the remote agent crash reports the user kept selected in
 /// the preview (#3574); they are fetched from their (connected) agents over the
 /// existing connection, capped, and redacted again locally before bundling.
+/// `agent_logs` are the remote agent log files the user kept selected (#4519),
+/// fetched and bounded the same way, under `agents/<agent>/logs/`.
 #[tauri::command]
 pub async fn export_diagnostics_bundle(
     destination: String,
     agent_reports: Option<Vec<AgentCrashReportRef>>,
+    agent_logs: Option<Vec<AgentLogRef>>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<DiagnosticsExportResult, String> {
     let dest = validate_destination(&destination)?;
     let manager = agent_manager.inner().clone();
     let selection = agent_reports.unwrap_or_default();
+    let log_selection = agent_logs.unwrap_or_default();
     tokio::task::spawn_blocking(move || {
         let log_dir = file_log::log_dir();
         let mut entries = diagnostics_bundle::plan_bundle(
@@ -174,6 +194,12 @@ pub async fn export_diagnostics_bundle(
             entries.extend(agent_crash_reports::fetch_agent_report_entries(
                 &ConnectedAgents(manager.as_ref()),
                 &selection,
+            ));
+        }
+        if !log_selection.is_empty() {
+            entries.extend(agent_logs::fetch_agent_log_entries(
+                &ConnectedAgents(manager.as_ref()),
+                &log_selection,
             ));
         }
         let redactor = Redactor::for_current_environment();
