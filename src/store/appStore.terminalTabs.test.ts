@@ -30,16 +30,21 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore } from "@/store/appStore";
+import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { layoutState } from "@/test/layoutState";
 
-describe("useTerminal logic (via store)", () => {
+/**
+ * Terminal tab actions on the store: open (addTab), close (closeTab) and
+ * activate (setActiveTab). Moved here from the orphaned src/hooks/useTerminal.test.ts
+ * (the useTerminal hook was removed in 2c77e62a9).
+ */
+describe("appStore — terminal tab actions", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  describe("openTerminal (addTab)", () => {
+  describe("addTab", () => {
     it("adds a new tab to the active panel", () => {
       const { addTab, rootPanel } = layoutState();
       const leaves = getAllLeaves(rootPanel);
@@ -70,7 +75,7 @@ describe("useTerminal logic (via store)", () => {
     });
   });
 
-  describe("closeTerminal (closeTab)", () => {
+  describe("closeTab", () => {
     it("removes the specified tab from the panel", () => {
       const { addTab } = layoutState();
       addTab("To Close", "local");
@@ -100,7 +105,7 @@ describe("useTerminal logic (via store)", () => {
     });
   });
 
-  describe("activateTerminal (setActiveTab)", () => {
+  describe("setActiveTab", () => {
     it("sets the active tab in the panel", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");

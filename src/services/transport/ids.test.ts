@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { newId, newIntentId, newClientId } from "./ids";
 
 describe("newId", () => {
@@ -22,6 +22,20 @@ describe("newId", () => {
   it("mints distinct ids on rapid successive calls", () => {
     const ids = new Set(Array.from({ length: 100 }, () => newId("macro")));
     expect(ids.size).toBe(100);
+  });
+
+  it("mints distinct ids within the same millisecond (no Date.now collision)", () => {
+    // Regression for FES-001 / LIBFE-001: bare `conn-${Date.now()}` ids collided
+    // when two connections were created within the same millisecond (bulk import,
+    // fleet onboarding, double-fire), silently overwriting the first entity.
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const ids = Array.from({ length: 50 }, () => newId("conn"));
+      expect(new Set(ids).size).toBe(ids.length);
+      for (const id of ids) expect(id).toMatch(/^conn-[0-9A-HJKMNP-TV-Z]{26}$/);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 
