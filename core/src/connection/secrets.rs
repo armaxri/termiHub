@@ -18,7 +18,7 @@
 //! the hop's identity (see [`hop_identity`]) so that reordering hops keeps each
 //! secret with its hop.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -85,6 +85,23 @@ pub fn hop_identity(hop: &Value) -> Option<String> {
     let port = hop.get("port").and_then(Value::as_u64).unwrap_or(22);
     let user = hop.get("username").and_then(Value::as_str).unwrap_or("");
     Some(format!("{user}@{host}:{port}"))
+}
+
+/// The identities (see [`hop_identity`]) of every inline jump-host hop in
+/// `settings` — across both [`JUMP_HOST_LIST_KEYS`] — the hop secrets a saved
+/// connection can still use (#4792). Reordered or duplicated hops yield the
+/// same set; a hop that references a saved connection or has no host adds
+/// nothing.
+pub fn hop_identities(settings: &Value) -> BTreeSet<String> {
+    let Some(map) = settings.as_object() else {
+        return BTreeSet::new();
+    };
+    JUMP_HOST_LIST_KEYS
+        .iter()
+        .filter_map(|k| map.get(*k).and_then(Value::as_array))
+        .flatten()
+        .filter_map(hop_identity)
+        .collect()
 }
 
 /// Secrets taken out of a settings bag by [`take_secrets`].
