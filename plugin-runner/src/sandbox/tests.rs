@@ -18,6 +18,7 @@ fn policy() -> SandboxPolicy {
         data_dir: Some(abs("/plugins/.data/acme")),
         denied_dirs: vec![abs("/Users/someone")],
         simulate_missing: Vec::new(),
+        tls_roots_file: None,
     }
 }
 
@@ -116,6 +117,7 @@ fn paths_are_parameters_never_profile_text() {
         data_dir: Some(abs("/tmp/da\"ta\\(dir)")),
         denied_dirs: vec![abs("/tmp/;; comment\n(allow network*)")],
         simulate_missing: Vec::new(),
+        tls_roots_file: None,
     })
     .unwrap();
     assert!(!profile.sbpl.contains("/tmp"));
@@ -128,6 +130,7 @@ fn paths_are_parameters_never_profile_text() {
             data_dir: Some(abs("/y")),
             denied_dirs: vec![abs("/z")],
             simulate_missing: Vec::new(),
+            tls_roots_file: None,
         })
         .unwrap()
         .sbpl,
@@ -257,6 +260,16 @@ fn invalid_paths_are_refused() {
         ..policy()
     };
     assert!(bad_data.validate().is_err());
+    let bad_roots = SandboxPolicy {
+        tls_roots_file: Some("roots.pem".into()),
+        ..policy()
+    };
+    assert!(bad_roots.validate().is_err());
+    let roots = SandboxPolicy {
+        tls_roots_file: Some(abs("/plugins/.tls-roots/acme/system-roots.pem")),
+        ..policy()
+    };
+    assert!(roots.validate().is_ok());
     assert!(policy().validate().is_ok());
 }
 
@@ -283,7 +296,11 @@ fn dot_segments_are_refused_on_every_policy_path() {
             denied_dirs: vec![path.clone()],
             ..policy()
         };
-        for candidate in [install, data, denied] {
+        let roots = SandboxPolicy {
+            tls_roots_file: Some(path.clone()),
+            ..policy()
+        };
+        for candidate in [install, data, denied, roots] {
             assert!(
                 matches!(candidate.validate(), Err(SandboxError::InvalidPath { .. })),
                 "{path:?} must be refused"

@@ -29,6 +29,7 @@ fn sample_messages() -> Vec<Message> {
                 data_dir: Some("/d/x".into()),
                 denied_dirs: vec!["/home/u".into()],
                 simulate_missing: vec!["landlock".into()],
+                tls_roots_file: Some("/r/.tls-roots/x/system-roots.pem".into()),
             }),
             accept_reduced_isolation: true,
         }),

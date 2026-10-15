@@ -69,6 +69,7 @@ mod session;
 mod spawn;
 mod status;
 mod threads;
+mod tls_roots;
 mod watchdog;
 mod writer;
 
@@ -93,6 +94,7 @@ pub use status::{
 };
 pub use termihub_plugin_runner::ipc::{ResourceLimits, SandboxReport};
 pub use termihub_plugin_runner::sandbox::{layer, Isolation, SandboxPolicy};
+pub(crate) use tls_roots::remove_snapshot as remove_tls_roots_snapshot;
 pub use watchdog::{
     WatchdogConfig, DEFAULT_HANG_TIMEOUT, DEFAULT_PING_INTERVAL, DEFAULT_RSS_LIMIT,
     DEFAULT_RSS_POLL_INTERVAL,

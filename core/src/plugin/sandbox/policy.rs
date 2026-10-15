@@ -21,7 +21,10 @@ use crate::plugin::HostError;
 /// Build the policy for plugin `id` under `plugins_root`: its install folder
 /// `<root>/<id>` read-only and its private data folder `<root>/.data/<id>`
 /// read/write. Paths are canonicalised (the kernel matches resolved paths).
-/// The user's home folder is denied explicitly.
+/// The user's home folder is denied explicitly. On Windows the policy also
+/// names the plugin's TLS root snapshot (#4811,
+/// [`super::tls_roots::snapshot_path`]), which the host writes before each
+/// runner start; it is not created here either.
 ///
 /// The data folder is **not created** here: the host creates it after the
 /// load, and only for an ABI 1.1 plugin (whose ABI is known only then); an
@@ -49,6 +52,11 @@ pub fn sandbox_policy(plugins_root: &Path, id: &str) -> Result<SandboxPolicy, Ho
             .into_iter()
             .collect(),
         simulate_missing: simulate_missing(),
+        tls_roots_file: if cfg!(windows) {
+            Some(utf8(super::tls_roots::snapshot_path(&root, id))?)
+        } else {
+            None
+        },
     };
     policy
         .validate()
@@ -130,6 +138,21 @@ mod tests {
         );
         if let Some(home) = crate::config::home_directory().and_then(|h| h.canonicalize().ok()) {
             assert_eq!(policy.denied_dirs, vec![home.to_str().unwrap().to_owned()]);
+        }
+        // Windows alone gets a TLS root snapshot (#4811), outside the
+        // writable data folder; elsewhere the plugin reads the system bundle.
+        if cfg!(windows) {
+            let roots = policy.tls_roots_file.as_deref().map(PathBuf::from).unwrap();
+            assert_eq!(
+                roots,
+                canonical
+                    .join(super::super::tls_roots::TLS_ROOTS_DIR_NAME)
+                    .join("acme")
+                    .join(super::super::tls_roots::TLS_ROOTS_FILE_NAME)
+            );
+            assert!(!roots.starts_with(policy.data_dir.as_deref().unwrap()));
+        } else {
+            assert_eq!(policy.tls_roots_file, None);
         }
     }
 
