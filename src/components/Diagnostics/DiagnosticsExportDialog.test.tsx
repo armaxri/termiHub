@@ -13,6 +13,7 @@ vi.mock("@/services/api", async (importOriginal) => {
     previewDiagnosticsBundle: vi.fn(),
     exportDiagnosticsBundle: vi.fn(),
     listAgentCrashReports: vi.fn(),
+    listAgentLogs: vi.fn(),
   };
 });
 
@@ -67,6 +68,7 @@ describe("DiagnosticsExportDialog", () => {
     mockedApi.previewDiagnosticsBundle.mockResolvedValue(ENTRIES);
     mockedApi.exportDiagnosticsBundle.mockResolvedValue({ path: "/tmp/d.zip", fileCount: 4 });
     mockedApi.listAgentCrashReports.mockResolvedValue([]);
+    mockedApi.listAgentLogs.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -90,6 +92,7 @@ describe("DiagnosticsExportDialog", () => {
     expect(mockedSave).toHaveBeenCalledTimes(1);
     expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith(
       "/Users/me/Desktop/diag.zip",
+      [],
       []
     );
     expect(useDiagnosticsDialogStore.getState().exportOpen).toBe(false);
@@ -155,9 +158,11 @@ describe("DiagnosticsExportDialog", () => {
         byTestId(`diagnostics-agent-report-agent-a-${R2}`)?.click();
       });
       await clickSave();
-      expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith("/tmp/d.zip", [
-        { agentId: "agent-a", name: R1 },
-      ]);
+      expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith(
+        "/tmp/d.zip",
+        [{ agentId: "agent-a", name: R1 }],
+        []
+      );
     });
 
     it("shows nothing extra when no agent is connected", async () => {
@@ -165,6 +170,75 @@ describe("DiagnosticsExportDialog", () => {
       await renderOpen();
       expect(byTestId("diagnostics-agent-reports")).toBeNull();
       expect(byTestId("diagnostics-agent-reports-loading")).toBeNull();
+    });
+  });
+
+  describe("remote agent log files (#4519)", () => {
+    const L1 = "termihub-agent-stdio-4242.log";
+    const L2 = "termihub-agent-registry-17.1.log";
+
+    beforeEach(() => {
+      mockedApi.listAgentLogs.mockResolvedValue([
+        {
+          agentId: "agent-a",
+          supported: true,
+          logs: [
+            { name: L1, size: 1024 },
+            { name: L2, size: 2048 },
+          ],
+        },
+        { agentId: "agent-old", supported: false, logs: [] },
+        { agentId: "agent-down", supported: true, logs: [], error: "timed out" },
+      ]);
+    });
+
+    it("previews each connected agent's log files, included by default", async () => {
+      await renderOpen();
+      const section = byTestId("diagnostics-agent-logs");
+      expect(section?.textContent).toContain("Build box: agent log files");
+      expect(section?.textContent).toContain("2 files");
+      expect(byTestId("diagnostics-agent-logs-include-agent-a")?.getAttribute("aria-checked")).toBe(
+        "true"
+      );
+    });
+
+    it("notes agents that are too old or unreachable instead of failing", async () => {
+      await renderOpen();
+      expect(byTestId("diagnostics-agent-logs-agent-old")?.textContent).toContain(
+        "cannot share its log files"
+      );
+      expect(byTestId("diagnostics-agent-logs-agent-down")?.textContent).toContain("timed out");
+    });
+
+    it("exports every log file of included agents", async () => {
+      mockedSave.mockResolvedValue("/tmp/d.zip");
+      await renderOpen();
+      await clickSave();
+      expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith(
+        "/tmp/d.zip",
+        [],
+        [
+          { agentId: "agent-a", name: L1 },
+          { agentId: "agent-a", name: L2 },
+        ]
+      );
+    });
+
+    it("leaves out an excluded agent's log files", async () => {
+      mockedSave.mockResolvedValue("/tmp/d.zip");
+      await renderOpen();
+      await act(async () => {
+        byTestId("diagnostics-agent-logs-include-agent-a")?.click();
+      });
+      await clickSave();
+      expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith("/tmp/d.zip", [], []);
+    });
+
+    it("shows nothing extra when no agent is connected", async () => {
+      mockedApi.listAgentLogs.mockResolvedValue([]);
+      await renderOpen();
+      expect(byTestId("diagnostics-agent-logs")).toBeNull();
+      expect(byTestId("diagnostics-agent-logs-loading")).toBeNull();
     });
   });
 

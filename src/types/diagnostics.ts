@@ -3,8 +3,9 @@
  * their Rust source of truth via ts-rs (audit DUP-030, #3088):
  * `src-tauri/src/commands/diagnostics.rs`,
  * `src-tauri/src/utils/diagnostics_bundle.rs`,
- * `src-tauri/src/utils/agent_crash_reports.rs` and the agent protocol's
- * `CrashReportSummary` (`core/src/protocol/methods.rs`).
+ * `src-tauri/src/utils/agent_crash_reports.rs`,
+ * `src-tauri/src/utils/agent_logs.rs` and the agent protocol's
+ * `CrashReportSummary` / `LogFileSummary` (`core/src/protocol/methods.rs`).
  */
 
 /** The newest crash report the user has not yet been told about. */
@@ -21,6 +22,12 @@ export type { AgentCrashReports } from "./generated/AgentCrashReports";
 
 /** A remote agent crash report the user chose to include in the export. */
 export type { AgentCrashReportRef } from "./generated/AgentCrashReportRef";
+
+/** A connected agent's log files, for the export preview (#4519). */
+export type { AgentLogs } from "./generated/AgentLogs";
+
+/** A remote agent log file the user chose to include in the export. */
+export type { AgentLogRef } from "./generated/AgentLogRef";
 
 /**
  * A remote agent that crashed since it was last connected (#3593): its newest
