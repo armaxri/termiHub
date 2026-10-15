@@ -41,7 +41,7 @@
 
 .shortcuts-overlay__action {
   color: var(--text-primary);
-  width: 40%;
+  width: 60%;
 }
 
 .shortcuts-overlay__scope {
@@ -53,7 +53,7 @@
 }
 
 .shortcuts-overlay__binding {
-  width: 30%;
+  width: 40%;
   font-family: monospace;
   color: var(--text-secondary);
 }
@@ -67,13 +67,4 @@
   font-family: monospace;
   font-size: var(--font-size-xs);
   color: var(--text-primary);
-}
-
-.shortcuts-overlay__highlight {
-  font-weight: 600;
-}
-
-.shortcuts-overlay__highlight kbd {
-  border-color: var(--accent-color);
-  background-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
