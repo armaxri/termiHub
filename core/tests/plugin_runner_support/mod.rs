@@ -1,8 +1,9 @@
 //! Shared support for the out-of-process plugin tests (#4182): builds the
-//! `termihub-plugin-runner` binary and the real `echo-backend` example plugin,
-//! and installs + trusts the plugin under a temporary plugins root.
+//! `termihub-plugin-runner` binary (and the test-only fake runner, #4550) and
+//! the real `echo-backend` example plugin, and installs + trusts the plugin
+//! under a temporary plugins root.
 //!
-//! Both are built into their own target directories under cargo's
+//! All are built into their own target directories under cargo's
 //! per-package scratch dir (`CARGO_TARGET_TMPDIR`), like the test-plugin
 //! fixture: the outer `cargo test` holds the workspace build-directory lock, so
 //! building into the workspace target dir from inside a test would deadlock.
@@ -63,6 +64,24 @@ pub fn runner_binary() -> PathBuf {
             }
             build_package("termihub-plugin-runner").join(format!(
                 "termihub-plugin-runner{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        })
+        .clone()
+}
+
+/// The test-only fake runner (`termihub-plugin-fake-runner`, #4550), which
+/// plays a scripted handshake; `TERMIHUB_PLUGIN_FAKE_RUNNER` overrides the
+/// build. Copy it before use: its file name selects its mode.
+pub fn fake_runner_binary() -> PathBuf {
+    static BUILT: OnceLock<PathBuf> = OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            if let Some(path) = std::env::var_os("TERMIHUB_PLUGIN_FAKE_RUNNER") {
+                return PathBuf::from(path);
+            }
+            build_package("termihub-plugin-fake-runner").join(format!(
+                "termihub-plugin-fake-runner{}",
                 std::env::consts::EXE_SUFFIX
             ))
         })

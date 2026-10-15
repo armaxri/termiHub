@@ -30,7 +30,10 @@
 //!
 //! Never shipped: no packaging script or bundle names it.
 
-#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -209,9 +212,7 @@ mod platform {
     pub(crate) type Channel = PipeStream;
 
     /// The inherited pipe handle named by `--ipc-handle <value>`.
-    pub(crate) fn open_channel(
-        mut args: impl Iterator<Item = String>,
-    ) -> Result<Channel, String> {
+    pub(crate) fn open_channel(mut args: impl Iterator<Item = String>) -> Result<Channel, String> {
         let value = args
             .by_ref()
             .skip_while(|arg| arg != IPC_HANDLE_ARG)

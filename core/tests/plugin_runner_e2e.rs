@@ -6,7 +6,8 @@
 //! Covers the data path (echo, settings, ABI 1.1 context), the lifecycle
 //! (spawn on load, bounded stop on unload, idle reap + lazy respawn, crash →
 //! sessions end → respawn), and handshake failures (missing runner, a runner
-//! that exits before `Hello`, a library the runner refuses).
+//! that exits before `Hello`, a library the runner refuses, a runner that
+//! forges `Loaded`).
 #![cfg(feature = "plugin")]
 
 use std::time::Duration;
@@ -15,8 +16,8 @@ mod plugin_fixture;
 mod plugin_runner_support;
 use plugin_fixture::{fixture_library, Variant};
 use plugin_runner_support::{
-    host_for, install_echo, install_plugin, kill_process, new_connection, process_exists,
-    runner_binary, wait_until,
+    fake_runner_binary, host_for, install_echo, install_plugin, kill_process, new_connection,
+    process_exists, runner_binary, wait_until,
 };
 
 use termihub_core::connection::ConnectionType;
@@ -290,66 +291,31 @@ fn an_unaccepted_abi_1_0_plugin_is_refused_by_the_runner() {
 /// runner could send — is refused by the host's own re-check: the runner
 /// process is killed (and reaped) and the plugin is not registered.
 ///
-/// The fake runner is a shell script that plays pre-encoded frames down its
-/// channel (descriptor 3), records its pid, and then waits to be killed.
-#[cfg(unix)]
+/// The fake runner (`termihub-plugin-fake-runner`, #4550) answers the real
+/// handshake on its channel (descriptor 3 on Unix; on Windows the inherited
+/// named-pipe handle, inside the plugin's AppContainer), forges its sandbox
+/// report and `Loaded` (its file name selects the forgery), records its pid
+/// in the plugin's data folder — the one folder a confined runner may write —
+/// and then waits to be killed.
 #[test]
 fn a_runner_that_forges_loaded_is_killed_and_the_plugin_is_not_registered() {
-    use termihub_plugin_api::{AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
-    use termihub_plugin_runner::ipc::{Hello, Loaded, Message, SandboxReport, PROTOCOL_VERSION};
-    use termihub_plugin_runner::sandbox::required_layers;
-
     let work = tempfile::TempDir::new().unwrap();
     let echo = install_echo(work.path());
     let (host, registry) = host_for(&echo);
 
     let fake = work.path().join("fake-runner");
     std::fs::create_dir_all(&fake).unwrap();
-    let frames: Vec<u8> = [
-        Message::Hello(Hello {
-            runner_version: "0.0.0-forged".into(),
-            protocol_version: PROTOCOL_VERSION,
-            pid: 1,
-        }),
-        // The sandbox report is forged too: the host cannot tell, so it
-        // re-checks what it can — the ABI on `Loaded`.
-        Message::SandboxReport(SandboxReport {
-            enforced: required_layers().iter().map(|l| (*l).to_owned()).collect(),
-            missing: Vec::new(),
-            failed: None,
-        }),
-        Message::Loaded(Loaded {
-            id: "echo-backend".into(),
-            name: "Echo".into(),
-            version: "0.1.0".into(),
-            abi_version: AbiVersion::new(CURRENT_PLUGIN_ABI_VERSION.major + 1, 0).to_packed(),
-            toolchain: None,
-        }),
-    ]
-    .iter()
-    .flat_map(|m| m.encode().unwrap())
-    .collect();
-    std::fs::write(fake.join("frames"), frames).unwrap();
-    let pid_file = fake.join("pid");
-    let script = fake.join("runner.sh");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\necho $$ > '{pid}'\n/bin/cat '{frames}' >&3\nexec /bin/sleep 30\n",
-            pid = pid_file.display(),
-            frames = fake.join("frames").display(),
-        ),
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
+    let exe = fake.join(format!(
+        "fake-runner-forge-abi{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::copy(fake_runner_binary(), &exe).expect("copy the fake runner");
 
-    let host = host.with_runner(PluginRunnerConfig::new(&script));
+    let host = host.with_runner(PluginRunnerConfig::new(&exe));
     let result = (0..50)
         .map(|_| host.load(&echo.plugin))
         .find(|r| {
-            // A script just written can briefly be "text file busy" on Linux
+            // A binary just copied can briefly be "text file busy" on Linux
             // while another test's fork holds its descriptor: retry that only.
             let busy = matches!(r, Err(HostError::RunnerUnavailable { detail, .. })
                 if detail.contains("busy"));
@@ -364,6 +330,11 @@ fn a_runner_that_forges_loaded_is_killed_and_the_plugin_is_not_registered() {
         other => panic!("expected IncompatibleAbi, got {other:?}"),
     }
 
+    let pid_file = echo
+        .root
+        .join(termihub_core::plugin::PLUGIN_DATA_DIR_NAME)
+        .join("echo-backend")
+        .join("pid");
     let pid: u32 = std::fs::read_to_string(&pid_file)
         .expect("the fake runner ran")
         .trim()
