@@ -1,7 +1,8 @@
 use super::elf::{gnu_build_id, NT_GNU_BUILD_ID};
-use super::macho::{macho_uuid, LC_UUID, MH_MAGIC_64};
+use super::macho::{macho_text_size, macho_uuid, LC_SEGMENT_64, LC_UUID, MH_MAGIC_64};
 use super::pe::{
-    codeview_entry, pe_debug_directory, rsds, DEBUG_DIRECTORY_SIZE, DEBUG_TYPE_CODEVIEW,
+    codeview_entry, pe_debug_directory, rsds, size_of_image, DEBUG_DIRECTORY_SIZE,
+    DEBUG_TYPE_CODEVIEW,
 };
 use super::*;
 
@@ -44,6 +45,41 @@ fn macho(with_uuid: bool) -> Vec<u8> {
 fn reads_the_macho_uuid() {
     assert_eq!(macho_uuid(&macho(true)), Some(UUID));
     assert_eq!(macho_uuid(&macho(false)), None);
+}
+
+/// A Mach-O image with a `__PAGEZERO` and a `__TEXT` LC_SEGMENT_64 command.
+fn macho_with_segments(text_vmsize: u64) -> Vec<u8> {
+    let segment = |name: &[u8], vmsize: u64| {
+        let mut c = Vec::new();
+        c.extend(le32(LC_SEGMENT_64));
+        c.extend(le32(72)); // segment_command_64 without sections
+        let mut segname = [0u8; 16];
+        segname[..name.len()].copy_from_slice(name);
+        c.extend(segname);
+        c.extend(0u64.to_le_bytes()); // vmaddr
+        c.extend(vmsize.to_le_bytes());
+        c.extend([0u8; 72 - 40]);
+        c
+    };
+    let mut cmds = segment(b"__PAGEZERO", 1 << 32);
+    cmds.extend(segment(b"__TEXT", text_vmsize));
+    let mut image = Vec::new();
+    for v in [MH_MAGIC_64, 0x0100_000c, 0, 2, 2] {
+        image.extend(le32(v));
+    }
+    image.extend(le32(u32::try_from(cmds.len()).unwrap()));
+    image.extend([0u8; 8]);
+    image.extend(cmds);
+    image
+}
+
+#[test]
+fn reads_the_macho_text_segment_size() {
+    assert_eq!(macho_text_size(&macho_with_segments(0x4_8000)), Some(0x4_8000));
+    // The UUID-only image has a filler 0x19 command but no __TEXT segment.
+    assert_eq!(macho_text_size(&macho(true)), None);
+    let image = macho_with_segments(0x4_8000);
+    assert_eq!(macho_text_size(&image[..image.len() - 40]), None);
 }
 
 #[test]
@@ -133,6 +169,15 @@ fn finds_the_pe_debug_directory() {
     assert_eq!(pe_debug_directory(b"MZ"), None);
 }
 
+#[test]
+fn reads_the_pe_size_of_image() {
+    let mut h = pe_headers(0x20b, 0, 0);
+    let at = 0x80 + 24 + 56;
+    h[at..at + 4].copy_from_slice(&le32(0x0012_3000));
+    assert_eq!(size_of_image(&h), Some(0x0012_3000));
+    assert_eq!(size_of_image(b"MZ"), None);
+}
+
 fn debug_entry(kind: u32, size: u32, rva: u32) -> Vec<u8> {
     let mut e = vec![0u8; DEBUG_DIRECTORY_SIZE];
     e[12..16].copy_from_slice(&le32(kind));
@@ -212,6 +257,83 @@ fn the_running_image_has_a_base_below_its_own_code() {
         assert!(
             matches!(image.build_id, Some(BuildId::Pdb { .. })),
             "{image:?}"
+        );
+    }
+}
+
+#[test]
+fn module_names_keep_only_the_file_name() {
+    assert_eq!(module_file_name("/usr/lib/libc.so.6"), "libc.so.6");
+    assert_eq!(
+        module_file_name("/Users/alice/Applications/termiHub.app/Contents/MacOS/termihub"),
+        "termihub"
+    );
+    assert_eq!(
+        module_file_name(r"C:\Users\alice\AppData\Local\termiHub\WebView2Loader.dll"),
+        "WebView2Loader.dll"
+    );
+    assert_eq!(module_file_name("Google Chrome\tHelper\n"), "Google_Chrome_Helper_");
+    assert_eq!(module_file_name(""), "<unnamed>");
+    assert_eq!(module_file_name("/trailing/"), "<unnamed>");
+    let long = format!("/x/{}", "é".repeat(MAX_MODULE_NAME_BYTES));
+    let name = module_file_name(&long);
+    assert!(name.len() <= MAX_MODULE_NAME_BYTES && name.len() >= MAX_MODULE_NAME_BYTES - 1);
+}
+
+#[test]
+fn a_loaded_module_renders_and_contains_its_range() {
+    let m = LoadedModule {
+        name: "libc.so.6".into(),
+        base: 0x7f00_0000,
+        size: 0x2000,
+        build_id: Some(BuildId::MachoUuid(UUID)),
+    };
+    let width = 2 * std::mem::size_of::<usize>();
+    assert_eq!(
+        m.render(),
+        format!(
+            "0x{:0width$x} 0x00002000 libc.so.6 uuid 4C4C44A3-5555-3144-A1B2-0123456789AB",
+            0x7f00_0000
+        )
+    );
+    assert!(m.contains(0x7f00_0000) && m.contains(0x7f00_1fff));
+    assert!(!m.contains(0x7f00_2000) && !m.contains(0x7eff_ffff));
+}
+
+/// The live module list holds this test's own image (same base and build id as
+/// [`ModuleImage::current`]), a name without any directory, and on macOS and
+/// glibc Linux the C library too (a static musl binary loads nothing else).
+#[cfg(any(target_vendor = "apple", target_os = "linux", windows))]
+#[test]
+fn the_live_module_list_contains_this_module() {
+    let modules = loaded_modules();
+    let code = the_live_module_list_contains_this_module as fn() as usize;
+    let own: Vec<&LoadedModule> = modules.iter().filter(|m| m.contains(code)).collect();
+    assert_eq!(own.len(), 1, "{modules:#?}");
+    let image = ModuleImage::current().expect("this platform is supported");
+    assert_eq!(own[0].base, image.base, "{own:?} vs {image:?}");
+    assert_eq!(own[0].build_id, image.build_id);
+    assert!(own[0].name.contains("termihub"), "{own:?}");
+    for m in &modules {
+        assert!(!m.name.contains(['/', '\\']), "{m:?}");
+        assert!(!m.name.is_empty(), "{m:?}");
+    }
+    // A statically linked (musl) test binary loads nothing else.
+    let libc_name = if cfg!(target_vendor = "apple") {
+        Some("libsystem_c.dylib")
+    } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
+        Some("libc.so")
+    } else if cfg!(windows) {
+        Some("ntdll.dll")
+    } else {
+        None
+    };
+    if let Some(name) = libc_name {
+        assert!(
+            modules
+                .iter()
+                .any(|m| m.name.to_ascii_lowercase().starts_with(name) && m.size > 0),
+            "{modules:#?}"
         );
     }
 }
