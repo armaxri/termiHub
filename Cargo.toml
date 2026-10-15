@@ -7,6 +7,9 @@ members = [
     # Out-of-process native plugin host (#4182): the `termihub-plugin-runner`
     # sidecar binary plus the loader/IPC library core shares with it.
     "plugin-runner",
+    # Test-only stand-in for the runner (#4550): the core plugin tests spawn it
+    # through the real host spawn path on every OS. Never bundled or shipped.
+    "plugin-runner/fake-runner",
     # The shared current-user SID / protected-DACL helper (#4322): a windows-sys
     # leaf crate both core and plugin-runner depend on.
     "win-security",
