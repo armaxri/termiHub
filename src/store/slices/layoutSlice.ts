@@ -424,8 +424,10 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         // once per session open (interactive shells only — file-browser and
         // remote-desktop tabs are excluded here). Matching/guarding lives in the
         // workflowTriggers service; the store only supplies state and the run.
-        // The tab's new session can fire on-disconnect again when it ends (#3791).
-        notifyWorkflowSessionStarted(tabId);
+        // The tab's new session can fire on-disconnect again when it ends (#3791),
+        // and the on-connect records of sessions it showed before are released
+        // (#4784).
+        notifyWorkflowSessionStarted({ get, set }, tabId, sessionId);
         const connectedTab = getAllLeaves(curLayout().rootPanel)
           .flatMap((l) => l.tabs)
           .find((t) => t.id === tabId);
