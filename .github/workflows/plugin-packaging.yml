@@ -72,6 +72,7 @@ jobs:
         with:
           # The PR merge commit plus its parents, so HEAD^1 (the base tip) exists.
           fetch-depth: 2
+          persist-credentials: false
 
       - name: Classify changed files
         id: detect
@@ -99,6 +100,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
@@ -213,6 +216,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Docker Hub resilience (mirror)
         # #4614: pull the rust:<pinned>-bookworm image below through the
@@ -264,6 +269,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust

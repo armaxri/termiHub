@@ -122,6 +122,7 @@ jobs:
         with:
           # The PR merge commit plus its parents, so HEAD^1 (the base tip) exists.
           fetch-depth: 2
+          persist-credentials: false
 
       - name: Classify changed files
         id: detect
@@ -185,6 +186,7 @@ jobs:
           # checkout's default ref: a PR's merge ref, the dispatching branch, or
           # the release-candidate caller's sha.
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false
 
       - name: Docker Hub resilience (mirror + pre-pulled images)
         # #4614: unauthenticated Docker Hub pulls hit the shared runners' per-IP
@@ -552,6 +554,7 @@ jobs:
         with:
           # Nightly grades develop; see core-integration's checkout (#3664).
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -593,6 +596,7 @@ jobs:
         with:
           # Nightly grades develop; see core-integration's checkout (#3664).
           ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+          persist-credentials: false
 
       - name: Docker Hub resilience (mirror)
         # #4614: pull the rust builder and debian base through mirror.gcr.io;

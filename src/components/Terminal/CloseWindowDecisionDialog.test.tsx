@@ -206,13 +206,13 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
         useAppStore
           .getState()
           .setPendingWindowClose(
-            request({ dirtyEditors: [{ tabId: "e1", title: "Settings", movable: false }] })
+            request({ dirtyEditors: [{ tabId: "e1", title: "notes.txt", movable: false }] })
           )
       );
 
       const move = q("close-window-decision-move") as HTMLButtonElement;
       expect(move.disabled).toBe(true);
-      expect(q("close-window-decision-move-blocked").textContent).toContain("Settings");
+      expect(q("close-window-decision-move-blocked").textContent).toContain("notes.txt");
       expect(q("close-window-decision-outcome-blocked")).not.toBeNull();
 
       await act(async () => move.click());
@@ -379,7 +379,7 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       expect(moveWindowSessionsToWindow).toHaveBeenCalledWith({ kind: "existing", label: "win-1" });
     });
 
-    it("names the typed secrets that reopen empty in the other window", () => {
+    it("names the typed secrets that do not move to the other window", () => {
       render();
       act(() =>
         useAppStore.getState().setPendingWindowClose(
@@ -405,13 +405,35 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
 
       const rows = qa("close-window-decision-secrets-row").map((row) => row.textContent);
       expect(rows).toEqual([
-        '"Edit: prod-db" moves with Password left empty, since typed secrets are never copied ' +
-          "to another window. Type it again there before saving.",
-        '"New Connection" moves with Password, SSH tunnel password and Jump host password left ' +
-          "empty, since typed secrets are never copied to another window. Type them again " +
-          "there before saving.",
+        '"Edit: prod-db" moves without the Password typed into it, since typed secrets are ' +
+          "never copied to another window. Type it again there.",
+        '"New Connection" moves without the Password, SSH tunnel password and Jump host ' +
+          "password typed into it, since typed secrets are never copied to another window. " +
+          "Type them again there.",
       ]);
       // Moving stays available: the user is told, nothing is blocked.
+      expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("moves an unsaved Settings panel, naming the secrets typed into it (#4758)", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [
+              { tabId: "st", title: "Settings", movable: true, clearedSecrets: ["API token"] },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-move-blocked")).toBeNull();
+      expect(q("close-window-decision-outcome-move")).not.toBeNull();
+      expect(qa("close-window-decision-secrets-row").map((row) => row.textContent)).toEqual([
+        '"Settings" moves without the API token typed into it, since typed secrets are never ' +
+          "copied to another window. Type it again there.",
+      ]);
       expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(false);
     });
 
