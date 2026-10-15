@@ -1439,6 +1439,17 @@ flowchart TB
             discarded first.
           </li>
           <li>
+            <strong>Settings stays one tab when it moves (#4760).</strong> When the destination
+            window already shows Settings, the moved unsaved settings are applied to that tab, which
+            comes to the front, instead of opening a second Settings tab. Both panels edit the same
+            document, so the merge is per field against the saved settings: a moved change applies
+            wherever the destination's panel has not changed that field, and where both changed the
+            same field differently the destination keeps its own value and a note names the fields
+            whose moved value was not applied. Secrets follow the move rule above: a secret typed in
+            the closed window never arrives, and the destination keeps its saved secret or the one
+            typed there.
+          </li>
+          <li>
             <strong>Quitting asks the same question (#4296).</strong> Cmd+Q or the app menu's Quit
             holds the exit and asks every window. A window with nothing to lose agrees at once; one
             that would lose a non-persistent session or an unsaved editor shows this dialog as

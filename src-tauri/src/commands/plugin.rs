@@ -17,10 +17,11 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    check_host_platform, host_target_triple, native_trust_binding, validate_package,
-    AckAcceptances, AckStatus, InstallOptions, InstalledPlugin, NativeAck, NativeTrustStore,
-    PluginHost, PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment,
-    TrustBinding, TrustLevel, TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
+    check_host_platform, host_target_triple, native_trust_binding,
+    resolve_filesystem_paths_for_host, validate_package, AckAcceptances, AckStatus, InstallOptions,
+    InstalledPlugin, NativeAck, NativeTrustStore, PluginHost, PluginManager, PluginManagerError,
+    PluginManifest, ResolvedFilesystemPath, SignerChange, TrustAssessment, TrustBinding,
+    TrustLevel, TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -61,15 +62,29 @@ pub struct PluginPackagePreview {
     pub host_platform: String,
     /// Whether the package can be installed on this host's platform.
     pub platform_supported: bool,
+    /// The manifest's `${home}`/`${config}` `filesystemPaths` entries with the
+    /// folder each resolves to on this computer (#4533), so the install dialog
+    /// shows the real folder next to the declared form. Omitted when none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "Array<import(\"./ResolvedFilesystemPath\").ResolvedFilesystemPath>"
+        )
+    )]
+    pub resolved_filesystem_paths: Vec<ResolvedFilesystemPath>,
 }
 
 /// Build the [`PluginPackagePreview`] for an already-validated manifest.
 fn package_preview(manifest: PluginManifest) -> PluginPackagePreview {
     let platform_supported = check_host_platform(&manifest).is_ok();
+    let resolved_filesystem_paths = resolve_filesystem_paths_for_host(&manifest.filesystem_paths);
     PluginPackagePreview {
         manifest,
         host_platform: host_target_triple().to_owned(),
         platform_supported,
+        resolved_filesystem_paths,
     }
 }
 

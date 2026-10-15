@@ -77,6 +77,9 @@ mod native_trust;
 mod pack;
 mod package;
 #[cfg(test)]
+mod path_placeholder_scope_tests;
+mod path_placeholders;
+#[cfg(test)]
 mod persist_tests;
 mod platform;
 mod plugin_index;
@@ -137,6 +140,11 @@ pub use pack::{
 pub use package::{
     check_host_platform, validate_package, PluginPackageError, MANIFEST_FILE_NAME,
     MAX_PACKAGE_SIZE_BYTES,
+};
+pub use path_placeholders::{
+    check_manifest_filesystem_path, resolve_filesystem_paths, resolve_filesystem_paths_for_host,
+    PathPlaceholder, PlaceholderBases, ResolvedFilesystemPath, CONFIG_PLACEHOLDER,
+    HOME_PLACEHOLDER,
 };
 pub use platform::{
     host_target_triple, is_valid_library_path, is_valid_target_triple,

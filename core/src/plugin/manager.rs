@@ -51,6 +51,7 @@ use super::package::{
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
     MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
+use super::path_placeholders::{resolve_filesystem_paths_for_host, ResolvedFilesystemPath};
 use super::plugin_state::{self, PluginStateRecord, StateError, StateStore, VerifiedBackend};
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::settings_migration::migrate_settings;
@@ -123,6 +124,13 @@ pub struct InstalledPlugin {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub invalid_manifest: bool,
+    /// The manifest's `filesystemPaths` entries that start with a
+    /// `${home}`/`${config}` placeholder, each with the folder it resolves to
+    /// on this computer (#4533), so the access summary can show both forms.
+    /// Derived on every listing, never persisted; omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<ResolvedFilesystemPath>>", optional))]
+    pub resolved_filesystem_paths: Vec<ResolvedFilesystemPath>,
     /// When the plugin was installed, as milliseconds since the Unix epoch.
     #[cfg_attr(test, ts(type = "number"))]
     pub installed_at: u64,
@@ -1152,11 +1160,14 @@ impl PluginManager {
             PluginState::Disabled => record.and_then(|r| r.auto_disabled_reason.clone()),
             _ => None,
         };
+        let resolved_filesystem_paths =
+            resolve_filesystem_paths_for_host(&manifest.filesystem_paths);
         InstalledPlugin {
             manifest,
             state: plugin_state,
             error_message,
             invalid_manifest: false,
+            resolved_filesystem_paths,
             installed_at,
         }
     }
@@ -1445,6 +1456,7 @@ fn invalid_plugin_from(
         state: PluginState::Error,
         error_message: Some(invalid.reason),
         invalid_manifest: true,
+        resolved_filesystem_paths: Vec::new(),
         installed_at,
     }
 }

@@ -25,6 +25,7 @@ import type {
   PluginPermission,
   PluginState,
   PluginTrustInfo,
+  ResolvedFilesystemPath,
 } from "@/types/plugin";
 import type { StatusTone } from "@/components/ui";
 
@@ -262,4 +263,22 @@ export function trustBanner(trust: PluginTrustInfo): TrustBanner {
         description: trust.warning,
       };
   }
+}
+
+/**
+ * How a declared `filesystemPaths` entry is shown in the install dialog and
+ * the access summary (#4533). An entry with a `${home}`/`${config}`
+ * placeholder shows the folder it resolves to on this computer next to the
+ * declared form, so consent always names the real folder; an entry that
+ * cannot be resolved here says so. Other entries are shown verbatim.
+ */
+export function describeFilesystemPath(
+  declared: string,
+  resolved: readonly ResolvedFilesystemPath[] | undefined
+): string {
+  const match = resolved?.find((r) => r.declared === declared);
+  if (!match) return declared;
+  return match.resolved
+    ? `${declared} → ${match.resolved}`
+    : `${declared} (not available on this computer)`;
 }

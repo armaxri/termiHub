@@ -36,12 +36,18 @@ import { useAppStore } from "@/store/appStore";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
-import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
+import {
+  useCarriedFormDraft,
+  useFormDraftProvider,
+  useLateCarriedFormDraft,
+} from "@/hooks/useFormDraftHandoff";
 import {
   changedSecretLabels,
   clearDraftSecrets,
   restoreDraftSecrets,
 } from "@/utils/formDraftSecrets";
+import { mergeMovedDraft } from "@/utils/mergeFormDraft";
+import { toast } from "@/components/ui";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
@@ -316,6 +322,28 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     carriedAppliedRef.current = true;
     handleSettingsChange(restoreDraftSecrets(carriedDraft, savedSettingsRef.current));
   }, [carriedDraft, handleSettingsChange]);
+
+  // Pending settings moved in from another window while this panel is already
+  // open (#4760): the destination window keeps its one Settings tab, and the
+  // moved values are merged into it instead of opening a second one. The merge
+  // is per field against the saved document: a moved change applies where this
+  // panel has not changed the field; where both changed it differently, this
+  // panel's value stays and the user is told which moved values were not
+  // applied. Secrets follow the move rules: a secret cleared for the move keeps
+  // the saved value, so it never replaces a secret saved or typed here.
+  useLateCarriedFormDraft<AppSettings>(tabId, "settings", (moved) => {
+    const base = savedSettingsRef.current;
+    const local = pendingSettingsRef.current ?? settingsRef.current;
+    const { values, conflicts } = mergeMovedDraft(local, restoreDraftSecrets(moved, base), base);
+    handleSettingsChange(values);
+    if (conflicts.length > 0) {
+      toast.info(
+        `Kept this window's unsaved ${conflicts.length === 1 ? "value" : "values"} for ` +
+          `${conflicts.join(", ")}; the moved Settings changed ` +
+          `${conflicts.length === 1 ? "it" : "them"} too.`
+      );
+    }
+  });
 
   // Settings auto-save, so a close request never needs a confirmation dialog.
   // Flush any pending debounced write (so the last <=300ms of edits aren't lost)

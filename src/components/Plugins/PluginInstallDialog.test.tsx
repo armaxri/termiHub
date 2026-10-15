@@ -118,6 +118,28 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     expect(items).toEqual(["/Users/someone/captures", "/var/log/app"]);
   });
 
+  it("shows a placeholder folder with the folder it resolves to (#4533)", () => {
+    act(() =>
+      root.render(
+        withTooltip(
+          React.createElement(PluginInstallDialog, {
+            filePath: "/tmp/k8s.termihub-plugin",
+            manifest: manifest({ filesystemPaths: ["${home}/.kube", "/var/log/app"] }),
+            trust: trust(),
+            resolvedFilesystemPaths: [
+              { declared: "${home}/.kube", resolved: "/Users/someone/.kube" },
+            ],
+            onClose,
+          })
+        )
+      )
+    );
+    const items = Array.from(
+      document.querySelectorAll('[data-testid="plugin-install-filesystem-paths"] li')
+    ).map((li) => li.textContent);
+    expect(items).toEqual(["${home}/.kube → /Users/someone/.kube", "/var/log/app"]);
+  });
+
   it("shows no path list when the plugin declares no filesystem paths", () => {
     render(manifest());
     expect(document.querySelector('[data-testid="plugin-install-filesystem-paths"]')).toBeNull();
