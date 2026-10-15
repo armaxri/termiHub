@@ -6,9 +6,12 @@ import {
   canCarryEditorBuffer,
   canMoveTabWithoutSession,
   currentWindowLabel,
+  pairBatchHandoffRecord,
   pruneForeignTransfers,
   readTabFormDraft,
+  transferViewMovesUnpaired,
 } from "../windowHelpers";
+import { newId } from "@/services/transport/ids";
 import { collectWindowTabs, getComposedLayout, withComposedLayout } from "../layoutHelpers";
 import { dirtyEditorTabs } from "@/utils/tabLiveSession";
 import { LAST_SESSION_SAVE_DEBOUNCE_MS } from "../restoreHelpers";
@@ -192,7 +195,9 @@ export interface WindowManagementSlice {
    * connection, tunnel and workspace editors and an unsaved Settings panel
    * carry their form draft without typed secrets (#4500, #4758); and so does
    * every other tab a hand-off can describe, such as saved file editors,
-   * Settings or the log viewer (#4501, {@link canMoveTabWithoutSession}).
+   * Settings or the log viewer (#4501, {@link canMoveTabWithoutSession}). A
+   * transfer view stays paired with its terminal when that terminal moves too,
+   * and reopens unpaired otherwise (#4751).
    * Rejects, moving nothing, only while a dirty editor cannot be read (it is
    * not mounted to hand over its unsaved state).
    */
@@ -220,22 +225,42 @@ function dirtyEditorRows(
 }
 
 /**
+ * The tabs "Move tabs" hands to the destination window, in hand-off order:
+ * session tabs first, so a remote editor's backing session (and a transfer
+ * view's terminal, #4751) is already in the destination when the tab that
+ * needs it arrives, then every other tab the destination can reopen, dirty
+ * file editors included (#4501).
+ */
+function windowMoveTabs(windowTabs: TerminalTab[]): TerminalTab[] {
+  return [
+    ...windowTabs.filter((tab) => tab.sessionId),
+    ...windowTabs.filter(canMoveTabWithoutSession),
+  ];
+}
+
+/**
  * The window-close dialog rows for this window's tabs that have neither a live
  * session nor unsaved changes (#4501), each flagged with whether "Move tabs"
- * reopens it in the destination window.
+ * reopens it in the destination window and, for a transfer view whose terminal
+ * stays behind, that it reopens unpaired (#4751).
  */
 function otherTabRows(
   tabs: TerminalTab[],
   editorDirty: Readonly<Record<string, boolean>>
 ): WindowCloseOtherTab[] {
+  const movingTabIds = new Set(windowMoveTabs(tabs).map((tab) => tab.id));
   return tabs
     .filter((tab) => !tab.sessionId && editorDirty[tab.id] !== true)
-    .map((tab) => ({
-      tabId: tab.id,
-      title: tab.title,
-      contentType: tab.contentType,
-      movable: canMoveTabWithoutSession(tab),
-    }));
+    .map((tab) => {
+      const movable = canMoveTabWithoutSession(tab);
+      return {
+        tabId: tab.id,
+        title: tab.title,
+        contentType: tab.contentType,
+        movable,
+        ...(movable && transferViewMovesUnpaired(tab, movingTabIds) ? { unpaired: true } : {}),
+      };
+    });
 }
 
 /** `otherTabs` for a {@link WindowCloseRequest}, omitted when there are none. */
@@ -451,13 +476,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         `Save or discard ${stuck.map((tab) => `"${tab.title}"`).join(", ")} before moving tabs`
       );
     }
-    // Session tabs first, so a remote editor's backing session is already in
-    // the destination when the editor reloads its file there. Then every other
-    // tab the destination can reopen, dirty file editors included (#4501).
-    const tabs = [
-      ...windowTabs.filter((tab) => tab.sessionId),
-      ...windowTabs.filter(canMoveTabWithoutSession),
-    ];
+    const tabs = windowMoveTabs(windowTabs);
     if (tabs.length === 0) return;
 
     // Build a hand-off record per tab before anything else happens. Each
@@ -466,7 +485,13 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     // The Transfer Queue is region-authoritative and shared (#2229), so no queue
     // rows are carried — the destination window already sees them; this window
     // is being torn down, so no source-side transient-map release is needed.
-    const records: TabHandoffRecord[] = tabs.map((tab) => buildTransferAwareHandoff(tab).record);
+    // Every record names its source tab and this move's batch, so the
+    // destination can re-pair a transfer view with its moved terminal (#4751).
+    const batchId = newId("move");
+    const movingTabIds = new Set(tabs.map((tab) => tab.id));
+    const records: TabHandoffRecord[] = tabs.map((tab) =>
+      pairBatchHandoffRecord(buildTransferAwareHandoff(tab).record, tab.id, batchId, movingTabIds)
+    );
 
     // Mark every session as moving up front so a source Terminal unmounting
     // during the window teardown does NOT tear down the backend session — the

@@ -3,7 +3,9 @@
 // with a contents: write token persisted in .git/config by actions/checkout.
 // Pinned here:
 //   - dev-build.yml defaults to contents: read; only publish-release writes;
-//   - no checkout in dev-build.yml or release.yml persists its credentials;
+//   - no checkout in any workflow or composite action persists its credentials
+//     (#4729 extended this repo-wide), except an explicit allowlist of jobs that
+//     push with the checkout's token, each with its reason;
 //   - the app build jobs install frontend dependencies with --ignore-scripts;
 //   - release.yml defaults to contents: read, and no job that installs
 //     dependencies or compiles holds a write token: the build jobs hand their
@@ -13,7 +15,7 @@
 //     never reach a write-scoped job (#4746).
 // Text-based like release-draft.test.mjs: the workflow layout is the contract.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -71,17 +73,78 @@ describe("dev-build.yml token scope (CI2-007)", () => {
   });
 });
 
-describe.each([
-  ["dev-build.yml", DEV_BUILD],
-  ["release.yml", RELEASE],
-])("%s checkouts (CI2-007)", (name, text) => {
-  it("never persist the token into .git/config", () => {
-    const steps = checkoutSteps(text);
-    expect(steps.length).toBeGreaterThan(0);
-    const persisting = steps
-      .filter((step) => !/\n\s+persist-credentials: false\b/.test(step.body))
-      .map((step) => `${name}:${step.line}`);
+/**
+ * Jobs whose checkout must keep the token in .git/config because a later step
+ * pushes, tags or otherwise authenticates git with it. Key: `<file>#<job>`,
+ * value: why. Empty today: cargo-update-lockfile.yml pushes with a step-scoped
+ * credential, the dev/release publishers use the API (gh), and every git fetch
+ * is anonymous against this public repo. A new entry must set
+ * `persist-credentials: true` explicitly so the exception is visible in the YAML.
+ */
+const PERSISTING_ALLOWLIST = new Map([]);
+
+/** Every workflow and composite action, as [repo-relative path, text]. */
+function workflowFiles() {
+  const files = [];
+  const workflows = path.join(ROOT, ".github/workflows");
+  for (const name of readdirSync(workflows).sort()) {
+    if (/\.ya?ml$/.test(name)) files.push(`.github/workflows/${name}`);
+  }
+  const actions = path.join(ROOT, ".github/actions");
+  for (const name of readdirSync(actions).sort()) {
+    for (const file of ["action.yml", "action.yaml"]) {
+      if (existsSync(path.join(actions, name, file))) files.push(`.github/actions/${name}/${file}`);
+    }
+  }
+  return files.map((file) => [file, readFileSync(path.join(ROOT, file), "utf8")]);
+}
+
+/** The top-level job id a 1-based line belongs to ("(composite)" for actions). */
+function jobAt(text, line) {
+  const before = text.split("\n").slice(0, line - 1);
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    const match = before[i].match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+    if (match) return match[1];
+    if (/^\S/.test(before[i]) && !/^jobs:/.test(before[i])) break;
+  }
+  return "(composite)";
+}
+
+/** Every checkout step in the repo, tagged with its file, line and job. */
+const CHECKOUTS = workflowFiles().flatMap(([file, text]) =>
+  checkoutSteps(text).map((step) => ({
+    ...step,
+    file,
+    key: `${file.replace(/^\.github\/workflows\//, "")}#${jobAt(text, step.line)}`,
+    where: `${file}:${step.line}`,
+  }))
+);
+
+describe("checkouts never persist the token (CI2-007, #4729)", () => {
+  it("finds the checkouts it guards, in dev-build.yml and release.yml too", () => {
+    const files = new Set(CHECKOUTS.map((step) => step.file));
+    expect(files).toContain(".github/workflows/dev-build.yml");
+    expect(files).toContain(".github/workflows/release.yml");
+    expect(CHECKOUTS.length).toBeGreaterThan(50);
+  });
+
+  it("sets persist-credentials: false on every checkout outside the allowlist", () => {
+    const persisting = CHECKOUTS.filter(
+      (step) =>
+        !PERSISTING_ALLOWLIST.has(step.key) && !/\n\s+persist-credentials: false\b/.test(step.body)
+    ).map((step) => `${step.where} (${step.key})`);
     expect(persisting).toEqual([]);
+  });
+
+  it("keeps each allowlist entry live, explicit and explained", () => {
+    for (const [key, reason] of PERSISTING_ALLOWLIST) {
+      expect(reason, key).toMatch(/\S{10,}/);
+      const steps = CHECKOUTS.filter((step) => step.key === key);
+      expect(steps.length, `${key} has no checkout`).toBeGreaterThan(0);
+      for (const step of steps) {
+        expect(step.body, step.where).toMatch(/\n\s+persist-credentials: true\b/);
+      }
+    }
   });
 });
 
@@ -313,6 +376,7 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
         "agent-binaries-macos",
         "agent-binaries-windows",
         "third-party-notices",
+        "sbom-generate",
         "check-release-assets",
       ])
     );
@@ -330,7 +394,21 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
     expect(body).toContain("version=0.0.0-dryrun");
   });
 
-  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
+  it("a dry run generates the SBOMs read-only and checks they are well-formed (#4484)", () => {
+    expect(jobs.get("sbom-generate").needs).toContain("release-version");
+    expect(jobs.get("sbom-generate").needs).not.toContain("create-release");
+    expect(jobPermissions(jobBody(RELEASE, "sbom-generate"))).toEqual({ contents: "read" });
+    expect(jobs.get("check-release-assets").needs).toContain("sbom-generate");
+    const check = stripComments(jobBody(RELEASE, "check-release-assets"));
+    expect(check).toMatch(/name: release-sboms\n/);
+    expect(check).toMatch(/for c in desktop agent rdp-sidecar frontend; do/);
+    expect(check).toMatch(/jq -e '\.bomFormat == "CycloneDX"/);
+    // Attest + upload stay tag-only: sbom needs create-release, so a dry run skips it.
+    expect(dryRunJobs).not.toContain("sbom");
+    expect(jobs.get("sbom").needs).toContain("create-release");
+  });
+
+  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices", "sbom"])(
     "%s publishes only an asset set check-release-assets passed",
     (id) => {
       expect(jobs.get(id).needs).toContain("check-release-assets");

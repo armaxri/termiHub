@@ -60,6 +60,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # fetch-integration-coverage.mjs git-fetches the measured commit anonymously
+          # (the repo is public), so no token is persisted (#4729).
+          persist-credentials: false
 
       # cargo-llvm-cov needs the llvm-tools-preview rustup component to
       # instrument and merge coverage (TOOL-003).
