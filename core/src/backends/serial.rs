@@ -19,7 +19,7 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 use crate::session::serial::{open_serial_port, parse_serial_config};
 
-use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
 /// Channel capacity for write data sent to the serial writer task.
@@ -40,6 +40,9 @@ pub struct Serial {
     /// The output sender is stored so `subscribe_output()` can replace
     /// the channel. The reader task picks up the new sender on its next send.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Holds the output produced between `connect` and the first
+    /// `subscribe_output()`, so it reaches that subscriber (#4719).
+    early_output: EarlyOutput,
 }
 
 /// Internal state of an active serial connection.
@@ -90,6 +93,7 @@ impl Serial {
         Self {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            early_output: EarlyOutput::new(),
         }
     }
 }
@@ -460,15 +464,9 @@ impl ConnectionType for Serial {
 
         let alive = Arc::new(AtomicBool::new(true));
 
-        // Set up output channel.
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            *guard = Some(tx);
-        }
+        // Set up the output channel. Its receiver is kept for the first subscriber, so output produced
+        // before anyone subscribes waits there instead of being dropped (#4719).
+        self.early_output.open(&self.output_tx);
 
         // Reader task: async reads forwarded to the output channel. On exit it
         // drops the stored output sender so a lost port surfaces as a disconnect
@@ -527,6 +525,7 @@ impl ConnectionType for Serial {
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
+            self.early_output.clear();
             debug!("Serial port disconnected");
         }
         Ok(())
@@ -554,11 +553,7 @@ impl ConnectionType for Serial {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        if let Ok(mut guard) = self.output_tx.lock() {
-            *guard = Some(tx);
-        }
-        rx
+        self.early_output.subscribe(&self.output_tx)
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {

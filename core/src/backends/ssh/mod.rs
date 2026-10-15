@@ -56,7 +56,7 @@ use crate::session::ssh::validate_ssh_config;
 use self::connector::{RusshSshConnector, SshConnector};
 use self::monitoring::SshMonitoringProvider;
 
-use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use crate::output::early::EarlyOutput;
 
 /// SSH backend using `russh`, implementing [`ConnectionType`].
 ///
@@ -77,6 +77,9 @@ pub struct Ssh {
     /// the channel. The reader thread also holds a reference and picks up
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Holds the output produced between `connect` and the first
+    /// `subscribe_output()`, so it reaches that subscriber (#4719).
+    early_output: EarlyOutput,
     /// Monitoring provider, created on connect.
     ///
     /// Held in an `Arc` so [`monitoring_handle`](ConnectionType::monitoring_handle)
@@ -163,6 +166,7 @@ impl Ssh {
             connector,
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            early_output: EarlyOutput::new(),
             monitoring_provider: None,
             file_browser_provider: None,
             process_manager: None,
@@ -754,15 +758,9 @@ impl ConnectionType for Ssh {
             }
         }
 
-        // Set up output channel.
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            *guard = Some(tx);
-        }
+        // Set up the output channel. Its receiver is kept for the first subscriber, so output produced
+        // before anyone subscribes waits there instead of being dropped (#4719).
+        self.early_output.open(&self.output_tx);
 
         // Spawn reader thread: `handle.reader` blocks internally until data arrives
         // or the `alive` flag is cleared, so no WouldBlock handling is needed here.
@@ -856,6 +854,7 @@ impl ConnectionType for Ssh {
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
+            self.early_output.clear();
             debug!("SSH session disconnected");
         }
         Ok(())
@@ -895,11 +894,7 @@ impl ConnectionType for Ssh {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        if let Ok(mut guard) = self.output_tx.lock() {
-            *guard = Some(tx);
-        }
-        rx
+        self.early_output.subscribe(&self.output_tx)
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
