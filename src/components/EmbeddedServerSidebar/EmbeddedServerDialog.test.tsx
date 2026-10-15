@@ -12,6 +12,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
   ),
 }));
 
+import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 
@@ -199,6 +200,34 @@ describe("EmbeddedServerDialog", () => {
     // and the invalid (missing) port blocks Save.
     expect(port.value).toBe("");
     expect(saveBtn.disabled).toBe(true);
+  });
+
+  describe("open effect (#4370)", () => {
+    const name = () =>
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement;
+
+    it("reloads once per open, not on edits or parent re-renders", async () => {
+      await render(<EmbeddedServerDialog {...baseProps} />);
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(1);
+
+      typeInto(name(), "Edited");
+      await render(<EmbeddedServerDialog {...baseProps} onOpenChange={() => {}} />);
+
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(1);
+      // The edit survived the re-render: the working copy was not reset.
+      expect(name().value).toBe("Edited");
+    });
+
+    it("resets the working copy when the dialog is reopened", async () => {
+      await render(<EmbeddedServerDialog {...baseProps} />);
+      typeInto(name(), "Discarded");
+
+      await render(<EmbeddedServerDialog {...baseProps} open={false} />);
+      await render(<EmbeddedServerDialog {...baseProps} />);
+
+      expect(listNetworkInterfaces).toHaveBeenCalledTimes(2);
+      expect(name().value).toBe("");
+    });
   });
 
   it("populates its fields from an existing config when editing", async () => {

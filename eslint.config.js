@@ -78,6 +78,11 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // A missing hook dependency is a stale-closure bug, so it fails the build
+      // (#4370, WA-CI2-005). A deliberate omission is suppressed on the line
+      // with a one-line justification right above it; the hookDepsSuppressions
+      // test enforces that.
+      "react-hooks/exhaustive-deps": "error",
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },

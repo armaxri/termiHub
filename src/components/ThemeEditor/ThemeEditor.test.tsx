@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ThemeEditor } from "./ThemeEditor";
-import { createCustomTheme } from "@/themes";
+import { createCustomTheme, previewTheme } from "@/themes";
 import { darkTheme } from "@/themes/dark";
 import type { ThemeDefinition } from "@/themes/types";
 
@@ -92,6 +92,34 @@ describe("ThemeEditor", () => {
     expect(saved.name).toBe("Renamed");
     expect(saved.colors.accentColor).toBe("#ff8800");
     expect(saved.baseTheme).toBe("dark");
+  });
+
+  describe("live preview effect (#4370)", () => {
+    it("previews the draft again when a colour or the name changes", () => {
+      render(createCustomTheme("dark", "Base"));
+      vi.mocked(previewTheme).mockClear();
+
+      setValue(q<HTMLInputElement>("theme-editor-hex-accentColor"), "#ff8800");
+      expect(previewTheme).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(previewTheme).mock.calls[0][0].colors.accentColor).toBe("#ff8800");
+
+      setValue(q<HTMLInputElement>("theme-editor-name"), "Renamed");
+      expect(previewTheme).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(previewTheme).mock.calls[1][0].name).toBe("Renamed");
+    });
+
+    it("does not preview again on a parent re-render with the same theme", () => {
+      const theme = createCustomTheme("dark", "Base");
+      const onSave = vi.fn();
+      const onCancel = vi.fn();
+      render(theme, onSave, onCancel);
+      vi.mocked(previewTheme).mockClear();
+
+      render(theme, vi.fn(), vi.fn());
+      render(theme, onSave, onCancel);
+
+      expect(previewTheme).not.toHaveBeenCalled();
+    });
   });
 
   it("enables per-token Reset only when overridden and restores the base value", () => {
