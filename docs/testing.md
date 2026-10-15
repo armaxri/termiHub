@@ -1018,16 +1018,18 @@ every entry, even when an assertion fails. Run them through the wrapper, which
 provides a throwaway store and fails unless both tests ran:
 
 ```bash
-scripts/internal/real-keychain-tests.sh
+scripts/internal/real-keychain-tests.sh     # macOS, Linux
+scripts\internal\real-keychain-tests.cmd    # Windows
 ```
 
-| Platform | Store used by the wrapper                                                                        |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| macOS    | a temporary keychain, made the default only while the tests run; the login keychain is untouched |
-| Linux    | a private `dbus-run-session` with its own `gnome-keyring-daemon` in a temporary directory        |
-| Windows  | the user's Credential Manager (no throwaway store), with the guarantees above                    |
+| Platform | Store used by the wrapper                                                                                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS    | a temporary keychain, made the default only while the tests run; the login keychain is untouched                                                                                    |
+| Linux    | a private `dbus-run-session` with its own `gnome-keyring-daemon` in a temporary directory, unlocked with a random non-empty password (an empty one creates no `default` collection) |
+| Windows  | the user's Credential Manager (no throwaway store), with the guarantees above                                                                                                       |
 
-CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`),
+CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`; the
+`.cmd` twin on Windows),
 reusing the already-built lib test binary. The guided end-to-end check in the
 real app is MT-CRED-18 on the
 [release-gating checklist](#release-gating-manual-checklist).

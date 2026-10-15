@@ -1582,11 +1582,17 @@ jobs:
       # Credential Manager. The script runs the prebuilt lib test binary in a
       # throwaway store (a temporary macOS keychain; a private D-Bus session
       # with its own gnome-keyring, installed above) and fails unless both
-      # tests ran — a missing keyring is a failure, not a skip.
+      # tests ran — a missing keyring is a failure, not a skip. Windows runs the
+      # .cmd twin against Credential Manager (run-unique names, self-cleaning).
       - name: Run real-keychain restore tests
-        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.os != 'windows-latest' }}
         shell: bash
         run: ./scripts/internal/real-keychain-tests.sh
+
+      - name: Run real-keychain restore tests (Windows)
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' && matrix.os == 'windows-latest' }}
+        shell: cmd
+        run: scripts\internal\real-keychain-tests.cmd
 
       # Windows shell-integration CLI smoke (#4010, #1368): build the desktop
       # binary and run `termiHub.exe install-shell-integration` /
