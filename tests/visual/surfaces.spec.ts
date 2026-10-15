@@ -265,6 +265,23 @@ for (const win of WINDOWS) {
       await report.finish();
     });
 
+    test("plugin update dialog with an access diff", async ({ page }, testInfo) => {
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page, { pluginUpdate: true });
+      await showSidebar(page, "plugins");
+      // The real install-from-file flow: picker → preview → trust → dialog.
+      await page.locator("[data-testid=plugin-install-from-file]").click();
+      await page.locator("[data-testid=plugin-install-access-more]").waitFor();
+      // The "Validating plugin…" toast is dismissed once the preview is in.
+      await page.getByText("Validating plugin…").waitFor({ state: "hidden" });
+      await report.check("dialog/plugin-update-access-diff", "[role=dialog]");
+      // The secondary list of access the update no longer requests.
+      const removed = page.locator("[data-testid=plugin-install-access-removed]");
+      await removed.scrollIntoViewIfNeeded();
+      await report.check("dialog/plugin-update-access-diff-removed", "[role=dialog]");
+      await report.finish();
+    });
+
     for (const { name, action, args } of STORE_DIALOGS) {
       test(`${name} dialog`, async ({ page }, testInfo) => {
         const report = new SurfaceReport(page, testInfo, win.name);
