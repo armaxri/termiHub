@@ -1,4 +1,9 @@
+// @vitest-environment node
+// Pure Node file-system / TypeScript-compiler work: no DOM needed, so skip the
+// jsdom environment setup that every other worker is paying for (#4767).
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import os from "os";
 import { fileURLToPath } from "url";
 import path from "path";
 import {
@@ -14,6 +19,7 @@ import {
   countIdentifiers,
   findOrphans,
   isProductionTsFile,
+  parseTsSource,
   checkRepo,
 } from "./check-invoke-contract.mjs";
 
@@ -334,6 +340,102 @@ export function Widget() { void usedCmd(); }`;
     expect(problems).toEqual([
       "ORPHAN_ALLOWLIST entry 'gone_cmd' is not a registered command — remove it",
     ]);
+  });
+});
+
+describe("checkRepo on a fixture repository", () => {
+  /** Write a minimal repo (one registered command, one wrapper, one caller) and check it. */
+  function checkFixture(apiTs) {
+    const root = mkdtempSync(path.join(os.tmpdir(), "invoke-contract-"));
+    try {
+      const write = (rel, text) => {
+        mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        writeFileSync(path.join(root, rel), text);
+      };
+      write(
+        "src-tauri/src/commands/plugin.rs",
+        `#[tauri::command]\npub fn enable_plugin(id: String, app: AppHandle) {}\n` +
+          `#[tauri::command]\npub fn list_plugins(state: State<'_, Foo>) {}\n`
+      );
+      write(
+        "src-tauri/src/lib.rs",
+        `tauri::generate_handler![commands::plugin::enable_plugin, commands::plugin::list_plugins];`
+      );
+      write("src/services/api.ts", apiTs);
+      write(
+        "src/app.ts",
+        `import { enablePlugin, listPlugins } from "./services/api";\n` +
+          `export const run = () => { enablePlugin("x"); listPlugins(); };\n`
+      );
+      return checkRepo(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const API_HEADER = `import { invoke } from "@tauri-apps/api/core";\n`;
+  const LIST_WRAPPER = `export const listPlugins = () => invoke("list_plugins");\n`;
+
+  it("passes when every invoke matches", () => {
+    const { problems, calls } = checkFixture(
+      API_HEADER +
+        `export const enablePlugin = (id: string) => invoke("enable_plugin", { id });\n` +
+        LIST_WRAPPER
+    );
+    expect(calls).toHaveLength(2);
+    expect(problems).toEqual([]);
+  });
+
+  it("still catches a mismatched invoke key through the single-parse path", () => {
+    const { problems } = checkFixture(
+      API_HEADER +
+        `/** JSDoc is not parsed; it must not hide the call. @param id the plugin */\n` +
+        `export const enablePlugin = (id: string) =>\n` +
+        `  invoke("enable_plugin", { pluginId: id });\n` +
+        LIST_WRAPPER
+    );
+    expect(problems).toEqual([
+      `src/services/api.ts:4: invoke("enable_plugin") passes unknown arg 'pluginId' (expects: id)`,
+      `src/services/api.ts:4: invoke("enable_plugin") is missing required arg 'id' (Rust 'id')`,
+    ]);
+  });
+
+  it("still scans a file whose invoke import is spelled with an escape", () => {
+    // No literal "@tauri-apps/api/core" substring: the backslash must still force a parse.
+    const { problems } = checkFixture(
+      `import { invoke } from "@tauri-apps\\u002fapi/core";\n` +
+        `export const enablePlugin = (id: string) => invoke("enable_plugin", { pluginId: id });\n` +
+        LIST_WRAPPER
+    );
+    expect(problems).toContain(
+      `src/services/api.ts:2: invoke("enable_plugin") passes unknown arg 'pluginId' (expects: id)`
+    );
+  });
+
+  it("still catches an orphaned command when its wrapper is never called", () => {
+    const { problems } = checkFixture(
+      API_HEADER +
+        `export const enablePlugin = (id: string) => invoke("enable_plugin", { id });\n` +
+        `export const unusedList = () => invoke("list_plugins");\n`
+    );
+    expect(problems).toEqual([
+      "orphan command 'list_plugins': its only invoke wrapper(s) unusedList " +
+        "(src/services/api.ts:3) have no production caller",
+    ]);
+  });
+});
+
+describe("parseTsSource", () => {
+  it("yields the same invoke calls and identifier counts as a standalone parse", () => {
+    const src =
+      `import { invoke } from "@tauri-apps/api/core";\n` +
+      `/** @param {Foo} bar see {@link Qux} */\n` +
+      `export function f(bar: string) { return invoke("enable_plugin", { id: bar }); }\n`;
+    const sf = parseTsSource(src, "a.ts");
+    expect(collectInvokeCalls(src, "a.ts", sf)).toEqual(collectInvokeCalls(src, "a.ts"));
+    expect(countIdentifiers(src, "a.ts", new Map(), sf)).toEqual(countIdentifiers(src, "a.ts"));
+    // JSDoc identifiers (Foo, Qux) never counted, with or without JSDoc parsing.
+    expect(countIdentifiers(src, "a.ts").has("Qux")).toBe(false);
   });
 });
 
