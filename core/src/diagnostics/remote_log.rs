@@ -88,7 +88,11 @@ pub fn list_family(dir: &Path, prefix: &str) -> Vec<LogFileEntry> {
             })
         })
         .collect();
-    entries.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.name.cmp(&b.name)));
+    entries.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     entries.truncate(MAX_REMOTE_LOGS);
     entries
 }

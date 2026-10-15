@@ -102,7 +102,11 @@ fn listing_a_missing_directory_is_empty() {
 fn listing_is_capped() {
     let dir = tempfile::tempdir().unwrap();
     for i in 0..(MAX_REMOTE_LOGS + 5) {
-        fs::write(dir.path().join(format!("termihub-agent-stdio-{i}.log")), "x").unwrap();
+        fs::write(
+            dir.path().join(format!("termihub-agent-stdio-{i}.log")),
+            "x",
+        )
+        .unwrap();
     }
     assert_eq!(list_family(dir.path(), FAMILY).len(), MAX_REMOTE_LOGS);
 }
@@ -156,7 +160,10 @@ fn reading_an_over_long_file_keeps_whole_newest_lines() {
     let rest = text.strip_prefix(TAIL_CUT_MARKER).expect("marker");
     assert!(rest.len() <= 100);
     assert!(rest.ends_with("line 0199 ok\n"));
-    assert!(rest.starts_with("line "), "starts on a whole line: {rest:?}");
+    assert!(
+        rest.starts_with("line "),
+        "starts on a whole line: {rest:?}"
+    );
 }
 
 #[test]
@@ -164,7 +171,11 @@ fn a_cut_exactly_on_a_line_boundary_keeps_that_line() {
     let dir = tempfile::tempdir().unwrap();
     let name = "termihub-agent-stdio-7.log";
     // 14-byte lines: a 28-byte window holds exactly the last two lines.
-    fs::write(dir.path().join(name), "line 0 ok....\nline 1 ok....\nline 2 ok....\n").unwrap();
+    fs::write(
+        dir.path().join(name),
+        "line 0 ok....\nline 1 ok....\nline 2 ok....\n",
+    )
+    .unwrap();
     let (text, truncated) = read_listed_log(dir.path(), FAMILY, name, 28, &redactor()).unwrap();
     assert!(truncated);
     assert_eq!(
