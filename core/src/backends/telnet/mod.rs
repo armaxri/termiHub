@@ -30,7 +30,7 @@ use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
-use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
 pub use auto_login::{
@@ -97,6 +97,9 @@ pub struct Telnet {
     /// the channel. The reader thread also holds a reference and picks up
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Holds what the server sends between `connect` and the first
+    /// `subscribe_output()` — e.g. a greeting written on accept (#4719).
+    early_output: EarlyOutput,
 }
 
 /// Internal state of an active telnet connection.
@@ -154,6 +157,7 @@ impl Telnet {
         Self {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            early_output: EarlyOutput::new(),
         }
     }
 }
@@ -560,15 +564,10 @@ impl ConnectionType for Telnet {
         // answers DONT/WONT and nothing else changes.
         send_initial_offer(&negotiator, &writer)?;
 
-        // Set up output channel.
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            *guard = Some(tx);
-        }
+        // Set up the output channel. Its receiver is kept for the first
+        // subscriber, so a greeting the server sends before anyone subscribes
+        // waits there instead of being dropped (#4719).
+        self.early_output.open(&self.output_tx);
 
         if options.auto_login.is_some() {
             // Never log the credentials themselves — only that auto-login is on.
@@ -609,10 +608,12 @@ impl ConnectionType for Telnet {
             if let Ok(writer) = state.writer.lock() {
                 let _ = writer.shutdown(std::net::Shutdown::Both);
             }
-            // Clear the sender to signal the reader thread to stop.
+            // Clear the sender to signal the reader thread to stop, and drop
+            // an untaken connect-time receiver so a reader waiting on it stops.
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
+            self.early_output.clear();
             debug!("Telnet session disconnected");
         }
         Ok(())
@@ -687,11 +688,7 @@ impl ConnectionType for Telnet {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        if let Ok(mut guard) = self.output_tx.lock() {
-            *guard = Some(tx);
-        }
-        rx
+        self.early_output.subscribe(&self.output_tx)
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
@@ -713,3 +710,7 @@ mod mode_tests;
 #[cfg(test)]
 #[path = "interrupt_tests.rs"]
 mod interrupt_tests;
+
+#[cfg(test)]
+#[path = "early_output_tests.rs"]
+mod early_output_tests;

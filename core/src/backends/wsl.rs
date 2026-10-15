@@ -33,7 +33,7 @@ use crate::monitoring::{
 };
 use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
-use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
 
 /// WSL backend using portable-pty, implementing [`ConnectionType`].
@@ -54,6 +54,9 @@ pub struct Wsl {
     /// the channel. The reader thread also holds a reference and picks up
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Holds the output produced between `connect` and the first
+    /// `subscribe_output()`, so it reaches that subscriber (#4719).
+    early_output: EarlyOutput,
     /// File browser provider, created on connect.
     file_browser_provider: Option<Arc<WslFileBrowser>>,
     /// System-monitoring provider, created on connect (#3182). Reads `/proc`
@@ -830,6 +833,7 @@ impl Wsl {
         Self {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            early_output: EarlyOutput::new(),
             file_browser_provider: None,
             monitoring_provider: None,
             process_manager: None,
@@ -1159,18 +1163,17 @@ impl ConnectionType for Wsl {
         let alive = Arc::new(AtomicBool::new(true));
 
         // Set up output channel.  Preserve an existing sender if a subscriber
-        // already called subscribe_output() before connect() — that way no
-        // early PTY output (including the first PROMPT_COMMAND / OSC 7 emission)
-        // is dropped before the caller starts listening.
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            if guard.is_none() {
-                let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-                *guard = Some(tx);
-            }
+        // already called subscribe_output() before connect(). Otherwise keep the
+        // new channel's receiver for the first subscriber, so early PTY output
+        // (including the first PROMPT_COMMAND / OSC 7 emission) is not dropped
+        // before the caller starts listening (#4719).
+        let pre_subscribed = self
+            .output_tx
+            .lock()
+            .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?
+            .is_some();
+        if !pre_subscribed {
+            self.early_output.open(&self.output_tx);
         }
 
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
@@ -1312,6 +1315,7 @@ impl ConnectionType for Wsl {
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
+            self.early_output.clear();
             self.file_browser_provider = None;
             self.monitoring_provider = None;
             self.process_manager = None;
@@ -1380,11 +1384,7 @@ impl ConnectionType for Wsl {
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        if let Ok(mut guard) = self.output_tx.lock() {
-            *guard = Some(tx);
-        }
-        rx
+        self.early_output.subscribe(&self.output_tx)
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
