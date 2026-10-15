@@ -52,6 +52,45 @@ export interface ToastPromiseMessages<T> {
 const PERSIST_DURATION = Infinity;
 
 /**
+ * Re-dismisses scheduled for toasts dismissed by id, keyed by toast id (#4812).
+ *
+ * sonner mounts a new or updated toast on a `setTimeout` tick but applies a
+ * dismiss on animation frames. A dismiss that lands before its toast mounted —
+ * a loading toast wrapping an IPC call that resolves at once, when a frame
+ * runs before the mount timer — finds nothing to remove and is lost, and a
+ * loading toast has no close button, so it would stay on screen for good.
+ *
+ * {@link toast.dismiss} therefore repeats the dismiss on a timer scheduled
+ * after the mount timer (equal-delay timers run in the order they were set),
+ * so the repeat always reaches the mounted toast. Reusing the id for a new or
+ * updated toast before then cancels the repeat, so it never removes the
+ * toast that replaced the dismissed one.
+ */
+const pendingRedismiss = new Map<string | number, ReturnType<typeof setTimeout>>();
+
+/** Cancel a scheduled re-dismiss because `id` is being shown again. */
+function cancelRedismiss(id: string | number | undefined): void {
+  if (id === undefined) return;
+  const timer = pendingRedismiss.get(id);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  pendingRedismiss.delete(id);
+}
+
+/** Dismiss `id` now and once more after any pending mount of it has landed. */
+function dismissById(id: string | number): void {
+  cancelRedismiss(id);
+  sonnerToast.dismiss(id);
+  pendingRedismiss.set(
+    id,
+    setTimeout(() => {
+      pendingRedismiss.delete(id);
+      sonnerToast.dismiss(id);
+    }, 0)
+  );
+}
+
+/**
  * The termiHub toast API — a token-styled skin over sonner. Every mutating or
  * async user action that resolves in the background should surface one of these
  * so nothing resolves silently (the "reactive" pillar).
@@ -80,7 +119,11 @@ export interface ToastApi {
    * caller can still await it.
    */
   promise<T>(promise: Promise<T>, messages: ToastPromiseMessages<T>): Promise<T>;
-  /** Dismiss a specific toast (or all toasts when no id is given). */
+  /**
+   * Dismiss a specific toast (or all toasts when no id is given). A dismiss by
+   * id always lands, even when issued before the toast finished mounting
+   * (#4812).
+   */
   dismiss(id?: string | number): void;
 }
 
@@ -89,6 +132,7 @@ export interface ToastApi {
  */
 export const toast: ToastApi = {
   success(message, opts) {
+    cancelRedismiss(opts?.id);
     return sonnerToast.success(message, {
       id: opts?.id,
       description: opts?.description,
@@ -99,6 +143,7 @@ export const toast: ToastApi = {
   },
 
   error(message, opts) {
+    cancelRedismiss(opts?.id);
     return sonnerToast.error(message, {
       id: opts?.id,
       description: opts?.description,
@@ -109,6 +154,7 @@ export const toast: ToastApi = {
   },
 
   info(message, opts) {
+    cancelRedismiss(opts?.id);
     return sonnerToast.info(message, {
       id: opts?.id,
       description: opts?.description,
@@ -119,6 +165,7 @@ export const toast: ToastApi = {
   },
 
   loading(message, opts) {
+    cancelRedismiss(opts?.id);
     return sonnerToast.loading(message, {
       id: opts?.id,
       description: opts?.description,
@@ -145,6 +192,10 @@ export const toast: ToastApi = {
   },
 
   dismiss(id) {
-    sonnerToast.dismiss(id);
+    if (id === undefined) {
+      sonnerToast.dismiss();
+      return;
+    }
+    dismissById(id);
   },
 };

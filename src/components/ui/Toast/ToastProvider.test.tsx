@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
@@ -153,4 +153,58 @@ describe("ToastProvider close button", () => {
       expect(document.body.textContent).not.toContain("Keyboard dismiss");
     }
   );
+});
+
+/**
+ * #4812: sonner mounts a toast on a timer tick but applies a dismiss on
+ * animation frames. When a frame runs before the mount timer — emulated here
+ * by running frame callbacks as microtasks — a dismiss issued right after
+ * `toast.loading` used to find nothing to remove and was lost, leaving the
+ * loading toast (which has no close button) on screen for good.
+ */
+describe("ToastProvider dismiss before mount (#4812)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      queueMicrotask(() => cb(0));
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("removes a loading toast dismissed before it mounted", async () => {
+    render(<ToastProvider />);
+    await act(async () => {
+      const id = toast.loading("Instant work");
+      await Promise.resolve();
+      toast.dismiss(id);
+    });
+
+    await waitFor(() => !(document.body.textContent ?? "").includes("Instant work"));
+    // Let every pending mount/dismiss settle, then confirm it stays gone.
+    for (let i = 0; i < 10; i++) await tick();
+    expect(document.querySelector('[data-sonner-toast][data-type="loading"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("Instant work");
+  });
+
+  it("keeps a toast that reuses the id right after the dismiss", async () => {
+    render(<ToastProvider />);
+    await act(async () => {
+      const id = toast.loading("Instant work");
+      toast.dismiss(id);
+      toast.error("Replacement error", { id });
+    });
+
+    await waitFor(() => (document.body.textContent ?? "").includes("Replacement error"));
+    for (let i = 0; i < 10; i++) await tick();
+    expect(document.body.textContent).toContain("Replacement error");
+  });
 });
