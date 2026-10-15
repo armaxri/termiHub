@@ -1,0 +1,26 @@
+# Automated update PRs for the SHA-pinned GitHub Actions (#4360, WA-CI2-006).
+#
+# Every third-party action is pinned to a full commit SHA with a `# vX.Y.Z`
+# comment (CI-004 / WA-CI-034); Dependabot rewrites the SHA and the comment
+# together. Workflows AND the composite actions under .github/actions/ are
+# scanned. All bumps land in ONE weekly grouped PR so the same action never
+# drifts to two SHAs (scripts/internal/check-action-pins.mjs enforces that).
+# Only github-actions here: cargo/npm updates go through the existing lockfile
+# chores (cargo-update-lockfile.yml) and security-audit.yml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+      include: scope
