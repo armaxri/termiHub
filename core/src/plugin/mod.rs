@@ -61,6 +61,7 @@
 //! the `termihub-plugin-pack` binary.
 
 mod abi_check;
+mod access_diff;
 mod anchored_fs;
 mod capabilities;
 mod connection;
@@ -94,6 +95,7 @@ mod update_check;
 mod version_change;
 
 pub use abi_check::PackWarning;
+pub use access_diff::{AccessDelta, AccessDiffPath, ConnectionPolicyChange, PluginAccessDiff};
 pub use capabilities::{ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT, DEFAULT_MAX_CONNECTIONS};
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use fat_pack::{

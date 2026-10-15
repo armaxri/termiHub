@@ -14,6 +14,11 @@
  */
 
 import connectionsWire from "../../../src/test/fixtures/wire/connections.json";
+import {
+  PLUGIN_UPDATE_PACKAGE,
+  PLUGIN_UPDATE_PREVIEW,
+  PLUGIN_UPDATE_TRUST,
+} from "./pluginUpdatePreview";
 import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
 
 /** Per-test knobs the spec sets before the app boots. */
@@ -36,6 +41,11 @@ export interface VisualScenario {
    * jump-host hop has a stored password, with real-shaped connection types.
    */
   storedSecrets?: boolean;
+  /**
+   * Answer the plugin file picker, `preview_plugin` and `assess_plugin_trust`
+   * with an update whose preview carries an access diff (#4418).
+   */
+  pluginUpdate?: boolean;
 }
 
 declare global {
@@ -397,6 +407,17 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return "/home/visual/.local/share/termihub/termihub.log";
     case "local_list_dir":
       return [];
+    case "plugin:dialog|open":
+      return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
+    case "preview_plugin":
+      // Answer after a real-IPC-like delay: sonner drops a dismiss that lands
+      // before its loading toast mounted, which would leave "Validating
+      // plugin…" over the dialog footer.
+      return scenario.pluginUpdate
+        ? new Promise((resolve) => setTimeout(() => resolve(PLUGIN_UPDATE_PREVIEW), 50))
+        : null;
+    case "assess_plugin_trust":
+      return scenario.pluginUpdate ? PLUGIN_UPDATE_TRUST : null;
 
     default:
       (window.__VISUAL_UNHANDLED__ ??= []).push(cmd);
