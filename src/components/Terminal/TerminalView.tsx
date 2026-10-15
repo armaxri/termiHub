@@ -224,7 +224,7 @@ export function TerminalView() {
           <LazyTestBridge />
         </Suspense>
       )}
-      <div className="terminal-view">
+      <main className="terminal-view">
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
@@ -363,7 +363,7 @@ export function TerminalView() {
           <TerminalHost />
           <SplitView />
         </div>
-      </div>
+      </main>
       <MacroRecordSaveDialog
         open={macroSaveDialogOpen}
         stepCount={macroRecordingStepCount}

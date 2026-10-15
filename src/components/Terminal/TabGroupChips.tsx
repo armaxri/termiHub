@@ -53,7 +53,7 @@ export function TabGroupChips() {
 
   // Both the chip X and the "Close Group" item go through the shared guard, which
   // confirms before ending the group's live sessions or unsaved editors (UX2-001).
-  const handleClose = useCallback((groupId: string, e: React.MouseEvent) => {
+  const handleClose = useCallback((groupId: string, e: React.SyntheticEvent) => {
     e.stopPropagation();
     closeTabGroupGuarded(groupId);
   }, []);
@@ -117,7 +117,7 @@ interface TabGroupChipProps {
   canClose: boolean;
   isDropTarget: boolean;
   onClick: () => void;
-  onClose: (e: React.MouseEvent) => void;
+  onClose: (e: React.SyntheticEvent) => void;
   onRename: () => void;
   /**
    * Move the group one place left — the keyboard/menu alternative to dragging
@@ -143,6 +143,25 @@ function TabGroupChip({
     id: group.id,
   });
 
+  // Keyboard close (A11Y2-011): the X is a pointer-only glyph (a button nested
+  // in the chip button is invalid), so Delete/Backspace on the focused chip
+  // closes the group through the same guarded path.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      canClose &&
+      (e.key === "Delete" || e.key === "Backspace") &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !e.shiftKey
+    ) {
+      e.preventDefault();
+      onClose(e);
+      return;
+    }
+    listeners?.onKeyDown?.(e);
+  };
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -160,6 +179,8 @@ function TabGroupChip({
           className={`tab-group-chip${isActive ? " tab-group-chip--active" : ""}${isDropTarget ? " tab-group-chip--drop-target" : ""}`}
           onClick={onClick}
           onDoubleClick={onRename}
+          onKeyDown={handleKeyDown}
+          aria-keyshortcuts={canClose ? "Delete" : undefined}
           title={group.name}
           data-testid={`tab-group-chip-${group.id}`}
           data-tab-group-id={group.id}
@@ -168,13 +189,14 @@ function TabGroupChip({
             <span className="tab-group-chip__dot" style={{ backgroundColor: group.color }} />
           )}
           <span className="tab-group-chip__name">{group.name}</span>
+          {/* Pointer-only close glyph, hidden from assistive tech (A11Y2-011):
+              keyboard users press Delete on the chip or use "Close Group". */}
           {canClose && (
             <span
               className="tab-group-chip__close"
               onClick={onClose}
               data-testid="tab-group-chip-close"
-              role="button"
-              aria-label={`Close ${group.name}`}
+              aria-hidden
             >
               <X size={12} />
             </span>
@@ -204,7 +226,7 @@ function TabGroupChip({
           <>
             <MenuSeparator />
             <MenuItem
-              onSelect={(e) => onClose(e as unknown as React.MouseEvent)}
+              onSelect={(e) => onClose(e as unknown as React.SyntheticEvent)}
               data-testid="tab-group-ctx-close"
             >
               Close Group

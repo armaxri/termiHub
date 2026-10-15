@@ -144,7 +144,7 @@ export function StatusBar() {
     : "";
 
   return (
-    <div className="status-bar" data-testid="status-bar">
+    <footer className="status-bar" data-testid="status-bar" aria-label="Status bar">
       <div className="status-bar__section status-bar__section--left">
         <WindowIndicator />
         <BroadcastStatus />
@@ -232,7 +232,7 @@ export function StatusBar() {
           </>
         )}
       </div>
-    </div>
+    </footer>
   );
 }
 

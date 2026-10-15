@@ -257,6 +257,35 @@ export function Tab({
                   : null;
   const isTerminalTab = tab.contentType === "terminal";
 
+  // Keyboard close (A11Y2-011): the close glyph is a pointer-only affordance
+  // (a nested button inside `role="tab"` is invalid), so Delete/Backspace on the
+  // focused tab closes it through the same guarded path as the X. The dnd-kit
+  // keyboard listener still runs for every other key.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (
+      (e.key === "Delete" || e.key === "Backspace") &&
+      e.target === e.currentTarget &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !e.shiftKey
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    listeners?.onKeyDown?.(e);
+  };
+  const focusOwningWindowItem = controlledByWindow && (
+    <MenuItem
+      onSelect={() => onFocusOwningWindow?.(controlledByWindow.label)}
+      data-testid="tab-context-focus-owning-window"
+    >
+      <AppWindow size={14} /> Focus {controlledByWindow.name}
+    </MenuItem>
+  );
+
   const tabElement = (
     <div
       ref={setNodeRef}
@@ -284,6 +313,8 @@ export function Tab({
       role="tab"
       aria-selected={tab.isActive}
       tabIndex={tab.isActive ? 0 : -1}
+      aria-keyshortcuts="Delete"
+      onKeyDown={handleKeyDown}
     >
       {NonTerminalIcon ? (
         <NonTerminalIcon size={14} className="tab__icon" data-testid={`tab-icon-${tab.id}`} />
@@ -315,16 +346,26 @@ export function Tab({
         </span>
       )}
       <span className="tab__title">
-        {isDirty && <span className="tab__dirty-dot" />}
+        {isDirty && (
+          <span
+            className="tab__dirty-dot"
+            role="img"
+            aria-label="Unsaved changes"
+            title="Unsaved changes"
+            data-testid={`tab-dirty-dot-${tab.id}`}
+          />
+        )}
         {shownTitle}
       </span>
       {isBroadcast && (
         <span
           className="tab__broadcast-badge"
+          role="img"
+          aria-label="Broadcast target: input is sent to all group members"
           title="Broadcast target"
           data-testid={`tab-broadcast-badge-${tab.id}`}
         >
-          <Radio size={12} />
+          <Radio size={12} aria-hidden />
         </span>
       )}
       {macroReceiving &&
@@ -347,18 +388,21 @@ export function Tab({
           content={`Taken over by ${controlledByWindow.name} — input and resize are disabled here. Click to focus that window.`}
           side="bottom"
         >
-          <button
-            type="button"
+          {/* Not a nested button (A11Y2-011): a labelled image inside the tab,
+              clickable with the pointer; keyboard users reach "Focus <window>"
+              through the tab's context menu. */}
+          <span
             className="tab__controlled-badge"
+            role="img"
             onClick={(e) => {
               e.stopPropagation();
               onFocusOwningWindow?.(controlledByWindow.label);
             }}
-            aria-label={`Taken over by ${controlledByWindow.name}; input and resize disabled here. Focus that window.`}
+            aria-label={`Taken over by ${controlledByWindow.name}; input and resize disabled here.`}
             data-testid={`tab-controlled-badge-${tab.id}`}
           >
             <AppWindow size={12} aria-hidden />
-          </button>
+          </span>
         </Tooltip>
       )}
       {/* Persistence marker (#2099). The ∞ is shown ONLY on agent persistent
@@ -369,10 +413,12 @@ export function Tab({
       {tab.persistentConnectionId && tab.config?.type === "remote-session" && (
         <span
           className="tab__persistent-badge"
+          role="img"
+          aria-label="Persistent session"
           title="Persistent session — lives on the agent and survives closing termiHub and restarting this machine."
           data-testid={`tab-persistent-badge-${tab.id}`}
         >
-          ∞
+          <span aria-hidden>∞</span>
         </span>
       )}
       {tab.spawned && (
@@ -384,18 +430,22 @@ export function Tab({
           Spawned
         </span>
       )}
+      {/* Pointer-only close glyph (A11Y2-011). A focusable button nested in
+          `role="tab"` is invalid and folded its label into the tab's name, so
+          it is hidden from assistive tech; keyboard users close the focused
+          tab with Delete/Backspace or the "Close Tab" context-menu item. */}
       <Tooltip content="Close" side="bottom">
-        <button
+        <span
           className="tab__close"
+          aria-hidden
           onClick={(e) => {
             e.stopPropagation();
             onClose();
           }}
-          aria-label="Close"
           data-testid={`tab-close-${tab.id}`}
         >
           <X size={14} />
-        </button>
+        </span>
       </Tooltip>
     </div>
   );
@@ -410,6 +460,10 @@ export function Tab({
           </MenuItem>
           <MenuSeparator />
           {moveItems}
+          <MenuSeparator />
+          <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
+            <X size={14} /> Close Tab
+          </MenuItem>
         </ContextMenuContent>
       </ContextMenuRoot>
     );
@@ -497,6 +551,11 @@ export function Tab({
         <MenuSeparator />
         <MenuItem onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
           <Palette size={14} /> Set Color...
+        </MenuItem>
+        {focusOwningWindowItem}
+        <MenuSeparator />
+        <MenuItem onSelect={() => onClose()} data-testid="tab-context-close">
+          <X size={14} /> Close Tab
         </MenuItem>
       </ContextMenuContent>
     </ContextMenuRoot>
