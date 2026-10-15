@@ -14,16 +14,11 @@
 //! services), and a drop guard deletes every entry the test may have written,
 //! even when an assertion fails.
 //!
-//! Run locally (Linux, inside a throwaway Secret Service):
-//!
-//! ```text
-//! dbus-run-session -- sh -c 'echo -n "" | gnome-keyring-daemon --unlock \
-//!   --components=secrets >/dev/null && TERMIHUB_REAL_KEYCHAIN_TESTS=1 \
-//!   cargo test -p termihub --lib backup::tests_real_keychain'
-//! ```
-//!
-//! On macOS the entries go to the default keychain (normally the login
-//! keychain); see `docs/testing.md` for running it against a throwaway one.
+//! Run them with `scripts/internal/real-keychain-tests.sh`, which provides a
+//! throwaway store (a temporary macOS keychain, a private Secret Service on
+//! Linux) and fails unless every test ran; CI runs it on every `Run Tests`
+//! leg. Setting the flag by hand on macOS writes to the default keychain —
+//! normally the login keychain. See `docs/testing.md`.
 
 use std::path::Path;
 
