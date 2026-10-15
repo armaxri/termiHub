@@ -58,6 +58,8 @@ from termihub_harness import (
     TELNET_PORT,
     TELNET_SERVICE,
     VNC_HOST,
+    VNC_JPEG_PORT,
+    VNC_JPEG_SERVICE,
     VNC_PORT,
     VNC_SERVICE,
     VNC_VENCRYPT_PORT,
@@ -565,6 +567,16 @@ def _ensure_vnc_service(service, port):
 def vnc_fixtures():
     """Classic-VncAuth VNC server (x11vnc + Xvfb, profile ``vnc``, port 2501)."""
     return _ensure_vnc_service(VNC_SERVICE, VNC_PORT)
+
+
+@pytest.fixture(scope="session")
+def vnc_jpeg_fixtures():
+    """Tight-JPEG VNC server (TigerVNC Xvnc, profile ``vnc``, port 2504, #4821).
+
+    Sends its gradient as Tight JPEG under a JPEG quality level and loops a
+    server-side CopyRect over it — the live JPEG pass-through path (#4424).
+    """
+    return _ensure_vnc_service(VNC_JPEG_SERVICE, VNC_JPEG_PORT)
 
 
 @pytest.fixture(scope="session")

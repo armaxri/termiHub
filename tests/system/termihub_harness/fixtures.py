@@ -136,6 +136,12 @@ VNC_VENCRYPT_SERVICE = "vnc-vencrypt-server"
 VNC_VENCRYPT_PORT = dev_local.service_port("TERMIHUB_TEST_VNC_VENCRYPT_PORT", 2502)
 #: ``container_name`` suffix of :data:`VNC_VENCRYPT_SERVICE`.
 VNC_VENCRYPT_CONTAINER_SUFFIX = "vnc-vencrypt"
+#: Service + host port of the Tight-JPEG server (TigerVNC Xvnc, VncAuth, #4821).
+#: Serves a grey desktop with a smooth gradient that a JPEG quality level sends
+#: as Tight JPEG, and loops a server-side CopyRect of it (see
+#: ``tests/docker/vnc-jpeg-server``).
+VNC_JPEG_SERVICE = "vnc-jpeg-server"
+VNC_JPEG_PORT = dev_local.service_port("TERMIHUB_TEST_VNC_JPEG_PORT", 2504)
 #: The fixtures' VNC password (VncAuth caps passwords at 8 characters).
 VNC_PASSWORD = "testpass"
 #: The fixtures' native framebuffer size.

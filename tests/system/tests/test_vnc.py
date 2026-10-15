@@ -10,8 +10,11 @@ suites drive the real app against the Docker ``vnc`` profile fixtures:
 * ``vnc-vencrypt-server`` (TigerVNC Xvnc, VeNCrypt X509) — the one fixture that
   accepts ``SetDesktopSize``, so a **dynamic-resolution** session in Match Window
   scaling really resizes the remote desktop to follow the tab (#3463 / #3556).
+* ``vnc-jpeg-server`` (TigerVNC Xvnc, VncAuth) — a gradient sent as **Tight
+  JPEG**, passed through to the webview compressed and decoded there, plus a
+  server-side CopyRect over it (#4424 / #4821).
 
-Both serve a static 1024x768 four-quadrant pattern (TL red, TR green, BL blue,
+The first two serve a static 1024x768 four-quadrant pattern (TL red, TR green, BL blue,
 BR white). The ``sampleCanvas`` bridge verb reads the canvas's pixels, so the
 tests assert the server's colours actually reached the screen — not just that a
 canvas element exists.
@@ -29,12 +32,14 @@ from typing import Optional
 
 import pytest
 
+from termihub_harness.ui.remote_desktop import color_matches
 from termihub_harness import (
     LIVE_CONNECT_REQUEST_TIMEOUT,
     VNC_CONTAINER_SUFFIX,
     VNC_FB_HEIGHT,
     VNC_FB_WIDTH,
     VNC_HOST,
+    VNC_JPEG_PORT,
     VNC_PASSWORD,
     VNC_PORT,
     VNC_QUADRANT_COLORS,
@@ -85,6 +90,7 @@ class _VncSuite(
         scale_mode: Optional[str] = None,
         resolution_mode: Optional[str] = None,
         tls_verify: Optional[str] = None,
+        quality: Optional[str] = None,
         auto_reconnect: bool = True,
     ) -> str:
         """Create + connect a VNC connection and wait for its session to go live.
@@ -102,6 +108,7 @@ class _VncSuite(
             scale_mode=scale_mode,
             resolution_mode=resolution_mode,
             tls_verify=tls_verify,
+            quality=quality,
             auto_reconnect=auto_reconnect,
         )
         self.handle_password_prompt(VNC_PASSWORD)
@@ -204,6 +211,90 @@ class TestVncResize(_VncSuite):
             "fit",
             what=f"the pattern after resizing the canvas {before} -> {after}",
         )
+
+
+#: The JPEG fixture's gradient (see tests/docker/vnc-jpeg-server/make_pattern.py):
+#: a 512x384 area at the top left, ``R = x*255//511, G = y*255//383, B = 160``,
+#: on a grey (64, 64, 64) desktop; its server-side copy lands at (512, 384).
+JPEG_GRADIENT_SIZE = (512, 384)
+JPEG_COPY_TARGET = (512, 384)
+JPEG_GREY = (64, 64, 64)
+#: Per-channel tolerance for a JPEG-decoded pixel (lossy decode plus the canvas's
+#: colour-management noise).
+JPEG_TOLERANCE = 32
+
+
+def jpeg_gradient(x: int, y: int) -> tuple[int, int, int]:
+    """Expected RGB of the fixture's gradient at (``x``, ``y``) within it."""
+    gw, gh = JPEG_GRADIENT_SIZE
+    return (x * 255 // (gw - 1), y * 255 // (gh - 1), 160)
+
+
+def jpeg_gradient_points() -> list[tuple[int, int]]:
+    """Probe points well inside the gradient, away from its edges."""
+    gw, gh = JPEG_GRADIENT_SIZE
+    return [
+        (int(gw * fx), int(gh * fy))
+        for fx in (0.1, 0.3, 0.5, 0.7, 0.9)
+        for fy in (0.15, 0.5, 0.85)
+    ]
+
+
+@pytest.mark.usefixtures("vnc_jpeg_fixtures")
+class TestVncJpegPassThrough(_VncSuite):
+    """VNC-UI-05: Tight JPEG rects reach the webview compressed (#4424 / #4821).
+
+    With a JPEG quality level the fixture's gradient arrives as Tight JPEG; the
+    backend passes the compressed bytes through and the canvas decodes them with
+    ``createImageBitmap``. The canvas reports how many JPEG rects it painted
+    (``data-jpeg-rects``) and whether it fell back to RGBA, so the test proves
+    the pass-through path ran — and that its pixels are right: a wrong-pixel
+    decode would not trip the fallback. The fixture also copies the gradient
+    server-side (an RFB CopyRect, proven bit-exact against the backend's shadow by
+    ``core/tests/vnc_jpeg.rs`` VNC-18); the copy must show the gradient too.
+    """
+
+    def _gradient_matches(self, origin: tuple[int, int]) -> bool:
+        points = jpeg_gradient_points()
+        fb_points = [(origin[0] + x + 0.5, origin[1] + y + 0.5) for x, y in points]
+        pixels = self.sample_framebuffer(fb_points, FB_SIZE, "pixel")
+        return all(
+            color_matches(rgba, jpeg_gradient(x, y), tolerance=JPEG_TOLERANCE)
+            for rgba, (x, y) in zip(pixels, points)
+        )
+
+    def _jpeg_rects_painted(self) -> int:
+        return int(self.driver.get_attribute(self.CANVAS, "data-jpeg-rects") or 0)
+
+    def test_jpeg_rects_are_decoded_in_the_webview(self):
+        self.open_vnc_tab("vnc-jpeg", VNC_JPEG_PORT, scale_mode="pixel", quality="high")
+        self.wait(
+            lambda: self.remote_resolution() == FB_SIZE,
+            timeout=PAINT_TIMEOUT,
+            what="the 1024x768 remote framebuffer",
+        )
+        self.wait(
+            lambda: self._gradient_matches((0, 0)),
+            timeout=PAINT_TIMEOUT,
+            what="the JPEG-decoded gradient to match the reference",
+        )
+        assert self._jpeg_rects_painted() > 0, "no JPEG rect was painted from pass-through"
+        assert self.driver.get_attribute(self.CANVAS, "data-jpeg-fallback") is None, (
+            "the canvas fell back to RGBA: a JPEG rect failed to decode"
+        )
+        # The plain background is untouched by the JPEG path.
+        grey = self.sample_framebuffer([(900.5, 100.5), (100.5, 600.5)], FB_SIZE, "pixel")
+        assert all(color_matches(rgba, JPEG_GREY) for rgba in grey), grey
+
+    def test_copy_rect_over_the_jpeg_area_shows_the_gradient(self):
+        # Same tab as the previous method. The fixture fills the target grey and
+        # copies the gradient onto it every 4 s; wait for a copied state.
+        self.wait(
+            lambda: self._gradient_matches(JPEG_COPY_TARGET),
+            timeout=PAINT_TIMEOUT,
+            what="the server-side copy of the JPEG gradient to paint",
+        )
+        assert self.driver.get_attribute(self.CANVAS, "data-jpeg-fallback") is None
 
 
 @pytest.mark.usefixtures("vnc_vencrypt_fixtures")
