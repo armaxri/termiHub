@@ -68,10 +68,18 @@ echo === Rust coverage (cargo llvm-cov -^> lcov) ===
 if "%DRY_RUN%"=="1" (
     echo   [dry-run] skipping: cargo llvm-cov --workspace --all-features --no-report
 ) else (
+    REM Core's out-of-process plugin suites spawn the runner llvm-cov builds and
+    REM scans, not a private build of their own, so the runner lines they drive
+    REM count toward plugin-runner coverage (#4693).
+    set "TERMIHUB_PLUGIN_RUNNER="
+    for /f "usebackq delims=" %%P in (`node scripts\internal\llvm-cov-runner-path.mjs`) do set "TERMIHUB_PLUGIN_RUNNER=%%P"
+    if not defined TERMIHUB_PLUGIN_RUNNER exit /b 1
+    echo   plugin runner: !TERMIHUB_PLUGIN_RUNNER!
     REM Tests and report are split so the report step survives an intermittent
     REM truncated .profraw (see scripts\internal\llvm-cov-report.mjs).
     cargo llvm-cov --workspace --all-features --no-report
     if errorlevel 1 exit /b 1
+    set "TERMIHUB_PLUGIN_RUNNER="
     node scripts\internal\llvm-cov-report.mjs "%RUST_LCOV%"
     if errorlevel 1 exit /b 1
 )

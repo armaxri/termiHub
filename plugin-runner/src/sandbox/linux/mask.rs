@@ -104,6 +104,10 @@ impl Plan {
             .map(PathBuf::from)
             .filter(|d| is_dir(d));
         keep.extend(data.clone());
+        // Coverage builds only (#4693): the instrumented runner's profile
+        // folder stays reachable under the home-folder mask.
+        #[cfg(coverage)]
+        keep.extend(super::super::coverage_profile_dir());
         let denied: Vec<PathBuf> = policy.denied_dirs.iter().map(PathBuf::from).collect();
         let workdir = data.unwrap_or_else(|| PathBuf::from("/"));
         Self::mask(&denied, &keep, &workdir)

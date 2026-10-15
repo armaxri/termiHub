@@ -287,6 +287,14 @@ fn apply_landlock(policy: &SandboxPolicy) -> Result<bool, SandboxError> {
             }
         }
     }
+    // Coverage builds only (#4693): let the instrumented runner save its
+    // profile at exit.
+    #[cfg(coverage)]
+    if let Some(fd) = super::coverage_profile_dir().and_then(|d| PathFd::new(d).ok()) {
+        ruleset = ruleset
+            .add_rule(PathBeneath::new(fd, AccessFs::from_all(abi)))
+            .map_err(|e| failed(&e))?;
+    }
     // No TCP port rule: every bind / connect is denied (ABI v4+).
     let status = ruleset.restrict_self().map_err(|e| failed(&e))?;
     Ok(status.ruleset != RulesetStatus::NotEnforced)
