@@ -149,6 +149,13 @@ Each entry must be:
   is rejected: it would depend on termiHub's working directory. termiHub does
   not expand `~` or environment variables; use `${home}` instead.
 - **Normalised**: no `.` or `..` segments.
+- **Literal on Windows**: in a Windows-form entry, no folder name that Windows
+  would rewrite or treat specially — a name ending in `.` or a space (`.. `
+  would become `..`), a `:` after the drive (an alternate data stream), one of
+  `<>"|?*`, or a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`,
+  `LPT0`–`LPT9`, also with an extension such as `nul.txt`). These are rejected
+  on every platform. POSIX-form entries keep such names, since POSIX takes them
+  literally.
 - **Below a root**: not `/`, `C:\` or a bare network share
   (`\\server\share`). Windows verbatim and device paths (`\\?\…`, `\\.\…`)
   are rejected.
@@ -186,8 +193,9 @@ macOS and `C:\Users\alice\.kube` on Windows. The rules:
   rejected, and so is a bare `${home}` (the whole home folder) or `${config}`
   (which holds termiHub's own settings).
 - **Separate folders with `/`**, on every platform. After the placeholder, `\`,
-  `:`, `.` and `..` segments, and folder names ending in `.` or a space are
-  rejected.
+  `:`, `.` and `..` segments are rejected, and so is any folder name a
+  Windows-form entry may not use (see **Literal on Windows** above), because
+  the placeholder may resolve to a Windows folder.
 - **The resolved folder is checked like any other entry**: it must be
   absolute and below a root, may not contain the home folder or overlap
   termiHub's own folders (`${home}/.config` on Linux is refused for that
