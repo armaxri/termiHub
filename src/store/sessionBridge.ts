@@ -8,17 +8,15 @@
  * makes that store authoritative for **session status**: `appStore`'s
  * connect / connected / disconnect / dropped / reconnect / error transitions
  * dispatch `session.*` intents instead of driving the lifecycle purely locally,
- * the backend timer driver drives the reconnect backoff loop's timing (replacing
- * the frontend `setTimeout`), and the projected status is reconciled back into
- * `appStore`'s existing fields so the terminal overlays render exactly as before
- * (the renderer cut is step 3, #2204).
+ * and the backend timer driver drives the reconnect backoff loop's timing
+ * (replacing the frontend `setTimeout`). The terminal overlays now render the
+ * projected status directly (#2204, #2625); there are no `appStore` status twins.
  *
  * # Session identity
  *
  * The frontend's stable lifecycle key is the **tab id** — it survives a reconnect
  * even as the backend session id changes or is briefly absent, which is exactly
- * why the auto-reconnect loop (`appStore.autoReconnectTimers`,
- * `terminalAutoReconnect`) is keyed by tab id. So the bridge uses the tab id as
+ * why the reconnect loop is keyed by tab id. So the bridge uses the tab id as
  * the region's opaque session key; the store treats it as an opaque string.
  *
  * # Backend-authoritative (migration flags removed, #2283)
@@ -688,21 +686,19 @@ export async function runSessionIntent(
   return view?.sessions?.[sessionId];
 }
 
-// ── Projected status → appStore display fields (the reconcile mapping) ──────────
+// ── Projected status → overlay display record ───────────────────────────────────
 
-/** The backoff schedule the display mapping reports (matches the store's). */
+/** The backoff schedule the display mapping reports (the shared policy). */
 const displayBackoff: BackoffConfig = RECONNECT_POLICY;
 
 /**
- * Map a projected lifecycle to the `terminalAutoReconnect` display record the
- * overlay renders, or `null` when no loop is active (idle / connected / gaveup).
- * This reproduces exactly the record `appStore.driveAutoReconnect` builds locally
- * for the `waiting` / `connecting` phases, so reconciling the projected status
- * back into `appStore` is parity-identical to the local path.
+ * Map a projected lifecycle to the {@link TerminalAutoReconnectState} display
+ * record the overlay renders, or `null` when no loop is active (idle / connected /
+ * gaveup). Only the `waiting` / `connecting` phases produce a record.
  *
  * `now` and `onReconnectCommand` are injected: `nextAttemptAt` is derived from
- * `now + delayMs` (as the local path does with `Date.now()`), and the optional
- * on-reconnect command is echoed from the tab's connection config by the caller.
+ * `now + delayMs`, and the optional on-reconnect command is echoed from the tab's
+ * connection config by the caller.
  */
 export function projectedToAutoReconnect(
   projected: ProjectedSessionLifecycle,
@@ -734,7 +730,7 @@ export function projectedToAutoReconnect(
   return null;
 }
 
-// ── Render cut: faithful-mirror gate + effective display record (#2204) ─────────
+// ── Effective auto-reconnect display record (#2204) ────────────────────────────
 
 /**
  * The auto-reconnect display record the disconnect overlay renders, sourced

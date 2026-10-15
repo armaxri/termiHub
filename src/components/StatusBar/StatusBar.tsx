@@ -592,10 +592,9 @@ function MonitoringStatus() {
   // Switching tabs just changes which entry we show — other hosts keep
   // monitoring independently.
   const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
-  // The active tab's monitor entry, sourced from the projected `system-monitors`
-  // region when it faithfully mirrors `appStore`, else `appStore` verbatim
-  // (#2224 render cut). Picking the active key stays a per-client (presentation)
-  // concern under partial projection.
+  // The active tab's monitor entry, sourced from the authoritative
+  // `system-monitors` region (#2224). Picking the active key stays a per-client
+  // (presentation) concern under partial projection.
   const { monitors: projectedMonitors, history: projectedHistory } = useProjectedMonitors();
   const activeMonitor = activeMonitorKey ? (projectedMonitors[activeMonitorKey] ?? null) : null;
   const monitoringConnected = !!activeMonitor?.monitorSessionId;

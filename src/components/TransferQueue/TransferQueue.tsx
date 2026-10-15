@@ -39,8 +39,7 @@ function summarize(entries: TransferEntry[]): string {
  * surfaced by the status-bar `TransferQueueIndicator` instead.
  */
 export function TransferQueue() {
-  // Render from the projected `transfers` region (parity-safe: it mirrors
-  // `appStore` and falls back to it verbatim — #2229 render cut).
+  // Render from the authoritative `transfers` region (#2229).
   const { queue: transferQueue, minimized } = useProjectedTransfers();
   const removeTransfer = useAppStore((s) => s.removeTransfer);
   const clearCompleted = useAppStore((s) => s.clearCompleted);

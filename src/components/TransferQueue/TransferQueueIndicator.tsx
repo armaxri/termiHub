@@ -12,8 +12,7 @@ import { isTerminalTransferState } from "@/types/transfer";
  * total when all rows are terminal) and re-expands the panel on click.
  */
 export function TransferQueueIndicator() {
-  // Render from the projected `transfers` region (parity-safe: it mirrors
-  // `appStore` and falls back to it verbatim — #2229 render cut).
+  // Render from the authoritative `transfers` region (#2229).
   const { queue: transferQueue, minimized } = useProjectedTransfers();
   const setMinimized = useAppStore((s) => s.setTransferQueueMinimized);
 

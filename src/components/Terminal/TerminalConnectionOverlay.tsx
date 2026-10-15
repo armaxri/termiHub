@@ -99,8 +99,8 @@ export function TerminalConnectionOverlay({
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
-  // Render cut (#2205 PR-A): the connect flag is sourced from the projected
-  // `session-lifecycle` region (falls back to appStore when it does not mirror).
+  // The connect flag is sourced from the authoritative `session-lifecycle` region
+  // (#2205).
   const isConnecting = useProjectedSessionLifecycle(tabId).connecting;
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);

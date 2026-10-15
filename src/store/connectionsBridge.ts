@@ -227,7 +227,8 @@ export function onConnectionsView(listener: ConnectionsViewListener): () => void
  * Ensure the shared `connections` region client is subscribed so projected diffs
  * are received and fanned out to the {@link onConnectionsView} listeners.
  * Idempotent and de-duplicated across concurrent callers; a transport/subscribe
- * failure is logged and rethrown so the caller can fall back to `appStore`.
+ * failure is logged and rethrown to the caller (there is no `appStore` fallback:
+ * the reader keeps the last-known view).
  */
 export function ensureConnectionsSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);

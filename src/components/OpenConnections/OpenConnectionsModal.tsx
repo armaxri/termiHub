@@ -114,8 +114,8 @@ interface ProxySessionsState {
  * user kill individual connections or entire sections at once.
  */
 export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModalProps) {
-  // The ordered remote-agent list, sourced from the projected `agents` region when
-  // it faithfully mirrors `appStore`, else `appStore` verbatim (#2226 render cut).
+  // The ordered remote-agent list, sourced from the authoritative `agents` region
+  // (#2226).
   const { remoteAgents } = useProjectedAgents();
   const desktopVersion = useDesktopVersion();
   // How many native windows are open. The owning-window badge/focus affordance
@@ -127,8 +127,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const tunnels = useAppStore((s) => s.tunnels);
-  // Live single source of truth for tunnel status (kept in sync by tunnel
-  // events); the panel reads it directly so it never drifts from the sidebar.
+  // Live single source of truth for tunnel status (folded from the authoritative
+  // `tunnels` projection region by the tunnel slice); the panel reads it directly
+  // so it never drifts from the sidebar.
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const transfers = useAppStore((s) => s.transfers);
   const cancelTransfer = useAppStore((s) => s.cancelTransfer);
@@ -136,8 +137,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const activeTabGroupId = useActiveTabGroupId();
   // Every monitored host with a live backend subscription (#1231, audit gap G6);
   // each renders its own killable row. Derived from the keyed `monitors` map,
-  // sourced from the projected `system-monitors` region when it faithfully
-  // mirrors `appStore`, else `appStore` verbatim (#2224 render cut).
+  // sourced from the authoritative `system-monitors` region (#2224).
   const { monitors } = useProjectedMonitors();
   const openMonitors = useMemo(
     () => Object.values(monitors).filter((m) => m.monitorSessionId !== null),
@@ -153,8 +153,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const httpMonitors = useAppStore((s) => s.httpMonitors);
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const rootPanel = useLayoutRenderTree();
-  // Render cut (#2205 PR-A): connecting flags sourced from the projected
-  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  // Connecting flags sourced from the authoritative `session-lifecycle` region
+  // (#2205).
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const closeTab = useAppStore((s) => s.closeTab);
   const markSessionKilled = useAppStore((s) => s.markSessionKilled);
