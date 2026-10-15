@@ -1447,11 +1447,14 @@ Check them before tagging with `./scripts/release-check.sh --versions-only --exp
 
 The version check runs in two places (CI-009, #3901):
 
-- **On every PR** that touches the frontend or Rust areas (which cover all version
-  files except `rdp-sidecar/Cargo.toml`, checked at the tag push only, `Cargo.lock` and `pnpm-lock.yaml`), the `Frontend Code Quality` job runs
-  `release-check.sh --versions-only`. A PR whose version sources disagree, or whose
-  `@tauri-apps/*` npm packages drift from their Rust crates on major/minor, fails there
-  and blocks the PR Gate. That PR check has no tag, so it cannot compare against one.
+- **On every PR** that touches a version file or lockfile, `release-check.sh --versions-only`
+  runs. The frontend and Rust areas (all version files except `rdp-sidecar/Cargo.toml`,
+  plus `Cargo.lock` and `pnpm-lock.yaml`) run it in the `Frontend Code Quality` job. The
+  sidecar area (`rdp-sidecar/Cargo.toml` and `rdp-sidecar/Cargo.lock`) runs it in the
+  `RDP Sidecar Quality` job, without the npm install (#4777). A PR whose version sources
+  disagree, or whose `@tauri-apps/*` npm packages drift from their Rust crates on
+  major/minor, fails there and blocks the PR Gate. That PR check has no tag, so it cannot
+  compare against one.
 - **On the tag push**, the Release workflow's `Verify Version` job runs the same script with
   `--expect-version <tag>`. Every build job lists it in its `needs:`, so a tag that disagrees
   with the in-repo version fails before anything is built or published.
