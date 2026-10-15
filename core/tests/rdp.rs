@@ -865,22 +865,90 @@ async fn wait_for_chansrv_line(marker: &str, since: &str, secs: u64, label: &str
 /// exits when a client without rdpsnd disconnects from a session an audio
 /// client used before, which would silently break CLIPRDR (RDP-05) for every
 /// later test sharing that session.
+///
+/// A session that will not end on SIGTERM is SIGKILLed. Either way, a chansrv
+/// that died without unmounting (a crash, the SIGKILL) leaves its FUSE mount
+/// behind as a dead endpoint ("Transport endpoint is not connected"); the next
+/// chansrv's `xfuse_init` then fails its mount-point `mkdir` and runs without
+/// FUSE, so no drive and no `.clipboard` ever appear (#4564). The stale mount is
+/// detached here, so every test starts from a clean `thinclient_drives`.
 async fn end_xrdp_session(label: &str) {
-    let script = "su testuser -s /bin/sh -c 'kill -TERM -1' 2>/dev/null; \
-        for _ in $(seq 1 60); do \
-            n=0; for p in /proc/[0-9]*; do \
+    let script = format!(
+        "count() {{ n=0; for p in /proc/[0-9]*; do \
                 [ \"$(stat -c %u \"$p\" 2>/dev/null)\" = 1000 ] && n=$((n + 1)); \
+            done; echo \"$n\"; }}; \
+        gone=; \
+        for sig in TERM KILL; do \
+            su testuser -s /bin/sh -c \"kill -$sig -1\" 2>/dev/null; \
+            for _ in $(seq 1 40); do \
+                [ \"$(count)\" = 0 ] && {{ gone=1; break; }}; sleep 0.25; \
             done; \
-            [ \"$n\" = 0 ] && exit 0; sleep 0.25; \
-        done; exit 1";
+            [ -n \"$gone\" ] && break; \
+        done; \
+        [ -n \"$gone\" ] || {{ echo 'testuser processes survived SIGKILL' >&2; exit 1; }}; \
+        m='{THINCLIENT_DRIVES}'; \
+        for _ in 1 2 3 4 5 6 7 8; do \
+            grep -q \" $m \" /proc/mounts || exit 0; \
+            umount -l \"$m\" 2>/dev/null || fusermount3 -uz \"$m\" 2>/dev/null; \
+        done; \
+        echo \"stale FUSE mount survived: $(grep \" $m \" /proc/mounts)\" >&2; exit 2"
+    );
     common::docker_cli(&[
         "exec",
         &common::fixture_container("rdp"),
         "sh",
         "-c",
-        script,
+        &script,
     ])
-    .unwrap_or_else(|e| panic!("{label}: the xrdp session did not end: {e}"));
+    .unwrap_or_else(|e| panic!("{label}: the xrdp session did not end cleanly: {e}"));
+}
+
+/// The chansrv log lines that explain a missing FUSE mount (its `xfuse_init`
+/// errors, the mount-point `mkdir` failure among them), for failure messages.
+fn chansrv_fuse_diagnostics(since: &str, label: &str) -> String {
+    let out = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "sh",
+        "-c",
+        "cat /home/testuser/.local/share/xrdp/xrdp-chansrv.*.log 2>/dev/null || true",
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
+    let lines: Vec<&str> = out
+        .lines()
+        .filter(|line| {
+            line.strip_prefix('[')
+                .and_then(|l| l.get(..since.len()))
+                .is_some_and(|stamp| stamp >= since)
+        })
+        .filter(|line| {
+            let l = line.to_ascii_lowercase();
+            l.contains("fuse") || l.contains("mkdir") || l.contains("[error")
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// Wait until this session's chansrv has a live FUSE mount at
+/// [`THINCLIENT_DRIVES`]: the kernel lists a FUSE filesystem there and the
+/// fixture user can list it (a dead endpoint fails that with ENOTCONN). chansrv
+/// mounts it at startup whenever CLIPRDR or RDPDR is up, and both drive
+/// redirection and clipboard file transfer are served through it, so this is
+/// the readiness signal those tests wait on instead of a fixed window (#4564).
+async fn wait_for_chansrv_fuse(since: &str, secs: u64, label: &str) {
+    let probe = format!(
+        "grep -q ' {THINCLIENT_DRIVES} fuse' /proc/mounts && ls -A '{THINCLIENT_DRIVES}' >/dev/null"
+    );
+    if let Err(e) = wait_for_user_sh(&probe, secs).await {
+        let mounts = fixture_user_sh(&format!(
+            "grep ' {THINCLIENT_DRIVES} ' /proc/mounts || true"
+        ));
+        panic!(
+            "{label}: chansrv's FUSE mount at {THINCLIENT_DRIVES} was not live within {secs} s: \
+             {e}\nmounts: {mounts:?}\nchansrv: {}",
+            chansrv_fuse_diagnostics(since, label)
+        );
+    }
 }
 
 /// Opting in to audio output redirection registers the real rdpsnd handler,
@@ -1362,6 +1430,7 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
         settings["driveRedirection"] = serde_json::json!(true);
         settings["sharedFolderPath"] = serde_json::json!(shared.path());
         settings["clipboardFileTransfer"] = serde_json::json!(receive);
+        let since = fixture_now(label);
         let mut rdp = SidecarRdp::new();
         rdp.connect(settings).await.expect("RDP-14: connect");
         let pid = spawned_helper_pid(label);
@@ -1383,6 +1452,9 @@ async fn rdp_14_remote_clipboard_files_are_listed_and_fetched_on_paste() {
                 "{label}: the sidecar is still running"
             );
         } else {
+            // chansrv serves pasted file streams through its FUSE mount; wait
+            // for it to be live rather than hoping a fixed window covers it.
+            wait_for_chansrv_fuse(&since, 30, label).await;
             let files = wait_for_remote_files(graphical, &nonce, 3, 45, label).await;
             let mut names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
             names.sort_unstable();
@@ -1511,6 +1583,7 @@ async fn rdp_15_drive_redirection_serves_only_the_shared_folder() {
     // ASCII here). Upstream IronRDP 0.7.0 sent the literal "ignored" there; the
     // vendored ironrdp-rdpdr fork sends the real name (#4125).
     let dos_name: String = drive.chars().take(7).collect();
+    wait_for_chansrv_fuse(&since, 30, label).await;
     let mounted = wait_for_user_sh(
         &format!("ls '{THINCLIENT_DRIVES}' | grep -x '{dos_name}'"),
         30,
@@ -1699,6 +1772,8 @@ async fn rdp_16_shared_folder_files_are_served_to_the_server() {
         let drain = tokio::spawn(async move { while frames.recv().await.is_some() {} });
 
         if transfer && !view_only {
+            // `.clipboard` lives on chansrv's FUSE mount: wait for it first.
+            wait_for_chansrv_fuse(&since, 30, label).await;
             let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
             let mut uris = String::new();
             while tokio::time::Instant::now() < deadline && !uris.contains("alpha.txt") {
