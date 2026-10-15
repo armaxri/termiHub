@@ -274,7 +274,13 @@ mod tests {
             parse(&empty).await.expect("io ok"),
             Err(Socks4Rejection::InvalidHostname)
         );
-        let bad = request(SOCKS4_CMD_CONNECT, 80, [0, 0, 0, 1], b"", Some(&[0xFF, 0xFE]));
+        let bad = request(
+            SOCKS4_CMD_CONNECT,
+            80,
+            [0, 0, 0, 1],
+            b"",
+            Some(&[0xFF, 0xFE]),
+        );
         assert_eq!(
             parse(&bad).await.expect("io ok"),
             Err(Socks4Rejection::InvalidHostname)
