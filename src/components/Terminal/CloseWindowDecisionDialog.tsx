@@ -19,7 +19,11 @@ import { cancelQuit, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
 import { windowDisplayName } from "@/types/window";
-import type { WindowCloseDirtyEditor, WindowCloseSessionRow } from "@/types/window";
+import type {
+  WindowCloseDirtyEditor,
+  WindowCloseOtherTab,
+  WindowCloseSessionRow,
+} from "@/types/window";
 import "./CloseWindowDecisionDialog.css";
 
 /**
@@ -48,6 +52,10 @@ import "./CloseWindowDecisionDialog.css";
  * the user explicitly discards it here or opens it to save or discard. Without a
  * window to move to, unsaved editors are listed as discarded and the choices are
  * Cancel or "Discard & close".
+ *
+ * The window's other tabs (saved file editors, Settings, the log viewer and so
+ * on) move too when the destination can reopen them (#4501); the dialog names
+ * which ones move and which close with the window.
  *
  * The same dialog answers an app quit (Cmd+Q / menu Quit, #4296) when the
  * request's `mode` is `"quit"`. Then "Quit" tells the backend this window
@@ -104,6 +112,7 @@ export function CloseWindowDecisionDialog() {
   // stays disabled while an editor would otherwise be discarded silently.
   const showMove = canMove && (count > 0 || movableCount > 0);
   const moveBlocked = blockedEditors.length > 0;
+  const otherTabs = request.otherTabs ?? [];
 
   const handleMove = async () => {
     if (!selected || moveBlocked) return;
@@ -239,7 +248,9 @@ export function CloseWindowDecisionDialog() {
         </p>
       )}
 
-      {others.length > 1 && count > 0 && (
+      {showMove && otherTabs.length > 0 && <MoveSummary otherTabs={otherTabs} />}
+
+      {others.length > 1 && showMove && (
         <div className="close-window-decision__target">
           <span className="close-window-decision__target-label">Move to</span>
           <Select
@@ -309,6 +320,40 @@ export function CloseWindowDecisionDialog() {
         ))}
       </div>
     </Modal>
+  );
+}
+
+/** `"A"`, `"A" and "B"`, `"A", "B" and "C"`: quoted tab titles for prose. */
+function quotedTitles(tabs: ReadonlyArray<WindowCloseOtherTab>): string {
+  const quoted = tabs.map((tab) => `"${tab.title}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+}
+
+/**
+ * Says exactly which of the window's other tabs "Move tabs" reopens in the
+ * destination window and which close with this window (#4501).
+ */
+function MoveSummary({ otherTabs }: { otherTabs: ReadonlyArray<WindowCloseOtherTab> }) {
+  const moving = otherTabs.filter((tab) => tab.movable);
+  const closing = otherTabs.filter((tab) => !tab.movable);
+  return (
+    <p className="close-window-decision__summary" data-testid="close-window-decision-move-summary">
+      {moving.length > 0 && (
+        <>
+          Moving also reopens {moving.length === 1 ? "this tab" : "these tabs"} there:{" "}
+          {quotedTitles(moving)}.
+        </>
+      )}
+      {moving.length > 0 && closing.length > 0 && " "}
+      {closing.length > 0 && (
+        <>
+          {quotedTitles(closing)}{" "}
+          {closing.length === 1 ? "can't be moved and closes" : "can't be moved and close"} with the
+          window.
+        </>
+      )}
+    </p>
   );
 }
 

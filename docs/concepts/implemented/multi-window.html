@@ -1396,6 +1396,15 @@ flowchart TB
             way.
           </li>
           <li>
+            <strong>Move tabs moves every tab it can reopen (#4501).</strong> Besides live sessions
+            and unsaved file editors, the move reopens the window's saved file editors, Settings,
+            the Log Viewer, network diagnostics, plugin details and clean connection, tunnel and
+            workspace editors in the destination. A transfer view closes, because its remote pane is
+            bound to a tab of the closing window. The dialog names which tabs move and which close.
+            Settings, the Log Viewer or a saved file the destination already shows is brought to the
+            front instead of opened twice.
+          </li>
+          <li>
             <strong>Quitting asks the same question (#4296).</strong> Cmd+Q or the app menu's Quit
             holds the exit and asks every window. A window with nothing to lose agrees at once; one
             that would lose a non-persistent session or an unsaved editor shows this dialog as
@@ -1817,8 +1826,8 @@ sequenceDiagram
                 <td><strong>N/A / restrict</strong></td>
                 <td>
                   No backend session; some are effectively singletons (Settings, Log Viewer). Moving
-                  is pure view transfer but often meaningless. Likely non-goal — restrict to
-                  session-bearing tabs, or allow but forbid duplicates.
+                  is pure view transfer. Decided in #4501: they move on window close, and a
+                  singleton the destination already shows is activated instead of duplicated.
                 </td>
               </tr>
             </tbody>

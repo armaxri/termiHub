@@ -105,3 +105,9 @@
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 }
+
+.close-window-decision__summary {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

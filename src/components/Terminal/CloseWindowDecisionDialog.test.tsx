@@ -278,4 +278,76 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       expect(useAppStore.getState().pendingWindowClose).not.toBeNull();
     });
   });
+
+  describe("other tabs (#4501)", () => {
+    const savedEditor = {
+      tabId: "e1",
+      title: "hosts",
+      contentType: "editor" as const,
+      movable: true,
+    };
+    const settings = {
+      tabId: "st",
+      title: "Settings",
+      contentType: "settings" as const,
+      movable: true,
+    };
+    const transferView = {
+      tabId: "tv",
+      title: "Transfers",
+      contentType: "transfer-view" as const,
+      movable: false,
+    };
+
+    it("names the tabs that move and the ones that close", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ otherTabs: [savedEditor, settings, transferView] }))
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens these tabs there: "hosts" and "Settings". ' +
+          '"Transfers" can\'t be moved and closes with the window.'
+      );
+    });
+
+    it("uses the singular for one moving tab", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ otherTabs: [savedEditor] }))
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens this tab there: "hosts".'
+      );
+    });
+
+    it("omits the summary when there is no window to move to", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ otherWindows: [], otherTabs: [savedEditor] }))
+      );
+
+      expect(q("close-window-decision-move-summary")).toBeNull();
+    });
+
+    it("offers the destination picker when only unsaved editors are listed", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            otherWindows: [{ label: "win-1" }, { label: "win-3" }],
+            dirtyEditors: [{ tabId: "e2", title: "notes.txt", movable: true }],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-target")).not.toBeNull();
+    });
+  });
 });

@@ -47,6 +47,41 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
     action: "requestPassword",
     args: ["build.example.com", "ci", "The saved password was rejected by the server."],
   },
+  {
+    // The window-close decision with every row kind and the #4501 move summary.
+    name: "close-window",
+    action: "setPendingWindowClose",
+    args: [
+      {
+        sessions: [
+          {
+            tabId: "t1",
+            sessionId: "s1",
+            title: "build.example.com",
+            connectionType: "ssh",
+            contentType: "terminal",
+            outcome: "detach",
+          },
+          {
+            tabId: "t2",
+            sessionId: "s2",
+            title: "zsh",
+            connectionType: "local",
+            contentType: "terminal",
+            outcome: "terminate",
+          },
+        ],
+        otherWindows: [{ label: "main" }, { label: "win-3" }],
+        dirtyEditors: [{ tabId: "e1", title: "deploy.yaml", movable: true }],
+        otherTabs: [
+          { tabId: "e2", title: "hosts", contentType: "editor", movable: true },
+          { tabId: "st", title: "Settings", contentType: "settings", movable: true },
+          { tabId: "lv", title: "Logs", contentType: "log-viewer", movable: true },
+          { tabId: "tv", title: "Transfers", contentType: "transfer-view", movable: false },
+        ],
+      },
+    ],
+  },
 ];
 
 /** Tests per window: settings, sidebars, unlock, shortcuts, and STORE_DIALOGS. */
