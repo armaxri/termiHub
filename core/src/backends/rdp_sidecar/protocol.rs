@@ -451,6 +451,7 @@ mod tests {
                 width: 2,
                 height: 1,
                 data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                jpeg: None,
             }],
         };
         let out = round_trip_sidecar(SidecarMessage::Frame(frame.clone())).await;

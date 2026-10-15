@@ -146,6 +146,7 @@ fn good_frame() -> FrameUpdate {
             width: 1,
             height: 1,
             data: vec![0; 4],
+            jpeg: None,
         }],
     }
 }

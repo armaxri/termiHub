@@ -1571,6 +1571,7 @@ mod frame_pump_tests {
             width: w,
             height: h,
             data: vec![7u8; (w as usize) * (h as usize) * 4],
+            jpeg: None,
         }
     }
 

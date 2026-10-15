@@ -15,6 +15,7 @@ fn rect(x: u32, y: u32, width: u32, height: u32, fill: u8) -> DirtyRect {
         width,
         height,
         data: vec![fill; (width * height * 4) as usize],
+        jpeg: None,
     }
 }
 
