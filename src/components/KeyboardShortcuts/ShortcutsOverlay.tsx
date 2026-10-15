@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Pencil } from "lucide-react";
 import { Modal, Button, SearchInput } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -9,7 +10,6 @@ import {
   formatBindingForDisplay,
   isUnboundCombo,
 } from "@/services/keybindings";
-import { isMac } from "@/utils/platform";
 import "./ShortcutsOverlay.css";
 
 /**
@@ -53,8 +53,24 @@ interface ShortcutsOverlayProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Display text for an action's binding on the running platform: the user
+ * override when one exists, else the platform default (#4711). Formatting goes
+ * through the display formatter (`formatComboForDisplay`), never the
+ * persistence serializer.
+ */
+function currentPlatformBindingText(action: string): string {
+  const effective = getEffectiveCombo(action);
+  if (!effective || isUnboundCombo(effective)) return "Unbound";
+  return formatBindingForDisplay(effective);
+}
+
+/**
+ * Read-only keyboard shortcuts overlay. The platform is known locally, so it
+ * shows a single "Shortcut" column with the running platform's bindings
+ * (#4711); the exported cheat sheet can still list every platform.
+ */
 export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) {
-  const currentPlatformIsMac = isMac();
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const bindings = getDefaultBindings();
@@ -110,56 +126,31 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
         <thead>
           <tr>
             <th>Action</th>
-            <th className={!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>
-              Win / Linux
-            </th>
-            <th className={currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}>macOS</th>
+            <th>Shortcut</th>
           </tr>
         </thead>
         <tbody>
           {groupedBindings.map((group) => (
-            <>
-              <tr key={`header-${group.category}`} className="shortcuts-overlay__group-row">
-                <td colSpan={3} className="shortcuts-overlay__group-label">
+            <Fragment key={group.category}>
+              <tr className="shortcuts-overlay__group-row">
+                <td colSpan={2} className="shortcuts-overlay__group-label">
                   {group.label}
                 </td>
               </tr>
-              {group.bindings.map((binding) => {
-                const winLinux = binding.winLinuxDefault
-                  ? formatBindingForDisplay(binding.winLinuxDefault, false)
-                  : "Unbound";
-                const mac = binding.macDefault
-                  ? formatBindingForDisplay(binding.macDefault, true)
-                  : "Unbound";
-                const effective = getEffectiveCombo(binding.action);
-                const effectiveStr = isUnboundCombo(effective)
-                  ? "Unbound"
-                  : effective
-                    ? formatBindingForDisplay(effective)
-                    : "";
-
-                return (
-                  <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
-                    <td className="shortcuts-overlay__action">
-                      {binding.label}
-                      <span className="shortcuts-overlay__scope">
-                        {SCOPE_HINTS[binding.scope ?? "global"]}
-                      </span>
-                    </td>
-                    <td
-                      className={`shortcuts-overlay__binding ${!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
-                    >
-                      <kbd>{!currentPlatformIsMac && effective ? effectiveStr : winLinux}</kbd>
-                    </td>
-                    <td
-                      className={`shortcuts-overlay__binding ${currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
-                    >
-                      <kbd>{currentPlatformIsMac && effective ? effectiveStr : mac}</kbd>
-                    </td>
-                  </tr>
-                );
-              })}
-            </>
+              {group.bindings.map((binding) => (
+                <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
+                  <td className="shortcuts-overlay__action">
+                    {binding.label}
+                    <span className="shortcuts-overlay__scope">
+                      {SCOPE_HINTS[binding.scope ?? "global"]}
+                    </span>
+                  </td>
+                  <td className="shortcuts-overlay__binding">
+                    <kbd>{currentPlatformBindingText(binding.action)}</kbd>
+                  </td>
+                </tr>
+              ))}
+            </Fragment>
           ))}
         </tbody>
       </table>

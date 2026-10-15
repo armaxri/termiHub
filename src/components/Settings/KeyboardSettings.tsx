@@ -25,7 +25,7 @@ import {
 } from "./modifierOnlyRecorder";
 import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybindingIo";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
-import { Button, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
+import { Button, Checkbox, Field, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import "./KeyboardSettings.css";
@@ -89,6 +89,9 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   // Text of the polite live region that tells screen-reader users what a
   // rebinding did: recording started, binding set/cleared/reset, or cancelled.
   const [announcement, setAnnouncement] = useState("");
+  // The overlay shows only this platform (#4711); the exported cheat sheet can
+  // still list every platform for sharing.
+  const [cheatSheetAllPlatforms, setCheatSheetAllPlatforms] = useState(false);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const settings = useProjectedSettings();
 
@@ -366,12 +369,24 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           variant="secondary"
           size="sm"
           icon={<Download size={14} />}
-          onClick={() => void exportCheatSheet()}
+          onClick={() => void exportCheatSheet(cheatSheetAllPlatforms ? "all" : "current")}
           data-testid="keyboard-settings-export-pdf"
           title="Save a one-page HTML cheat sheet of all shortcuts"
         >
           Save HTML Cheat Sheet
         </Button>
+        <Field
+          label="All platforms"
+          layout="checkbox"
+          htmlFor="keyboard-settings-cheat-sheet-all-platforms"
+        >
+          <Checkbox
+            id="keyboard-settings-cheat-sheet-all-platforms"
+            checked={cheatSheetAllPlatforms}
+            onCheckedChange={setCheatSheetAllPlatforms}
+            data-testid="keyboard-settings-cheat-sheet-all-platforms"
+          />
+        </Field>
         <Button
           variant="secondary"
           size="sm"
