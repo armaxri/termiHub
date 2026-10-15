@@ -279,6 +279,12 @@ pub struct ClientCapabilities {
     /// [`SSH_KEYBOARD_INTERACTIVE_RESPOND`].
     #[serde(default)]
     pub keyboard_interactive_prompts: bool,
+    /// The desktop reads fractional `latencyMs` in streamed network tool
+    /// results (`0.42`, protocol 0.31.0, #4542). Without it an agent rounds
+    /// every latency to whole milliseconds, because an older desktop parses
+    /// the field as an unsigned integer and would reject the result.
+    #[serde(default)]
+    pub fractional_latency: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -4557,6 +4563,7 @@ mod tests {
             },
             client_capabilities: ClientCapabilities {
                 keyboard_interactive_prompts: true,
+                fractional_latency: true,
             },
         };
         let expected = json!({
@@ -4573,7 +4580,10 @@ mod tests {
                 "verboseTracing": true,
                 "persistentScrollbackBufferSizeMb": 4,
             },
-            "clientCapabilities": { "keyboardInteractivePrompts": true },
+            "clientCapabilities": {
+                "keyboardInteractivePrompts": true,
+                "fractionalLatency": true,
+            },
         });
         let v = serde_json::to_value(&params).unwrap();
         assert_eq!(v, expected);

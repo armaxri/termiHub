@@ -14,7 +14,7 @@ use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use super::error::NetworkError;
-use super::types::{PingResult, PingStats};
+use super::types::{duration_to_latency_ms, PingResult, PingStats};
 
 /// Send a single ICMP ping (or TCP fallback) to `host`.
 ///
@@ -96,7 +96,7 @@ pub async fn ping_stream(
         sent += 1;
         if let Some(ms) = result.latency_ms {
             received += 1;
-            latencies.push(ms as f64);
+            latencies.push(ms);
         }
 
         on_result(result);
@@ -228,10 +228,10 @@ fn reply_ttl(packet: &IcmpPacket) -> Option<u8> {
     }
 }
 
-/// Round-trip time in whole milliseconds, rounded to nearest rather than
-/// truncated, so a 0.6 ms LAN reply reads as 1 ms instead of 0 ms.
-fn rtt_ms(duration: Duration) -> u64 {
-    (duration.as_secs_f64() * 1000.0).round() as u64
+/// Round-trip time in fractional milliseconds (microsecond precision), so a
+/// 0.2 ms LAN reply reads as 0.2 ms rather than 0 ms (#4542).
+fn rtt_ms(duration: Duration) -> f64 {
+    duration_to_latency_ms(duration)
 }
 
 fn compute_stats(sent: u32, received: u32, latencies: &[f64]) -> PingStats {
@@ -358,11 +358,14 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_time_is_rounded_not_truncated() {
-        assert_eq!(rtt_ms(Duration::from_micros(400)), 0);
-        assert_eq!(rtt_ms(Duration::from_micros(600)), 1);
-        assert_eq!(rtt_ms(Duration::from_micros(1_499)), 1);
-        assert_eq!(rtt_ms(Duration::from_micros(1_500)), 2);
+    fn round_trip_time_keeps_sub_millisecond_precision() {
+        // #4542: a LAN reply below 1 ms is no longer rounded to 0 or 1.
+        assert_eq!(rtt_ms(Duration::from_micros(200)), 0.2);
+        assert_eq!(rtt_ms(Duration::from_micros(420)), 0.42);
+        assert_eq!(rtt_ms(Duration::from_micros(1_499)), 1.499);
+        assert_eq!(rtt_ms(Duration::from_millis(12)), 12.0);
+        // Sub-microsecond noise is rounded away.
+        assert_eq!(rtt_ms(Duration::from_nanos(419_667)), 0.42);
     }
 
     #[tokio::test]

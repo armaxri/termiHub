@@ -22,6 +22,14 @@ describe("deriveLivePingStats", () => {
     expect(stats!.avgMs).toBe(20);
   });
 
+  it("keeps sub-millisecond precision (#4542)", () => {
+    const stats = deriveLivePingStats([reply(1, 0.4), reply(2, 0.2), reply(3, 0.6)]);
+    expect(stats!.minMs).toBe(0.2);
+    expect(stats!.maxMs).toBe(0.6);
+    expect(stats!.avgMs).toBeCloseTo(0.4, 10);
+    expect(stats!.jitterMs).toBeCloseTo(0.3, 10);
+  });
+
   it("counts timed-out replies as loss but not received", () => {
     const stats = deriveLivePingStats([
       reply(1, 10),

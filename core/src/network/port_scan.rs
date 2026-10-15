@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::error::NetworkError;
-use super::types::{PortScanResult, PortScanSummary, PortState};
+use super::types::{duration_to_latency_ms, PortScanResult, PortScanSummary, PortState};
 
 /// Scan a set of TCP ports on a single host, streaming individual results via
 /// `on_result`. Convenience wrapper around [`scan_targets`].
@@ -193,7 +193,7 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
             host: host.to_string(),
             port,
             state: PortState::Open,
-            latency_ms: Some(started.elapsed().as_millis() as u64),
+            latency_ms: Some(duration_to_latency_ms(started.elapsed())),
         },
         Ok(Err(e)) => {
             // Connection refused → Closed; anything else (network unreachable,

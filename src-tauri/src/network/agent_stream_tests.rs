@@ -270,3 +270,53 @@ fn unknown_or_malformed_events_are_skipped() {
     assert_eq!(n, name::PING_RESULT);
     assert_eq!(p["result"]["seq"], 0);
 }
+
+/// #4542: a current agent streams fractional latencies and an agent from before
+/// #4542 streams whole milliseconds; the desktop surfaces both as numbers.
+#[test]
+fn fractional_and_legacy_integer_latencies_both_surface() {
+    let ping = |latency: Value| {
+        StreamTool::Ping
+            .event_payload(
+                "t",
+                event(
+                    "result",
+                    json!({ "seq": 1, "latencyMs": latency, "timedOut": false, "tcpFallback": false }),
+                ),
+            )
+            .expect("ping result surfaces")
+            .1
+    };
+    assert_eq!(ping(json!(0.42))["result"]["latencyMs"], 0.42);
+    assert_eq!(ping(json!(12))["result"]["latencyMs"].as_f64(), Some(12.0));
+
+    let sweep = |latency: Value| {
+        StreamTool::PingSweep
+            .event_payload(
+                "t",
+                event(
+                    "result",
+                    json!({ "host": "10.0.0.1", "latencyMs": latency }),
+                ),
+            )
+            .expect("sweep result surfaces")
+            .1
+    };
+    assert_eq!(sweep(json!(0.08))["latencyMs"], 0.08);
+    assert_eq!(sweep(json!(1))["latencyMs"].as_f64(), Some(1.0));
+
+    let scan = |latency: Value| {
+        StreamTool::PortScan
+            .event_payload(
+                "t",
+                event(
+                    "result",
+                    json!({ "host": "10.0.0.1", "port": 22, "state": "open", "latencyMs": latency }),
+                ),
+            )
+            .expect("scan result surfaces")
+            .1
+    };
+    assert_eq!(scan(json!(0.5))["latencyMs"], 0.5);
+    assert_eq!(scan(json!(3))["latencyMs"].as_f64(), Some(3.0));
+}

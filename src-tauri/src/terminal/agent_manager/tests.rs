@@ -2006,6 +2006,14 @@ fn initialize_advertises_keyboard_interactive_prompt_support() {
     );
 }
 
+/// #4542: the desktop reads fractional `latencyMs`, so it tells the agent to
+/// stop rounding streamed latencies to whole milliseconds.
+#[test]
+fn initialize_advertises_fractional_latency_support() {
+    let params = build_initialize_params(&AgentSettings::default(), &[]);
+    assert_eq!(params["clientCapabilities"]["fractionalLatency"], true);
+}
+
 #[test]
 fn ki_respond_line_carries_answers_or_null() {
     let answers = vec![Zeroizing::new("123456".to_string())];
@@ -2347,6 +2355,7 @@ fn legacy_initialize_params(settings: &AgentSettings, external_files: &[&str]) -
         "externalConnectionFiles": external_files,
         "clientCapabilities": ClientCapabilities {
             keyboard_interactive_prompts: true,
+            fractional_latency: true,
         },
     })
 }
