@@ -716,6 +716,7 @@ jobs:
 
       - name: Write release notes
         run: |
+          set -euo pipefail
           BRANCH="${{ needs.prepare-release.outputs.branch }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
@@ -738,9 +739,9 @@ jobs:
             echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
             echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
             echo ""
-            echo "> **macOS — one-time security confirmation required.** These builds are not notarized (no Apple"
-            echo "> Developer account). On first launch macOS will warn that the developer cannot be verified."
-            echo "> Open **System Settings → Privacy \& Security** and click **Open Anyway**. This is a one-time step."
+            # The macOS first-launch steps come from the single source release.yml
+            # and README.md use too (#4472); --dev-build keeps the dev framing.
+            node scripts/internal/macos-first-launch.mjs --dev-build
             echo ""
             echo "### Agent Binaries"
             echo "| Target | Artifact |"
