@@ -5,8 +5,14 @@ on:
     tags:
       - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
 
+# Read-only by default (CI2-007, #4730). Only the jobs that publish write: they
+# check nothing out (or only run first-party scripts) and install nothing. The
+# build jobs that install dependencies and compile (third-party code: lifecycle
+# scripts, every crate's build.rs, tauri-action) hold contents: read and hand
+# their outputs to a write-scoped upload-* job as workflow artifacts.
+# workflow-token-hygiene.test.mjs pins this.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # Release gate (PKG-007): fail BEFORE anything is created, built or published
@@ -52,7 +58,7 @@ jobs:
 
       # The Windows leg builds an MSI, whose version must be numeric
       # (major.minor.patch.revision); Tauri's WiX bundler rejects a semver
-      # prerelease such as 0.2.0-beta.1 (PKG2-003, #4283). build-and-upload maps
+      # prerelease such as 0.2.0-beta.1 (PKG2-003, #4283). build-app maps
       # the tag with msi-version.mjs; fail HERE, before create-release, when the
       # tag has a shape that mapping cannot represent (only -beta.N / -rc.N
       # prereleases, WiX field limits).
@@ -208,6 +214,10 @@ jobs:
     name: Create Release
     needs: [verify-version, verify-supply-chain, verify-integration]
     runs-on: ubuntu-latest
+    # Creates the draft release. Runs only first-party scripts with the
+    # preinstalled node; installs nothing.
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -289,7 +299,7 @@ jobs:
 
       - name: Append macOS unsigned-beta bypass note
         # v0.x ships as an UNSIGNED public beta (maintainer decision 2026-09-06):
-        # no Apple Developer-ID / notarization yet. build-and-upload re-signs the
+        # no Apple Developer-ID / notarization yet. build-app re-signs the
         # .app ad-hoc so it launches (and satisfies the Apple Silicon kernel), but
         # Gatekeeper still shows an "unverified developer" prompt on first open.
         # Document the one-time approval in every release body so the beta stays
@@ -335,19 +345,19 @@ jobs:
             "${prerelease_flag[@]}" \
             --notes release_notes.md
 
-  build-and-upload:
-    name: Build and Upload - ${{ matrix.platform }}
+  # Build the desktop installers (read-only, CI2-007 / #4730). This job runs
+  # third-party code (pnpm packages, every crate's build.rs, tauri-action), so it
+  # holds no write, OIDC or attestation token: it stages the renamed bundles as
+  # the release-app-<platform> workflow artifact, and upload-app attests and
+  # publishes them.
+  build-app:
+    name: Build App - ${{ matrix.platform }}
     # third-party-notices generates the THIRD_PARTY_NOTICES.txt every installer
     # bundles (PKG-009) — generated once so all platforms ship the same file.
     needs: [verify-version, verify-supply-chain, create-release, third-party-notices]
     runs-on: ${{ matrix.os }}
-    # A job-level block REPLACES the workflow-level one, so contents: write is
-    # restated. id-token + attestations are granted only to the jobs that
-    # attest build provenance (CI-022), never workflow-wide.
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
 
     strategy:
       fail-fast: false
@@ -725,10 +735,14 @@ jobs:
           scripts/internal/macos-dmg-layout.sh check "$DMG"
           rm -rf "$WORKDIR"
 
+      # Stage the release assets under their published names in release-assets/
+      # (the upload job publishes that directory as-is): the primary bundle
+      # termiHub-<version>-<platform><ext>, plus the .deb (linux-x64) and .rpm
+      # (linux-arm64) side-assets.
       - name: Find and rename release artifact
-        id: find_artifact
         shell: bash
         run: |
+          mkdir -p release-assets
           # Find the built installer/bundle
           ARTIFACT=$(find "target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }}" -name "*${{ matrix.file_ext }}" | head -n 1)
 
@@ -739,65 +753,98 @@ jobs:
 
           # Rename to include platform
           FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
-          mv "$ARTIFACT" "$FILENAME"
+          mv "$ARTIFACT" "release-assets/$FILENAME"
 
-          echo "artifact_path=$FILENAME" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=$FILENAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release asset
-        run: gh release upload "v${{ needs.create-release.outputs.version }}" --clobber "${{ steps.find_artifact.outputs.artifact_path }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Also upload .deb for Linux (skip ARM64 where .deb is already the primary artifact)
-      - name: Upload .deb (Linux only)
+      # Also stage .deb for Linux (skip ARM64 where .deb is already the primary artifact)
+      - name: Stage .deb (Linux only)
         if: startsWith(matrix.os, 'ubuntu') && matrix.file_ext != '.deb'
         run: |
           DEB_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then
             DEB_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
-            mv "$DEB_FILE" "$DEB_FILENAME"
-
-            gh release upload v${{ needs.create-release.outputs.version }} --clobber "$DEB_FILENAME"
+            mv "$DEB_FILE" "release-assets/$DEB_FILENAME"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ARM64 builds deb,rpm (extra_args above); the deb is the primary artifact,
-      # so upload the .rpm too — matches dev-build.yml's "Collect .rpm" step.
-      - name: Upload .rpm (Linux ARM64 only)
+      # so stage the .rpm too — matches dev-build.yml's "Collect .rpm" step.
+      - name: Stage .rpm (Linux ARM64 only)
         if: matrix.platform == 'linux-arm64'
         run: |
           RPM_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/rpm -name "*.rpm" | head -n 1)
           if [ -n "$RPM_FILE" ]; then
             RPM_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.rpm"
-            mv "$RPM_FILE" "$RPM_FILENAME"
-
-            gh release upload v${{ needs.create-release.outputs.version }} --clobber "$RPM_FILENAME"
+            mv "$RPM_FILE" "release-assets/$RPM_FILENAME"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build provenance (CI-022): a Sigstore-signed SLSA statement binding each
-      # published bundle's SHA-256 to this workflow run, commit and tag. The glob
-      # covers the primary artifact plus the .deb/.rpm side-uploads renamed
-      # above. Users verify with `gh attestation verify <file> --repo <repo>`;
-      # verify-release does the same for every asset before the release is marked latest.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the bundles to upload-app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.*
+          name: release-app-${{ matrix.platform }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
 
-  # Build and upload Linux agent binaries as release assets (static musl)
-  agent-binaries-linux:
-    name: Agent Binary (${{ matrix.target }})
-    needs: [verify-version, verify-supply-chain, create-release]
+  # Privileged half of the app publish (#4730), shaped like the sbom job: no
+  # checkout and no third-party code, so the write, OIDC and attestation tokens
+  # never share a runner with the build. It downloads every build-app leg's
+  # bundles, checks the set, attests build provenance (CI-022) and uploads.
+  upload-app:
+    name: Attest and Upload App Bundles
+    needs: [verify-version, verify-supply-chain, create-release, build-app]
     runs-on: ubuntu-latest
-    # Same scoped attestation grant as build-and-upload (CI-022).
     permissions:
       contents: write
       id-token: write
       attestations: write
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download app bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-app-*
+          merge-multiple: true
+
+      - name: Check the app bundle set
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for a in macos-x64.dmg macos-arm64.dmg windows-x64.msi linux-x64.AppImage \
+            linux-x64.deb linux-arm64.deb linux-arm64.rpm; do
+            f="termiHub-${VERSION}-${a}"
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty app bundle: ${f}"
+              exit 1
+            fi
+          done
+
+      # Build provenance (CI-022): a Sigstore-signed SLSA statement binding each
+      # published bundle's SHA-256 to this workflow run, commit and tag. Users
+      # verify with `gh attestation verify <file> --repo <repo>`; verify-release
+      # does the same for every asset before the release is published.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: termiHub-${{ needs.create-release.outputs.version }}-*
+
+      - name: Upload app bundles as release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: gh release upload "v${VERSION}" --clobber termiHub-"${VERSION}"-*
+
+  # Build the Linux agent binaries (static musl). Read-only like build-app; the
+  # binaries + .sha256 sidecars go to upload-agent-binaries as workflow artifacts.
+  agent-binaries-linux:
+    name: Agent Binary (${{ matrix.target }})
+    needs: [verify-version, verify-supply-chain, create-release]
+    runs-on: ubuntu-latest
+    # Read-only (#4730): upload-agent-binaries attests and publishes.
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: false
@@ -844,34 +891,30 @@ jobs:
       - name: Build agent
         run: cross build --release --locked --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary and checksum as release assets
+      - name: Stage agent binary and checksum
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
           # Publish a SHA-256 sidecar the desktop verifies before install (#1350).
           sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          gh release upload v${{ needs.create-release.outputs.version }} --clobber \
-            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
-      # sidecars are not attested: the attestation already binds the binary's
-      # SHA-256, and the .sig is itself a signature over that same digest.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the binary and checksum to upload-agent-binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: ${{ matrix.artifact_name }}
+          name: release-agent-${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
 
-  # Build and upload macOS agent binaries as release assets (native build)
+  # Build the macOS agent binaries (native build); published by upload-agent-binaries.
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
     needs: [verify-version, verify-supply-chain, create-release]
     runs-on: macos-latest
-    # Same scoped attestation grant as build-and-upload (CI-022).
+    # Read-only (#4730): upload-agent-binaries attests and publishes.
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
 
     strategy:
       fail-fast: false
@@ -901,26 +944,25 @@ jobs:
       - name: Build agent
         run: cargo build --release --locked --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary and checksum as release assets
+      - name: Stage agent binary and checksum
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
           # macOS runners have `shasum`, not `sha256sum`; emit the same
           # "<hex>  <file>" sidecar the desktop verifies before install (#1350).
           shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          gh release upload v${{ needs.create-release.outputs.version }} --clobber \
-            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
-      # sidecars are not attested: the attestation already binds the binary's
-      # SHA-256, and the .sig is itself a signature over that same digest.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the binary and checksum to upload-agent-binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: ${{ matrix.artifact_name }}
+          name: release-agent-${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
 
-  # Build and upload Windows agent binaries as release assets (native MSVC build).
+  # Build the Windows agent binaries (native MSVC build); published by
+  # upload-agent-binaries.
   # cross-rs cannot build the MSVC ABI, so this runs native cargo on a Windows
   # runner. The binary is emitted as termihub-agent.exe.
   #
@@ -935,11 +977,9 @@ jobs:
     name: Agent Binary (${{ matrix.target }})
     needs: [verify-version, verify-supply-chain, create-release]
     runs-on: windows-latest
-    # Same scoped attestation grant as build-and-upload (CI-022).
+    # Read-only (#4730): upload-agent-binaries attests and publishes.
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: read
 
     strategy:
       fail-fast: false
@@ -984,42 +1024,107 @@ jobs:
           ./scripts/internal/verify-no-vcruntime.ps1 -Exe "target/${{ matrix.target }}/release/termihub-agent.exe"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Upload agent binary and checksum as release assets
+      - name: Stage agent binary and checksum
         shell: bash
         run: |
           cp target/${{ matrix.target }}/release/termihub-agent.exe ${{ matrix.artifact_name }}
           # Git Bash on the Windows runner provides `sha256sum` (#1350).
           sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.artifact_name }}.sha256"
-          gh release upload v${{ needs.create-release.outputs.version }} --clobber \
-            "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
-      # sidecars are not attested: the attestation already binds the binary's
-      # SHA-256, and the .sig is itself a signature over that same digest.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Hand the binary and checksum to upload-agent-binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: ${{ matrix.artifact_name }}
+          name: release-agent-${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}
+            ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
 
-  # Third-party license notices (PKG-009): the full license text of every Rust
-  # crate in the desktop app, agent and RDP sidecar (cargo-about, pinned), every
-  # npm production dependency, and the X-server attribution, in one
-  # THIRD_PARTY_NOTICES.txt. Generated ONCE here from the lockfiles, then
-  #   - handed to build-and-upload as an artifact, which bundles it into every
-  #     installer (tauri.notices.conf.json), and
-  #   - published as a release asset next to the agent binaries, which ship
-  #     without an installer.
-  # Needs no build — cargo-about reads the lockfiles and crate sources only.
-  third-party-notices:
-    name: Generate Third-Party Notices
-    needs: [verify-version, verify-supply-chain, create-release]
+  # Privileged half of the agent publish (#4730): no checkout and no third-party
+  # code. Downloads every agent-binaries-* leg's binary + .sha256 sidecar, checks
+  # each binary against its sidecar, attests the binaries and uploads all of it.
+  upload-agent-binaries:
+    name: Attest and Upload Agent Binaries
+    needs:
+      [
+        verify-version,
+        verify-supply-chain,
+        create-release,
+        agent-binaries-linux,
+        agent-binaries-macos,
+        agent-binaries-windows,
+      ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download agent binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-agent-*
+          merge-multiple: true
+
+      # Names mirror the agent-binaries-* matrices (and sign-agent-binaries /
+      # verify-release). Publish only bytes that match their checksum sidecar.
+      - name: Check the agent binary set
+        run: |
+          set -euo pipefail
+          for a in termihub-agent-linux-x64 termihub-agent-linux-arm64 \
+            termihub-agent-linux-armv7 termihub-agent-macos-arm64 termihub-agent-macos-x64 \
+            termihub-agent-windows-x64.exe termihub-agent-windows-arm64.exe; do
+            for f in "$a" "${a}.sha256"; do
+              if [ ! -s "$f" ]; then
+                echo "::error::Missing or empty agent asset: ${f}"
+                exit 1
+              fi
+            done
+            sha256sum -c "${a}.sha256"
+          done
+
+      # Provenance for the agent binaries themselves (CI-022). The .sha256 and
+      # .sig sidecars are not attested: the attestation already binds each
+      # binary's SHA-256, and the .sig is itself a signature over that digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            termihub-agent-linux-x64
+            termihub-agent-linux-arm64
+            termihub-agent-linux-armv7
+            termihub-agent-macos-arm64
+            termihub-agent-macos-x64
+            termihub-agent-windows-x64.exe
+            termihub-agent-windows-arm64.exe
+
+      - name: Upload agent binaries and checksums as release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: gh release upload "v${VERSION}" --clobber termihub-agent-*
+
+  # Third-party license notices (PKG-009): the full license text of every Rust
+  # crate in the desktop app, agent and RDP sidecar (cargo-about, pinned), every
+  # npm production dependency, and the X-server attribution, in one
+  # THIRD_PARTY_NOTICES.txt. Generated ONCE here from the lockfiles, then
+  #   - handed to build-app as an artifact, which bundles it into every
+  #     installer (tauri.notices.conf.json), and
+  #   - published by upload-third-party-notices as a release asset next to the
+  #     agent binaries, which ship without an installer.
+  # Needs no build — cargo-about reads the lockfiles and crate sources only.
+  # Read-only (#4730): it installs npm packages and runs cargo-about.
+  third-party-notices:
+    name: Generate Third-Party Notices
+    needs: [verify-version, verify-supply-chain, create-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -1050,12 +1155,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generate THIRD_PARTY_NOTICES.txt
-        env:
-          VERSION: ${{ needs.create-release.outputs.version }}
-        run: |
-          set -euo pipefail
-          pnpm notices:generate --out THIRD_PARTY_NOTICES.txt
-          cp THIRD_PARTY_NOTICES.txt "termiHub-${VERSION}-THIRD_PARTY_NOTICES.txt"
+        run: pnpm notices:generate --out THIRD_PARTY_NOTICES.txt
 
       - name: Stage notices for the installer builds
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1063,6 +1163,38 @@ jobs:
           name: third-party-notices
           path: THIRD_PARTY_NOTICES.txt
           if-no-files-found: error
+
+  # Privileged half of the notices publish (#4730): no checkout and no
+  # third-party code. Publishes the same bytes build-app bundled, under the
+  # versioned release-asset name, attested.
+  upload-third-party-notices:
+    name: Attest and Upload Third-Party Notices
+    needs: [verify-version, verify-supply-chain, create-release, third-party-notices]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download third-party notices
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: third-party-notices
+
+      - name: Name the notices for the release
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ ! -s THIRD_PARTY_NOTICES.txt ]; then
+            echo "::error::Missing or empty THIRD_PARTY_NOTICES.txt"
+            exit 1
+          fi
+          cp THIRD_PARTY_NOTICES.txt "termiHub-${VERSION}-THIRD_PARTY_NOTICES.txt"
 
       - name: Attest notices provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -1232,14 +1364,12 @@ jobs:
   # the published assets to verify what users will actually fetch.
   sign-agent-binaries:
     name: Sign Agent Binaries
-    needs:
-      [
-        create-release,
-        agent-binaries-linux,
-        agent-binaries-macos,
-        agent-binaries-windows,
-      ]
+    needs: [create-release, upload-agent-binaries]
     runs-on: ubuntu-latest
+    # Uploads the .sig assets. Checks out the repo for the first-party signing
+    # helpers only; installs nothing and compiles nothing.
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
@@ -1316,13 +1446,11 @@ jobs:
     needs:
       [
         create-release,
-        build-and-upload,
-        agent-binaries-linux,
-        agent-binaries-macos,
-        agent-binaries-windows,
+        upload-app,
+        upload-agent-binaries,
         sign-agent-binaries,
         sbom,
-        third-party-notices,
+        upload-third-party-notices,
       ]
     runs-on: ubuntu-latest
     # This job only inspects the release, but the release is still a DRAFT here
@@ -1347,7 +1475,7 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}"
 
-          # Desktop bundles — names mirror build-and-upload's rename logic
+          # Desktop bundles — names mirror build-app's rename logic
           # (termiHub-<version>-<platform><ext>) plus its .deb/.rpm side-uploads.
           # DMG ×2 are re-signed ad-hoc before upload.
           expected=(
@@ -1381,7 +1509,7 @@ jobs:
             expected+=("termiHub-${VERSION}-sbom-${c}.cdx.json")
           done
 
-          # Third-party license notices from the third-party-notices job (PKG-009).
+          # Third-party license notices from upload-third-party-notices (PKG-009).
           expected+=("termiHub-${VERSION}-THIRD_PARTY_NOTICES.txt")
 
           echo "Fetching asset list for ${TAG}..."
@@ -1570,6 +1698,8 @@ jobs:
         smoke-windows-arm64,
       ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     # No checkout in this job; GH_REPO tells gh which repository to act on.
     env:
       GH_REPO: ${{ github.repository }}

@@ -131,8 +131,25 @@ function writeScopes(body, workflowDefault) {
 const RUNS_DEPENDENCY_CODE =
   /\b(pnpm|npm|npx|yarn|cargo|cross|pip3?|uvx?)\b|setup-(rust|node|pnpm|cross)\b|tauri-apps\/tauri-action@|rust-cache@|install-action@/;
 
+/** parseWorkflowJobs plus release.yml's multi-line flow `needs:` lists. */
+function releaseJobs() {
+  const jobs = parseWorkflowJobs(RELEASE);
+  const flow =
+    /^ {2}([A-Za-z0-9_-]+):\s*\n(?:(?! {2}\S)[^\n]*\n)*? {4}needs:\s*\n\s*\[([^\]]*)\]/gm;
+  for (const [, id, list] of RELEASE.matchAll(flow)) {
+    const job = jobs.get(id);
+    if (job && job.needs.length === 0) {
+      job.needs = list
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  return jobs;
+}
+
 describe("release.yml token scope (CI2-007, #4730)", () => {
-  const jobs = [...parseWorkflowJobs(RELEASE).keys()];
+  const jobs = [...releaseJobs().keys()];
 
   it("defaults the workflow token to contents: read", () => {
     expect(RELEASE).toMatch(/^permissions:\n {2}contents: read\n/m);
@@ -169,7 +186,7 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
     ["upload-agent-binaries", "agent-binaries-windows"],
     ["upload-third-party-notices", "third-party-notices"],
   ])("%s publishes what %s built", (upload, build) => {
-    expect(parseWorkflowJobs(RELEASE).get(upload)?.needs ?? []).toContain(build);
+    expect(releaseJobs().get(upload)?.needs ?? []).toContain(build);
   });
 
   it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
