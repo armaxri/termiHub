@@ -379,3 +379,7 @@ fn publish_region(manager: &TunnelManager, projector: &Projector) -> Vec<Produce
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_stats_delta_tests.rs"]
+mod stats_delta_tests;
