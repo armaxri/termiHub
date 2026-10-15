@@ -272,7 +272,8 @@ for (const win of WINDOWS) {
       // The real install-from-file flow: picker → preview → trust → dialog.
       await page.locator("[data-testid=plugin-install-from-file]").click();
       await page.locator("[data-testid=plugin-install-access-more]").waitFor();
-      // The "Validating plugin…" toast is dismissed once the preview is in.
+      // The "Validating plugin…" toast is dismissed once the preview is in,
+      // even though the mocked preview answers at once (#4812).
       await page.getByText("Validating plugin…").waitFor({ state: "hidden" });
       await report.check("dialog/plugin-update-access-diff", "[role=dialog]");
       // The secondary list of access the update no longer requests.
