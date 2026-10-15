@@ -76,30 +76,14 @@
   border-top: 1px solid var(--border-primary);
 }
 
-.schedules__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xxs) var(--spacing-sm);
-}
-
-.schedules__title {
+/* "Pause all" label + toggle in the section header. The label never wraps; at
+   narrow widths the component drops it for a tooltip (#4709). */
+.schedules__pause {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.schedules__header-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .schedules__list {

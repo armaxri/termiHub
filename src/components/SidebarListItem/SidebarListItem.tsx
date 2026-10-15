@@ -1,5 +1,6 @@
 import React from "react";
 import { StatusDot } from "../ui/StatusDot";
+import { TruncatedText } from "../ui/TruncatedText";
 import type { StatusTone } from "../ui/StatusDot";
 import "./SidebarListItem.css";
 
@@ -23,7 +24,11 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   name: React.ReactNode;
   /** Test hook for the name element. */
   nameTestId?: string;
-  /** Action controls (compose from the shared Button primitive). Revealed on hover/focus. */
+  /**
+   * Action controls (compose from the shared Button primitive). Revealed on
+   * hover/focus as an overlay on the row's trailing edge, so while hidden they
+   * reserve no width and the name gets the whole row (#4709).
+   */
   actions: React.ReactNode;
   /** Optional leading status indicator (typically a {@link SidebarStatusDot}). */
   status?: React.ReactNode;
@@ -78,10 +83,10 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
               {badge}
             </span>
           )}
-          <span className="sidebar-list-item__name" data-testid={nameTestId}>
+          <TruncatedText className="sidebar-list-item__name" data-testid={nameTestId}>
             {name}
-          </span>
-          <div className="sidebar-list-item__actions">{actions}</div>
+          </TruncatedText>
+          {actions != null && <div className="sidebar-list-item__actions">{actions}</div>}
         </div>
         {details && <div className="sidebar-list-item__details">{details}</div>}
       </div>

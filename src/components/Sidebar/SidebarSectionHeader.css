@@ -1,0 +1,36 @@
+/* Shared in-sidebar section header (#4709): History / Schedules. Tokens only.
+   The title truncates; the controls never shrink, wrap or clip. */
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  padding: var(--spacing-xxs) var(--spacing-sm);
+}
+
+.sidebar-section-header__title {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+}
+
+.sidebar-section-header__title > svg {
+  flex-shrink: 0;
+}
+
+.sidebar-section-header__actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--spacing-xs);
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}

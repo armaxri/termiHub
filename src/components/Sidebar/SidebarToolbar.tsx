@@ -1,4 +1,6 @@
 import React from "react";
+import { ResponsiveToolbar } from "@/components/ui";
+import type { ToolbarAction } from "@/components/ui";
 import "./SidebarToolbar.css";
 
 /**
@@ -12,13 +14,23 @@ import "./SidebarToolbar.css";
  * owns that shell so the sidebars stop duplicating — and drifting — the same
  * markup and layout; callers pass the action buttons as `children`.
  *
- * Behaviour-free: it renders one wrapper element and its children verbatim, so
- * the rendered button set, tooltips, and testids are unchanged from the inline
- * markup it replaces.
+ * Width-responsive (#4709): pass `actions` (not `children`) and the strip is a
+ * {@link ResponsiveToolbar} — labelled buttons while they fit, icon-only buttons
+ * with a tooltip below that, and an overflow "…" menu after that — so no
+ * control is ever clipped or hidden in a narrow sidebar. `children` remains for
+ * content that is not a list of actions; it renders verbatim.
  */
 export interface SidebarToolbarProps {
-  /** The action controls (buttons, dropdown triggers) laid out in the strip. */
-  children: React.ReactNode;
+  /** Free-form content laid out in the strip (prefer `actions`). */
+  children?: React.ReactNode;
+  /** The actions, in priority order; makes the strip width-responsive. */
+  actions?: ToolbarAction[];
+  /** Accessible name of the action group (with `actions`). */
+  "aria-label"?: string;
+  /** Accessible name of the overflow "…" trigger (with `actions`). */
+  overflowLabel?: string;
+  /** `data-testid` of the overflow "…" trigger (with `actions`). */
+  overflowTestId?: string;
   /**
    * `align-items` override. Default is the flex initial (`stretch`); pass
    * `"center"` to vertically centre controls of differing heights.
@@ -38,6 +50,10 @@ export interface SidebarToolbarProps {
 /** The top actions strip shared by the management sidebars. */
 export function SidebarToolbar({
   children,
+  actions,
+  "aria-label": ariaLabel,
+  overflowLabel,
+  overflowTestId,
   align,
   justify,
   className,
@@ -47,6 +63,18 @@ export function SidebarToolbar({
   if (align === "center") classes.push("sidebar-toolbar--align-center");
   if (justify === "end") classes.push("sidebar-toolbar--justify-end");
   if (className) classes.push(className);
+  if (actions) {
+    return (
+      <ResponsiveToolbar
+        actions={actions}
+        aria-label={ariaLabel ?? "Actions"}
+        overflowLabel={overflowLabel}
+        overflowTestId={overflowTestId}
+        className={classes.join(" ")}
+        data-testid={testId}
+      />
+    );
+  }
   return (
     <div className={classes.join(" ")} data-testid={testId}>
       {children}
