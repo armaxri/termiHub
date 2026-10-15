@@ -6,7 +6,7 @@
  * them without pulling in the root store.
  */
 
-import type { EditorTabMeta, TerminalTab } from "@/types/terminal";
+import type { EditorTabMeta, TerminalTab, TransferViewMeta } from "@/types/terminal";
 import type { TransferState } from "@/types/connection";
 import type { TabHandoffRecord, HandoffTab } from "@/types/window";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
@@ -147,6 +147,7 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
     ...editorHandoffFields(tab),
     ...tabMetaHandoffFields(tab),
     ...formDraftHandoffFields(tab),
+    ...(tab.transferViewMeta ? { transferViewMeta: tab.transferViewMeta } : {}),
   };
 }
 
@@ -212,9 +213,10 @@ function tabMetaHandoffFields(
  * Whether a tab without a live session reopens in another window when "Move
  * tabs" closes its window (#4501): everything a hand-off record can describe
  * in full. File editors, Settings, the log viewer, network diagnostics, plugin
- * details, the agent-error placeholder and the connection, tunnel and
- * workspace forms move. The transfer view does not: its remote pane is bound
- * to a terminal tab id of the closing window, which the move replaces.
+ * details, the agent-error placeholder, the connection, tunnel and workspace
+ * forms and the transfer view move. A transfer view stays paired with its
+ * terminal when that terminal moves too, and reopens unpaired otherwise
+ * (#4751, {@link pairBatchHandoffRecord}).
  *
  * This says nothing about unsaved changes. A dirty tab moves only when
  * {@link canCarryEditorBuffer} holds, and the caller checks that first.
@@ -239,9 +241,84 @@ export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
       return !!tab.workspaceEditorMeta;
     case "agent-error":
       return !!tab.agentErrorMeta;
+    case "transfer-view":
+      return !!tab.transferViewMeta;
     default:
       return false;
   }
+}
+
+/** The title of a transfer view that is not paired with a terminal. */
+export const UNPAIRED_TRANSFER_VIEW_TITLE = "File Transfer";
+
+/**
+ * Whether `tab` is a transfer view whose paired terminal is not among
+ * `movingTabIds` (#4751): "Move tabs" then reopens it unpaired in the
+ * destination window, with its local pane intact. An already unpaired view
+ * (`remoteTabId: null`) loses nothing, so it is not flagged.
+ */
+export function transferViewMovesUnpaired(
+  tab: TerminalTab,
+  movingTabIds: ReadonlySet<string>
+): boolean {
+  if (tab.contentType !== "transfer-view") return false;
+  const remoteTabId = tab.transferViewMeta?.remoteTabId;
+  return !!remoteTabId && !movingTabIds.has(remoteTabId);
+}
+
+/**
+ * Stamp `record` as part of the whole-window move `batchId` (#4751): it
+ * carries the tab's source id so the destination can map it to the moved
+ * tab's new id. A transfer view whose paired terminal is not in the batch
+ * (`movingTabIds`) has its `remoteTabId` cleared here, so it reopens unpaired
+ * instead of pointing at a tab id of the closed window.
+ */
+export function pairBatchHandoffRecord(
+  record: TabHandoffRecord,
+  sourceTabId: string,
+  batchId: string,
+  movingTabIds: ReadonlySet<string>
+): TabHandoffRecord {
+  const tab: HandoffTab = { ...record.tab, sourceTabId, moveBatchId: batchId };
+  const meta = tab.transferViewMeta;
+  if (meta?.remoteTabId && !movingTabIds.has(meta.remoteTabId)) {
+    tab.transferViewMeta = { ...meta, remoteTabId: null };
+    tab.title = UNPAIRED_TRANSFER_VIEW_TITLE;
+  }
+  return { ...record, tab };
+}
+
+/**
+ * Destination side of a whole-window move (#4751): the source id → new id map
+ * of the batch being hydrated. Records of one batch drain in order, session
+ * tabs first, so a transfer view's terminal is mapped before the view itself
+ * hydrates. A new batch replaces the map, which keeps it bounded.
+ */
+let handoffBatchIds: { batchId: string; ids: Map<string, string> } | null = null;
+
+/** Record that the hand-off tab `h` hydrated as `newTabId` here (#4751). */
+export function noteHandoffTabId(h: HandoffTab, newTabId: string): void {
+  if (!h.moveBatchId || !h.sourceTabId) return;
+  if (handoffBatchIds?.batchId !== h.moveBatchId) {
+    handoffBatchIds = { batchId: h.moveBatchId, ids: new Map() };
+  }
+  handoffBatchIds.ids.set(h.sourceTabId, newTabId);
+}
+
+/**
+ * The transfer view metadata a hydrated hand-off tab gets here (#4751): its
+ * `remoteTabId` rewritten to the id the paired terminal hydrated as in this
+ * window, or `null` when that terminal did not arrive in the same batch (a
+ * single-tab move, or a terminal that stayed behind). The panes' paths keep.
+ */
+export function resolveHandoffTransferView(h: HandoffTab): TransferViewMeta | undefined {
+  const meta = h.transferViewMeta;
+  if (!meta) return undefined;
+  const remoteTabId =
+    meta.remoteTabId && h.moveBatchId && handoffBatchIds?.batchId === h.moveBatchId
+      ? (handoffBatchIds.ids.get(meta.remoteTabId) ?? null)
+      : null;
+  return { ...meta, remoteTabId };
 }
 
 /**

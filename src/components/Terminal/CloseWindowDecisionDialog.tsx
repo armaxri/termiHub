@@ -58,9 +58,11 @@ import "./CloseWindowDecisionDialog.css";
  * window to move to, unsaved editors are listed as discarded and the choices are
  * Cancel or "Discard & close".
  *
- * The window's other tabs (saved file editors, Settings, the log viewer and so
- * on) move too when the destination can reopen them (#4501); the dialog names
- * which ones move and which close with the window.
+ * The window's other tabs (saved file editors, Settings, the log viewer, the
+ * transfer view and so on) move too when the destination can reopen them
+ * (#4501, #4751); the dialog names which ones move and which close with the
+ * window, and says when a transfer view reopens unpaired because the terminal
+ * it was paired with does not move.
  *
  * The same dialog answers an app quit (Cmd+Q / menu Quit, #4296) when the
  * request's `mode` is `"quit"`. Then "Quit" tells the backend this window
@@ -376,11 +378,13 @@ function SecretsNote({ editors }: { editors: ReadonlyArray<WindowCloseDirtyEdito
 
 /**
  * Says exactly which of the window's other tabs "Move tabs" reopens in the
- * destination window and which close with this window (#4501).
+ * destination window and which close with this window (#4501), and which
+ * transfer views reopen unpaired because their terminal does not move (#4751).
  */
 function MoveSummary({ otherTabs }: { otherTabs: ReadonlyArray<WindowCloseOtherTab> }) {
   const moving = otherTabs.filter((tab) => tab.movable);
   const closing = otherTabs.filter((tab) => !tab.movable);
+  const unpaired = moving.filter((tab) => tab.unpaired);
   return (
     <p className="close-window-decision__summary" data-testid="close-window-decision-move-summary">
       {moving.length > 0 && (
@@ -396,6 +400,14 @@ function MoveSummary({ otherTabs }: { otherTabs: ReadonlyArray<WindowCloseOtherT
           {closing.length === 1 ? "can't be moved and closes" : "can't be moved and close"} with the
           window.
         </>
+      )}
+      {unpaired.length > 0 && (
+        <span data-testid="close-window-decision-unpaired-note">
+          {" "}
+          {quotedTitles(unpaired)} {unpaired.length === 1 ? "opens" : "open"} unpaired there, since{" "}
+          {unpaired.length === 1 ? "its terminal doesn't" : "their terminals don't"} move; the local
+          side stays as it is.
+        </span>
       )}
     </p>
   );

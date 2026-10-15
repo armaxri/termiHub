@@ -15,6 +15,7 @@ import type {
   NetworkDiagnosticMeta,
   PluginDetailMeta,
   TabContentType,
+  TransferViewMeta,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
 } from "@/types/terminal";
@@ -83,6 +84,25 @@ export interface HandoffTab {
    * secret fields travel empty (see `src/utils/formDraftSecrets.ts`).
    */
   formDraft?: FormDraftSnapshot;
+  /**
+   * A moved transfer view's panes (#4751). `remoteTabId` names the paired
+   * terminal by its id in the source window; the destination rewrites it to
+   * that terminal's new id when both moved in the same batch, and to `null`
+   * (an unpaired view) otherwise.
+   */
+  transferViewMeta?: TransferViewMeta;
+  /**
+   * The tab's id in the source window (#4751), so the destination can map it
+   * to the id it mints for the moved tab. Set only on the records of a
+   * whole-window move, together with {@link moveBatchId}.
+   */
+  sourceTabId?: string;
+  /**
+   * Identifies one whole-window move (#4751). The destination maps source tab
+   * ids to new ids per batch, so a transfer view only pairs with a terminal
+   * that moved with it.
+   */
+  moveBatchId?: string;
 }
 
 /**
@@ -228,6 +248,11 @@ export interface WindowCloseOtherTab {
   contentType: TabContentType;
   /** Whether "Move tabs" reopens this tab in the destination window. */
   movable: boolean;
+  /**
+   * A transfer view whose paired terminal does not move (#4751): it reopens
+   * in the destination window unpaired, with its local pane intact.
+   */
+  unpaired?: boolean;
 }
 
 /**
