@@ -7,7 +7,6 @@ import {
   companionIdFor,
   deriveCompanion,
   findCompanion,
-  findParent,
   isCompanion,
   isCompanionRedundant,
   orderTunnelRows,
@@ -89,11 +88,6 @@ describe("link walking", () => {
     expect(findCompanion(tunnels, "tun-parent")?.id).toBe(companion.id);
     expect(findCompanion(tunnels, "tun-other")).toBeUndefined();
     expect(findCompanion(tunnels, companion.id)).toBeUndefined();
-  });
-
-  it("findParent resolves a companion back to its parent", () => {
-    expect(findParent(tunnels, companion)?.id).toBe("tun-parent");
-    expect(findParent(tunnels, parent)).toBeUndefined();
   });
 
   it("isCompanion distinguishes the hop from a parent/plain tunnel", () => {

@@ -29,11 +29,6 @@ export function getJumpHosts(config: ConnectionConfig | undefined | null): JumpH
   return Array.isArray(raw) ? raw : [];
 }
 
-/** Whether the connection reaches its target through a jump host. */
-export function hasJumpHost(config: ConnectionConfig | undefined | null): boolean {
-  return getJumpHosts(config).length > 0;
-}
-
 /** Display name for a single hop (its host, falling back to a generic label). */
 function hopLabel(hop: JumpHostConfig): string {
   return hop.host?.trim() || "jump host";

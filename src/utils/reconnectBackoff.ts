@@ -2,8 +2,7 @@
  * Agentless auto-reconnect backoff state machine (#1962).
  *
  * A pure, timer-free model of the "resilient reconnect" loop used for plain SSH
- * connections over flaky links. It answers two questions the store's timer
- * driver needs:
+ * connections over flaky links. It answers two questions:
  *
  *   1. How long to wait before the next connection attempt (exponential backoff,
  *      capped, with bounded jitter below the cap).
@@ -12,8 +11,12 @@
  *
  * Keeping this logic pure and injectable (`rand`) makes the backoff schedule and
  * the give-up decision unit-testable without fake timers or a live connection.
- * The store ({@link "@/store/appStore"}) owns the real `setTimeout` that drives
- * the machine and the side effects (calling `reconnectTerminal`).
+ * The authoritative loop runs in the backend (the Rust twin in
+ * `core/src/reconnect_backoff.rs`, driven by the session lifecycle store's
+ * redrive), which owns the timers and the reconnect side effects. The frontend
+ * only uses this port for the optimistic `session.reconnect` fold in
+ * `src/store/sessionBridge.ts`, which the authoritative session region then
+ * reconciles.
  *
  * No agent means the remote shell state cannot be recovered — this machine only
  * models re-establishing the *transport*, not restoring server-side session
@@ -64,6 +67,9 @@ export const RECONNECT_POLICY: BackoffConfig = {
  * The shared policy's total give-up window in ms: the longest a loop waits
  * between attempts before giving up (the sum of the nominal delays; jitter only
  * shortens a window). Twin of the Rust `RECONNECT_GIVE_UP_WINDOW_MS`.
+ *
+ * @internal The frontend never reads it; the golden fixtures pin it equal to
+ * the Rust constant, which production code uses (monitoring give-up window).
  */
 export const RECONNECT_GIVE_UP_WINDOW_MS = 181_000;
 
@@ -122,6 +128,9 @@ export function nextReconnectDelay(
  * across its whole attempt budget: the sum of the nominal (rounded) delays for
  * attempts `1..maxAttempts`. `null` for an unbounded config (`maxAttempts <= 0`).
  * Twin of the Rust `worst_case_total_backoff_ms`.
+ *
+ * @internal Only tests (incl. the golden-fixture parity suite) call it; kept
+ * until the Rust twin is removed with it (#4783).
  */
 export function worstCaseTotalBackoffMs(config: BackoffConfig): number | null {
   if (config.maxAttempts <= 0) return null;
@@ -210,7 +219,13 @@ export function reconnectReducer(
   }
 }
 
-/** Whether a phase is one where the loop is actively trying (spinner/countdown). */
+/**
+ * Whether a phase is one where the loop is actively trying (spinner/countdown).
+ * Twin of the Rust `is_active_reconnect_phase`.
+ *
+ * @internal Only tests (incl. the golden-fixture parity suite) call it; kept
+ * until the Rust twin is removed with it (#4783).
+ */
 export function isActiveReconnectPhase(phase: ReconnectPhase): boolean {
   return phase === "waiting" || phase === "connecting";
 }
