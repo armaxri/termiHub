@@ -78,6 +78,27 @@ describe("PingPanel — live stats", () => {
     expect(text).toContain("avg=20ms");
     expect(text).not.toContain("NaN");
   });
+
+  it("shows sub-millisecond RTTs with fractional precision (#4542)", async () => {
+    await act(async () => {
+      root.render(<PingPanel prefillHost="192.168.1.1" />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="ping-start"]')!.click();
+    });
+    await flush();
+
+    await emitResult({ seq: 1, latencyMs: 0.42, timedOut: false, tcpFallback: false });
+    await emitResult({ seq: 2, latencyMs: 0.2, timedOut: false, tcpFallback: false });
+
+    const text = statsText();
+    // A LAN reply must no longer read 0ms.
+    expect(text).toContain("min=0.2ms");
+    expect(text).toContain("avg=0.31ms");
+    expect(text).toContain("max=0.42ms");
+    expect(text).toContain("jitter=0.22ms");
+    expect(text).not.toContain("=0ms");
+  });
   it("shows the TCP fallback notice only when replies arrive via TCP (MT-NET-11)", async () => {
     await act(async () => {
       root.render(<PingPanel prefillHost="example.com" />);

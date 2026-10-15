@@ -2,6 +2,7 @@ import { useMemo, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { cssVar, useUplot } from "@/components/charts/uplot";
+import { formatLatencyMs } from "@/utils/formatters";
 import { buildLatencyChartData } from "./latencyChartData";
 
 interface LatencyChartProps {
@@ -123,7 +124,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
           width: 1.5,
           spanGaps: false,
           points: { show: true, size: 4, stroke: accent, fill: accent },
-          value: (_u, v) => (v == null ? "—" : `${v.toFixed(1)}ms`),
+          value: (_u, v) => formatLatencyMs(v),
         },
       ],
       plugins: [dropMarkersPlugin(() => dropsRef.current, dropColor), latestValuePlugin()],

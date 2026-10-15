@@ -11,6 +11,7 @@ import {
   dnsRecordsToCsv,
   exportNetworkResults,
   pingResultsToCsv,
+  pingSweepResultsTable,
   portScanResultsToCsv,
   tableToCsv,
   tracerouteHopsToCsv,
@@ -61,6 +62,18 @@ describe("network export CSV formatters", () => {
         { host: "10.0.0.1", port: 80, state: "closed" },
       ])
     ).toBe("host,port,state,latency_ms\n10.0.0.1,22,open,3\n10.0.0.1,80,closed,\n");
+  });
+
+  it("exports sub-millisecond latencies unrounded (#4542)", () => {
+    expect(
+      pingResultsToCsv([{ seq: 1, latencyMs: 0.42, ttl: 64, timedOut: false, tcpFallback: false }])
+    ).toBe("seq,latency_ms,ttl,timed_out,tcp_fallback\n1,0.42,64,false,false\n");
+    expect(
+      portScanResultsToCsv([{ host: "10.0.0.1", port: 22, state: "open", latencyMs: 0.087 }])
+    ).toBe("host,port,state,latency_ms\n10.0.0.1,22,open,0.087\n");
+    expect(
+      tableToCsv(pingSweepResultsTable([{ host: "10.0.0.2", hostname: null, latencyMs: 0.5 }]))
+    ).toBe("host,hostname,latency_ms\n10.0.0.2,,0.5\n");
   });
 
   it("serializes DNS records and quotes cells containing commas", () => {

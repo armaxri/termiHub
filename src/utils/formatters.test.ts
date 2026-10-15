@@ -3,6 +3,7 @@ import {
   formatBytes,
   formatRate,
   formatElapsed,
+  formatLatencyMs,
   formatRelativeAgo,
   formatRelativeTime,
   formatAbsoluteTime,
@@ -13,6 +14,39 @@ import {
   truncate,
 } from "./formatters";
 import * as locale from "./locale";
+
+describe("formatLatencyMs (#4542)", () => {
+  it("keeps sub-millisecond precision", () => {
+    expect(formatLatencyMs(0.42)).toBe("0.42ms");
+    expect(formatLatencyMs(0.2)).toBe("0.2ms");
+    expect(formatLatencyMs(0.006)).toBe("0.01ms");
+    expect(formatLatencyMs(3.456)).toBe("3.46ms");
+  });
+
+  it("scales precision down as latency grows", () => {
+    expect(formatLatencyMs(12.34)).toBe("12.3ms");
+    expect(formatLatencyMs(99.94)).toBe("99.9ms");
+    expect(formatLatencyMs(238.6)).toBe("239ms");
+    expect(formatLatencyMs(1234.4)).toBe("1,234ms");
+  });
+
+  it("shows whole milliseconds from an older agent unchanged", () => {
+    expect(formatLatencyMs(12)).toBe("12ms");
+    expect(formatLatencyMs(1)).toBe("1ms");
+    expect(formatLatencyMs(0)).toBe("0ms");
+  });
+
+  it("never rounds a real reply down to zero", () => {
+    expect(formatLatencyMs(0.004)).toBe("<0.01ms");
+  });
+
+  it("renders a dash for missing or invalid input", () => {
+    expect(formatLatencyMs(null)).toBe("—");
+    expect(formatLatencyMs(undefined)).toBe("—");
+    expect(formatLatencyMs(Number.NaN)).toBe("—");
+    expect(formatLatencyMs(-1)).toBe("—");
+  });
+});
 
 describe("formatBytes", () => {
   it("formats real byte counts", () => {

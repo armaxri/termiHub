@@ -19,6 +19,7 @@ import { deriveLivePingStats } from "./pingStats";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { formatLatencyMs } from "@/utils/formatters";
 
 interface PingPanelProps {
   prefillHost?: string;
@@ -179,7 +180,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       count: count === "" ? null : count,
     },
     summary: stats
-      ? `${stats.received}/${stats.sent} received, ${stats.lossPercent.toFixed(1)}% loss, avg ${stats.avgMs.toFixed(0)}ms`
+      ? `${stats.received}/${stats.sent} received, ${stats.lossPercent.toFixed(1)}% loss, avg ${formatLatencyMs(stats.avgMs)}`
       : `${results.length} repl${results.length === 1 ? "y" : "ies"}`,
     table: pingResultsTable(results),
     error,
@@ -334,8 +335,9 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
             {displayStats.lossPercent.toFixed(1)}%
           </span>
           <span>
-            RTT: min={displayStats.minMs.toFixed(0)}ms avg={displayStats.avgMs.toFixed(0)}ms max=
-            {displayStats.maxMs.toFixed(0)}ms jitter={displayStats.jitterMs.toFixed(0)}ms
+            RTT: min={formatLatencyMs(displayStats.minMs)} avg={formatLatencyMs(displayStats.avgMs)}{" "}
+            max={formatLatencyMs(displayStats.maxMs)} jitter=
+            {formatLatencyMs(displayStats.jitterMs)}
           </span>
         </div>
       )}
