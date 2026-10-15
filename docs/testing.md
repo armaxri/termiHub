@@ -539,6 +539,8 @@ VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
     editor opened first;
   - every sidebar at the default width (260px) and at the minimum the resize
     handle allows (its `aria-valuemin`, 170px today);
+  - Settings → Security with confirmed imported workspace commands (#4445),
+    and its revoke-all dialog;
   - the unlock, password-prompt, shortcuts, command-palette, customize-layout
     and export dialogs.
 

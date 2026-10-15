@@ -23,6 +23,13 @@ describe("settingsRegistry", () => {
       expect(results.some((s) => s.id === "fontFamily")).toBe(true);
     });
 
+    it("finds the imported workspace confirmations by allowlist and imported (#4445)", () => {
+      for (const query of ["allowlist", "imported", "revoke"]) {
+        const results = filterSettings(query);
+        expect(results.some((s) => s.id === "workspaceImportConfirmations")).toBe(true);
+      }
+    });
+
     it("matches by description", () => {
       const results = filterSettings("scrollback buffer");
       expect(results.some((s) => s.id === "scrollbackBuffer")).toBe(true);

@@ -460,6 +460,26 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "workspaceImportConfirmations",
+    label: "Imported Workspace Confirmations",
+    description:
+      "See and revoke the imported workspace commands and connections confirmed on this machine",
+    category: "security",
+    keywords: [
+      "workspace",
+      "imported",
+      "import",
+      "allowlist",
+      "confirm",
+      "confirmation",
+      "revoke",
+      "trust",
+      "command",
+      "connection",
+      "security",
+    ],
+  },
+  {
     id: "fileLanguageMappings",
     label: "File Type Mappings",
     description: "Map filenames and extensions to syntax highlighting languages",

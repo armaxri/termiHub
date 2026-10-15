@@ -163,6 +163,26 @@ for (const win of WINDOWS) {
       await report.finish();
     });
 
+    test("security settings with imported workspace confirmations", async ({ page }, testInfo) => {
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page, { importConfirmations: true });
+      await store(page, "openSettingsTab", { category: "security" });
+      const section = page.locator("[data-testid=imported-confirmations]");
+      await section.scrollIntoViewIfNeeded();
+      // Wait until the keys are matched against the saved workspace (#4445).
+      await page.locator("[data-testid=imported-confirmations-group-ws-test]").waitFor();
+      await page.locator("[data-testid=imported-confirmations-group-unused]").waitFor();
+      await section.scrollIntoViewIfNeeded();
+      await report.check(
+        "settings/security-imported-confirmations",
+        ".settings-panel:not(.settings-panel--hidden)"
+      );
+      await page.locator("[data-testid=imported-confirmations-revoke-all]").click();
+      await page.getByRole("dialog").waitFor();
+      await report.check("dialog/revoke-imported-confirmations", "[role=dialog]");
+      await report.finish();
+    });
+
     test("sidebars fit at default and minimum width", async ({ page }, testInfo) => {
       const report = new SurfaceReport(page, testInfo, win.name);
       await boot(page);

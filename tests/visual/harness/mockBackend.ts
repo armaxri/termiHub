@@ -24,6 +24,11 @@ export interface VisualScenario {
   };
   /** Seed the sidebars with populated fixture rows (default true). */
   populated?: boolean;
+  /**
+   * Seed confirmed imported workspace commands (#4445): `ws-1` holds two of
+   * them, and one more key matches no saved workspace.
+   */
+  importConfirmations?: boolean;
 }
 
 declare global {
@@ -109,9 +114,49 @@ const FRESH_SETTINGS = {
   },
 };
 
+/** A held command long enough to expose wrapping in the confirmations list. */
+const LONG_COMMAND =
+  "ssh -o StrictHostKeyChecking=accept-new deploy@build-server-with-a-long-hostname.example.com " +
+  '"cd /srv/app && ./scripts/release.sh --environment=staging --verbose"';
+
+/** `ws-1` as an imported workspace whose tabs hold commands (#4434). */
+const IMPORTED_WORKSPACE = {
+  id: "ws-1",
+  name: "test",
+  tabGroups: [
+    {
+      name: "Main",
+      layout: {
+        type: "leaf",
+        tabs: [
+          { title: "Build", pendingInitialCommand: "make deploy" },
+          { title: "Release", pendingInitialCommand: LONG_COMMAND },
+        ],
+      },
+    },
+  ],
+};
+
+/**
+ * The settings with `IMPORTED_WORKSPACE`'s commands confirmed (sha256 of each
+ * command's exact text, as `importedCommandKey` computes it) plus a stale key.
+ */
+const IMPORT_CONFIRMED_SETTINGS = {
+  ...FRESH_SETTINGS,
+  workspaceImportAllowlist: [
+    "cmd:c28716624ab42f2fdbc840b2e95f7541211a11a2513c53f6b4f89a724ba55c6b",
+    "cmd:7ddd5e3b188edce0a853e811ccabf50b1d13fa88e67b027ff9780a2493f928c6",
+    `cmd:${"ab".repeat(32)}`,
+  ],
+};
+
+function settingsFor(scenario: VisualScenario): unknown {
+  return scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
+}
+
 function regionView(region: string, populated: boolean): unknown {
   const wire = connectionsWire.loadConnectionsAndFolders;
-  if (region === "settings") return FRESH_SETTINGS;
+  if (region === "settings") return settingsFor(window.__VISUAL_SCENARIO__ ?? {});
   if (region === "connections") {
     return populated ? { folders: wire.folders, connections: wire.connections } : {};
   }
@@ -143,7 +188,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
 
     // ── app / window ──
     case "get_settings":
-      return FRESH_SETTINGS;
+      return settingsFor(scenario);
     case "get_app_info":
       return { version: "0.1.0", gitHash: "visual", isDev: true, buildBranch: "develop" };
     case "get_app_mode":
@@ -202,6 +247,12 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return [];
     case "get_workspaces":
       return populated ? WORKSPACES : [];
+    case "load_workspace": {
+      const id = String(args?.workspaceId ?? "");
+      if (id === IMPORTED_WORKSPACE.id && scenario.importConfirmations) return IMPORTED_WORKSPACE;
+      const summary = WORKSPACES.find((ws) => ws.id === id);
+      return summary ? { id, name: summary.name, tabGroups: [] } : null;
+    }
     case "list_macros":
       return populated ? MACROS : [];
     case "list_workflows":

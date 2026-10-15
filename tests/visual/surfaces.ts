@@ -88,8 +88,11 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
   },
 ];
 
-/** Tests per window: settings, sidebars, unlock, shortcuts, and STORE_DIALOGS. */
-export const EXPECTED_TESTS = WINDOWS.length * (4 + STORE_DIALOGS.length);
+/**
+ * Tests per window: settings, imported confirmations, sidebars, unlock,
+ * shortcuts, and STORE_DIALOGS.
+ */
+export const EXPECTED_TESTS = WINDOWS.length * (5 + STORE_DIALOGS.length);
 
 const RESULTS = join(import.meta.dirname, "test-results");
 /** Where every surface's screenshot goes (uploaded as a CI artifact). */
