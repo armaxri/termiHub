@@ -67,7 +67,7 @@ permissions: Array<PluginPermission>,
  * filesystem access. Each entry must be an absolute, normalised path below
  * a filesystem root ([`validate`](Self::validate), #4293), or start with a
  * host-expanded `${home}`/`${config}` placeholder (#4533, see
- * [`super::path_placeholders`]).
+ * `path_placeholders`).
  */
 filesystemPaths?: Array<string>, 
 /**
