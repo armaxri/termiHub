@@ -32,6 +32,14 @@ interface DynamicFieldProps {
   /** When true, shows a "Password saved in credential store" hint below password fields. */
   credentialSaved?: boolean;
   /**
+   * A schema secret other than `password` that is stored in the credential
+   * store for this saved connection (#4431). An empty password field then
+   * shows a "saved" placeholder and a Clear control; `cleared` marks it for
+   * removal on save (Undo takes that back). Only meaningful while the field
+   * is empty — a typed value replaces the stored one.
+   */
+  storedSecret?: StoredSecretState;
+  /**
    * Pre-supplied list of serial port names for `serialPort` fields.
    * When provided, the field shows these instead of querying the local system.
    * Use this to pass ports from a remote agent's capabilities.
@@ -90,6 +98,7 @@ export function DynamicField({
   onBlur,
   error,
   credentialSaved,
+  storedSecret,
   availablePorts,
   containerContext,
   savedConnectionContext,
@@ -155,7 +164,8 @@ export function DynamicField({
           onBlur,
           platformNote != null,
           containerContext,
-          savedConnectionContext
+          savedConnectionContext,
+          storedSecret
         )}
         {field.description && (
           <p id={descriptionId} className="settings-form__hint">
@@ -179,6 +189,7 @@ export function DynamicField({
             Password saved in credential store
           </p>
         )}
+        {storedSecret && <StoredSecretHint state={storedSecret} testIdBase={testIdBase} />}
       </>
     </Field>
   );
@@ -197,7 +208,8 @@ function renderFieldInput(
    * platform (audit PROD-019). Currently only honoured by boolean toggles. */
   platformDisabled = false,
   containerContext?: ContainerContext,
-  savedConnectionContext?: SavedConnectionContext
+  savedConnectionContext?: SavedConnectionContext,
+  storedSecret?: StoredSecretState
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
@@ -219,6 +231,7 @@ function renderFieldInput(
           onChange={onChange}
           a11y={a11y}
           testIdBase={testIdBase}
+          storedSecret={storedSecret}
         />
       );
     case "number":
@@ -449,20 +462,87 @@ function TextField({
   );
 }
 
+/** Placeholder of an empty password field whose secret is stored (#4431). */
+export const STORED_SECRET_PLACEHOLDER = "Saved — leave empty to keep";
+
+/** See {@link DynamicFieldProps.storedSecret}. */
+export interface StoredSecretState {
+  /** Whether the stored secret is marked for removal on save. */
+  cleared: boolean;
+  /** Mark the stored secret for removal on save. */
+  onClear: () => void;
+  /** Take back a pending removal. */
+  onUndo: () => void;
+}
+
+/**
+ * The status row under an empty password field whose secret is stored
+ * (#4431): "saved" with a Clear control, or — once cleared — a note that the
+ * secret is removed on save, with Undo. Nothing is removed until Save.
+ */
+function StoredSecretHint({ state, testIdBase }: { state: StoredSecretState; testIdBase: string }) {
+  return (
+    <div className="settings-form__stored-secret" data-testid={`${testIdBase}-stored-secret`}>
+      {state.cleared ? (
+        <>
+          <p
+            className="settings-form__hint settings-form__hint--warning"
+            data-testid={`${testIdBase}-secret-cleared`}
+          >
+            Saved secret will be removed on save
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={state.onUndo}
+            data-testid={`${testIdBase}-secret-undo`}
+          >
+            Undo
+          </Button>
+        </>
+      ) : (
+        <>
+          <p
+            className="settings-form__hint settings-form__hint--success"
+            data-testid={`${testIdBase}-secret-saved`}
+          >
+            Saved in credential store
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={state.onClear}
+            data-testid={`${testIdBase}-secret-clear`}
+          >
+            Clear
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PasswordField({
   field,
   value,
   onChange,
   a11y,
   testIdBase,
-}: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
+  storedSecret,
+}: FieldProps & { a11y: FieldA11y; testIdBase: string; storedSecret?: StoredSecretState }) {
+  // A stored secret the user keeps reads as saved; once marked for clearing
+  // the field falls back to its own placeholder (#4431).
+  const placeholder =
+    storedSecret && !storedSecret.cleared ? STORED_SECRET_PLACEHOLDER : field.placeholder;
   return (
     <>
       <PasswordInput
         id={a11y.id}
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
-        placeholder={field.placeholder}
+        placeholder={placeholder}
         aria-describedby={a11y.describedBy}
         aria-invalid={a11y.invalid}
         data-testid={testIdBase}

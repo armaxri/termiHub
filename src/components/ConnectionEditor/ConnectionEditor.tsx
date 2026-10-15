@@ -102,6 +102,7 @@ import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { JumpHostSection } from "./JumpHostSection";
+import { useStoredFieldSecrets } from "./useStoredFieldSecrets";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 import { SshConnectionImportDialog } from "./SshConnectionImportDialog";
 import { validateProxyJump } from "@/utils/validateProxyJump";
@@ -689,6 +690,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingConnection]);
 
+  // Which schema field secrets are stored for this saved connection — names
+  // only — and the ones the user marked for removal on save (#4431).
+  const storedSecrets = useStoredFieldSecrets({
+    connectionId: existingConnection?.id,
+    sourceFile: existingConnection?.sourceFile ?? null,
+    storeMode: credentialStoreStatus?.mode,
+    storeStatus: credentialStoreStatus?.status,
+  });
+
   useEffect(() => {
     const normalizedConnSettings = {
       ...(connSettingsSchemaDefaultsRef.current ?? {}),
@@ -702,7 +712,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       icon !== initialIcon.current ||
       persistent !== initialPersistent.current ||
       JSON.stringify(agentSettings) !== JSON.stringify(initialAgentSettings.current) ||
-      sourceFile !== initialSourceFile.current;
+      sourceFile !== initialSourceFile.current ||
+      storedSecrets.hasPendingClears;
     isDirtyRef.current = isDirty;
     setEditorDirty(tabId, isDirty);
   }, [
@@ -714,6 +725,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     persistent,
     agentSettings,
     sourceFile,
+    storedSecrets.hasPendingClears,
     baselineVersion,
     tabId,
     setEditorDirty,
@@ -1071,6 +1083,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return null;
     }
 
+    // Stored secrets the user cleared are removed before the connection is
+    // persisted (#4431), from the file it is stored in now — a move then
+    // carries only what is left. A locked store is unlocked first.
+    if (storedSecrets.hasPendingClears) {
+      if (!(await ensureCredentialStoreUnlocked({ authMethod: "", fieldSecrets: true }))) {
+        toast.info("Save canceled — unlock the credential store to remove the cleared secrets.");
+        return null;
+      }
+      try {
+        await storedSecrets.applyPendingClears();
+      } catch (err) {
+        frontendLog("connection_editor", `Failed to clear stored secrets: ${errorMessage(err)}`);
+        toast.error(`Could not remove the cleared secrets: ${errorMessage(err)}`);
+        return null;
+      }
+    }
+
     const connectionConfig: ConnectionConfig = { type: selectedType, config: connSettings };
     const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
@@ -1108,6 +1137,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [
     currentTypeInfo?.schema,
+    storedSecrets,
     name,
     nameError,
     jumpHostValidation,
@@ -1812,6 +1842,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               : undefined
           }
           credentialSavedHint={credentialSavedHint}
+          storedFieldSecrets={storedSecrets.fields}
           availablePorts={
             isAgentDefinitionMode
               ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
@@ -1851,6 +1882,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           sshSchema={currentTypeInfo?.schema}
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
+          storedHopSecrets={storedSecrets.hops}
         />
       )}
 
