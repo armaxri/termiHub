@@ -39,7 +39,7 @@ use crate::plugin::HostError;
 
 /// A runner's confinement: the plugin's AppContainer, and the TLS root
 /// snapshot it may read when the export succeeded (#4811).
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct Confinement {
     pub(super) container: AppContainer,
     pub(super) tls_roots: Option<PathBuf>,
