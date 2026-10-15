@@ -64,35 +64,10 @@
   border-top: 1px solid var(--border-primary);
 }
 
-.macro-history__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--spacing-xxs) var(--spacing-sm);
-}
-
-.macro-history__title {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
 .macro-history__filter {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  margin-left: var(--spacing-xs);
   text-transform: none;
   letter-spacing: normal;
-}
-
-.macro-history__actions {
-  display: inline-flex;
-  align-items: center;
 }
 
 .macro-history__list {
