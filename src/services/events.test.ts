@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import {
   onTerminalOutput,
-  onTerminalExit,
   onVscodeEditComplete,
   onLogEntry,
   TerminalOutputDispatcher,
@@ -107,53 +106,6 @@ describe("events service", () => {
     it("accepts both Uint8Array and number[] identically", () => {
       const nums = [1, 2, 3, 200, 255];
       expect(bytesToBase64(nums)).toBe(bytesToBase64(Uint8Array.from(nums)));
-    });
-  });
-
-  describe("onTerminalExit", () => {
-    it("registers listener on terminal-exit event", async () => {
-      const unlisten = vi.fn();
-      mockedListen.mockResolvedValue(unlisten);
-
-      const callback = vi.fn();
-      const result = await onTerminalExit(callback);
-
-      expect(mockedListen).toHaveBeenCalledWith("terminal-exit", expect.any(Function));
-      expect(result).toBe(unlisten);
-    });
-
-    it("transforms payload and calls callback with exit code", async () => {
-      let capturedHandler: ((event: unknown) => void) | undefined;
-      mockedListen.mockImplementation((_event, handler) => {
-        capturedHandler = handler as (event: unknown) => void;
-        return Promise.resolve(vi.fn());
-      });
-
-      const callback = vi.fn();
-      await onTerminalExit(callback);
-
-      capturedHandler!({
-        payload: { session_id: "sess-1", exit_code: 0 },
-      });
-
-      expect(callback).toHaveBeenCalledWith("sess-1", 0);
-    });
-
-    it("passes null exit code when process is killed", async () => {
-      let capturedHandler: ((event: unknown) => void) | undefined;
-      mockedListen.mockImplementation((_event, handler) => {
-        capturedHandler = handler as (event: unknown) => void;
-        return Promise.resolve(vi.fn());
-      });
-
-      const callback = vi.fn();
-      await onTerminalExit(callback);
-
-      capturedHandler!({
-        payload: { session_id: "sess-1", exit_code: null },
-      });
-
-      expect(callback).toHaveBeenCalledWith("sess-1", null);
     });
   });
 

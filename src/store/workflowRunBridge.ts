@@ -126,7 +126,10 @@ let regionClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription, cached view, and streamed content. */
+ * drops any active subscription, cached view, and streamed content.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setWorkflowTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -230,7 +233,11 @@ export function ensureWorkflowSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription and reset the cached view (tests / re-init). */
+/**
+ * Drop the region subscription and reset the cached view (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopWorkflowSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -479,7 +486,10 @@ export function logWorkflowBridgeFallback(kind: string, err: unknown): void {
 // ── Test seams (drive the projected view + streamed content directly) ──────────
 
 /** Push a projected view straight to the render hook (component tests that do not
- * stand up a transport double). */
+ * stand up a transport double).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setWorkflowRunViewForTest(view: WorkflowRunViewInput): void {
   lastView = normalizeView(view);
   fanView();
@@ -487,12 +497,19 @@ export function setWorkflowRunViewForTest(view: WorkflowRunViewInput): void {
 
 /** Commit a projected view at an explicit region `version` through the same guarded
  * path a real diff takes, so a test can drive the stale-drop / apply behaviour
- * (FES-006) without a transport double. Never call from production code. */
+ * (FES-006) without a transport double. Never call from production code.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function __emitWorkflowRunViewForTest(view: WorkflowRunViewInput, version: number): void {
   commitWorkflowRunView(normalizeView(view), version);
 }
 
-/** Push streamed content straight to the render hook (component tests). */
+/**
+ * Push streamed content straight to the render hook (component tests).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setWorkflowOutputContentForTest(content: WorkflowRunOutputContent | null): void {
   outputContent = content;
   fanContent();

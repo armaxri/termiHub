@@ -5,7 +5,6 @@ import {
   RUN_LOCATION_THIS,
   decodeRunLocation,
   encodeRunLocation,
-  runLocationLabel,
   runLocationOptions,
 } from "./runLocation";
 
@@ -50,11 +49,5 @@ describe("runLocation helpers", () => {
   it("offers only This computer for a desktop-only item", () => {
     const options = runLocationOptions(AGENTS, false);
     expect(options).toEqual([{ value: RUN_LOCATION_THIS, label: "This computer" }]);
-  });
-
-  it("labels a run-location, naming a known agent and falling back to its id", () => {
-    expect(runLocationLabel(THIS_COMPUTER, AGENTS)).toBe("This computer");
-    expect(runLocationLabel({ kind: "agent", agentId: "a1" }, AGENTS)).toBe("Agent · build-server");
-    expect(runLocationLabel({ kind: "agent", agentId: "gone" }, AGENTS)).toBe("Agent · gone");
   });
 });

@@ -1147,8 +1147,8 @@ export function FileBrowser() {
   const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
   const removeTransfer = useAppStore((s) => s.removeTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
-  // Render cut (#2228): the copy-cut clipboard is sourced from the projected
-  // client-scoped file-browser region (mirror-gated, falls back to appStore).
+  // The copy-cut clipboard is sourced from the authoritative client-scoped
+  // file-browser region (#2228).
   const fileClipboard = useProjectedFileBrowsers().clipboard;
   const quickShareServer = useAppStore((s) => s.quickShareServer);
   const setSidebarView = useAppStore((s) => s.setSidebarView);

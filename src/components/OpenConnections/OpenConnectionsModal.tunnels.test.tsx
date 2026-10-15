@@ -47,10 +47,6 @@ vi.mock("@/services/api", () => ({
 
 // No status fetch is mocked: any tunnel rows that render must come from the
 // store's live map.
-const stopTunnel = vi.fn((_id: string) => Promise.resolve());
-vi.mock("@/services/tunnelApi", () => ({
-  stopTunnel: (id: string) => stopTunnel(id),
-}));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
 
@@ -99,7 +95,6 @@ describe("OpenConnectionsModal — SSH Tunnels section (live store source)", () 
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    stopTunnel.mockClear();
   });
 
   afterEach(() => {

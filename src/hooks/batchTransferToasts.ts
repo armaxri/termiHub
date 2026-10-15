@@ -62,7 +62,11 @@ export function isBatchTransfer(progress: {
   return progress.direction === "upload" && pendingSessions.has(progress.sessionId);
 }
 
-/** Test-only: forget every registration. */
+/**
+ * Test-only: forget every registration.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetBatchTransfersForTest(): void {
   pendingSessions.clear();
   batchIds.clear();

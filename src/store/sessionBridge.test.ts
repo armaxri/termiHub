@@ -149,8 +149,9 @@ describe("dispatchSessionIntent", () => {
 describe("projectedToAutoReconnect — cut-vs-local parity", () => {
   const maxAttempts = RECONNECT_POLICY.maxAttempts;
 
-  /** The exact `terminalAutoReconnect` record `appStore.driveAutoReconnect`
-   * builds locally for a reducer result, so the mapping is asserted equal. */
+  /** The display record the removed local engine (`appStore.driveAutoReconnect`,
+   * #2205 PR-B) built for a reducer result: the parity reference the mapping is
+   * asserted equal to. */
   function localRecord(
     next: ReconnectState,
     now: number,

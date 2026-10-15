@@ -570,6 +570,54 @@ describe("ConnectionSettingsForm", () => {
     expect(query("field-password-credential-saved")).toBeTruthy();
   });
 
+  it("keeps the password hint off other password fields, which show their own stored state (#4431)", () => {
+    const schema: SettingsSchema = {
+      groups: [
+        {
+          key: "auth",
+          label: "Auth",
+          fields: [
+            {
+              key: "password",
+              label: "Password",
+              fieldType: { type: "password" },
+              required: false,
+            },
+            {
+              key: "sshPassword",
+              label: "SSH Password",
+              fieldType: { type: "password" },
+              required: false,
+            },
+            { key: "pin", label: "PIN", fieldType: { type: "password" }, required: false },
+          ],
+        },
+      ],
+    };
+    act(() => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={schema}
+          settings={{}}
+          onChange={vi.fn()}
+          credentialSavedHint={true}
+          storedFieldSecrets={{
+            stored: ["sshPassword"],
+            cleared: [],
+            onClear: vi.fn(),
+            onUndo: vi.fn(),
+          }}
+        />
+      );
+    });
+    expect(query("field-password-credential-saved")).toBeTruthy();
+    expect(query("field-password-stored-secret")).toBeNull();
+    expect(query("field-sshPassword-credential-saved")).toBeNull();
+    expect(query("field-sshPassword-secret-saved")).toBeTruthy();
+    expect(query("field-pin-credential-saved")).toBeNull();
+    expect(query("field-pin-stored-secret")).toBeNull();
+  });
+
   it("shows validation error for invalid port", async () => {
     await act(async () => {
       renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "h" }, vi.fn());

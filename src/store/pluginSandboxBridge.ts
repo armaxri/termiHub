@@ -94,7 +94,11 @@ const versionGuard = makeVersionGuard();
 export type PluginSandboxListener = (view: PluginSandboxView) => void;
 const listeners = new Set<PluginSandboxListener>();
 
-/** Inject a transport for tests; `null` restores the real one. */
+/**
+ * Inject a transport for tests; `null` restores the real one.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setPluginSandboxTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;

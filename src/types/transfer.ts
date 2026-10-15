@@ -99,6 +99,9 @@ export function computeEtaSeconds(input: EtaInput): number | null {
  * Build a `queued` {@link TransferEntry} from a {@link TransferSeed}, for the
  * pre-event registration seed (#1632). Progress/throughput are unknown until the
  * first `transfer-progress` event folds over this row.
+ *
+ * @internal Only the transfer test harness (src/test/transferHarness.ts) folds with it, mirroring
+ * the Rust store.
  */
 export function transferEntryFromSeed(seed: TransferSeed, now: number): TransferEntry {
   const totalBytes = seed.totalBytes && seed.totalBytes > 0 ? seed.totalBytes : null;
@@ -148,6 +151,9 @@ export function stateFromPhase(phase: TransferProgress["phase"]): TransferQueueS
  * delta and preserves fields a given event may omit — the remote `path` is
  * taken from the event when present (#1531) and otherwise carried over from
  * `prev`. `now` is the current wall-clock ms (injected for deterministic tests).
+ *
+ * @internal Only the transfer test harness (src/test/transferHarness.ts) folds with it, mirroring
+ * the Rust store.
  */
 export function transferEntryFromProgress(
   progress: TransferProgress,

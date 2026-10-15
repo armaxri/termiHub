@@ -90,9 +90,16 @@ echo "=== Rust coverage (cargo llvm-cov → lcov) ==="
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "  [dry-run] skipping: cargo llvm-cov --workspace --all-features --no-report"
 else
+    # Core's out-of-process plugin suites spawn the runner llvm-cov builds and
+    # scans, not a private build of their own, so the runner lines they drive
+    # count toward plugin-runner coverage (#4693).
+    TERMIHUB_PLUGIN_RUNNER="$(node scripts/internal/llvm-cov-runner-path.mjs)"
+    export TERMIHUB_PLUGIN_RUNNER
+    echo "  plugin runner: $TERMIHUB_PLUGIN_RUNNER"
     # Tests and report are split so the report step can survive an intermittent
     # truncated .profraw (see scripts/internal/llvm-cov-report.mjs).
     cargo llvm-cov --workspace --all-features --no-report
+    unset TERMIHUB_PLUGIN_RUNNER
     node scripts/internal/llvm-cov-report.mjs "$RUST_LCOV"
 fi
 

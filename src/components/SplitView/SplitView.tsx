@@ -247,9 +247,8 @@ function LazyPanelFallback() {
 }
 
 export function SplitView() {
-  // Structure from the projected layout render-list (#2151 step 3); content is
-  // overlaid per-tab from appStore. Flag-off / desync falls back to appStore's
-  // tree verbatim, so rendering is byte-for-byte unchanged.
+  // The active group's tree, composed on demand from the `layout` region view
+  // plus the by-id tab content (#2151, #2562).
   const rootPanel = useLayoutRenderTree();
   const tabGroups = useLayoutTabGroups();
   const activeTabGroupId = useActiveTabGroupId();
@@ -263,8 +262,8 @@ export function SplitView() {
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  // Render cut (#2205 PR-A): connecting flags sourced from the projected
-  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  // Connecting flags sourced from the authoritative `session-lifecycle` region
+  // (#2205).
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const terminalAutoRetryCountZoom = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgentZoom = useAppStore((s) => s.terminalWaitingForAgent);
@@ -758,8 +757,8 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  // Render cut (#2205 PR-A): connecting flags sourced from the projected
-  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  // Connecting flags sourced from the authoritative `session-lifecycle` region
+  // (#2205).
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
@@ -772,8 +771,8 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   // terminal it currently shows (its active tab) is in the broadcast set; the
   // source panel additionally glows. Keyed off the visible tab so the ring
   // tracks what the user actually sees, not an inactive participant behind it.
-  // Render cut (#2242): active/source/membership sourced from the projected
-  // broadcast region when it mirrors appStore, else appStore verbatim.
+  // Active/source/membership sourced from the authoritative `broadcast` region
+  // (#2242).
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   const broadcastSourceTabId = broadcast.sourceTabId;

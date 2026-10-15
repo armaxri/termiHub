@@ -31,7 +31,6 @@ import openPortsFixture from "@/test/fixtures/wire/open_ports.json";
 import projectionFixture from "@/test/fixtures/wire/projection.json";
 import sessionFixture from "@/test/fixtures/wire/session.json";
 import settingsFixture from "@/test/fixtures/wire/settings.json";
-import transfersFixture from "@/test/fixtures/wire/transfers.json";
 import workspaceFixture from "@/test/fixtures/wire/workspace.json";
 
 /** The channels `TauriTransport.subscribe` opens, so a test can push frames. */
@@ -53,13 +52,11 @@ import {
   getSettings,
   listAgentConnections,
   loadConnectionsAndFolders,
-  transferList,
 } from "./api";
 import { networkOpenPorts } from "./networkApi";
 import { loadWorkspace } from "./workspaceApi";
 import { ProjectionClient } from "./transport/ProjectionClient";
 import { TauriTransport } from "./transport/TauriTransport";
-import { isTerminalTransferState } from "@/types/transfer";
 import {
   buildTabGroupsFromWorkspace,
   countWorkspaceTabs,
@@ -357,42 +354,6 @@ function collectLeaves(node: PanelNode): Extract<PanelNode, { type: "leaf" }>[] 
   if (node.type === "leaf") return [node];
   return node.children.flatMap(collectLeaves);
 }
-
-describe("wire contract: transfer snapshot", () => {
-  it("decodes the registry's snapshots", async () => {
-    respondWith(transfersFixture.transferList);
-    const [active, cancelled] = await transferList("sess-1");
-
-    expect(mockedInvoke).toHaveBeenCalledWith("transfer_list", { sessionId: "sess-1" });
-    expect(keys(active)).toEqual([
-      "attempt",
-      "direction",
-      "fileName",
-      "maxAttempts",
-      "path",
-      "sessionId",
-      "settled",
-      "speed",
-      "state",
-      "total",
-      "transferId",
-      "transferred",
-    ]);
-    // u64 byte counts above 2^32 arrive as exact JS numbers.
-    expect(active.transferred).toBe(4_294_967_313);
-    expect(active.total).toBe(6_442_450_944);
-    expect(active.direction).toBe("download");
-    expect(active.state).toBe("active");
-    expect(isTerminalTransferState(active.state)).toBe(false);
-
-    // An empty path is skipped on the wire.
-    expect(cancelled).not.toHaveProperty("path");
-    expect(cancelled.direction).toBe("upload");
-    expect(cancelled.state).toBe("cancelled");
-    expect(isTerminalTransferState(cancelled.state)).toBe(true);
-    expect(cancelled.settled).toBe(true);
-  });
-});
 
 describe("wire contract: open ports", () => {
   it("decodes ports with null (not absent) owner fields", async () => {

@@ -23,6 +23,7 @@
     "markdownlint": "markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"docs/**/*.md\" \"*.md\"",
     "knip": "knip",
+    "knip:prod": "knip --production",
     "size": "node scripts/internal/bundle-size.mjs",
     "notices:generate": "node scripts/internal/third-party-notices.mjs generate",
     "notices:check": "node scripts/internal/third-party-notices.mjs check"

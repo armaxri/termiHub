@@ -85,7 +85,10 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / seed dedup. */
+ * drops any active subscription / seed dedup.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setSettingsTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -189,7 +192,11 @@ export function ensureSettingsSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopSettingsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -218,6 +225,8 @@ export function currentSettingsView(): SettingsView {
  * so a reader that renders (or re-renders on a mutation) sees the document without
  * an explicit flush — matching the synchronous behaviour the removed `appStore`
  * fallback used to provide. Never call this from production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitSettingsViewForTest(view: SettingsView, version: number): void {
   commitSettingsView(view, version);
@@ -237,6 +246,9 @@ let lastSeededSignature: string | null = null;
  * De-duplicated: a document identical to the last seeded one is not re-dispatched
  * (a repeated no-op is idempotent server-side anyway). On any failure the dedup
  * signature is cleared so a later change retries the mirror.
+ *
+ * @internal Tests seed the settings region through it; production no longer mirrors appStore into
+ * the region.
  */
 export function seedSettingsRegion(settings: AppSettings): Promise<void> {
   const signature = JSON.stringify(settings);

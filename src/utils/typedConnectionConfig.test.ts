@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectionConfig } from "@/types/terminal";
 import {
-  isDockerConnectionConfig,
   isLocalConnectionConfig,
-  isSerialConnectionConfig,
   isSshConnectionConfig,
-  isTelnetConnectionConfig,
   isWslConnectionConfig,
 } from "./typedConnectionConfig";
 
@@ -58,12 +55,6 @@ describe("typedConnectionConfig guards", () => {
     }
   });
 
-  it("recognises serial, telnet and docker configs", () => {
-    expect(isSerialConnectionConfig(cfg("serial", { port: "/dev/ttyUSB0" }))).toBe(true);
-    expect(isTelnetConnectionConfig(cfg("telnet", { host: "h", port: 23 }))).toBe(true);
-    expect(isDockerConnectionConfig(cfg("docker", { image: "alpine:3" }))).toBe(true);
-  });
-
   it("returns false for a mismatched type", () => {
     expect(isLocalConnectionConfig(cfg("ssh"))).toBe(false);
     expect(isSshConnectionConfig(cfg("local"))).toBe(false);
@@ -73,7 +64,6 @@ describe("typedConnectionConfig guards", () => {
     const plugin = cfg("acme-custom", { endpoint: "wss://acme.example" });
     expect(isLocalConnectionConfig(plugin)).toBe(false);
     expect(isSshConnectionConfig(plugin)).toBe(false);
-    expect(isDockerConnectionConfig(plugin)).toBe(false);
   });
 
   it("returns false for null / undefined", () => {

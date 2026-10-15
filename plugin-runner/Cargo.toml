@@ -127,3 +127,8 @@ libc = "0.2"
 # attribute strings, which cargo-machete's name scan cannot see.
 [package.metadata.cargo-machete]
 ignored = ["serde_bytes"]
+
+# `cfg(coverage)` is set by cargo-llvm-cov only (#4693): coverage-only code
+# (the runner's LLVM profile output) compiles in nowhere else.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }

@@ -158,7 +158,11 @@ export function deliverCarriedFormDraft(tabId: string, draft: FormDraftSnapshot)
   carriedDrafts.set(tabId, draft);
 }
 
-/** Drop every registration and carried buffer or draft. Test-only reset hook. */
+/**
+ * Drop every registration and carried buffer or draft. Test-only reset hook.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function clearEditorBuffers(): void {
   providers.clear();
   carried.clear();

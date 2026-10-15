@@ -554,11 +554,19 @@ fn next_frame<S: ChannelStream>(
     timeout: Duration,
     waiting_for: &str,
 ) -> Result<Message, HostError> {
-    // macOS refuses socket options once the peer is gone (EINVAL), so a
-    // runner that already exited can fail here rather than at the read.
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|e| HostError::RunnerProtocol(format!("waiting for {waiting_for}: {e}")))?;
+    // macOS (XNU `sosetopt`) refuses socket options with EINVAL once both
+    // directions are shut down, which is what a peer that already exited
+    // leaves behind (#4786). Such a socket can no longer block, so the read
+    // below still runs: it drains anything the runner sent and then reports
+    // end of stream — the defined "the runner exited" error. Any other
+    // failure to arm the deadline is refused, since the read would be unbounded.
+    if let Err(e) = stream.set_read_timeout(Some(timeout)) {
+        if e.kind() != std::io::ErrorKind::InvalidInput {
+            return Err(HostError::RunnerProtocol(format!(
+                "waiting for {waiting_for}: {e}"
+            )));
+        }
+    }
     match FrameReader::new(&mut *stream).read_frame() {
         Ok(Some(frame)) => Message::decode_from_peer(frame, Sender::Host)
             .map_err(|e| HostError::RunnerProtocol(format!("waiting for {waiting_for}: {e}"))),

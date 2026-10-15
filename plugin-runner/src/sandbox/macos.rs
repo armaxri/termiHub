@@ -215,7 +215,19 @@ pub fn apply(policy: &SandboxPolicy) -> Result<(), SandboxError> {
         layer: super::layer::SEATBELT,
         detail,
     };
-    let profile = seatbelt_profile(policy)?;
+    #[allow(unused_mut, reason = "extended in coverage builds only")]
+    let mut profile = seatbelt_profile(policy)?;
+    // Coverage builds only (#4693): let the instrumented runner save its
+    // profile. Last rule, so it wins inside a denied home folder.
+    #[cfg(coverage)]
+    if let Some(dir) = super::coverage_profile_dir().and_then(|d| d.to_str().map(str::to_owned)) {
+        profile.sbpl.push_str(
+            "(allow file-read* file-write* (subpath (param \"COVERAGE_PROFILE_DIR\")))\n",
+        );
+        profile
+            .params
+            .push(("COVERAGE_PROFILE_DIR".to_owned(), dir));
+    }
     // `validate` already refused NUL bytes in paths; names and the profile are
     // ours. Map defensively anyway.
     let nul = |_| failed("a profile string contains a NUL byte".to_owned());

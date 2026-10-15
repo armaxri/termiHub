@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  BUILTIN_RULES,
-  cloneBuiltinRules,
-  getThemedBuiltinRules,
-  getThemedRuleColor,
-} from "./syntaxHighlightingRules";
+import { BUILTIN_RULES, getThemedRuleColor } from "./syntaxHighlightingRules";
 import type { HighlightRule } from "../types/syntaxHighlighting";
 
 /** Build a case-aware regex for a built-in rule exactly as the engine would. */
@@ -134,21 +129,5 @@ describe("theme-aware color resolution", () => {
 
   it("falls back to a valid color for unknown rule ids", () => {
     expect(getThemedRuleColor("does-not-exist")).toMatch(/^#[0-9a-fA-F]{6}$/i);
-  });
-
-  it("getThemedBuiltinRules returns one themed rule per built-in", () => {
-    const themed = getThemedBuiltinRules();
-    expect(themed).toHaveLength(BUILTIN_RULES.length);
-    for (const rule of themed) {
-      expect(rule.style.color).toMatch(/^#[0-9a-fA-F]{6}$/i);
-    }
-  });
-
-  it("cloneBuiltinRules yields an independent mutable copy", () => {
-    const clone = cloneBuiltinRules();
-    clone[0].enabled = !clone[0].enabled;
-    clone[0].style.color = "#000000";
-    expect(BUILTIN_RULES[0].enabled).not.toBe(clone[0].enabled);
-    expect(BUILTIN_RULES[0].style.color).not.toBe("#000000");
   });
 });

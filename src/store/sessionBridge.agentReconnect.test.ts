@@ -2,8 +2,7 @@
  * Unit tests for {@link waitForBackendAgentReconnectOutcome} — the give-up-aware
  * wait that activates the backend-driven **agent** reconnect (#2476).
  *
- * Unlike {@link waitForBackendReattachSessionId} (direct SSH, #2457), this wait
- * has no short fall-through timeout: it stays deferred to the backend park/retry
+ * The wait has no short fall-through timeout: it stays deferred to the backend park/retry
  * loop for as long as the loop is active (a prolonged agent drop), resolving only
  * on a genuine terminal outcome — a fresh backend session id (reattach), an
  * exhausted-retry give-up, a server-side stop, or the effect being torn down.
@@ -11,7 +10,7 @@
  * backend redrive is re-establishing.
  *
  * The region is driven by an in-memory transport double so the round-trip runs
- * without a backend (mirrors sessionBridge.backendReattach.test.ts).
+ * without a backend.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

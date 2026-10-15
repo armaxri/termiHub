@@ -9,12 +9,8 @@
  * without every test having to construct a region view by hand.
  */
 
-import {
-  type AppState,
-  getComposedLayout,
-  tabContentFromGroups,
-  useAppStore,
-} from "@/store/appStore";
+import { type AppState, getComposedLayout, useAppStore } from "@/store/appStore";
+import { tabContentFromGroups } from "@/store/layoutHelpers";
 import {
   buildLayoutSnapshot,
   type ComposedLayoutState,

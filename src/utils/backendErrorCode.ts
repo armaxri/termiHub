@@ -46,14 +46,6 @@ export const SECOND_FACTOR_FAILED_CODE: IpcErrorCode = "second_factor_failed";
 const AGENT_TRANSPORT_CLOSED_CODE: IpcErrorCode = "agent_transport_closed";
 
 /**
- * Stable code emitted when an agent request got **no reply** within its
- * deadline while the transport was still up — the agent never answered
- * (#3959). Distinct from {@link AGENT_TRANSPORT_CLOSED_CODE} and from
- * {@link AGENT_REPORTED_ERROR_CODE}. Mirrors the Rust `TerminalError::AgentTimeout`.
- */
-const AGENT_TIMEOUT_CODE: IpcErrorCode = "agent_timeout";
-
-/**
  * Stable code for an error the agent itself reported (it answered the request
  * with a JSON-RPC error), and for other generic agent-command failures raised
  * before the request was sent. Since #3959 it no longer covers timeouts, and
@@ -143,15 +135,6 @@ export function isSecondFactorFailure(error: unknown): boolean {
  */
 export function isAgentTransportClosed(error: unknown): boolean {
   return parseBackendError(error).code === AGENT_TRANSPORT_CLOSED_CODE;
-}
-
-/**
- * True when an agent request timed out waiting for the agent's reply (#3959),
- * per the typed backend code — never the message text. Not the SSH-operation
- * `timeout` code.
- */
-export function isAgentTimeout(error: unknown): boolean {
-  return parseBackendError(error).code === AGENT_TIMEOUT_CODE;
 }
 
 /**

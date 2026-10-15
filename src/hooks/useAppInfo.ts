@@ -64,6 +64,8 @@ export function useDesktopVersion(): string | null {
 /**
  * Reset the cached app info and any in-flight fetch.
  * Exposed for testing only.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function resetAppInfoCache(): void {
   cachedInfo = null;

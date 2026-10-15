@@ -146,10 +146,17 @@ pub fn apply(policy: &SandboxPolicy, skip: Skip) -> Result<SandboxReport, Sandbo
     // Before landlock (which would deny writing the id maps under `/proc`)
     // and before seccomp (which kills `unshare` and `mount`).
     let namespaces = !skip.namespaces && {
-        let plan = mask::Plan::for_policy(policy).map_err(|e| SandboxError::Apply {
-            layer: layer::NETNS,
-            detail: format!("preparing the home-folder mask failed: {e}"),
-        })?;
+        // Coverage builds only (#4693): the instrumented runner's profile
+        // folder stays reachable under the home-folder mask.
+        #[cfg(coverage)]
+        let extra: Vec<std::path::PathBuf> = super::coverage_profile_dir().into_iter().collect();
+        #[cfg(not(coverage))]
+        let extra: Vec<std::path::PathBuf> = Vec::new();
+        let plan =
+            mask::Plan::for_policy_keeping(policy, &extra).map_err(|e| SandboxError::Apply {
+                layer: layer::NETNS,
+                detail: format!("preparing the home-folder mask failed: {e}"),
+            })?;
         namespaces::enter(&plan)?
     };
     let landlock = if skip.landlock {
@@ -286,6 +293,14 @@ fn apply_landlock(policy: &SandboxPolicy) -> Result<bool, SandboxError> {
                     .map_err(|e| failed(&e))?;
             }
         }
+    }
+    // Coverage builds only (#4693): let the instrumented runner save its
+    // profile at exit.
+    #[cfg(coverage)]
+    if let Some(fd) = super::coverage_profile_dir().and_then(|d| PathFd::new(d).ok()) {
+        ruleset = ruleset
+            .add_rule(PathBeneath::new(fd, AccessFs::from_all(abi)))
+            .map_err(|e| failed(&e))?;
     }
     // No TCP port rule: every bind / connect is denied (ABI v4+).
     let status = ruleset.restrict_self().map_err(|e| failed(&e))?;
@@ -1090,16 +1105,21 @@ mod tests {
     #[test]
     fn file_watching_is_not_allowed() {
         let allowed: HashSet<_> = filters::allowed().into_iter().collect();
-        let mut watchers = vec![
+        // The legacy `inotify_init` only exists on x86_64; aarch64 has just
+        // the `*1` variant. A cfg-gated slice keeps the binding immutable on
+        // every arch (a cfg-gated `push` left `mut` unused on aarch64, #4788).
+        #[cfg(target_arch = "x86_64")]
+        let arch_specific: &[libc::c_long] = &[libc::SYS_inotify_init];
+        #[cfg(not(target_arch = "x86_64"))]
+        let arch_specific: &[libc::c_long] = &[];
+        let watchers = [
             libc::SYS_inotify_init1,
             libc::SYS_inotify_add_watch,
             libc::SYS_inotify_rm_watch,
             libc::SYS_fanotify_init,
             libc::SYS_fanotify_mark,
         ];
-        #[cfg(target_arch = "x86_64")]
-        watchers.push(libc::SYS_inotify_init);
-        for nr in watchers {
+        for &nr in watchers.iter().chain(arch_specific) {
             assert!(!allowed.contains(&nr), "syscall {nr} must answer ENOSYS");
         }
     }

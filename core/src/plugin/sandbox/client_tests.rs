@@ -31,6 +31,9 @@ struct Scripted {
     written: Arc<Mutex<Vec<u8>>>,
     timeout: Arc<Mutex<Option<Duration>>>,
     stall: bool,
+    /// Refuse every read timeout with this error, like macOS does on a
+    /// socket whose peer already closed it (EINVAL, #4786).
+    refuse_timeout: Option<std::io::ErrorKind>,
 }
 
 impl Scripted {
@@ -40,6 +43,7 @@ impl Scripted {
             written: Arc::new(Mutex::new(Vec::new())),
             timeout: Arc::new(Mutex::new(None)),
             stall: false,
+            refuse_timeout: None,
         }
     }
 
@@ -49,6 +53,11 @@ impl Scripted {
 
     fn stalling(mut self) -> Self {
         self.stall = true;
+        self
+    }
+
+    fn refusing_timeouts(mut self, kind: std::io::ErrorKind) -> Self {
+        self.refuse_timeout = Some(kind);
         self
     }
 }
@@ -87,10 +96,14 @@ impl ChannelStream for Scripted {
             written: Arc::clone(&self.written),
             timeout: Arc::clone(&self.timeout),
             stall: self.stall,
+            refuse_timeout: self.refuse_timeout,
         })
     }
 
     fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        if let Some(kind) = self.refuse_timeout {
+            return Err(kind.into());
+        }
         *self.timeout.lock().unwrap() = timeout;
         Ok(())
     }
@@ -318,6 +331,33 @@ fn a_runner_that_exits_mid_handshake_is_reported() {
     let detail = protocol_error(run(Scripted::of(&[hello()])));
     assert!(detail.contains("the runner exited"), "{detail}");
     assert!(detail.contains("SandboxReport"), "{detail}");
+}
+
+#[test]
+fn a_runner_gone_before_the_deadline_is_armed_is_reported_as_exited() {
+    // macOS refuses the read timeout (EINVAL) once the peer has closed the
+    // socket; that is still an early exit, not an I/O failure (#4786).
+    let stream = Scripted::new(Vec::new()).refusing_timeouts(std::io::ErrorKind::InvalidInput);
+    let detail = protocol_error(run(stream));
+    assert_eq!(
+        detail,
+        "the runner exited while the host was waiting for Hello"
+    );
+}
+
+#[test]
+fn frames_sent_before_the_runner_closed_are_still_read() {
+    let stream = Scripted::of(&[hello()]).refusing_timeouts(std::io::ErrorKind::InvalidInput);
+    let detail = protocol_error(run(stream));
+    assert!(detail.contains("the runner exited"), "{detail}");
+    assert!(detail.contains("SandboxReport"), "{detail}");
+}
+
+#[test]
+fn any_other_failure_to_arm_the_deadline_is_refused() {
+    let stream = Scripted::of(&[hello()]).refusing_timeouts(std::io::ErrorKind::PermissionDenied);
+    let detail = protocol_error(run(stream));
+    assert!(detail.starts_with("waiting for Hello: "), "{detail}");
 }
 
 #[test]

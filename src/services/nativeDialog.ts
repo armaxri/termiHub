@@ -54,7 +54,11 @@ export function setNativeDialogStub(kind: NativeDialogKind, path: string | null)
   pending[kind] = { path };
 }
 
-/** Drop every pending stub. For unit tests. */
+/**
+ * Drop every pending stub. For unit tests.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function clearNativeDialogStubs(): void {
   pending.open = undefined;
   pending.save = undefined;

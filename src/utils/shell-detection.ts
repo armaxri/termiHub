@@ -14,17 +14,6 @@ export async function detectAvailableShells(): Promise<ShellType[]> {
   }
 }
 
-/** Get the default shell for the current platform */
-export async function getDefaultShell(): Promise<ShellType> {
-  const shells = await detectAvailableShells();
-  return shells[0] ?? "bash";
-}
-
-/** Check whether a shell type represents a WSL distribution. */
-export function isWslShell(shell: ShellType): boolean {
-  return shell.startsWith("wsl:");
-}
-
 /** Extract the distro name from a WSL shell type, or null if not a WSL shell. */
 export function getWslDistroName(shell: ShellType): string | null {
   if (!shell.startsWith("wsl:")) {
