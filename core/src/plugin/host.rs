@@ -1365,6 +1365,7 @@ mod tests {
             error_message: None,
             invalid_manifest: false,
             resolved_filesystem_paths: Vec::new(),
+            trust_snapshot: None,
             installed_at: 0,
         }
     }
