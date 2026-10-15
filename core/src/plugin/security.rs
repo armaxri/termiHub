@@ -332,7 +332,7 @@ fn stays_inside_anchor(root: &Path, anchor: &Path) -> bool {
 ///
 /// * empty, or contain a NUL byte;
 /// * carrying a `${` — placeholders are expanded before this check
-///   ([`super::path_placeholders`], #4533), so one that reaches it is unknown
+///   (`path_placeholders`, #4533), so one that reaches it is unknown
 ///   or misplaced, and is never taken as a literal folder name;
 /// * relative (`docs`, `~/captures`, `C:docs`, `\Windows`) — it would resolve
 ///   against the host process's working directory, which differs between a

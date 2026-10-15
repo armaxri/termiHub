@@ -3,7 +3,9 @@
 //! filesystem scope, the load-time protected-folder checks, and the native
 //! trust binding.
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use tempfile::TempDir;
 

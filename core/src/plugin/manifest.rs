@@ -373,7 +373,7 @@ pub struct PluginManifest {
     /// filesystem access. Each entry must be an absolute, normalised path below
     /// a filesystem root ([`validate`](Self::validate), #4293), or start with a
     /// host-expanded `${home}`/`${config}` placeholder (#4533, see
-    /// [`super::path_placeholders`]).
+    /// `path_placeholders`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub filesystem_paths: Vec<String>,
