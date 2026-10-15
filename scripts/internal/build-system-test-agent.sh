@@ -30,7 +30,7 @@
 #      exactly like agent.yml / release.yml build the shipped Linux agents. The
 #      custom images only add an lld linker for Windows/Podman hosts.
 #   With --install-cross, a missing `cross` is first installed from the pinned,
-#   SHA256-verified cross-rs release that agent.yml uses (x86_64 Linux hosts).
+#   SHA256-verified cross-rs release in .github/cross-version (x86_64 Linux hosts).
 #   The harness passes it on CI only: before #4092 the integration lane had no
 #   `cross`, so every deployed-agent suite skipped there and never ran.
 #
@@ -44,9 +44,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Keep in sync with the "Install cross-rs" step of agent.yml / release.yml.
-CROSS_VERSION="0.2.5"
-CROSS_SHA256="642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad"
+# The cross-rs pin (version + tarball SHA256) lives only in .github/cross-version,
+# shared with the CI setup-cross action (#4360); read lazily by install_cross.
+CROSS_PIN_FILE="$REPO_ROOT/.github/cross-version"
 
 usage() {
     sed -n '2,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
@@ -124,7 +124,14 @@ install_cross() {
             "install cross by hand (scripts/setup-agent-cross.sh)" >&2
         return 1
     fi
-    local bin_dir tmp url
+    local bin_dir tmp url CROSS_VERSION CROSS_SHA256
+    CROSS_VERSION="$(sed -n 's/^version=//p' "$CROSS_PIN_FILE" | tr -d '[:space:]')"
+    CROSS_SHA256="$(sed -n 's/^sha256=//p' "$CROSS_PIN_FILE" | tr -d '[:space:]')"
+    if ! [[ "$CROSS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        ! [[ "$CROSS_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "ERROR: malformed cross-rs pin in $CROSS_PIN_FILE" >&2
+        return 1
+    fi
     bin_dir="${CARGO_HOME:-$HOME/.cargo}/bin"
     mkdir -p "$bin_dir"
     tmp="$(mktemp -d)"
