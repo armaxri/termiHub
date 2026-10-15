@@ -410,12 +410,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "plugin:dialog|open":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
     case "preview_plugin":
-      // Answer after a real-IPC-like delay: sonner drops a dismiss that lands
-      // before its loading toast mounted, which would leave "Validating
-      // plugin…" over the dialog footer.
-      return scenario.pluginUpdate
-        ? new Promise((resolve) => setTimeout(() => resolve(PLUGIN_UPDATE_PREVIEW), 50))
-        : null;
+      // Answered at once, like every other mock: a loading toast dismissed
+      // before it mounted is still removed (#4812).
+      return scenario.pluginUpdate ? PLUGIN_UPDATE_PREVIEW : null;
     case "assess_plugin_trust":
       return scenario.pluginUpdate ? PLUGIN_UPDATE_TRUST : null;
 
