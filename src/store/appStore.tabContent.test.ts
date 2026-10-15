@@ -72,16 +72,10 @@ vi.mock("@/services/api", () => ({
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  saveTunnel: vi.fn(),
-  deleteTunnel: vi.fn(),
-  startTunnel: vi.fn(),
-  stopTunnel: vi.fn(),
-}));
-
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import { extractTabContent, useAppStore } from "./appStore";
+import { useAppStore } from "./appStore";
+import { extractTabContent } from "./layoutHelpers";
 import { layoutState } from "@/test/layoutState";
 
 const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" } };

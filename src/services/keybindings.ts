@@ -755,11 +755,6 @@ export function unbindAction(action: string): void {
   setOverride(action, { ...UNBOUND_COMBO });
 }
 
-/** Whether an action is currently unbound (either by default or by the user). */
-export function isActionUnbound(action: string): boolean {
-  return isUnboundCombo(getEffectiveCombo(action));
-}
-
 /**
  * Check for conflicts: returns the action that already uses the given binding,
  * or null if no conflict exists. Accepts either a single {@link KeyCombo} or a

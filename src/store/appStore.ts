@@ -76,13 +76,7 @@ import { installStoreSubscriptions } from "./storeSubscriptions";
 // The module-level helpers live in their own modules (ARCH-001/FES-011, #2881) so
 // the slices import them without pulling in this root store; they are
 // re-exported here so every existing `@/store/appStore` import keeps working.
-export {
-  collectLiveTabs,
-  extractTabContent,
-  tabContentFromGroups,
-  getComposedLayout,
-  getActiveTab,
-} from "./layoutHelpers";
+export { collectLiveTabs, getComposedLayout, getActiveTab } from "./layoutHelpers";
 export {
   deriveEditorHostLabel,
   resolveBroadcastTargetTabIds,
@@ -90,7 +84,6 @@ export {
   monitorKeyForTab,
 } from "./tabQueries";
 export {
-  ABORTED_CONNECT_MESSAGE,
   isResilientReconnectTabId,
   isBackendDrivenAgentReconnectTabId,
   onReconnectCommandForTabId,

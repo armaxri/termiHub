@@ -37,7 +37,8 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn(() => Promise.resolve()),
 }));
 
-import { extractTabContent, useAppStore } from "./appStore";
+import { useAppStore } from "./appStore";
+import { extractTabContent } from "./layoutHelpers";
 import { seedLayoutState } from "@/test/layoutState";
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { collectWindowTabs } from "./layoutHelpers";

@@ -33,7 +33,8 @@ vi.mock("@/components/ui", async () => {
 
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import { extractTabContent, useAppStore } from "./appStore";
+import { useAppStore } from "./appStore";
+import { extractTabContent } from "./layoutHelpers";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { __emitAgentsViewForTest, EMPTY_AGENTS_VIEW } from "./agentsBridge";
 

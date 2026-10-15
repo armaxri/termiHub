@@ -10,7 +10,6 @@ import { describe, it, expect } from "vitest";
 import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
 import {
-  collectTabs,
   composeLayoutFromView,
   type LayoutView,
   minimalNodesEqual,
@@ -19,6 +18,17 @@ import {
   reconcileNode,
   toMinimalNode,
 } from "./layoutBridge";
+
+/** Index every rich tab in a tree by id (the `tabsById` input of reconcile). */
+function collectTabs(node: PanelNode): Map<string, TerminalTab> {
+  const map = new Map<string, TerminalTab>();
+  const walk = (n: PanelNode): void => {
+    if (n.type === "leaf") n.tabs.forEach((t) => map.set(t.id, t));
+    else n.children.forEach(walk);
+  };
+  walk(node);
+  return map;
+}
 
 function tab(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -80,12 +90,6 @@ describe("layoutBridge — tree mapping", () => {
         },
       ],
     });
-  });
-
-  it("collectTabs indexes every rich tab by id", () => {
-    const map = collectTabs(tree());
-    expect([...map.keys()].sort()).toEqual(["t1", "t2", "t3"]);
-    expect(map.get("t1")?.title).toBe("Tab t1");
   });
 
   it("reconcileNode re-hydrates rich tabs and re-derives panelId + isActive", () => {

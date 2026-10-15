@@ -205,16 +205,6 @@ export async function onAgentCrashNoticesChanged(
   });
 }
 
-/** Subscribe to terminal exit events */
-export async function onTerminalExit(
-  callback: (sessionId: string, exitCode: number | null) => void
-): Promise<UnlistenFn> {
-  return await listen<TerminalExitEvent>(TAURI_EVENT.terminalExit, (event) => {
-    const { session_id, exit_code } = event.payload;
-    callback(session_id, exit_code);
-  });
-}
-
 /**
  * Listen for backend `session → window` ownership changes (#1985): a window
  * claimed or released a session, or a window was destroyed and its sessions

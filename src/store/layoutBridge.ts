@@ -327,20 +327,6 @@ export function toMinimalNode(node: PanelNode): MinimalNode {
   return split;
 }
 
-/** Index every rich tab in a tree by id, for reconcile lookups. */
-export function collectTabs(node: PanelNode): Map<string, TerminalTab> {
-  const map = new Map<string, TerminalTab>();
-  const walk = (n: PanelNode): void => {
-    if (n.type === "leaf") {
-      for (const t of n.tabs) map.set(t.id, t);
-    } else {
-      n.children.forEach(walk);
-    }
-  };
-  walk(node);
-  return map;
-}
-
 /**
  * Rebuild a rich {@link PanelNode} from a projected minimal tree, re-attaching
  * each tab's rich fields by id (partial projection: the region carries only

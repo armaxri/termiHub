@@ -48,13 +48,6 @@ vi.mock("@/services/api", () => ({
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  saveTunnel: vi.fn(),
-  deleteTunnel: vi.fn(),
-  startTunnel: vi.fn(),
-  stopTunnel: vi.fn(),
-}));
-
 import { useAppStore } from "@/store/appStore";
 
 let container: HTMLDivElement;
