@@ -149,3 +149,40 @@ fn an_empty_secret_is_stripped_without_a_write() {
     assert!(conns[0].config.settings.get("sshPassword").is_none());
     assert!(store.snapshot().is_empty());
 }
+
+#[test]
+fn a_migrated_entry_drops_hop_secrets_the_file_no_longer_has_when_pruning() {
+    // The file was edited outside termiHub: its hop was re-addressed and
+    // carries the new password in plaintext (#4792).
+    let seeded = || {
+        RecordingStore::with(&[(
+            "jump",
+            FS,
+            r#"{"fields":{"sshPassword":"gw"},"hops":{"ops@old:22":"stale"}}"#,
+        )])
+    };
+    let edited = || {
+        vec![conn(
+            "jump",
+            "ssh",
+            json!({ "host": "t", "proxyJump": [{ "host": "new", "username": "ops", "password": "fresh" }] }),
+        )]
+    };
+
+    let store = seeded();
+    let mut conns = edited();
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, true).unwrap());
+    let stored = secret_fields::read_field_secrets(&store, "jump").unwrap();
+    assert_eq!(stored.hops.keys().collect::<Vec<_>>(), vec!["ops@new:22"]);
+    assert_eq!(
+        stored.fields.get("sshPassword").map(String::as_str),
+        Some("gw")
+    );
+
+    // Without pruning (an entry another file may still read) nothing is dropped.
+    let store = seeded();
+    let mut conns = edited();
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap());
+    let stored = secret_fields::read_field_secrets(&store, "jump").unwrap();
+    assert_eq!(stored.hops.len(), 2);
+}

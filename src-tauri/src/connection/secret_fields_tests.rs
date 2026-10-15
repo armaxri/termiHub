@@ -197,3 +197,31 @@ fn clearing_the_last_secret_deletes_the_entry_and_unknown_names_change_nothing()
     // Nothing stored: still a no-op.
     remove_field_secrets(&store, "c", &["sshPassword".into()], &[]).unwrap();
 }
+
+#[test]
+fn pruning_drops_only_hop_secrets_of_hops_the_settings_no_longer_have() {
+    let store = RecordingStore::default();
+    let mut taken = TakenSecrets::default();
+    taken.fields.insert("sshPassword".into(), "gw".into());
+    taken.hops.insert("u@a:22".into(), "pa".into());
+    taken.hops.insert("u@b:22".into(), "pb".into());
+    store_field_secrets(&store, "c", taken).unwrap();
+
+    let settings = json!({ "proxyJump": [{ "host": "b", "username": "u" }] });
+    let removed = prune_orphan_hop_secrets(&store, "c", &settings).unwrap();
+    assert_eq!(removed, vec!["u@a:22".to_string()]);
+    let stored = read_field_secrets(&store, "c").unwrap();
+    assert_eq!(stored.hops.keys().collect::<Vec<_>>(), vec!["u@b:22"]);
+    assert_eq!(
+        stored.fields.get("sshPassword").map(String::as_str),
+        Some("gw")
+    );
+
+    // Nothing orphaned: nothing removed. No entry: nothing to do.
+    assert!(prune_orphan_hop_secrets(&store, "c", &settings)
+        .unwrap()
+        .is_empty());
+    assert!(prune_orphan_hop_secrets(&store, "none", &settings)
+        .unwrap()
+        .is_empty());
+}
