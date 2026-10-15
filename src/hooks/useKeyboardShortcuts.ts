@@ -10,6 +10,7 @@ import {
   getActionScope,
 } from "@/services/keybindings";
 import { CONTEXT_COMMANDS } from "@/services/contextCommands";
+import { cycleLandmarkFocus } from "@/services/landmarkFocus";
 import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
 import {
   activeContextFromTab,
@@ -78,11 +79,17 @@ export function useKeyboardShortcuts() {
         return;
       }
 
+      // A focused terminal keeps keys bound to terminal-yielding actions (F6 /
+      // Shift+F6, #4773): no preventDefault, so the running program gets them.
+      const scope = getActionScope(action);
+      if (scope === "yields-to-terminal" && isEventFromTerminal(e)) {
+        return;
+      }
+
       // Context-aware routing: when an editor or input surface owns this combo,
       // step aside (no preventDefault) so the focused widget handles it. The
       // setting lets users restore the old global-first behavior. Global-scoped
       // actions short-circuit before any context/DOM lookup since they always fire.
-      const scope = getActionScope(action);
       const delegationEnabled = currentSettingsView().editorShortcutDelegation !== false;
       if (delegationEnabled && scope !== "global") {
         const ctx = activeContextFromTab(getActiveTab(useAppStore.getState()) ?? undefined);
@@ -139,6 +146,18 @@ export function useKeyboardShortcuts() {
         case "split-down":
           e.preventDefault();
           useAppStore.getState().splitPanel("vertical");
+          break;
+
+        case "focus-next-region":
+        case "focus-next-region-anywhere":
+          e.preventDefault();
+          cycleLandmarkFocus(1);
+          break;
+
+        case "focus-prev-region":
+        case "focus-prev-region-anywhere":
+          e.preventDefault();
+          cycleLandmarkFocus(-1);
           break;
 
         case "zoom-panel":

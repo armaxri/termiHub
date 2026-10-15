@@ -70,6 +70,44 @@ other shell integrations (starship, VS Code's scripts, …) emit them natively.
 - Marks live in the terminal buffer: a prompt that scrolls out of the scrollback
   (or is cleared) is forgotten, and marks are not restored after a reconnect.
 
+## Moving between regions (F6)
+
+<kbd>F6</kbd> moves keyboard focus to the next region of the window and
+<kbd>Shift</kbd>+<kbd>F6</kbd> to the previous one, wrapping around — the same
+keys VS Code and browsers use. The regions are the app shell's landmarks, in
+this order:
+
+| Region        | Landmark | Focus lands on                                   |
+| ------------- | -------- | ------------------------------------------------ |
+| Activity bar  | `nav`    | The active activity-bar item                     |
+| Sidebar       | `aside`  | The sidebar's first control                      |
+| Terminal area | `main`   | The active terminal, or the active tab otherwise |
+| Status bar    | `footer` | The first status-bar control                     |
+
+| Action                                     | macOS          | Windows / Linux | Works while a terminal has focus |
+| ------------------------------------------ | -------------- | --------------- | -------------------------------- |
+| Focus Next Region                          | `F6`           | `F6`            | No — the key goes to the program |
+| Focus Previous Region                      | `Shift+F6`     | `Shift+F6`      | No — the key goes to the program |
+| Focus Next Region (Also from Terminal)     | `Cmd+F6`       | `Ctrl+F6`       | Yes                              |
+| Focus Previous Region (Also from Terminal) | `Cmd+Shift+F6` | `Ctrl+Shift+F6` | Yes                              |
+
+- **A focused terminal keeps F6.** Bare <kbd>F6</kbd> / <kbd>Shift</kbd>+<kbd>F6</kbd>
+  are passed through to the program running in the terminal (Midnight
+  Commander, editors, …), so they never move focus out of a terminal. Use
+  <kbd>Ctrl</kbd>+<kbd>F6</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F6</kbd>
+  there instead; those work everywhere. The shortcuts overlay marks the bare
+  keys as active "Outside terminals".
+- macOS uses <kbd>Cmd</kbd> rather than <kbd>Ctrl</kbd> for the variants that
+  work in a terminal, because <kbd>Ctrl</kbd>+<kbd>F6</kbd> is the system's
+  "move focus to the floating window" key.
+- Regions that are not on screen — a collapsed sidebar, a hidden activity bar
+  or status bar — are skipped.
+- Focus inside a dialog stays there; the keys do nothing until the dialog
+  closes.
+- All four actions can be rebound in **Settings → Keyboard Shortcuts**. A
+  rebound **Focus Next Region** / **Focus Previous Region** key still goes to
+  the terminal program while a terminal has focus.
+
 ## Moving items without dragging
 
 Tabs, saved connections and remote agents can be moved from the keyboard as

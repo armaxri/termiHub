@@ -7,6 +7,7 @@
  */
 import { COMMAND_MARK_ACTIONS } from "@/services/commandMarks";
 import {
+  getActionScope,
   isAppShortcut,
   isChordPending,
   isShellReservedKey,
@@ -90,6 +91,12 @@ export function routeTerminalKeyEvent(e: KeyboardEvent, ctx: TerminalKeyRoutingC
   // the shell emits OSC 133 marks. Without them, let the key reach the
   // shell exactly as before (#3415) — the global handler's run is a no-op.
   if (action && COMMAND_MARK_ACTIONS.has(action) && !ctx.hasCommandMarks()) {
+    return true;
+  }
+
+  // Terminal-yielding actions (F6 / Shift+F6 region cycling, #4773) leave the
+  // key to the running program; the global handler skips them here too.
+  if (action && getActionScope(action) === "yields-to-terminal") {
     return true;
   }
 

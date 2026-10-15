@@ -257,4 +257,48 @@ describe("ShortcutsOverlay", () => {
       expect(keys).toEqual(["Ctrl+Alt"]);
     });
   });
+
+  describe("landmark focus cycling (#4773)", () => {
+    afterEach(() => clearOverrides());
+
+    function kbds(action: string): (string | null)[] {
+      return Array.from(
+        document.querySelectorAll(`[data-testid="shortcut-row-${action}"] kbd`),
+        (k) => k.textContent
+      );
+    }
+
+    it("lists the F6 / Shift+F6 region shortcuts", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const next = document.querySelector('[data-testid="shortcut-row-focus-next-region"]');
+      const prev = document.querySelector('[data-testid="shortcut-row-focus-prev-region"]');
+      expect(next?.textContent).toContain("Focus Next Region");
+      expect(prev?.textContent).toContain("Focus Previous Region");
+      expect(kbds("focus-next-region")).toEqual(["F6"]);
+      expect(kbds("focus-prev-region")).toEqual(["Shift+F6"]);
+      expect(kbds("focus-next-region-anywhere")).toEqual(["Ctrl+F6"]);
+      expect(kbds("focus-prev-region-anywhere")).toEqual(["Ctrl+Shift+F6"]);
+    });
+
+    it("marks bare F6 as active outside terminals only", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const scope = (action: string) =>
+        document.querySelector(`[data-testid="shortcut-row-${action}"] .shortcuts-overlay__scope`)
+          ?.textContent;
+      expect(scope("focus-next-region")).toBe("Outside terminals");
+      expect(scope("focus-next-region-anywhere")).toBe("All tabs");
+    });
+
+    it("shows a user override instead of the default", () => {
+      setOverride("focus-next-region", { key: "F7" });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(kbds("focus-next-region")).toEqual(["F7"]);
+    });
+  });
 });

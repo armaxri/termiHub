@@ -297,6 +297,45 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "focus-next-region",
+    label: "Focus Next Region",
+    category: "navigation",
+    // F6 / Shift+F6 cycle the shell landmarks (activity bar, sidebar, terminal
+    // area, status bar), as in VS Code and browsers (#4773). A focused terminal
+    // keeps the bare keys for its program (Midnight Commander, …), so these
+    // yield there; the Ctrl/Cmd variants below cycle from inside a terminal.
+    macDefault: { key: "F6" },
+    winLinuxDefault: { key: "F6" },
+    configurable: true,
+    scope: "yields-to-terminal",
+  },
+  {
+    action: "focus-prev-region",
+    label: "Focus Previous Region",
+    category: "navigation",
+    macDefault: { key: "F6", shift: true },
+    winLinuxDefault: { key: "F6", shift: true },
+    configurable: true,
+    scope: "yields-to-terminal",
+  },
+  {
+    action: "focus-next-region-anywhere",
+    label: "Focus Next Region (Also from Terminal)",
+    category: "navigation",
+    // Cmd on macOS: Ctrl+F6 is the system "move focus to floating window" key.
+    macDefault: { key: "F6", meta: true },
+    winLinuxDefault: { key: "F6", ctrl: true },
+    configurable: true,
+  },
+  {
+    action: "focus-prev-region-anywhere",
+    label: "Focus Previous Region (Also from Terminal)",
+    category: "navigation",
+    macDefault: { key: "F6", meta: true, shift: true },
+    winLinuxDefault: { key: "F6", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "zoom-panel",
     label: "Toggle Panel Zoom",
     category: "navigation",

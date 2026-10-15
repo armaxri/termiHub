@@ -24,6 +24,11 @@ import { useAppStore } from "@/store/appStore";
  * - `release-remote-desktop-keyboard` — the remote-desktop release chord
  *   (#4524) is read directly by the focused canvas; running it from the
  *   palette is meaningless because opening the palette already left the canvas.
+ * - `focus-next-region` / `focus-prev-region` and their `-anywhere` variants —
+ *   F6 / Ctrl+F6 landmark cycling (#4773)
+ *   moves focus relative to the currently focused region; from the palette,
+ *   focus sits in the palette dialog and is restored on close, so there is no
+ *   region to move from.
  *
  * The clipboard actions (`copy` / `paste` / `select-all`) are surfaced through
  * `CONTEXT_COMMANDS`, which routes them to the focused terminal via the
@@ -32,6 +37,10 @@ import { useAppStore } from "@/store/appStore";
 const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
   "command-palette",
   RELEASE_CHORD_ACTION,
+  "focus-next-region",
+  "focus-prev-region",
+  "focus-next-region-anywhere",
+  "focus-prev-region-anywhere",
 ]);
 
 describe("command palette action coverage", () => {

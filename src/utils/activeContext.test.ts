@@ -94,6 +94,16 @@ describe("isScopeCompatible", () => {
     }
   });
 
+  it("yields-to-terminal scope is compatible with every context and text input (#4773)", () => {
+    // The terminal yield depends on the event origin and is checked by the key
+    // routers; context-wise the scope behaves like global, so F6 still cycles
+    // from a sidebar search box or an editor.
+    for (const ctx of CONTEXTS) {
+      expect(isScopeCompatible("yields-to-terminal", ctx, false)).toBe(true);
+      expect(isScopeCompatible("yields-to-terminal", ctx, true)).toBe(true);
+    }
+  });
+
   it("terminal scope is compatible only with the terminal context", () => {
     expect(isScopeCompatible("terminal", "terminal", false)).toBe(true);
     expect(isScopeCompatible("terminal", "editor", false)).toBe(false);
