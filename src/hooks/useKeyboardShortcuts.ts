@@ -10,6 +10,7 @@ import {
   getActionScope,
 } from "@/services/keybindings";
 import { CONTEXT_COMMANDS } from "@/services/contextCommands";
+import { cycleLandmarkFocus } from "@/services/landmarkFocus";
 import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
 import {
   activeContextFromTab,
@@ -139,6 +140,16 @@ export function useKeyboardShortcuts() {
         case "split-down":
           e.preventDefault();
           useAppStore.getState().splitPanel("vertical");
+          break;
+
+        case "focus-next-region":
+          e.preventDefault();
+          cycleLandmarkFocus(1);
+          break;
+
+        case "focus-prev-region":
+          e.preventDefault();
+          cycleLandmarkFocus(-1);
           break;
 
         case "zoom-panel":

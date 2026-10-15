@@ -297,6 +297,25 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "focus-next-region",
+    label: "Focus Next Region",
+    category: "navigation",
+    // F6 / Shift+F6 cycle the shell landmarks (activity bar, sidebar, terminal
+    // area, status bar), as in VS Code and browsers (#4773). Function keys are
+    // not shell-reserved; the terminal swallows them like any app shortcut.
+    macDefault: { key: "F6" },
+    winLinuxDefault: { key: "F6" },
+    configurable: true,
+  },
+  {
+    action: "focus-prev-region",
+    label: "Focus Previous Region",
+    category: "navigation",
+    macDefault: { key: "F6", shift: true },
+    winLinuxDefault: { key: "F6", shift: true },
+    configurable: true,
+  },
+  {
     action: "zoom-panel",
     label: "Toggle Panel Zoom",
     category: "navigation",
