@@ -125,8 +125,7 @@ describe("checkouts never persist the token (CI2-007, #4729)", () => {
   it("sets persist-credentials: false on every checkout outside the allowlist", () => {
     const persisting = CHECKOUTS.filter(
       (step) =>
-        !PERSISTING_ALLOWLIST.has(step.key) &&
-        !/\n\s+persist-credentials: false\b/.test(step.body)
+        !PERSISTING_ALLOWLIST.has(step.key) && !/\n\s+persist-credentials: false\b/.test(step.body)
     ).map((step) => `${step.where} (${step.key})`);
     expect(persisting).toEqual([]);
   });
