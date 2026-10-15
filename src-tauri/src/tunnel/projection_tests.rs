@@ -30,7 +30,7 @@ use crate::tunnel::config::{
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
+pub(super) fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
     TunnelConfig {
         id: id.to_string(),
         name: name.to_string(),
@@ -49,7 +49,7 @@ fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
     }
 }
 
-fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
+pub(super) fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
     TunnelConfig {
         id: id.to_string(),
         name: name.to_string(),
@@ -66,7 +66,7 @@ fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
     }
 }
 
-fn state(id: &str, status: TunnelStatus) -> TunnelState {
+pub(super) fn state(id: &str, status: TunnelStatus) -> TunnelState {
     TunnelState::desktop(id.to_string(), status, None, TunnelStats::default())
 }
 
@@ -163,20 +163,20 @@ impl FakeTunnels {
 
 /// An in-memory sink that records delivered frames and can be killed to simulate
 /// a dead subscriber (mirrors the Phase-1 substrate test double).
-struct VecSink {
+pub(super) struct VecSink {
     frames: Mutex<Vec<ProjectionFrame>>,
     alive: AtomicBool,
 }
 
 impl VecSink {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             frames: Mutex::new(Vec::new()),
             alive: AtomicBool::new(true),
         }
     }
 
-    fn diffs(&self) -> Vec<DiffFrame> {
+    pub(super) fn diffs(&self) -> Vec<DiffFrame> {
         self.frames
             .lock()
             .unwrap()
@@ -200,20 +200,20 @@ impl ProjectionSink for VecSink {
 }
 
 /// A minimal client cache mirroring the TypeScript `ProjectionClient`.
-struct ClientCache {
-    version: u64,
-    view: Value,
+pub(super) struct ClientCache {
+    pub(super) version: u64,
+    pub(super) view: Value,
 }
 
 impl ClientCache {
-    fn from_snapshot(s: &SnapshotFrame) -> Self {
+    pub(super) fn from_snapshot(s: &SnapshotFrame) -> Self {
         Self {
             version: s.version,
             view: s.view.clone(),
         }
     }
 
-    fn apply(&mut self, diff: &DiffFrame) {
+    pub(super) fn apply(&mut self, diff: &DiffFrame) {
         assert_eq!(diff.base_version, self.version, "diff must fit the cache");
         apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
         self.version = diff.version;

@@ -3,7 +3,7 @@
   flex-wrap: wrap;
   gap: var(--spacing-sm);
   margin-top: calc(-1 * var(--spacing-xs));
-  margin-bottom: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
 }
 
 /* A plugin-provided theme option: its name preceded by a puzzle-piece badge. */

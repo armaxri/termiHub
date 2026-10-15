@@ -400,6 +400,11 @@
   background: var(--border-secondary);
 }
 
+/* A labelled group of options; its rows stack like the ungrouped list. */
+.ui-select__group {
+  display: block;
+}
+
 .ui-select__group-label {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
@@ -1209,6 +1214,11 @@
   color: var(--text-secondary);
 }
 
+/* The loading spinner that stands in for the icon; never squeezed by the row. */
+.ui-empty__spinner {
+  flex-shrink: 0;
+}
+
 /* An inline text-link action inside an empty state's copy ("…, or write one
    by hand."), for when a full Button would break the sentence. */
 .ui-empty__link {
@@ -1526,6 +1536,125 @@
 .ui-field--checkbox {
   flex-direction: row;
   align-items: center;
+}
+
+/* Inline row (layout="inline"): label + hint stacked on the left, a compact
+   control (toggle, action button) right-aligned beside them; an inline error
+   spans the full row below. */
+.ui-field--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: var(--spacing-md);
+}
+
+.ui-field__text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.ui-field__control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.ui-field--inline > .ui-field__msg {
+  flex-basis: 100%;
+}
+
+/* ── Field: settings variant (variant="settings") ───────────────────── */
+/* The compact settings-panel scaffold the Field primitive renders for the
+   Settings panel and the connection editor. It lives here, with the primitive,
+   so it is always loaded — the editor and the Settings panel are lazy chunks
+   and must not carry styles the other one needs (#4708). */
+.settings-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.settings-form__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Row holding a field label next to its optional "?" help affordance (UX-009).
+   The help Button keeps its own inline margin, so no extra gap is set here. */
+.settings-form__label-row {
+  display: flex;
+  align-items: center;
+}
+
+/* Required-field marker (asterisk) appended to a field label. */
+.settings-form__required {
+  color: var(--color-error);
+}
+
+.settings-form__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.settings-form__field--checkbox input[type="checkbox"] {
+  width: auto;
+  height: auto;
+}
+
+/* Inline settings row (toggles, action buttons): label with its hint beneath it
+   on the left, the control right-aligned. A long hint wraps inside the text
+   column and never sits between the label and the control. */
+.settings-form__field--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: var(--spacing-md);
+  row-gap: var(--spacing-xs);
+}
+
+.settings-form__field-text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.settings-form__field-control {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.settings-form__field--inline > .ui-field__msg {
+  flex-basis: 100%;
+}
+
+/* Field hint: spacing between fields comes from the field's own margin, so the
+   hint carries none of its own (it used to add a second, uneven gap). */
+.settings-form__hint {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin: 0;
+  font-style: italic;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.settings-form__hint--warning {
+  color: var(--color-warning);
 }
 
 /* === Chip (read-only label pill, #4188) === */

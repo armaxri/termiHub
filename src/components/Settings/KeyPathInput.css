@@ -1,13 +1,54 @@
+/* Input-group: the path input and its "…" browse button share one border box,
+   the button attached flush to the input's trailing edge (#4708). */
 .key-path-input {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
+  align-items: stretch;
 }
 
 .key-path-input__field {
   flex: 1;
   min-width: 0;
+}
+
+.key-path-input .key-path-input__field.ui-input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.key-path-input__browse {
+  flex-shrink: 0;
+  height: var(--control-height-lg);
+  min-width: var(--control-height-lg);
+  padding: 0 var(--spacing-sm);
+  margin: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-primary);
+  border-left: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.key-path-input__browse:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.key-path-input__browse:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key-path-input__browse {
+    transition: none;
+  }
 }
 
 .key-path-input__dropdown {

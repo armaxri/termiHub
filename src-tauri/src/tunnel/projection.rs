@@ -24,8 +24,10 @@
 //! [`build_tunnel_view`] is the pure snapshot function; [`publish_tunnels`]
 //! diffs and fans out a new snapshot after any authoritative change. Status
 //! transitions publish automatically because [`crate::tunnel::tunnel_manager`]'s
-//! status-emit choke point calls [`publish_tunnels`]; config/stats changes
-//! publish from their own sites.
+//! status-emit choke point calls [`publish_tunnels`]; config changes publish
+//! from their own sites. The 1 Hz live-stats tick instead publishes a
+//! stats-only delta via [`publish_tunnel_stats`] (#4574), patching just
+//! `states.<id>.stats` rather than rebuilding the whole view.
 //!
 //! # Intents
 //!
@@ -51,8 +53,11 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
-use crate::tunnel::config::{TunnelConfig, TunnelState};
+use crate::projection::{
+    compute_ops, report_perf006_divergence, DiffOp, HandlerRegistry, Intent, ProducedRegion,
+    Projector,
+};
+use crate::tunnel::config::{TunnelConfig, TunnelState, TunnelStats, TunnelStatus};
 use crate::tunnel::tunnel_manager::TunnelManager;
 
 /// The projection region id for the SSH-tunnels domain (shared, per Open Design
@@ -106,6 +111,127 @@ pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     projection
         .projector
         .publish_with(TUNNELS_REGION, || build_tunnel_view(&manager));
+}
+
+/// Publish only the live per-tunnel stats onto the `tunnels` region, as an
+/// incremental delta (#4574, the optional half of PERF2-007 / #4344).
+///
+/// The 1 Hz stats tick (the desktop stats emitter and the agent `tunnel.status`
+/// poller) changes nothing but `states.<id>.stats`, so instead of rebuilding,
+/// re-serializing and structurally diffing the whole view ([`publish_tunnels`])
+/// it goes through [`Projector::publish_delta`] like the other hot regions
+/// (#2878): the closure patches just the changed stats subtrees in place and
+/// emits exactly their ops. Status and config changes keep using the full
+/// [`publish_tunnels`].
+///
+/// The samples are read **under the region lock**, inside the delta closure —
+/// the same build-under-lock guarantee [`publish_tunnels`] has (#3788) — so a
+/// delta can never land older stats over a newer full publish. Lock order stays
+/// region lock → manager mutexes. A no-op when either state is not managed.
+pub fn publish_tunnel_stats<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
+    let (Some(projection), Some(manager)) = (
+        app_handle.try_state::<ProjectionState>(),
+        app_handle.try_state::<Arc<TunnelManager>>(),
+    ) else {
+        return;
+    };
+    publish_stats_delta(&projection.projector, || manager.live_stats());
+}
+
+/// Publish a stats-only delta of the `tunnels` region to `projector`, with the
+/// samples produced by `samples` **under the region lock** (#4574).
+///
+/// Debug builds cross-check the incremental ops against the whole-region diff
+/// of the old and new views (PERF-006); on a mismatch the frame carries the
+/// whole-region ops instead (so subscribers stay exact) and the divergence is
+/// reported after the fan-out. Returns the new version, or `None` when no
+/// projected stats changed (no frame, no version bump).
+pub(crate) fn publish_stats_delta(
+    projector: &Projector,
+    samples: impl FnOnce() -> Vec<(String, TunnelStats)>,
+) -> Option<u64> {
+    let mut divergence = None;
+    let published = projector.publish_delta(TUNNELS_REGION, |view| {
+        let samples = samples();
+        if cfg!(debug_assertions) {
+            let old = view.clone();
+            let ops = apply_tunnel_stats_delta(view, &samples);
+            let expected = compute_ops(&old, view);
+            if ops != expected {
+                divergence = Some(format!(
+                    "incremental ops {ops:?} != whole-region ops {expected:?}"
+                ));
+                return expected;
+            }
+            ops
+        } else {
+            apply_tunnel_stats_delta(view, &samples)
+        }
+    });
+    if let Some(reason) = divergence {
+        report_perf006_divergence(TUNNELS_REGION, &reason);
+    }
+    published
+}
+
+/// Splice live stats samples into a `tunnels` view **in place** and return
+/// exactly the ops that splice implies (#4574). Pure, so it is unit-testable.
+///
+/// Only a tunnel whose projected state is `connected` is patched — the only
+/// status [`TunnelManager::get_statuses`] reports live stats for — so the
+/// patched view is always one a full [`build_tunnel_view`] could have produced.
+/// An id with no projected state (a config not yet published) or a non-connected
+/// one is skipped: the status transition's own full publish carries it. An
+/// unchanged sample emits nothing.
+///
+/// The ops are the diff of the reduced subtrees `{states: {<id>: {stats}}}` for
+/// the changed ids. `json_patch::diff` visits object keys in sorted order and
+/// each key's sub-diff depends only on that key's subtrees, so this equals the
+/// whole-view diff when nothing but those stats changed (see `delta_splice`).
+pub fn apply_tunnel_stats_delta(
+    view: &mut Value,
+    samples: &[(String, TunnelStats)],
+) -> Vec<DiffOp> {
+    let connected = serde_json::to_value(TunnelStatus::Connected).unwrap_or(Value::Null);
+    let Some(states) = view.get("states").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+
+    let mut old = Map::new();
+    let mut new = Map::new();
+    for (id, stats) in samples {
+        let Some(entry) = states.get(id) else {
+            continue;
+        };
+        if entry.get("status") != Some(&connected) {
+            continue;
+        }
+        let Ok(new_stats) = serde_json::to_value(stats) else {
+            continue;
+        };
+        let old_stats = entry.get("stats").cloned().unwrap_or(Value::Null);
+        if old_stats == new_stats {
+            continue;
+        }
+        old.insert(id.clone(), json!({ "stats": old_stats }));
+        new.insert(id.clone(), json!({ "stats": new_stats }));
+    }
+    if new.is_empty() {
+        return Vec::new();
+    }
+
+    let ops = compute_ops(
+        &json!({ "states": Value::Object(old) }),
+        &json!({ "states": Value::Object(new.clone()) }),
+    );
+    if let Some(states) = view.get_mut("states").and_then(Value::as_object_mut) {
+        for (id, mut patch) in new {
+            if let Some(entry) = states.get_mut(&id).and_then(Value::as_object_mut) {
+                entry.insert("stats".to_string(), patch["stats"].take());
+            }
+        }
+    }
+    ops
 }
 
 /// Register the SSH-tunnels domain intents on a handler registry.
@@ -253,3 +379,7 @@ fn publish_region(manager: &TunnelManager, projector: &Projector) -> Vec<Produce
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "projection_stats_delta_tests.rs"]
+mod stats_delta_tests;

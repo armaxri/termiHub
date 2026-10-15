@@ -321,6 +321,28 @@ tests:
     verification: manual
     tags: [visual]
 
+  - id: MT-UI-54
+    release_gate: true
+    manual_reason: "fresh-start lazy-chunk CSS loading and settings row layout are visual; the stylesheet placement is pinned by ui/uiCssCoverage.test.ts"
+    name: "Settings fields render styled on a fresh start (no connection editor opened)"
+    pr: 4708
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Quit and restart the app; do NOT open any connection editor."
+      - "Open Settings and visit every category (General, Appearance, Terminal, Sessions, Safety Prompts, X Server, Security, Plugins, Backup, Schedules, Updates, ...)."
+      - "Repeat General and Sessions with the Settings tab narrowed to about 420 px wide."
+      - "Open a connection editor (new SSH connection) and look at its fields and toggles."
+    expected:
+      - "Toggle and button rows: label with its hint underneath on the left, the control right-aligned; a long hint wraps under its label."
+      - "Input and select rows: label, then the control, then the hint; even spacing between fields and between sections."
+      - "The Default SSH Key Path '…' button is attached to the right edge of its input as one input-group."
+      - "Action buttons (e.g. Clear All History) sit on the right of their row, never between the label and the hint."
+      - "The connection editor's fields look the same as before this change, apart from toggles sharing the inline row layout."
+    verification: manual
+    tags: [visual]
+
   - id: MT-UI-55
     release_gate: true
     manual_reason: "real flex-wrap layout at the minimum window size; the wrap rules and header structure are pinned by ExternalFilesSettings.test.tsx"
