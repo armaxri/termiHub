@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Ban,
   FileWarning,
+  KeyRound,
   Network,
   Plug,
   Power,
@@ -52,6 +53,11 @@ import "./CloseWindowDecisionDialog.css";
  * the user explicitly discards it here or opens it to save or discard. Without a
  * window to move to, unsaved editors are listed as discarded and the choices are
  * Cancel or "Discard & close".
+ *
+ * Unsaved connection, tunnel and workspace editors move with their form values
+ * (#4500), but a secret typed into one (a password, a key passphrase) is never
+ * copied to another window: the dialog names the fields that reopen empty.
+ * Only an unsaved Settings panel still blocks the move.
  *
  * The window's other tabs (saved file editors, Settings, the log viewer and so
  * on) move too when the destination can reopen them (#4501); the dialog names
@@ -113,6 +119,10 @@ export function CloseWindowDecisionDialog() {
   const showMove = canMove && (count > 0 || movableCount > 0);
   const moveBlocked = blockedEditors.length > 0;
   const otherTabs = request.otherTabs ?? [];
+  // Movable form editors whose typed secrets stay behind (#4500).
+  const secretEditors = dirtyEditors.filter(
+    (editor) => editor.movable && (editor.clearedSecrets?.length ?? 0) > 0
+  );
 
   const handleMove = async () => {
     if (!selected || moveBlocked) return;
@@ -248,6 +258,8 @@ export function CloseWindowDecisionDialog() {
         </p>
       )}
 
+      {showMove && secretEditors.length > 0 && <SecretsNote editors={secretEditors} />}
+
       {showMove && otherTabs.length > 0 && <MoveSummary otherTabs={otherTabs} />}
 
       {others.length > 1 && showMove && (
@@ -323,11 +335,44 @@ export function CloseWindowDecisionDialog() {
   );
 }
 
+/** `A`, `A and B`, `A, B and C`: a list of words for prose. */
+function joinWords(words: ReadonlyArray<string>): string {
+  if (words.length <= 1) return words.join("");
+  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
 /** `"A"`, `"A" and "B"`, `"A", "B" and "C"`: quoted tab titles for prose. */
-function quotedTitles(tabs: ReadonlyArray<WindowCloseOtherTab>): string {
-  const quoted = tabs.map((tab) => `"${tab.title}"`);
-  if (quoted.length <= 1) return quoted.join("");
-  return `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+function quotedTitles(tabs: ReadonlyArray<{ title: string }>): string {
+  return joinWords(tabs.map((tab) => `"${tab.title}"`));
+}
+
+/**
+ * Says which secrets typed into a moving form editor stay behind (#4500): a
+ * password or key passphrase is never copied out of its editor, so the editor
+ * reopens in the destination window with that field empty, and the user types
+ * it again there before saving.
+ */
+function SecretsNote({ editors }: { editors: ReadonlyArray<WindowCloseDirtyEditor> }) {
+  return (
+    <div
+      className="close-window-decision__secrets"
+      data-testid="close-window-decision-secrets-note"
+    >
+      <KeyRound className="li close-window-decision__secrets-icon" aria-hidden="true" />
+      <div>
+        {editors.map((editor) => {
+          const secrets = editor.clearedSecrets ?? [];
+          return (
+            <p key={editor.tabId} data-testid="close-window-decision-secrets-row">
+              &quot;{editor.title}&quot; moves with {joinWords(secrets)} left empty, since typed
+              secrets are never copied to another window. Type{" "}
+              {secrets.length === 1 ? "it" : "them"} again there before saving.
+            </p>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /**

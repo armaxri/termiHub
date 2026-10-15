@@ -26,14 +26,27 @@ export interface ClearedDraft<T> {
   cleared: string[];
 }
 
-/** Turn a key such as `sshPassword` into a readable label ("ssh password"). */
+/** Words a key label spells in capitals. */
+const ACRONYMS: ReadonlySet<string> = new Set(["ssh", "api", "otp", "totp", "pin", "id", "vnc"]);
+
+/** Turn a key such as `sshPassword` into a readable label ("SSH password"). */
 function keyLabel(key: string): string {
   const words = key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => (ACRONYMS.has(word) ? word.toUpperCase() : word))
+    .join(" ");
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** A hop secret's label after "Jump host": the key label, lower-case but for acronyms. */
+function hopLabel(key: string): string {
+  const label = keyLabel(key);
+  const [first = "", ...rest] = label.split(" ");
+  return [ACRONYMS.has(first.toLowerCase()) ? first : first.toLowerCase(), ...rest].join(" ");
 }
 
 /** The password-type fields of `schema`, keyed by settings key, with their labels. */
@@ -68,9 +81,7 @@ export function clearDraftSecrets<T>(values: T, schema?: SettingsSchema): Cleare
       if (typeof entry === "string" && (schemaLabel !== undefined || isSecretKeyName(key))) {
         out[key] = "";
         if (entry.length > 0) {
-          note(
-            hopContext ? `Jump host ${keyLabel(key).toLowerCase()}` : (schemaLabel ?? keyLabel(key))
-          );
+          note(hopContext ? `Jump host ${hopLabel(key)}` : (schemaLabel ?? keyLabel(key)));
         }
         continue;
       }
