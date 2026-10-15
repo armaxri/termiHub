@@ -1850,7 +1850,7 @@ modules:   412 loaded (base, size, name, build id; * = holds a backtrace frame)
   frame are marked `*`. The section is capped (1024 modules, 64 KiB); when a process has
   more, the `*` modules are kept first and a final line counts the omitted ones. The size
   is the `__TEXT` segment on macOS, the end of the last loaded segment on Linux and
-  `SizeOfImage` on Windows. dyld itself is not in macOS's image list.
+  `SizeOfImage` on Windows.
 
 Download the archive for the report's version, platform and app, unpack it, and confirm
 the build id with `node scripts/internal/debug-symbols.mjs id <symbol file>` (or the

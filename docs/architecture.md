@@ -3611,7 +3611,12 @@ sandbox is a pre-v1.0 requirement and approved the concept
   does not mediate metadata; without the namespace that leak remains and is documented). macOS
   narrows `sysctl-read` to named values found by tracing and denies `process-info*` explicitly
   before allowing it for the runner: `(deny default)` alone let a plugin list processes and read
-  other processes' arguments and environment.
+  other processes' arguments and environment. On Windows the LPAC cannot reach the trust store
+  (#4606, probed on the hosted runner): both `ROOT` system stores and `CertGetCertificateChain`
+  are denied, `lpacCryptoServices` does not open them, and `registryRead` would re-open
+  `HKCU\Software` (the runner then refuses to start). No capability is added; a host-provided root
+  snapshot is the planned fix (#4811). The escape probe asserts the gap and that the user's CNG
+  keys and certificate-store keys stay unreachable.
 - **Fail closed.** The runner reports the layers it actually enforced before `dlopen`. If a layer is
   missing (mostly a Linux kernel without landlock) the plugin loads only with the hash-bound
   `reducedIsolationAccepted` acknowledgement; if setup fails, it does not load. Linux reduced
@@ -3643,7 +3648,8 @@ sandbox is a pre-v1.0 requirement and approved the concept
   outside the data folder fails with a permission error (use the bridge), no process spawning, and
   `HOME` / `TMPDIR` point into the data folder. Since #4342 also: inotify is unavailable on Linux,
   and TLS roots load through the platform verifier on macOS (anchor enumeration needs the keychain,
-  which stays closed) or the CA bundles on Linux. No third-party plugin had shipped, so there was no
+  which stays closed) or the CA bundles on Linux; on Windows a plugin must bring its own roots
+  until #4811. No third-party plugin had shipped, so there was no
   dual-mode period.
 - Each enabled plugin costs one process; terminal I/O crosses a socket (budget: at most +0.5 ms p99
   echo latency, an absolute throughput floor instead of a ratio, #4190).

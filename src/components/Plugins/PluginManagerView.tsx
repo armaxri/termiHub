@@ -192,6 +192,8 @@ export function PluginManagerView() {
           hostPlatform={pending.hostPlatform}
           platformSupported={pending.platformSupported}
           resolvedFilesystemPaths={pending.resolvedFilesystemPaths}
+          installedVersion={pending.installedVersion}
+          accessDiff={pending.accessDiff}
           onClose={() => setPending(null)}
         />
       )}

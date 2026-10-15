@@ -723,7 +723,17 @@ verification:
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Linux   | Read-only: the distribution CA bundles and hashed folders (`/etc/ssl/certs`, `/etc/ssl/cert.pem`, `/etc/pki/tls/certs`, `/etc/pki/ca-trust/extracted`, `/etc/ca-certificates`, `/usr/share/ca-certificates`, `/usr/local/share/ca-certificates`, `/var/lib/ca-certificates`) and the OpenSSL / crypto-policies files | `rustls-native-certs`, `rustls-platform-verifier`, or OpenSSL's default verify paths      |
 | macOS   | The platform verifier: `SecTrustEvaluateWithError` reaches the per-user trust daemon (`trustd`), which applies the system, admin and user trust settings. Read-only: `/etc/ssl/cert.pem` (the system roots only)                                                                                                     | `rustls-platform-verifier`, `native-tls`, or `security-framework`'s `SecTrust` evaluation |
-| Windows | Not yet verified inside the Less-Privileged AppContainer ([#4606](https://github.com/armaxri/termiHub/issues/4606))                                                                                                                                                                                                  | `rustls-platform-verifier` or `native-tls`                                                |
+| Windows | Nothing yet: inside the Less-Privileged AppContainer the system certificate stores and the CryptoAPI chain engine are denied, so the platform verifier and store enumeration both fail ([#4811](https://github.com/armaxri/termiHub/issues/4811) tracks a host-provided root snapshot)                               | Until #4811: ship the roots your plugin needs (for example `webpki-roots`)                |
+
+On Windows the sandbox was probed directly (#4606): `CertOpenSystemStore("ROOT")`,
+the local-machine `ROOT` store and `CertGetCertificateChain` all fail with
+`ERROR_ACCESS_DENIED` inside the Less-Privileged AppContainer. The
+`lpacCryptoServices` capability does not change that, and `registryRead` would
+also open `HKCU\Software` (other applications' saved sessions), so termiHub
+grants neither. Until the host provides a snapshot of the system roots
+([#4811](https://github.com/armaxri/termiHub/issues/4811)), a Windows plugin
+that needs TLS must carry its own roots, which means a user's corporate CA is
+not trusted there.
 
 On macOS, enumerating the trust anchors (`SecTrustCopyAnchorCertificates`,
 `SecTrustSettingsCopyCertificates`, which `rustls-native-certs` uses) needs the
@@ -1082,6 +1092,16 @@ from an HTTPS URL plus its SHA-256 (**Settings → Plugins → Install from URL*
 All three end in the same install dialog. Installing a newer file over an
 installed plugin upgrades it; an older version or a different build of the same
 version asks for confirmation first.
+
+When the package replaces an installed copy (an update or a re-install), the
+install dialog compares its access with the installed version's: what it asks
+for that the installed version did not — permissions, `filesystemPaths` folders
+(declared form and resolved folder) and `connectionPolicy` — appears under a
+_"This update asks for more access"_ banner, and what it no longer requests is
+listed below. The comparison uses the same canonical access a native plugin's
+trust is bound to, so a folder written differently but resolving to the same
+place is not a change. Ask only for what a release needs: every addition is
+shown to the user on update.
 
 A plugin can additionally publish an **update check** by setting `updateUrl` in
 its manifest to an HTTPS URL serving this JSON document:

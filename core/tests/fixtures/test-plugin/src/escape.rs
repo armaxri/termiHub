@@ -26,6 +26,10 @@
 //! | `env`   | read the environment variable `<arg>` (ALLOWED = set)     |
 //! | `tmp`   | write a file in `std::env::temp_dir()`                    |
 //! | `reg`   | open the registry key `HKCU\<arg>` for reading (Windows)  |
+//! | `regw`  | open the registry key `HKCU\<arg>` for writing (Windows;  |
+//! |         | #4606)                                                    |
+//! | `cngkey`| open the user's persisted CNG key named `<arg>` in the    |
+//! |         | Microsoft Software Key Storage Provider (Windows; #4606)  |
 //! | `pipe`  | open the named pipe `<arg>` for reading and writing       |
 //! | `sockets` | call `socket()` `<arg>` times (ALLOWED = any succeeded)   |
 //! | `sigsys`  | replace the `SIGSYS` handler (Linux; #4236)             |
@@ -33,7 +37,10 @@
 //! | `procmem` | open `/proc/<arg>/mem` for reading and writing (Linux)   |
 //! | `inotify` | watch the path `<arg>` with inotify (Linux; #4342)       |
 //! | `trust`   | verify a root of `/etc/ssl/cert.pem` with the platform   |
-//! |           | verifier, `SecTrustEvaluateWithError` (macOS; #4342)     |
+//! |           | verifier, `SecTrustEvaluateWithError` (macOS; #4342);    |
+//! |           | build + verify the chain of a root from the folder `<arg>`|
+//! |           | (or of the `ROOT` store) with `CertGetCertificateChain`, |
+//! |           | as `rustls-platform-verifier` does (Windows; #4606)      |
 //! | `proclist`| size the process table, `sysctl(KERN_PROC_ALL)` (macOS)  |
 //! | `procargs`| read `KERN_PROCARGS2` of the process `<arg>` (macOS)     |
 //! | `pidpath` | `proc_pidpath` of the process `<arg>` (macOS)            |
@@ -106,7 +113,9 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
                 .map(|()| path.display().to_string())
                 .map_err(io)
         }
-        "reg" => open_hkcu_key(arg),
+        "reg" => open_hkcu_key(arg, false),
+        "regw" => open_hkcu_key(arg, true),
+        "cngkey" => open_cng_key(arg),
         "pipe" => std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -125,7 +134,7 @@ fn run(op: &str, arg: &str) -> Result<String, String> {
             .map(|_| "opened".to_owned())
             .map_err(io),
         "inotify" => inotify_watch(arg),
-        "trust" => macos::verify_a_system_root(),
+        "trust" => verify_a_system_root(arg),
         "proclist" => macos::process_table_size(),
         "procargs" => macos::process_arguments(arg),
         "pidpath" => macos::process_path(arg),
@@ -145,8 +154,381 @@ fn unix_connect(_path: &str) -> Result<String, String> {
     Err("no Unix sockets on this platform".to_owned())
 }
 
+/// The platform certificate verifier accepts a system root (#4342, #4606).
 #[cfg(windows)]
-fn open_hkcu_key(subkey: &str) -> Result<String, String> {
+fn verify_a_system_root(roots: &str) -> Result<String, String> {
+    windows_trust::verify_a_system_root(roots)
+}
+
+#[cfg(not(windows))]
+fn verify_a_system_root(_roots: &str) -> Result<String, String> {
+    macos::verify_a_system_root()
+}
+
+/// Windows: the system trust store through CryptoAPI, the path
+/// `rustls-platform-verifier`, `native-tls` (SChannel) and
+/// `rustls-native-certs` take (#4606). Denied inside the LPAC today (#4811).
+#[cfg(windows)]
+mod windows_trust {
+    use std::ffi::{c_char, c_void};
+
+    type CertStore = *mut c_void;
+    type CertContext = *const c_void;
+
+    #[repr(C)]
+    struct CtlUsage {
+        count: u32,
+        identifiers: *mut *mut c_char,
+    }
+
+    #[repr(C)]
+    struct CertUsageMatch {
+        kind: u32,
+        usage: CtlUsage,
+    }
+
+    /// `CERT_CHAIN_PARA` (the leading members; `cbSize` says how many).
+    #[repr(C)]
+    struct CertChainPara {
+        size: u32,
+        requested_usage: CertUsageMatch,
+    }
+
+    /// The head of `CERT_CHAIN_CONTEXT`: `cbSize`, then `TrustStatus`.
+    #[repr(C)]
+    struct CertChainContextHead {
+        size: u32,
+        error_status: u32,
+        info_status: u32,
+    }
+
+    #[repr(C)]
+    struct CertChainPolicyPara {
+        size: u32,
+        flags: u32,
+        extra: *mut c_void,
+    }
+
+    #[repr(C)]
+    struct CertChainPolicyStatus {
+        size: u32,
+        error: u32,
+        chain_index: i32,
+        element_index: i32,
+        extra: *mut c_void,
+    }
+
+    #[link(name = "crypt32")]
+    extern "system" {
+        fn CertOpenSystemStoreW(provider: usize, name: *const u16) -> CertStore;
+        fn CertOpenStore(
+            provider: *const c_char,
+            encoding: u32,
+            crypt_provider: usize,
+            flags: u32,
+            para: *const c_void,
+        ) -> CertStore;
+        fn CertEnumCertificatesInStore(store: CertStore, previous: CertContext) -> CertContext;
+        fn CertCreateCertificateContext(encoding: u32, der: *const u8, len: u32) -> CertContext;
+        fn CertGetCertificateChain(
+            engine: *mut c_void,
+            cert: CertContext,
+            time: *const c_void,
+            additional_store: CertStore,
+            para: *const CertChainPara,
+            flags: u32,
+            reserved: *mut c_void,
+            chain: *mut *const CertChainContextHead,
+        ) -> i32;
+        fn CertVerifyCertificateChainPolicy(
+            policy: *const c_char,
+            chain: *const CertChainContextHead,
+            para: *const CertChainPolicyPara,
+            status: *mut CertChainPolicyStatus,
+        ) -> i32;
+        fn CertFreeCertificateChain(chain: *const CertChainContextHead);
+        fn CertFreeCertificateContext(cert: CertContext) -> i32;
+        fn CertCloseStore(store: CertStore, flags: u32) -> i32;
+    }
+
+    /// `CERT_CHAIN_POLICY_BASE`: an integer OID passed as a pointer.
+    const CERT_CHAIN_POLICY_BASE: *const c_char = std::ptr::without_provenance(1);
+    /// `CERT_STORE_PROV_MEMORY` / `CERT_STORE_PROV_SYSTEM_W`.
+    const CERT_STORE_PROV_MEMORY: *const c_char = std::ptr::without_provenance(2);
+    const CERT_STORE_PROV_SYSTEM_W: *const c_char = std::ptr::without_provenance(10);
+    /// `CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_READONLY_FLAG |
+    /// CERT_STORE_OPEN_EXISTING_FLAG`.
+    const LOCAL_MACHINE_READ_ONLY: u32 = 0x2_0000 | 0x8000 | 0x4000;
+    /// `X509_ASN_ENCODING | PKCS_7_ASN_ENCODING`.
+    const ENCODING: u32 = 0x1_0001;
+    /// `USAGE_MATCH_TYPE_AND`.
+    const USAGE_MATCH_TYPE_AND: u32 = 0;
+    /// How many roots to try before giving up (some may be expired or
+    /// disallowed; one trusted root is enough).
+    const MAX_TRIED: usize = 64;
+
+    /// Verify a system root the way `rustls-platform-verifier` verifies a
+    /// server certificate: a certificate context made from DER bytes, an
+    /// in-memory store for the "intermediates", and `CertGetCertificateChain`
+    /// on the default (current-user) chain engine, then the base chain
+    /// policy. A system root verifies exactly when the chain engine reaches
+    /// the system trust store.
+    ///
+    /// `roots` names a folder of DER certificates (the host test exports the
+    /// machine's roots there); empty enumerates the `ROOT` system store
+    /// instead (the unsandboxed control). The detail also reports whether
+    /// the current-user and local-machine `ROOT` stores open, which is what
+    /// store-enumerating loaders (`rustls-native-certs`) need.
+    pub(super) fn verify_a_system_root(roots: &str) -> Result<String, String> {
+        let stores = format!(
+            "CU ROOT {}, LM ROOT {}",
+            open_result(user_root()),
+            open_result(machine_root())
+        );
+        let outcome = if roots.is_empty() {
+            verify_from_store()
+        } else {
+            verify_from_folder(roots)
+        };
+        match outcome {
+            Ok(detail) => Ok(format!("{detail} ({stores})")),
+            Err(error) => Err(format!("{error} ({stores})")),
+        }
+    }
+
+    fn user_root() -> CertStore {
+        let name: Vec<u16> = "ROOT".encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: a NUL-terminated store name; the caller closes the store.
+        unsafe { CertOpenSystemStoreW(0, name.as_ptr()) }
+    }
+
+    fn machine_root() -> CertStore {
+        let name: Vec<u16> = "ROOT".encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: the system-store provider with a NUL-terminated store name;
+        // the caller closes the store.
+        unsafe {
+            CertOpenStore(
+                CERT_STORE_PROV_SYSTEM_W,
+                0,
+                0,
+                LOCAL_MACHINE_READ_ONLY,
+                name.as_ptr().cast(),
+            )
+        }
+    }
+
+    /// "opens" or the error, closing a store that opened.
+    fn open_result(store: CertStore) -> String {
+        if store.is_null() {
+            return format!("denied: {}", std::io::Error::last_os_error());
+        }
+        // SAFETY: a store opened by the caller, closed once.
+        unsafe { CertCloseStore(store, 0) };
+        "opens".to_owned()
+    }
+
+    fn verify_from_store() -> Result<String, String> {
+        let store = user_root();
+        if store.is_null() {
+            return Err(format!(
+                "CertOpenSystemStoreW(ROOT): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut last = "the ROOT store is empty".to_owned();
+        let mut tried = 0usize;
+        let mut cert: CertContext = std::ptr::null();
+        let outcome = loop {
+            // SAFETY: `store` is open; `cert` is NULL or the previous context,
+            // which this call frees.
+            cert = unsafe { CertEnumCertificatesInStore(store, cert) };
+            if cert.is_null() || tried == MAX_TRIED {
+                break Err(format!("{tried} roots tried, last: {last}"));
+            }
+            tried += 1;
+            match verify(cert) {
+                Ok(()) => break Ok(format!("root #{} of ROOT verified", tried - 1)),
+                Err(error) => last = error,
+            }
+        };
+        // SAFETY: `cert` is NULL or a context the enumeration handed out; the
+        // store is closed once.
+        unsafe {
+            if !cert.is_null() {
+                CertFreeCertificateContext(cert);
+            }
+            CertCloseStore(store, 0);
+        }
+        outcome
+    }
+
+    fn verify_from_folder(folder: &str) -> Result<String, String> {
+        let mut files: Vec<_> = std::fs::read_dir(folder)
+            .map_err(|e| format!("listing {folder}: {e}"))?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .collect();
+        files.sort();
+        let mut last = format!("no certificate in {folder}");
+        for (i, file) in files.iter().take(MAX_TRIED).enumerate() {
+            let der = std::fs::read(file).map_err(|e| format!("reading {file:?}: {e}"))?;
+            let len = u32::try_from(der.len()).map_err(|e| e.to_string())?;
+            // SAFETY: `der` holds `len` bytes; the context is freed below.
+            let cert = unsafe { CertCreateCertificateContext(ENCODING, der.as_ptr(), len) };
+            if cert.is_null() {
+                last = format!(
+                    "CertCreateCertificateContext: {}",
+                    std::io::Error::last_os_error()
+                );
+                continue;
+            }
+            let outcome = verify(cert);
+            // SAFETY: the context created above, freed once.
+            unsafe { CertFreeCertificateContext(cert) };
+            match outcome {
+                Ok(()) => return Ok(format!("root #{i} verified")),
+                Err(error) => last = error,
+            }
+        }
+        Err(format!(
+            "{} roots tried, last: {last}",
+            files.len().min(MAX_TRIED)
+        ))
+    }
+
+    fn verify(cert: CertContext) -> Result<(), String> {
+        let para = CertChainPara {
+            size: std::mem::size_of::<CertChainPara>() as u32,
+            requested_usage: CertUsageMatch {
+                kind: USAGE_MATCH_TYPE_AND,
+                usage: CtlUsage {
+                    count: 0,
+                    identifiers: std::ptr::null_mut(),
+                },
+            },
+        };
+        // The in-memory "intermediates" store `rustls-platform-verifier`
+        // passes (empty here: a root needs none).
+        // SAFETY: the memory provider takes no parameter; closed below.
+        let extra = unsafe { CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, std::ptr::null()) };
+        if extra.is_null() {
+            return Err(format!(
+                "CertOpenStore(memory): {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut chain: *const CertChainContextHead = std::ptr::null();
+        // SAFETY: the default chain engine, a valid certificate context, an
+        // open store, a filled `CERT_CHAIN_PARA` and an out-pointer for a
+        // chain freed below.
+        let ok = unsafe {
+            CertGetCertificateChain(
+                std::ptr::null_mut(),
+                cert,
+                std::ptr::null(),
+                extra,
+                &para,
+                0,
+                std::ptr::null_mut(),
+                &mut chain,
+            )
+        };
+        let error = std::io::Error::last_os_error();
+        // SAFETY: the store opened above, closed once.
+        unsafe { CertCloseStore(extra, 0) };
+        if ok == 0 || chain.is_null() {
+            return Err(format!("CertGetCertificateChain: {error}"));
+        }
+        let policy_para = CertChainPolicyPara {
+            size: std::mem::size_of::<CertChainPolicyPara>() as u32,
+            flags: 0,
+            extra: std::ptr::null_mut(),
+        };
+        let mut status = CertChainPolicyStatus {
+            size: std::mem::size_of::<CertChainPolicyStatus>() as u32,
+            error: 0,
+            chain_index: -1,
+            element_index: -1,
+            extra: std::ptr::null_mut(),
+        };
+        // SAFETY: `chain` is the chain built above, freed once after reading
+        // its trust status; `policy_para` / `status` are filled structs.
+        let (ok, chain_status) = unsafe {
+            let ok = CertVerifyCertificateChainPolicy(
+                CERT_CHAIN_POLICY_BASE,
+                chain,
+                &policy_para,
+                &mut status,
+            );
+            let chain_status = (*chain).error_status;
+            CertFreeCertificateChain(chain);
+            (ok, chain_status)
+        };
+        if ok == 0 {
+            return Err(format!(
+                "CertVerifyCertificateChainPolicy: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if status.error != 0 {
+            return Err(format!(
+                "chain policy error {:#010x}, chain trust status {chain_status:#010x}",
+                status.error
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Open the user's persisted CNG key `name` (#4606): whatever TLS root
+/// access a sandboxed plugin gets must not extend to the user's private keys.
+#[cfg(windows)]
+fn open_cng_key(name: &str) -> Result<String, String> {
+    #[link(name = "ncrypt")]
+    extern "system" {
+        fn NCryptOpenStorageProvider(provider: *mut usize, name: *const u16, flags: u32) -> i32;
+        fn NCryptOpenKey(
+            provider: usize,
+            key: *mut usize,
+            name: *const u16,
+            legacy_key_spec: u32,
+            flags: u32,
+        ) -> i32;
+        fn NCryptFreeObject(object: usize) -> i32;
+    }
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    let ksp = wide("Microsoft Software Key Storage Provider");
+    let mut provider = 0usize;
+    // SAFETY: a NUL-terminated provider name; the handle is freed below.
+    let status = unsafe { NCryptOpenStorageProvider(&mut provider, ksp.as_ptr(), 0) };
+    if status != 0 {
+        return Err(format!("NCryptOpenStorageProvider: {status:#010x}"));
+    }
+    let key_name = wide(name);
+    let mut key = 0usize;
+    // SAFETY: an open provider, a NUL-terminated key name, an out-pointer
+    // for a key freed below.
+    let status = unsafe { NCryptOpenKey(provider, &mut key, key_name.as_ptr(), 0, 0) };
+    // SAFETY: handles opened above, each freed once.
+    unsafe {
+        if status == 0 {
+            NCryptFreeObject(key);
+        }
+        NCryptFreeObject(provider);
+    }
+    if status == 0 {
+        Ok("opened".to_owned())
+    } else {
+        Err(format!("NCryptOpenKey: {status:#010x}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn open_cng_key(_name: &str) -> Result<String, String> {
+    Err("no CNG on this platform".to_owned())
+}
+
+#[cfg(windows)]
+fn open_hkcu_key(subkey: &str, write: bool) -> Result<String, String> {
     #[link(name = "advapi32")]
     extern "system" {
         fn RegOpenKeyExW(
@@ -162,11 +544,14 @@ fn open_hkcu_key(subkey: &str) -> Result<String, String> {
     const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
     /// `KEY_READ`.
     const KEY_READ: u32 = 0x2_0019;
+    /// `KEY_WRITE`.
+    const KEY_WRITE: u32 = 0x2_0006;
     let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     let mut key = 0isize;
     // SAFETY: a predefined root key, a NUL-terminated subkey, an out-pointer
     // for a key closed below.
-    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, KEY_READ, &mut key) };
+    let access = if write { KEY_WRITE } else { KEY_READ };
+    let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, access, &mut key) };
     if status != 0 {
         return Err(std::io::Error::from_raw_os_error(status as i32).to_string());
     }
@@ -176,7 +561,7 @@ fn open_hkcu_key(subkey: &str) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn open_hkcu_key(_subkey: &str) -> Result<String, String> {
+fn open_hkcu_key(_subkey: &str, _write: bool) -> Result<String, String> {
     Err("no registry on this platform".to_owned())
 }
 
@@ -458,6 +843,7 @@ mod macos {
 
 #[cfg(not(target_os = "macos"))]
 mod macos {
+    #[cfg(not(windows))]
     pub(super) fn verify_a_system_root() -> Result<String, String> {
         Err("no platform verifier probe on this platform".to_owned())
     }
