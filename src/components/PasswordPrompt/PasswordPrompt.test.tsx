@@ -49,6 +49,18 @@ describe("PasswordPrompt", () => {
     expect(query("password-prompt-cancel")).not.toBeNull();
   });
 
+  it("renders the description and input as separate blocks in one stack (#4710)", async () => {
+    await act(async () => {
+      useAppStore.getState().requestPassword("example.com", "alice");
+    });
+    render();
+
+    const body = query("password-prompt-body");
+    expect(body?.classList.contains("password-prompt__body")).toBe(true);
+    expect(query("password-prompt-description")!.parentElement).toBe(body);
+    expect(query("password-prompt-input")!.closest(".password-input")!.parentElement).toBe(body);
+  });
+
   it("labels the prompt as a password by default (UX-010)", async () => {
     await act(async () => {
       useAppStore.getState().requestPassword("example.com", "alice");

@@ -175,3 +175,14 @@ fn taken_secrets_round_trip_through_json() {
         .unwrap()
         .is_empty());
 }
+
+/// The schema-less fallback keys and the hop secret key are secret field names
+/// under the shared secret-word list too (#4701), so log redaction and the
+/// credential store agree on them.
+#[test]
+fn fallback_secret_keys_are_shared_secret_names() {
+    use crate::protocol::log_frame::is_secret_field as is_secret_name;
+    for key in FALLBACK_SECRET_KEYS.iter().chain([&HOP_SECRET_KEY]) {
+        assert!(is_secret_name(key), "{key}");
+    }
+}

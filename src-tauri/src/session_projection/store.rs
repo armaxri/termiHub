@@ -238,6 +238,12 @@ struct Inner {
     /// always safe: an unchanged key contributes an empty sub-diff and never
     /// reorders the rest.
     dirty: HashSet<String>,
+    /// Tabs whose `Failed` came from their agent's in-task reconnect giving up
+    /// ([`SessionLifecycleStore::connect_failed_if_reconnecting`], #4713). Such a
+    /// tab stays `Failed` until the user acts: no late drop may refold it. Only
+    /// meaningful while the tab is `Failed`; every other route into `Failed`, a
+    /// fresh `connect` and `remove` clear it.
+    agent_gave_up: HashSet<String>,
 }
 
 /// A serialized description of the region entries touched since the previous
@@ -296,6 +302,7 @@ impl SessionLifecycleStore {
                 config,
                 rand: Box::new(system_jitter),
                 dirty: HashSet::new(),
+                agent_gave_up: HashSet::new(),
             }),
         }
     }
@@ -314,6 +321,8 @@ impl SessionLifecycleStore {
     pub fn connect(&self, session_id: &str) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
+        // A fresh connect (the user's Reconnect) leaves an agent give-up (#4713).
+        inner.agent_gave_up.remove(session_id);
         inner
             .sessions
             .insert(session_id.to_string(), SessionLifecycle::connecting());
@@ -485,6 +494,12 @@ impl SessionLifecycleStore {
         if is_evicted(&inner, session_id) {
             return;
         }
+        // #4713: nor may a late drop overwrite an agent give-up. The hosted
+        // session's output bridge ends when the gave-up I/O task returns; the
+        // tab keeps `Failed` and its give-up error until the user acts.
+        if agent_gave_up(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         // No-op for an unknown/removed session (SM-006): a drop only fires for a
         // tab that already folded `connect`, so a late `dropped` arriving after the
@@ -521,6 +536,8 @@ impl SessionLifecycleStore {
         // which starts a fresh `connect`. A late drop of such a tab (its backend
         // session closing after the fold) must not arm a redrive that can never
         // succeed — after an agent Disconnect its transport config is gone.
+        // #4713: the same holds for a tab whose agent's reconnect gave up — the
+        // give-up means stop, so the redrive must not take over from `Failed`.
         if ended_by_user_or_terminal(&inner, session_id) {
             return;
         }
@@ -643,6 +660,10 @@ impl SessionLifecycleStore {
         }
         inner.dirty.insert(session_id.to_string());
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Failure);
+        if reconnect.phase == ReconnectPhase::Gaveup {
+            // The backend redrive gave up, not the agent (#4713).
+            inner.agent_gave_up.remove(session_id);
+        }
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.reconnect = reconnect;
             if reconnect.phase == ReconnectPhase::Gaveup {
@@ -851,6 +872,11 @@ impl SessionLifecycleStore {
             return false;
         }
         apply_connect_failed(&mut inner, session_id, error);
+        // #4713: the give-up is final until the user acts. A late drop of the
+        // hosted session must not refold the tab or arm the redrive.
+        if inner.sessions.contains_key(session_id) {
+            inner.agent_gave_up.insert(session_id.to_string());
+        }
         true
     }
 
@@ -905,6 +931,7 @@ impl SessionLifecycleStore {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
         inner.sessions.remove(session_id);
+        inner.agent_gave_up.remove(session_id);
     }
 
     /// Drain the dirty-key set, serializing each touched session's current value
@@ -1005,7 +1032,8 @@ fn drain_delta_of(inner: &mut Inner) -> RegionDelta {
 
 /// Whether a session is in the sticky [`SessionStatus::Evicted`] state (SM-003).
 /// Whether the tab sits in a status the reconnect loop must never leave on its
-/// own (#4459): `Disconnected(User)`, `AuthFailed` or `SessionLost`.
+/// own (#4459): `Disconnected(User)`, `AuthFailed`, `SessionLost`, or `Failed`
+/// from an agent reconnect give-up (#4713).
 fn ended_by_user_or_terminal(inner: &Inner, session_id: &str) -> bool {
     inner
         .sessions
@@ -1013,8 +1041,19 @@ fn ended_by_user_or_terminal(inner: &Inner, session_id: &str) -> bool {
         .is_some_and(|s| match s.status {
             SessionStatus::Disconnected => s.end_reason == Some(EndReason::User),
             SessionStatus::AuthFailed | SessionStatus::SessionLost => true,
+            SessionStatus::Failed => inner.agent_gave_up.contains(session_id),
             _ => false,
         })
+}
+
+/// Whether the tab is `Failed` because its agent's in-task reconnect gave up
+/// (#4713) — sticky against every late drop fold until the user acts.
+fn agent_gave_up(inner: &Inner, session_id: &str) -> bool {
+    inner.agent_gave_up.contains(session_id)
+        && inner
+            .sessions
+            .get(session_id)
+            .is_some_and(|s| s.status == SessionStatus::Failed)
 }
 
 /// The `session.disconnect` transition on the locked store (see
@@ -1053,6 +1092,9 @@ fn apply_connect_failed(inner: &mut Inner, session_id: &str, error: Option<Strin
         return;
     }
     inner.dirty.insert(session_id.to_string());
+    // A plain connect failure is not an agent give-up (#4713); the agent
+    // give-up fold re-marks the tab after this.
+    inner.agent_gave_up.remove(session_id);
     // No-op for an unknown/removed session (SM-006): the initial connect always
     // folds `connect` first (`commands::session`), so a late `connectFailed`
     // for a tab the user already closed must not resurrect a phantom entry.

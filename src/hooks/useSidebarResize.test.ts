@@ -85,18 +85,18 @@ describe("useSidebarResize (store-level)", () => {
 
 describe("useSidebarResize hook clamping", () => {
   // Test the actual clamping logic from the hook module.
-  // The hook clamps between 170 and 600. We simulate what the hook does:
-  // newWidth = Math.min(600, Math.max(170, startWidth + delta * direction))
+  // The hook clamps between 200 and 600. We simulate what the hook does:
+  // newWidth = Math.min(600, Math.max(200, startWidth + delta * direction))
 
   const clamp = (startWidth: number, deltaX: number, direction: 1 | -1) =>
-    Math.min(600, Math.max(170, startWidth + deltaX * direction));
+    Math.min(600, Math.max(200, startWidth + deltaX * direction));
 
   it("left sidebar: dragging right widens", () => {
     expect(clamp(260, 100, 1)).toBe(360);
   });
 
   it("left sidebar: dragging left narrows", () => {
-    expect(clamp(260, -100, 1)).toBe(170);
+    expect(clamp(260, -100, 1)).toBe(200);
   });
 
   it("right sidebar: dragging left widens", () => {
@@ -104,11 +104,11 @@ describe("useSidebarResize hook clamping", () => {
   });
 
   it("right sidebar: dragging right narrows", () => {
-    expect(clamp(260, 100, -1)).toBe(170);
+    expect(clamp(260, 100, -1)).toBe(200);
   });
 
-  it("clamps to min width (170)", () => {
-    expect(clamp(260, -200, 1)).toBe(170);
+  it("clamps to min width (200)", () => {
+    expect(clamp(260, -200, 1)).toBe(200);
   });
 
   it("clamps to max width (600)", () => {

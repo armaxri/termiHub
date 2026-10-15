@@ -77,14 +77,16 @@ describe("ShortcutsOverlay", () => {
     expect(content).toContain("Paste");
   });
 
-  it("shows both Win/Linux and macOS column headers", () => {
+  it("shows a single Shortcut column instead of per-platform columns (#4711)", () => {
     act(() => {
       root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
     });
-    const headers = document.querySelectorAll(".shortcuts-overlay__table th");
-    const headerTexts = Array.from(headers).map((h) => h.textContent);
-    expect(headerTexts).toContain("Win / Linux");
-    expect(headerTexts).toContain("macOS");
+    const headerTexts = Array.from(document.querySelectorAll(".shortcuts-overlay__table th")).map(
+      (h) => h.textContent
+    );
+    expect(headerTexts).toEqual(["Action", "Shortcut"]);
+    expect(document.body.textContent).not.toContain("Win / Linux");
+    expect(document.body.textContent).not.toContain("macOS");
   });
 
   it("shows category group labels", () => {
@@ -157,17 +159,74 @@ describe("ShortcutsOverlay", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("renders letter keys upper-case in both platform columns (#4598)", () => {
-    act(() => {
-      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+  describe.each([
+    {
+      platform: "macOS",
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15",
+      sidebar: "Cmd+B",
+      newTabGroup: "Cmd+Shift+T",
+      primary: "Cmd",
+    },
+    {
+      platform: "Windows",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      sidebar: "Ctrl+Shift+B",
+      newTabGroup: "Ctrl+Shift+T",
+      primary: "Ctrl",
+    },
+    {
+      platform: "Linux",
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+      sidebar: "Ctrl+Shift+B",
+      newTabGroup: "Ctrl+Shift+T",
+      primary: "Ctrl",
+    },
+  ])("on $platform (#4711)", ({ userAgent, sidebar, newTabGroup, primary }) => {
+    beforeEach(() => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
     });
-    const cells = (action: string) =>
-      Array.from(document.querySelectorAll(`[data-testid="shortcut-row-${action}"] td`)).map(
-        (td) => td.textContent
+    afterEach(() => {
+      vi.restoreAllMocks();
+      clearOverrides();
+    });
+
+    function cells(action: string): string[] {
+      return Array.from(
+        document.querySelectorAll(`[data-testid="shortcut-row-${action}"] td`),
+        (td) => td.textContent ?? ""
       );
-    expect(cells("toggle-sidebar")[1]).toContain("Ctrl+Shift+B");
-    expect(cells("toggle-sidebar")[2]).toContain("Cmd+B");
-    expect(cells("new-tab-group")[2]).toContain("Cmd+Shift+T");
+    }
+
+    it("renders one binding column with the platform's bindings, letters upper-cased", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const row = document.querySelector('[data-testid="shortcut-row-toggle-sidebar"]');
+      expect(row?.querySelectorAll("td")).toHaveLength(2);
+      expect(row?.querySelectorAll("kbd")).toHaveLength(1);
+      expect(cells("toggle-sidebar")[1]).toBe(sidebar);
+      expect(cells("new-tab-group")[1]).toBe(newTabGroup);
+      expect(cells("toggle-sidebar")[1].startsWith(primary)).toBe(true);
+    });
+
+    it("shows a user override in place of the platform default", () => {
+      setOverride("toggle-sidebar", { key: "j", ctrl: true, alt: true });
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(cells("toggle-sidebar")[1]).toBe("Ctrl+Alt+J");
+    });
+
+    it("lists the remote-desktop release chord (#4524)", () => {
+      act(() => {
+        root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+      });
+      const kbds = Array.from(
+        document.querySelectorAll(`[data-testid="shortcut-row-${RELEASE_CHORD_ACTION}"] kbd`),
+        (k) => k.textContent
+      );
+      expect(kbds).toEqual(["Ctrl+Shift+Alt"]);
+    });
   });
 
   describe("remote-desktop release chord (#4524)", () => {
@@ -177,7 +236,7 @@ describe("ShortcutsOverlay", () => {
       return document.querySelector(`[data-testid="shortcut-row-${RELEASE_CHORD_ACTION}"]`);
     }
 
-    it("lists the release chord under Remote Desktop with its default in both columns", () => {
+    it("lists the release chord under Remote Desktop with its default", () => {
       act(() => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
@@ -186,7 +245,7 @@ describe("ShortcutsOverlay", () => {
       expect(r?.textContent).toContain("Release Remote Desktop Keyboard");
       expect(r?.textContent).toContain("Focused remote desktop");
       const keys = Array.from(r?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
-      expect(keys).toEqual(["Ctrl+Shift+Alt", "Ctrl+Shift+Alt"]);
+      expect(keys).toEqual(["Ctrl+Shift+Alt"]);
     });
 
     it("shows a rebound chord for the current platform", () => {
@@ -195,7 +254,7 @@ describe("ShortcutsOverlay", () => {
         root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
       });
       const keys = Array.from(row()?.querySelectorAll("kbd") ?? []).map((k) => k.textContent);
-      expect(keys).toContain("Ctrl+Alt");
+      expect(keys).toEqual(["Ctrl+Alt"]);
     });
   });
 });

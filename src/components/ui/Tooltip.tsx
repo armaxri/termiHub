@@ -54,6 +54,14 @@ export interface TooltipProps {
   sideOffset?: number;
   /** Disable the tooltip without unmounting the trigger. */
   disabled?: boolean;
+  /**
+   * Controlled open state. Leave unset for the default hover/focus behaviour;
+   * pass it (with {@link TooltipProps.onOpenChange}) to veto opening — e.g. a
+   * truncated label that only explains itself when it is actually clipped.
+   */
+  open?: boolean;
+  /** Called when Radix wants to open or close the tooltip. */
+  onOpenChange?: (open: boolean) => void;
   /** Test hook forwarded to the tooltip content. */
   "data-testid"?: string;
 }
@@ -70,6 +78,8 @@ export function Tooltip({
   align = "center",
   sideOffset = 6,
   disabled,
+  open,
+  onOpenChange,
   ...rest
 }: TooltipProps): React.ReactElement {
   if (disabled) {
@@ -77,7 +87,7 @@ export function Tooltip({
   }
 
   return (
-    <RadixTooltip.Root>
+    <RadixTooltip.Root open={open} onOpenChange={onOpenChange}>
       <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
       <RadixTooltip.Portal>
         <RadixTooltip.Content

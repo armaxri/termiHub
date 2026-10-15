@@ -1478,57 +1478,44 @@ export function ConnectionList() {
             onToggle={() => setLocalCollapsed((v) => !v)}
             headerTestId="sidebar-group-header-connections"
             toggleTestId="connection-list-group-toggle"
-            actions={
-              <>
-                <Tooltip content="New Folder" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<FolderPlus size={16} />}
-                    onClick={() => {
-                      setLocalCollapsed(false);
-                      setCreatingFolder(true);
-                    }}
-                    aria-label="New Folder"
-                    data-testid="connection-list-new-folder"
-                  />
-                </Tooltip>
-                <Tooltip content="New Connection" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<Plus size={16} />}
-                    onClick={handleNewConnection}
-                    aria-label="New Connection"
-                    data-testid="connection-list-new-connection"
-                  />
-                </Tooltip>
-                <Tooltip content="Import from ~/.ssh/config" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<FileDown size={16} />}
-                    onClick={() => setBulkImportOpen(true)}
-                    aria-label="Import from ~/.ssh/config"
-                    data-testid="connection-list-import-ssh-config"
-                  />
-                </Tooltip>
-                <Tooltip content="Onboard hosts from a CSV / inventory" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<FileSpreadsheet size={16} />}
-                    onClick={handleImportCsv}
-                    aria-label="Onboard hosts from a CSV / inventory"
-                    data-testid="connection-list-import-csv"
-                  />
-                </Tooltip>
-              </>
-            }
+            actionsLabel="Connection actions"
+            actions={[
+              {
+                id: "new-folder",
+                label: "New Folder",
+                icon: <FolderPlus size={16} />,
+                onClick: () => {
+                  setLocalCollapsed(false);
+                  setCreatingFolder(true);
+                },
+                iconOnly: true,
+                testId: "connection-list-new-folder",
+              },
+              {
+                id: "new-connection",
+                label: "New Connection",
+                icon: <Plus size={16} />,
+                onClick: handleNewConnection,
+                iconOnly: true,
+                testId: "connection-list-new-connection",
+              },
+              {
+                id: "import-ssh-config",
+                label: "Import from ~/.ssh/config",
+                icon: <FileDown size={16} />,
+                onClick: () => setBulkImportOpen(true),
+                iconOnly: true,
+                testId: "connection-list-import-ssh-config",
+              },
+              {
+                id: "import-csv",
+                label: "Onboard hosts from a CSV / inventory",
+                icon: <FileSpreadsheet size={16} />,
+                onClick: handleImportCsv,
+                iconOnly: true,
+                testId: "connection-list-import-csv",
+              },
+            ]}
           />
           {!localCollapsed && (
             <div className="connection-list__filter">
