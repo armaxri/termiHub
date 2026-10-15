@@ -68,7 +68,7 @@ pub enum TransferStateTag {
 }
 
 impl TransferStateTag {
-    /// Whether this tag is a settled outcome the reconcile treats as final
+    /// Whether this tag is a settled outcome a Transfer Queue row treats as final
     /// (`completed`/`failed`/`cancelled`). Unlike [`TransferState::is_terminal`]
     /// — which is about the state machine's own no-further-transitions states —
     /// this mirrors the frontend's `TERMINAL_TRANSFER_STATES`, where a

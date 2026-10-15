@@ -7,10 +7,9 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
 
 use serde_json::{json, Value};
-use termihub_core::files::transfer::registry::TransferRegistry;
+use termihub_core::files::transfer::registry::{TransferHandle, TransferRegistry};
 use termihub_core::files::transfer::state::TransferStateTag;
 use termihub_core::files::transfer::{ProgressSink, TransferDirection};
 use termihub_core::protocol::methods::{CONNECTION_FILES_READ_RANGE, CONNECTION_FILES_STAT};
@@ -335,20 +334,16 @@ fn quiet_sink() -> ProgressSink {
     Arc::new(|_: &termihub_core::files::transfer::TransferProgress| {})
 }
 
-async fn settled(registry: &TransferRegistry, id: &str) -> TransferStateTag {
-    for _ in 0..250 {
-        if let Some(snap) = registry
-            .list(None)
-            .into_iter()
-            .find(|s| s.transfer_id == id)
-        {
-            if snap.state.is_terminal() {
-                return snap.state;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("transfer {id} did not settle");
+/// The final state of an awaited transfer. Its registry entry is already
+/// dropped (the registry keeps no terminal history), so read the handle.
+fn settled(handle: &TransferHandle) -> TransferStateTag {
+    let state = handle.snapshot().state;
+    assert!(
+        state.is_terminal(),
+        "transfer {} did not settle",
+        handle.transfer_id
+    );
+    state
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -380,17 +375,14 @@ async fn agent_side_channel_downloads_through_the_queue_in_slices() {
         TransferDirection::Download,
         "/home/pi/big.bin".to_string(),
         local.to_string_lossy().into_owned(),
-        handle,
+        handle.clone(),
         registry.clone(),
         sink,
         0,
     )
     .await;
 
-    assert_eq!(
-        settled(&registry, "dl-1").await,
-        TransferStateTag::Completed
-    );
+    assert_eq!(settled(&handle), TransferStateTag::Completed);
     assert_eq!(std::fs::read(&local).unwrap(), big);
     let reads = host
         .methods()
@@ -428,16 +420,13 @@ async fn a_cancelled_side_channel_download_stops() {
         TransferDirection::Download,
         "/home/pi/a.bin".to_string(),
         tmp.path().join("a.bin").to_string_lossy().into_owned(),
-        handle,
+        handle.clone(),
         registry.clone(),
         quiet_sink(),
         0,
     )
     .await;
-    assert_eq!(
-        settled(&registry, "dl-2").await,
-        TransferStateTag::Cancelled
-    );
+    assert_eq!(settled(&handle), TransferStateTag::Cancelled);
 }
 
 /// An agent that answers no request and reports `host_ops` as its host's

@@ -723,17 +723,18 @@ termiHub supports three types of SSH tunnels: local forwarding (expose a remote 
 sequenceDiagram
     participant UI as Tunnel Editor
     participant Store as Zustand Store
-    participant Tauri as Tauri IPC
+    participant Disp as Projection dispatcher
     participant TM as Tunnel Manager
     participant Pool as SSH Session Pool
     participant SSH as SSH Connection
 
     UI->>Store: saveTunnel({type: "local", sshConnectionId, localPort, remoteHost, remotePort})
-    Store->>Tauri: save_tunnel(config)
-    Tauri->>TM: save(config) → tunnels.json
+    Store->>Disp: tunnel.create { config }
+    Disp->>TM: save_tunnel(config) → tunnels.json
 
-    UI->>Tauri: start_tunnel(tunnelId)
-    Tauri->>TM: start(tunnelId)
+    UI->>Store: startTunnel(tunnelId)
+    Store->>Disp: tunnel.start { tunnelId }
+    Disp->>TM: start_tunnel(tunnelId) (spawn_blocking)
     TM->>Pool: get_or_create_session(sshConnectionId)
     Pool-->>TM: SSH session (pooled)
     TM->>SSH: Open forwarding channel
@@ -749,7 +750,7 @@ sequenceDiagram
         TM->>SSH: Forward each SOCKS request through SSH
     end
 
-    TM-->>UI: tunnel-status event (active, stats)
+    TM-->>UI: status + stats diffs on the `tunnels` region
 
     Note over TM: On app close: graceful shutdown of all tunnels
 ```
@@ -3074,7 +3075,7 @@ This **is** ADR-11's option (a), adopted deliberately. ADR-11 rejected (a) for t
 
 **Context:** The FTP client epic (#1331, concept `docs/concepts/implemented/ftp-client.html`) needs a transfer queue with per-transfer progress, pause/resume/retry, and bounded concurrency. termiHub already had a transfer subsystem for SFTP — `src-tauri/src/files/transfer.rs` (#1245) — but it only offered one-shot cancellable up/downloads with no queue, concurrency limit, pause/resume, or panel UI. Two shapes were possible: (a) build an **FTP-specific** queue inside `core/src/backends/ftp/` (as the concept's skeleton sketched), or (b) **generalize the existing transfer subsystem** into a protocol-agnostic queue that FTP is the first consumer of.
 
-**Decision:** Adopt **(b)**. The queue model, states (queued/active/paused/completed/failed-with-retry), concurrency gate, `REST`-based resume, and exponential-backoff retry live in the shared `src-tauri/src/files/transfer/` module and are driven by generic `transfer_pause`/`transfer_resume`/`transfer_cancel`/`transfer_retry`/`transfer_list` IPC commands and a single `transfer-progress` event stream. FTP is wired in via `core/src/backends/ftp/transfer.rs`; the frontend panel (`src/components/TransferQueue/`) is likewise protocol-agnostic. The existing `TransferRegistry`/`CancellationToken` plumbing is **extended, never forked**.
+**Decision:** Adopt **(b)**. The queue model, states (queued/active/paused/completed/failed-with-retry), concurrency gate, `REST`-based resume, and exponential-backoff retry live in the shared transfer module (now `core/src/files/transfer/`) and are driven by generic `transfer_pause`/`transfer_resume`/`transfer_cancel`/`transfer_retry` IPC commands and a single `transfer-progress` event stream, which the backend folds into the authoritative `transfers` projection region. (A `transfer_list` snapshot command once let the frontend reconcile rows against the registry; it was retired in #4785, and the registry no longer keeps a history of finished transfers, #4798.) FTP is wired in via `core/src/backends/ftp/transfer.rs`; the frontend panel (`src/components/TransferQueue/`) is likewise protocol-agnostic. The existing `TransferRegistry`/`CancellationToken` plumbing is **extended, never forked**.
 
 **Rationale:**
 
