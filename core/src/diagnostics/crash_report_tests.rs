@@ -17,6 +17,7 @@ fn details(message: &str) -> CrashDetails {
         location: Some("src/lib.rs:42:9".into()),
         message: message.into(),
         backtrace: "0: frame_one\n1: frame_two".into(),
+        image: None,
     }
 }
 
@@ -114,6 +115,58 @@ fn capture_reads_payload_location_and_backtrace_inside_a_hook() {
         d.location
     );
     assert!(!d.backtrace.is_empty());
+    // Full format (#4504): every frame carries its address for offline
+    // symbolization.
+    assert!(d.backtrace.contains(" - "), "{}", d.backtrace);
+    assert!(d.backtrace.contains("0x"), "{}", d.backtrace);
+}
+
+#[test]
+fn a_report_records_the_module_image_for_offline_symbolization() {
+    use crate::diagnostics::module_image::{BuildId, ModuleImage};
+
+    let mut d = details("boom");
+    let text = render_report(&d, at(0), &redactor());
+    assert!(text.contains("image:     unknown"), "{text}");
+
+    // Every build-id shape must survive redaction: a 40-digit hex run would be
+    // masked as a token, so the GNU id is grouped.
+    let id: Vec<u8> = (0xa0..0xb4).collect();
+    for (build_id, shown) in [
+        (
+            BuildId::MachoUuid([0x4c; 16]),
+            "uuid 4C4C4C4C-4C4C-4C4C-4C4C-4C4C4C4C4C4C",
+        ),
+        (
+            BuildId::Gnu(id),
+            "build-id a0a1a2a3 a4a5a6a7 a8a9aaab acadaeaf b0b1b2b3",
+        ),
+        (
+            BuildId::Pdb {
+                guid: [0x11; 16],
+                age: 1,
+            },
+            "pdb 11111111-1111-1111-1111-111111111111 age 1",
+        ),
+    ] {
+        d.image = Some(ModuleImage {
+            base: 0x5555_0000,
+            build_id: Some(build_id),
+        });
+        let text = render_report(&d, at(0), &redactor());
+        assert!(text.contains("image:     base 0x"), "{text}");
+        assert!(text.contains("5555"), "{text}");
+        assert!(text.contains(shown), "{shown} missing: {text}");
+    }
+}
+
+#[test]
+fn a_captured_report_names_this_module() {
+    // capture() fills the image in; on a supported platform it is present.
+    if cfg!(any(target_vendor = "apple", target_os = "linux", windows)) {
+        let image = crate::diagnostics::module_image::ModuleImage::current();
+        assert!(image.is_some());
+    }
 }
 
 #[test]

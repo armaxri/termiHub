@@ -8,8 +8,9 @@
 //!
 //! What a report contains: the app name, version, git commit, OS /
 //! architecture, a UTC timestamp, the panicking thread and source location, the
-//! panic message (capped at [`MAX_MESSAGE_BYTES`]) and a backtrace (capped at
-//! [`MAX_BACKTRACE_BYTES`]). Everything is run through [`Redactor`] first. It
+//! panic message (capped at [`MAX_MESSAGE_BYTES`]), the module's load address
+//! and build id (for offline symbolization, #4504) and a backtrace with frame
+//! addresses (capped at [`MAX_BACKTRACE_BYTES`]). Everything is run through [`Redactor`] first. It
 //! never contains terminal session content, connection configs, or credentials
 //! by construction — only the panic payload, which is size-capped and redacted
 //! in case a caller interpolated something it should not have.
@@ -22,6 +23,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use super::module_image::ModuleImage;
 use super::redact::Redactor;
 
 /// Name of the crash-report directory inside an app's log directory.
@@ -72,8 +74,13 @@ pub struct CrashDetails {
     pub location: Option<String>,
     /// The panic payload.
     pub message: String,
-    /// The captured backtrace, rendered.
+    /// The captured backtrace, rendered in std's full format: every frame with
+    /// its instruction address, so a report can be symbolized offline (#4504).
     pub backtrace: String,
+    /// Where termiHub's own module was loaded and its build id (#4504): the
+    /// addresses in [`backtrace`](Self::backtrace) are ASLR-shifted, and this
+    /// is what a `.dSYM` / `.debug` / `.pdb` release asset is matched against.
+    pub image: Option<ModuleImage>,
 }
 
 impl CrashDetails {
@@ -85,11 +92,13 @@ impl CrashDetails {
     /// The backtrace names functions only if the binary keeps its symbol table.
     /// Release builds use `strip = "debuginfo"` (root `Cargo.toml`, #4316) for
     /// exactly this reason: `strip = true` removed the symbol table and every
-    /// frame of a shipped build's report read `<unknown>`. Neither profile keeps
-    /// DWARF (`[profile.dev] debug = 0`, release default `debug = 0`), so frames
-    /// carry function names but no source line. Windows is the exception: MSVC
-    /// keeps symbols in a `.pdb` next to the build, which is not shipped, so a
-    /// field report from Windows still shows bare addresses.
+    /// frame of a shipped build's report read `<unknown>`. Source lines are not
+    /// in the shipped binary: the release workflow splits them into separate
+    /// `.dSYM` / `.debug` / `.pdb` assets (#4504), and the report records every
+    /// frame's address plus the module's load address and build id
+    /// ([`ModuleImage`]) so those assets can symbolize it offline. That is also
+    /// the only way to name a frame from a Windows report: MSVC keeps symbols in
+    /// the `.pdb`, never in the `.exe`.
     ///
     /// Never inlined, so this function appears as a resolved `termihub_core`
     /// frame near the top of every report — the release-symbol check
@@ -119,7 +128,10 @@ impl CrashDetails {
             thread: std::thread::current().name().map(str::to_string),
             location,
             message,
-            backtrace: std::backtrace::Backtrace::force_capture().to_string(),
+            // `{:#}` is std's full format: each frame's address, not only its
+            // (possibly unresolved) name.
+            backtrace: format!("{:#}", std::backtrace::Backtrace::force_capture()),
+            image: ModuleImage::current(),
         }
     }
 }
@@ -162,6 +174,7 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
          time:      {time}\n\
          thread:    {thread}\n\
          location:  {location}\n\
+         image:     {image}\n\
          \n\
          message:\n{message}\n\
          \n\
@@ -183,6 +196,10 @@ pub fn render_report(details: &CrashDetails, now: SystemTime, redactor: &Redacto
         time = format_utc(now),
         thread = details.thread.as_deref().unwrap_or("<unnamed>"),
         location = details.location.as_deref().unwrap_or("unknown"),
+        image = details
+            .image
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), ModuleImage::render),
     );
     redactor.redact(&text)
 }

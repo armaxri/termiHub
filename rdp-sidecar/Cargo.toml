@@ -23,8 +23,11 @@ publish = false
 #   worse than a fail-fast panic in a safety-critical build.
 # - `strip = "debuginfo"` (#4316): strip debug info but keep the symbol table,
 #   so a panic backtrace still names functions.
+# - `debug = "line-tables-only"` (#4504): the release workflow splits the line
+#   tables into a separate debug-symbols release asset (root Cargo.toml).
 [profile.release]
 overflow-checks = true
+debug = "line-tables-only"
 strip = "debuginfo"
 
 [[bin]]

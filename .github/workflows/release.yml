@@ -435,6 +435,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    # Split debug symbols (#4504): every Rust binary this job ships (desktop,
+    # RDP sidecar, plugin runner) keeps its line tables (Cargo.toml
+    # `debug = "line-tables-only"`) in a separate .dSYM / .pdb / .debug file,
+    # never in the installer. macOS: packed split -> rustc runs dsymutil.
+    # Windows: strip = none, or the MSVC linker writes no .pdb at all. Linux:
+    # strip = none, then debug-symbols.mjs splits the DWARF out with objcopy
+    # before anything is bundled. See the matrix's split_debuginfo/profile_strip.
+    env:
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: ${{ matrix.split_debuginfo }}
+      CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.profile_strip }}
+      TERMIHUB_SYMBOLS_VERSION: ${{ needs.release-version.outputs.version }}
 
     strategy:
       fail-fast: false
@@ -446,6 +457,8 @@ jobs:
             rust_target: 'x86_64-apple-darwin'
             file_ext: '.dmg'
             bundle_path: 'dmg'
+            split_debuginfo: 'packed'
+            profile_strip: 'debuginfo'
 
           # macOS Apple Silicon
           - platform: 'macos-arm64'
@@ -453,6 +466,8 @@ jobs:
             rust_target: 'aarch64-apple-darwin'
             file_ext: '.dmg'
             bundle_path: 'dmg'
+            split_debuginfo: 'packed'
+            profile_strip: 'debuginfo'
 
           # Windows
           - platform: 'windows-x64'
@@ -460,6 +475,8 @@ jobs:
             rust_target: 'x86_64-pc-windows-msvc'
             file_ext: '.msi'
             bundle_path: 'msi'
+            split_debuginfo: 'packed'
+            profile_strip: 'none'
             # Sideloaded ConPTY host next to termihub.exe (#4121).
             extra_config: '--config src-tauri/tauri.conpty.conf.json'
 
@@ -469,6 +486,8 @@ jobs:
             rust_target: 'x86_64-unknown-linux-gnu'
             file_ext: '.AppImage'
             bundle_path: 'appimage'
+            split_debuginfo: 'off'
+            profile_strip: 'none'
 
           # Linux ARM64 (Raspberry Pi)
           # Uses native ARM64 runner — no cross-compilation needed.
@@ -480,6 +499,8 @@ jobs:
             file_ext: '.deb'
             bundle_path: 'deb'
             extra_args: '--bundles deb,rpm'
+            split_debuginfo: 'off'
+            profile_strip: 'none'
 
     steps:
       - name: Checkout code
@@ -550,6 +571,35 @@ jobs:
         shell: bash
         run: ./scripts/build-plugin-runner.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
 
+      # Collect both sidecars' debug symbols into debug-symbols/ (#4504), each
+      # verified to carry the binary's build id. Linux: split the DWARF out of
+      # the STAGED copy in place, before tauri-action hashes it (core/build.rs
+      # embeds that digest), and refresh the transparency .sha256 next to it.
+      # macOS/Windows: the staged copy is the target-dir binary (macOS: ad-hoc
+      # re-signed, same LC_UUID), whose .dSYM/.pdb cargo left next to it.
+      - name: Stage sidecar debug symbols
+        shell: bash
+        env:
+          T: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          EXE=""
+          if [ "$RUNNER_OS" = "Windows" ]; then EXE=".exe"; fi
+          stage() { node scripts/internal/debug-symbols.mjs stage --out debug-symbols --name "$1" "$2"; }
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            for n in termihub-rdp-helper termihub-plugin-runner; do
+              staged="src-tauri/binaries/$n-$T"
+              stage "$n" "$staged"
+              (cd src-tauri/binaries && sha256sum "$n-$T" > "$n-$T.sha256")
+            done
+          else
+            stage termihub-rdp-helper "rdp-sidecar/target/$T/release/termihub-rdp-helper$EXE"
+            stage termihub-plugin-runner "target/$T/release/termihub-plugin-runner$EXE"
+            node scripts/internal/debug-symbols.mjs check debug-symbols \
+              termihub-rdp-helper="src-tauri/binaries/termihub-rdp-helper-$T$EXE" \
+              termihub-plugin-runner="src-tauri/binaries/termihub-plugin-runner-$T$EXE"
+          fi
+
       # The generated notices (PKG-009) are bundled as an app resource by the
       # bundle-only fragment tauri.notices.conf.json (merged via --config below);
       # tauri-build rejects a missing resource, so stage the file first.
@@ -593,6 +643,26 @@ jobs:
           cat "$fragment"
           echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
 
+      # Linux: split the desktop binary's DWARF out between compile and bundle
+      # (#4504), via Tauri's build.beforeBundleCommand in a generated fragment,
+      # so the .deb/.rpm/AppImage ship the stripped binary. Absolute paths: the
+      # hook's working directory is Tauri's, not this step's.
+      - name: Generate the debug-symbols bundle hook (Linux)
+        id: symbols_hook
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          T: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          fragment=src-tauri/tauri.debug-symbols.conf.json
+          root="$PWD"
+          cmd="node \"$root/scripts/internal/debug-symbols.mjs\" stage"
+          cmd="$cmd --out \"$root/debug-symbols\" \"$root/target/$T/release/termihub\""
+          jq -n --arg cmd "$cmd" '{build: {beforeBundleCommand: $cmd}}' > "$fragment"
+          cat "$fragment"
+          echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
+
       - name: Build Tauri app for release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
@@ -603,7 +673,32 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ steps.wix_version.outputs.config }} ${{ matrix.extra_args }} -- --locked
+          args: --config src-tauri/tauri.sidecar.conf.json --config src-tauri/tauri.notices.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_config }} ${{ steps.wix_version.outputs.config }} ${{ steps.symbols_hook.outputs.config }} ${{ matrix.extra_args }} -- --locked
+
+      # macOS/Windows: the desktop binary's .dSYM/.pdb lies next to it (#4504);
+      # Linux staged it in the bundle hook above. Either way it must be there.
+      - name: Stage desktop debug symbols
+        shell: bash
+        env:
+          T: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          BIN="target/$T/release/termihub"
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN="${BIN}.exe"; fi
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            node scripts/internal/debug-symbols.mjs stage --out debug-symbols --name termihub "$BIN"
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # The sidecars are checked inside the re-signed .app below.
+            node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$BIN"
+          else
+            # tauri-build copied the staged sidecars next to termihub.
+            EXE=""
+            if [ "$RUNNER_OS" = "Windows" ]; then EXE=".exe"; fi
+            node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$BIN" \
+              termihub-rdp-helper="target/$T/release/termihub-rdp-helper$EXE" \
+              termihub-plugin-runner="target/$T/release/termihub-plugin-runner$EXE"
+          fi
 
       # Fail the build, not the user, if the sideloaded ConPTY host (#4121) is
       # missing from the installer, misplaced (it must sit next to termihub.exe,
@@ -671,6 +766,12 @@ jobs:
             check() {
               scripts/internal/verify-plugin-runner-bundle.sh "$1"
               scripts/internal/verify-rdp-helper-bundle.sh "$1"
+              # The shipped binaries must match the debug-symbols asset (#4504).
+              local dir
+              dir="$(dirname "$1")"
+              node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$1" \
+                termihub-rdp-helper="$dir/termihub-rdp-helper" \
+                termihub-plugin-runner="$dir/termihub-plugin-runner"
             }
             scripts/internal/verify-rdp-helper-bundle.sh "$BIN"
             B="$PWD/target/$T/release/bundle"
@@ -796,6 +897,14 @@ jobs:
           #    bundle is cross-built here; Release macOS Smoke runs it natively.
           scripts/internal/verify-plugin-runner-bundle.sh --no-run "$APP/Contents/MacOS/$EXE_NAME"
 
+          # 6. The re-signed binaries must still match the .dSYMs in the
+          #    debug-symbols asset (#4504): codesign leaves LC_UUID unchanged.
+          M="$APP/Contents/MacOS"
+          dwarfdump --uuid "$M/$EXE_NAME" debug-symbols/termihub.dSYM
+          node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$M/$EXE_NAME" \
+            termihub-rdp-helper="$M/termihub-rdp-helper" \
+            termihub-plugin-runner="$M/termihub-plugin-runner"
+
           # Advisory only: Gatekeeper always rejects an ad-hoc (non-Developer ID)
           # bundle — the project ships unsigned-beta by maintainer decision — so
           # spctl cannot be a gate. Its verdict is logged, never discarded.
@@ -864,12 +973,39 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # One archive per platform with the desktop, RDP sidecar and plugin runner
+      # symbols plus their SYMBOLS.txt manifest (#4504). Published by
+      # upload-debug-symbols, never bundled into an installer.
+      - name: Package debug symbols
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-symbols
+          archive="release-symbols/termiHub-${VERSION}-debug-symbols-desktop-${PLATFORM}.tar.gz"
+          cat debug-symbols/SYMBOLS.txt
+          tar -czf "$archive" -C debug-symbols .
+          ls -l "$archive"
+          du -sh debug-symbols
+
+      - name: Hand the debug symbols to upload-debug-symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-symbols-desktop-${{ matrix.platform }}
+          path: release-symbols/
+          if-no-files-found: error
+          retention-days: 7
+
   # Check the full release asset set before anything is published (#4746). Runs
   # in a real release AND in a dry run: it downloads every build job's artifact
   # and asserts every expected file is present and non-empty, and every agent
   # binary matches its .sha256 sidecar, and every SBOM is well-formed CycloneDX
-  # JSON (#4484). Read-only, no checkout. The upload-* jobs and sbom need it, so
-  # they only ever publish a checked set.
+  # JSON (#4484), and every debug-symbols archive's symbols match its manifest
+  # and, for the agents, the agent binary itself (#4504). Read-only; it checks
+  # out only scripts/internal (debug-symbols.mjs, no dependencies). The upload-*
+  # jobs and sbom need it, so they only ever publish a checked set.
   check-release-assets:
     name: Check Release Assets
     needs:
@@ -889,10 +1025,23 @@ jobs:
       contents: read
 
     steps:
+      # Only the first-party, dependency-free debug-symbols.mjs is needed.
+      - name: Checkout the release scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/internal
+
       - name: Download app bundles
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-app-*
+          merge-multiple: true
+
+      - name: Download debug symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-symbols-*
           merge-multiple: true
 
       - name: Download agent binaries
@@ -934,6 +1083,16 @@ jobs:
             sboms+=("termiHub-${VERSION}-sbom-${c}.cdx.json")
           done
           expected+=("${sboms[@]}")
+          # Debug symbols (#4504): one archive per desktop platform and agent.
+          symbols=()
+          for p in macos-x64 macos-arm64 windows-x64 linux-x64 linux-arm64; do
+            symbols+=("termiHub-${VERSION}-debug-symbols-desktop-${p}.tar.gz")
+          done
+          for a in "${agents[@]}"; do
+            n="${a#termihub-agent-}"
+            symbols+=("termiHub-${VERSION}-debug-symbols-agent-${n%.exe}.tar.gz")
+          done
+          expected+=("${symbols[@]}")
           missing=0
           {
             echo "### Release assets (v${VERSION})"
@@ -965,6 +1124,56 @@ jobs:
             echo "${f}: CycloneDX $(jq -r .specVersion "$f"), $(jq '.components | length' "$f") components"
           done
           echo "All ${#expected[@]} expected assets are present."
+
+      # Every debug-symbols archive (#4504) must hold a SYMBOLS.txt whose
+      # entries match their symbol files' build ids; a desktop archive must
+      # cover all three shipped binaries, and an agent archive must match the
+      # agent binary being published. (build-app already checked the desktop
+      # symbols against the binaries inside each installer.)
+      - name: Check the debug symbols
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo
+            echo "### Debug symbols (v${VERSION})"
+            echo
+            echo "| Archive | Bytes | Binary | Format | Build id |"
+            echo "| --- | ---: | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for archive in termiHub-"${VERSION}"-debug-symbols-*.tar.gz; do
+            dir="unpacked/${archive%.tar.gz}"
+            mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+            kind="${archive#termiHub-"${VERSION}"-debug-symbols-}"
+            kind="${kind%.tar.gz}"
+            bins=()
+            case "$kind" in
+            desktop-*) want=(termihub termihub-rdp-helper termihub-plugin-runner) ;;
+            agent-*)
+              want=(termihub-agent)
+              agent="termihub-agent-${kind#agent-}"
+              if [ ! -f "$agent" ]; then agent="${agent}.exe"; fi
+              bins=("termihub-agent=${agent}")
+              ;;
+            *)
+              echo "::error::Unexpected debug-symbols archive: ${archive}"
+              exit 1
+              ;;
+            esac
+            for w in "${want[@]}"; do
+              if ! cut -f1 "$dir/SYMBOLS.txt" | grep -qx "$w"; then
+                echo "::error::${archive} has no symbols for ${w}"
+                exit 1
+              fi
+            done
+            node scripts/internal/debug-symbols.mjs check "$dir" "${bins[@]}"
+            bytes="$(stat -c %s "$archive")"
+            grep -v '^#' "$dir/SYMBOLS.txt" | while IFS=$'\t' read -r name _file format id; do
+              echo "| ${archive} | ${bytes} | ${name} | ${format} | \`${id}\` |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
 
   # Privileged half of the app publish (#4730), shaped like the sbom job: no
   # checkout and no third-party code, so the write, OIDC and attestation tokens
@@ -1005,6 +1214,51 @@ jobs:
           VERSION: ${{ needs.create-release.outputs.version }}
         run: gh release upload "v${VERSION}" --clobber termiHub-"${VERSION}"-*
 
+  # Privileged half of the debug-symbols publish (#4504), shaped like upload-app:
+  # no checkout and no third-party code. It downloads the symbol archives every
+  # build-app and agent-binaries-* leg packaged (checked by check-release-assets),
+  # attests their provenance like every other asset (verify-release checks it)
+  # and uploads them as release assets next to the installers they describe.
+  upload-debug-symbols:
+    name: Attest and Upload Debug Symbols
+    needs:
+      [
+        verify-version,
+        verify-supply-chain,
+        create-release,
+        check-release-assets,
+        build-app,
+        agent-binaries-linux,
+        agent-binaries-macos,
+        agent-binaries-windows,
+      ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Download debug symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-symbols-*
+          merge-multiple: true
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: termiHub-${{ needs.create-release.outputs.version }}-debug-symbols-*.tar.gz
+
+      - name: Upload debug symbols as release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: gh release upload "v${VERSION}" --clobber termiHub-"${VERSION}"-debug-symbols-*.tar.gz
+
   # Build the Linux agent binaries (static musl). Read-only like build-app; the
   # binaries + .sha256 sidecars go to upload-agent-binaries as workflow artifacts.
   agent-binaries-linux:
@@ -1032,10 +1286,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # llvm-tools: debug-symbols.mjs splits the cross-built (aarch64/armv7)
+      # agent's DWARF with llvm-objcopy, which reads every ELF architecture.
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.target }}
+          components: llvm-tools
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -1057,8 +1314,23 @@ jobs:
       # local Windows/Podman dev (DrvFs strips execute bits); neither is required
       # on a Linux runner, so dropping CROSS_CONFIG here changes nothing but the
       # image source. Local dev still uses Cross.toml via the build-agents scripts.
+      #
+      # Split debug symbols (#4504): keep the DWARF line tables (strip = none),
+      # and link a GNU build-id, which the musl cross toolchain does not add by
+      # default; the next step splits the DWARF out. --config rather than env
+      # vars, which cross does not pass into its container.
       - name: Build agent
-        run: cross build --release --locked --target ${{ matrix.target }} -p termihub-agent
+        env:
+          T: ${{ matrix.target }}
+          BUILD_ID: target.${{ matrix.target }}.rustflags=['-C','link-arg=-Wl,--build-id=sha1']
+        run: cross build --release --locked --target "$T" -p termihub-agent --config 'profile.release.strip="none"' --config "$BUILD_ID"
+
+      - name: Split the agent's debug symbols
+        env:
+          TERMIHUB_SYMBOLS_VERSION: ${{ needs.release-version.outputs.version }}
+        run: >-
+          node scripts/internal/debug-symbols.mjs stage --out debug-symbols
+          --name termihub-agent target/${{ matrix.target }}/release/termihub-agent
 
       - name: Stage agent binary and checksum
         run: |
@@ -1073,6 +1345,33 @@ jobs:
           path: |
             ${{ matrix.artifact_name }}
             ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      # The agent's debug symbols as one archive with a SYMBOLS.txt manifest
+      # (#4504), checked against the exact bytes handed to upload-agent-binaries.
+      - name: Package agent debug symbols
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          ARTIFACT: ${{ matrix.artifact_name }}
+        run: |
+          set -euo pipefail
+          node scripts/internal/debug-symbols.mjs check debug-symbols termihub-agent="$ARTIFACT"
+          name="${ARTIFACT#termihub-agent-}"
+          name="${name%.exe}"
+          mkdir -p release-symbols
+          archive="release-symbols/termiHub-${VERSION}-debug-symbols-agent-${name}.tar.gz"
+          cat debug-symbols/SYMBOLS.txt
+          tar -czf "$archive" -C debug-symbols .
+          ls -l "$archive"
+          echo "SYMBOLS_NAME=agent-${name}" >> "$GITHUB_ENV"
+
+      - name: Hand the debug symbols to upload-debug-symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-symbols-${{ env.SYMBOLS_NAME }}
+          path: release-symbols/
           if-no-files-found: error
           retention-days: 7
 
@@ -1110,8 +1409,19 @@ jobs:
         with:
           key: release-agent-${{ matrix.target }}
 
+      # Split debug symbols (#4504): packed split debuginfo makes rustc run
+      # dsymutil, leaving termihub-agent.dSYM next to a DWARF-free binary.
       - name: Build agent
+        env:
+          CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
         run: cargo build --release --locked --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Stage the agent's debug symbols
+        env:
+          TERMIHUB_SYMBOLS_VERSION: ${{ needs.release-version.outputs.version }}
+        run: >-
+          node scripts/internal/debug-symbols.mjs stage --out debug-symbols
+          --name termihub-agent target/${{ matrix.target }}/release/termihub-agent
 
       - name: Stage agent binary and checksum
         run: |
@@ -1127,6 +1437,33 @@ jobs:
           path: |
             ${{ matrix.artifact_name }}
             ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      # The agent's debug symbols as one archive with a SYMBOLS.txt manifest
+      # (#4504), checked against the exact bytes handed to upload-agent-binaries.
+      - name: Package agent debug symbols
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          ARTIFACT: ${{ matrix.artifact_name }}
+        run: |
+          set -euo pipefail
+          node scripts/internal/debug-symbols.mjs check debug-symbols termihub-agent="$ARTIFACT"
+          name="${ARTIFACT#termihub-agent-}"
+          name="${name%.exe}"
+          mkdir -p release-symbols
+          archive="release-symbols/termiHub-${VERSION}-debug-symbols-agent-${name}.tar.gz"
+          cat debug-symbols/SYMBOLS.txt
+          tar -czf "$archive" -C debug-symbols .
+          ls -l "$archive"
+          echo "SYMBOLS_NAME=agent-${name}" >> "$GITHUB_ENV"
+
+      - name: Hand the debug symbols to upload-debug-symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-symbols-${{ env.SYMBOLS_NAME }}
+          path: release-symbols/
           if-no-files-found: error
           retention-days: 7
 
@@ -1181,10 +1518,21 @@ jobs:
       # explicit --target reach only the target's crates, never build scripts or
       # proc macros, and `cc`-built C code follows the crt-static feature to /MT.
       # Same flag as scripts/build-agents.{sh,cmd}; agent tests stay dynamic.
+      # strip = none (#4504): with strip = "debuginfo" the MSVC linker gets
+      # /DEBUG:NONE and writes no .pdb; this way it writes termihub_agent.pdb.
       - name: Build agent
         env:
           RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_PROFILE_RELEASE_STRIP: none
         run: cargo build --release --locked --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Stage the agent's debug symbols
+        shell: bash
+        env:
+          TERMIHUB_SYMBOLS_VERSION: ${{ needs.release-version.outputs.version }}
+        run: >-
+          node scripts/internal/debug-symbols.mjs stage --out debug-symbols
+          --name termihub-agent target/${{ matrix.target }}/release/termihub-agent.exe
 
       # Fail the release if the agent still imports a VC++ runtime DLL (#4175).
       - name: Verify no Visual C++ runtime dependency in the agent
@@ -1207,6 +1555,33 @@ jobs:
           path: |
             ${{ matrix.artifact_name }}
             ${{ matrix.artifact_name }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      # The agent's debug symbols as one archive with a SYMBOLS.txt manifest
+      # (#4504), checked against the exact bytes handed to upload-agent-binaries.
+      - name: Package agent debug symbols
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          ARTIFACT: ${{ matrix.artifact_name }}
+        run: |
+          set -euo pipefail
+          node scripts/internal/debug-symbols.mjs check debug-symbols termihub-agent="$ARTIFACT"
+          name="${ARTIFACT#termihub-agent-}"
+          name="${name%.exe}"
+          mkdir -p release-symbols
+          archive="release-symbols/termiHub-${VERSION}-debug-symbols-agent-${name}.tar.gz"
+          cat debug-symbols/SYMBOLS.txt
+          tar -czf "$archive" -C debug-symbols .
+          ls -l "$archive"
+          echo "SYMBOLS_NAME=agent-${name}" >> "$GITHUB_ENV"
+
+      - name: Hand the debug symbols to upload-debug-symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-symbols-${{ env.SYMBOLS_NAME }}
+          path: release-symbols/
           if-no-files-found: error
           retention-days: 7
 
@@ -1604,6 +1979,7 @@ jobs:
         sign-agent-binaries,
         sbom,
         upload-third-party-notices,
+        upload-debug-symbols,
       ]
     runs-on: ubuntu-latest
     # This job only inspects the release, but the release is still a DRAFT here
@@ -1664,6 +2040,16 @@ jobs:
 
           # Third-party license notices from upload-third-party-notices (PKG-009).
           expected+=("termiHub-${VERSION}-THIRD_PARTY_NOTICES.txt")
+
+          # Debug symbols from upload-debug-symbols (#4504): one archive per
+          # desktop platform and agent binary.
+          for p in macos-x64 macos-arm64 windows-x64 linux-x64 linux-arm64; do
+            expected+=("termiHub-${VERSION}-debug-symbols-desktop-${p}.tar.gz")
+          done
+          for a in "${agents[@]}"; do
+            n="${a#termihub-agent-}"
+            expected+=("termiHub-${VERSION}-debug-symbols-agent-${n%.exe}.tar.gz")
+          done
 
           echo "Fetching asset list for ${TAG}..."
           mapfile -t actual < <(gh release view "$TAG" --json assets --jq '.assets[].name')

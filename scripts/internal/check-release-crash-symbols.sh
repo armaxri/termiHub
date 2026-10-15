@@ -15,13 +15,24 @@
 # as the real hooks, then panics — and fails unless the report's backtrace has a
 # resolved `termihub_core::` frame.
 #
+# Then (#4504, only when it builds the probe itself, on Linux and macOS) it
+# proves the offline symbolization the release debug-symbols assets exist for:
+# it rebuilds the probe the way release.yml does (Linux: strip = none, then
+# scripts/internal/debug-symbols.mjs splits the DWARF into a .debug file;
+# macOS: packed split debuginfo -> .dSYM), runs the stripped binary AWAY from
+# its symbols, checks the report's `image:` build id matches the symbol file,
+# and resolves the CrashDetails::capture frame's address to crash_report.rs with
+# addr2line (Linux) or atos (macOS) — the steps docs/contributing.md ->
+# "Symbolizing a crash report" documents.
+#
 # Usage:
 #   scripts/internal/check-release-crash-symbols.sh [<probe-binary>]
 #   scripts/internal/check-release-crash-symbols.sh --help
 #
-# Exit status: 0 = resolved frame found, 1 = no resolved frame / no report,
-# 2 = usage. Runs per PR in agent.yml (job "Release crash-report symbols") on
-# Ubuntu. Not meaningful on Windows: MSVC keeps symbols in an unshipped .pdb.
+# Exit status: 0 = resolved frame found (and symbolized offline), 1 = no
+# resolved frame / no report / offline symbolization failed, 2 = usage. Runs per
+# PR in agent.yml (job "Release crash-report symbols") on Ubuntu. Not meaningful
+# on Windows: a PE carries no symbol table, only the .pdb does.
 
 set -euo pipefail
 
@@ -59,31 +70,102 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# The probe panics on purpose; a zero exit means it did not.
-if "$probe" "$work/crash-reports" 2>"$work/stderr.log"; then
-  cat "$work/stderr.log" >&2
-  echo "::error::the crash probe exited 0; it should have panicked" >&2
-  exit 1
-fi
+# Run probe binary $1 with crash-report dir $2; print the report's path.
+run_probe() {
+  # The probe panics on purpose; a zero exit means it did not.
+  if "$1" "$2" 2>"$work/stderr.log"; then
+    cat "$work/stderr.log" >&2
+    echo "::error::the crash probe exited 0; it should have panicked" >&2
+    return 1
+  fi
+  local reports=("$2"/crash-*.txt)
+  if [ ! -f "${reports[0]}" ]; then
+    cat "$work/stderr.log" >&2
+    echo "::error::the crash probe wrote no crash report" >&2
+    return 1
+  fi
+  printf '%s\n' "${reports[0]}"
+}
 
-reports=("$work"/crash-reports/crash-*.txt)
-if [ ! -f "${reports[0]}" ]; then
-  cat "$work/stderr.log" >&2
-  echo "::error::the crash probe wrote no crash report" >&2
-  exit 1
-fi
-report="${reports[0]}"
+report="$(run_probe "$probe" "$work/crash-reports")"
 
 echo "----- crash report -----"
 cat "$report"
 echo "------------------------"
 
 # The backtrace section: from the "backtrace:" line up to the first blank line.
+# std's full format (#4504) prints crate disambiguators: `termihub_core[0123]::`.
 backtrace="$(sed -n '/^backtrace:$/,/^$/p' "$report")"
-if printf '%s\n' "$backtrace" | grep -Eq '[0-9]+: .*termihub_core::'; then
-  echo "OK: the release crash report names termiHub functions."
+if ! printf '%s\n' "$backtrace" | grep -Eq '[0-9]+: .*termihub_core(\[[0-9a-f]+\])?::'; then
+  echo "::error::the release crash report has no resolved termihub_core frame;" \
+    "is [profile.release] stripping the symbol table (strip = true)? See #4316." >&2
+  exit 1
+fi
+echo "OK: the release crash report names termiHub functions."
+
+# --- Offline symbolization with split debug symbols (#4504) ---------------
+if [ "$#" -eq 1 ]; then
   exit 0
 fi
-echo "::error::the release crash report has no resolved termihub_core frame;" \
-  "is [profile.release] stripping the symbol table (strip = true)? See #4316." >&2
-exit 1
+case "$(uname -s)" in
+Linux) knobs=(CARGO_PROFILE_RELEASE_STRIP=none) ;;
+Darwin) knobs=(CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed) ;;
+*)
+  echo "Offline symbolization check skipped on $(uname -s)."
+  exit 0
+  ;;
+esac
+
+echo "Building the crash probe with split debug symbols (${knobs[*]})..."
+split_target="$target_dir/split-debug-symbols"
+(cd "$REPO_ROOT" && env "${knobs[@]}" CARGO_TARGET_DIR="$split_target" \
+  cargo build --release --locked -p termihub-crash-probe)
+built="$split_target/release/termihub-crash-probe"
+node "$REPO_ROOT/scripts/internal/debug-symbols.mjs" stage --out "$work/symbols" "$built"
+symbols="$(cut -f2 <<<"$(grep -v '^#' "$work/symbols/SYMBOLS.txt")")"
+symbols="$work/symbols/$symbols"
+# Run a copy that has no symbols next to it, like a shipped binary.
+mkdir -p "$work/bin"
+cp "$built" "$work/bin/termihub-crash-probe"
+split_report="$(run_probe "$work/bin/termihub-crash-probe" "$work/split-reports")"
+image="$(sed -n 's/^image: *//p' "$split_report")"
+echo "image: $image"
+
+frame="$(grep -E 'CrashDetails[^ ]*::capture' "$split_report" | head -n 1)"
+addr="$(grep -oE '0x[0-9a-f]+' <<<"$frame" | head -n 1)"
+base="$(sed -nE 's/^base (0x[0-9a-f]+),.*/\1/p' <<<"$image")"
+if [ -z "$addr" ] || [ -z "$base" ]; then
+  cat "$split_report" >&2
+  echo "::error::the report lacks the image base or the capture frame address (#4504)" >&2
+  exit 1
+fi
+
+want_id="$(node "$REPO_ROOT/scripts/internal/debug-symbols.mjs" id "$symbols" |
+  sed -E 's/.*"id":"([^"]*)".*/\1/')"
+case "$image" in
+*"uuid $want_id"*) ;;
+*"build-id "*)
+  got_id="$(sed -E 's/.*build-id ([0-9a-f ]+).*/\1/; s/ //g' <<<"$image")"
+  [ "$got_id" = "$want_id" ] || {
+    echo "::error::report build-id $got_id != symbol file $want_id" >&2
+    exit 1
+  }
+  ;;
+*)
+  echo "::error::the report's image line does not carry the symbols' id $want_id" >&2
+  exit 1
+  ;;
+esac
+
+if [ "$(uname -s)" = Darwin ]; then
+  dwarf=("$symbols"/Contents/Resources/DWARF/*)
+  resolved="$(atos -o "${dwarf[0]}" -l "$base" "$addr")"
+else
+  resolved="$(addr2line -f -C -e "$symbols" "$(printf '0x%x' $((addr - base)))")"
+fi
+echo "symbolized $addr (base $base): $resolved"
+if ! grep -q 'crash_report\.rs' <<<"$resolved"; then
+  echo "::error::offline symbolization did not resolve the capture frame to crash_report.rs" >&2
+  exit 1
+fi
+echo "OK: the crash report symbolizes offline with the split debug symbols."

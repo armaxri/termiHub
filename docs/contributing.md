@@ -1737,7 +1737,9 @@ After the workflow completes:
       macOS arm64 + x64, Windows x64, Windows arm64 agent) and, for a stable release,
       that `mark-latest` ran
 - [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
-- [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
+- [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64),
+      plus the `termiHub-X.Y.Z-debug-symbols-*.tar.gz` archives
+      ([Symbolizing a Crash Report](#symbolizing-a-crash-report))
 - [ ] Download and smoke-test at least one artifact on your platform
 - [ ] Spot-check provenance on the downloaded artifact:
       `gh attestation verify <file> --repo armaxri/termiHub`
@@ -1749,7 +1751,8 @@ The release workflow adds two supply-chain records to every release (CI-022,
 
 - **Build provenance attestations.** `actions/attest-build-provenance` signs (keyless,
   Sigstore) a SLSA provenance statement for every published installer (`.dmg`, `.msi`,
-  `.AppImage`, `.deb`, `.rpm`), every agent binary and every SBOM, binding its SHA-256 to the
+  `.AppImage`, `.deb`, `.rpm`), every agent binary, every SBOM and every debug-symbols
+  archive, binding its SHA-256 to the
   release workflow run, commit and tag. The agent `.sha256` / `.sig` sidecars are not
   attested — both derive from the binary's digest, which the attestation already covers.
   Anyone can verify a download with the GitHub CLI:
@@ -1800,6 +1803,71 @@ pnpm install --frozen-lockfile --ignore-scripts --config.node-linker=hoisted
 pnpm exec cyclonedx-npm --ignore-npm-errors --omit dev --spec-version 1.6 \
   --output-format JSON --output-file sbom-frontend.cdx.json
 ```
+
+### Symbolizing a Crash Report
+
+Release binaries keep their symbol table (so a crash report names functions, #4316) but
+ship **no** debug info: the source-line tables live in separate release assets, so the
+installers do not grow ([#4504](https://github.com/armaxri/termiHub/issues/4504)). Every
+release carries one archive per desktop platform and per agent binary:
+
+| Asset                                                    | Contains                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------- |
+| `termiHub-X.Y.Z-debug-symbols-desktop-<platform>.tar.gz` | `termihub`, `termihub-rdp-helper`, `termihub-plugin-runner`   |
+| `termiHub-X.Y.Z-debug-symbols-agent-<platform>.tar.gz`   | `termihub-agent` (`linux-x64`, `macos-arm64`, `windows-x64`…) |
+
+Each archive holds the symbol files (`.dSYM` on macOS, `.debug` on Linux, `.pdb` on
+Windows) and a `SYMBOLS.txt` manifest with the release version, the git commit and each
+binary's **build id**. The release workflow verifies every symbol file against the binary
+actually shipped (inside the installer for the desktop) before anything is published, and
+`check-release-assets` re-checks every archive.
+
+A crash report (`crash-reports/crash-*.txt`) gives you three things to symbolize it:
+
+```text
+version:   0.2.0
+commit:    663465d52
+image:     base 0x0000000102b40000, uuid 4C4C44A3-5555-3144-A1B2-0123456789AB
+backtrace:
+   1:        0x102b59a84 - <termihub_core[…]::diagnostics::crash_report::CrashDetails>::capture
+```
+
+- `image:` is where the module was loaded (ASLR) and its build id: `uuid …` (macOS,
+  `dwarfdump --uuid`), `build-id …` (Linux, `readelf -n`; the hex is grouped by 8 so the
+  report's redaction keeps it, drop the spaces to compare) or `pdb <GUID> age <N>`
+  (Windows).
+- Every backtrace frame starts with its instruction address.
+
+Download the archive for the report's version, platform and app, unpack it, and confirm
+the build id with `node scripts/internal/debug-symbols.mjs id <symbol file>` (or the
+platform tool) before trusting any line number. Then resolve an address:
+
+```bash
+# macOS: atos takes the load address directly
+tar -xzf termiHub-0.2.0-debug-symbols-desktop-macos-arm64.tar.gz -C syms
+atos -o syms/termihub.dSYM/Contents/Resources/DWARF/* -l 0x0000000102b40000 0x102b59a84
+
+# Linux: subtract the base (the load bias) and look the offset up in the .debug file
+tar -xzf termiHub-0.2.0-debug-symbols-desktop-linux-x64.tar.gz -C syms
+addr2line -f -C -i -e syms/termihub.debug $(printf '0x%x' $((0x7f1a2b459a84 - 0x7f1a2b400000)))
+
+# Windows: the frame's RVA is address - base; resolve it against the PDB, e.g. with
+# llvm-symbolizer (put termihub.exe from the installer next to termihub.pdb) at the
+# image's preferred base (0x140000000 for x64):
+llvm-symbolizer --obj=termihub.exe $(printf '0x%x' $((0x140000000 + 0x7ff6a1b39a84 - 0x7ff6a1b20000)))
+```
+
+A frame's address is a return address, so subtract 1 when a line looks one statement too
+late. `scripts/internal/check-release-crash-symbols.sh` runs exactly this flow on a
+forced panic (Linux `addr2line`, macOS `atos`) on every PR that touches the release
+profile, the crash reporter or the symbol tooling (agent.yml).
+
+How the symbols are produced (release.yml, `debug = "line-tables-only"` in the root
+`Cargo.toml`): macOS builds use `split-debuginfo = "packed"` (rustc runs `dsymutil`);
+Windows builds use `strip = "none"` so the MSVC linker writes the `.pdb`; Linux builds use
+`strip = "none"` and `scripts/internal/debug-symbols.mjs stage` splits the DWARF into a
+`.debug` file with `objcopy` before anything is bundled (via Tauri's
+`build.beforeBundleCommand` for the desktop binary).
 
 ### Agent Update Signing Key
 

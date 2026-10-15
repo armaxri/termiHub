@@ -21,6 +21,7 @@
 pub mod crash_report;
 #[cfg(feature = "file-log")]
 pub mod file_log;
+pub mod module_image;
 pub mod redact;
 #[cfg(feature = "file-log")]
 pub mod remote_log;
