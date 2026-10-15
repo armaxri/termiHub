@@ -277,6 +277,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       reset(carriedDraft ?? loaded);
       setBaselineKey(draftKey(loaded));
     }
+    // Keyed on the id (see above): a republished tunnel object must not reset
+    // the unsaved draft, and the carried draft is only read when the tunnel loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingTunnelId]);
 
