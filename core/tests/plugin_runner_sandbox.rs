@@ -26,7 +26,8 @@
 //! namespace layer masks the home folder), the process table and other
 //! processes' arguments and paths (macOS) — and, as positive controls, the
 //! TLS trust store: the distribution CA bundle on Linux, the CA bundle and
-//! the platform certificate verifier (`trustd`) on macOS.
+//! the platform certificate verifier (`trustd`) on macOS, the `ROOT` system
+//! store and the CryptoAPI chain engine on Windows (#4606).
 //!
 //! The resource limits are switched off here so that every denial is the
 //! sandbox's own (macOS `RLIMIT_NPROC = 0` would deny `spawn` / `fork` too).
@@ -154,9 +155,13 @@ fn trust_store_reads() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Windows (#4606): the `ROOT` system store and the CryptoAPI chain engine
+/// (`CertGetCertificateChain` + `CertVerifyCertificateChainPolicy`), the
+/// path `rustls-platform-verifier`, `native-tls` and `rustls-native-certs`
+/// take, from inside the Less-Privileged AppContainer.
 #[cfg(windows)]
 fn trust_store_reads() -> Vec<(&'static str, String)> {
-    Vec::new()
+    vec![("trust", String::new())]
 }
 
 /// A file in the user's home folder whose metadata the plugin must not see
@@ -655,6 +660,10 @@ async fn without_the_sandbox_the_probes_escape() {
         ("reg", "Software".to_owned()),
         ("pipe", canary.pipe.name.clone()),
     ]);
+    // The trust probe itself works outside the sandbox, so a denial inside
+    // it is the sandbox's doing, not a broken probe (#4606).
+    #[cfg(any(windows, target_os = "macos"))]
+    controls.push(("trust", String::new()));
     for (op, arg) in controls {
         let (allowed, line) = probe(conn.as_ref(), &mut rx, op, &arg).await;
         assert!(allowed, "the control probe should escape: {line}");
