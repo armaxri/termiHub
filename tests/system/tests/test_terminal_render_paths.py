@@ -15,7 +15,8 @@ asserts the same paths in the real WebView, read through the read-only
 - the live renderer paints: the DOM renderer's rows carry the output, or the
   WebGL canvas is sized to the grid; a forced WebGL context loss
   (``lose_terminal_webgl_context``) falls back to the DOM renderer, which then
-  paints both the old buffer and new output;
+  paints both the old buffer and new output; hiding and re-showing the tab
+  reacquires a WebGL context, and a hidden tab holds none (#4426);
 - the ``createTerminalScrollbar`` thumb has the right size and position against
   the real gutter with real scrollback, at the bottom, top and middle.
 
@@ -254,6 +255,96 @@ class TestTerminalRenderPaths(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Syst
         self._wait_dom_painted(tab_id, "AFTER_LOSS_3")
         # The fallback keeps a real measured fit.
         self._wait_settled(tab_id, what="the fit to stay settled on the DOM renderer")
+
+    def _renderer_is(self, tab_id: str, renderer: str) -> Optional[dict[str, Any]]:
+        """The measurement once ``tab_id`` reports ``renderer`` consistently.
+
+        Consistent means the ``data-terminal-renderer`` attribute and the mounted
+        canvas agree: a WebGL canvas exists exactly when the renderer is webgl.
+        """
+        m = self._measure(tab_id)
+        if m["renderer"] != renderer:
+            return None
+        has_canvas = m["webglCanvas"] is not None
+        return m if has_canvas == (renderer == "webgl") else None
+
+    def _wait_renderer(
+        self, tab_id: str, renderer: str, what: str, timeout: Optional[float] = None
+    ) -> dict[str, Any]:
+        """Wait for :meth:`_renderer_is`; on timeout, name the last measurement."""
+        extra = {} if timeout is None else {"timeout": timeout}
+        try:
+            return self.wait(lambda: self._renderer_is(tab_id, renderer), what=what, **extra)
+        except AssertionError as exc:
+            raise AssertionError(f"{exc}; last measurement: {self._measure(tab_id)!r}") from exc
+
+    def _switch_and_wait_active(self, tab_id: str) -> None:
+        self.switch_to_tab(tab_id)
+        self.wait(
+            lambda: (self.active_tab() or {}).get("id") == tab_id,
+            what=f"tab {tab_id!r} to become active",
+        )
+
+    def test_lost_webgl_context_is_reacquired_on_the_next_tab_show(self):
+        """Loss -> DOM fallback; hide -> show re-leases a WebGL context (#4308, #4426).
+
+        The WebGL context is a lease of on-screen terminals: a hidden tab holds
+        none (DOM renderer, no canvas), and a context lost while visible is not
+        retried until the tab has been hidden and shown again. This drives that
+        whole cycle on a real WebView with two tabs in one panel.
+        """
+        first = self._open_shell()
+        m = self._wait_settled(first)
+        if m["renderer"] != "webgl":
+            pytest.skip(
+                "this WebView provides no WebGL2 context, so there is no WebGL "
+                "lease to lose or reacquire (the DOM renderer is live from the start)"
+            )
+
+        # A second terminal in the same panel; opening it hides the first.
+        second_name = unique_name("render")
+        self.create_local_connection(second_name, shell=self.posix_shell_name(), connect=True)
+        second = self.wait(
+            lambda: self.find_tab(second_name), what=f"the {second_name!r} terminal tab"
+        )["id"]
+        self.wait(lambda: self.driver.read_terminal(second).strip(), what="the second prompt")
+
+        # Back to the first tab: it is on screen (webgl), the second is hidden
+        # and has released its context (dom, no canvas).
+        self._switch_and_wait_active(first)
+        self._wait_renderer(first, "webgl", "the shown first tab to lease a WebGL context")
+        self._wait_renderer(second, "dom", "the hidden second tab to release its context")
+
+        # A real GPU context loss on the visible tab falls back to the DOM renderer.
+        assert self.driver.lose_terminal_webgl_context(first) is True
+        self._wait_renderer(
+            first,
+            "dom",
+            "the renderer to fall back to DOM after the context loss",
+            timeout=CONTEXT_LOSS_TIMEOUT,
+        )
+
+        # Hide it: the hidden tab reports dom with no WebGL canvas, while the
+        # now-shown second tab leases a context of its own.
+        self._switch_and_wait_active(second)
+        self._wait_renderer(second, "webgl", "the shown second tab to lease a WebGL context")
+        hidden = self._wait_renderer(first, "dom", "the hidden first tab to stay on DOM")
+        assert hidden["webglCanvas"] is None, hidden
+
+        # Show it again: the lost context is reacquired, and the hidden second
+        # tab gives its lease back.
+        self._switch_and_wait_active(first)
+        self._wait_renderer(first, "webgl", "the lost WebGL context to be reacquired on show")
+        self._wait_renderer(second, "dom", "the hidden second tab to release its context again")
+        assert (
+            self.driver.get_attribute(f"terminal-renderer-{first}", "data-terminal-renderer")
+            == "webgl"
+        )
+
+        # The reacquired renderer paints new output and keeps a real fit.
+        self.run_command("echo REACQUIRED_$((3+4))")
+        self.wait_for_output("REACQUIRED_7", tab_id=first)
+        self._wait_settled(first, what="the fit to settle on the reacquired WebGL renderer")
 
     # -- scrollbar ---------------------------------------------------------
 
