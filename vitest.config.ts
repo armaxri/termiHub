@@ -18,7 +18,8 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    exclude: ["tests/e2e/**", "node_modules/**"],
+    // tests/visual is the Playwright rendered visual check (#4712), not vitest.
+    exclude: ["tests/e2e/**", "tests/visual/**", "node_modules/**"],
     // The default 5000ms testTimeout is too tight for the React-DOM `createRoot`
     // component tests when the runner is starved: the Windows CI job has been seen
     // spending 240s+ just on environment setup, leaving otherwise-instant tests
