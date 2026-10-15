@@ -504,35 +504,83 @@ always stale and would recompile that crate, and every crate above it, on each c
 invocation (#3909). To see why cargo rebuilds a crate, run the same command again with
 `CARGO_LOG=cargo::core::compiler::fingerprint=info`.
 
-## 4. Visual Regression Testing (Optional)
+## 4. Rendered Visual Checks (#4712)
 
-**What it does**: Detects unintended UI changes
-**Use for**: Ensuring UI consistency across updates
-
-### Setup with Playwright
+**What it does**: renders the real frontend in headless Chromium at several
+window and sidebar sizes and fails on layout breakage. No baseline images.
+**Use for**: catching CSS that is not loaded, clipped controls, overflow and
+overlapping text before user testing does (#4708–#4711 all reached user
+testing because earlier UI audits read the code but never rendered it).
 
 ```bash
-npm install --save-dev @playwright/test
+pnpm exec playwright install chromium   # once per machine
+pnpm test:visual                        # whole suite, about 30 s locally
+VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
 ```
 
-### Example Visual Test
+### How it works
 
-```javascript
-// tests/visual/terminal.spec.js
-import { test, expect } from "@playwright/test";
+- **Harness.** `tests/visual/harness/index.html` boots the unmodified
+  `src/main.tsx` after `boot.ts` installs `mockIPC` from
+  `@tauri-apps/api/mocks`. `mockBackend.ts` answers the IPC commands, seeded
+  from the golden wire fixtures in `src/test/fixtures/wire/`. A per-test
+  `window.__VISUAL_SCENARIO__` switches the few responses a surface depends on,
+  for example a locked credential store for the unlock dialog. Commands the mock
+  does not know resolve to `null`, or to `[]` for list-shaped names. Each test
+  lists them in an `info` annotation, so a new startup command is easy to add.
+- **Server.** Playwright starts `vite` on this checkout's dev port + 5, so it
+  never collides with `scripts/dev.sh` or with another parallel checkout. Set
+  `TERMIHUB_VISUAL_PORT` to override the port. The dev server is used on
+  purpose: a lazily imported module's CSS only loads when that module loads,
+  exactly the #4708 failure mode.
+- **Surfaces** (`surfaces.spec.ts`). Each surface runs at 1280x800 (the default
+  window), 1024x700 and 800x600 (the minimum window):
+  - every Settings category on a fresh start, with no connection editor opened
+    first;
+  - every sidebar at the default width (260px) and the minimum width (170px);
+  - the unlock, password-prompt, shortcuts, command-palette, customize-layout
+    and export dialogs.
 
-test("terminal UI should match baseline", async ({ page }) => {
-  await page.goto("http://localhost:1420");
+  The spec drives the app through the store that `boot.ts` exposes, not through
+  click paths.
 
-  // Wait for app to load
-  await page.waitForSelector('[data-testid="terminal-view"]');
+- **Assertions** (`layoutAudit.ts`, run inside the page):
 
-  // Take screenshot and compare
-  await expect(page).toHaveScreenshot("terminal-view.png", {
-    maxDiffPixels: 100, // Allow small differences
-  });
-});
-```
+  | Kind              | Fails when                                                                                                                |
+  | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+  | `overflow`        | an element sticks out of the surface horizontally (horizontal scrollers excepted)                                         |
+  | `clipped-control` | a button/input/switch/tab is cut off by an `overflow: hidden` ancestor or the window edge, or is squeezed to nothing      |
+  | `truncated-text`  | ellipsis truncation leaves less than about 4 characters visible                                                           |
+  | `text-overlap`    | a visible text line overlaps a control's box (including its focus ring) or another element's text                         |
+  | `unstyled-class`  | a class a `src/components/ui/` primitive emits is styled somewhere in `src/**/*.css`, but no loaded stylesheet defines it |
+  | `console-error`   | the app logs a console error (React warnings included) while the surface renders                                          |
+  | `expectation`     | a surface-specific check fails, for example the shortcuts overlay showing more than one shortcut column (#4711)           |
+
+  Every surface is a separate soft assertion, so a failure names the surface
+  and the window size, and one broken surface never hides the others.
+
+- **Screenshots.** Every surface is screenshotted to
+  `tests/visual/test-results/screens/<window>/` and attached to the Playwright
+  report. CI uploads the folder as the `visual-check-screenshots` artifact on
+  every run, pass or fail.
+
+### Known bugs: the allowlist
+
+`tests/visual/allowlist.ts` lists the layout bugs that are known and still
+open. Each entry names the issue that owns the fix and matches the issue kind,
+the surface and the message. The fix PR deletes its entry, which turns the
+check into that fix's regression guard. An entry that no longer matches
+anything shows up as a `warning` annotation. Never add an entry without an open
+issue. `VISUAL_STRICT=1` ignores the list and shows everything it hides. `VISUAL_STRICT=4708` ignores only the entries for #4708, which is how a fix PR shows that its fix passes before it deletes them.
+
+### CI
+
+The `Rendered Visual Checks` job in `code-quality.yml` runs on every PR that
+touches the `frontend` area (`tests/visual/` is part of it) and on every push to
+`develop` and `main`. It is part of the `PR Gate`. The suite itself takes well
+under a minute, and installing Chromium takes most of the job time.
+`scripts/ci-local.sh` runs the same check as the
+`Frontend: rendered visual checks` gate.
 
 ## Test Data Attributes
 
@@ -1373,7 +1421,7 @@ a per-`it` override (`it("…", async () => { … }, 30000)`) over lowering the 
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:visual": "playwright test"
+    "test:visual": "playwright test -c tests/visual/playwright.config.ts"
   }
 }
 ```
