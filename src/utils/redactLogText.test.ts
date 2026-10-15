@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { redactLogText, REDACTION_MARKER } from "./redactLogText";
 import secretTextVectors from "@/test/fixtures/redaction/secret-text-vectors.json";
+import secretFieldVectors from "@/test/fixtures/redaction/secret-field-vectors.json";
 
 const MARK = REDACTION_MARKER;
 
@@ -177,5 +178,23 @@ describe("redactLogText — shared secret-key vectors (#4430)", () => {
       const once = redactLogText(input);
       expect(redactLogText(once)).toBe(once);
     }
+  });
+});
+
+describe("redactLogText — shared field-name vectors", () => {
+  // The same names run against the structured classifier
+  // `log_frame::is_secret_field` and the Rust redactor (#4701), so field names
+  // and free-text keys are classified from one word list.
+  it("has vectors", () => {
+    expect(secretFieldVectors.secret.length).toBeGreaterThan(50);
+    expect(secretFieldVectors.notSecret.length).toBeGreaterThan(10);
+  });
+
+  it.each(secretFieldVectors.secret)("masks the value of %s", (name) => {
+    expect(redactLogText(`${name}=hunter2`)).toBe(`${name}=${MARK}`);
+  });
+
+  it.each(secretFieldVectors.notSecret)("keeps the value of %s", (name) => {
+    expect(redactLogText(`${name}=hunter2`)).toBe(`${name}=hunter2`);
   });
 });

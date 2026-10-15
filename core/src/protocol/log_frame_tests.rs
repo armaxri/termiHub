@@ -100,3 +100,117 @@ fn secret_field_names_are_recognised() {
         assert!(!is_secret_field(name), "{name}");
     }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FieldVectors {
+    secret: Vec<String>,
+    structured_secret: Vec<String>,
+    not_secret: Vec<String>,
+}
+
+/// The same vectors run against the free-text redactors (#4701), so the
+/// structured and free-text classifications share one word list.
+#[test]
+fn shared_secret_field_vectors_match() {
+    let raw = include_str!("../../../src/test/fixtures/redaction/secret-field-vectors.json");
+    let vectors: FieldVectors = serde_json::from_str(raw).unwrap();
+    assert!(vectors.secret.len() > 50);
+    for name in vectors.secret.iter().chain(&vectors.structured_secret) {
+        assert!(is_secret_field(name), "{name} should be a secret field");
+    }
+    for name in &vectors.not_secret {
+        assert!(
+            !is_secret_field(name),
+            "{name} should not be a secret field"
+        );
+    }
+}
+
+/// Every term in the shared list `src/data/secret-key-words.json` is a secret
+/// field name in every spelling (#4701): adding a word there without the
+/// structured classifier honouring it fails here.
+#[test]
+fn every_shared_secret_word_is_a_secret_field() {
+    let raw = include_str!("../../../src/data/secret-key-words.json");
+    let spec: serde_json::Value = serde_json::from_str(raw).unwrap();
+    let mut terms: Vec<Vec<String>> = spec["words"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| vec![w.as_str().unwrap().to_string()])
+        .collect();
+    for t in spec["compoundWords"].as_array().unwrap() {
+        terms.push(
+            t.as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_string())
+                .collect(),
+        );
+    }
+    assert!(terms.iter().any(|t| t == &["pin"]));
+    let cap = |s: &str| {
+        let mut c = s.chars();
+        c.next()
+            .map(|f| f.to_ascii_uppercase().to_string() + c.as_str())
+            .unwrap_or_default()
+    };
+    for parts in &terms {
+        let snake = parts.join("_");
+        let camel_tail: String = parts.iter().map(|p| cap(p)).collect();
+        let camel = parts[0].clone() + &parts[1..].iter().map(|p| cap(p)).collect::<String>();
+        let names = [
+            snake.clone(),
+            format!("{snake}s"),
+            snake.to_ascii_uppercase(),
+            parts.join("-"),
+            parts.concat(),
+            camel.clone(),
+            format!("ssh_{snake}"),
+            format!("ssh-{}", parts.join("-")),
+            format!("SSH_{}", snake.to_ascii_uppercase()),
+            format!("ssh{camel_tail}"),
+            format!("ssh{}", parts.concat()),
+            format!("key.{snake}"),
+        ];
+        for name in names {
+            assert!(is_secret_field(&name), "{name} (from {parts:?})");
+        }
+    }
+}
+
+/// Every name the classifier caught before it was driven by the shared list
+/// (#4701) is still caught: the shared list may only add secrets.
+#[test]
+fn pre_shared_list_secret_names_stay_secret() {
+    for name in [
+        "password",
+        "passwd",
+        "passphrase",
+        "pwd",
+        "secret",
+        "token",
+        "credential",
+        "credentials",
+        "cookie",
+        "otp",
+        "totp",
+        "private_key",
+        "privatekey",
+        "api_key",
+        "apikey",
+        "secret_key",
+        "access_key",
+        "authorization",
+        "xprivate_key",
+        "my.api-key",
+        "token_count",
+        "cookie_jar",
+        "credentials_path",
+        "secretKey",
+        "AccessKey",
+    ] {
+        assert!(is_secret_field(name), "{name}");
+    }
+}

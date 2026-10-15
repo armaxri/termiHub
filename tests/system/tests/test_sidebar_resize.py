@@ -20,7 +20,7 @@ pytestmark = pytest.mark.integration
 
 HANDLE = "sidebar-resize-handle"
 TOGGLE = "terminal-view-toggle-sidebar"
-MIN_WIDTH = 170
+MIN_WIDTH = 200  # SIDEBAR_MIN_WIDTH in src/hooks/useSidebarResize.ts (#4709)
 MAX_WIDTH = 600
 
 

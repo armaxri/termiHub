@@ -8,7 +8,7 @@ import {
 } from "@/services/api";
 import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Modal, Button, ConfirmDialog, toast } from "@/components/ui";
+import { Modal, Button, ConfirmDialog, Field, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
@@ -197,49 +197,64 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
         </>
       }
     >
-      <p className="unlock-dialog__description">
-        termiHub has saved credentials that are encrypted with your master password.
-      </p>
-      {biometricAvailable && !corrupt && (
-        <div className="unlock-dialog__biometric-row">
-          <Button
-            variant="secondary"
-            icon={<Fingerprint size={14} />}
-            onClick={() => void handleBiometricUnlock()}
-            disabled={biometricPending}
-            data-testid="unlock-dialog-biometric"
-          >
-            {biometricPending ? `Waiting for ${biometricLabel}…` : `Unlock with ${biometricLabel}`}
-          </Button>
-          <span className="unlock-dialog__biometric-or">or enter your master password</span>
-        </div>
-      )}
-      <PasswordInput
-        className="ui-input"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Master password"
-        autoFocus={!biometricAvailable}
-        data-testid="unlock-dialog-input"
-      />
-      {error && (
-        <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
-          {error}
+      {/* One spacing container (#4710): the description, the optional biometric
+          row, the password field, the error and the reset link are separate
+          blocks separated by the stack gap, so the input's focus ring never
+          overlaps the wrapped description text above it. */}
+      <div className="unlock-dialog__body" data-testid="unlock-dialog-body">
+        <p className="unlock-dialog__description" data-testid="unlock-dialog-description">
+          termiHub has saved credentials that are encrypted with your master password.
         </p>
-      )}
-      {!corrupt && (
-        <div className="unlock-dialog__forgot-row">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setConfirmReset(true)}
-            data-testid="unlock-dialog-forgot"
-          >
-            Forgot password? Reset credential store…
-          </Button>
-        </div>
-      )}
+        {biometricAvailable && !corrupt && (
+          <div className="unlock-dialog__biometric-row">
+            <Button
+              variant="secondary"
+              icon={<Fingerprint size={14} />}
+              onClick={() => void handleBiometricUnlock()}
+              disabled={biometricPending}
+              data-testid="unlock-dialog-biometric"
+            >
+              {biometricPending
+                ? `Waiting for ${biometricLabel}…`
+                : `Unlock with ${biometricLabel}`}
+            </Button>
+            <span className="unlock-dialog__biometric-or">or enter your master password</span>
+          </div>
+        )}
+        <Field
+          label="Master password"
+          htmlFor="unlock-dialog-password"
+          data-testid="unlock-dialog-field"
+        >
+          <PasswordInput
+            id="unlock-dialog-password"
+            className="ui-input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Master password"
+            autoFocus={!biometricAvailable}
+            data-testid="unlock-dialog-input"
+          />
+        </Field>
+        {error && (
+          <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
+            {error}
+          </p>
+        )}
+        {!corrupt && (
+          <div className="unlock-dialog__forgot-row">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmReset(true)}
+              data-testid="unlock-dialog-forgot"
+            >
+              Forgot password? Reset credential store…
+            </Button>
+          </div>
+        )}
+      </div>
       <ConfirmDialog
         open={confirmReset}
         title="Reset credential store?"

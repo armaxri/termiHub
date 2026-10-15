@@ -13,7 +13,7 @@ import { createRoot, Root } from "react-dom/client";
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 import { useAppStore } from "@/store/appStore";
-import { useSidebarResize, SIDEBAR_KEYBOARD_STEP } from "./useSidebarResize";
+import { useSidebarResize, SIDEBAR_KEYBOARD_STEP, SIDEBAR_MIN_WIDTH } from "./useSidebarResize";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -54,7 +54,7 @@ describe("useSidebarResize — keyboard separator (#4329)", () => {
     expect(handle.getAttribute("aria-label")).toBe("Resize sidebar");
     expect(handle.getAttribute("tabindex")).toBe("0");
     expect(handle.getAttribute("aria-valuenow")).toBe("260");
-    expect(handle.getAttribute("aria-valuemin")).toBe("170");
+    expect(handle.getAttribute("aria-valuemin")).toBe(String(SIDEBAR_MIN_WIDTH));
     expect(handle.getAttribute("aria-valuemax")).toBe("600");
     handle.focus();
     expect(document.activeElement).toBe(handle);
@@ -84,7 +84,7 @@ describe("useSidebarResize — keyboard separator (#4329)", () => {
     press(handle, "End");
     expect(useAppStore.getState().sidebarWidth).toBe(600);
     press(handle, "Home");
-    expect(useAppStore.getState().sidebarWidth).toBe(170);
+    expect(useAppStore.getState().sidebarWidth).toBe(SIDEBAR_MIN_WIDTH);
   });
 
   it("clamps arrow steps to the bounds", () => {

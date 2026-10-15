@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
-import { Button, ConfirmDialog, toast, EmptyState } from "@/components/ui";
+import { ConfirmDialog, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -161,17 +161,18 @@ export function EmbeddedServerSidebar() {
 
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
-      <SidebarToolbar>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Plus size={14} />}
-          onClick={handleNew}
-          data-testid="server-new-btn"
-        >
-          New Service
-        </Button>
-      </SidebarToolbar>
+      <SidebarToolbar
+        aria-label="Service actions"
+        actions={[
+          {
+            id: "new",
+            label: "New Service",
+            icon: <Plus size={14} />,
+            onClick: handleNew,
+            testId: "server-new-btn",
+          },
+        ]}
+      />
 
       {servers.length === 0 ? (
         <EmptyState

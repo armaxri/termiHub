@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Plus, Save } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
-import { Button, toast, Tooltip, ConfirmDialog, EmptyState } from "@/components/ui";
+import { toast, ConfirmDialog, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { formatUntrustedImportNotice } from "@/services/workspaceImportTrust";
@@ -10,7 +10,7 @@ import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
-import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
+import { exportImportActions } from "@/components/Sidebar/ExportImportButtons";
 import type { WorkspaceSummary } from "@/types/workspace";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
@@ -214,40 +214,36 @@ export function WorkspaceSidebar() {
 
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
-      <SidebarToolbar>
-        <Tooltip content="New Workspace" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Plus size={14} />}
-            onClick={handleNew}
-            aria-label="New Workspace"
-            data-testid="workspace-new-btn"
-          >
-            New Workspace
-          </Button>
-        </Tooltip>
-        <Tooltip content="Save Current Layout" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Save size={14} />}
-            onClick={() => setShowSaveDialog(true)}
-            aria-label="Save Current Layout"
-            data-testid="workspace-save-current-btn"
-          >
-            Save Current
-          </Button>
-        </Tooltip>
-        <ExportImportButtons
-          onExport={handleExport}
-          onImport={handleImport}
-          exportLabel="Export Workspaces"
-          importLabel="Import Workspaces"
-          exportTestId="workspace-export-btn"
-          importTestId="workspace-import-btn"
-        />
-      </SidebarToolbar>
+      <SidebarToolbar
+        aria-label="Workspace actions"
+        overflowLabel="More workspace actions"
+        overflowTestId="workspace-toolbar-overflow"
+        actions={[
+          {
+            id: "new",
+            label: "New Workspace",
+            icon: <Plus size={14} />,
+            onClick: handleNew,
+            testId: "workspace-new-btn",
+          },
+          {
+            id: "save-current",
+            label: "Save Current Layout",
+            shortLabel: "Save Current",
+            icon: <Save size={14} />,
+            onClick: () => setShowSaveDialog(true),
+            testId: "workspace-save-current-btn",
+          },
+          ...exportImportActions({
+            onExport: handleExport,
+            onImport: handleImport,
+            exportLabel: "Export Workspaces",
+            importLabel: "Import Workspaces",
+            exportTestId: "workspace-export-btn",
+            importTestId: "workspace-import-btn",
+          }),
+        ]}
+      />
       {workspaces.length === 0 ? (
         <EmptyState
           title="No workspaces configured."

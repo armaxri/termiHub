@@ -28,6 +28,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostics::redact::{is_secret_key_name, secret_key_terms};
+
 /// Marker that starts every framed stderr line, followed by [`FRAME_VERSION`]
 /// and a single space.
 pub const FRAME_PREFIX: &str = "@termihub-log/";
@@ -113,58 +115,52 @@ pub fn parse_line(line: &str) -> StderrLine {
 
 /// Whether a field named `name` holds a secret and must never be logged.
 ///
-/// Matched case-insensitively on the whole name or a `_`/`-`/`.`-separated or
-/// camelCase component, so `password`, `ssh_password`, `sshPassword`,
-/// `auth-token` and `api_key` are all caught while `session_id` or `keyCount`
-/// are not.
+/// Driven by the shared secret-word list `src/data/secret-key-words.json`
+/// (#4701) that the free-text redactors also use, so every word they mask is a
+/// secret field name here too. A name is secret when:
+///
+/// - the shared key pattern matches it whole, or any `.`-separated segment
+///   ([`is_secret_key_name`]): `ssh_password`, `sshPassword`, `X-Auth-Token`,
+///   `sshpassword`, `pin`, `otps`;
+/// - any `_`/`-`/`.`-separated or camelCase component, lowercased and with an
+///   optional plural `s`, is a shared word: `token_count`, `pin_code`,
+///   `cookie.jar`, `credentials`; or
+/// - it ends in a shared compound term (`private_key`, `myApiKey`) or is one of
+///   the legacy whole names (`authorization`, `apikey`, `privatekey`).
+///
+/// `session_id`, `keyCount`, `spinner` and `options` are not secret.
 pub fn is_secret_field(name: &str) -> bool {
-    const WHOLE: &[&str] = &[
-        "password",
-        "passwd",
-        "passphrase",
-        "pwd",
-        "secret",
-        "token",
-        "credential",
-        "credentials",
-        "cookie",
-        "otp",
-        "totp",
-        "private_key",
-        "privatekey",
-        "api_key",
-        "apikey",
-        "secret_key",
-        "access_key",
-        "authorization",
-    ];
     let normalized = snake_case(name).replace(['-', '.'], "_");
-    if WHOLE.contains(&normalized.as_str()) {
+    if WHOLE_SECRET_NAMES.contains(&normalized.as_str()) {
         return true;
     }
-    if normalized.ends_with("private_key")
-        || normalized.ends_with("api_key")
-        || normalized.ends_with("secret_key")
-        || normalized.ends_with("access_key")
-    {
-        return true;
-    }
-    normalized.split('_').any(|part| {
-        matches!(
-            part,
-            "password"
-                | "passwd"
-                | "passphrase"
-                | "secret"
-                | "token"
-                | "credential"
-                | "credentials"
-                | "cookie"
-                | "otp"
-                | "totp"
-        )
-    })
+    let parts: Vec<&str> = normalized.split('_').filter(|p| !p.is_empty()).collect();
+    let is_word = |part: &str, word: &str| {
+        part == word || part.strip_suffix('s').is_some_and(|stem| stem == word)
+    };
+    let terms = secret_key_terms();
+    let word_hit = parts.iter().any(|part| {
+        terms
+            .iter()
+            .any(|t| t.len() == 1 && is_word(part, t[0].as_str()))
+    });
+    let compound_hit = terms.iter().filter(|t| t.len() > 1).any(|t| {
+        let joined = t.join("_");
+        normalized.ends_with(&joined) || normalized.ends_with(&format!("{joined}s"))
+    });
+    word_hit || compound_hit || is_secret_key_name(name) || terms.is_empty()
 }
+
+/// Whole normalized names that are secret although no single component is a
+/// shared word (`apikey` / `privatekey` glue a compound term, `authorization`
+/// carries a credential).
+const WHOLE_SECRET_NAMES: &[&str] = &[
+    "privatekey",
+    "apikey",
+    "secretkey",
+    "accesskey",
+    "authorization",
+];
 
 /// `name` lowercased, with a `_` at every lower-to-upper camelCase boundary
 /// (`sshPassword` → `ssh_password`).

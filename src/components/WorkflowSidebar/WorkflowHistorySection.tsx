@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
+import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
 import type { WorkflowRun, WorkflowRunHistoryStatus } from "@/types/workflow";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
@@ -72,23 +73,24 @@ export function WorkflowHistorySection() {
       data-testid="workflow-history"
       aria-label="Workflow run history"
     >
-      <header className="workflow-history__header">
-        <span className="workflow-history__title">
-          <History size={12} aria-hidden="true" /> History
-        </span>
-        <Tooltip content="Clear history" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label="Clear history"
-            data-testid="workflow-history-clear"
-            icon={<Trash2 size={12} />}
-            disabled={workflowRuns.length === 0}
-            onClick={() => void handleClear()}
-          />
-        </Tooltip>
-      </header>
+      <SidebarSectionHeader
+        title="History"
+        icon={<History size={12} aria-hidden="true" />}
+        actions={
+          <Tooltip content="Clear history" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Clear history"
+              data-testid="workflow-history-clear"
+              icon={<Trash2 size={12} />}
+              disabled={workflowRuns.length === 0}
+              onClick={() => void handleClear()}
+            />
+          </Tooltip>
+        }
+      />
       {workflowRuns.length === 0 ? (
         <EmptyState title="No runs recorded yet." data-testid="workflow-history-empty" />
       ) : (

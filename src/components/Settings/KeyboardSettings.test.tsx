@@ -91,6 +91,28 @@ describe("KeyboardSettings", () => {
     });
 
     expect(exportCheatSheet).toHaveBeenCalledOnce();
+    expect(exportCheatSheet).toHaveBeenCalledWith("current");
+  });
+
+  it("exports the all-platforms cheat sheet when the option is checked (#4711)", async () => {
+    const { exportCheatSheet } = await import("@/utils/cheatSheetPdf");
+    vi.mocked(exportCheatSheet).mockClear();
+    await renderComponent();
+    const allPlatforms = container.querySelector(
+      '[data-testid="keyboard-settings-cheat-sheet-all-platforms"]'
+    ) as HTMLElement;
+    expect(allPlatforms.getAttribute("aria-checked")).toBe("false");
+
+    act(() => {
+      allPlatforms.click();
+    });
+    act(() => {
+      (
+        container.querySelector('[data-testid="keyboard-settings-export-pdf"]') as HTMLElement
+      ).click();
+    });
+
+    expect(exportCheatSheet).toHaveBeenCalledWith("all");
   });
 
   it("filters bindings by search query", async () => {

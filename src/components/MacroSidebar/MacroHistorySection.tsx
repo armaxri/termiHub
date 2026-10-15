@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
+import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
 import type { MacroRun, MacroRunOrigin, MacroRunStatus } from "@/types/macro";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
@@ -102,43 +103,46 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
 
   return (
     <section className="macro-history" data-testid="macro-history" aria-label="Macro run history">
-      <header className="macro-history__header">
-        <span className="macro-history__title">
-          <History size={12} aria-hidden="true" /> History
-          {macroId ? (
+      <SidebarSectionHeader
+        title="History"
+        icon={<History size={12} aria-hidden="true" />}
+        suffix={
+          macroId ? (
             <span className="macro-history__filter" data-testid="macro-history-filter">
               · {filterName ?? "this macro"}
             </span>
-          ) : null}
-        </span>
-        <span className="macro-history__actions">
-          {macroId ? (
-            <Tooltip content="Show all macros" side="top">
+          ) : undefined
+        }
+        actions={
+          <>
+            {macroId ? (
+              <Tooltip content="Show all macros" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Show all macros"
+                  data-testid="macro-history-show-all"
+                  icon={<X size={12} />}
+                  onClick={onShowAll}
+                />
+              </Tooltip>
+            ) : null}
+            <Tooltip content={macroId ? "Clear history (all macros)" : "Clear history"} side="top">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                aria-label="Show all macros"
-                data-testid="macro-history-show-all"
-                icon={<X size={12} />}
-                onClick={onShowAll}
+                aria-label="Clear history"
+                data-testid="macro-history-clear"
+                icon={<Trash2 size={12} />}
+                disabled={macroRuns.length === 0}
+                onClick={() => void handleClear()}
               />
             </Tooltip>
-          ) : null}
-          <Tooltip content={macroId ? "Clear history (all macros)" : "Clear history"} side="top">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              aria-label="Clear history"
-              data-testid="macro-history-clear"
-              icon={<Trash2 size={12} />}
-              disabled={macroRuns.length === 0}
-              onClick={() => void handleClear()}
-            />
-          </Tooltip>
-        </span>
-      </header>
+          </>
+        }
+      />
       {runs.length === 0 ? (
         <EmptyState
           title={macroId ? "This macro has not been played yet." : "No playbacks recorded yet."}

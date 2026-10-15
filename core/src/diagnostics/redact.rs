@@ -88,6 +88,13 @@ fn any_case(text: &str) -> String {
 /// boundary (`keyPassphrase`, `clientSecret`) or glued to a listed prefix in any
 /// case (`sshpassword`, `accesstoken`). A trailing plural `s` is allowed.
 fn secret_key_pattern() -> Option<String> {
+    secret_key_pattern_with(&format!("[A-Za-z0-9_-]{{0,{MAX_KEY_PREFIX}}}"))
+}
+
+/// [`secret_key_pattern`] with `ident` as the identifier-prefix pattern: the
+/// free-text redactor bounds it, a whole-name match ([`is_secret_key_name`])
+/// does not need to.
+fn secret_key_pattern_with(ident: &str) -> Option<String> {
     let spec: SecretKeyWords = serde_json::from_str(SECRET_KEY_WORDS_JSON).ok()?;
     let terms: Vec<Vec<String>> = spec
         .words
@@ -135,10 +142,53 @@ fn secret_key_pattern() -> Option<String> {
         .map(|p| any_case(p))
         .collect::<Vec<_>>()
         .join("|");
-    let ident = format!("[A-Za-z0-9_-]{{0,{MAX_KEY_PREFIX}}}");
     Some(format!(
         r"\b(?:(?:{ident}[_-])?(?:{term_any_case})|{ident}[A-Za-z0-9](?:{term_camel})|(?:{glued})(?:{term_any_case}))[sS]?\b"
     ))
+}
+
+/// The shared secret terms (#4701), lowercased: each `words` entry as a
+/// one-part term and each `compoundWords` entry as its parts. Empty only if the
+/// embedded list fails to parse, which a unit test rules out.
+pub fn secret_key_terms() -> &'static [Vec<String>] {
+    static TERMS: OnceLock<Vec<Vec<String>>> = OnceLock::new();
+    TERMS.get_or_init(|| {
+        serde_json::from_str::<SecretKeyWords>(SECRET_KEY_WORDS_JSON)
+            .map(|spec| {
+                spec.words
+                    .iter()
+                    .map(|w| vec![w.to_ascii_lowercase()])
+                    .chain(
+                        spec.compound_words
+                            .iter()
+                            .map(|t| t.iter().map(|p| p.to_ascii_lowercase()).collect()),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Whether `name`, taken as a whole field or key name, is one the free-text
+/// redactor treats as secret-bearing (#4701): the shared key pattern anchored
+/// to the whole name, or to any `.`-separated segment of it (`key.passphrase`).
+///
+/// Structured classifiers (`protocol::log_frame::is_secret_field`) build on
+/// this so a word added to `src/data/secret-key-words.json` is a secret field
+/// name too, not only a secret key in free text. Fails closed: if the shared
+/// pattern cannot be built every name is treated as secret.
+pub fn is_secret_key_name(name: &str) -> bool {
+    static NAME: OnceLock<Option<Regex>> = OnceLock::new();
+    let Some(re) = NAME
+        .get_or_init(|| {
+            let pattern = secret_key_pattern_with("[A-Za-z0-9_-]*")?;
+            Regex::new(&format!("^(?:{pattern})$")).ok()
+        })
+        .as_ref()
+    else {
+        return true;
+    };
+    name.split('.').any(|segment| re.is_match(segment))
 }
 
 /// Host-bearing field names.

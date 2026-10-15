@@ -1,5 +1,5 @@
 import { Download, Upload } from "lucide-react";
-import { Button, Tooltip } from "@/components/ui";
+import type { ToolbarAction } from "@/components/ui";
 
 /**
  * Shared export / import icon-button pair (UISF-019).
@@ -7,12 +7,10 @@ import { Button, Tooltip } from "@/components/ui";
  * The Macro, Workflow, and Workspace sidebars each repeated the same trailing
  * pair of icon-only ghost buttons in their toolbar — a `Download` "export all"
  * and an `Upload` "import" — verbatim, differing only in their labels/testids
- * and whether export is disabled when the list is empty. This component owns that
- * pair so the three sidebars compose it instead of re-declaring the markup.
- *
- * It renders the two `<Tooltip><Button/></Tooltip>` pairs the sidebars had
- * before, in the same order, so the rendered DOM (icons, ghost/sm variant,
- * `aria-label`, tooltip text, testids) is unchanged.
+ * and whether export is disabled when the list is empty. {@link exportImportActions}
+ * owns that pair so the three sidebars compose it instead of re-declaring it;
+ * the toolbar renders each as a tooltipped, `aria-label`led icon button with the
+ * caller's testid (or an overflow-menu item when the sidebar is narrow).
  */
 export interface ExportImportButtonsProps {
   /** Invoked when the export (Download) button is clicked. */
@@ -31,8 +29,12 @@ export interface ExportImportButtonsProps {
   importTestId?: string;
 }
 
-/** The Download/Upload icon-button pair shared by the list-export sidebars. */
-export function ExportImportButtons({
+/**
+ * The Download/Upload pair as icon-only {@link ToolbarAction}s for a
+ * width-responsive `SidebarToolbar` (#4709) — so the pair collapses into the
+ * overflow menu instead of clipping in a narrow sidebar.
+ */
+export function exportImportActions({
   onExport,
   onImport,
   exportLabel,
@@ -40,32 +42,24 @@ export function ExportImportButtons({
   exportDisabled = false,
   exportTestId,
   importTestId,
-}: ExportImportButtonsProps) {
-  return (
-    <>
-      <Tooltip content={exportLabel} side="top">
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          icon={<Download size={14} />}
-          onClick={onExport}
-          disabled={exportDisabled}
-          aria-label={exportLabel}
-          data-testid={exportTestId}
-        />
-      </Tooltip>
-      <Tooltip content={importLabel} side="top">
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          icon={<Upload size={14} />}
-          onClick={onImport}
-          aria-label={importLabel}
-          data-testid={importTestId}
-        />
-      </Tooltip>
-    </>
-  );
+}: ExportImportButtonsProps): ToolbarAction[] {
+  return [
+    {
+      id: "export",
+      label: exportLabel,
+      icon: <Download size={14} />,
+      onClick: onExport,
+      disabled: exportDisabled,
+      iconOnly: true,
+      testId: exportTestId,
+    },
+    {
+      id: "import",
+      label: importLabel,
+      icon: <Upload size={14} />,
+      onClick: onImport,
+      iconOnly: true,
+      testId: importTestId,
+    },
+  ];
 }
