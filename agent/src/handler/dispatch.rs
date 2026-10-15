@@ -196,7 +196,12 @@ use termihub_core::monitoring::{
 /// `latencyMs` (`0.42`) to a desktop that advertises it, and whole milliseconds
 /// to one that does not (an older desktop parses the field as an integer). An
 /// older agent always sends whole milliseconds, which the desktop still reads.
-const AGENT_PROTOCOL_VERSION: &str = "0.31.0";
+/// Bumped to 0.32.0 for the additive `agent.logs.list` / `agent.logs.read`
+/// methods (#4519): a connected desktop pulls the agent's own per-process log
+/// files, redacted and size-capped, into its Export Diagnostics bundle. An
+/// older agent answers "method not found", which the desktop reports as
+/// "this agent cannot share its logs".
+const AGENT_PROTOCOL_VERSION: &str = "0.32.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -268,6 +273,10 @@ struct HandlerState {
     /// agent's own `<config>/logs/crash-reports` is used; tests point it at a
     /// temp dir via [`AgentHandler::with_crash_dir`].
     crash_dir: Arc<OnceLock<PathBuf>>,
+    /// Log directory override (#4519). Empty in production, where the agent's
+    /// own `<config>/logs` is used; tests point it at a temp dir via
+    /// [`AgentHandler::with_log_dir`].
+    log_dir: Arc<OnceLock<PathBuf>>,
     /// This agent instance's update auth token (AGT-003, #3213), wired by the
     /// transport via [`AgentHandler::with_update_auth`]. Empty ⇒ every update
     /// RPC is refused (fail closed).
@@ -326,6 +335,15 @@ pub struct AgentHandler {
         )
     )]
     crash_dir: Arc<OnceLock<PathBuf>>,
+    /// Shared with [`HandlerState::log_dir`]; see [`with_log_dir`](Self::with_log_dir).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read only by tests; production reads it via HandlerState"
+        )
+    )]
+    log_dir: Arc<OnceLock<PathBuf>>,
     /// Shared with [`HandlerState::update_auth`]; see
     /// [`with_update_auth`](Self::with_update_auth).
     update_auth: Arc<OnceLock<UpdateAuth>>,
@@ -373,6 +391,7 @@ impl AgentHandler {
         let tool_runs = ToolRunManager::new(RunLimits::default());
         let ki_binding = KiBinding::new();
         let crash_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
+        let log_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         let update_auth: Arc<OnceLock<UpdateAuth>> = Arc::new(OnceLock::new());
         let forward_streams = ClientForwardStreams::new(session_manager.clone());
 
@@ -395,6 +414,7 @@ impl AgentHandler {
             ki_binding: ki_binding.clone(),
             forward_streams: forward_streams.clone(),
             crash_dir: crash_dir.clone(),
+            log_dir: log_dir.clone(),
             update_auth: update_auth.clone(),
         });
 
@@ -414,6 +434,7 @@ impl AgentHandler {
             service_registry,
             services_attached,
             crash_dir,
+            log_dir,
             update_auth,
         })
     }
@@ -434,6 +455,15 @@ impl AgentHandler {
     #[cfg(test)]
     pub fn with_crash_dir(self, dir: PathBuf) -> Self {
         let _ = self.crash_dir.set(dir);
+        self
+    }
+
+    /// Serve `agent.logs.*` from `dir` instead of the agent's own log
+    /// directory (#4519). Test-only seam, so handler tests never read the real
+    /// `<config>/logs`.
+    #[cfg(test)]
+    pub fn with_log_dir(self, dir: PathBuf) -> Self {
+        let _ = self.log_dir.set(dir);
         self
     }
 
@@ -865,6 +895,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_request_update(module)?;
     register_agent_list_connections(module)?;
     register_agent_crash_reports(module)?;
+    agent_logs::register(module)?;
     register_docker_list_containers(module)?;
     Ok(())
 }
@@ -3133,6 +3164,10 @@ fn register_agent_crash_reports(module: &mut RpcModule<Mutex<HandlerState>>) -> 
     Ok(())
 }
 
+// ── agent.logs.* (#4519) ─────────────────────────────────────────────
+
+mod agent_logs;
+
 // ── docker.list_containers (PROD-017, #3424) ─────────────────────────
 
 /// `docker.list_containers` — list the containers of **this host's** container
@@ -3910,10 +3945,11 @@ mod tests {
     /// the connect window and its `forwardFlow` capability (#4284), and
     /// 0.29.0 the `hostFileAttributeOps` capability (#4601), and 0.30.0 the
     /// `write_range` exclusive create with its `fileCreateNew` capability
-    /// (#4433), and 0.31.0 the `fractionalLatency` client capability (#4542).
+    /// (#4433), and 0.31.0 the `fractionalLatency` client capability (#4542),
+    /// and 0.32.0 the `agent.logs.*` methods (#4519).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.31.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.32.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -7077,6 +7113,9 @@ mod tests {
 
     /// `agent.crash_reports.*` — listing, reading, caps, invalid names (#3574).
     mod crash_reports_tests;
+
+    /// `agent.logs.*` — listing, reading, caps, redaction, invalid names (#4519).
+    mod agent_logs_tests;
 
     /// `docker.list_containers` — init gate, params, reply mapping (#3424).
     mod docker_list_tests;

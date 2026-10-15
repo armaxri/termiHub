@@ -22,7 +22,12 @@ import {
   sendHandoffToWindow,
   takePendingWindowRestore,
 } from "@/services/api";
-import type { MoveWindowTarget, TabHandoffRecord, WindowRestorePayload } from "@/types/window";
+import type {
+  HandoffTab,
+  MoveWindowTarget,
+  TabHandoffRecord,
+  WindowRestorePayload,
+} from "@/types/window";
 import { buildTabGroupsFromWorkspace } from "@/utils/workspaceLayout";
 import { newId } from "@/services/transport/ids";
 import { frontendLog } from "@/utils/frontendLog";
@@ -41,7 +46,7 @@ import { createLayoutCommit } from "./layoutCommit";
 import { prunedTabState, prunedTabsState, releaseTabFromSharedRegions } from "../tabTeardown";
 import { notifyWorkflowTabClosing } from "../workflowSessionTriggers";
 import { errorMessage } from "@/utils/errorMessage";
-import { stashCarriedBuffer } from "@/utils/editorBufferRegistry";
+import { stashCarriedBuffer, stashCarriedFormDraft } from "@/utils/editorBufferRegistry";
 
 /**
  * Tab-groups slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -547,13 +552,33 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
     hydrateHandoffTab: (record) =>
       setAndReseed((state) => {
         const h = record.tab;
-        const targetLeaf = getAllLeaves(state.rootPanel)[0];
+        const leaves = getAllLeaves(state.rootPanel);
+        const targetLeaf = leaves[0];
         if (!targetLeaf) return state;
+        // A moved tab this window already shows (Settings, the log viewer, a
+        // plugin's details, a saved local file) activates the existing tab
+        // instead of opening a duplicate (#4501).
+        for (const leaf of leaves) {
+          const existing = leaf.tabs.find((t) => isSameReopenedTab(t, h));
+          if (!existing) continue;
+          const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+            ...l,
+            tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+            activeTabId: existing.id,
+          }));
+          const tabGroups = state.tabGroups.map((g) =>
+            g.id === state.activeTabGroupId ? { ...g, rootPanel } : g
+          );
+          return { rootPanel, tabGroups, activePanelId: leaf.id };
+        }
         const newTabId = newId("tab");
         // Hand a moved editor's unsaved text to the editor that mounts for the
         // new tab (#4412). It is consumed once, never stored in the tab itself,
         // so it is not persisted and cannot reappear on a later remount.
         if (h.editorBuffer !== undefined) stashCarriedBuffer(newTabId, h.editorBuffer);
+        // Likewise a moved form editor's unsaved values (#4500): the connection,
+        // tunnel or workspace editor mounted for the new tab takes them once.
+        if (h.formDraft) stashCarriedFormDraft(newTabId, h.formDraft);
 
         const newTab: TerminalTab = {
           id: newTabId,
@@ -572,6 +597,14 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           ...(h.spawned ? { spawned: true } : {}),
           // A moved file editor keeps its metadata and any unsaved buffer (#4412).
           ...(h.editorMeta ? { editorMeta: h.editorMeta } : {}),
+          // Every other moved tab keeps the metadata it reopens from (#4501).
+          ...(h.connectionEditorMeta ? { connectionEditorMeta: h.connectionEditorMeta } : {}),
+          ...(h.tunnelEditorMeta ? { tunnelEditorMeta: h.tunnelEditorMeta } : {}),
+          ...(h.workspaceEditorMeta ? { workspaceEditorMeta: h.workspaceEditorMeta } : {}),
+          ...(h.networkDiagnosticMeta ? { networkDiagnosticMeta: h.networkDiagnosticMeta } : {}),
+          ...(h.pluginDetailMeta ? { pluginDetailMeta: h.pluginDetailMeta } : {}),
+          ...(h.agentErrorMeta ? { agentErrorMeta: h.agentErrorMeta } : {}),
+          ...(h.workspaceAgentRef ? { workspaceAgentRef: h.workspaceAgentRef } : {}),
           // Repaint history from the backend ring buffer once the fresh xterm
           // (re)attaches to the live session.
           ...(h.sessionId ? { pendingScrollbackReplay: true } : {}),
@@ -666,3 +699,32 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
     },
   };
 };
+
+/**
+ * Whether `tab` already shows what the moved, session-less hand-off `h` would
+ * reopen (#4501): the one-per-window Settings and log viewer tabs, the same
+ * plugin's details, or the same saved local file. Anything carrying a session
+ * or unsaved changes always gets its own tab, so nothing is merged away.
+ */
+function isSameReopenedTab(tab: TerminalTab, h: HandoffTab): boolean {
+  if (h.sessionId || h.editorDirty || tab.contentType !== h.contentType) return false;
+  switch (h.contentType) {
+    case "settings":
+    case "log-viewer":
+      return true;
+    case "plugin-detail":
+      return !!h.pluginDetailMeta && tab.pluginDetailMeta?.pluginId === h.pluginDetailMeta.pluginId;
+    case "editor": {
+      const meta = h.editorMeta;
+      if (!meta || meta.isRemote || meta.scratch) return false;
+      return (
+        !!tab.editorMeta &&
+        !tab.editorMeta.isRemote &&
+        !tab.editorMeta.scratch &&
+        tab.editorMeta.filePath === meta.filePath
+      );
+    }
+    default:
+      return false;
+  }
+}

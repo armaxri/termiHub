@@ -5,6 +5,7 @@ REM
 REM Run from the repo root:
 REM   scripts\ci-local.cmd            REM full gate - the per-PR CI it can reproduce
 REM   scripts\ci-local.cmd --quick    REM fast subset (seconds) - used by the pre-push hook
+REM   scripts\ci-local.cmd --help     REM usage; unknown arguments are rejected (exit 2)
 REM
 REM Mirrors .github\workflows\code-quality.yml job by job, like ci-local.sh.
 REM Composes scripts\check.cmd and adds the steps that gate CI but check.cmd does
@@ -22,12 +23,28 @@ REM when absent rather than failing the run.
 REM
 REM Gate titles go through delayed expansion (!T!) because several contain
 REM characters cmd would otherwise parse: parentheses and the "<->" arrow.
+REM External tools are run with "call" so a .cmd/.bat shim on PATH (pyenv-win's
+REM python.bat, a version manager's node.cmd, the CI smoke's stubs) returns here
+REM instead of ending the script. The Windows cmd Script Smoke job in
+REM code-quality.yml runs this script on cmd.exe against stub tools (#4584).
 
 cd /d "%~dp0\.."
 
+REM Argument parsing mirrors ci-local.sh: one optional mode flag, --help, and an
+REM unknown argument is an error (exit 2) rather than a silent full run (#4584).
 set "MODE=full"
-if /i "%~1"=="--quick" set "MODE=quick"
-if /i "%~1"=="--full" set "MODE=full"
+if "%~1"=="" goto args_done
+if /i "%~1"=="--quick" (
+    set "MODE=quick"
+    goto args_done
+)
+if /i "%~1"=="--full" goto args_done
+if /i "%~1"=="--help" goto usage
+if /i "%~1"=="-h" goto usage
+if "%~1"=="/?" goto usage
+echo Unknown argument: %~1 (use --quick, --full, or --help) 1>&2
+exit /b 2
+:args_done
 
 set FAILED=0
 set "FAILED_GATES="
@@ -124,6 +141,24 @@ for /f "delims=" %%L in ('node scripts\internal\ci-local.mjs not-reproduced') do
 echo Nor the integration/system E2E lanes - Docker fixtures, see docs\testing.md.
 exit /b 0
 
+REM --- usage ---------------------------------------------------------------------
+
+:usage
+echo Reproduce the per-PR CI gate locally (mirrors .github\workflows\code-quality.yml).
+echo.
+echo Usage:
+echo   scripts\ci-local.cmd            Full gate - every per-PR CI check this host can run.
+echo   scripts\ci-local.cmd --quick    Quality-only subset (check.cmd + tsc + commitlint);
+echo                                   skips tests, coverage, audits, and plugin packaging.
+echo                                   This is what the pre-push git hook runs.
+echo   scripts\ci-local.cmd --help     Show this help.
+echo.
+echo Every gate runs to completion (CI fail-fast: false); failures are listed at the end.
+echo Optional tools absent (cargo-audit, cargo-deny, cargo-machete, uv, shellcheck,
+echo actionlint, bash) are skipped with a warning. The summary lists the CI jobs that
+echo are deliberately not reproduced (Windows-only jobs, other OS test legs).
+exit /b 0
+
 REM --- gate plumbing ------------------------------------------------------------
 
 REM Run one gate: %1 = title, %2 = the :label of its body. Records PASS/FAIL and
@@ -155,7 +190,7 @@ REM errorlevel 0 when cargo-%1 is installed (on PATH or as a cargo subcommand).
 :have_cargo
 where cargo-%1 >nul 2>nul
 if not errorlevel 1 exit /b 0
-cargo %1 --version >nul 2>nul
+call cargo %1 --version >nul 2>nul
 exit /b %errorlevel%
 
 REM --- gate bodies --------------------------------------------------------------
@@ -169,7 +204,7 @@ call pnpm exec tsc --noEmit
 exit /b %errorlevel%
 
 :g_prerelease
-node scripts\internal\check-prerelease-crates.mjs
+call node scripts\internal\check-prerelease-crates.mjs
 exit /b %errorlevel%
 
 :g_core_features
@@ -226,7 +261,7 @@ popd
 exit /b !RC!
 
 :g_manual_inventory
-python scripts\manual-inventory.py --check
+call python scripts\manual-inventory.py --check
 exit /b %errorlevel%
 
 :g_versions
@@ -285,19 +320,19 @@ popd
 exit /b !RC!
 
 :g_shellcheck
-node scripts\internal\ci-local.mjs shellcheck
+call node scripts\internal\ci-local.mjs shellcheck
 exit /b %errorlevel%
 
 :g_script_parity
-bash scripts/internal/check-script-parity.sh
+call bash scripts/internal/check-script-parity.sh
 exit /b %errorlevel%
 
 :g_script_headless
-bash scripts/internal/check-script-headless.sh
+call bash scripts/internal/check-script-headless.sh
 exit /b %errorlevel%
 
 :g_actionlint
-actionlint
+call actionlint
 exit /b %errorlevel%
 
 :g_rust_tests
@@ -313,11 +348,11 @@ call bash tests/system/pytest.sh -m "not integration" -q
 exit /b %errorlevel%
 
 :g_test_inventory
-python scripts\build-test-inventory.py --check-baseline
+call python scripts\build-test-inventory.py --check-baseline
 exit /b %errorlevel%
 
 :g_testid_drift
-python scripts\check-testid-drift.py
+call python scripts\check-testid-drift.py
 exit /b %errorlevel%
 
 :g_cargo_audit

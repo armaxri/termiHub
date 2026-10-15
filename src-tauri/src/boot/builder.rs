@@ -64,6 +64,8 @@ pub(crate) fn build(
         // Binary remote-desktop frame channels per session (#4291).
         .manage(crate::session::remote_desktop_frames::RemoteDesktopFrameChannels::new())
         .manage(commands::connection_path::ProbeRegistry::default())
+        // Pending Test-connection certificate reviews (#4510).
+        .manage(crate::session::graphical_probe::ProbeCertReviews::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
         // Stateless-UI projection substrate (#2149) + tunnel pilot (#2150): the
         // projector + intent dispatcher are constructed in `setup` (below), once

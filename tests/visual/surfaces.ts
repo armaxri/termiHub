@@ -47,10 +47,52 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
     action: "requestPassword",
     args: ["build.example.com", "ci", "The saved password was rejected by the server."],
   },
+  {
+    // The window-close decision with every row kind, the #4501 move summary and
+    // the #4500 note on typed secrets that reopen empty.
+    name: "close-window",
+    action: "setPendingWindowClose",
+    args: [
+      {
+        sessions: [
+          {
+            tabId: "t1",
+            sessionId: "s1",
+            title: "build.example.com",
+            connectionType: "ssh",
+            contentType: "terminal",
+            outcome: "detach",
+          },
+          {
+            tabId: "t2",
+            sessionId: "s2",
+            title: "zsh",
+            connectionType: "local",
+            contentType: "terminal",
+            outcome: "terminate",
+          },
+        ],
+        otherWindows: [{ label: "main" }, { label: "win-3" }],
+        dirtyEditors: [
+          { tabId: "e1", title: "deploy.yaml", movable: true },
+          { tabId: "c1", title: "Edit: prod-db", movable: true, clearedSecrets: ["Password"] },
+        ],
+        otherTabs: [
+          { tabId: "e2", title: "hosts", contentType: "editor", movable: true },
+          { tabId: "st", title: "Settings", contentType: "settings", movable: true },
+          { tabId: "lv", title: "Logs", contentType: "log-viewer", movable: true },
+          { tabId: "tv", title: "Transfers", contentType: "transfer-view", movable: false },
+        ],
+      },
+    ],
+  },
 ];
 
-/** Tests per window: settings, sidebars, unlock, shortcuts, and STORE_DIALOGS. */
-export const EXPECTED_TESTS = WINDOWS.length * (4 + STORE_DIALOGS.length);
+/**
+ * Tests per window: settings, imported confirmations, sidebars, unlock,
+ * shortcuts, and STORE_DIALOGS.
+ */
+export const EXPECTED_TESTS = WINDOWS.length * (5 + STORE_DIALOGS.length);
 
 const RESULTS = join(import.meta.dirname, "test-results");
 /** Where every surface's screenshot goes (uploaded as a CI artifact). */

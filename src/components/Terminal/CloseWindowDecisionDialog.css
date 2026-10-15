@@ -105,3 +105,37 @@
   color: var(--text-primary);
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 }
+
+.close-window-decision__summary {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.close-window-decision__secrets {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+  margin: 0 0 var(--spacing-md);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+}
+
+.close-window-decision__secrets p {
+  margin: 0;
+}
+
+.close-window-decision__secrets p + p {
+  margin-top: var(--spacing-xs);
+}
+
+.close-window-decision__secrets-icon.li {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: var(--spacing-xxs);
+  color: var(--color-warning);
+}

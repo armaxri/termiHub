@@ -18,7 +18,10 @@ use crate::files::sftp::{ElevatedWriteResult, Writability};
 use crate::files::transfer::{
     self, TransferDirection, TransferPersistenceManager, TransferRegistry,
 };
-use crate::session::graphical_manager::GraphicalSessionManager;
+use crate::session::graphical_manager::{GraphicalSessionManager, RemoteDesktopCertPromptEvent};
+use crate::session::graphical_probe::{
+    CertReview, CertReviewRequest, CertReviewer, ProbeCertReviews,
+};
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{SessionInfo, SessionLogStatus, SessionManager, SessionOrigin};
 use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
@@ -204,15 +207,26 @@ fn initial_connect_tab_id(connect_id: Option<&str>) -> Option<String> {
 /// frontend — `auth_failed` (credentials rejected), `unreachable` (host
 /// unreachable / transport / timeout), or another category — via
 /// [`TerminalError::from_session_spawn`].
+///
+/// `review_cert` (#4510): when `true` and a `connect_id` is given, an RDP
+/// certificate the trust store does not already trust is put to the calling
+/// window as a [`CONNECTION_TEST_CERT_PROMPT_EVENT`] (the remote-desktop cert
+/// prompt shape, `session_id` = `connect_id`), answered through
+/// [`test_connection_cert_decision`]. Otherwise — every unattended caller — the
+/// probe stays non-interactive and reports the certificate as not trusted.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn test_connection(
     type_id: String,
     mut settings: Value,
     agent_id: Option<String>,
     connect_id: Option<String>,
+    review_cert: Option<bool>,
+    window: tauri::WebviewWindow,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
     graphical: State<'_, GraphicalSessionManager>,
+    cert_reviews: State<'_, ProbeCertReviews>,
 ) -> Result<(), TerminalError> {
     info!(type_id, agent_id = ?agent_id, "Testing connection");
     // Expand any saved-connection jump-host references to inline hops before the
@@ -221,18 +235,87 @@ pub async fn test_connection(
         .resolve_jump_host_refs(&mut settings, None)
         .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
 
+    // An RDP probe auto-accepts an already-trusted certificate (#4320); any
+    // other is reviewed by the user only for an interactive Test (#4510).
+    let reviewer = match (review_cert, connect_id.as_deref()) {
+        (Some(true), Some(cid)) => Some(WindowCertReviewer {
+            window: &window,
+            connect_id: cid,
+            reviews: cert_reviews.inner(),
+        }),
+        _ => None,
+    };
     manager
         .test_connection(
             &type_id,
             settings,
             agent_id.as_deref(),
             connect_id.as_deref(),
-            // An RDP probe auto-accepts only an already-trusted certificate
-            // (#4320); it never prompts.
             Some(graphical.trust_store().as_ref()),
+            reviewer.as_ref().map(|r| r as &dyn CertReviewer),
         )
         .await
         .map_err(TerminalError::from_session_spawn)
+}
+
+/// Event asking the window running an interactive Test connection to review an
+/// untrusted RDP certificate (#4510). Its payload is a
+/// [`RemoteDesktopCertPromptEvent`] whose `session_id` is the test's
+/// `connect_id`.
+pub const CONNECTION_TEST_CERT_PROMPT_EVENT: &str = "connection-test-cert-prompt";
+
+/// Puts a Test connection's untrusted certificate to the window that started
+/// the test, and waits for its verdict via [`test_connection_cert_decision`].
+struct WindowCertReviewer<'a> {
+    window: &'a tauri::WebviewWindow,
+    connect_id: &'a str,
+    reviews: &'a ProbeCertReviews,
+}
+
+#[async_trait::async_trait]
+impl CertReviewer for WindowCertReviewer<'_> {
+    async fn review(&self, request: CertReviewRequest) -> Option<CertReview> {
+        use tauri::Emitter;
+        // Register before emitting so an instant answer always finds it.
+        let mut pending = self.reviews.register(self.connect_id);
+        let event = RemoteDesktopCertPromptEvent {
+            session_id: self.connect_id.to_string(),
+            host: request.host,
+            fingerprint: request.fingerprint,
+            subject: request.subject,
+            issuer: request.issuer,
+            changed: request.changed,
+        };
+        if let Err(e) = self.window.app_handle().emit_to(
+            tauri::EventTarget::labeled(self.window.label()),
+            CONNECTION_TEST_CERT_PROMPT_EVENT,
+            &event,
+        ) {
+            tracing::warn!(error = %e, "failed to emit the test-connection certificate prompt");
+            return None;
+        }
+        pending.verdict().await
+    }
+}
+
+/// Deliver the user's verdict on a Test connection's certificate prompt
+/// (#4510). `accept` lets the probe continue to the credential check;
+/// `remember` also trusts the certificate for the host, through the same trust
+/// store a real connect uses. Returns whether the test was still waiting for it
+/// (a late answer after the review timed out or the test was cancelled is
+/// ignored).
+#[tauri::command]
+pub fn test_connection_cert_decision(
+    connect_id: String,
+    accept: bool,
+    remember: bool,
+    cert_reviews: State<'_, ProbeCertReviews>,
+) -> bool {
+    info!(
+        connect_id,
+        accept, remember, "Test connection certificate decision"
+    );
+    cert_reviews.decide(&connect_id, CertReview { accept, remember })
 }
 
 /// Cancel an in-flight (still connecting) session by its `connect_id`.

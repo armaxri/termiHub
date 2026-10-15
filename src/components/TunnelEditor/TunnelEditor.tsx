@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
+import { clearDraftSecrets } from "@/utils/formDraftSecrets";
 import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
@@ -252,6 +254,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // The values the editor was opened (or last reloaded) with: the draft differing
   // from them is what marks the tab dirty (UX2-004).
   const [baselineKey, setBaselineKey] = useState(() => draftKey(getValues()));
+  // Unsaved values carried in from another window by "Move tabs" (#4500). They
+  // replace the working copy once it is loaded, while the baseline stays the
+  // saved tunnel (or a new tunnel's defaults), so the moved editor is dirty.
+  const carriedDraft = useCarriedFormDraft<TunnelFormState>(tabId, "tunnel-editor");
+  useEffect(() => {
+    if (!existingTunnel && carriedDraft && !meta.tunnelId) reset(carriedDraft);
+    // Applied once, on mount; a saved tunnel's draft is applied when it loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (existingTunnel) {
       const loaded: TunnelFormState = {
@@ -263,7 +274,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         startWithConnection: existingTunnel.startWithConnection ?? false,
         reconnectOnDisconnect: existingTunnel.reconnectOnDisconnect,
       };
-      reset(loaded);
+      reset(carriedDraft ?? loaded);
       setBaselineKey(draftKey(loaded));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,6 +291,19 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   useEffect(() => {
     setEditorDirty(tabId, isDirty);
   }, [tabId, isDirty, setEditorDirty]);
+
+  // Hand the unsaved draft to "Move tabs" on window close (#4500). A tunnel
+  // form holds no secrets today; the check still runs, so a future one is
+  // cleared rather than carried.
+  useFormDraftProvider(tabId, () => {
+    if (!isDirty) return null;
+    const { values, cleared } = clearDraftSecrets(getValues());
+    return {
+      kind: "tunnel-editor",
+      values: values as unknown as Record<string, unknown>,
+      ...(cleared.length > 0 ? { clearedSecrets: cleared } : {}),
+    };
+  });
 
   const handleTypeChange = (type: "local" | "remote" | "dynamic") => {
     if (getValues("tunnelType").type !== type) {

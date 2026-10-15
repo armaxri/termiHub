@@ -1515,8 +1515,10 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb).
    The macOS legs re-sign the app ad-hoc and swap it back into Tauri's own DMG, so the
    drag-to-install `Applications` link and volume layout are kept
-   (`scripts/internal/macos-dmg-layout.sh`)
-4. Upload all artifacts to the draft release, each agent binary with a `.sha256`
+   (`scripts/internal/macos-dmg-layout.sh`). The build jobs hold a read-only token and
+   hand their outputs on as workflow artifacts; `check-release-assets` checks the full set
+4. Upload all artifacts to the draft release from small write-scoped jobs that check
+   nothing out and run no dependency code, each agent binary with a `.sha256`
    checksum and a `.sig` update signature. Every upload replaces an existing asset of the
    same name (`--clobber`), so `gh run rerun <run-id> --failed` can finish a leg that
    failed after uploading
@@ -1532,6 +1534,24 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    fails here
 9. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
    `verify-release` and every install smoke pass
+
+#### Release dry run
+
+To exercise the release build without publishing anything, dispatch the workflow on a
+branch:
+
+```bash
+gh workflow run release.yml --ref <branch> -f dry_run=true
+```
+
+A dispatched run is always a dry run. It runs the version and supply-chain gates, builds
+every installer and agent binary and the license notices under the stand-in version
+`0.0.0-dryrun`, and checks the full asset set (`check-release-assets`, with a table of
+names, sizes and SHA-256 digests in the job summary). It creates no tag or release:
+`create-release` runs only on a tag push and every job that holds a write token needs
+it, so none of them starts. The integration-lane gate and the coverage summary are
+skipped, and the Windows MSI version is mapped from the in-repo version.
+`workflow-token-hygiene.test.mjs` pins this.
 
 There is no `latest` git tag. The desktop update check and the agent self-updater
 follow GitHub's own "Latest release" marker through the `releases/latest` API, as do

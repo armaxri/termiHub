@@ -876,8 +876,9 @@ jobs:
   # sidecars, checking the result is byte-identical to `sha256sum` -- launched
   # from cmd AND from pwsh (pwsh leaks its PSModulePath into powershell.exe,
   # which broke cmdlet autoload in the old Get-FileHash line, #4029). It also runs
-  # build-rdp-sidecar.cmd end to end against a stub cargo (#3475). PR lane: only
-  # when scripts change. Post-merge: always.
+  # build-rdp-sidecar.cmd end to end against a stub cargo (#3475), and runs
+  # ci-local.cmd's --help and every verdict path against stub tools (#4584).
+  # PR lane: only when scripts change. Post-merge: always.
   cmd-scripts-windows:
     name: Windows cmd Script Smoke
     runs-on: windows-latest
@@ -1152,6 +1153,189 @@ jobs:
           # Windows MSVC targets link the static VC runtime (#4172).
           grep -q 'crt-static' "target/${triple}/release/stub-rustflags.txt" ||
             { echo "::error::no +crt-static for ${triple}"; cat "target/${triple}/release/stub-rustflags.txt"; exit 1; }
+
+      # ci-local.cmd (#4584). --help and the unknown-argument path on the real
+      # checkout, then full runs of the script on cmd.exe in a throwaway repo
+      # where every tool it calls is a stub: pnpm/cargo/node/python/bash/
+      # actionlint on a minimal PATH, plus stub check.cmd, package-plugin.cmd and
+      # release-check.cmd. Four runs exercise every verdict path -- --quick, a
+      # run with FAIL and SKIPPED gates, a SKIPPED-only run and an all-PASS run
+      # (the not-reproduced summary, read through the real ci-local.mjs) -- and
+      # the gate titles echoed through delayed expansion are compared verbatim
+      # with the titles in the script, so a broken title or verdict fails here.
+      - name: ci-local.cmd --help and unknown-argument paths
+        shell: cmd
+        run: |
+          set "H=%RUNNER_TEMP%\cil-help.txt"
+          for %%A in (--help -h) do (
+            call scripts\ci-local.cmd %%A >"%H%" 2>&1
+            if errorlevel 1 (type "%H%"& echo %%A failed& exit /b 1)
+            findstr /b /c:"Usage:" "%H%" >nul || (type "%H%"& echo %%A printed no usage& exit /b 1)
+            findstr /c:"===" "%H%" >nul && (type "%H%"& echo %%A ran a gate& exit /b 1)
+          )
+          type "%H%"
+          call scripts\ci-local.cmd --no-such-flag
+          if not "%errorlevel%"=="2" (echo expected exit 2 for an unknown argument& exit /b 1)
+          echo ci-local.cmd --help smoke OK
+          exit /b 0
+
+      - name: Stage stub tools and a throwaway repo for ci-local.cmd
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          bin="$tmp/cil-stubs" extra="$tmp/cil-stubs-extra" fake="$tmp/cil-repo"
+          mkdir -p "$bin" "$extra" "$fake/scripts/internal" "$fake/node_modules" \
+            "$fake/target/plugin-dist" "$fake/rdp-sidecar" "$fake/plugin-runner/fuzz"
+          cp scripts/ci-local.cmd "$fake/scripts/"
+          cp scripts/internal/ci-local.mjs scripts/internal/is-main-module.mjs "$fake/scripts/internal/"
+          cp Cargo.lock "$fake/"
+          # The packaged plugins the gate checks for, as the stub packager would leave them.
+          grep -oE 'plugin-dist\\[A-Za-z0-9.-]+\.termihub-plugin' scripts/ci-local.cmd | sed 's/^plugin-dist\\//' |
+            while read -r f; do : >"$fake/target/plugin-dist/$f"; done
+          git -C "$fake" init -q
+          git -C "$fake" -c user.name=ci -c user.email=ci@example.invalid commit -q --allow-empty -m "chore: stub"
+          # Every stub appends its command line to %STUB_LOG% and fails when that
+          # line contains a word of %STUB_FAIL_ON% (so "machete" also makes
+          # `cargo machete --version` fail, i.e. cargo-machete "not installed").
+          printf '%s\r\n' \
+            '@echo off' \
+            'setlocal EnableDelayedExpansion' \
+            'set "A=%*"' \
+            'if defined STUB_LOG echo(!A!>>"%STUB_LOG%"' \
+            'if defined STUB_FAIL_ON for %%T in (%STUB_FAIL_ON%) do if not "!A:%%T=!"=="!A!" (echo stub: failing on purpose: !A! 1>&2& exit /b 1)' \
+            'exit /b 0' >"$bin/stub.cmd"
+          for t in pnpm cargo python bash actionlint; do
+            printf '@call "%%~dp0stub.cmd" %s %%*\r\n' "$t" >"$bin/$t.cmd"
+          done
+          for s in check package-plugin release-check; do
+            printf '@call "%%STUB_BIN%%\\stub.cmd" scripts\\%s.cmd %%*\r\n' "$s" >"$fake/scripts/$s.cmd"
+          done
+          # node: the real ci-local.mjs for the not-reproduced summary, two fake
+          # features for core-features (the real one needs cargo metadata).
+          printf '%s\r\n' \
+            '@echo off' \
+            'if /i "%~1"=="scripts\internal\ci-local.mjs" if /i "%~2"=="not-reproduced" goto real' \
+            'if /i "%~1"=="scripts\internal\ci-local.mjs" if /i "%~2"=="core-features" goto features' \
+            'call "%~dp0stub.cmd" node %*' \
+            'exit /b' \
+            ':real' \
+            '"%REAL_NODE%" %*' \
+            'exit /b' \
+            ':features' \
+            'echo stubfeat-a' \
+            'echo stubfeat-b' \
+            'exit /b 0' >"$bin/node.cmd"
+          # Only `where`-probed; on PATH for the all-PASS run alone.
+          for t in shellcheck uv; do printf '@exit /b 0\r\n' >"$extra/$t.cmd"; done
+
+      - name: ci-local.cmd runs every verdict path (stub tools)
+        shell: cmd
+        run: |
+          set "STUB_BIN=%RUNNER_TEMP%\cil-stubs"
+          set "CIL=%RUNNER_TEMP%\cil-repo\scripts\ci-local.cmd"
+          set "OUT=%RUNNER_TEMP%\cil-out"
+          mkdir "%OUT%"
+          for /f "delims=" %%N in ('where node') do if not defined REAL_NODE set "REAL_NODE=%%N"
+          for /f "delims=" %%G in ('where git') do if not defined GITBIN set "GITBIN=%%~dpG"
+          rem A minimal PATH: the stubs, System32 (where, findstr) and git, so no
+          rem real shellcheck/uv/cargo-* on the runner image changes a verdict.
+          set "BASE_PATH=%STUB_BIN%;%SystemRoot%\System32;%GITBIN%"
+          set "SAVED_PATH=%PATH%"
+          set "PATH=%BASE_PATH%"
+          set "STUB_FAIL_ON="
+          set "STUB_LOG=%OUT%\quick.log"
+          call "%CIL%" --quick >"%OUT%\quick.txt" 2>&1
+          >"%OUT%\quick.rc" echo %errorlevel%
+          set "STUB_FAIL_ON=tsc manual-inventory.py machete deny"
+          set "STUB_LOG=%OUT%\fail.log"
+          call "%CIL%" >"%OUT%\fail.txt" 2>&1
+          >"%OUT%\fail.rc" echo %errorlevel%
+          set "STUB_FAIL_ON=machete deny"
+          set "STUB_LOG=%OUT%\skip.log"
+          call "%CIL%" --full >"%OUT%\skip.txt" 2>&1
+          >"%OUT%\skip.rc" echo %errorlevel%
+          set "STUB_FAIL_ON="
+          set "STUB_LOG=%OUT%\pass.log"
+          set "PATH=%RUNNER_TEMP%\cil-stubs-extra;%BASE_PATH%"
+          call "%CIL%" >"%OUT%\pass.txt" 2>&1
+          >"%OUT%\pass.rc" echo %errorlevel%
+          set "PATH=%SAVED_PATH%"
+          for %%R in (quick fail skip pass) do (
+            echo ---------- %%R run ----------
+            type "%OUT%\%%R.txt"
+          )
+          exit /b 0
+
+      - name: ci-local.cmd titles, verdicts and summaries are correct
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(cygpath -u "$RUNNER_TEMP")/cil-out"
+          fail() { echo "::error::$*"; exit 1; }
+          # Gate titles in script order (a skip/run pair on one line counts once).
+          mapfile -t titles < <(grep -oE ':(run|skip)_gate "[^"]+"' scripts/ci-local.cmd |
+            sed -E 's/^:(run|skip)_gate "(.*)"$/\2/' | uniq)
+          n="${#titles[@]}"
+          [ "$n" -gt 20 ] || fail "only $n gate titles parsed from ci-local.cmd"
+          # "<title>|<verdict>" per gate the transcript ran; a PASS/FAIL line must
+          # repeat its gate's header title verbatim.
+          verdicts() {
+            tr -d '\r' <"$out/$1.txt" | awk '
+              /^=== .* ===$/ { t = substr($0, 5, length($0) - 8); next }
+              /^(PASS|FAIL): / {
+                v = substr($0, 1, 4)
+                if (substr($0, 7) != t) print "TITLE MISMATCH|" t "|" $0; else print t "|" v
+                t = ""; next
+              }
+              /^SKIPPED: / { print t "|SKIPPED"; t = "" }'
+          }
+          expected() { # <gate count> <FAIL titles> <SKIPPED titles>
+            local i t v
+            for ((i = 0; i < $1; i++)); do
+              t="${titles[$i]}" v=PASS
+              grep -qxF -- "$t" <<<"$3" && v=SKIPPED
+              grep -qxF -- "$t" <<<"$2" && v=FAIL
+              printf '%s|%s\n' "$t" "$v"
+            done
+          }
+          check_run() { # <run> <exit code> <gate count> <FAIL titles> <SKIPPED titles>
+            local rc
+            rc="$(tr -d '\r ' <"$out/$1.rc")"
+            [ "$rc" = "$2" ] || fail "$1 run exited $rc, expected $2"
+            diff <(expected "$3" "$4" "$5") <(verdicts "$1") ||
+              fail "$1 run: gate titles/verdicts differ (< expected, > ci-local.cmd)"
+          }
+          summary() { tr -d '\r' <"$out/$1.txt" | sed -En '/^={20,}$/,$p'; }
+          fails=$'Frontend: TypeScript (tsc --noEmit)\nFrontend: manual-test inventory'
+          skips=$'Rust: unused dependencies (cargo-machete)\nShell: ShellCheck\nSystem-test harness (machinery)\nSecurity: cargo deny (supply-chain)\nRDP sidecar: cargo deny'
+
+          check_run quick 0 3 "" ""
+          summary quick | grep -q '^QUICK GATE PASSED' || fail "quick run: no QUICK GATE PASSED"
+
+          check_run fail 1 "$n" "$fails" "$skips"
+          list="$(summary fail | sed -n '/^SOME GATES FAILED:$/{n;p;}')"
+          [ "$list" = "  - Frontend: TypeScript (tsc --noEmit)  - Frontend: manual-test inventory" ] ||
+            fail "fail run: failure list is '$list'"
+
+          check_run skip 0 "$n" "" "$skips"
+          summary skip | grep -q '^ALL RUN GATES PASSED - but some were SKIPPED' ||
+            fail "skip run: no SKIPPED summary"
+
+          check_run pass 0 "$n" "" ""
+          diff <(node scripts/internal/ci-local.mjs not-reproduced | tr -d '\r' | sed 's/^/  - /') \
+            <(summary pass | sed -n '/^ALL REPRODUCED CI GATES PASSED/,/^Nor the /p' | sed '1d;$d') ||
+            fail "pass run: not-reproduced summary differs (< ci-local.mjs, > ci-local.cmd)"
+
+          # The core-features for /f fed every feature to clippy and rustdoc.
+          log="$(tr -d '\r' <"$out/pass.log")"
+          for f in stubfeat-a stubfeat-b; do
+            grep -qxF "cargo clippy -p termihub-core --no-default-features --features $f --all-targets -- -D warnings" <<<"$log" ||
+              fail "no isolated clippy run for $f"
+            grep -qxF "cargo doc --no-deps -p termihub-core --features $f" <<<"$log" ||
+              fail "no isolated rustdoc run for $f"
+          done
+          echo "ci-local.cmd stub runs OK ($n gates)"
 
       # fetch-conpty.cmd (#4121): the flag parser, then REAL fetches of the
       # pinned Microsoft.Windows.Console.ConPTY package through the PowerShell

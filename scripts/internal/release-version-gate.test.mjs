@@ -34,11 +34,14 @@ const PRE_GATE = new Set([
 /** Jobs that produce or publish release assets; each must directly need the gate. */
 const BUILD_JOBS = [
   "create-release",
-  "build-and-upload",
+  "build-app",
+  "upload-app",
   "agent-binaries-linux",
   "agent-binaries-macos",
   "agent-binaries-windows",
+  "upload-agent-binaries",
   "third-party-notices",
+  "upload-third-party-notices",
   "sbom-generate",
   "sbom",
 ];

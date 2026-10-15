@@ -955,8 +955,10 @@ impl SessionManager {
     /// For a graphical backend that negotiates after `connect()` returns (the
     /// RDP sidecar), the verdict is its first definitive outcome — established,
     /// or its typed failure — bounded by the graphical connect timeout, with a
-    /// certificate prompt answered from `rdp_trust` (an untrusted certificate
-    /// is reported, never prompted for) (#4320).
+    /// certificate prompt answered from `rdp_trust` (#4320). An untrusted
+    /// certificate is put to `cert_reviewer` when one is supplied (the
+    /// interactive Test in the connection editor, #4510), and otherwise
+    /// reported, never prompted for.
     ///
     /// Returns `Ok(())` when the connection was established (and then torn down),
     /// or a typed [`SessionError`] classifying the failure — [`AuthFailed`] when
@@ -979,6 +981,7 @@ impl SessionManager {
         agent_id: Option<&str>,
         connect_id: Option<&str>,
         rdp_trust: Option<&crate::session::rdp_trust_store::RdpTrustStore>,
+        cert_reviewer: Option<&dyn crate::session::graphical_probe::CertReviewer>,
     ) -> Result<(), termihub_core::errors::SessionError> {
         // A graphical backend that negotiates after `connect()` (RDP) is judged
         // by its first definitive outcome, bounded by the graphical connect
@@ -1050,6 +1053,7 @@ impl SessionManager {
                     backend,
                     &probe_host,
                     rdp_trust,
+                    cert_reviewer,
                     probe_timeout,
                     cancel_token.as_ref(),
                 )

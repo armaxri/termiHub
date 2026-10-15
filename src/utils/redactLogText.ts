@@ -73,6 +73,18 @@ function secretKeyPattern(spec: SecretKeyWords): string {
 /** Secret-bearing key names, built from the shared list. */
 const SECRET_KEY_PATTERN = secretKeyPattern(secretKeyWords as SecretKeyWords);
 
+const WHOLE_SECRET_KEY = new RegExp(`^(?:${SECRET_KEY_PATTERN})$`);
+
+/**
+ * Whether `key` names a secret-bearing value (`password`, `sshPassword`,
+ * `keyPassphrase`, `apiToken`, ...), by the same shared word list the log
+ * redactors use. Used to keep typed secrets out of a form draft carried to
+ * another window (#4500).
+ */
+export function isSecretKeyName(key: string): boolean {
+  return WHOLE_SECRET_KEY.test(key);
+}
+
 /**
  * A PEM-style private key block, from the BEGIN header through the END footer,
  * across any number of lines. The block body is the most dangerous single thing

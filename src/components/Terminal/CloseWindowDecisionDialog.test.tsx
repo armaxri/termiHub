@@ -206,13 +206,13 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
         useAppStore
           .getState()
           .setPendingWindowClose(
-            request({ dirtyEditors: [{ tabId: "e1", title: "New Connection", movable: false }] })
+            request({ dirtyEditors: [{ tabId: "e1", title: "Settings", movable: false }] })
           )
       );
 
       const move = q("close-window-decision-move") as HTMLButtonElement;
       expect(move.disabled).toBe(true);
-      expect(q("close-window-decision-move-blocked").textContent).toContain("New Connection");
+      expect(q("close-window-decision-move-blocked").textContent).toContain("Settings");
       expect(q("close-window-decision-outcome-blocked")).not.toBeNull();
 
       await act(async () => move.click());
@@ -276,6 +276,161 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
 
       expect(destroy).not.toHaveBeenCalled();
       expect(useAppStore.getState().pendingWindowClose).not.toBeNull();
+    });
+  });
+
+  describe("other tabs (#4501)", () => {
+    const savedEditor = {
+      tabId: "e1",
+      title: "hosts",
+      contentType: "editor" as const,
+      movable: true,
+    };
+    const settings = {
+      tabId: "st",
+      title: "Settings",
+      contentType: "settings" as const,
+      movable: true,
+    };
+    const transferView = {
+      tabId: "tv",
+      title: "Transfers",
+      contentType: "transfer-view" as const,
+      movable: false,
+    };
+
+    it("names the tabs that move and the ones that close", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ otherTabs: [savedEditor, settings, transferView] }))
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens these tabs there: "hosts" and "Settings". ' +
+          '"Transfers" can\'t be moved and closes with the window.'
+      );
+    });
+
+    it("uses the singular for one moving tab", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ otherTabs: [savedEditor] }))
+      );
+
+      expect(q("close-window-decision-move-summary").textContent).toBe(
+        'Moving also reopens this tab there: "hosts".'
+      );
+    });
+
+    it("omits the summary when there is no window to move to", () => {
+      render();
+      act(() =>
+        useAppStore
+          .getState()
+          .setPendingWindowClose(request({ otherWindows: [], otherTabs: [savedEditor] }))
+      );
+
+      expect(q("close-window-decision-move-summary")).toBeNull();
+    });
+
+    it("offers the destination picker when only unsaved editors are listed", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            otherWindows: [{ label: "win-1" }, { label: "win-3" }],
+            dirtyEditors: [{ tabId: "e2", title: "notes.txt", movable: true }],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-target")).not.toBeNull();
+    });
+  });
+
+  describe("unsaved form editors (#4500)", () => {
+    it("moves a dirty connection, tunnel and workspace editor without blocking", async () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [
+              { tabId: "c1", title: "New Connection", movable: true },
+              { tabId: "t1", title: "New Tunnel", movable: true },
+              { tabId: "w1", title: "New Workspace", movable: true },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-move-blocked")).toBeNull();
+      expect(qa("close-window-decision-outcome-move")).toHaveLength(3);
+      expect(q("close-window-decision-dialog").textContent).toContain(
+        "3 unsaved editors: moving keeps them, closing discards them."
+      );
+      expect(q("close-window-decision-secrets-note")).toBeNull();
+      const move = q("close-window-decision-move") as HTMLButtonElement;
+      expect(move.disabled).toBe(false);
+      await act(async () => move.click());
+      expect(moveWindowSessionsToWindow).toHaveBeenCalledWith({ kind: "existing", label: "win-1" });
+    });
+
+    it("names the typed secrets that reopen empty in the other window", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [
+              {
+                tabId: "c1",
+                title: "Edit: prod-db",
+                movable: true,
+                clearedSecrets: ["Password"],
+              },
+              {
+                tabId: "c2",
+                title: "New Connection",
+                movable: true,
+                clearedSecrets: ["Password", "SSH tunnel password", "Jump host password"],
+              },
+            ],
+          })
+        )
+      );
+
+      const rows = qa("close-window-decision-secrets-row").map((row) => row.textContent);
+      expect(rows).toEqual([
+        '"Edit: prod-db" moves with Password left empty, since typed secrets are never copied ' +
+          "to another window. Type it again there before saving.",
+        '"New Connection" moves with Password, SSH tunnel password and Jump host password left ' +
+          "empty, since typed secrets are never copied to another window. Type them again " +
+          "there before saving.",
+      ]);
+      // Moving stays available: the user is told, nothing is blocked.
+      expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("says nothing about secrets when there is no window to move to", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            otherWindows: [],
+            dirtyEditors: [
+              { tabId: "c1", title: "Edit: prod-db", movable: true, clearedSecrets: ["Password"] },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-secrets-note")).toBeNull();
+      expect(q("close-window-decision-outcome-discard")).not.toBeNull();
     });
   });
 });

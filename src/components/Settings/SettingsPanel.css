@@ -459,3 +459,17 @@
 .settings-panel__list-item code {
   word-break: break-all;
 }
+
+/* A list item whose text has a caption line above it (#4445). */
+.settings-panel__list-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.settings-panel__list-item-meta {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}

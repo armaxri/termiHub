@@ -52,6 +52,11 @@ use tracing_subscriber::EnvFilter;
 /// Extension of every log file.
 pub const LOG_EXT: &str = "log";
 
+/// Stem prefix shared by every agent log file — the agent's log "family"
+/// (`termihub-agent-<role>-<pid>.log`, `termihub-agent-stderr-….log`). Shared
+/// so the desktop can validate the names a remote agent reports (#4519).
+pub const AGENT_LOG_FAMILY: &str = "termihub-agent";
+
 /// Floor applied to `russh` on top of *any* file directive, including an
 /// env-var override.
 ///
@@ -101,7 +106,7 @@ pub fn generation_path(dir: &Path, stem: &str, generation: usize) -> PathBuf {
 }
 
 /// Split a log file name into its stem and generation, if it is one.
-fn parse_log_name(name: &str) -> Option<(&str, usize)> {
+pub(crate) fn parse_log_name(name: &str) -> Option<(&str, usize)> {
     let base = name.strip_suffix(&format!(".{LOG_EXT}"))?;
     match base.rsplit_once('.') {
         Some((stem, digits))
@@ -115,7 +120,7 @@ fn parse_log_name(name: &str) -> Option<(&str, usize)> {
 
 /// Whether `stem` belongs to the log family `prefix`: the stem itself, or any
 /// `prefix-…` per-process / per-role stem.
-fn in_family(stem: &str, prefix: &str) -> bool {
+pub(crate) fn in_family(stem: &str, prefix: &str) -> bool {
     stem == prefix
         || stem
             .strip_prefix(prefix)

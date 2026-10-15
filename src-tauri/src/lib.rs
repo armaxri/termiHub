@@ -658,6 +658,7 @@ pub fn run() -> anyhow::Result<()> {
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::test_connection,
+            commands::session::test_connection_cert_decision,
             commands::session::cancel_connecting,
             commands::connection_path::probe_connection_path_cmd,
             commands::connection_path::cancel_connection_path_probe,
@@ -840,6 +841,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::diagnostics::preview_diagnostics_bundle,
             commands::diagnostics::export_diagnostics_bundle,
             commands::diagnostics::list_agent_crash_reports,
+            commands::diagnostics::list_agent_logs,
             commands::diagnostics::get_agent_crash_notices,
             commands::diagnostics::acknowledge_agent_crash_notice,
             commands::diagnostics::read_agent_crash_report,

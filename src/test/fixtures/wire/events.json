@@ -10,6 +10,7 @@
     "app-quit-requested",
     "cli-workspace-requested",
     "connection-ids-changed",
+    "connection-test-cert-prompt",
     "connections-changed",
     "credential-store-locked",
     "credential-store-status-changed",

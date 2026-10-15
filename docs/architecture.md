@@ -3400,6 +3400,13 @@ terminal sessions for people who expect nothing to leave their machine.
   cap, and **redacts every report again** with its own redactor before writing it. An agent that
   predates the RPC answers "method not found" and is skipped with a note in the preview; reports
   that were selected but could not be fetched are listed in `agents/skipped.txt`.
+- **Remote agent log files, the same way** (#4519). The dialog also lists each connected agent's
+  own log files (`agent.logs.list` / `.read`, protocol 0.32.0) with one include checkbox per agent.
+  The agent serves only plain names of its own log family from its fixed log directory, at most
+  40 files, **redacts** each read (logs, unlike crash reports, are not redacted when written) and
+  returns at most the newest 256 KiB of a file; the desktop validates the names again, writes them
+  to `agents/<agent id>/logs/<name>`, re-applies the per-file cap plus a 4 MiB total cap, and
+  redacts again. Unfetchable selections are listed in `agents/skipped-logs.txt`.
 - **"Agent crashed since it was last connected" notice** (#3593). After an agent connects or
   reconnects, the desktop calls `agent.crash_reports.list` **once** over that same connection,
   spawned off the connect path (never delays or fails it), bounded by a 10 s timeout, and skipped

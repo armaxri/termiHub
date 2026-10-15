@@ -37,11 +37,16 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn(() => Promise.resolve()),
 }));
 
-import { useAppStore } from "./appStore";
+import { extractTabContent, useAppStore } from "./appStore";
+import { seedLayoutState } from "@/test/layoutState";
+import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { collectWindowTabs } from "./layoutHelpers";
 import {
   clearEditorBuffers,
+  peekCarriedFormDraft,
+  readFormDraft,
   registerEditorBuffer,
+  registerFormDraft,
   takeCarriedBuffer,
   type EditorBufferSnapshot,
 } from "@/utils/editorBufferRegistry";
@@ -98,7 +103,7 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
       ]);
     });
 
-    it("marks a dirty connection editor as not movable", async () => {
+    it("marks a dirty connection editor without a readable draft as not movable", async () => {
       const tabId = useAppStore
         .getState()
         .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
@@ -220,5 +225,411 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
       expect(takeCarriedBuffer(tab!.id)).toBe("unsaved text");
       expect(takeCarriedBuffer(tab!.id)).toBeNull();
     });
+  });
+});
+
+/** A session-less tab of `contentType` with the given metadata, for seeding. */
+function staticTab(id: string, title: string, fields: Partial<TerminalTab>): TerminalTab {
+  return {
+    id,
+    sessionId: null,
+    title,
+    connectionType: "local",
+    contentType: "settings",
+    config: { type: "local", config: {} } as ConnectionConfig,
+    panelId: "a",
+    isActive: false,
+    ...fields,
+  };
+}
+
+/** One tab of every session-less kind "Move tabs" reopens elsewhere (#4501). */
+const MOVABLE_TABS: TerminalTab[] = [
+  staticTab("st", "Settings", { contentType: "settings" }),
+  staticTab("lv", "Logs", { contentType: "log-viewer" }),
+  staticTab("nd", "Ping: host-a", {
+    contentType: "network-diagnostic",
+    networkDiagnosticMeta: { tool: "ping", prefillHost: "host-a" },
+  }),
+  staticTab("pd", "Demo plugin", {
+    contentType: "plugin-detail",
+    pluginDetailMeta: { pluginId: "demo.plugin" },
+  }),
+  staticTab("ce", "Edit server-1", {
+    contentType: "connection-editor",
+    connectionEditorMeta: { connectionId: "conn-1", folderId: null },
+  }),
+  staticTab("te", "Edit tunnel", {
+    contentType: "tunnel-editor",
+    tunnelEditorMeta: { tunnelId: "tun-1" },
+  }),
+  staticTab("we", "Edit workspace", {
+    contentType: "workspace-editor",
+    workspaceEditorMeta: { workspaceId: "ws-1" },
+  }),
+  staticTab("ae", "Def (error)", {
+    connectionType: "remote-session",
+    contentType: "agent-error",
+    agentErrorMeta: {
+      agentId: "ag1",
+      agentName: "Agent 1",
+      definitionId: "def1",
+      definitionName: "Def",
+      error: "agent offline",
+    },
+    workspaceAgentRef: { agentId: "ag1", definitionId: "def1" },
+  }),
+];
+
+const TRANSFER_VIEW = staticTab("tv", "Transfers", {
+  contentType: "transfer-view",
+  transferViewMeta: { remoteTabId: "t-term" },
+});
+
+/** Install a one-panel layout holding `tabs`. */
+function seedTabs(tabs: TerminalTab[]): void {
+  const root: PanelNode = {
+    type: "leaf",
+    id: "a",
+    tabs: tabs.map((tab, i) => ({ ...tab, isActive: i === tabs.length - 1 })),
+    activeTabId: tabs[tabs.length - 1]?.id ?? null,
+  };
+  seedLayoutState({
+    rootPanel: root,
+    activePanelId: "a",
+    tabGroups: [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "a" }],
+    activeTabGroupId: "g1",
+    tabContent: Object.fromEntries(tabs.map((tab) => [tab.id, extractTabContent(tab)])),
+  });
+}
+
+/** Hydrate `records` into a fresh store, as the destination window does. */
+function hydrateInFreshWindow(records: TabHandoffRecord[]): TerminalTab[] {
+  useAppStore.setState(useAppStore.getInitialState());
+  clearEditorBuffers();
+  for (const record of records) useAppStore.getState().hydrateHandoffTab(record);
+  return collectWindowTabs(useAppStore.getState());
+}
+
+describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    clearEditorBuffers();
+    openWindow.mockReset().mockResolvedValue("win-9");
+    sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("a clean file editor tab appears in the target window after Move", async () => {
+    seedSessionTab("s1");
+    useAppStore.getState().openEditorTab("/etc/hosts", false);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const records = sentRecords();
+    expect(records.map((r) => r.tab.contentType)).toEqual(["terminal", "editor"]);
+    expect(records[1].tab.editorDirty).toBeUndefined();
+    expect(records[1].tab.editorBuffer).toBeUndefined();
+
+    const tabs = hydrateInFreshWindow(records);
+    const editor = tabs.find((t) => t.contentType === "editor");
+    expect(editor?.editorMeta).toMatchObject({ filePath: "/etc/hosts", isRemote: false });
+    expect(editor?.title).toBe("hosts");
+    expect(useAppStore.getState().editorDirtyTabs[editor!.id]).toBeUndefined();
+  });
+
+  it("moves a window that holds only clean file editors", async () => {
+    useAppStore.getState().openEditorTab("/etc/hosts", false);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "new" });
+
+    expect(openWindow).toHaveBeenCalledTimes(1);
+    const seeded = openWindow.mock.calls[0][0] as TabHandoffRecord;
+    expect(seeded.tab.editorMeta).toMatchObject({ filePath: "/etc/hosts" });
+  });
+
+  it.each(MOVABLE_TABS.map((tab) => [tab.contentType, tab] as const))(
+    "reopens a %s tab in the target window with its metadata",
+    async (_kind, tab) => {
+      seedTabs([tab]);
+
+      await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+      const records = sentRecords();
+      expect(records).toHaveLength(1);
+      const [moved] = hydrateInFreshWindow(records).filter(
+        (t) => t.contentType === tab.contentType
+      );
+      expect(moved).toBeDefined();
+      expect(moved.title).toBe(tab.title);
+      expect(moved.sessionId).toBeNull();
+      for (const key of [
+        "networkDiagnosticMeta",
+        "pluginDetailMeta",
+        "connectionEditorMeta",
+        "tunnelEditorMeta",
+        "workspaceEditorMeta",
+        "agentErrorMeta",
+        "workspaceAgentRef",
+      ] as const) {
+        expect(moved[key]).toEqual(tab[key]);
+      }
+    }
+  );
+
+  it("moves every movable kind in one go, after the session tabs", async () => {
+    seedTabs([...MOVABLE_TABS, TRANSFER_VIEW]);
+    seedSessionTab("s1");
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const kinds = sentRecords().map((r) => r.tab.contentType);
+    expect(kinds).toEqual(["terminal", ...MOVABLE_TABS.map((tab) => tab.contentType)]);
+  });
+
+  it("leaves a transfer view behind, since its remote pane is bound to a source tab", async () => {
+    seedTabs([TRANSFER_VIEW]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    expect(sendHandoffToWindow).not.toHaveBeenCalled();
+    expect(openWindow).not.toHaveBeenCalled();
+  });
+
+  it("still refuses the move while a dirty form editor has no readable draft", async () => {
+    const formEditor = MOVABLE_TABS.find((t) => t.contentType === "connection-editor")!;
+    seedTabs([formEditor]);
+    useAppStore.getState().setEditorDirty(formEditor.id, true);
+
+    await expect(
+      useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" })
+    ).rejects.toThrow(/Edit server-1/);
+    expect(sendHandoffToWindow).not.toHaveBeenCalled();
+  });
+
+  it("lists the other tabs with whether each moves in the close request", async () => {
+    const settings = MOVABLE_TABS[0];
+    seedTabs([settings, TRANSFER_VIEW]);
+    seedSessionTab("s1");
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+
+    expect(useAppStore.getState().pendingWindowClose?.otherTabs).toEqual([
+      { tabId: "st", title: "Settings", contentType: "settings", movable: true },
+      { tabId: "tv", title: "Transfers", contentType: "transfer-view", movable: false },
+    ]);
+  });
+
+  it("keeps an unsaved editor out of the other tabs, since it has its own row", async () => {
+    seedSessionTab("s1");
+    const tabId = seedDirtyFileEditor("/etc/hosts", "edited");
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+
+    const request = useAppStore.getState().pendingWindowClose;
+    expect(request?.dirtyEditors?.map((e) => e.tabId)).toEqual([tabId]);
+    expect(request?.otherTabs).toBeUndefined();
+  });
+
+  describe("hydrateHandoffTab de-duplication", () => {
+    it("activates the target's own Settings tab instead of opening a second", async () => {
+      seedTabs([MOVABLE_TABS[0]]);
+      await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+      const [record] = sentRecords();
+
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.getState().openSettingsTab();
+      useAppStore.getState().hydrateHandoffTab(record);
+
+      const settings = collectWindowTabs(useAppStore.getState()).filter(
+        (t) => t.contentType === "settings"
+      );
+      expect(settings).toHaveLength(1);
+      expect(settings[0].isActive).toBe(true);
+    });
+
+    it("activates an already open copy of the same saved local file", async () => {
+      useAppStore.getState().openEditorTab("/etc/hosts", false);
+      await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+      const [record] = sentRecords();
+
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.getState().openEditorTab("/etc/hosts", false);
+      useAppStore.getState().hydrateHandoffTab(record);
+
+      const editors = collectWindowTabs(useAppStore.getState()).filter(
+        (t) => t.contentType === "editor"
+      );
+      expect(editors).toHaveLength(1);
+    });
+
+    it("never merges an editor that carries unsaved changes", async () => {
+      seedDirtyFileEditor("/etc/hosts", "edited");
+      await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+      const [record] = sentRecords();
+
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.getState().openEditorTab("/etc/hosts", false);
+      useAppStore.getState().hydrateHandoffTab(record);
+
+      const editors = collectWindowTabs(useAppStore.getState()).filter(
+        (t) => t.contentType === "editor"
+      );
+      expect(editors).toHaveLength(2);
+    });
+  });
+});
+
+describe("appStore — Move tabs carries unsaved form editors (#4500)", () => {
+  const connEditor = MOVABLE_TABS.find((t) => t.contentType === "connection-editor")!;
+  const tunnelEditor = MOVABLE_TABS.find((t) => t.contentType === "tunnel-editor")!;
+  const workspaceEditor = MOVABLE_TABS.find((t) => t.contentType === "workspace-editor")!;
+
+  const CONN_DRAFT = {
+    selectedType: "ssh",
+    connSettings: { host: "db.internal", username: "ops", authMethod: "password", password: "" },
+    topLevel: { name: "prod-db (edited)" },
+  };
+  const TUNNEL_DRAFT = { name: "db tunnel", sshConnectionId: "conn-1", autoStart: true };
+  const WORKSPACE_DRAFT = { name: "Ops", description: "on-call", activeGroupIndex: 0 };
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    clearEditorBuffers();
+    openWindow.mockReset().mockResolvedValue("win-9");
+    sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
+  });
+
+  /** Seed the three form editors dirty, each with a registered draft provider. */
+  function seedDirtyFormEditors(connClearedSecrets?: string[]): void {
+    seedTabs([connEditor, tunnelEditor, workspaceEditor]);
+    registerFormDraft(connEditor.id, () => ({
+      kind: "connection-editor",
+      values: CONN_DRAFT,
+      ...(connClearedSecrets ? { clearedSecrets: connClearedSecrets } : {}),
+    }));
+    registerFormDraft(tunnelEditor.id, () => ({ kind: "tunnel-editor", values: TUNNEL_DRAFT }));
+    registerFormDraft(workspaceEditor.id, () => ({
+      kind: "workspace-editor",
+      values: WORKSPACE_DRAFT,
+    }));
+    for (const tab of [connEditor, tunnelEditor, workspaceEditor]) {
+      useAppStore.getState().setEditorDirty(tab.id, true);
+    }
+  }
+
+  it("lists dirty form editors with a draft as movable, naming the secrets left behind", async () => {
+    seedDirtyFormEditors(["Password"]);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+
+    expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([
+      { tabId: "ce", title: "Edit server-1", movable: true, clearedSecrets: ["Password"] },
+      { tabId: "te", title: "Edit tunnel", movable: true },
+      { tabId: "we", title: "Edit workspace", movable: true },
+    ]);
+  });
+
+  it("a dirty connection, tunnel and workspace editor each reappears dirty with its values", async () => {
+    seedDirtyFormEditors(["Password"]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const records = sentRecords();
+    expect(records.map((r) => r.tab.formDraft)).toEqual([
+      { kind: "connection-editor", values: CONN_DRAFT },
+      { kind: "tunnel-editor", values: TUNNEL_DRAFT },
+      { kind: "workspace-editor", values: WORKSPACE_DRAFT },
+    ]);
+    expect(records.every((r) => r.tab.editorDirty === true)).toBe(true);
+
+    const tabs = hydrateInFreshWindow(records);
+
+    const byType = (type: string) => tabs.find((t) => t.contentType === type)!;
+    const conn = byType("connection-editor");
+    const tunnel = byType("tunnel-editor");
+    const workspace = byType("workspace-editor");
+    expect(conn.connectionEditorMeta).toEqual(connEditor.connectionEditorMeta);
+    expect(tunnel.tunnelEditorMeta).toEqual(tunnelEditor.tunnelEditorMeta);
+    expect(workspace.workspaceEditorMeta).toEqual(workspaceEditor.workspaceEditorMeta);
+    for (const tab of [conn, tunnel, workspace]) {
+      expect(useAppStore.getState().editorDirtyTabs[tab.id]).toBe(true);
+      // Nothing about the draft is stored in the tab itself, so it is never persisted.
+      expect(JSON.stringify(tab)).not.toContain("db.internal");
+    }
+    // Each draft waits for the editor that mounts for its new tab, and only that kind.
+    expect(peekCarriedFormDraft(conn.id, "connection-editor")).toEqual(CONN_DRAFT);
+    expect(peekCarriedFormDraft(conn.id, "tunnel-editor")).toBeNull();
+    expect(peekCarriedFormDraft(tunnel.id, "tunnel-editor")).toEqual(TUNNEL_DRAFT);
+    expect(peekCarriedFormDraft(workspace.id, "workspace-editor")).toEqual(WORKSPACE_DRAFT);
+  });
+
+  it("never puts a typed secret into the hand-off, even if an editor's draft holds one", async () => {
+    seedTabs([connEditor]);
+    registerFormDraft(connEditor.id, () => ({
+      kind: "connection-editor",
+      values: {
+        selectedType: "ssh",
+        connSettings: {
+          host: "db.internal",
+          password: "hunter2",
+          keyPassphrase: "open sesame",
+          savePassword: true,
+          proxyJump: [{ host: "bastion", username: "ops", password: "hop-secret" }],
+        },
+        topLevel: { name: "prod-db" },
+      },
+    }));
+    useAppStore.getState().setEditorDirty(connEditor.id, true);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+    expect(useAppStore.getState().pendingWindowClose?.dirtyEditors?.[0].clearedSecrets).toEqual([
+      "Password",
+      "Key passphrase",
+      "Jump host password",
+    ]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const [record] = sentRecords();
+    const wire = JSON.stringify(record);
+    for (const secret of ["hunter2", "open sesame", "hop-secret"]) {
+      expect(wire).not.toContain(secret);
+    }
+    expect(record.tab.formDraft?.values).toEqual({
+      selectedType: "ssh",
+      connSettings: {
+        host: "db.internal",
+        password: "",
+        keyPassphrase: "",
+        savePassword: true,
+        proxyJump: [{ host: "bastion", username: "ops", password: "" }],
+      },
+      topLevel: { name: "prod-db" },
+    });
+    // The labels are for this window's dialog only; they never travel.
+    expect(record.tab.formDraft?.clearedSecrets).toBeUndefined();
+  });
+
+  it("moves a clean form editor without a draft", async () => {
+    seedTabs([connEditor]);
+    // A clean editor's provider returns null.
+    registerFormDraft(connEditor.id, () => null);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const [record] = sentRecords();
+    expect(record.tab.formDraft).toBeUndefined();
+    expect(record.tab.editorDirty).toBeUndefined();
+    expect(readFormDraft(connEditor.id)).toBeNull();
+  });
+
+  it("ignores a draft whose kind does not match the tab", async () => {
+    seedTabs([connEditor]);
+    registerFormDraft(connEditor.id, () => ({ kind: "tunnel-editor", values: TUNNEL_DRAFT }));
+    useAppStore.getState().setEditorDirty(connEditor.id, true);
+
+    await expect(
+      useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" })
+    ).rejects.toThrow(/Edit server-1/);
   });
 });

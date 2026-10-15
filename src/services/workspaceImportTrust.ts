@@ -17,6 +17,7 @@
  * needs a new confirmation. Locally created workspaces never carry the pending
  * fields, so this module leaves them untouched.
  */
+import { getWorkspaceLeaves } from "@/utils/workspaceLayout";
 import type {
   UntrustedImportedTab,
   WorkspaceLayoutNode,
@@ -66,6 +67,76 @@ export function withImportConfirmed(
 ): string[] {
   const current = allowlist ?? [];
   return current.includes(key) ? [...current] : [...current, key];
+}
+
+/** `allowlist` without any of `keys` (#4445). */
+export function withImportsRevoked(
+  allowlist: readonly string[] | undefined,
+  keys: readonly string[]
+): string[] {
+  const revoked = new Set(keys);
+  return (allowlist ?? []).filter((key) => !revoked.has(key));
+}
+
+/** Whether an allowlist key confirms a command or an inline connection config. */
+export function importKeyKind(key: string): "command" | "connection" | "unknown" {
+  if (key.startsWith(COMMAND_KEY_PREFIX)) return "command";
+  if (key.startsWith(CONNECTION_KEY_PREFIX)) return "connection";
+  return "unknown";
+}
+
+/** One held command or inline connection config of an imported workspace. */
+export interface ImportedItem {
+  /** Positional id (`<group>-<leaf>-<tab>-cmd|conn`), stable for one layout. */
+  id: string;
+  kind: "command" | "connection";
+  /** `<tab title> (<group name>)`. */
+  tabLabel: string;
+  /** What runs or opens, shown verbatim. */
+  text: string;
+  /** Resolves to the allowlist key for this item. */
+  key: () => Promise<string>;
+}
+
+/**
+ * Every held item (a `pendingInitialCommand` or an `inlineConfigUnconfirmed`
+ * inline config) in a workspace's tab groups, in layout order. Locally created
+ * workspaces carry none, so this returns an empty list for them.
+ */
+export function collectImportedItems(groups: readonly WorkspaceTabGroupDef[]): ImportedItem[] {
+  const items: ImportedItem[] = [];
+  groups.forEach((group, g) => {
+    getWorkspaceLeaves(group.layout).forEach((leaf, l) => {
+      leaf.tabs.forEach((tab, t) => {
+        const tabLabel = `${tab.title ?? "Tab"} (${group.name})`;
+        const base = `${g}-${l}-${t}`;
+        if (tab.inlineConfigUnconfirmed && tab.inlineConfig) {
+          const inline = tab.inlineConfig;
+          const summary = describeImportedConnection(inline);
+          const parts = [summary.type, summary.target].filter(Boolean).join(" ");
+          const runs = summary.embeddedCommand ? ` (runs "${summary.embeddedCommand}")` : "";
+          items.push({
+            id: `${base}-conn`,
+            kind: "connection",
+            tabLabel,
+            text: parts + runs,
+            key: () => importedConnectionKey(inline),
+          });
+        }
+        if (tab.pendingInitialCommand) {
+          const command = tab.pendingInitialCommand;
+          items.push({
+            id: `${base}-cmd`,
+            kind: "command",
+            tabLabel,
+            text: command,
+            key: () => importedCommandKey(command),
+          });
+        }
+      });
+    });
+  });
+  return items;
 }
 
 async function resolveTab(

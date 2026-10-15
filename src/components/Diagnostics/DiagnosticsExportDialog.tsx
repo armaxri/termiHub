@@ -4,17 +4,21 @@ import { Modal, Button, toast } from "@/components/ui";
 import {
   exportDiagnosticsBundle,
   listAgentCrashReports,
+  listAgentLogs,
   previewDiagnosticsBundle,
 } from "@/services/api";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import type {
   AgentCrashReportRef,
   AgentCrashReports,
+  AgentLogRef,
+  AgentLogs,
   DiagnosticsBundleEntry,
 } from "@/types/diagnostics";
 import { errorMessage } from "@/utils/errorMessage";
 import { formatBytes } from "@/utils/formatters";
 import { AgentCrashReportsSection, agentReportKey } from "./AgentCrashReportsSection";
+import { AgentLogsSection } from "./AgentLogsSection";
 import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
 import "./Diagnostics.css";
 
@@ -37,10 +41,31 @@ function selectedAgentReports(
   );
 }
 
+/** The log files of every agent whose logs are still included. */
+function selectedAgentLogs(
+  agents: AgentLogs[] | null,
+  excluded: ReadonlySet<string>
+): AgentLogRef[] {
+  return (agents ?? []).flatMap((a) =>
+    a.supported && !a.error && !excluded.has(a.agentId)
+      ? a.logs.map((l) => ({ agentId: a.agentId, name: l.name }))
+      : []
+  );
+}
+
+/** Toggle `key` in an exclusion set: `include` removes it, otherwise adds it. */
+function toggleExcluded(prev: ReadonlySet<string>, key: string, include: boolean) {
+  const next = new Set(prev);
+  if (include) next.delete(key);
+  else next.add(key);
+  return next;
+}
+
 /**
  * Help → "Export diagnostics" (OBS-010). Lists exactly which files the bundle
  * will contain — including crash reports of already-connected remote agents,
- * each of which the user can exclude (#3574) — then, only when the user
+ * each of which the user can exclude (#3574), and those agents' log files,
+ * excludable per agent (#4519) — then, only when the user
  * confirms and picks a destination in the save dialog, writes a redacted zip
  * there. Nothing is sent anywhere.
  */
@@ -51,6 +76,8 @@ export function DiagnosticsExportDialog() {
   const [error, setError] = useState("");
   const [agentReports, setAgentReports] = useState<AgentCrashReports[] | null>(null);
   const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+  const [agentLogs, setAgentLogs] = useState<AgentLogs[] | null>(null);
+  const [excludedLogs, setExcludedLogs] = useState<ReadonlySet<string>>(new Set());
   const { remoteAgents } = useProjectedAgents();
 
   useEffect(() => {
@@ -58,6 +85,8 @@ export function DiagnosticsExportDialog() {
     setError("");
     setAgentReports(null);
     setExcluded(new Set());
+    setAgentLogs(null);
+    setExcludedLogs(new Set());
     if (!open) return;
     let cancelled = false;
     previewDiagnosticsBundle()
@@ -75,6 +104,13 @@ export function DiagnosticsExportDialog() {
       .catch(() => {
         if (!cancelled) setAgentReports([]);
       });
+    listAgentLogs()
+      .then((list) => {
+        if (!cancelled) setAgentLogs(list);
+      })
+      .catch(() => {
+        if (!cancelled) setAgentLogs([]);
+      });
     return () => {
       cancelled = true;
     };
@@ -86,12 +122,11 @@ export function DiagnosticsExportDialog() {
   );
 
   const handleToggle = useCallback((key: string, include: boolean) => {
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (include) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setExcluded((prev) => toggleExcluded(prev, key, include));
+  }, []);
+
+  const handleLogToggle = useCallback((agentId: string, include: boolean) => {
+    setExcludedLogs((prev) => toggleExcluded(prev, agentId, include));
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -103,7 +138,8 @@ export function DiagnosticsExportDialog() {
     try {
       const result = await exportDiagnosticsBundle(
         destination,
-        selectedAgentReports(agentReports, excluded)
+        selectedAgentReports(agentReports, excluded),
+        selectedAgentLogs(agentLogs, excludedLogs)
       );
       toast.success(`Diagnostics saved (${result.fileCount} files)`, { description: result.path });
       setOpen(false);
@@ -112,7 +148,7 @@ export function DiagnosticsExportDialog() {
       setError(`Export failed: ${message}`);
       throw err;
     }
-  }, [setOpen, agentReports, excluded]);
+  }, [setOpen, agentReports, excluded, agentLogs, excludedLogs]);
 
   return (
     <Modal
@@ -164,6 +200,12 @@ export function DiagnosticsExportDialog() {
         agentName={agentName}
         excluded={excluded}
         onToggle={handleToggle}
+      />
+      <AgentLogsSection
+        agents={agentLogs}
+        agentName={agentName}
+        excluded={excludedLogs}
+        onToggle={handleLogToggle}
       />
       {error && (
         <p className="diagnostics__error" role="alert" data-testid="diagnostics-export-error">

@@ -1396,6 +1396,27 @@ flowchart TB
             way.
           </li>
           <li>
+            <strong>Move tabs moves every tab it can reopen (#4501).</strong> Besides live sessions
+            and unsaved file editors, the move reopens the window's saved file editors, Settings,
+            the Log Viewer, network diagnostics, plugin details and clean connection, tunnel and
+            workspace editors in the destination. A transfer view closes, because its remote pane is
+            bound to a tab of the closing window. The dialog names which tabs move and which close.
+            Settings, the Log Viewer or a saved file the destination already shows is brought to the
+            front instead of opened twice.
+          </li>
+          <li>
+            <strong>Unsaved form editors move with their edits (#4500).</strong> A connection,
+            tunnel or workspace editor with unsaved changes no longer blocks the move: its form
+            values travel in the hand-off record and the editor reopens in the destination still
+            unsaved, compared against the saved record, and nothing is saved on the way. A secret
+            typed into the form (a password, a key passphrase, an inline jump host's password, any
+            password field of the connection type) never leaves its editor: the record carries the
+            field empty, and the dialog names each such field so the user types it again there. The
+            record crosses windows through the backend's in-memory queue, which a typed secret has
+            no reason to sit in. Only an unsaved Settings panel still asks to be saved or discarded
+            first.
+          </li>
+          <li>
             <strong>Quitting asks the same question (#4296).</strong> Cmd+Q or the app menu's Quit
             holds the exit and asks every window. A window with nothing to lose agrees at once; one
             that would lose a non-persistent session or an unsaved editor shows this dialog as
@@ -1817,8 +1838,8 @@ sequenceDiagram
                 <td><strong>N/A / restrict</strong></td>
                 <td>
                   No backend session; some are effectively singletons (Settings, Log Viewer). Moving
-                  is pure view transfer but often meaningless. Likely non-goal — restrict to
-                  session-bearing tabs, or allow but forbid duplicates.
+                  is pure view transfer. Decided in #4501: they move on window close, and a
+                  singleton the destination already shows is activated instead of duplicated.
                 </td>
               </tr>
             </tbody>

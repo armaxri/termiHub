@@ -4,17 +4,21 @@
 // v0.x ships unsigned (no Apple Developer ID / notarization), so every macOS user
 // has to approve the app once on first launch. macOS 15 (Sequoia) removed the
 // right-click → Open override for unnotarized apps: the approval now lives in
-// System Settings → Privacy & Security → Open Anyway (the flow dev-build.yml's
-// release body already documents). The `xattr` one-liner works on every version.
+// System Settings → Privacy & Security → Open Anyway. The `xattr` one-liner
+// works on every version.
 //
-// Two surfaces carry these steps and must not drift apart:
+// Three surfaces carry these steps and must not drift apart:
 //   - the release body: release.yml runs this script and appends its output;
+//   - the dev-build release body: dev-build.yml runs this script with
+//     --dev-build, which keeps the "Dev Build" framing (#4472);
 //   - README.md: the macOS install section embeds FIRST_LAUNCH_STEPS between
 //     the README_BEGIN / README_END markers.
-// macos-first-launch.test.mjs checks that README.md and dev-build.yml carry the
-// current steps and that release.yml calls this script.
+// macos-first-launch.test.mjs checks that README.md carries the current steps
+// and that release.yml and dev-build.yml call this script.
 //
-// Usage: node scripts/internal/macos-first-launch.mjs >> release_notes.md
+// Usage:
+//   node scripts/internal/macos-first-launch.mjs >> release_notes.md
+//   node scripts/internal/macos-first-launch.mjs --dev-build   # dev-build.yml
 
 import { isMainModule } from "./is-main-module.mjs";
 
@@ -58,6 +62,45 @@ export function renderReleaseBody() {
   ].join("\n");
 }
 
+/**
+ * The note dev-build.yml puts in every dev-build release body: a Markdown
+ * blockquote with the "Dev Build" framing around the same canonical steps.
+ * It sits between the installer and agent tables, so it carries no separator.
+ *
+ * @returns {string} Markdown, ending in a newline.
+ */
+export function renderDevBuildNote() {
+  const lines = [
+    "**macOS — one-time security confirmation required.** These dev builds are not notarized",
+    "(no Apple Developer account). On first launch macOS warns that the developer cannot be",
+    "verified. Approve it once, either way:",
+    "",
+    ...FIRST_LAUNCH_STEPS.split("\n"),
+    "",
+    "This is a one-time step; later launches work normally.",
+  ];
+  return lines.map((line) => (line ? `> ${line}` : ">")).join("\n") + "\n";
+}
+
+/**
+ * Pick the block to print from the CLI arguments.
+ *
+ * @param {string[]} args process.argv.slice(2)
+ * @returns {string} the Markdown to write to stdout
+ */
+export function renderForArgs(args) {
+  const unknown = args.filter((arg) => arg !== "--dev-build");
+  if (unknown.length > 0) {
+    throw new Error(`unknown argument(s): ${unknown.join(" ")} (expected: [--dev-build])`);
+  }
+  return args.includes("--dev-build") ? renderDevBuildNote() : renderReleaseBody();
+}
+
 if (isMainModule(import.meta.url)) {
-  process.stdout.write(renderReleaseBody());
+  try {
+    process.stdout.write(renderForArgs(process.argv.slice(2)));
+  } catch (err) {
+    console.error(`macos-first-launch: ${err.message}`);
+    process.exit(2);
+  }
 }
