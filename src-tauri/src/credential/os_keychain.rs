@@ -20,7 +20,6 @@ const SERVICE_NAME: &str = "termiHub";
 /// Service name of the keys that seal a backup restore's deferred credential
 /// import (#4414). Distinct from [`SERVICE_NAME`], so a seal key is never
 /// mistaken for a credential.
-#[cfg(not(test))]
 const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
 
 /// Credential store backed by the native OS credential store via the
@@ -56,6 +55,16 @@ const RESTORE_SEAL_SERVICE: &str = "termiHub-backup-restore";
 pub struct OsKeychainStore {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
     index: KeychainKeyIndex,
+    /// Keychain service of the credentials ([`SERVICE_NAME`] outside tests).
+    service: String,
+    /// Keychain service of the backup-restore seal keys
+    /// ([`RESTORE_SEAL_SERVICE`]), or `None` to import a restore right away.
+    /// Unit tests default to `None`, so they never touch the real keyring.
+    seal_service: Option<String>,
+    /// Every seal-key id handed out, so the opt-in real-keychain tests can
+    /// delete each one they created even when an assertion fails (#4659).
+    #[cfg(test)]
+    issued_seal_ids: Mutex<Vec<String>>,
 }
 
 impl Default for OsKeychainStore {
@@ -77,10 +86,41 @@ impl OsKeychainStore {
     }
 
     fn with_index(index: KeychainKeyIndex) -> Self {
+        // Unit tests never touch the real OS keyring (and the `keyring` mock
+        // keeps state per entry handle), so a test build imports right away.
+        let seal_service = (!cfg!(test)).then(|| RESTORE_SEAL_SERVICE.to_string());
         Self {
             entries: Mutex::new(HashMap::new()),
             index,
+            service: SERVICE_NAME.to_string(),
+            seal_service,
+            #[cfg(test)]
+            issued_seal_ids: Mutex::new(Vec::new()),
         }
+    }
+
+    /// A store on the platform keyring under throwaway service names, with
+    /// deferred restore imports enabled — for the opt-in real-keychain tests
+    /// only (#4659). Never pass the production service names.
+    #[cfg(test)]
+    pub(crate) fn with_test_services(service: &str, seal_service: &str) -> Self {
+        assert!(
+            service != SERVICE_NAME && seal_service != RESTORE_SEAL_SERVICE,
+            "a test must never use the real keychain service names"
+        );
+        let mut store = Self::new();
+        store.service = service.to_string();
+        store.seal_service = Some(seal_service.to_string());
+        store
+    }
+
+    /// The seal-key ids this store has handed out (see `issued_seal_ids`).
+    #[cfg(test)]
+    pub(crate) fn issued_seal_ids(&self) -> Vec<String> {
+        self.issued_seal_ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Drop every key from the index without touching the keychain, to
@@ -114,7 +154,7 @@ impl OsKeychainStore {
             return Ok(entry.clone());
         }
         let entry = Arc::new(
-            Entry::new(SERVICE_NAME, &account)
+            Entry::new(&self.service, &account)
                 .with_context(|| format!("Failed to open OS keychain entry for {key}"))?,
         );
         entries.insert(account, entry.clone());
@@ -171,20 +211,20 @@ impl CredentialStore for OsKeychainStore {
     }
 
     fn restore_seal_slot(&self, id: &str) -> Option<Box<dyn super::biometric_slot::SecretSlot>> {
-        // Unit tests never touch the real OS keyring (and the `keyring` mock
-        // keeps state per entry handle), so a test build imports right away.
-        #[cfg(not(test))]
-        {
-            Some(Box::new(super::biometric_slot::KeyringSlot::new(
-                RESTORE_SEAL_SERVICE,
-                id,
-            )))
-        }
+        let service = self.seal_service.as_deref()?;
         #[cfg(test)]
         {
-            let _ = id;
-            None
+            let mut ids = self
+                .issued_seal_ids
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !ids.iter().any(|known| known == id) {
+                ids.push(id.to_string());
+            }
         }
+        Some(Box::new(super::biometric_slot::KeyringSlot::new(
+            service, id,
+        )))
     }
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
@@ -274,6 +314,17 @@ pub(crate) mod test_support {
     pub(crate) fn install_mock() -> MutexGuard<'static, ()> {
         let guard = MOCK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        guard
+    }
+
+    /// Install the platform's real credential store (macOS Keychain, Windows
+    /// Credential Manager, Linux Secret Service) as the `keyring` default for
+    /// the duration of an opt-in real-keychain test (#4659). Serialized with
+    /// the mock tests through the same mutex, so no mock test ever runs on
+    /// the real keyring.
+    pub(crate) fn install_platform() -> MutexGuard<'static, ()> {
+        let guard = MOCK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        keyring::set_default_credential_builder(keyring::default::default_credential_builder());
         guard
     }
 }
