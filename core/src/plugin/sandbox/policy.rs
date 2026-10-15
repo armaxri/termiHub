@@ -23,7 +23,7 @@ use crate::plugin::HostError;
 /// read/write. Paths are canonicalised (the kernel matches resolved paths).
 /// The user's home folder is denied explicitly. On Windows the policy also
 /// names the plugin's TLS root snapshot (#4811,
-/// [`super::tls_roots::snapshot_path`]), which the host writes before each
+/// `tls_roots::snapshot_path`), which the host writes before each
 /// runner start; it is not created here either.
 ///
 /// The data folder is **not created** here: the host creates it after the
