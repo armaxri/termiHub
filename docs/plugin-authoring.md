@@ -150,8 +150,8 @@ Each entry must be:
   not expand `~` or environment variables; use `${home}` instead.
 - **Normalised**: no `.` or `..` segments.
 - **Literal on Windows**: in a Windows-form entry, no folder name that Windows
-  would rewrite or treat specially — a name ending in `.` or a space (`.. `
-  would become `..`), a `:` after the drive (an alternate data stream), one of
+  would rewrite or treat specially — a name ending in `.` or a space (`C:\data\.. \x`
+  would become `C:\x`), a `:` after the drive (an alternate data stream), one of
   `<>"|?*`, or a reserved device name (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`,
   `LPT0`–`LPT9`, also with an extension such as `nul.txt`). These are rejected
   on every platform. POSIX-form entries keep such names, since POSIX takes them
