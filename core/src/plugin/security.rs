@@ -45,6 +45,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use super::manifest::{PluginExtensions, PluginManifest, PluginPermission};
+use super::path_placeholders::{self, PlaceholderBases};
 use super::signature::{self, PackageVerification, SignatureError};
 use super::trust_store::TrustStore;
 
@@ -121,12 +122,22 @@ pub struct PermissionSet {
 }
 
 impl PermissionSet {
-    /// Derive the permission set from a plugin's manifest.
+    /// Derive the permission set from a plugin's manifest, expanding any
+    /// `${home}`/`${config}` placeholder in its `filesystemPaths` against this
+    /// host's folders (#4533).
     #[must_use]
     pub fn from_manifest(manifest: &PluginManifest) -> Self {
-        Self::from_parts(
+        Self::from_manifest_with_bases(manifest, &PlaceholderBases::host())
+    }
+
+    /// [`from_manifest`](Self::from_manifest), expanding placeholders against
+    /// explicit `bases` instead of this host's folders.
+    #[must_use]
+    pub fn from_manifest_with_bases(manifest: &PluginManifest, bases: &PlaceholderBases) -> Self {
+        Self::from_parts_with_bases(
             manifest.permissions.iter().copied(),
             &manifest.filesystem_paths,
+            bases,
         )
     }
 
@@ -134,15 +145,30 @@ impl PermissionSet {
     /// filesystem paths — the manifest-free constructor used by host wiring and
     /// tests. The filesystem scope is granted iff
     /// [`Filesystem`](PluginPermission::Filesystem) is among `permissions`.
+    ///
+    /// Placeholders in `filesystem_paths` are expanded against this host's
+    /// folders, as in [`from_manifest`](Self::from_manifest).
     #[must_use]
     pub fn from_parts(
         permissions: impl IntoIterator<Item = PluginPermission>,
         filesystem_paths: &[String],
     ) -> Self {
+        Self::from_parts_with_bases(permissions, filesystem_paths, &PlaceholderBases::host())
+    }
+
+    /// [`from_parts`](Self::from_parts), expanding placeholders against
+    /// explicit `bases`.
+    #[must_use]
+    pub fn from_parts_with_bases(
+        permissions: impl IntoIterator<Item = PluginPermission>,
+        filesystem_paths: &[String],
+        bases: &PlaceholderBases,
+    ) -> Self {
         let granted: BTreeSet<PluginPermission> = permissions.into_iter().collect();
         let filesystem = FilesystemScope::new(
             granted.contains(&PluginPermission::Filesystem),
             filesystem_paths,
+            bases,
         );
         Self {
             granted,
@@ -225,6 +251,11 @@ impl PermissionSet {
     /// Compared both lexically and with symlinks resolved, so `/var` and
     /// `/private/var` (macOS) or a differently-cased existing Windows path
     /// cannot slip past.
+    ///
+    /// A root expanded from a `${home}`/`${config}` placeholder (#4533) must
+    /// also stay inside that folder once symlinks are resolved, so a symlink
+    /// such as `~/.kube -> /etc` cannot turn a home-relative declaration into
+    /// access elsewhere.
     pub fn check_protected_folders(
         &self,
         home: Option<&Path>,
@@ -240,12 +271,23 @@ impl PermissionSet {
         };
         let home_forms = home.map(forms).unwrap_or_default();
         let app_forms: Vec<PathBuf> = app_dirs.iter().flat_map(|d| forms(d)).collect();
-        for (declared, root) in self.filesystem.declared_roots() {
+        for ((declared, root), anchor) in self
+            .filesystem
+            .declared_roots()
+            .zip(self.filesystem.anchors.iter())
+        {
             let root_forms = forms(root);
             let over_broad = |reason| PermissionError::OverBroadFilesystemPath {
                 path: declared.to_owned(),
                 reason,
             };
+            if let Some(anchor) = anchor {
+                if !stays_inside_anchor(root, anchor) {
+                    return Err(over_broad(
+                        "leaves its placeholder's folder through a symlink",
+                    ));
+                }
+            }
             let contains = |outer: &[PathBuf], inner: &[PathBuf]| {
                 outer.iter().any(|o| inner.iter().any(|i| i.starts_with(o)))
             };
@@ -262,6 +304,24 @@ impl PermissionSet {
     }
 }
 
+/// Whether the scope root expanded from a placeholder stays inside the
+/// placeholder's folder `anchor`, both lexically and with symlinks resolved.
+///
+/// The canonical root is compared against the canonical anchor (so a
+/// symlinked home such as `/home -> /usr/home` still matches), and a root
+/// whose existing prefix cannot be resolved (a dangling symlink) is refused.
+fn stays_inside_anchor(root: &Path, anchor: &Path) -> bool {
+    let lexical_anchor = normalize_lexical(anchor);
+    if !root.starts_with(&lexical_anchor) || root == lexical_anchor {
+        return false;
+    }
+    let Some(canonical_root) = resolve_existing_prefix(root) else {
+        return false;
+    };
+    let canonical_anchor = resolve_existing_prefix(&lexical_anchor).unwrap_or(lexical_anchor);
+    canonical_root != canonical_anchor && canonical_root.starts_with(&canonical_anchor)
+}
+
 /// Why a declared `filesystemPaths` entry cannot be a filesystem scope root,
 /// or `Ok` if it can (#4293).
 ///
@@ -271,6 +331,9 @@ impl PermissionSet {
 /// must not be
 ///
 /// * empty, or contain a NUL byte;
+/// * carrying a `${` — placeholders are expanded before this check
+///   ([`super::path_placeholders`], #4533), so one that reaches it is unknown
+///   or misplaced, and is never taken as a literal folder name;
 /// * relative (`docs`, `~/captures`, `C:docs`, `\Windows`) — it would resolve
 ///   against the host process's working directory, which differs between a
 ///   desktop and a terminal launch;
@@ -291,6 +354,9 @@ pub fn check_declared_filesystem_path(raw: &str) -> Result<(), &'static str> {
     }
     if raw.contains('\0') {
         return Err("contains a NUL byte");
+    }
+    if raw.contains("${") {
+        return Err(path_placeholders::UNKNOWN_PLACEHOLDER);
     }
     const WINDOWS_SEPARATORS: &[char] = &['\\', '/'];
     let bytes = raw.as_bytes();
@@ -336,6 +402,9 @@ pub struct FilesystemScope {
     roots: Vec<PathBuf>,
     /// The declared entry each of [`roots`](Self::roots) came from, in order.
     declared_for_root: Vec<String>,
+    /// For each of [`roots`](Self::roots), the lexically normalised folder its
+    /// placeholder expanded from (#4533), or `None` for a plain absolute entry.
+    anchors: Vec<Option<PathBuf>>,
     /// How many paths were declared (valid or not, for this OS or another).
     declared: usize,
     /// Declared entries refused by [`check_declared_filesystem_path`], with
@@ -348,19 +417,26 @@ impl FilesystemScope {
     ///
     /// Each entry is re-validated here, independently of manifest validation
     /// (defence in depth, #4293): an invalid entry is recorded as rejected and
-    /// never becomes a root. A valid entry in another OS's form (`C:\…` on
-    /// Unix, `/…` on Windows) grants nothing on this host. Roots are lexically
-    /// normalized so scope checks do not depend on the filesystem's state.
-    fn new(granted: bool, declared: &[String]) -> Self {
+    /// never becomes a root. A `${home}`/`${config}` placeholder is expanded
+    /// against `bases` first, and the expanded path is validated the same way
+    /// (#4533); one that cannot be expanded on this host is rejected. A valid
+    /// entry in another OS's form (`C:\…` on Unix, `/…` on Windows) grants
+    /// nothing on this host. Roots are lexically normalized so scope checks do
+    /// not depend on the filesystem's state.
+    fn new(granted: bool, declared: &[String], bases: &PlaceholderBases) -> Self {
         let mut roots = Vec::new();
         let mut declared_for_root = Vec::new();
+        let mut anchors = Vec::new();
         let mut rejected = Vec::new();
         for raw in declared {
-            if let Err(reason) = check_declared_filesystem_path(raw) {
-                rejected.push((raw.clone(), reason));
-                continue;
-            }
-            let path = Path::new(raw);
+            let resolved = match path_placeholders::resolve(raw, bases) {
+                Ok(resolved) => resolved,
+                Err(reason) => {
+                    rejected.push((raw.clone(), reason));
+                    continue;
+                }
+            };
+            let path = Path::new(&resolved.path);
             if !path.is_absolute() {
                 continue;
             }
@@ -371,11 +447,17 @@ impl FilesystemScope {
             }
             roots.push(root);
             declared_for_root.push(raw.clone());
+            anchors.push(
+                resolved
+                    .anchor
+                    .map(|anchor| normalize_lexical(Path::new(&anchor))),
+            );
         }
         Self {
             granted,
             roots,
             declared_for_root,
+            anchors,
             declared: declared.len(),
             rejected,
         }

@@ -371,7 +371,9 @@ pub struct PluginManifest {
     /// confines the plugin's filesystem access to these roots (concept §13, "must
     /// declare which paths they need"). Absent/empty for plugins that request no
     /// filesystem access. Each entry must be an absolute, normalised path below
-    /// a filesystem root ([`validate`](Self::validate), #4293).
+    /// a filesystem root ([`validate`](Self::validate), #4293), or start with a
+    /// host-expanded `${home}`/`${config}` placeholder (#4533, see
+    /// [`super::path_placeholders`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub filesystem_paths: Vec<String>,
@@ -422,7 +424,7 @@ impl PluginManifest {
             validate_libraries(&backend.libraries)?;
         }
         for path in &self.filesystem_paths {
-            super::security::check_declared_filesystem_path(path).map_err(|reason| {
+            super::path_placeholders::check_manifest_filesystem_path(path).map_err(|reason| {
                 ManifestValidationError::InvalidFilesystemPath {
                     path: path.clone(),
                     reason,
@@ -539,7 +541,8 @@ pub enum ManifestValidationError {
     },
     /// A `filesystemPaths` entry is not an absolute, normalised path below a
     /// filesystem root (#4293): empty, relative, `.`/`..`-carrying, a root, a
-    /// network share root, or a Windows verbatim/device path. See
+    /// network share root, or a Windows verbatim/device path — or it uses an
+    /// unknown, misplaced or bare placeholder (#4533). See
     /// [`check_declared_filesystem_path`](super::check_declared_filesystem_path).
     #[error("plugin manifest `filesystemPaths` entry `{path}` is invalid: it {reason}")]
     InvalidFilesystemPath {
