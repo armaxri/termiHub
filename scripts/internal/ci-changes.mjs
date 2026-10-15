@@ -158,7 +158,7 @@ const FRONTEND_FILES = new Set([
   "vite.config.ts",
   "vitest.config.ts",
   "eslint.config.js",
-  "knip.json",
+  "knip.ts",
   ".prettierrc",
   ".prettierignore",
 ]);
