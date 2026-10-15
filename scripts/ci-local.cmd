@@ -66,6 +66,7 @@ REM Frontend Code Quality (lint/prettier/markdownlint/IPC contract in check.cmd)
 call :run_gate "Frontend: manual-test inventory" g_manual_inventory
 call :run_gate "Version sources + Tauri drift" g_versions
 call :run_gate "Frontend: bundle size budget" g_bundle_size
+call :run_gate "Frontend: rendered visual checks" g_visual_checks
 
 call :run_gate "Rust: rustdoc (-D warnings)" g_rustdoc
 call :run_gate "Plugin IPC fuzz crate (fmt + clippy)" g_plugin_fuzz
@@ -235,6 +236,12 @@ exit /b %errorlevel%
 :g_bundle_size
 call pnpm build || exit /b 1
 call pnpm size
+exit /b %errorlevel%
+
+:g_visual_checks
+REM Rendered visual checks (#4712): headless Chromium against the IPC mock.
+call pnpm exec playwright install chromium || exit /b 1
+call pnpm test:visual
 exit /b %errorlevel%
 
 :g_rustdoc
