@@ -795,7 +795,14 @@ async fn reconnect_agent_stops_when_alive_is_false() {
     let mut request_id = 0u64;
     let alive = AgentAlive::stopped();
 
-    let result = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
+    let result = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await;
 
     assert!(result.is_err());
     let err = result.err().unwrap();
@@ -1337,7 +1344,14 @@ async fn reconnect_agent_stops_at_the_disconnect_instant_mid_backoff() {
     });
 
     let start = tokio::time::Instant::now();
-    let result = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
+    let result = reconnect_agent(
+        &config,
+        &settings,
+        &mut request_id,
+        &alive,
+        &ReconnectTuning::PRODUCTION,
+    )
+    .await;
 
     assert_eq!(
         result.err().as_deref(),
@@ -1672,6 +1686,22 @@ fn walk_agent_schedule(
 fn agent_transport_follows_the_shared_reconnect_policy() {
     use termihub_core::reconnect_backoff::RECONNECT_POLICY;
     assert_eq!(super::AGENT_RECONNECT_POLICY, RECONNECT_POLICY);
+}
+
+/// #4404: the reconnect test seam leaves production untouched — a new manager's
+/// I/O tasks reconnect on the shared policy with the 45 s handshake bound.
+#[test]
+fn a_new_manager_reconnects_with_the_production_tuning() {
+    assert_eq!(
+        ReconnectTuning::PRODUCTION,
+        ReconnectTuning {
+            handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
+            policy: super::AGENT_RECONNECT_POLICY,
+        }
+    );
+    let app = tauri::test::mock_app();
+    let manager = AgentConnectionManager::new(app.handle().clone());
+    assert_eq!(manager.reconnect_tuning, ReconnectTuning::PRODUCTION);
 }
 
 #[test]

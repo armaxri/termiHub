@@ -126,9 +126,9 @@ use io_task::{
     log_agent_reconnected,
 };
 use reattach::reattach_after_reconnect;
-use reconnect::reconnect_agent;
 #[cfg(test)]
 use reconnect::AGENT_RECONNECT_POLICY;
+use reconnect::{reconnect_agent, ReconnectTuning};
 #[cfg(test)]
 pub(crate) use recovery::resolve_agent_hosted_sessions;
 use recovery::{
@@ -1217,6 +1217,10 @@ pub struct AgentConnectionManager<R: Runtime = Wry> {
     /// Bound on the post-auth connect handshake ([`AGENT_HANDSHAKE_TIMEOUT`];
     /// shortened only by tests).
     handshake_timeout: std::time::Duration,
+    /// Handshake bound and backoff policy of every in-task reconnect this
+    /// manager's I/O tasks run ([`ReconnectTuning::PRODUCTION`]; replaced only
+    /// by tests, #4404).
+    reconnect_tuning: ReconnectTuning,
     /// The coordinated-update reconnects the backend is driving, one per agent
     /// for every window (#4489). See [`update_reconnect`].
     update_reconnects: UpdateReconnectRegistry,
@@ -1234,6 +1238,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             agent_configs: AgentConfigStore::new(),
             io_budgets: Arc::new(Mutex::new(HashMap::new())),
             handshake_timeout: AGENT_HANDSHAKE_TIMEOUT,
+            reconnect_tuning: ReconnectTuning::PRODUCTION,
             update_reconnects: UpdateReconnectRegistry::default(),
             app_handle,
         }
@@ -1244,6 +1249,14 @@ impl<R: Runtime> AgentConnectionManager<R> {
     #[cfg(test)]
     pub(crate) fn set_handshake_timeout_for_test(&mut self, timeout: std::time::Duration) {
         self.handshake_timeout = timeout;
+    }
+
+    /// TEST-ONLY: run every in-task reconnect of agents connected after this
+    /// call with `tuning` — a short handshake bound and a fast, few-attempt
+    /// policy — so a test can drive the loop through to give-up (#4404).
+    #[cfg(all(test, unix))]
+    fn set_reconnect_tuning_for_test(&mut self, tuning: ReconnectTuning) {
+        self.reconnect_tuning = tuning;
     }
 
     /// Prune every agent whose I/O task has already died (`alive == false`),
@@ -1429,6 +1442,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             io_budgets: Arc::downgrade(&self.io_budgets),
         };
         let handshake_timeout = self.handshake_timeout;
+        let reconnect_tuning = self.reconnect_tuning;
 
         // Run the async connect+handshake on the current tokio runtime, wrapped
         // in a `tokio::select!` against the cancellation token so a Cancel aborts
@@ -1694,6 +1708,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     ki_activity_task,
                     update_auth_token_path,
                     capabilities_task,
+                    reconnect_tuning,
                 )
                 .await;
             })
@@ -3701,6 +3716,10 @@ mod output_flow_tests;
 // Capability refresh across an in-place reconnect (#4440).
 #[cfg(test)]
 mod capability_refresh_tests;
+// End-to-end give-up of a never-answering in-task reconnect (#4404); unix-only
+// like the transport sever it drives.
+#[cfg(all(test, unix))]
+mod reconnect_give_up_tests;
 
 // ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
 //

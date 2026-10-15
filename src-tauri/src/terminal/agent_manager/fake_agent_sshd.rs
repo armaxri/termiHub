@@ -22,6 +22,10 @@
 //! capability ([`InitBehavior::AnswerWithOutputFlow`]), and serves
 //! `fake.output_flood`: `params.chunks` `connection.output` notifications of
 //! `params.size` bytes for `params.session_id`, followed by the answer.
+//!
+//! For the reconnect give-up test (#4404) it answers `connection.create`,
+//! `connection.attach` and `connection.types`, so `SessionManager` can open an
+//! agent-hosted session over it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -63,6 +67,11 @@ pub(super) enum InitBehavior {
     /// rich on every reconnect — an update across a reconnect (#4440).
     #[cfg(unix)]
     UpgradeOnReconnect,
+    /// Answer the first `initialize` at once and never answer a later one — an
+    /// agent that wedges across a reconnect, so every reconnect attempt's
+    /// handshake times out (#4404). Unix-only, like the transport sever.
+    #[cfg(unix)]
+    StallOnReconnect,
 }
 
 /// The agent version the rich `initialize` answer reports (#4440).
@@ -133,6 +142,7 @@ impl FakeAgentSshd {
                     release: release_rx.clone(),
                     lines: LineSplitter::new(),
                     requests: task_requests.clone(),
+                    sessions_created: AtomicUsize::new(0),
                 };
                 let config = config.clone();
                 tokio::spawn(async move {
@@ -277,6 +287,8 @@ struct FakeAgentHandler {
     release: watch::Receiver<bool>,
     lines: LineSplitter,
     requests: Arc<std::sync::Mutex<Vec<ReceivedRequest>>>,
+    /// `connection.create` requests answered on this connection.
+    sessions_created: AtomicUsize,
 }
 
 /// Queue `bytes` on `channel` one byte per SSH data message.
@@ -311,6 +323,12 @@ impl FakeAgentHandler {
                     initialize_answer_with_version(id, MINIMAL_AGENT_VERSION)
                 };
                 let _ = session.data(channel, answer.into_bytes());
+            }
+            #[cfg(unix)]
+            InitBehavior::StallOnReconnect => {
+                if self.inits.load(Ordering::SeqCst) == 1 {
+                    let _ = session.data(channel, initialize_answer(id).into_bytes());
+                }
             }
             InitBehavior::Stall => {}
             InitBehavior::Answer => {
@@ -401,6 +419,33 @@ impl russh::server::Handler for FakeAgentHandler {
                     let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": params });
                     let wire = ndjson_line(&note) + &ndjson_line(&reply);
                     send_one_byte_at_a_time(session, channel, wire.as_bytes());
+                }
+                // Enough of a session host for `SessionManager` to open one
+                // agent-hosted session through the real proxy (#4404).
+                Some("connection.create") => {
+                    let n = self.sessions_created.fetch_add(1, Ordering::SeqCst) + 1;
+                    let reply = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "session_id": format!("fake-session-{n}"),
+                            "title": "fake",
+                            "type": params["type"].as_str().unwrap_or("shell"),
+                            "status": "running",
+                            "created_at": "2026-01-01T00:00:00Z",
+                        },
+                    });
+                    let _ = session.data(channel, ndjson_line(&reply).into_bytes());
+                }
+                Some("connection.attach") => {
+                    let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} });
+                    let _ = session.data(channel, ndjson_line(&reply).into_bytes());
+                }
+                Some("connection.types") => {
+                    let reply = serde_json::json!({
+                        "jsonrpc": "2.0", "id": id, "result": { "types": [] },
+                    });
+                    let _ = session.data(channel, ndjson_line(&reply).into_bytes());
                 }
                 Some("fake.output_flood") => {
                     let handle = session.handle();
