@@ -1,0 +1,12 @@
+{
+  "$comment": "The ONE version of every cargo tool CI installs via taiki-e/install-action (#4406). Each workflow step writes `tool: <name>@<version>` with exactly this version; scripts/internal/check-cargo-tool-pins.mjs fails on an unpinned tool or a version that differs from this file. Dependabot cannot bump these: see docs/contributing.md -> 'Cargo tool versions'.",
+  "tools": {
+    "cargo-about": "0.9.2",
+    "cargo-audit": "0.22.2",
+    "cargo-cyclonedx": "0.5.9",
+    "cargo-deny": "0.20.2",
+    "cargo-fuzz": "0.13.2",
+    "cargo-llvm-cov": "0.9.1",
+    "cargo-machete": "0.9.2"
+  }
+}
