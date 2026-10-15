@@ -48,7 +48,7 @@ use termihub_core::diagnostics::file_log::{self as shared, FamilyBudget, Rotatin
 use tracing_subscriber::EnvFilter;
 
 /// Stem prefix shared by every agent log file (the log "family").
-const LOG_FAMILY: &str = "termihub-agent";
+const LOG_FAMILY: &str = shared::AGENT_LOG_FAMILY;
 
 /// Size at which a process's live log file is rotated away.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
