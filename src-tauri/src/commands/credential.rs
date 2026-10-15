@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
+use crate::connection::secret_fields::StoredFieldSecretKeys;
 use crate::connection::settings::{CredentialStorageMode, SettingsUnion};
 use crate::credential::manager::PendingStoreSwitch;
 use crate::credential::named::NamedCredentialRegistry;
@@ -874,6 +875,53 @@ pub fn store_field_secrets(
     debug!(connection_id = %connection_id, "Storing field secrets");
     connection_manager
         .save_field_secrets(&connection_id, source_file.as_deref(), secrets)
+        .map_err(|e| e.to_string())
+}
+
+/// List which schema secrets other than `password` are stored for a saved
+/// connection — their names only, never their values — for the connection
+/// editor's "saved" indicator (#4431).
+///
+/// Returns `null` when the store cannot be read (locked or unavailable): the
+/// editor then shows nothing rather than guessing.
+#[tauri::command]
+pub fn list_stored_field_secret_keys(
+    connection_id: String,
+    source_file: Option<String>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<Option<StoredFieldSecretKeys>, String> {
+    debug!(connection_id = %connection_id, "Listing stored field secret keys");
+    match connection_manager.stored_field_secret_keys(&connection_id, source_file.as_deref()) {
+        Ok(keys) => Ok(Some(keys)),
+        Err(e) => {
+            debug!(
+                "Stored field secret keys of {} are unavailable: {}",
+                connection_id, e
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Remove exactly the named stored field secrets of a saved connection
+/// (`fields` by settings key, `hops` by inline-hop identity), keeping the
+/// others — the connection editor's explicit "clear", applied on save (#4431).
+#[tauri::command]
+pub fn clear_field_secrets(
+    connection_id: String,
+    source_file: Option<String>,
+    fields: Vec<String>,
+    hops: Vec<String>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    debug!(
+        connection_id = %connection_id,
+        fields = fields.len(),
+        hops = hops.len(),
+        "Clearing stored field secrets"
+    );
+    connection_manager
+        .clear_field_secrets(&connection_id, source_file.as_deref(), &fields, &hops)
         .map_err(|e| e.to_string())
 }
 

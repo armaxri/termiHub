@@ -11,6 +11,13 @@ import { vncPortForDisplay } from "@/utils/vncDisplayPort";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
 import { DynamicField } from "./DynamicField";
 import { savedConnectionValues } from "./savedConnectionValues";
+import { storedSecretState, type StoredSecretsControl } from "./storedSecrets";
+
+/**
+ * The settings key whose secret has its own credential entries (the
+ * "Password saved" hint); every other password field is a field secret.
+ */
+const PASSWORD_KEY = "password";
 
 /** Stable empty lists for the optional saved-connection props. */
 const NO_CONNECTIONS: SavedConnection[] = [];
@@ -26,6 +33,12 @@ interface ConnectionSettingsFormProps {
    * and will not be overwritten unless the user types a new value).
    */
   credentialSavedHint?: boolean;
+  /**
+   * The schema secrets other than `password` stored for the saved connection,
+   * by settings key, with the user's pending clears (#4431). An empty password
+   * field among them shows a "saved" placeholder and a Clear control.
+   */
+  storedFieldSecrets?: StoredSecretsControl;
   /**
    * Pre-supplied serial port names for `serialPort` fields.
    * Pass the remote agent's `availableSerialPorts` here when editing an
@@ -86,6 +99,7 @@ export function ConnectionSettingsForm({
   settings,
   onChange,
   credentialSavedHint,
+  storedFieldSecrets,
   availablePorts,
   localContainerListing = true,
   containerListingAgentId,
@@ -355,7 +369,13 @@ export function ConnectionSettingsForm({
                           credentialSaved={
                             credentialSavedHint &&
                             field.fieldType.type === "password" &&
+                            field.key === PASSWORD_KEY &&
                             !rhfField.value
+                          }
+                          storedSecret={
+                            field.fieldType.type === "password" && field.key !== PASSWORD_KEY
+                              ? storedSecretState(storedFieldSecrets, field.key, rhfField.value)
+                              : undefined
                           }
                           availablePorts={availablePorts}
                           containerContext={
