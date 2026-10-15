@@ -141,6 +141,61 @@ describe("macroIo — malformed/incompatible rejection", () => {
   });
 });
 
+describe("macroIo — zod import validation (#4386)", () => {
+  const raw = (...macros: unknown[]) => JSON.stringify({ version: MACRO_EXPORT_VERSION, macros });
+  const at = 'Invalid macro file: macro at index 0 ("X")';
+
+  it.each<[string, unknown, string]>([
+    ["a non-object macro", "m", "Invalid macro file: macro at index 0 is not an object."],
+    [
+      "a blank name",
+      { name: "  ", steps: [] },
+      "Invalid macro file: macro at index 0 is missing a name.",
+    ],
+    [
+      "a non-object step",
+      { name: "X", steps: [7] },
+      `Invalid macro file: step 0 of macro at index 0 ("X") is malformed.`,
+    ],
+    [
+      "a non-string data",
+      { name: "X", steps: [{ data: 1, delayMs: 0 }] },
+      `Invalid macro file: step 0 of macro at index 0 ("X") is malformed.`,
+    ],
+    [
+      "a missing delay",
+      { name: "X", steps: [{ data: "a" }] },
+      `Invalid macro file: step 0 of macro at index 0 ("X") has an invalid delay.`,
+    ],
+    ["non-array tags", { name: "X", steps: [], tags: "ops" }, `${at} has malformed tags.`],
+    ["a non-string tag", { name: "X", steps: [], tags: ["ops", 2] }, `${at} has malformed tags.`],
+  ])("rejects %s with the exact message", (_label, macro, message) => {
+    expect(() => parseMacroEnvelope(raw(macro))).toThrow(message);
+  });
+
+  it("keeps every macro field (no dropped fields)", () => {
+    // Typed Required<> so a new optional Macro field must be added here too.
+    const full: Required<Macro> = {
+      id: "m-1",
+      name: "Full",
+      description: "every field",
+      tags: ["a"],
+      steps: [{ data: "a", delayMs: 5 }],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+    };
+    expect(parseMacroEnvelope(serializeMacros([full]))).toStrictEqual([full]);
+  });
+
+  it("strips unknown keys on macros and steps", () => {
+    const [macro] = parseMacroEnvelope(
+      raw({ name: "X", steps: [{ data: "a", delayMs: 0, extra: 1 }], trusted: true })
+    );
+    expect(macro).not.toHaveProperty("trusted");
+    expect(macro.steps).toStrictEqual([{ data: "a", delayMs: 0 }]);
+  });
+});
+
 describe("macroIo — collision handling", () => {
   const counter = () => {
     let n = 0;
