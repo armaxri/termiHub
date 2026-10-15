@@ -1399,10 +1399,21 @@ flowchart TB
             <strong>Move tabs moves every tab it can reopen (#4501).</strong> Besides live sessions
             and unsaved file editors, the move reopens the window's saved file editors, Settings,
             the Log Viewer, network diagnostics, plugin details and clean connection, tunnel and
-            workspace editors in the destination. A transfer view closes, because its remote pane is
-            bound to a tab of the closing window. The dialog names which tabs move and which close.
+            workspace editors in the destination. The dialog names which tabs move and which close.
             Settings, the Log Viewer or a saved file the destination already shows is brought to the
             front instead of opened twice.
+          </li>
+          <li>
+            <strong>The transfer view moves with its terminal (#4751).</strong> A transfer view's
+            remote pane follows a terminal tab by id, and the destination gives every moved tab a
+            new id. Each record of a whole-window move therefore carries its source tab id and a
+            move batch id; session tabs hand off first, and the destination maps each source id to
+            the id it mints within the batch, then rewrites the view's <code>remoteTabId</code> to
+            the moved terminal's new id. Its local and remote paths travel unchanged. When the
+            paired terminal does not move (it holds no live session), the view still moves but
+            reopens unpaired (<code>remoteTabId: null</code>, titled <em>File Transfer</em>) with
+            its local side intact, and the dialog says so. A view arriving outside its batch is
+            never paired with another move's terminal.
           </li>
           <li>
             <strong>Unsaved form editors move with their edits (#4500).</strong> A connection,

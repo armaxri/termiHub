@@ -5,7 +5,10 @@ import { beginRestoreGuard, collectRestoreCohort } from "../restoreHelpers";
 import {
   bestEffortOwnership,
   buildTransferAwareHandoff,
+  noteHandoffTabId,
   removeTransferSessionsFromWindow,
+  resolveHandoffTransferView,
+  UNPAIRED_TRANSFER_VIEW_TITLE,
 } from "../windowHelpers";
 import {
   currentLayoutSnapshot,
@@ -561,6 +564,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         for (const leaf of leaves) {
           const existing = leaf.tabs.find((t) => isSameReopenedTab(t, h));
           if (!existing) continue;
+          noteHandoffTabId(h, existing.id);
           const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
             ...l,
             tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
@@ -572,6 +576,12 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           return { rootPanel, tabGroups, activePanelId: leaf.id };
         }
         const newTabId = newId("tab");
+        // Map the source id to the new one for this move batch, so a transfer
+        // view hydrated after its terminal pairs with the moved copy (#4751).
+        noteHandoffTabId(h, newTabId);
+        const transferViewMeta = resolveHandoffTransferView(h);
+        // A view that lost its terminal no longer names it in its title.
+        const lostPairing = !!h.transferViewMeta?.remoteTabId && !transferViewMeta?.remoteTabId;
         // Hand a moved editor's unsaved text to the editor that mounts for the
         // new tab (#4412). It is consumed once, never stored in the tab itself,
         // so it is not persisted and cannot reappear on a later remount.
@@ -584,7 +594,7 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         const newTab: TerminalTab = {
           id: newTabId,
           sessionId: h.sessionId,
-          title: h.title,
+          title: lostPairing ? UNPAIRED_TRANSFER_VIEW_TITLE : h.title,
           connectionType: h.connectionType,
           contentType: h.contentType,
           config: h.config,
@@ -606,6 +616,8 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
           ...(h.pluginDetailMeta ? { pluginDetailMeta: h.pluginDetailMeta } : {}),
           ...(h.agentErrorMeta ? { agentErrorMeta: h.agentErrorMeta } : {}),
           ...(h.workspaceAgentRef ? { workspaceAgentRef: h.workspaceAgentRef } : {}),
+          // A moved transfer view, re-paired with its moved terminal (#4751).
+          ...(transferViewMeta ? { transferViewMeta } : {}),
           // Repaint history from the backend ring buffer once the fresh xterm
           // (re)attaches to the live session.
           ...(h.sessionId ? { pendingScrollbackReplay: true } : {}),
