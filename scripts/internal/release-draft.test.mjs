@@ -67,7 +67,9 @@ describe("release.yml draft-then-publish wiring (#4361)", () => {
 
   it("every gh release upload passes --clobber (re-runnable legs)", () => {
     const uploads = RELEASE.split("\n").filter((l) => /\bgh release upload\b/.test(l));
-    expect(uploads.length).toBeGreaterThanOrEqual(9);
+    // One upload per publishing job (#4730): upload-app, upload-agent-binaries,
+    // upload-third-party-notices, sbom and sign-agent-binaries.
+    expect(uploads.length).toBeGreaterThanOrEqual(5);
     for (const line of uploads) expect(line, line.trim()).toContain("--clobber");
   });
 

@@ -171,7 +171,7 @@ describe("release.yml wiring", () => {
   });
 
   it("the Windows leg generates the wix.version fragment and passes it to the build", () => {
-    const body = job("build-and-upload", "\n  agent-binaries-linux:");
+    const body = job("build-app", "\n  upload-app:");
     const gen = body.indexOf("scripts/internal/msi-version.mjs --config-out");
     const build = body.indexOf("- name: Build Tauri app for release");
     expect(gen).toBeGreaterThan(-1);

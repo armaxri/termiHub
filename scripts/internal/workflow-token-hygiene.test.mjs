@@ -4,7 +4,13 @@
 // Pinned here:
 //   - dev-build.yml defaults to contents: read; only publish-release writes;
 //   - no checkout in dev-build.yml or release.yml persists its credentials;
-//   - the app build jobs install frontend dependencies with --ignore-scripts.
+//   - the app build jobs install frontend dependencies with --ignore-scripts;
+//   - release.yml defaults to contents: read, and no job that installs
+//     dependencies or compiles holds a write token: the build jobs hand their
+//     outputs on as workflow artifacts to small write-scoped upload jobs that
+//     check nothing out and run no package manager (#4730);
+//   - a dispatched dry run of release.yml builds and checks every asset but can
+//     never reach a write-scoped job (#4746).
 // Text-based like release-draft.test.mjs: the workflow layout is the contract.
 
 import { readFileSync } from "node:fs";
@@ -82,10 +88,252 @@ describe.each([
 describe("app build jobs run no dependency lifecycle scripts (CI2-007)", () => {
   it.each([
     ["dev-build.yml", "build-app", DEV_BUILD],
-    ["release.yml", "build-and-upload", RELEASE],
+    ["release.yml", "build-app", RELEASE],
   ])("%s %s installs with --ignore-scripts", (_name, job, text) => {
     const installs = jobBody(text, job).match(/pnpm install[^\n]*/g) ?? [];
     expect(installs.length).toBeGreaterThan(0);
     for (const install of installs) expect(install).toContain("--ignore-scripts");
   });
+});
+
+/** The job-level `permissions:` map of a job body as { scope: level }. */
+function jobPermissions(body) {
+  const m = body.match(/\n {4}permissions:[ \t]*([^\n]*)\n((?: {6}[^\n]*\n)*)/);
+  if (!m) return null;
+  if (m[1].trim()) return { "*": m[1].trim() };
+  const perms = {};
+  for (const line of m[2].split("\n")) {
+    const kv = line.match(/^ {6}([a-z-]+):\s*([a-z-]+)/);
+    if (kv) perms[kv[1]] = kv[2];
+  }
+  return perms;
+}
+
+/** Drop full-line and trailing YAML comments so prose cannot satisfy a check. */
+function stripComments(text) {
+  return text
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .map((l) => l.replace(/\s+#.*$/, ""))
+    .join("\n");
+}
+
+/** Scopes a job body grants `write` (the workflow default when it has no block). */
+function writeScopes(body, workflowDefault) {
+  const perms = jobPermissions(body) ?? workflowDefault;
+  return Object.entries(perms)
+    .filter(([, level]) => level === "write" || level === "write-all")
+    .map(([scope]) => scope);
+}
+
+/**
+ * Anything that installs dependencies, sets up a toolchain or compiles: the
+ * steps that run third-party code (lifecycle scripts, build.rs, tauri-action).
+ */
+const RUNS_DEPENDENCY_CODE =
+  /\b(pnpm|npm|npx|yarn|cargo|cross|pip3?|uvx?)\b|setup-(rust|node|pnpm|cross)\b|tauri-apps\/tauri-action@|rust-cache@|install-action@/;
+
+/** parseWorkflowJobs plus release.yml's multi-line flow `needs:` lists. */
+function releaseJobs() {
+  const jobs = parseWorkflowJobs(RELEASE);
+  const flow =
+    /^ {2}([A-Za-z0-9_-]+):\s*\n(?:(?! {2}\S)[^\n]*\n)*? {4}needs:\s*\n\s*\[([^\]]*)\]/gm;
+  for (const [, id, list] of RELEASE.matchAll(flow)) {
+    const job = jobs.get(id);
+    if (job && job.needs.length === 0) {
+      job.needs = list
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  return jobs;
+}
+
+describe("release.yml token scope (CI2-007, #4730)", () => {
+  const jobs = [...releaseJobs().keys()];
+
+  it("defaults the workflow token to contents: read", () => {
+    expect(RELEASE).toMatch(/^permissions:\n {2}contents: read\n/m);
+    expect(RELEASE).not.toMatch(/^permissions:\n {2}contents: write/m);
+  });
+
+  it.each([
+    "build-app",
+    "agent-binaries-linux",
+    "agent-binaries-macos",
+    "agent-binaries-windows",
+    "third-party-notices",
+    "sbom-generate",
+  ])("build job %s holds a read-only token and no OIDC", (id) => {
+    expect(jobs).toContain(id);
+    expect(jobPermissions(jobBody(RELEASE, id))).toEqual({ contents: "read" });
+  });
+
+  it("no job that installs dependencies or compiles holds a write token", () => {
+    const offenders = jobs.filter((id) => {
+      const body = jobBody(RELEASE, id);
+      return (
+        RUNS_DEPENDENCY_CODE.test(stripComments(body)) &&
+        writeScopes(body, { contents: "read" }).length > 0
+      );
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([
+    ["upload-app", "build-app"],
+    ["upload-agent-binaries", "agent-binaries-linux"],
+    ["upload-agent-binaries", "agent-binaries-macos"],
+    ["upload-agent-binaries", "agent-binaries-windows"],
+    ["upload-third-party-notices", "third-party-notices"],
+  ])("%s publishes what %s built", (upload, build) => {
+    expect(releaseJobs().get(upload)?.needs ?? []).toContain(build);
+  });
+
+  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
+    "%s checks nothing out and runs no repository or package-manager code",
+    (id) => {
+      const body = jobBody(RELEASE, id);
+      expect(jobPermissions(body)).toEqual({
+        contents: "write",
+        "id-token": "write",
+        attestations: "write",
+      });
+      const code = stripComments(body);
+      const uses = [...code.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+      expect(uses.some((u) => u.startsWith("actions/download-artifact@"))).toBe(true);
+      expect(uses.some((u) => u.startsWith("actions/attest-build-provenance@"))).toBe(true);
+      for (const u of uses) expect(u, u).toMatch(/^actions\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
+      expect(uses.some((u) => u.startsWith("actions/checkout@"))).toBe(false);
+      expect(code).not.toMatch(RUNS_DEPENDENCY_CODE);
+      expect(code).not.toMatch(/\b(node|curl|wget)\b|\.\/|scripts\//);
+      expect(code).toMatch(/gh release upload\b/);
+    }
+  );
+
+  it("only the publishing jobs hold contents: write", () => {
+    const writers = jobs.filter((id) =>
+      writeScopes(jobBody(RELEASE, id), { contents: "read" }).includes("contents")
+    );
+    expect(writers.sort()).toEqual(
+      [
+        "create-release",
+        "mark-latest",
+        "publish-release",
+        "sbom",
+        "sign-agent-binaries",
+        "upload-agent-binaries",
+        "upload-app",
+        "upload-third-party-notices",
+        "verify-release",
+      ].sort()
+    );
+  });
+
+  it("grants id-token: write only to jobs that attest provenance", () => {
+    for (const id of jobs) {
+      const body = jobBody(RELEASE, id);
+      if (writeScopes(body, { contents: "read" }).includes("id-token")) {
+        expect(body, id).toMatch(/uses: actions\/attest-build-provenance@/);
+      }
+    }
+  });
+});
+
+const TAG_PUSH_ONLY = "github.event_name == 'push'";
+
+describe("release.yml dry run never reaches a write token (#4746)", () => {
+  const jobs = releaseJobs();
+  const ids = [...jobs.keys()];
+  /**
+   * Jobs a dispatched dry run can start: a job is skipped when its own `if` is
+   * tag-push-only or any job it needs is skipped (no write job may override
+   * that with an `if`, pinned below).
+   */
+  const reached = new Map();
+  const runsInDryRun = (id) => {
+    if (!reached.has(id)) {
+      reached.set(id, false);
+      const job = jobs.get(id);
+      reached.set(id, job.if !== TAG_PUSH_ONLY && job.needs.every((n) => runsInDryRun(n)));
+    }
+    return reached.get(id);
+  };
+  const dryRunJobs = ids.filter((id) => runsInDryRun(id));
+
+  it("is dispatchable only with a boolean dry_run input that defaults to true", () => {
+    expect(RELEASE).toMatch(
+      /\n {2}workflow_dispatch:\n {4}inputs:\n {6}dry_run:\n(?: {8}[^\n]*\n)*? {8}type: boolean\n/
+    );
+    expect(RELEASE).toMatch(/\n {6}dry_run:\n(?: {8}[^\n]*\n)*? {8}default: true\n/);
+    const triggers = RELEASE.slice(RELEASE.indexOf("\non:\n"), RELEASE.indexOf("\npermissions:\n"));
+    expect([...triggers.matchAll(/^ {2}([a-z_]+):/gm)].map((m) => m[1])).toEqual([
+      "push",
+      "workflow_dispatch",
+    ]);
+  });
+
+  it("verify-version refuses a dispatch that is not a dry run", () => {
+    const body = jobBody(RELEASE, "verify-version");
+    expect(body).toContain(
+      "if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true"
+    );
+  });
+
+  it("create-release runs on a tag push only", () => {
+    expect(jobs.get("create-release").if).toBe(TAG_PUSH_ONLY);
+  });
+
+  it("every other write-scoped job directly needs create-release and has no if", () => {
+    for (const id of ids) {
+      if (id === "create-release") continue;
+      if (writeScopes(jobBody(RELEASE, id), { contents: "read" }).length === 0) continue;
+      expect(jobs.get(id).needs, id).toContain("create-release");
+      expect(jobs.get(id).if, id).toBeUndefined();
+    }
+  });
+
+  it("every job a dry run reaches is read-only", () => {
+    const writers = dryRunJobs.filter(
+      (id) => writeScopes(jobBody(RELEASE, id), { contents: "read" }).length > 0
+    );
+    expect(writers).toEqual([]);
+  });
+
+  it("a dry run builds every artifact and checks the asset set", () => {
+    expect(dryRunJobs).toEqual(
+      expect.arrayContaining([
+        "verify-version",
+        "verify-supply-chain",
+        "verify-integration",
+        "release-version",
+        "build-app",
+        "agent-binaries-linux",
+        "agent-binaries-macos",
+        "agent-binaries-windows",
+        "third-party-notices",
+        "check-release-assets",
+      ])
+    );
+    for (const id of dryRunJobs) {
+      expect(jobBody(RELEASE, id), id).not.toContain("needs.create-release");
+    }
+    expect(jobPermissions(jobBody(RELEASE, "check-release-assets"))).toEqual({
+      contents: "read",
+    });
+  });
+
+  it("release-version resolves the stand-in version without a token", () => {
+    const body = jobBody(RELEASE, "release-version");
+    expect(body).toMatch(/\n {4}permissions: \{\}\n/);
+    expect(body).toContain("version=0.0.0-dryrun");
+  });
+
+  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
+    "%s publishes only an asset set check-release-assets passed",
+    (id) => {
+      expect(jobs.get(id).needs).toContain("check-release-assets");
+    }
+  );
 });
