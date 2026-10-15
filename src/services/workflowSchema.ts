@@ -30,6 +30,7 @@
  */
 import { z } from "zod";
 
+import { type AssertExact, nonBlankStringSchema } from "@/services/importEnvelope";
 import { validateOutputPattern } from "@/services/workflowOutputTriggers";
 import type {
   Workflow,
@@ -40,21 +41,6 @@ import type {
   WorkflowStepRetry,
   WorkflowTrigger,
 } from "@/types/workflow";
-
-// ---------------------------------------------------------------------------
-// Compile-time exactness check
-// ---------------------------------------------------------------------------
-
-/** `true` only when `A` and `B` are the identical type (not merely assignable). */
-type Exact<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
-
-/**
- * Compiles only when `T` is `true`. Used as `const _x: AssertExact<…> = true`
- * so a schema whose inferred output drifts from the generated type is a `tsc`
- * error rather than a silent import bug.
- */
-type AssertExact<A, B> = Exact<A, B> extends true ? true : never;
 
 /** The variant of `U` whose `kind` is `K`. */
 type KindOf<U, K> = Extract<U, { kind: K }>;
@@ -302,12 +288,9 @@ export const workflowTriggerSchema = z.discriminatedUnion("kind", triggerOptions
 // Parameters and the workflow itself
 // ---------------------------------------------------------------------------
 
-/** A string with at least one non-whitespace character (names). */
-const nonBlank = () => z.string().refine((s) => s.trim() !== "");
-
 /** One declared workflow parameter (PROD-0040). */
 export const workflowParameterSchema = z.object({
-  name: nonBlank(),
+  name: nonBlankStringSchema(),
   type: z.enum(["string", "number", "boolean", "enum"]),
   label: z.string().optional(),
   default: z.union([z.string(), z.number(), z.boolean()]).optional(),
@@ -327,7 +310,7 @@ const _parameterExact: AssertExact<
  * is the order errors are reported in.
  */
 export const importedWorkflowSchema = z.object({
-  name: nonBlank(),
+  name: nonBlankStringSchema(),
   steps: z.array(workflowStepSchema),
   triggers: z.array(workflowTriggerSchema).default([]),
   tags: z.array(z.string()).default([]),
