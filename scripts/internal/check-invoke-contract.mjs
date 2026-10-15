@@ -353,16 +353,38 @@ export function enclosingFunctionName(node) {
 }
 
 /**
+ * Parse one TS/TSX file (with parent pointers) for the invoke / identifier scans.
+ *
+ * Parsing dominates the whole-repo check (#4767), so checkRepo parses each file
+ * ONCE and hands the tree to both collectInvokeCalls and countIdentifiers.
+ * JSDoc parsing is skipped: both scans walk the tree with ts.forEachChild,
+ * which never descends into JSDoc nodes, so JSDoc trees are pure overhead and
+ * the results are identical either way.
+ *
+ * @param {string} source - TS/TSX source text.
+ * @param {string} fileName - used for TSX detection.
+ * @returns {ts.SourceFile}
+ */
+export function parseTsSource(source, fileName) {
+  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const options = {
+    languageVersion: ts.ScriptTarget.Latest,
+    jsDocParsingMode: ts.JSDocParsingMode.ParseNone,
+  };
+  return ts.createSourceFile(fileName, source, options, true, kind);
+}
+
+/**
  * Count every identifier occurrence in one TS file (declarations included).
  *
  * @param {string} source - TS/TSX source text.
  * @param {string} fileName - used for TSX detection.
  * @param {Map<string, number>} [counts] - accumulator, updated in place.
+ * @param {ts.SourceFile} [sf] - an already-parsed tree of `source` (see parseTsSource).
  * @returns {Map<string, number>}
  */
-export function countIdentifiers(source, fileName, counts = new Map()) {
-  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+export function countIdentifiers(source, fileName, counts = new Map(), sf = undefined) {
+  sf ??= parseTsSource(source, fileName);
   const visit = (node) => {
     if (ts.isIdentifier(node)) counts.set(node.text, (counts.get(node.text) ?? 0) + 1);
     ts.forEachChild(node, visit);
@@ -422,12 +444,12 @@ export function findOrphans(contract, calls, identifierCounts, allowlist = ORPHA
  *
  * @param {string} source - TS/TSX source text.
  * @param {string} fileName - used for locations and TSX detection.
+ * @param {ts.SourceFile} [sf] - an already-parsed tree of `source` (see parseTsSource).
  * @returns {{file: string, line: number, command: string | null,
  *   keys: string[] | null, open: boolean, caller: string | null, reason?: string}[]}
  */
-export function collectInvokeCalls(source, fileName) {
-  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
-  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+export function collectInvokeCalls(source, fileName, sf = undefined) {
+  sf ??= parseTsSource(source, fileName);
   const invokeNames = new Set();
   for (const stmt of sf.statements) {
     if (
@@ -580,6 +602,55 @@ export function isProductionTsFile(rel) {
   return true;
 }
 
+/** Escape `text` for literal use inside a RegExp. */
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Collect the invoke calls and the identifier counts findOrphans needs from the
+ * production sources, parsing as few files as possible (#4767: TypeScript
+ * parsing is ~all of the whole-repo check's cost).
+ *
+ * Exactness: in a file with no backslash, every string literal's value and
+ * every identifier's text appear verbatim in the source (escapes are the only
+ * way to spell them differently). So
+ *   1. a file can only import `invoke` from `@tauri-apps/api/core` if it contains
+ *      that substring (or a backslash) — every other file has no invoke calls;
+ *   2. findOrphans only looks up the counts of the invoke callers' names, and a
+ *      file can only contribute to those if it contains one of them as a
+ *      substring (or a backslash).
+ * Files ruled out by both are skipped unparsed; every other file is parsed once
+ * and that tree feeds both scans. The returned counts are therefore exact for
+ * every caller name (what findOrphans reads), not for unrelated identifiers.
+ *
+ * @param {{rel: string, text: string}[]} sources - repo-relative path + text.
+ * @returns {{calls: ReturnType<typeof collectInvokeCalls>,
+ *   identifierCounts: Map<string, number>}}
+ */
+export function scanSources(sources) {
+  const calls = [];
+  const identifierCounts = new Map();
+  const deferred = [];
+  for (const { rel, text } of sources) {
+    if (text.includes("@tauri-apps/api/core") || text.includes("\\")) {
+      const sf = parseTsSource(text, rel);
+      calls.push(...collectInvokeCalls(text, rel, sf));
+      countIdentifiers(text, rel, identifierCounts, sf);
+    } else {
+      deferred.push({ rel, text });
+    }
+  }
+  const callers = [...new Set(calls.map((c) => c.caller).filter((c) => c !== null))];
+  if (callers.length > 0) {
+    const mentionsCaller = new RegExp(callers.map(escapeRegExp).join("|"));
+    for (const { rel, text } of deferred) {
+      if (mentionsCaller.test(text)) countIdentifiers(text, rel, identifierCounts);
+    }
+  }
+  return { calls, identifierCounts };
+}
+
 /** Run the whole-repo check. */
 export function checkRepo(root) {
   const rustRoot = path.join(root, "src-tauri", "src");
@@ -590,15 +661,12 @@ export function checkRepo(root) {
   }
   const libSource = readFileSync(path.join(rustRoot, "lib.rs"), "utf8");
   const { contract, problems } = buildContract(rustFiles, libSource);
-  const calls = [];
-  const identifierCounts = new Map();
+  const sources = [];
   for (const f of walk(path.join(root, "src"), () => true)) {
     const rel = path.relative(root, f).replace(/\\/g, "/");
-    if (!isProductionTsFile(rel)) continue;
-    const text = readFileSync(f, "utf8");
-    calls.push(...collectInvokeCalls(text, rel));
-    countIdentifiers(text, rel, identifierCounts);
+    if (isProductionTsFile(rel)) sources.push({ rel, text: readFileSync(f, "utf8") });
   }
+  const { calls, identifierCounts } = scanSources(sources);
   return {
     contract,
     calls,
