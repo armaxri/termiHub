@@ -52,6 +52,48 @@ describe("buildCheatSheetHtml", () => {
   });
 });
 
+describe("buildCheatSheetHtml platforms (#4711)", () => {
+  const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15";
+  const WIN_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists only the running platform's bindings by default (macOS)", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+    const html = buildCheatSheetHtml();
+    expect(html).toContain("<kbd>Cmd+B</kbd>");
+    expect(html).not.toContain("<kbd>Ctrl+Shift+B</kbd>");
+    expect(html).not.toContain("Win / Linux");
+  });
+
+  it("lists only the running platform's bindings by default (Windows)", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(WIN_UA);
+    const html = buildCheatSheetHtml("current");
+    expect(html).toContain("<kbd>Ctrl+Shift+B</kbd>");
+    expect(html).not.toContain("<kbd>Cmd+B</kbd>");
+  });
+
+  it("lists both platforms with column headers when asked for all", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+    const html = buildCheatSheetHtml("all");
+    expect(html).toContain("Win / Linux");
+    expect(html).toContain("macOS");
+    expect(html).toContain("<kbd>Ctrl+Shift+B</kbd>");
+    expect(html).toContain("<kbd>Cmd+B</kbd>");
+  });
+
+  it("applies an override to the running platform's column only", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(WIN_UA);
+    setOverride("toggle-sidebar", { key: "j", ctrl: true, alt: true });
+    const html = buildCheatSheetHtml("all");
+    expect(html).toContain("<kbd>Ctrl+Alt+J</kbd>");
+    expect(html).not.toContain("<kbd>Ctrl+Shift+B</kbd>");
+    expect(html).toContain("<kbd>Cmd+B</kbd>");
+  });
+});
+
 describe("exportCheatSheet", () => {
   it("opens a save dialog with the correct default filename", async () => {
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -67,6 +109,15 @@ describe("exportCheatSheet", () => {
     expect(writeTextFile).toHaveBeenCalledWith(
       "/chosen/termihub-shortcuts.html",
       expect.stringContaining("termiHub")
+    );
+  });
+
+  it("writes the all-platforms sheet when asked (#4711)", async () => {
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+    await exportCheatSheet("all");
+    expect(writeTextFile).toHaveBeenCalledWith(
+      "/chosen/termihub-shortcuts.html",
+      expect.stringContaining("Win / Linux")
     );
   });
 

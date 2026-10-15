@@ -216,9 +216,15 @@ you hover over a row opens the same actions; it is not a Tab stop.
 ## Customizing shortcuts: the overlay and the recorder
 
 The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
-<kbd>Cmd</kbd>+<kbd>S</kbd>) is a searchable, read-only cheat sheet. To change a
-binding, use its **Edit shortcuts…** button, which opens
-**Settings → Keyboard Shortcuts** — the panel with the interactive editor.
+<kbd>Cmd</kbd>+<kbd>S</kbd>) is a searchable, read-only cheat sheet. It shows
+one **Shortcut** column with the bindings of the platform you are running on,
+including your own overrides. To change a binding, use its **Edit shortcuts…**
+button, which opens **Settings → Keyboard Shortcuts** — the panel with the
+interactive editor.
+
+**Save HTML Cheat Sheet** in that panel exports a printable sheet for this
+platform. Check **All platforms** first to list the Win / Linux and macOS
+bindings side by side, for example to share with someone on another OS.
 
 In that editor, click a binding — or <kbd>Tab</kbd> to it and press
 <kbd>Enter</kbd> or <kbd>Space</kbd> — to **record** a new shortcut:
