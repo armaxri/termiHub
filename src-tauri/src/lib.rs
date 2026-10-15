@@ -658,6 +658,7 @@ pub fn run() -> anyhow::Result<()> {
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::test_connection,
+            commands::session::test_connection_cert_decision,
             commands::session::cancel_connecting,
             commands::connection_path::probe_connection_path_cmd,
             commands::connection_path::cancel_connection_path_probe,

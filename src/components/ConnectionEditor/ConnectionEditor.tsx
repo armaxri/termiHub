@@ -30,8 +30,12 @@ import {
   resolveCredential,
   storeCredential,
   testTerminal,
+  testConnectionCertDecision,
   cancelConnecting,
 } from "@/services/api";
+import { onConnectionTestCertPrompt } from "@/services/events";
+import { RemoteDesktopCertPrompt } from "@/components/RemoteDesktop/RemoteDesktopCertPrompt";
+import type { RemoteDesktopCertPromptPayload } from "@/types/remoteDesktop";
 import {
   SECOND_FACTOR_FAILED_MESSAGE,
   backendErrorMessage,
@@ -1351,6 +1355,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // from a genuine failure (error toast) in the shared catch.
   const [testConnectId, setTestConnectId] = useState<string | null>(null);
   const testCanceledRef = useRef(false);
+  // An untrusted RDP certificate the running test asks the user to review
+  // (#4510). Only the user's explicit verdict in the dialog answers it; the
+  // backend treats closing it, a cancel, or its timeout as a reject.
+  const [testCertPrompt, setTestCertPrompt] = useState<RemoteDesktopCertPromptPayload | null>(null);
 
   const handleTest = useCallback(async () => {
     if (!canSave) {
@@ -1427,8 +1435,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const connectId = `test:${newId("test")}`;
     testCanceledRef.current = false;
     setTestConnectId(connectId);
+    // Listen for this test's certificate review before it starts, so a prompt
+    // raised at once is not missed (#4510).
+    const unlistenCertPrompt = await onConnectionTestCertPrompt((prompt) => {
+      if (prompt.session_id === connectId) setTestCertPrompt(prompt);
+    }).catch((err: unknown) => {
+      frontendLog(
+        "connection_editor",
+        `Failed to listen for test certificate prompts: ${errorMessage(err)}`
+      );
+      return null;
+    });
     try {
-      await testTerminal(config, connectId);
+      await testTerminal(config, connectId, { reviewCert: unlistenCertPrompt !== null });
       toast.success("Connection successful", {
         description: `Reached ${name.trim() || "the target"} — nothing was saved.`,
       });
@@ -1449,6 +1468,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // suppressed via errorToast={false} — this handler owns the messaging).
       throw err;
     } finally {
+      unlistenCertPrompt?.();
+      setTestCertPrompt(null);
       setTestConnectId(null);
     }
   }, [
@@ -1464,6 +1485,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     connSettings,
     name,
   ]);
+
+  // The user's verdict on the test's certificate review (#4510): close the
+  // dialog and hand the verdict to the waiting probe.
+  const handleTestCertDecision = useCallback(
+    (accept: boolean, remember: boolean) => {
+      const prompt = testCertPrompt;
+      if (!prompt) return;
+      setTestCertPrompt(null);
+      testConnectionCertDecision(prompt.session_id, accept, remember).catch((err: unknown) =>
+        frontendLog(
+          "connection_editor",
+          `Failed to deliver the test certificate decision: ${errorMessage(err)}`
+        )
+      );
+    },
+    [testCertPrompt]
+  );
 
   const handleCancelTest = useCallback(async () => {
     if (!testConnectId) return;
@@ -1967,6 +2005,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         onJustClose={handleDialogJustClose}
         onSaveAndClose={handleDialogSaveAndClose}
       />
+
+      <RemoteDesktopCertPrompt prompt={testCertPrompt} onDecision={handleTestCertDecision} />
 
       <GitBashSetupDialog
         open={gitBashSetupOpen}

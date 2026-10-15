@@ -16,8 +16,11 @@ use termihub_core::errors::{ConnectFailureKind, SessionError};
 use termihub_core::files::FileBrowser;
 use termihub_core::monitoring::MonitoringProvider;
 
-use super::await_verdict;
-use crate::session::rdp_trust_store::RdpTrustStore;
+use super::{
+    await_verdict, CertReview, CertReviewRequest, CertReviewer, ProbeCertReviews,
+    CERT_REVIEW_TIMEOUT,
+};
+use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 
 /// The fake's registry type id.
 pub(crate) const PROBE_FAKE: &str = "probe-fake";
@@ -33,6 +36,8 @@ pub(crate) enum Outcome {
     /// The server presents a certificate with this fingerprint; the session is
     /// established once it is accepted and fails once it is declined.
     CertPrompt(String),
+    /// Like `CertPrompt`, but once accepted the credentials are rejected.
+    CertThenAuthFails(String),
 }
 
 impl Clone for Outcome {
@@ -42,6 +47,7 @@ impl Clone for Outcome {
             Self::Never => Self::Never,
             Self::Fails(e) => Self::Fails(clone_error(e)),
             Self::CertPrompt(fingerprint) => Self::CertPrompt(fingerprint.clone()),
+            Self::CertThenAuthFails(fingerprint) => Self::CertThenAuthFails(fingerprint.clone()),
         }
     }
 }
@@ -53,6 +59,7 @@ pub(crate) struct ProbeFake {
     connected: bool,
     prompts: StdMutex<Option<CertPromptReceiver>>,
     decision: Arc<StdMutex<Option<bool>>>,
+    remembered: Arc<StdMutex<Option<bool>>>,
     decided: Arc<Notify>,
 }
 
@@ -63,6 +70,7 @@ impl ProbeFake {
             connected: false,
             prompts: StdMutex::new(None),
             decision: Arc::new(StdMutex::new(None)),
+            remembered: Arc::new(StdMutex::new(None)),
             decided: Arc::new(Notify::new()),
         }
     }
@@ -75,7 +83,9 @@ impl ProbeFake {
     }
 
     fn open_prompts(&mut self) {
-        if let Outcome::CertPrompt(fingerprint) = &self.outcome {
+        if let Outcome::CertPrompt(fingerprint) | Outcome::CertThenAuthFails(fingerprint) =
+            &self.outcome
+        {
             let (tx, rx) = mpsc::channel(1);
             tx.try_send(CertPrompt {
                 fingerprint: fingerprint.clone(),
@@ -175,8 +185,9 @@ impl GraphicalBackend for ProbeFake {
     fn subscribe_cert_prompts(&self) -> Option<CertPromptReceiver> {
         self.prompts.lock().unwrap().take()
     }
-    async fn send_cert_decision(&self, accept: bool, _remember: bool) -> Result<(), SessionError> {
+    async fn send_cert_decision(&self, accept: bool, remember: bool) -> Result<(), SessionError> {
         *self.decision.lock().unwrap() = Some(accept);
+        *self.remembered.lock().unwrap() = Some(remember);
         self.decided.notify_one();
         Ok(())
     }
@@ -185,9 +196,13 @@ impl GraphicalBackend for ProbeFake {
             Outcome::Established => Ok(()),
             Outcome::Never => std::future::pending().await,
             Outcome::Fails(e) => Err(clone_error(e)),
-            Outcome::CertPrompt(_) => {
+            Outcome::CertPrompt(_) | Outcome::CertThenAuthFails(_) => {
                 self.decided.notified().await;
-                match *self.decision.lock().unwrap() {
+                let accepted = *self.decision.lock().unwrap();
+                match accepted {
+                    Some(true) if matches!(self.outcome, Outcome::CertThenAuthFails(_)) => {
+                        Err(SessionError::AuthFailed)
+                    }
                     Some(true) => Ok(()),
                     _ => Err(SessionError::ConnectionFailed(
                         "certificate rejected".to_string(),
@@ -216,7 +231,7 @@ async fn verdict(
     trust: Option<&RdpTrustStore>,
     timeout: Duration,
 ) -> Result<(), SessionError> {
-    await_verdict(fake, "rdp.example", trust, timeout, None).await
+    await_verdict(fake, "rdp.example", trust, None, timeout, None).await
 }
 
 #[tokio::test]
@@ -322,6 +337,7 @@ async fn the_probe_is_cancellable() {
         &fake,
         "rdp.example",
         None,
+        None,
         Duration::from_secs(600),
         Some(&cancel),
     )
@@ -330,4 +346,294 @@ async fn the_probe_is_cancellable() {
         matches!(result, Err(SessionError::SpawnFailed(ref m)) if m.contains("cancelled")),
         "{result:?}"
     );
+}
+
+// ── Interactive review during Test connection (#4510) ──────────────
+
+/// A reviewer scripted with the user's verdict (`None` = the dialog went away
+/// without one, `Hang` = the user never answers), recording what it was asked.
+pub(crate) enum Script {
+    Verdict(Option<CertReview>),
+    Hang,
+}
+
+pub(crate) struct ScriptedReviewer {
+    script: Script,
+    pub(crate) asked: StdMutex<Vec<CertReviewRequest>>,
+}
+
+impl ScriptedReviewer {
+    pub(crate) fn new(script: Script) -> Self {
+        Self {
+            script,
+            asked: StdMutex::new(Vec::new()),
+        }
+    }
+    pub(crate) fn answering(accept: bool, remember: bool) -> Self {
+        Self::new(Script::Verdict(Some(CertReview { accept, remember })))
+    }
+}
+
+#[async_trait::async_trait]
+impl CertReviewer for ScriptedReviewer {
+    async fn review(&self, request: CertReviewRequest) -> Option<CertReview> {
+        self.asked.lock().unwrap().push(request);
+        match self.script {
+            Script::Verdict(verdict) => verdict,
+            Script::Hang => std::future::pending().await,
+        }
+    }
+}
+
+async fn reviewed_verdict(
+    fake: &ProbeFake,
+    trust: &RdpTrustStore,
+    reviewer: &ScriptedReviewer,
+) -> Result<(), SessionError> {
+    await_verdict(
+        fake,
+        "rdp.example",
+        Some(trust),
+        Some(reviewer),
+        Duration::from_secs(5),
+        None,
+    )
+    .await
+}
+
+fn assert_untrusted(result: Result<(), SessionError>, needle: &str) {
+    match result {
+        Err(SessionError::Classified { kind, message }) => {
+            assert_eq!(kind, ConnectFailureKind::HostKeyUntrusted);
+            assert!(message.contains(needle), "{message}");
+            assert!(message.contains("Nothing was trusted"), "{message}");
+        }
+        other => panic!("expected an untrusted-certificate verdict, got {other:?}"),
+    }
+}
+
+/// Accept once: the user's verdict lets the probe continue to the credential
+/// check and report its real outcome; nothing is persisted.
+#[tokio::test]
+async fn accepting_once_continues_to_the_credential_verdict_without_remembering() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::answering(true, false);
+
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(*fake.decision.lock().unwrap(), Some(true));
+    assert_eq!(*fake.remembered.lock().unwrap(), Some(false));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Unknown);
+    let asked = reviewer.asked.lock().unwrap();
+    assert_eq!(
+        *asked,
+        vec![CertReviewRequest {
+            host: "rdp.example".to_string(),
+            fingerprint: "CC:DD".to_string(),
+            subject: None,
+            issuer: None,
+            changed: false,
+        }]
+    );
+}
+
+/// After an accepted certificate the credential check still decides the
+/// verdict: a rejected password is reported as such, not as success.
+#[tokio::test]
+async fn accepting_reports_a_rejected_credential() {
+    let fake = ProbeFake::connected(Outcome::CertThenAuthFails("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::answering(true, false);
+    let result = reviewed_verdict(&fake, &RdpTrustStore::in_memory(), &reviewer).await;
+    assert!(
+        matches!(result, Err(SessionError::AuthFailed)),
+        "{result:?}"
+    );
+}
+
+/// Accept and remember: the certificate is trusted through the trust store a
+/// real connect writes, so the next probe accepts it silently.
+#[tokio::test]
+async fn accepting_and_remembering_persists_through_the_trust_store() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::answering(true, true);
+
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(*fake.remembered.lock().unwrap(), Some(true));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Trusted);
+
+    // A second probe never asks again.
+    let again = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let silent = ScriptedReviewer::new(Script::Hang);
+    assert!(reviewed_verdict(&again, &trust, &silent).await.is_ok());
+    assert!(silent.asked.lock().unwrap().is_empty());
+}
+
+/// Reject: the certificate is declined, the trust store is unchanged, and the
+/// probe reports it as not trusted.
+#[tokio::test]
+async fn rejecting_declines_and_leaves_the_trust_store_unchanged() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    // "Reject" with remember set must still trust nothing.
+    let reviewer = ScriptedReviewer::answering(false, true);
+
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert_untrusted(result, "did not accept");
+    assert_eq!(*fake.decision.lock().unwrap(), Some(false));
+    assert_eq!(*fake.remembered.lock().unwrap(), Some(false));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Unknown);
+}
+
+/// Closing the dialog (no verdict at all) behaves like a reject.
+#[tokio::test]
+async fn closing_the_dialog_behaves_like_a_reject() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::new(Script::Verdict(None));
+
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert_untrusted(result, "did not accept");
+    assert_eq!(*fake.decision.lock().unwrap(), Some(false));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Unknown);
+}
+
+/// No verdict within the review timeout behaves like a reject — and the review
+/// window does not count against the shorter connect timeout.
+#[tokio::test(start_paused = true)]
+async fn an_unanswered_review_times_out_like_a_reject() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::new(Script::Hang);
+
+    let started = tokio::time::Instant::now();
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert_untrusted(result, "not reviewed within");
+    assert!(started.elapsed() >= CERT_REVIEW_TIMEOUT);
+    assert_eq!(*fake.decision.lock().unwrap(), Some(false));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Unknown);
+}
+
+/// A changed certificate is put to the user flagged as changed, and rejecting
+/// it keeps the previously trusted one.
+#[tokio::test]
+async fn a_changed_certificate_is_reviewed_as_changed() {
+    let trust = RdpTrustStore::in_memory();
+    trust.remember("rdp.example", "AA:BB");
+    let fake = ProbeFake::connected(Outcome::CertPrompt("EE:FF".to_string()));
+    let reviewer = ScriptedReviewer::answering(false, false);
+
+    let result = reviewed_verdict(&fake, &trust, &reviewer).await;
+
+    assert_untrusted(result, "did not accept");
+    assert!(reviewer.asked.lock().unwrap()[0].changed);
+    assert_eq!(trust.lookup("rdp.example", "AA:BB"), TrustLookup::Trusted);
+    assert_eq!(trust.lookup("rdp.example", "EE:FF"), TrustLookup::Changed);
+}
+
+/// Cancelling the Test while the dialog is open declines the certificate and
+/// reports the cancel, trusting nothing.
+#[tokio::test]
+async fn cancelling_during_review_declines_and_reports_cancelled() {
+    let trust = RdpTrustStore::in_memory();
+    let fake = ProbeFake::connected(Outcome::CertPrompt("CC:DD".to_string()));
+    let reviewer = ScriptedReviewer::new(Script::Hang);
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        trigger.cancel();
+    });
+
+    let result = await_verdict(
+        &fake,
+        "rdp.example",
+        Some(&trust),
+        Some(&reviewer),
+        Duration::from_secs(5),
+        Some(&cancel),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(SessionError::SpawnFailed(ref m)) if m.contains("cancelled")),
+        "{result:?}"
+    );
+    assert_eq!(*fake.decision.lock().unwrap(), Some(false));
+    assert_eq!(trust.lookup("rdp.example", "CC:DD"), TrustLookup::Unknown);
+}
+
+/// A remembered certificate is accepted silently even when a reviewer exists.
+#[tokio::test]
+async fn a_trusted_certificate_is_never_put_to_the_reviewer() {
+    let trust = RdpTrustStore::in_memory();
+    trust.remember("rdp.example", "AA:BB");
+    let fake = ProbeFake::connected(Outcome::CertPrompt("AA:BB".to_string()));
+    let reviewer = ScriptedReviewer::new(Script::Hang);
+
+    assert!(reviewed_verdict(&fake, &trust, &reviewer).await.is_ok());
+    assert!(reviewer.asked.lock().unwrap().is_empty());
+}
+
+// ── The review registry the decision command answers ───────────────
+
+#[tokio::test]
+async fn the_registry_delivers_the_decision_to_the_waiting_review() {
+    let reviews = ProbeCertReviews::default();
+    let mut pending = reviews.register("test:1");
+    assert!(reviews.decide(
+        "test:1",
+        CertReview {
+            accept: true,
+            remember: true
+        }
+    ));
+    assert_eq!(
+        pending.verdict().await,
+        Some(CertReview {
+            accept: true,
+            remember: true
+        })
+    );
+    assert!(!reviews.is_pending("test:1"));
+}
+
+/// A verdict for another test, or after the review ended (timeout / cancel),
+/// reaches nothing.
+#[tokio::test]
+async fn the_registry_ignores_stray_and_late_decisions() {
+    let reviews = ProbeCertReviews::default();
+    let verdict = CertReview {
+        accept: true,
+        remember: true,
+    };
+    assert!(!reviews.decide("test:none", verdict));
+
+    let pending = reviews.register("test:2");
+    assert!(!reviews.decide("test:other", verdict));
+    assert!(reviews.is_pending("test:2"));
+    drop(pending);
+    assert!(!reviews.is_pending("test:2"));
+    assert!(!reviews.decide("test:2", verdict));
+}
+
+/// A newer review for the same id replaces the old one; dropping the old guard
+/// does not unregister the new one.
+#[tokio::test]
+async fn a_replaced_review_does_not_unregister_its_successor() {
+    let reviews = ProbeCertReviews::default();
+    let mut first = reviews.register("test:3");
+    let second = reviews.register("test:3");
+    assert_eq!(first.verdict().await, None);
+    drop(first);
+    assert!(reviews.is_pending("test:3"));
+    drop(second);
+    assert!(!reviews.is_pending("test:3"));
 }

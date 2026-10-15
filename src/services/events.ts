@@ -130,6 +130,24 @@ export async function onRemoteDesktopCertPrompt(
 }
 
 /**
+ * Subscribe to the certificate review a Test connection asks for (#4510). Fires
+ * when an interactive RDP Test meets a certificate the trust store does not
+ * trust yet; the payload has the remote-desktop cert prompt shape with
+ * `session_id` set to the test's `connectId`. Answer it with
+ * `testConnectionCertDecision`.
+ */
+export async function onConnectionTestCertPrompt(
+  callback: (payload: RemoteDesktopCertPromptPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteDesktopCertPromptPayload>(
+    TAURI_EVENT.connectionTestCertPrompt,
+    (event) => {
+      callback(event.payload);
+    }
+  );
+}
+
+/**
  * Subscribe to interactive SSH host-key trust prompts (#1959). Fires when an SSH
  * server presents an untrusted (unknown or changed) host key; the global
  * `SshHostKeyPrompt` dialog shows the SHA-256 fingerprint and routes the verdict
