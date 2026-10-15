@@ -96,40 +96,44 @@ export function PasswordPrompt() {
         </>
       }
     >
-      {notice && (
-        <p className="password-prompt__notice" role="alert" data-testid="password-prompt-notice">
-          {notice}
+      {/* Spacing container (#4710): separate blocks so the input's focus ring
+          never overlaps the description above it. */}
+      <div className="password-prompt__body" data-testid="password-prompt-body">
+        {notice && (
+          <p className="password-prompt__notice" role="alert" data-testid="password-prompt-notice">
+            {notice}
+          </p>
+        )}
+        <p className="password-prompt__description" data-testid="password-prompt-description">
+          {description}
         </p>
-      )}
-      <p className="password-prompt__description" data-testid="password-prompt-description">
-        {description}
-      </p>
-      {waiting > 0 && (
-        <p className="password-prompt__queue" data-testid="password-prompt-queue">
-          {waitingText}
-        </p>
-      )}
-      <PasswordInput
-        className="ui-input"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder={inputPlaceholder}
-        aria-label={inputAriaLabel}
-        autoFocus
-        data-testid="password-prompt-input"
-      />
-      {showSave && (
-        <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
-          <Checkbox
-            checked={savePassword}
-            onCheckedChange={setSavePassword}
-            aria-label={saveLabel}
-            data-testid="password-prompt-save-checkbox"
-          />
-          <span>{saveLabel}</span>
-        </label>
-      )}
+        {waiting > 0 && (
+          <p className="password-prompt__queue" data-testid="password-prompt-queue">
+            {waitingText}
+          </p>
+        )}
+        <PasswordInput
+          className="ui-input"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={inputPlaceholder}
+          aria-label={inputAriaLabel}
+          autoFocus
+          data-testid="password-prompt-input"
+        />
+        {showSave && (
+          <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
+            <Checkbox
+              checked={savePassword}
+              onCheckedChange={setSavePassword}
+              aria-label={saveLabel}
+              data-testid="password-prompt-save-checkbox"
+            />
+            <span>{saveLabel}</span>
+          </label>
+        )}
+      </div>
     </Modal>
   );
 }

@@ -1,7 +1,15 @@
+/* Body stack (#4710): every block is separated by the shared modal field gap. */
+.unlock-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
 .unlock-dialog__description {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   margin: 0;
+  line-height: 1.4;
 }
 
 .unlock-dialog__error {
@@ -13,7 +21,6 @@
 .unlock-dialog__forgot-row {
   display: flex;
   justify-content: flex-start;
-  margin-top: var(--spacing-xs);
 }
 
 .unlock-dialog__biometric-row {

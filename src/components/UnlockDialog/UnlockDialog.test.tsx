@@ -53,6 +53,48 @@ describe("UnlockDialog", () => {
     container.remove();
   });
 
+  it("renders the description and the password field as separate blocks in one stack (#4710)", async () => {
+    await act(async () => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+    const body = query("unlock-dialog-body");
+    expect(body).not.toBeNull();
+    expect(body!.classList.contains("unlock-dialog__body")).toBe(true);
+    const description = query("unlock-dialog-description");
+    const field = query("unlock-dialog-field");
+    // Both are direct children of the spacing container, so the stack gap
+    // separates them and the input never sits on the description text.
+    expect(description!.parentElement).toBe(body);
+    expect(field!.parentElement).toBe(body);
+    expect(description!.contains(query("unlock-dialog-input"))).toBe(false);
+    expect(field!.contains(query("unlock-dialog-input"))).toBe(true);
+    expect(field!.classList.contains("ui-field")).toBe(true);
+    // The field carries a real label tied to the input.
+    const input = query("unlock-dialog-input") as HTMLInputElement;
+    expect(field!.querySelector(`label[for="${input.id}"]`)?.textContent).toBe("Master password");
+    // The reset link is its own block in the same stack.
+    expect(
+      query("unlock-dialog-forgot")!.closest(".unlock-dialog__forgot-row")!.parentElement
+    ).toBe(body);
+  });
+
+  it("keeps the error message as its own block in the stack (#4710)", async () => {
+    mockedUnlock.mockRejectedValue(new Error("wrong"));
+    await act(async () => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+    const input = query("unlock-dialog-input") as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "bad");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      query("unlock-dialog-unlock")!.click();
+    });
+    expect(query("unlock-dialog-error")!.parentElement).toBe(query("unlock-dialog-body"));
+  });
+
   it("renders correctly when open", async () => {
     await act(async () => {
       root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
