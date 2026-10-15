@@ -123,10 +123,46 @@ export function forgetCarriedFormDraft(tabId: string): void {
   carriedDrafts.delete(tabId);
 }
 
+type CarriedDraftListener = (draft: FormDraftSnapshot) => void;
+
+const carriedDraftListeners = new Map<string, CarriedDraftListener>();
+
+/**
+ * Listen for drafts carried in for `tabId` after its editor has mounted
+ * (#4760). A moved dirty Settings panel whose destination already shows
+ * Settings is merged into that existing tab rather than opening a second one,
+ * so its draft arrives at an editor that has already read its mount-time draft.
+ * Returns an unsubscribe function that removes only this listener.
+ */
+export function subscribeCarriedFormDraft(
+  tabId: string,
+  listener: CarriedDraftListener
+): () => void {
+  carriedDraftListeners.set(tabId, listener);
+  return () => {
+    if (carriedDraftListeners.get(tabId) === listener) carriedDraftListeners.delete(tabId);
+  };
+}
+
+/**
+ * Hand `draft` to the existing tab `tabId` (#4760): straight to its mounted
+ * editor when one is listening, otherwise held like {@link stashCarriedFormDraft}
+ * until an editor mounts for the tab and takes it.
+ */
+export function deliverCarriedFormDraft(tabId: string, draft: FormDraftSnapshot): void {
+  const listener = carriedDraftListeners.get(tabId);
+  if (listener) {
+    listener(draft);
+    return;
+  }
+  carriedDrafts.set(tabId, draft);
+}
+
 /** Drop every registration and carried buffer or draft. Test-only reset hook. */
 export function clearEditorBuffers(): void {
   providers.clear();
   carried.clear();
   draftProviders.clear();
   carriedDrafts.clear();
+  carriedDraftListeners.clear();
 }
