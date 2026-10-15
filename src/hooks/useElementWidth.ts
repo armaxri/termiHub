@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 /**
  * Track the content-box width of an element with a `ResizeObserver` (#4709).
@@ -9,6 +9,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * so callers should treat `null` as "unconstrained" and render their widest
  * layout. That keeps every existing test, which mounts without a layout engine,
  * on the same DOM it had before width-responsive rendering existed.
+ *
+ * The observer's whole lifetime is owned by the callback ref: React calls it
+ * with the node on attach and with `null` on detach, and each call disconnects
+ * whatever observer the previous call made. There is deliberately no unmount
+ * `useEffect` cleanup — under React StrictMode the simulated unmount/remount
+ * runs effect cleanups but does not re-run ref callbacks, so such a cleanup
+ * would disconnect the observer and nothing would reattach it, leaving the
+ * width frozen at `null` in dev builds (#4736).
  *
  * @returns `[ref, width]` — attach `ref` to the measured element.
  */
@@ -32,14 +40,6 @@ export function useElementWidth<T extends HTMLElement = HTMLElement>(): [
     observer.observe(node);
     observerRef.current = observer;
   }, []);
-
-  useEffect(
-    () => () => {
-      observerRef.current?.disconnect();
-      observerRef.current = null;
-    },
-    []
-  );
 
   return [ref, width];
 }

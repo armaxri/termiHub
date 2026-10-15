@@ -16,6 +16,8 @@ import { act } from "react";
 export interface ResizeObserverMock {
   /** Report `width` (px) for every currently observed element. */
   resize(width: number): void;
+  /** How many observers are live (constructed and not yet disconnected). */
+  liveObservers(): number;
   /** Put the previous `ResizeObserver` back. */
   restore(): void;
 }
@@ -61,6 +63,9 @@ export function installResizeObserverMock(): ResizeObserverMock {
       act(() => {
         for (const observer of Array.from(observers)) observer.fire(width);
       });
+    },
+    liveObservers() {
+      return observers.size;
     },
     restore() {
       globalThis.ResizeObserver = previous;
