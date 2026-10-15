@@ -583,21 +583,21 @@ the app-launching suites still run on a cadence:
 - **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR that touches the harness (`tests/system/`) runs it with `-m "not integration"` — every push to `develop`/`main` runs it regardless (#3325), so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
-> **Grading a feature branch before merge (#4726).** A manual dispatch normally
-> picks `-f branch=develop|main|both` (dispatched with `--ref main`). To prove a
-> nightly-only fix on its own branch, dispatch the lane _from that branch_ with
-> the `dispatched` option, which checks out and grades the exact commit the run
-> was dispatched on:
->
-> ```bash
-> gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched
-> ```
->
-> The run uses the **feature branch's copy** of the workflow, so the branch must
-> contain the `dispatched` option — merge `develop` into it first if it predates
-> #4726. Dispatched runs have their own concurrency group keyed on the dispatch
-> ref, so they never cancel (or get cancelled by) the scheduled nightly runs; a
-> re-dispatch of the same branch supersedes only that branch's older run.
+**Grading a feature branch before merge (#4726).** A manual dispatch normally
+picks `-f branch=develop|main|both` (dispatched with `--ref main`). To prove a
+nightly-only fix on its own branch, dispatch the lane _from that branch_ with
+the `dispatched` option, which checks out and grades the exact commit the run
+was dispatched on:
+
+```bash
+gh workflow run system-integration.yml --ref <feature-branch> -f branch=dispatched
+```
+
+The run uses the **feature branch's copy** of the workflow, so the branch must
+contain the `dispatched` option — merge `develop` into it first if it is older
+than this option (#4726). Dispatched runs have their own concurrency group keyed on the dispatch
+ref, so they never cancel (or get cancelled by) the scheduled nightly runs; a
+re-dispatch of the same branch supersedes only that branch's older run.
 
 > **Reading the coverage-gap report honestly (#2050).** Because the per-PR lane
 > runs `-m "not integration"`, an `integration`-marked test is **not** merge-gate
