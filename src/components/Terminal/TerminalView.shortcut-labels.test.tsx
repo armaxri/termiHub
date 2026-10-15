@@ -60,6 +60,7 @@ vi.mock("@/services/api", () => ({
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 import { TerminalView } from "./TerminalView";
+import { getByRole } from "@/test/accessibleRoles";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -113,5 +114,24 @@ describe("TerminalView — Toggle Sidebar shortcut label (#4374, WA-FE2-003)", (
     setOverride("toggle-sidebar", { key: "F9" });
     renderView();
     expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (F9)");
+  });
+});
+
+describe("TerminalView landmark (A11Y2-012, #4351)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("is the main landmark and keeps the named Terminal region inside it", () => {
+    renderView();
+    const main = getByRole("main", undefined, container);
+    expect(main.classList.contains("terminal-view")).toBe(true);
+    expect(main.contains(getByRole("region", "Terminal", container))).toBe(true);
   });
 });

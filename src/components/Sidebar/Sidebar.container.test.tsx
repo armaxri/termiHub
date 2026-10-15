@@ -20,6 +20,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore, type SidebarView } from "@/store/appStore";
 import { Sidebar } from "./Sidebar";
+import { getByRole } from "@/test/accessibleRoles";
 
 // Stub every panel subcomponent with an inert marker so the container mounts
 // without dragging in each panel's own store dependencies. The specifier paths
@@ -182,5 +183,21 @@ describe("Sidebar container (#2953)", () => {
     renderSidebar({});
     const elNoWidth = container.querySelector<HTMLDivElement>('[data-testid="sidebar"]');
     expect(elNoWidth?.style.width).toBe("");
+  });
+});
+
+describe("Sidebar landmark (A11Y2-012, #4351)", () => {
+  it("is a complementary landmark named after the active view", () => {
+    act(() => {
+      useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
+    });
+    renderSidebar();
+    const aside = getByRole("complementary", "SSH Tunnels", container);
+    expect(aside).toBe(container.querySelector('[data-testid="sidebar"]'));
+
+    act(() => {
+      useAppStore.setState({ sidebarView: "macros" });
+    });
+    expect(getByRole("complementary", "Macros", container)).toBe(aside);
   });
 });
