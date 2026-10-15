@@ -43,7 +43,12 @@ on:
       branch:
         description: "Which branch(es) to grade"
         type: choice
-        options: [both, develop, main]
+        # "dispatched" grades the exact commit the run was dispatched on, so a
+        # feature branch can prove a nightly-only fix before it merges
+        # (`gh workflow run system-integration.yml --ref <branch> -f branch=dispatched`).
+        # It runs that branch's copy of this workflow, so the branch must contain
+        # this option (be up to date with develop).
+        options: [both, develop, main, dispatched]
         default: both
   # Release gate (#3652): release-candidate.yml calls this lane to grade ONE exact
   # commit (the release candidate), instead of the develop/main branch tips. The
@@ -59,9 +64,11 @@ on:
 # overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
 # same trigger still cancels the older in-flight run.
 # A release-candidate call keys on its sha, so it neither cancels nor is
-# cancelled by the nightly/manual runs.
+# cancelled by the nightly/manual runs. A `dispatched` run keys on its dispatch
+# ref, so it never touches the nightly/develop/main groups and a re-dispatch of
+# the same feature branch supersedes only that branch's older run.
 concurrency:
-  group: system-integration-${{ inputs.ref && format('rc-{0}', inputs.ref) || github.event.schedule || github.event.inputs.branch || github.ref }}
+  group: system-integration-${{ inputs.ref && format('rc-{0}', inputs.ref) || github.event.inputs.branch == 'dispatched' && format('dispatched-{0}', github.ref) || github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
 
 # Least-privilege token (CI-010). Every job checks out (its matrix branch),
@@ -74,7 +81,8 @@ permissions:
 jobs:
   # Resolve which branch(es) this run grades from the trigger: the daily cron →
   # develop, the Wednesday cron → main, a manual dispatch → the chosen input
-  # (default both), a release-candidate call → its exact sha. Emitted as a JSON
+  # (default both; `dispatched` → the dispatch ref's exact sha), a
+  # release-candidate call → its exact sha. Emitted as a JSON
   # array the matrix below expands over (each entry is a checkout ref).
   setup:
     runs-on: ubuntu-latest
@@ -88,6 +96,7 @@ jobs:
           # called workflow github.event_name is the CALLER's event, so this must
           # be checked first.
           RC_REF: ${{ inputs.ref }}
+          DISPATCH_SHA: ${{ github.sha }}
         run: |
           if [ -n "${RC_REF}" ]; then
             # Only a full sha is accepted: it is what the release gate keys on,
@@ -106,6 +115,9 @@ jobs:
             case "${{ github.event.inputs.branch }}" in
               develop) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
               main) echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
+              # The commit sha, not the branch name: it is a valid checkout ref
+              # and, unlike a "dev1/ci/..." name, a valid artifact name.
+              dispatched) echo "branches=[\"${DISPATCH_SHA}\"]" >> "$GITHUB_OUTPUT" ;;
               *) echo 'branches=["main","develop"]' >> "$GITHUB_OUTPUT" ;;
             esac
           fi
