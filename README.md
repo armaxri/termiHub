@@ -122,7 +122,7 @@ Prefer to build it yourself? See [Development](#development) below.
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH Tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow Experimental Features**
+- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH Tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow Experimental Features**
 - **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, swap, disk, and network throughput stats for remote hosts
