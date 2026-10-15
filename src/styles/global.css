@@ -2,6 +2,7 @@
 @import "./variables.css";
 @import "./animations.css";
 @import "./broadcast.css";
+@import "./settings-form.css";
 
 *,
 *::before,

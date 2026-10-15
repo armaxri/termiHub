@@ -45,22 +45,6 @@
   flex-shrink: 0;
 }
 
-/* === Category sections === */
-.settings-panel__category {
-  margin-bottom: var(--spacing-xl);
-}
-
-.settings-panel__category-title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  margin: 0 0 var(--spacing-md);
-  padding-bottom: var(--spacing-xs);
-  border-bottom: 1px solid var(--border-secondary);
-}
-
 /* === No search results === */
 .settings-panel__no-results {
   font-size: var(--font-size-sm);
@@ -172,50 +156,6 @@
 .settings-panel__create-input.ui-input {
   height: var(--control-height-md);
   font-size: var(--font-size-sm);
-}
-
-/* === File list === */
-.settings-panel__file-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xxs);
-}
-
-.settings-panel__file-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs-sm) var(--spacing-sm);
-  border-radius: var(--radius-md);
-  background-color: var(--bg-tertiary);
-  transition: background-color var(--transition-fast);
-}
-
-.settings-panel__file-item:hover {
-  background-color: var(--bg-hover);
-}
-
-.settings-panel__file-path {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Left-truncate long paths (shows the end of the path instead of the beginning). */
-.settings-panel__file-path--rtl {
-  direction: rtl;
-  text-align: left;
-}
-
-.settings-panel__file-path--disabled {
-  color: var(--text-disabled);
 }
 
 .settings-panel__file-item--overridden {

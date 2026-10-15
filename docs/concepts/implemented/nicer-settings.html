@@ -546,7 +546,7 @@ flowchart LR
 <ul>
 <li><code>SettingsPanel.css</code> gets the two-panel layout styles</li>
 <li><code>SettingsNav.css</code> for the sidebar</li>
-<li>Each new settings component reuses the existing <code>.settings-form</code> classes from <code>ConnectionEditor.css</code></li>
+<li>Each new settings component reuses the shared <code>.settings-form</code> classes (the <code>Field</code> scaffold in <code>ui/ui.css</code>, the remaining helpers in the always-loaded <code>styles/settings-form.css</code>; #4708)</li>
 <li>Responsive breakpoint at 480 px handled via <code>@media</code> query or <code>ResizeObserver</code> (preferred, since the panel width depends on split-view, not viewport)</li>
 </ul>
 <h3 id="7-migration-path">7. Migration Path</h3>
