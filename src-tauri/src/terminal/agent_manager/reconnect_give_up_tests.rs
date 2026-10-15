@@ -11,6 +11,11 @@
 //! ([`AgentConnectionManager::set_reconnect_tuning_for_test`]), so it gives up
 //! in well under a second instead of the production minutes.
 //!
+//! After the give-up the hosted session's own late drop (its output bridge
+//! ends with the task) must leave the tab `Failed` with the give-up error,
+//! whether the tab is resilient or not (#4713); a user's fresh connect still
+//! leaves it.
+//!
 //! Unix-only, like the transport sever it relies on.
 //!
 //! [`give_up_after_exhausted_reconnect`]: super::io_task::give_up_after_exhausted_reconnect
@@ -23,16 +28,13 @@ use serde_json::{json, Value};
 use tauri::test::MockRuntime;
 use tauri::{Listener, Manager};
 use termihub_core::connection::ConnectionTypeRegistry;
-use termihub_core::reconnect_backoff::BackoffConfig;
+use termihub_core::reconnect_backoff::{BackoffConfig, ReconnectPhase};
 
 use super::fake_agent_sshd::{FakeAgentSshd, InitBehavior};
 use super::reconnect::ReconnectTuning;
 use super::{AgentConnectionManager, AgentRpcClient};
 use crate::session::manager::SessionManager;
 use crate::session_projection::store::{SessionLifecycle, SessionLifecycleStore, SessionStatus};
-
-const AGENT: &str = "agent-give-up";
-const TAB: &str = "tab-give-up";
 
 /// Ceiling for any one step against the loopback fake agent. The whole give-up
 /// takes well under a second; this only keeps a regression from hanging CI.
@@ -64,14 +66,16 @@ fn trust_all_host_keys() {
     let _ = set_host_key_verifier(Arc::new(TrustAll));
 }
 
-/// One `agent-state-change` "disconnected" event for [`AGENT`]: its `error`,
+/// One `agent-state-change` "disconnected" event for the agent: its `error`,
 /// and the tab's region entry as it stood when the event fired.
 type Disconnect = (Value, Option<SessionLifecycle>);
 
-/// Record every "disconnected" event for [`AGENT`] (see [`Disconnect`]).
+/// Record every "disconnected" event for `agent` (see [`Disconnect`]).
 fn record_disconnects(
     app: &tauri::App<MockRuntime>,
     store: &Arc<SessionLifecycleStore>,
+    agent: &'static str,
+    tab: &'static str,
 ) -> Arc<Mutex<Vec<Disconnect>>> {
     let seen: Arc<Mutex<Vec<Disconnect>>> = Arc::default();
     let (sink, store) = (seen.clone(), store.clone());
@@ -79,19 +83,31 @@ fn record_disconnects(
         let Ok(payload) = serde_json::from_str::<Value>(event.payload()) else {
             return;
         };
-        if payload["session_id"].as_str() == Some(AGENT)
+        if payload["session_id"].as_str() == Some(agent)
             && payload["state"].as_str() == Some("disconnected")
         {
             sink.lock()
                 .unwrap()
-                .push((payload["error"].clone(), store.get(TAB)));
+                .push((payload["error"].clone(), store.get(tab)));
         }
     });
     seen
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() {
+async fn a_never_answering_reconnect_gives_up_and_a_resilient_tab_stays_failed() {
+    give_up_and_settle("agent-give-up-resilient", "tab-give-up-resilient", true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_never_answering_reconnect_gives_up_and_a_plain_tab_stays_failed() {
+    give_up_and_settle("agent-give-up-plain", "tab-give-up-plain", false).await;
+}
+
+/// Connect `agent`, open one hosted tab `tab` (resilient or not), sever the
+/// transport, let the reconnect give up, and pin the state the tab settles in
+/// once the hosted session's late drop has been folded.
+async fn give_up_and_settle(agent: &'static str, tab: &'static str, resilient: bool) {
     trust_all_host_keys();
     let server = FakeAgentSshd::serve(InitBehavior::StallOnReconnect).await;
     let app = tauri::test::mock_app();
@@ -115,7 +131,7 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
     let (m, cfg) = (manager.clone(), server.agent_config());
     tokio::time::timeout(
         STEP,
-        tokio::task::spawn_blocking(move || m.connect_agent(AGENT, &cfg, None)),
+        tokio::task::spawn_blocking(move || m.connect_agent(agent, &cfg, None)),
     )
     .await
     .expect("connect settles")
@@ -129,39 +145,39 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
         sessions.create_connection(
             "shell",
             json!({ "config": {} }),
-            Some(AGENT),
-            Some(&format!("{TAB}:0")),
+            Some(agent),
+            Some(&format!("{tab}:0")),
             false,
-            true,
+            resilient,
             handle.clone(),
         ),
     )
     .await
     .expect("the hosted session opens in time")
     .expect("the hosted session opens");
-    store.connect(TAB);
-    store.connected(TAB);
+    store.connect(tab);
+    store.connected(tab);
     assert_eq!(
         sessions
-            .agent_hosted_sessions(AGENT)
+            .agent_hosted_sessions(agent)
             .await
             .into_iter()
             .map(|h| h.tab_id)
             .collect::<Vec<_>>(),
-        vec![TAB.to_string()]
+        vec![tab.to_string()]
     );
-    assert!(manager.io_budgets.lock().unwrap().contains_key(AGENT));
+    assert!(manager.io_budgets.lock().unwrap().contains_key(agent));
 
-    let disconnects = record_disconnects(&app, &store);
+    let disconnects = record_disconnects(&app, &store, agent, tab);
 
     // Sever: every reconnect attempt now reaches `initialize` and stalls.
-    assert!(manager.test_sever_transport(AGENT));
+    assert!(manager.test_sever_transport(agent));
     let deadline = tokio::time::Instant::now() + STEP;
     while disconnects.lock().unwrap().is_empty() {
         assert!(
             tokio::time::Instant::now() < deadline,
             "the reconnect never gave up (tab is {:?})",
-            store.status(TAB)
+            store.status(tab)
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -171,9 +187,7 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
 
     // `disconnected` was announced once, carrying the give-up error, and by
     // then the hosted tab had folded `Failed` at the backend source with the
-    // same error. Read at the emit: the hosted session's own late drop (its
-    // output channel closes when the task ends) refolds the tab afterwards —
-    // #4713.
+    // same error.
     let disconnects = disconnects.lock().unwrap().clone();
     assert_eq!(
         disconnects.len(),
@@ -189,8 +203,8 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
     // The task reaps its own entry and its data-credit budget right after the
     // emit.
     let reaped = || {
-        !manager.agents.lock().unwrap().contains_key(AGENT)
-            && !manager.io_budgets.lock().unwrap().contains_key(AGENT)
+        !manager.agents.lock().unwrap().contains_key(agent)
+            && !manager.io_budgets.lock().unwrap().contains_key(agent)
     };
     while !reaped() {
         assert!(
@@ -199,5 +213,25 @@ async fn a_never_answering_reconnect_gives_up_and_folds_the_hosted_tab_failed() 
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert!(!manager.is_connected(AGENT));
+    assert!(!manager.is_connected(agent));
+
+    // #4713: the hosted session's own late drop (its output bridge ends with
+    // the task) is folded before the session leaves the manager. Once it has,
+    // the tab must still read `Failed` with the give-up error: no `Reconnecting`
+    // (resilient) and no `Disconnected` (plain), and no redrive armed.
+    while !sessions.list_sessions().await.is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the hosted session never ended after the give-up"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let settled = store.get(tab).expect("the tab is still tracked");
+    assert_eq!(settled.status, SessionStatus::Failed, "{settled:?}");
+    assert_eq!(settled.error.as_deref(), Some(GIVE_UP_ERROR));
+    assert_eq!(settled.reconnect.phase, ReconnectPhase::Idle);
+
+    // The user's Reconnect starts a fresh connect, which leaves the give-up.
+    store.connect(tab);
+    assert_eq!(store.status(tab), Some(SessionStatus::Connecting));
 }
