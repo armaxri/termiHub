@@ -627,7 +627,7 @@ Connect termiHub to `/tmp/termihub-serial-a` to test.
 
 ### Prerequisites
 
-- **Node.js** v18+ — [nodejs.org](https://nodejs.org/)
+- **Node.js** v20.19+ (v22 recommended) — [nodejs.org](https://nodejs.org/)
 - **pnpm** — `npm install -g pnpm`
 - **Rust** — [rustup.rs](https://www.rust-lang.org/tools/install)
 - **Tauri prerequisites** — Follow the [Tauri v2 prerequisites guide](https://v2.tauri.app/start/prerequisites/) for your platform
