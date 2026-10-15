@@ -145,7 +145,10 @@ import {
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
-import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
+import {
+  onConnectDispatchRecordCount,
+  resetOnConnectDispatchState,
+} from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
 import { WORKFLOW_FANOUT_CONCURRENCY } from "./slices/workflowFanout";
 import { executeScheduledRun } from "./scheduledRuns";
@@ -1713,6 +1716,74 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(injected.filter((d) => d === "echo wf-a\n")).toHaveLength(1);
+  });
+
+  describe("dispatch record teardown (#4784)", () => {
+    const runs = () => injected.filter((d) => d === "echo wf-a\n").length;
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+
+    beforeEach(() => {
+      useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    });
+
+    it("drops the record when the tab closes", async () => {
+      seedUnconnectedTab("conn-1");
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-close");
+      await vi.waitFor(() => expect(runs()).toBe(1));
+      expect(onConnectDispatchRecordCount()).toBe(1);
+
+      useAppStore.getState().closeTab("tab-oc", "leaf-1");
+
+      expect(onConnectDispatchRecordCount()).toBe(0);
+    });
+
+    it("drops the record when the session disconnects with a clean exit", async () => {
+      seedUnconnectedTab("conn-1");
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-exit");
+      await vi.waitFor(() => expect(runs()).toBe(1));
+
+      // The terminal clears the tab's session id, then reports the exit.
+      useAppStore.getState().setTabSessionId("tab-oc", null);
+      useAppStore.getState().setTerminalExited("tab-oc", { code: 0, reason: "clean" });
+
+      expect(onConnectDispatchRecordCount()).toBe(0);
+    });
+
+    it("keeps the guard across a drop and a reconnect that re-attaches the same session", async () => {
+      seedUnconnectedTab("conn-1");
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-keep");
+      await vi.waitFor(() => expect(runs()).toBe(1));
+
+      useAppStore.getState().setTabSessionId("tab-oc", null);
+      useAppStore.getState().setTerminalExited("tab-oc", { code: null, reason: "dropped" });
+      // A persistent session whose transport recovered re-attaches the same id.
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-keep");
+      await settle();
+
+      expect(runs()).toBe(1);
+      expect(onConnectDispatchRecordCount()).toBe(1);
+    });
+
+    it("releases the old session's record when a reconnect binds a fresh session", async () => {
+      seedUnconnectedTab("conn-1");
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-old");
+      await vi.waitFor(() => expect(runs()).toBe(1));
+
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-new");
+      await vi.waitFor(() => expect(runs()).toBe(2));
+
+      expect(onConnectDispatchRecordCount()).toBe(1);
+    });
+
+    it("does not grow across many open/close cycles", async () => {
+      for (let i = 0; i < 25; i++) {
+        seedUnconnectedTab("conn-1", `tab-cycle-${i}`);
+        useAppStore.getState().setTabSessionId(`tab-cycle-${i}`, `sess-cycle-${i}`);
+        useAppStore.getState().closeTab(`tab-cycle-${i}`, "leaf-1");
+        expect(onConnectDispatchRecordCount()).toBe(0);
+      }
+      await settle();
+    });
   });
 
   it("does not run on-connect workflows for a tab with no connection id", async () => {

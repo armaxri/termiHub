@@ -4,6 +4,8 @@ import {
   matchOnConnectWorkflows,
   dispatchOnConnectTriggers,
   forgetOnConnectSession,
+  onConnectDispatchRecordCount,
+  releaseOnConnectSessions,
   resetOnConnectDispatchState,
   armSessionEnd,
   disconnectCauseMatches,
@@ -181,6 +183,39 @@ describe("dispatchOnConnectTriggers", () => {
     forgetOnConnectSession("sess-1");
     dispatchOnConnectTriggers(args);
     expect(run).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("releaseOnConnectSessions (#4784)", () => {
+  const workflows = [makeWorkflow("a", [{ kind: "on-connect", connectionIds: ["c1"] }])];
+  const open = (tabId: string, sessionId: string, run = vi.fn()) => {
+    dispatchOnConnectTriggers({ connectionId: "c1", tabId, sessionId, workflows, run });
+    return run;
+  };
+
+  beforeEach(() => {
+    resetOnConnectDispatchState();
+  });
+
+  it("forgets the records the tab owns when no other tab shows the session", () => {
+    open("tab-1", "sess-1");
+    open("tab-2", "sess-2");
+    releaseOnConnectSessions("tab-1", () => null);
+    expect(onConnectDispatchRecordCount()).toBe(1);
+    // The released session id fires again; the other tab's is still guarded.
+    expect(open("tab-1", "sess-1")).toHaveBeenCalledTimes(1);
+    expect(open("tab-2", "sess-2")).not.toHaveBeenCalled();
+  });
+
+  it("hands a still-shown session's record to the tab that shows it", () => {
+    open("tab-1", "sess-1");
+    releaseOnConnectSessions("tab-1", () => "tab-2");
+    expect(open("tab-2", "sess-1")).not.toHaveBeenCalled();
+    // Now owned by tab-2: releasing tab-1 again leaves it, releasing tab-2 drops it.
+    releaseOnConnectSessions("tab-1", () => null);
+    expect(onConnectDispatchRecordCount()).toBe(1);
+    releaseOnConnectSessions("tab-2", () => null);
+    expect(onConnectDispatchRecordCount()).toBe(0);
   });
 });
 

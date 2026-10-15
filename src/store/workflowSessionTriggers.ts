@@ -199,12 +199,13 @@ export function notifyWorkflowSessionExited(
   tabId: string,
   reason: TerminalExitReason
 ): void {
-  guarded("session-exit", () =>
-    notifyWorkflowSessionEnded(store, tabId, sessionEndCauseFromExit(reason))
-  );
-  if (reason === "clean") {
-    guarded("session-exit", () => releaseTabOnConnectRecords(store, tabId));
-  }
+  guarded("session-exit", () => {
+    try {
+      notifyWorkflowSessionEnded(store, tabId, sessionEndCauseFromExit(reason));
+    } finally {
+      if (reason === "clean") releaseTabOnConnectRecords(store, tabId);
+    }
+  });
 }
 
 /**
@@ -220,15 +221,18 @@ export function notifyWorkflowTabClosing(
   closingTabIds?: ReadonlySet<string>
 ): void {
   guarded("tab-close", () => {
-    const tab = collectLiveTabs(store.get()).find((t) => t.id === tabId);
-    const live =
-      !!tab?.sessionId && !isSessionEndHandled(tabId) && !regionExited(currentSessionView()[tabId]);
-    if (live) notifyWorkflowSessionEnded(store, tabId, "user-close");
-    armSessionEnd(tabId);
+    try {
+      const tab = collectLiveTabs(store.get()).find((t) => t.id === tabId);
+      const live =
+        !!tab?.sessionId &&
+        !isSessionEndHandled(tabId) &&
+        !regionExited(currentSessionView()[tabId]);
+      if (live) notifyWorkflowSessionEnded(store, tabId, "user-close");
+      armSessionEnd(tabId);
+    } finally {
+      releaseTabOnConnectRecords(store, tabId, { departing: closingTabIds });
+    }
   });
-  guarded("tab-close", () =>
-    releaseTabOnConnectRecords(store, tabId, { departing: closingTabIds })
-  );
 }
 
 /**
