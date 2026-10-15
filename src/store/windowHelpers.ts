@@ -150,11 +150,12 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
   };
 }
 
-/** The tab content types whose editor can hand over a form draft (#4500). */
+/** The tab content types whose editor can hand over a form draft (#4500, #4758). */
 const FORM_DRAFT_KINDS: ReadonlySet<string> = new Set<FormDraftKind>([
   "connection-editor",
   "tunnel-editor",
   "workspace-editor",
+  "settings",
 ]);
 
 /**
@@ -246,8 +247,8 @@ export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
 /**
  * Whether a window move can carry `tab`'s unsaved changes: a file editor whose
  * live buffer can be read (#4412), or a connection, tunnel or workspace editor
- * whose form draft can be read (#4500). The Settings panel keeps its state
- * inside the component and is never movable with unsaved changes.
+ * or the Settings panel whose form draft can be read (#4500, #4758). Only an
+ * editor that is not mounted to answer cannot carry them.
  */
 export function canCarryEditorBuffer(tab: TerminalTab): boolean {
   if (tab.contentType === "editor") {

@@ -623,6 +623,34 @@ describe("appStore — Move tabs carries unsaved form editors (#4500)", () => {
     expect(readFormDraft(connEditor.id)).toBeNull();
   });
 
+  it("moves an unsaved Settings panel dirty with its values instead of blocking (#4758)", async () => {
+    const settingsTab = MOVABLE_TABS.find((t) => t.contentType === "settings")!;
+    const SETTINGS_DRAFT = { version: "1", fontSize: 18, apiToken: "" };
+    seedTabs([settingsTab]);
+    registerFormDraft(settingsTab.id, () => ({
+      kind: "settings",
+      values: SETTINGS_DRAFT,
+      clearedSecrets: ["API token"],
+    }));
+    useAppStore.getState().setEditorDirty(settingsTab.id, true);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+    expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([
+      { tabId: "st", title: "Settings", movable: true, clearedSecrets: ["API token"] },
+    ]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const [record] = sentRecords();
+    expect(record.tab.formDraft).toEqual({ kind: "settings", values: SETTINGS_DRAFT });
+    expect(record.tab.editorDirty).toBe(true);
+
+    const [tab] = hydrateInFreshWindow([record]);
+    expect(tab.contentType).toBe("settings");
+    expect(useAppStore.getState().editorDirtyTabs[tab.id]).toBe(true);
+    expect(peekCarriedFormDraft(tab.id, "settings")).toEqual(SETTINGS_DRAFT);
+  });
+
   it("ignores a draft whose kind does not match the tab", async () => {
     seedTabs([connEditor]);
     registerFormDraft(connEditor.id, () => ({ kind: "tunnel-editor", values: TUNNEL_DRAFT }));
