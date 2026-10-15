@@ -99,19 +99,30 @@ overflow-checks = true
 # report with a std backtrace, and that backtrace can only name functions from
 # the binary's own symbol table. `strip = true` (PKG-010) removed it, so every
 # frame of a shipped build's crash report read `<unknown>` at an ASLR-shifted
-# address. A different (debug) build cannot symbolize those addresses after the
-# fact, so the symbols have to ship in the binary. Release builds emit no DWARF
-# anyway (default `debug = 0`), so "debuginfo" strips only what std/dependency
-# rlibs bring in: frames get function names, not source lines.
+# address. Frames get function names in the binary; source lines do not ship.
 #
 # Cost, measured on macOS aarch64 against `strip -x` (what `strip = true` runs
 # there): desktop `termihub` 53.9 -> 72.3 MB (+34%, +2.4 MB / +12% gzipped),
-# `termihub-agent` 27.4 -> 35.4 MB (+29%).
-# Windows: MSVC keeps symbols in a separate .pdb that is not shipped, so Windows
-# field reports still show bare addresses; shipping split debug symbols
-# (.dSYM/.pdb) as release artifacts is #4504. Checked per PR by
+# `termihub-agent` 27.4 -> 35.4 MB (+29%). Checked per PR by
 # scripts/internal/check-release-crash-symbols.sh (agent.yml). Does not affect
 # behaviour or optimization level.
+#
+# Split debug symbols (#4504): `debug = "line-tables-only"` compiles file/line
+# tables (no types or variables), which the release workflow keeps OUT of the
+# shipped binaries as separate `termiHub-<version>-debug-symbols-*.tar.gz`
+# release assets, so a field crash report can be symbolized to source lines
+# offline (docs/contributing.md -> "Symbolizing a crash report"). The per-OS
+# split knobs live in release.yml, not here, so local builds are unchanged:
+#   macOS:   CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed -> rustc runs dsymutil
+#            (`<bin>.dSYM`) before `strip`, the binary carries no DWARF;
+#   Windows: CARGO_PROFILE_RELEASE_STRIP=none -> the MSVC linker writes the
+#            `.pdb` (`strip = "debuginfo"` passes /DEBUG:NONE: no .pdb at all);
+#   Linux:   CARGO_PROFILE_RELEASE_STRIP=none, then
+#            scripts/internal/debug-symbols.mjs splits the DWARF into a `.debug`
+#            file with objcopy and strips it from the binary before bundling.
+# Here, with `strip = "debuginfo"`, the line tables are compiled and stripped,
+# so a local `cargo build --release` binary is the same size as before.
+debug = "line-tables-only"
 strip = "debuginfo"
 
 [workspace.dependencies]

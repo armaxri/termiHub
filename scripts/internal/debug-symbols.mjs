@@ -27,6 +27,8 @@
  *            CARGO_PROFILE_RELEASE_STRIP=none so there is DWARF to split;
  *       Mach-O: copy the <binary>.dSYM cargo emits with split-debuginfo=packed;
  *       PE: copy the .pdb its CodeView record names, from next to <binary>.
+ *       --version / --commit (default: $TERMIHUB_SYMBOLS_VERSION / $GITHUB_SHA)
+ *       go into the manifest header.
  *   node scripts/internal/debug-symbols.mjs check <dir> [<name>=<binary> ...]
  *       re-verify every SYMBOLS.txt entry of an unpacked symbol archive against
  *       its symbol file, and each named binary against its entry.
@@ -327,6 +329,8 @@ export function objcopy() {
  * @returns {{symbols: string, id: string}}
  */
 export function stage(binary, { outDir, name, version, commit }) {
+  version ??= process.env.TERMIHUB_SYMBOLS_VERSION;
+  commit ??= process.env.GITHUB_SHA;
   mkdirSync(outDir, { recursive: true });
   const base = name ?? path.basename(binary).replace(/\.exe$/i, "");
   const info = identify(binary);

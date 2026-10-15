@@ -44,7 +44,7 @@ import { STANDALONE_CRATES, tableBody, workspaceMembers } from "./check-rust-ver
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** Release-profile keys an excluded crate must restate with the root's value. */
-export const MIRRORED_RELEASE_KEYS = ["overflow-checks", "strip"];
+export const MIRRORED_RELEASE_KEYS = ["overflow-checks", "strip", "debug"];
 
 /**
  * Workspace-member path prefixes that are not first-party shipped code: vendored
@@ -345,7 +345,7 @@ if (isMainModule(import.meta.url)) {
     0
   );
   console.log(
-    `Crate policy: release overflow-checks/strip mirrored in ${STANDALONE_CRATES.join(", ")}; ` +
+    `Crate policy: release overflow-checks/strip/debug mirrored in ${STANDALONE_CRATES.join(", ")}; ` +
       `no-panic header on all ${roots} first-party crate roots; ` +
       `no crate enables ${RUNNER_PACKAGE}/${RUNNER_FEATURE} outside dev-dependencies.`
   );
