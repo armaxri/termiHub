@@ -84,14 +84,29 @@ this order:
 | Terminal area | `main`   | The active terminal, or the active tab otherwise |
 | Status bar    | `footer` | The first status-bar control                     |
 
+| Action                                     | macOS          | Windows / Linux | Works while a terminal has focus |
+| ------------------------------------------ | -------------- | --------------- | -------------------------------- |
+| Focus Next Region                          | `F6`           | `F6`            | No — the key goes to the program |
+| Focus Previous Region                      | `Shift+F6`     | `Shift+F6`      | No — the key goes to the program |
+| Focus Next Region (Also from Terminal)     | `Cmd+F6`       | `Ctrl+F6`       | Yes                              |
+| Focus Previous Region (Also from Terminal) | `Cmd+Shift+F6` | `Ctrl+Shift+F6` | Yes                              |
+
+- **A focused terminal keeps F6.** Bare <kbd>F6</kbd> / <kbd>Shift</kbd>+<kbd>F6</kbd>
+  are passed through to the program running in the terminal (Midnight
+  Commander, editors, …), so they never move focus out of a terminal. Use
+  <kbd>Ctrl</kbd>+<kbd>F6</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F6</kbd>
+  there instead; those work everywhere. The shortcuts overlay marks the bare
+  keys as active "Outside terminals".
+- macOS uses <kbd>Cmd</kbd> rather than <kbd>Ctrl</kbd> for the variants that
+  work in a terminal, because <kbd>Ctrl</kbd>+<kbd>F6</kbd> is the system's
+  "move focus to the floating window" key.
 - Regions that are not on screen — a collapsed sidebar, a hidden activity bar
   or status bar — are skipped.
-- Focus inside a dialog stays there; F6 does nothing until the dialog closes.
-- Both keys are rebindable as **Focus Next Region** / **Focus Previous Region**
-  in **Settings → Keyboard Shortcuts**, on every platform.
-- Function keys are not shell-reserved, so F6 is taken by termiHub even while a
-  terminal has focus. A terminal app that needs F6 itself (Midnight Commander,
-  for example) gets it back once you unbind or rebind **Focus Next Region**.
+- Focus inside a dialog stays there; the keys do nothing until the dialog
+  closes.
+- All four actions can be rebound in **Settings → Keyboard Shortcuts**. A
+  rebound **Focus Next Region** / **Focus Previous Region** key still goes to
+  the terminal program while a terminal has focus.
 
 ## Moving items without dragging
 
