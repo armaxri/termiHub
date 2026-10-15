@@ -188,13 +188,12 @@ export interface WindowManagementSlice {
   /**
    * Safe close outcome (#1903): re-parent every owned live session tab into
    * another window so nothing is lost, reusing the #1900 hand-off seam. Dirty
-   * file editors move too, carrying their unsaved buffer (#4412), dirty
+   * file editors move too, carrying their unsaved buffer (#4412); dirty
    * connection, tunnel and workspace editors carry their form draft without
-   * typed secrets (#4500), and so does
-   * every other tab a hand-off can describe, such as saved file editors,
-   * Settings or the log viewer (#4501, {@link canMoveTabWithoutSession}).
-   * Rejects, moving nothing, while a dirty editor cannot carry its unsaved
-   * state.
+   * typed secrets (#4500); and so does every other tab a hand-off can
+   * describe, such as saved file editors, Settings or the log viewer (#4501,
+   * {@link canMoveTabWithoutSession}). Rejects, moving nothing, while a dirty
+   * editor (an unsaved Settings panel) cannot carry its unsaved state.
    */
   moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
 }
