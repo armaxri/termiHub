@@ -327,6 +327,27 @@ fn apply_os(policy: &SandboxPolicy) -> Result<SandboxReport, SandboxError> {
     Ok(SandboxReport::default())
 }
 
+/// Coverage builds only (#4693): the folder the LLVM profile runtime writes
+/// this instrumented runner's counters into at exit — the parent of
+/// `$LLVM_PROFILE_FILE`, canonical. Each OS layer grants it read/write on top
+/// of the policy; without the grant the confined runner could not save its
+/// profile and its lines would never reach the coverage report.
+/// `cfg(coverage)` is set by cargo-llvm-cov alone: a release or ordinary debug
+/// runner has neither this function nor any grant beyond the policy. `None`
+/// when the variable is unset or names no absolute, existing, pattern-free
+/// folder. Windows confines by the host-made AppContainer ACLs instead, so
+/// a sandboxed Windows runner's profile stays unwritten.
+#[cfg(all(coverage, feature = "runner"))]
+#[must_use]
+pub fn coverage_profile_dir() -> Option<std::path::PathBuf> {
+    let file = std::path::PathBuf::from(std::env::var_os("LLVM_PROFILE_FILE")?);
+    let dir = file.parent()?;
+    if !dir.is_absolute() || dir.to_string_lossy().contains('%') {
+        return None;
+    }
+    std::fs::canonicalize(dir).ok().filter(|d| d.is_dir())
+}
+
 /// Drain the system-call denials counted since the last call into
 /// `Denied{syscall}` log frames (#4236; see [`denial`]). Empty where the
 /// sandbox does not trap denials (every platform but Linux).

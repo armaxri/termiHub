@@ -96,7 +96,11 @@ fn outermost(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
 impl Plan {
     /// The plan for `policy`: mask its denied folders (the home folder),
     /// keeping its install folder and, when it exists, its data folder.
-    pub fn for_policy(policy: &SandboxPolicy) -> io::Result<Self> {
+    ///
+    /// The folders of `extra` (absolute, canonical) are kept reachable too.
+    /// Only a coverage build passes any (#4693: the instrumented runner's
+    /// profile folder); every other build passes none.
+    pub fn for_policy_keeping(policy: &SandboxPolicy, extra: &[PathBuf]) -> io::Result<Self> {
         let mut keep = vec![PathBuf::from(&policy.install_dir)];
         let data = policy
             .data_dir
@@ -104,6 +108,7 @@ impl Plan {
             .map(PathBuf::from)
             .filter(|d| is_dir(d));
         keep.extend(data.clone());
+        keep.extend(extra.iter().filter(|d| is_dir(d)).cloned());
         let denied: Vec<PathBuf> = policy.denied_dirs.iter().map(PathBuf::from).collect();
         let workdir = data.unwrap_or_else(|| PathBuf::from("/"));
         Self::mask(&denied, &keep, &workdir)
@@ -436,10 +441,39 @@ mod tests {
             denied_dirs: vec![home.to_str().unwrap().to_owned()],
             simulate_missing: Vec::new(),
         };
-        let plan = Plan::for_policy(&policy).unwrap();
+        let plan = Plan::for_policy_keeping(&policy, &[]).unwrap();
         let s = steps(&plan);
         assert_eq!(s.last().map(String::as_str), Some("chdir /"));
         assert!(s.contains(&format!("bind 0 {}", install.display())));
+        assert!(!s.iter().any(|step| step.contains("absent")));
+    }
+
+    /// An extra kept folder (a coverage build's profile folder, #4693) is
+    /// bound back under the mask like the plugin's own folders; a missing
+    /// one is skipped.
+    #[test]
+    fn extra_kept_folders_are_bound_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().canonicalize().unwrap();
+        let install = home.join("acme");
+        let profiles = home.join("profiles");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&profiles).unwrap();
+        let policy = SandboxPolicy {
+            install_dir: install.to_str().unwrap().to_owned(),
+            data_dir: None,
+            denied_dirs: vec![home.to_str().unwrap().to_owned()],
+            simulate_missing: Vec::new(),
+        };
+        let plan =
+            Plan::for_policy_keeping(&policy, &[profiles.clone(), home.join("absent")]).unwrap();
+        let s = steps(&plan);
+        assert!(s
+            .iter()
+            .any(|step| step.starts_with("bind ") && step.ends_with(&*install.to_string_lossy())));
+        assert!(s
+            .iter()
+            .any(|step| step.starts_with("bind ") && step.ends_with(&*profiles.to_string_lossy())));
         assert!(!s.iter().any(|step| step.contains("absent")));
     }
 
