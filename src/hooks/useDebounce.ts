@@ -1,31 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-/**
- * Debounce a rapidly-changing value: returns the most recent `value` that has
- * held steady for `delayMs`. Each new `value` (or `delayMs`) restarts the timer,
- * and the pending timer is cleared on unmount, so no stale update fires after the
- * component is gone.
- *
- * Use this for read-only derivations of a fast-changing value (e.g. a debounced
- * search term feeding a filter or a validation query). For firing a *side effect*
- * — a debounced save or validate — reach for {@link useDebouncedCallback}, which
- * also exposes `cancel()` and `flush()`.
- *
- * @typeParam T - the value type.
- * @param value - the source value to debounce.
- * @param delayMs - how long `value` must hold steady before it is surfaced.
- * @returns the debounced value.
- */
-export function useDebounce<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(id);
-  }, [value, delayMs]);
-
-  return debounced;
-}
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 /**
  * A stable debounced function with imperative controls.

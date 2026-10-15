@@ -47,7 +47,7 @@ import { currentAgentsView } from "@/store/agentsBridge";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { createLayoutCommit } from "./layoutCommit";
 import { prunedTabState, prunedTabsState, releaseTabFromSharedRegions } from "../tabTeardown";
-import { notifyWorkflowTabClosing } from "../workflowSessionTriggers";
+import { notifyWorkflowTabClosing, notifyWorkflowTabDeparted } from "../workflowSessionTriggers";
 import { errorMessage } from "@/utils/errorMessage";
 import {
   deliverCarriedFormDraft,
@@ -183,12 +183,13 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       // before this, in the caller's guard). The backend session itself is
       // closed once, by each tab's Terminal view unmounting — not here.
       const releasedSessions = new Set<string>();
+      const closingTabIdSet = new Set(closingTabIds);
       for (const tab of closingTabs) {
         // Lifecycle record + broadcast membership (#4313).
         releaseTabFromSharedRegions(get, tab.id);
         // On-disconnect workflow triggers (#3791) — checked before the tab
         // leaves the layout.
-        notifyWorkflowTabClosing({ get, set }, tab.id);
+        notifyWorkflowTabClosing({ get, set }, tab.id, closingTabIdSet);
         // Relinquish backend `session → window` ownership (#1939), once per
         // session, skipping a session mid-move (the destination owns it).
         const sid = tab.sessionId;
@@ -512,8 +513,10 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
       // one), so release it from the shared regions — lifecycle record and
       // broadcast membership — exactly as a close would (#4313, FES2-002).
       // Ownership release and close workflow triggers are deliberately skipped:
-      // the session is moving, not closing.
+      // the session is moving, not closing. Its on-connect records are dropped,
+      // though — the old tab id no longer exists here (#4784).
       releaseTabFromSharedRegions(get, tabId);
+      notifyWorkflowTabDeparted({ get, set }, tabId);
 
       // Remove the tab from the source window's tree. The Terminal unmount sees
       // the moving flag and skips closeTerminal, keeping the backend session

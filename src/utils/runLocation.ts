@@ -57,13 +57,3 @@ export function runLocationOptions(
   }
   return options;
 }
-
-/**
- * The human label for a run-location, naming the agent when it is known —
- * "This computer" or "Agent · «name»" — for a badge / where-it-runs indicator.
- */
-export function runLocationLabel(location: RunLocation, agents: RemoteAgentDefinition[]): string {
-  if (!isAgentHost(location)) return "This computer";
-  const name = agents.find((a) => a.id === location.agentId)?.name ?? location.agentId;
-  return `Agent · ${name}`;
-}

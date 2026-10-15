@@ -359,3 +359,44 @@ fn reading_field_secrets_from_a_locked_store_fails_without_writing() {
     assert!(mgr.save_field_secrets("Desk", None, prompted).is_err());
     assert!(store.snapshot().is_empty());
 }
+
+#[test]
+fn the_editor_lists_and_clears_stored_field_secret_names() {
+    // The connection editor sees which field secrets are stored (names only)
+    // and removes exactly the one the user cleared (#4431).
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::default());
+    let mgr = manager(dir.path(), &store);
+    let id = mgr.save_connection(tunnelled_vnc()).unwrap();
+    let mut prompted = termihub_core::connection::secrets::TakenSecrets::default();
+    prompted.hops.insert("ops@bastion:22".into(), HOP.into());
+    mgr.save_field_secrets(&id, None, prompted).unwrap();
+
+    let keys = mgr.stored_field_secret_keys(&id, None).unwrap();
+    assert_eq!(keys.fields, vec!["sshPassword"]);
+    assert_eq!(keys.hops, vec!["ops@bastion:22"]);
+
+    mgr.clear_field_secrets(&id, None, &["sshPassword".into()], &[])
+        .unwrap();
+    let stored = mgr.stored_field_secrets(&id, None).unwrap();
+    assert!(stored.fields.is_empty());
+    assert_eq!(
+        stored.hops.get("ops@bastion:22").map(String::as_str),
+        Some(HOP)
+    );
+}
+
+#[test]
+fn listing_field_secret_names_from_a_locked_store_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore {
+        fail_gets: true,
+        ..Default::default()
+    });
+    let mgr = manager(dir.path(), &store);
+    assert!(mgr.stored_field_secret_keys("Desk", None).is_err());
+    assert!(mgr
+        .clear_field_secrets("Desk", None, &["sshPassword".into()], &[])
+        .is_err());
+    assert!(store.snapshot().is_empty());
+}

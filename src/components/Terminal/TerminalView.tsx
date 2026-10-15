@@ -94,8 +94,8 @@ export function TerminalView() {
   const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
   const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
   const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
-  // Render cut (#2242): the toolbar's active/pressed state is sourced from the
-  // projected broadcast region when it mirrors appStore, else appStore verbatim.
+  // The toolbar's active/pressed state is sourced from the authoritative
+  // `broadcast` region (#2242).
   const broadcastActive = useProjectedBroadcast().active;
   const stopBroadcast = useAppStore((s) => s.stopBroadcast);
   const macros = useAppStore((s) => s.macros);

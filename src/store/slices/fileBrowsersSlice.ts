@@ -73,7 +73,11 @@ export function sessionPaneShowsOtherSession(sessionId: string): boolean {
   return sessionPaneOwner !== null && sessionPaneOwner !== sessionId;
 }
 
-/** Reset the module-level request bookkeeping (tests only). */
+/**
+ * Reset the module-level request bookkeeping (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetFileBrowserRequestStateForTest(): void {
   localFileBrowserRequestSeq = 0;
   sessionFileBrowserRequestSeq = 0;

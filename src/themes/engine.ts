@@ -299,7 +299,11 @@ export function getThemeRevision(): number {
   return themeRevision;
 }
 
-/** Clean up the matchMedia listener and all registered callbacks. */
+/**
+ * Clean up the matchMedia listener and all registered callbacks.
+ *
+ * @internal Test-only teardown; the app keeps the engine for its whole lifetime.
+ */
 export function dispose(): void {
   removeMediaListener();
   changeCallbacks.clear();

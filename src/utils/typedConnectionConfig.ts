@@ -166,24 +166,3 @@ export function isSshConnectionConfig(
 ): config is Extract2<"ssh"> {
   return config?.type === "ssh";
 }
-
-/** True when the config is a built-in serial connection. */
-export function isSerialConnectionConfig(
-  config: ConnectionConfig | null | undefined
-): config is Extract2<"serial"> {
-  return config?.type === "serial";
-}
-
-/** True when the config is a built-in telnet connection. */
-export function isTelnetConnectionConfig(
-  config: ConnectionConfig | null | undefined
-): config is Extract2<"telnet"> {
-  return config?.type === "telnet";
-}
-
-/** True when the config is a built-in Docker connection. */
-export function isDockerConnectionConfig(
-  config: ConnectionConfig | null | undefined
-): config is Extract2<"docker"> {
-  return config?.type === "docker";
-}

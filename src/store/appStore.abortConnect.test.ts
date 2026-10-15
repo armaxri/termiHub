@@ -30,7 +30,8 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore, ABORTED_CONNECT_MESSAGE } from "./appStore";
+import { useAppStore } from "./appStore";
+import { ABORTED_CONNECT_MESSAGE } from "./reconnectHelpers";
 
 describe("abortTerminalConnect", () => {
   beforeEach(() => {

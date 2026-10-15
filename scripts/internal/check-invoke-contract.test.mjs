@@ -367,7 +367,8 @@ describe("checkRepo on a fixture repository", () => {
         `import { enablePlugin, listPlugins } from "./services/api";\n` +
           `export const run = () => { enablePlugin("x"); listPlugins(); };\n`
       );
-      return checkRepo(root);
+      // The fixture registers none of the real allowlisted commands.
+      return checkRepo(root, new Map());
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

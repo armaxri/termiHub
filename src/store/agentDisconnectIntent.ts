@@ -39,7 +39,11 @@ export function consumeAgentDisconnectIntent(agentId: string): boolean {
   return pending.delete(agentId);
 }
 
-/** Forget every recorded intent (test isolation). */
+/**
+ * Forget every recorded intent (test isolation).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetAgentDisconnectIntentsForTest(): void {
   pending.clear();
 }

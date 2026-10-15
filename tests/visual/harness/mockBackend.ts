@@ -14,6 +14,7 @@
  */
 
 import connectionsWire from "../../../src/test/fixtures/wire/connections.json";
+import { STORED_SECRET_CONNECTIONS } from "./storedSecretIds";
 
 /** Per-test knobs the spec sets before the app boots. */
 export interface VisualScenario {
@@ -29,6 +30,12 @@ export interface VisualScenario {
    * them, and one more key matches no saved workspace.
    */
   importConfirmations?: boolean;
+  /**
+   * Seed saved connections whose schema secrets are stored (#4431): a plugin
+   * connection with stored token fields and an SSH connection whose inline
+   * jump-host hop has a stored password, with real-shaped connection types.
+   */
+  storedSecrets?: boolean;
 }
 
 declare global {
@@ -150,6 +157,116 @@ const IMPORT_CONFIRMED_SETTINGS = {
   ],
 };
 
+/** The password-bearing fields of the SSH schema the editor and hop editor render. */
+const SSH_FIELDS = [
+  { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+  { key: "port", label: "Port", fieldType: { type: "port" }, required: true, default: 22 },
+  { key: "username", label: "Username", fieldType: { type: "text" }, required: false },
+  {
+    key: "authMethod",
+    label: "Authentication",
+    fieldType: {
+      type: "select",
+      options: [
+        { value: "key", label: "SSH Key" },
+        { value: "password", label: "Password" },
+        { value: "agent", label: "SSH Agent" },
+      ],
+    },
+    required: true,
+    default: "key",
+  },
+  {
+    key: "password",
+    label: "Password",
+    fieldType: { type: "password" },
+    required: false,
+    visibleWhen: { field: "authMethod", equals: "password" },
+  },
+  {
+    key: "keyPath",
+    label: "Key Path",
+    fieldType: { type: "filePath", kind: "file" },
+    required: false,
+    visibleWhen: { field: "authMethod", equals: "key" },
+  },
+];
+
+const CAPABILITIES = { monitoring: false, fileBrowser: false, resize: true, persistent: false };
+
+/** Connection types for the stored-secrets editor surfaces (#4431). */
+const STORED_SECRET_TYPES = [
+  {
+    typeId: "ssh",
+    displayName: "SSH",
+    icon: "terminal",
+    schema: { groups: [{ key: "connection", label: "Connection", fields: SSH_FIELDS }] },
+    capabilities: CAPABILITIES,
+  },
+  {
+    typeId: "plugin:visual:api",
+    displayName: "Metrics API",
+    icon: "plug",
+    schema: {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [
+            { key: "endpoint", label: "Endpoint", fieldType: { type: "text" }, required: true },
+            { key: "apiToken", label: "API Token", fieldType: { type: "password" } },
+            { key: "signingSecret", label: "Signing Secret", fieldType: { type: "password" } },
+          ],
+        },
+      ],
+    },
+    capabilities: CAPABILITIES,
+  },
+];
+
+const STORED_SECRET_ROWS = [
+  {
+    id: STORED_SECRET_CONNECTIONS.plugin,
+    name: "Metrics API",
+    folderId: "Work",
+    config: {
+      type: "plugin:visual:api",
+      config: { endpoint: "https://metrics.internal.example.com/v2" },
+    },
+  },
+  {
+    id: STORED_SECRET_CONNECTIONS.hop,
+    name: "Behind Bastion",
+    folderId: "Work",
+    config: {
+      type: "ssh",
+      config: {
+        host: "10.20.0.5",
+        port: 22,
+        username: "deploy",
+        authMethod: "key",
+        proxyJump: [
+          {
+            host: "bastion-with-a-long-hostname.example.com",
+            port: 22,
+            username: "ops",
+            authMethod: "password",
+          },
+        ],
+      },
+    },
+  },
+];
+
+/** The stored field secret names — never values — each connection reports. */
+const STORED_SECRET_KEYS: Record<string, { fields: string[]; hops: string[] }> = {
+  [STORED_SECRET_CONNECTIONS.plugin]: { fields: ["apiToken", "signingSecret"], hops: [] },
+  [STORED_SECRET_CONNECTIONS.hop]: {
+    fields: [],
+    hops: ["ops@bastion-with-a-long-hostname.example.com:22"],
+  },
+};
+
 function settingsFor(scenario: VisualScenario): unknown {
   return scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
 }
@@ -158,7 +275,9 @@ function regionView(region: string, populated: boolean): unknown {
   const wire = connectionsWire.loadConnectionsAndFolders;
   if (region === "settings") return settingsFor(window.__VISUAL_SCENARIO__ ?? {});
   if (region === "connections") {
-    return populated ? { folders: wire.folders, connections: wire.connections } : {};
+    if (!populated) return {};
+    const extra = window.__VISUAL_SCENARIO__?.storedSecrets ? STORED_SECRET_ROWS : [];
+    return { folders: wire.folders, connections: [...wire.connections, ...extra] };
   }
   return {};
 }
@@ -244,7 +363,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "load_connections_and_folders":
       return populated ? wire : { connections: [], folders: [], agents: [], externalErrors: [] };
     case "get_connection_types":
-      return [];
+      return scenario.storedSecrets ? STORED_SECRET_TYPES : [];
+    case "list_stored_field_secret_keys":
+      return STORED_SECRET_KEYS[String(args?.connectionId ?? "")] ?? { fields: [], hops: [] };
     case "get_workspaces":
       return populated ? WORKSPACES : [];
     case "load_workspace": {

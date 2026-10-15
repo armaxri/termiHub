@@ -114,7 +114,10 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / view + seed dedup state. */
+ * drops any active subscription / view + seed dedup state.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function setAgentTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
@@ -220,7 +223,11 @@ export function ensureAgentsSubscribed(): Promise<ProjectionClient> {
   return startPromise;
 }
 
-/** Drop the region subscription (tests / re-init). */
+/**
+ * Drop the region subscription (tests / re-init).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function stopAgentsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
@@ -247,6 +254,8 @@ export function currentAgentsView(): AgentsView {
  * immediately, so a reader that renders (or re-renders on a mutation) sees the slice
  * without an explicit flush — matching the synchronous behaviour the removed
  * `appStore` fallback used to provide. Never call this from production code.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function __emitAgentsViewForTest(view: AgentsView, version: number): void {
   commitAgentsView(view, version);
@@ -260,6 +269,8 @@ export function __emitAgentsViewForTest(view: AgentsView, version: number): void
  * always the intended current view), advancing the version guard so a later
  * real diff is not treated as stale relative to the seed. The twin of the
  * connections bridge's `setConnectionsViewForTest`. Never call from production.
+ *
+ * @internal Test-only hook; no production code calls it.
  */
 export function setAgentsViewForTest(view: AgentsView): void {
   lastView = view;
@@ -290,6 +301,9 @@ let lastSeededSignature: string | null = null;
  * last seeded one is not re-dispatched (a repeated no-op is idempotent server-side
  * anyway). On any failure the dedup signature is cleared so a later change retries
  * the mirror.
+ *
+ * @internal Tests seed the agents region through it; production no longer mirrors appStore into the
+ * region.
  */
 export function seedAgentsRegion(
   remoteAgents: RemoteAgentDefinition[],

@@ -508,7 +508,11 @@ export function unloadPluginFromSandbox(pluginId: string): void {
   disposeWorkerIfIdle();
 }
 
-/** Number of plugins tracked by the sandbox, quarantined included (introspection/tests). */
+/**
+ * Number of plugins tracked by the sandbox, quarantined included (introspection/tests).
+ *
+ * @internal Test-only introspection.
+ */
 export function sandboxLoadedCount(): number {
   return loadedPlugins.size;
 }
@@ -598,7 +602,11 @@ export function discardSandboxSession(sessionId: string): void {
 
 // ─── Test-only hooks ─────────────────────────────────────────────────────────
 
-/** Override the worker factory (tests only). */
+/**
+ * Override the worker factory (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function __setSandboxWorkerFactory(factory: (() => Worker) | null): void {
   workerFactory =
     factory ??
@@ -609,7 +617,11 @@ export function __setSandboxWorkerFactory(factory: (() => Worker) | null): void 
       }));
 }
 
-/** Reset all sandbox host state (tests only). */
+/**
+ * Reset all sandbox host state (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function __resetSandboxHost(): void {
   if (worker) worker.terminate();
   worker = null;

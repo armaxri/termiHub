@@ -133,3 +133,67 @@ fn only_connections_that_can_own_field_secrets_touch_the_store() {
         &json!({ "host": "h", "authMethod": "key" })
     ));
 }
+
+#[test]
+fn listing_reports_only_the_names_of_the_stored_secrets() {
+    let store = RecordingStore::default();
+    let mut taken = TakenSecrets::default();
+    taken
+        .fields
+        .insert("sshPassword".into(), "gw-secret".into());
+    taken
+        .fields
+        .insert("apiToken".into(), "token-secret".into());
+    taken.hops.insert("u@h:22".into(), "hop-secret".into());
+    store_field_secrets(&store, "c", taken).unwrap();
+
+    let keys = stored_field_secret_keys(&store, "c").unwrap();
+    assert_eq!(keys.fields, vec!["apiToken", "sshPassword"]);
+    assert_eq!(keys.hops, vec!["u@h:22"]);
+    let wire = serde_json::to_string(&keys).unwrap();
+    for secret in ["gw-secret", "token-secret", "hop-secret"] {
+        assert!(!wire.contains(secret), "a value crossed: {wire}");
+    }
+    assert_eq!(
+        stored_field_secret_keys(&store, "none").unwrap(),
+        StoredFieldSecretKeys::default()
+    );
+}
+
+#[test]
+fn clearing_removes_exactly_the_named_secrets() {
+    let store = RecordingStore::default();
+    let mut taken = TakenSecrets::default();
+    taken.fields.insert("sshPassword".into(), "gw".into());
+    taken.fields.insert("apiToken".into(), "token".into());
+    taken.hops.insert("u@h:22".into(), "hop".into());
+    taken.hops.insert("v@k:22".into(), "hop2".into());
+    store_field_secrets(&store, "c", taken).unwrap();
+
+    remove_field_secrets(&store, "c", &["sshPassword".into()], &["u@h:22".into()]).unwrap();
+
+    let stored = read_field_secrets(&store, "c").unwrap();
+    assert!(!stored.fields.contains_key("sshPassword"));
+    assert_eq!(
+        stored.fields.get("apiToken").map(String::as_str),
+        Some("token")
+    );
+    assert!(!stored.hops.contains_key("u@h:22"));
+    assert_eq!(stored.hops.get("v@k:22").map(String::as_str), Some("hop2"));
+}
+
+#[test]
+fn clearing_the_last_secret_deletes_the_entry_and_unknown_names_change_nothing() {
+    let store = RecordingStore::default();
+    let mut taken = TakenSecrets::default();
+    taken.fields.insert("sshPassword".into(), "gw".into());
+    store_field_secrets(&store, "c", taken).unwrap();
+
+    remove_field_secrets(&store, "c", &["notStored".into()], &[]).unwrap();
+    assert!(store.value("c", FS).is_some());
+
+    remove_field_secrets(&store, "c", &["sshPassword".into()], &[]).unwrap();
+    assert!(store.value("c", FS).is_none());
+    // Nothing stored: still a no-op.
+    remove_field_secrets(&store, "c", &["sshPassword".into()], &[]).unwrap();
+}

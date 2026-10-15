@@ -90,7 +90,7 @@ async function freshModules() {
   rec.defined.length = 0;
   rec.setThemeCalls.length = 0;
   document.documentElement.removeAttribute("style");
-  const themes = await import("@/themes");
+  const themes = { ...(await import("@/themes")), ...(await import("@/themes/dark")) };
   const customThemes = await import("@/themes/customThemes");
   const mod = await import("./monacoCustomLanguages");
   return { themes, customThemes, mod };

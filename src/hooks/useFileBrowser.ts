@@ -24,11 +24,10 @@ function paneRenderState(pane: FileBrowserPaneView) {
  * All hooks are always called to satisfy Rules of Hooks.
  *
  * The active pane and each pane's per-render UI state (listing, cwd, loading,
- * error) are sourced from the projected client-scoped `file-browser` region via
- * {@link useProjectedFileBrowsers} — the parity-safe render cut (#2228). The region
- * faithfully mirrors `appStore` (and falls back to it when it does not), so the
- * output is value-identical to the pre-cut path. The file *actions* still come from
- * the per-mode hooks, which keep reading `appStore` directly. Since the SFTP
+ * error) are sourced from the authoritative client-scoped `file-browser` region via
+ * {@link useProjectedFileBrowsers} (#2228); there is no `appStore` fallback. The
+ * file *actions* still come from the per-mode hooks, which keep reading
+ * `appStore` directly. Since the SFTP
  * convergence (#2313 / #2422) SSH browses through the session mode like every other
  * remote type — the legacy standalone SFTP browser is gone.
  */

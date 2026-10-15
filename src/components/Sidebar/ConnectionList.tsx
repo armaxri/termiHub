@@ -776,14 +776,12 @@ export function ConnectionList() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
-  // The saved-connection / folder inventory, sourced from the projected
-  // `connections` region when it faithfully mirrors `appStore`, else `appStore`
-  // verbatim (#2225 render cut).
+  // The saved-connection / folder inventory, sourced from the authoritative
+  // `connections` region (#2225).
   const { folders, connections: allConnections } = useProjectedConnections();
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   // The ordered remote-agent list + per-agent saved-definition map, sourced from
-  // the projected `agents` region when it faithfully mirrors `appStore`, else
-  // `appStore` verbatim (#2226 render cut).
+  // the authoritative `agents` region (#2226).
   const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const experimental = useExperimentalFeatures();
 

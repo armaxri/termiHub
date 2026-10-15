@@ -110,7 +110,11 @@ export function installStyleNonce(doc: Document = document): string | null {
   return nonce;
 }
 
-/** Undo {@link installStyleNonce} (tests only). */
+/**
+ * Undo {@link installStyleNonce} (tests only).
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
 export function resetStyleNonceForTests(): void {
   restore?.();
   restore = null;

@@ -31,7 +31,6 @@ const PAYLOADS: Record<string, unknown> = {
     attached_tab_count: 1,
     error_message: null,
   },
-  onTerminalExit: { session_id: "s-1", exit_code: 3 },
   onAgentSetupProgress: { agentId: "a-1", step: "upload", message: "Uploading" },
   onAgentUpdateAvailable: {
     agent_id: "a-1",
@@ -62,7 +61,6 @@ const EXPECTED_ARGS: Record<string, unknown[]> = {
       errorMessage: null,
     },
   ],
-  onTerminalExit: ["s-1", 3],
   onAgentSetupProgress: ["a-1", "upload", "Uploading"],
   onAgentUpdateAvailable: [
     { agentId: "a-1", currentVersion: "0.1.0", availableVersion: "0.2.0", staged: true },

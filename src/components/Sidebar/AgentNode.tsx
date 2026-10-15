@@ -772,8 +772,7 @@ export function AgentNode({
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
   // This agent's live sessions, saved definitions and folders, sourced from the
-  // projected `agents` region when it faithfully mirrors `appStore`, else
-  // `appStore` verbatim (#2226 render cut).
+  // authoritative `agents` region (#2226).
   const {
     agentSessions: projectedSessions,
     agentDefinitions: projectedDefinitions,

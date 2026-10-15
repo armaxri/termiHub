@@ -4,8 +4,6 @@
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { TAURI_EVENT } from "./eventNames";
-
-export { TAURI_EVENT, type TauriEventName } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
@@ -202,16 +200,6 @@ export async function onAgentCrashNoticesChanged(
 ): Promise<UnlistenFn> {
   return await listen<AgentCrashNotice[]>(TAURI_EVENT.agentCrashNoticesChanged, (event) => {
     callback(event.payload);
-  });
-}
-
-/** Subscribe to terminal exit events */
-export async function onTerminalExit(
-  callback: (sessionId: string, exitCode: number | null) => void
-): Promise<UnlistenFn> {
-  return await listen<TerminalExitEvent>(TAURI_EVENT.terminalExit, (event) => {
-    const { session_id, exit_code } = event.payload;
-    callback(session_id, exit_code);
   });
 }
 

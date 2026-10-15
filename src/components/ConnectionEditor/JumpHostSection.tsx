@@ -4,6 +4,7 @@ import type { JumpHostConfig } from "@/types/connection";
 import type { SettingsSchema } from "@/types/schema";
 import { Checkbox, Field } from "@/components/ui";
 import { jumpHostInlineFields, type SavedConnectionOption } from "@/utils/jumpHost";
+import type { StoredSecretsControl } from "@/components/DynamicForm/storedSecrets";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
@@ -26,6 +27,8 @@ interface JumpHostSectionProps {
   errors?: string[];
   /** Non-blocking advisories. */
   warnings?: string[];
+  /** Inline-hop passwords stored for the saved connection, by hop identity (#4431). */
+  storedHopSecrets?: StoredSecretsControl;
 }
 
 /** A fresh inline hop, used when adding a hop. */
@@ -56,6 +59,7 @@ export function JumpHostSection({
   sshSchema,
   errors = [],
   warnings = [],
+  storedHopSecrets,
 }: JumpHostSectionProps) {
   const hops = useMemo(() => value ?? [], [value]);
   const enabled = hops.length > 0;
@@ -156,6 +160,7 @@ export function JumpHostSection({
                 fields={inlineFields}
                 onChange={(patch) => updateHop(i, patch)}
                 savedConnections={savedConnections}
+                storedHopSecrets={storedHopSecrets}
               />
             );
             // A lone hop renders as a plain field group; multiple hops get a

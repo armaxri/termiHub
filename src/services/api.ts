@@ -102,7 +102,6 @@ import type { SshKeyValidation } from "@/types/generated/SshKeyValidation";
 import type { SshTrustedHost } from "@/types/generated/SshTrustedHost";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
 import type { TransferQueueState } from "@/types/generated/TransferQueueState";
-import type { TransferSnapshot } from "@/types/generated/TransferSnapshot";
 import type { NativeTrustAckError } from "@/types/generated/NativeTrustAckError";
 import type { NativeTrustSnapshot } from "@/types/generated/NativeTrustSnapshot";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
@@ -1637,9 +1636,9 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 
 // The transfer event/queue DTOs are generated via ts-rs (audit DUP-030, #3088)
 // from the projection mirrors in `src-tauri/src/transfers_projection/store.rs`,
-// which deserialize exactly what core's `transfer-progress` / `transfer_list`
-// payloads emit. The #1336 rich `transfer-progress` fields stay optional.
-export type { TransferQueueState, TransferProgress, TransferSnapshot };
+// which deserialize exactly what core's `transfer-progress` payloads emit. The
+// #1336 rich `transfer-progress` fields stay optional.
+export type { TransferQueueState, TransferProgress };
 
 /**
  * Rejection raised by {@link awaitTransfer} when a transfer settles via a
@@ -1771,11 +1770,6 @@ export async function folderPasteLinkTransfer(pasteId: string, transferId: strin
  */
 export async function folderPasteTakeInterrupted(): Promise<InterruptedFolderPaste[]> {
   return await invoke<InterruptedFolderPaste[]>("folder_paste_take_interrupted");
-}
-
-/** List queued transfers, optionally filtered by session. */
-export async function transferList(sessionId?: string): Promise<TransferSnapshot[]> {
-  return await invoke<TransferSnapshot[]>("transfer_list", { sessionId });
 }
 
 // --- Local filesystem commands ---
@@ -3093,6 +3087,48 @@ export async function storeFieldSecrets(
     connectionId,
     sourceFile: sourceFile ?? null,
     secrets,
+  });
+}
+
+/**
+ * The names — never the values — of a saved connection's stored field secrets
+ * (#4431): top-level secret settings keys and inline-hop identities.
+ */
+export interface StoredFieldSecretKeys {
+  fields: string[];
+  hops: string[];
+}
+
+/**
+ * List which field secrets are stored for a saved connection, names only
+ * (#4431). Returns `null` when the store cannot be read (locked or
+ * unavailable). `sourceFile` scopes the lookup as in {@link storeCredential}.
+ */
+export async function listStoredFieldSecretKeys(
+  connectionId: string,
+  sourceFile?: string | null
+): Promise<StoredFieldSecretKeys | null> {
+  return await invoke<StoredFieldSecretKeys | null>("list_stored_field_secret_keys", {
+    connectionId,
+    sourceFile: sourceFile ?? null,
+  });
+}
+
+/**
+ * Remove exactly the named stored field secrets of a saved connection
+ * (`fields` by settings key, `hops` by hop identity), keeping the others
+ * (#4431). `sourceFile` scopes the key as in {@link storeCredential}.
+ */
+export async function clearFieldSecrets(
+  connectionId: string,
+  cleared: StoredFieldSecretKeys,
+  sourceFile?: string | null
+): Promise<void> {
+  await invoke("clear_field_secrets", {
+    connectionId,
+    sourceFile: sourceFile ?? null,
+    fields: cleared.fields,
+    hops: cleared.hops,
   });
 }
 

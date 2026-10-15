@@ -6,9 +6,9 @@
  * tab-strip status dot, the split-panel overlay gates and Open Connections — source
  * their connect / reconnect / disconnect status from the shared `session-lifecycle`
  * region via {@link import("@/store/useSessionLifecycle").useProjectedSessionLifecycle}
- * / {@link import("@/store/useSessionLifecycle").useProjectedSessionLifecycleMaps},
- * under a faithful-mirror gate with an `appStore` fallback. This harness lets a test
- * drive that region without a backend.
+ * / {@link import("@/store/useSessionLifecycle").useProjectedSessionLifecycleMaps};
+ * the region is authoritative, with no `appStore` fallback. This harness lets a
+ * test drive that region without a backend.
  *
  * It generalises the in-memory region double first written inline in
  * `TerminalDisconnectOverlay.projection.test.tsx` (#2204): {@link FakeSessionTransport}

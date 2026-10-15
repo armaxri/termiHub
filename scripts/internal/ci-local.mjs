@@ -69,7 +69,7 @@ export const CI_LOCAL_JOBS = {
       "Frontend: manual-test inventory",
       "Version sources + Tauri drift",
     ],
-    omitted: "Frontend Code Quality: the advisory knip report",
+    omitted: "Frontend Code Quality: the advisory knip reports (default + --production)",
   },
   "visual-checks": { gates: ["Frontend: rendered visual checks"] },
   "bundle-size": { gates: ["Frontend: bundle size budget"] },

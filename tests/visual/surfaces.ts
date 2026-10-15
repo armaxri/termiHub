@@ -90,9 +90,9 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
 
 /**
  * Tests per window: settings, imported confirmations, sidebars, unlock,
- * shortcuts, and STORE_DIALOGS.
+ * shortcuts, the connection editor with stored secrets, and STORE_DIALOGS.
  */
-export const EXPECTED_TESTS = WINDOWS.length * (5 + STORE_DIALOGS.length);
+export const EXPECTED_TESTS = WINDOWS.length * (6 + STORE_DIALOGS.length);
 
 const RESULTS = join(import.meta.dirname, "test-results");
 /** Where every surface's screenshot goes (uploaded as a CI artifact). */

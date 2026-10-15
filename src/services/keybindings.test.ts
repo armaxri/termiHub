@@ -21,7 +21,6 @@ import {
   DEFAULT_BINDINGS,
   unbindAction,
   isUnboundCombo,
-  isActionUnbound,
   getOverrides,
   UNBOUND_COMBO,
 } from "./keybindings";
@@ -453,7 +452,7 @@ describe("unbind", () => {
 
     unbindAction("close-tab");
 
-    expect(isActionUnbound("close-tab")).toBe(true);
+    expect(isUnboundCombo(getEffectiveCombo("close-tab"))).toBe(true);
     expect(findMatchingAction(makeKeyEvent("W", { ctrl: true, shift: true }))).toBeNull();
     expect(processKeyEvent(makeKeyEvent("W", { ctrl: true, shift: true }))).toBeNull();
   });
@@ -475,18 +474,18 @@ describe("unbind", () => {
 
     // Simulate reload from persisted settings.
     clearOverrides();
-    expect(isActionUnbound("copy")).toBe(false);
+    expect(isUnboundCombo(getEffectiveCombo("copy"))).toBe(false);
     setOverrides(entries);
-    expect(isActionUnbound("copy")).toBe(true);
+    expect(isUnboundCombo(getEffectiveCombo("copy"))).toBe(true);
     expect(findMatchingAction(makeKeyEvent("C", { ctrl: true, shift: true }))).toBeNull();
   });
 
   it("reset-to-default restores an unbound action", () => {
     unbindAction("close-tab");
-    expect(isActionUnbound("close-tab")).toBe(true);
+    expect(isUnboundCombo(getEffectiveCombo("close-tab"))).toBe(true);
 
     setOverride("close-tab", null);
-    expect(isActionUnbound("close-tab")).toBe(false);
+    expect(isUnboundCombo(getEffectiveCombo("close-tab"))).toBe(false);
     expect(findMatchingAction(makeKeyEvent("W", { ctrl: true, shift: true }))).toBe("close-tab");
   });
 

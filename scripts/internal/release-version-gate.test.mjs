@@ -16,6 +16,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { parseWorkflowJobs } from "./pr-gate.mjs";
+import { classify } from "./ci-changes.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (rel) => readFileSync(path.join(ROOT, rel), "utf8");
@@ -183,13 +184,92 @@ describe("release.yml --locked builds (#4282)", () => {
   );
 });
 
+/** The body of one top-level code-quality.yml job, up to the next job. */
+function codeQualityJobBody(id) {
+  const start = CODE_QUALITY.indexOf(`\n  ${id}:\n`);
+  expect(start).toBeGreaterThan(-1);
+  const rest = CODE_QUALITY.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[A-Za-z0-9_-]+:\n/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
+const VERSIONS_ONLY_RUN = /run: scripts\/release-check\.sh --versions-only\s*$/m;
+
+/**
+ * The files release-check.sh --versions-only compares: package.json (the
+ * reference) plus every `"<file>:$VAR"` entry of its consistency loop. Read from
+ * the script itself, so a newly compared file is covered without editing here.
+ */
+function comparedVersionFiles() {
+  const script = read("scripts/release-check.sh");
+  const loop = script.match(/for name_ver in ([\s\S]*?); do/);
+  expect(loop).not.toBeNull();
+  const files = [...loop[1].matchAll(/"([^":]+):\$[A-Z_]+"/g)].map((m) => m[1]);
+  expect(script).toMatch(/^PKG_VER=.*\bpackage\.json\b/m);
+  return ["package.json", ...files];
+}
+
+/**
+ * Areas (from scripts/internal/ci-changes.mjs) that start a Code Quality job
+ * running the versions-only check on a PR, read from each job's `if:`.
+ */
+function versionCheckAreas() {
+  const jobs = parseWorkflowJobs(CODE_QUALITY);
+  const areas = new Set();
+  for (const [id, job] of jobs) {
+    if (!VERSIONS_ONLY_RUN.test(codeQualityJobBody(id))) continue;
+    expect(job.needs).toContain("changes");
+    for (const m of (job.if ?? "").matchAll(/needs\.changes\.outputs\.(\w+) != 'false'/g)) {
+      areas.add(m[1]);
+    }
+  }
+  return areas;
+}
+
 describe("per-PR version drift check", () => {
   it("Code Quality's frontend-quality job runs release-check.sh --versions-only", () => {
-    const start = CODE_QUALITY.indexOf("  frontend-quality:");
-    const end = CODE_QUALITY.indexOf("\n  bundle-size:");
-    expect(start).toBeGreaterThan(-1);
-    expect(CODE_QUALITY.slice(start, end)).toMatch(
-      /run: scripts\/release-check\.sh --versions-only\s*$/m
+    expect(codeQualityJobBody("frontend-quality")).toMatch(VERSIONS_ONLY_RUN);
+  });
+
+  it("rdp-sidecar-quality runs it from the repo root (#4777)", () => {
+    const body = codeQualityJobBody("rdp-sidecar-quality");
+    // The job defaults to working-directory rdp-sidecar; the script needs the root.
+    expect(body).toMatch(
+      /run: scripts\/release-check\.sh --versions-only\s*\n\s+working-directory: \.\s*$/m
     );
+  });
+
+  it("reads all seven version files from release-check.sh", () => {
+    expect(comparedVersionFiles().sort()).toEqual(
+      [
+        "package.json",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/Cargo.toml",
+        "agent/Cargo.toml",
+        "core/Cargo.toml",
+        "plugin-runner/Cargo.toml",
+        "rdp-sidecar/Cargo.toml",
+      ].sort()
+    );
+  });
+
+  // The drift guard (#4777): a PR that edits any compared version file, or a
+  // lockfile the check reads versions from, must start a job that runs it.
+  it.each([
+    ...comparedVersionFiles(),
+    "Cargo.lock",
+    "rdp-sidecar/Cargo.lock",
+    "pnpm-lock.yaml",
+  ])("a PR changing only %s runs the version check", (file) => {
+    const areas = versionCheckAreas();
+    const flags = classify([file]);
+    const hit = [...areas].filter((a) => flags[a]);
+    expect(hit, `${file} sets none of ${[...areas].join(", ")}`).not.toEqual([]);
+  });
+
+  it("an rdp-sidecar-only version bump is caught per PR (#4777)", () => {
+    const flags = classify(["rdp-sidecar/Cargo.toml", "rdp-sidecar/Cargo.lock"]);
+    expect(Object.keys(flags).filter((k) => flags[k])).toEqual(["sidecar"]);
+    expect(versionCheckAreas().has("sidecar")).toBe(true);
   });
 });
