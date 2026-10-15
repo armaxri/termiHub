@@ -41,6 +41,7 @@ on:
       # Release crash-report symbol check (#4316).
       - 'tests/release-crash-probe/**'
       - 'scripts/internal/check-release-crash-symbols.sh'
+      - 'scripts/internal/debug-symbols.mjs'
   push:
     branches: [ main, develop ]
     paths:
@@ -64,6 +65,7 @@ on:
       # Release crash-report symbol check (#4316).
       - 'tests/release-crash-probe/**'
       - 'scripts/internal/check-release-crash-symbols.sh'
+      - 'scripts/internal/debug-symbols.mjs'
 
 # Cancel superseded runs (#4119). A newer commit on the same PR, or a newer push
 # to develop, cancels the in-flight run for the older commit, so a merge burst
@@ -221,6 +223,7 @@ jobs:
           # Reader/writer split (#3328): only pushes to develop/main save.
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
+      # Also proves a report symbolizes offline with split debug symbols (#4504).
       - name: Forced panic in a release build names termiHub frames
         run: scripts/internal/check-release-crash-symbols.sh
 
