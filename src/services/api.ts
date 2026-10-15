@@ -102,6 +102,8 @@ import type { SshKeyValidation } from "@/types/generated/SshKeyValidation";
 import type { SshTrustedHost } from "@/types/generated/SshTrustedHost";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
 import type { TransferQueueState } from "@/types/generated/TransferQueueState";
+import type { NativeTrustAckError } from "@/types/generated/NativeTrustAckError";
+import type { NativeTrustSnapshot } from "@/types/generated/NativeTrustSnapshot";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -3342,18 +3344,37 @@ export interface AcknowledgeNativePluginOptions {
 }
 
 /**
- * Acknowledge trust for the native plugin `id`, binding consent to its current
- * backend library, and load it. Returns the refreshed installed-plugin record.
+ * Acknowledge trust for the native plugin `id`, binding consent to the
+ * `binding` the trust surface rendered (`InstalledPlugin.trustSnapshot`), and
+ * load it. Returns the refreshed installed-plugin record.
+ *
+ * The host refuses with a {@link NativeTrustAckError} when `binding` is absent
+ * or in an old format (`binding_missing`), or when the plugin on disk no longer
+ * matches it — its library or requested access changed since it was shown
+ * (`binding_changed`, #4419). See {@link isTrustBindingRefusal}.
  */
 export async function acknowledgeNativePlugin(
   id: string,
+  binding: NativeTrustSnapshot | undefined,
   options: AcknowledgeNativePluginOptions = {}
 ): Promise<InstalledPlugin> {
   return await invoke<InstalledPlugin>("acknowledge_native_plugin", {
     id,
+    binding: binding ?? null,
     acceptUnverifiedToolchain: options.acceptUnverifiedToolchain ?? false,
     acceptReducedIsolation: options.acceptReducedIsolation ?? false,
   });
+}
+
+/**
+ * Whether `err` is the host refusing a native trust acknowledgement because
+ * the binding the user was shown is missing or no longer matches the plugin on
+ * disk (#4419). The trust surface then re-fetches and shows the current state.
+ */
+export function isTrustBindingRefusal(err: unknown): err is NativeTrustAckError {
+  if (typeof err !== "object" || err === null || !("code" in err)) return false;
+  const code = (err as { code: unknown }).code;
+  return code === "binding_changed" || code === "binding_missing";
 }
 
 /** Revoke trust for the native plugin `id` and unload it immediately. */

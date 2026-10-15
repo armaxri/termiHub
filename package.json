@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && node --max-old-space-size=4096 node_modules/vite/bin/vite.js build",
@@ -13,7 +16,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:visual": "playwright test -c tests/visual/playwright.config.ts",
-    "lint": "eslint src/",
+    "lint": "eslint src/ --max-warnings 0",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/visual/**/*.{ts,html}\" \"docs/**/*.md\" \"*.md\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/visual/**/*.{ts,html}\" \"docs/**/*.md\" \"*.md\"",

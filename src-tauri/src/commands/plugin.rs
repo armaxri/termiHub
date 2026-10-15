@@ -18,10 +18,11 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
     check_host_platform, host_target_triple, native_trust_binding,
-    resolve_filesystem_paths_for_host, validate_package, AckAcceptances, AckStatus, InstallOptions,
-    InstalledPlugin, NativeAck, NativeTrustStore, PluginHost, PluginManager, PluginManagerError,
-    PluginManifest, ResolvedFilesystemPath, SignerChange, TrustAssessment, TrustBinding,
-    TrustLevel, TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
+    native_trust_binding_with_snapshot, resolve_filesystem_paths_for_host, validate_package,
+    AckAcceptances, AckStatus, InstallOptions, InstalledPlugin, NativeAck, NativeTrustSnapshot,
+    NativeTrustStore, PluginHost, PluginManager, PluginManagerError, PluginManifest,
+    ResolvedFilesystemPath, SignerChange, TrustAssessment, TrustBinding, TrustLevel,
+    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -504,9 +505,109 @@ pub fn set_native_plugins_enabled(
     Ok(())
 }
 
+/// Why [`acknowledge_native_plugin`] refused, as a machine-readable code
+/// (#4419).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "snake_case")]
+pub enum NativeTrustAckErrorCode {
+    /// The request carried no trust binding, or one in an old or malformed
+    /// format. Never treated as a match.
+    BindingMissing,
+    /// The plugin on disk no longer matches the binding the user was shown —
+    /// its library or the access it requests changed since the row rendered.
+    /// The UI re-fetches and shows the current state.
+    BindingChanged,
+    /// Any other failure (unreadable plugin, store write, load).
+    Failed,
+}
+
+/// The typed error [`acknowledge_native_plugin`] returns: the structured
+/// `{ code, message }` IPC envelope (#4419).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTrustAckError {
+    /// What went wrong.
+    pub code: NativeTrustAckErrorCode,
+    /// A human-readable explanation for the toast.
+    pub message: String,
+}
+
+impl NativeTrustAckError {
+    fn failed(e: impl std::fmt::Display) -> Self {
+        Self {
+            code: NativeTrustAckErrorCode::Failed,
+            message: e.to_string(),
+        }
+    }
+}
+
+/// Check the binding the trust surface rendered against the plugin on disk
+/// (#4419). The comparison is exact; a missing or malformed rendered binding
+/// is refused, never treated as a match.
+fn check_rendered_binding(
+    rendered: Option<&NativeTrustSnapshot>,
+    on_disk: &NativeTrustSnapshot,
+) -> Result<(), NativeTrustAckError> {
+    let Some(rendered) = rendered.filter(|r| r.is_well_formed()) else {
+        return Err(NativeTrustAckError {
+            code: NativeTrustAckErrorCode::BindingMissing,
+            message: "termiHub could not tell which build of this plugin you reviewed. \
+                      Review it again before trusting it."
+                .to_owned(),
+        });
+    };
+    if rendered.library_sha256 != on_disk.library_sha256 {
+        return Err(NativeTrustAckError {
+            code: NativeTrustAckErrorCode::BindingChanged,
+            message: "This plugin's library changed since it was shown. \
+                      Review the current build before trusting it."
+                .to_owned(),
+        });
+    }
+    if rendered.access_digest != on_disk.access_digest {
+        return Err(NativeTrustAckError {
+            code: NativeTrustAckErrorCode::BindingChanged,
+            message: "The access this plugin asks for changed since it was shown. \
+                      Review it again before trusting it."
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Read plugin `id`'s binding from disk, check it against the `rendered`
+/// one, and record the acknowledgment for exactly that binding (#4419).
+fn record_acknowledgment(
+    plugins_root: &std::path::Path,
+    id: &str,
+    rendered: Option<&NativeTrustSnapshot>,
+    acceptances: AckAcceptances,
+) -> Result<(), NativeTrustAckError> {
+    // One manifest read and one library hash: the binding checked is the
+    // binding recorded.
+    let (binding, on_disk) = native_trust_binding_with_snapshot(plugins_root, id)
+        .map_err(NativeTrustAckError::failed)?;
+    check_rendered_binding(rendered, &on_disk)?;
+    NativeTrustStore::load(plugins_root)
+        .acknowledge_with(id, &binding, acceptances)
+        .map_err(NativeTrustAckError::failed)
+}
+
 /// Acknowledge trust for the native plugin `id`, binding the acknowledgment to the
-/// exact backend library currently on disk and the access its installed manifest
-/// requests (#4294), then load it.
+/// exact backend library and the access its installed manifest requests
+/// (#4294), then load it.
+///
+/// `binding` is the [`NativeTrustSnapshot`] the trust surface rendered
+/// (`InstalledPlugin::trust_snapshot`). The acknowledgment is recorded only
+/// when the plugin on disk still produces exactly that snapshot (#4419); a
+/// changed library or access is refused with
+/// [`NativeTrustAckErrorCode::BindingChanged`], and a missing or old-format
+/// binding with [`NativeTrustAckErrorCode::BindingMissing`], so consent never
+/// binds to bytes or access the user was not shown.
 ///
 /// Fails when the plugin has no backend library (not a native plugin) or its
 /// library cannot be read. After recording the acknowledgment it re-runs the
@@ -526,27 +627,24 @@ pub fn set_native_plugins_enabled(
 #[tauri::command]
 pub fn acknowledge_native_plugin(
     id: String,
+    binding: Option<NativeTrustSnapshot>,
     accept_unverified_toolchain: Option<bool>,
     accept_reduced_isolation: Option<bool>,
     app: AppHandle,
     manager: State<'_, PluginManager>,
-) -> Result<InstalledPlugin, String> {
-    // Bind consent to the exact library bytes and the requested access on disk.
-    let binding = native_trust_binding(manager.root(), &id).map_err(|e| e.to_string())?;
-    let mut store = NativeTrustStore::load(manager.root());
-    store
-        .acknowledge_with(
-            &id,
-            &binding,
-            AckAcceptances {
-                unverified_toolchain: accept_unverified_toolchain.unwrap_or(false),
-                reduced_isolation: accept_reduced_isolation.unwrap_or(false),
-            },
-        )
-        .map_err(|e| e.to_string())?;
+) -> Result<InstalledPlugin, NativeTrustAckError> {
+    record_acknowledgment(
+        manager.root(),
+        &id,
+        binding.as_ref(),
+        AckAcceptances {
+            unverified_toolchain: accept_unverified_toolchain.unwrap_or(false),
+            reduced_isolation: accept_reduced_isolation.unwrap_or(false),
+        },
+    )?;
     // Drive the load path now that the plugin is trusted (re-runs on_enable →
     // host.load, which now passes the gate).
-    let plugin = manager.enable(&id).map_err(|e| e.to_string())?;
+    let plugin = manager.enable(&id).map_err(NativeTrustAckError::failed)?;
     emit_changed(&app);
     Ok(plugin)
 }
@@ -658,6 +756,133 @@ mod tests {
         let json = serde_json::to_value(&wider).unwrap();
         assert_eq!(json["state"], "accessChanged");
         assert_eq!(json["addedAccess"][0], "network");
+    }
+
+    /// Install native plugin `p` under `root` with `permissions` and library
+    /// `bytes`, the way the manager lays it out.
+    fn install_native(root: &std::path::Path, permissions: &str, bytes: &[u8]) {
+        let dir = root.join("p");
+        std::fs::create_dir_all(dir.join("backend")).unwrap();
+        let lib = format!(
+            "{}p{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        std::fs::write(dir.join("backend").join(lib), bytes).unwrap();
+        let manifest = format!(
+            r#"{{
+                "id": "p", "name": "P", "version": "1.0.0", "author": "a",
+                "description": "d", "license": "MIT", "apiVersion": "1.1",
+                "platforms": ["linux", "macos", "windows"],
+                "permissions": {permissions},
+                "extensions": {{ "terminalBackend": {{
+                    "connectionType": "p", "displayName": "P", "configSchema": {{}}
+                }} }}
+            }}"#
+        );
+        std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+    }
+
+    /// What the Settings row renders for `p` right now.
+    fn rendered(root: &std::path::Path) -> NativeTrustSnapshot {
+        native_trust_binding_with_snapshot(root, "p").unwrap().1
+    }
+
+    fn ack(
+        root: &std::path::Path,
+        binding: Option<&NativeTrustSnapshot>,
+    ) -> Result<(), NativeTrustAckError> {
+        record_acknowledgment(root, "p", binding, AckAcceptances::default())
+    }
+
+    fn recorded(root: &std::path::Path) -> bool {
+        NativeTrustStore::load(root)
+            .acknowledgments()
+            .iter()
+            .any(|(id, _)| id == "p")
+    }
+
+    /// #4419: a binding that matches what is on disk is recorded.
+    #[test]
+    fn acknowledging_the_rendered_binding_records_it() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        install_native(tmp.path(), r#"["terminal"]"#, b"v1");
+        let shown = rendered(tmp.path());
+        ack(tmp.path(), Some(&shown)).unwrap();
+        let store = NativeTrustStore::load(tmp.path());
+        let binding = native_trust_binding(tmp.path(), "p").unwrap();
+        assert_eq!(store.ack_status("p", &binding), Some(AckStatus::Current));
+    }
+
+    /// #4419: the library changing between render and click is refused.
+    #[test]
+    fn a_library_changed_after_render_is_refused() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        install_native(tmp.path(), r#"["terminal"]"#, b"v1");
+        let shown = rendered(tmp.path());
+        install_native(tmp.path(), r#"["terminal"]"#, b"v2 - swapped");
+        let err = ack(tmp.path(), Some(&shown)).unwrap_err();
+        assert_eq!(err.code, NativeTrustAckErrorCode::BindingChanged);
+        assert!(err.message.contains("library"), "{}", err.message);
+        assert!(!recorded(tmp.path()), "nothing may be recorded");
+    }
+
+    /// #4419: the access changing between render and click is refused.
+    #[test]
+    fn access_changed_after_render_is_refused() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        install_native(tmp.path(), r#"["terminal"]"#, b"v1");
+        let shown = rendered(tmp.path());
+        install_native(tmp.path(), r#"["terminal", "network"]"#, b"v1");
+        let err = ack(tmp.path(), Some(&shown)).unwrap_err();
+        assert_eq!(err.code, NativeTrustAckErrorCode::BindingChanged);
+        assert!(err.message.contains("access"), "{}", err.message);
+        assert!(!recorded(tmp.path()));
+    }
+
+    /// #4419: any mismatch is refused — the comparison is exact.
+    #[test]
+    fn a_mismatched_binding_is_refused() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        install_native(tmp.path(), r#"["terminal"]"#, b"v1");
+        let shown = rendered(tmp.path());
+        let other = termihub_core::plugin::sha256_digest(b"other");
+        let mut wrong_lib = shown.clone();
+        wrong_lib.library_sha256 = other.clone();
+        let mut wrong_access = shown.clone();
+        wrong_access.access_digest =
+            format!("{}{other}", termihub_core::plugin::ACCESS_DIGEST_PREFIX);
+        for bad in [wrong_lib, wrong_access] {
+            let err = ack(tmp.path(), Some(&bad)).unwrap_err();
+            assert_eq!(err.code, NativeTrustAckErrorCode::BindingChanged);
+        }
+        assert!(!recorded(tmp.path()));
+    }
+
+    /// #4419: a missing or old-format binding is refused, never a match.
+    #[test]
+    fn a_missing_or_old_format_binding_is_refused() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        install_native(tmp.path(), r#"["terminal"]"#, b"v1");
+        let shown = rendered(tmp.path());
+        let bare = shown
+            .access_digest
+            .strip_prefix(termihub_core::plugin::ACCESS_DIGEST_PREFIX)
+            .unwrap()
+            .to_owned();
+        let old_format = NativeTrustSnapshot {
+            access_digest: bare,
+            ..shown.clone()
+        };
+        for binding in [None, Some(&old_format)] {
+            let err = ack(tmp.path(), binding).unwrap_err();
+            assert_eq!(err.code, NativeTrustAckErrorCode::BindingMissing);
+        }
+        assert!(!recorded(tmp.path()));
+        // The wire form is the `{ code, message }` envelope.
+        let json = serde_json::to_value(ack(tmp.path(), None).unwrap_err()).unwrap();
+        assert_eq!(json["code"], "binding_missing");
+        assert!(json["message"].is_string());
     }
 
     fn downgrade() -> VersionChange {

@@ -56,8 +56,11 @@ use thiserror::Error;
 
 use super::manifest::{parse_manifest, ConnectionPolicyManifest, PluginManifest, PluginPermission};
 use super::package::MANIFEST_FILE_NAME;
-use super::path_placeholders::PlaceholderBases;
+use super::path_placeholders::{
+    resolve_filesystem_paths, PlaceholderBases, ResolvedFilesystemPath,
+};
 use super::signature::now_rfc3339;
+use super::signature::sha256_digest;
 use crate::util::persist::{self, OverwriteError};
 
 /// The file, alongside the manager's other plugin state files under the plugins
@@ -322,6 +325,99 @@ impl TrustBinding {
             library_sha256: library_sha256.into(),
             access: ApprovedAccess::from_manifest(manifest),
         }
+    }
+}
+
+/// The version tag every [`NativeTrustSnapshot::access_digest`] starts with.
+///
+/// A digest without it — or with an older tag — was not produced by this
+/// host's canonical form, so it never matches (#4419).
+pub const ACCESS_DIGEST_PREFIX: &str = "access-v1:";
+
+/// The canonical document an access digest hashes: every piece of the
+/// requested access the trust surface shows at consent (#4419).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessDigestInput<'a> {
+    /// The access the acknowledgment binds to (resolved, normalised paths).
+    access: &'a ApprovedAccess,
+    /// The `filesystemPaths` exactly as declared, in manifest order.
+    declared_filesystem_paths: &'a [String],
+    /// The `${home}`/`${config}` entries with the folder each resolves to on
+    /// this computer (#4533), as the trust surface shows them.
+    resolved_filesystem_paths: &'a [ResolvedFilesystemPath],
+}
+
+/// The trust binding a native plugin's trust surface rendered (#4419): the
+/// hash of the backend library this host would load and a digest of the
+/// access shown, including the resolved filesystem paths (#4533).
+///
+/// The frontend sends back the snapshot it rendered when the user clicks
+/// Trust; the host acknowledges only when the plugin on disk still produces
+/// exactly this snapshot, so consent never binds to bytes or access the user
+/// was not shown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTrustSnapshot {
+    /// `sha256:` digest of the backend library this host would load.
+    pub library_sha256: String,
+    /// [`ACCESS_DIGEST_PREFIX`] followed by the `sha256:` digest of the
+    /// canonical form of the access the manifest requests.
+    pub access_digest: String,
+}
+
+impl NativeTrustSnapshot {
+    /// The snapshot of a plugin whose library hashes to `library_sha256` and
+    /// whose installed manifest is `manifest`, resolving placeholders against
+    /// this host's folders.
+    #[must_use]
+    pub fn new(library_sha256: impl Into<String>, manifest: &PluginManifest) -> Self {
+        Self::with_bases(library_sha256, manifest, &PlaceholderBases::host())
+    }
+
+    /// [`new`](Self::new), resolving placeholders against explicit `bases`.
+    #[must_use]
+    pub fn with_bases(
+        library_sha256: impl Into<String>,
+        manifest: &PluginManifest,
+        bases: &PlaceholderBases,
+    ) -> Self {
+        let access = ApprovedAccess::from_manifest_with_bases(manifest, bases);
+        let resolved = resolve_filesystem_paths(&manifest.filesystem_paths, bases);
+        let input = AccessDigestInput {
+            access: &access,
+            declared_filesystem_paths: &manifest.filesystem_paths,
+            resolved_filesystem_paths: &resolved,
+        };
+        // Serialising plain structs, strings and vectors cannot fail; an empty
+        // document would still be tagged and so never match a real digest.
+        let canonical = serde_json::to_vec(&input).unwrap_or_default();
+        Self {
+            library_sha256: library_sha256.into(),
+            access_digest: format!("{ACCESS_DIGEST_PREFIX}{}", sha256_digest(&canonical)),
+        }
+    }
+
+    /// Whether this snapshot is in the current format: a `sha256:`-tagged,
+    /// 64-digit lower-case hex library hash and an access digest tagged
+    /// [`ACCESS_DIGEST_PREFIX`] around the same form.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        let digest = |s: &str| {
+            s.strip_prefix("sha256:").is_some_and(|hex| {
+                hex.len() == 64
+                    && hex
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        };
+        digest(&self.library_sha256)
+            && self
+                .access_digest
+                .strip_prefix(ACCESS_DIGEST_PREFIX)
+                .is_some_and(digest)
     }
 }
 
@@ -638,13 +734,49 @@ pub fn native_trust_binding(
     plugins_root: &Path,
     id: &str,
 ) -> Result<TrustBinding, NativeTrustError> {
+    native_trust_binding_with_snapshot(plugins_root, id).map(|(binding, _)| binding)
+}
+
+/// [`native_trust_binding`] plus the [`NativeTrustSnapshot`] of the same
+/// installed plugin, both derived from **one** read of its manifest and one
+/// hash of its library (#4419) — so a check of the snapshot against what the
+/// user was shown covers exactly the binding that is then recorded.
+pub fn native_trust_binding_with_snapshot(
+    plugins_root: &Path,
+    id: &str,
+) -> Result<(TrustBinding, NativeTrustSnapshot), NativeTrustError> {
     let plugin_dir = plugins_root.join(id);
     let not_found =
         |msg: String| NativeTrustError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, msg));
     let json = std::fs::read_to_string(plugin_dir.join(MANIFEST_FILE_NAME))?;
     let manifest = parse_manifest(&json).map_err(|e| not_found(e.to_string()))?;
-    let library_sha256 = native_library_hash(plugins_root, id)?;
-    Ok(TrustBinding::new(library_sha256, &manifest))
+    let library_sha256 = manifest_library_hash(&plugin_dir, &manifest)?;
+    let snapshot = NativeTrustSnapshot::new(library_sha256.clone(), &manifest);
+    Ok((TrustBinding::new(library_sha256, &manifest), snapshot))
+}
+
+/// The hash of the backend library `manifest` selects in `plugin_dir` for this
+/// host. Fails when the manifest declares no native backend or the library
+/// cannot be selected or read.
+pub(crate) fn manifest_library_hash(
+    plugin_dir: &Path,
+    manifest: &PluginManifest,
+) -> Result<String, NativeTrustError> {
+    let not_found =
+        |msg: String| NativeTrustError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, msg));
+    let backend = manifest
+        .extensions
+        .terminal_backend
+        .as_ref()
+        .ok_or_else(|| {
+            not_found(format!(
+                "plugin `{}` declares no native backend",
+                manifest.id
+            ))
+        })?;
+    let lib_path = super::host::select_backend_library(plugin_dir, backend)
+        .map_err(|e| not_found(e.to_string()))?;
+    super::signature::sha256_file(&lib_path).map_err(NativeTrustError::Io)
 }
 
 #[cfg(test)]
@@ -1054,6 +1186,119 @@ mod tests {
         // No manifest → cannot acknowledge.
         std::fs::remove_file(dir.join(MANIFEST_FILE_NAME)).unwrap();
         assert!(native_trust_binding(root, "p").is_err());
+    }
+
+    /// #4419: the snapshot the trust surface renders covers every piece of
+    /// access it shows, and only a current, well-formed one is accepted.
+    #[test]
+    fn trust_snapshot_digest_covers_the_access_shown() {
+        let lib = super::super::signature::sha256_digest(b"lib");
+        let alice = PlaceholderBases::new(Some("/home/alice"), Some("/home/alice/.config"));
+        let bob = PlaceholderBases::new(Some("/home/bob"), Some("/home/bob/.config"));
+        let base = manifest(
+            r#"["terminal", "filesystem"]"#,
+            Some(r#"["${home}/.kube"]"#),
+            None,
+        );
+        let snap = NativeTrustSnapshot::with_bases(lib.clone(), &base, &alice);
+        assert!(snap.is_well_formed(), "{snap:?}");
+        assert!(snap.access_digest.starts_with(ACCESS_DIGEST_PREFIX));
+        // Deterministic for the same manifest and folders.
+        assert_eq!(
+            snap,
+            NativeTrustSnapshot::with_bases(lib.clone(), &base, &alice)
+        );
+        // A placeholder resolving to another folder is different access.
+        assert_ne!(
+            snap.access_digest,
+            NativeTrustSnapshot::with_bases(lib.clone(), &base, &bob).access_digest
+        );
+        // So is another permission, another declared folder, or a policy.
+        for other in [
+            manifest(
+                r#"["terminal", "filesystem", "network"]"#,
+                Some(r#"["${home}/.kube"]"#),
+                None,
+            ),
+            manifest(
+                r#"["terminal", "filesystem"]"#,
+                Some(r#"["${home}/.ssh"]"#),
+                None,
+            ),
+            manifest(
+                r#"["terminal", "filesystem"]"#,
+                Some(r#"["${home}/.kube"]"#),
+                Some(r#"{"allowLocalNetwork": true}"#),
+            ),
+        ] {
+            assert_ne!(
+                snap.access_digest,
+                NativeTrustSnapshot::with_bases(lib.clone(), &other, &alice).access_digest
+            );
+        }
+    }
+
+    #[test]
+    fn only_current_format_snapshots_are_well_formed() {
+        let good = NativeTrustSnapshot::new(
+            super::super::signature::sha256_digest(b"lib"),
+            &manifest(r#"["terminal"]"#, None, None),
+        );
+        assert!(good.is_well_formed());
+        let hex = good
+            .access_digest
+            .strip_prefix(ACCESS_DIGEST_PREFIX)
+            .unwrap();
+        for bad in [
+            NativeTrustSnapshot {
+                access_digest: hex.to_owned(),
+                ..good.clone()
+            },
+            NativeTrustSnapshot {
+                access_digest: format!("access-v0:{hex}"),
+                ..good.clone()
+            },
+            NativeTrustSnapshot {
+                access_digest: String::new(),
+                ..good.clone()
+            },
+            NativeTrustSnapshot {
+                library_sha256: "deadbeef".to_owned(),
+                ..good.clone()
+            },
+            NativeTrustSnapshot {
+                library_sha256: good.library_sha256.to_uppercase(),
+                ..good.clone()
+            },
+        ] {
+            assert!(!bad.is_well_formed(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn binding_with_snapshot_describes_one_installed_state() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        let dir = root.join("p");
+        std::fs::create_dir_all(dir.join("backend")).unwrap();
+        let lib_name = format!(
+            "{}p{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        std::fs::write(dir.join("backend").join(lib_name), b"library bytes").unwrap();
+        let m = manifest(r#"["terminal"]"#, None, None);
+        std::fs::write(
+            dir.join(MANIFEST_FILE_NAME),
+            serde_json::to_string(&m).unwrap(),
+        )
+        .unwrap();
+
+        let (binding, snapshot) = native_trust_binding_with_snapshot(root, "p").unwrap();
+        let hash = super::super::signature::sha256_digest(b"library bytes");
+        assert_eq!(binding, TrustBinding::new(hash.clone(), &m));
+        assert_eq!(snapshot, NativeTrustSnapshot::new(hash, &m));
+        assert_eq!(snapshot.library_sha256, binding.library_sha256);
     }
 
     #[test]

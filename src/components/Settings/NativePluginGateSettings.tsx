@@ -7,6 +7,7 @@ import {
   acknowledgeNativePlugin,
   enablePlugin,
   getNativePluginTrust,
+  isTrustBindingRefusal,
   revokeNativePluginTrust,
   setNativePluginsEnabled,
 } from "@/services/api";
@@ -37,6 +38,7 @@ import { NativePluginRow, openSessionsLabel } from "./NativePluginRow";
  */
 export function NativePluginGateSettings() {
   const plugins = useAppStore((s) => s.plugins);
+  const loadPlugins = useAppStore((s) => s.loadPlugins);
   const sandbox = usePluginSandbox();
   const [trust, setTrust] = useState<NativePluginTrust | null>(null);
   // Switching native plugins off ends every open plugin session; with any
@@ -112,37 +114,64 @@ export function NativePluginGateSettings() {
     setConfirmDisable(false);
   }, [applyGlobal]);
 
-  const handleTrust = useCallback(
-    async (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
-      const name = plugin.manifest.name;
+  /**
+   * Acknowledge `plugin` with the trust binding its row rendered (#4419). When
+   * the host refuses because the plugin changed since it was shown, re-fetch
+   * the plugin list and the trust state so the row shows the current build and
+   * access, and resolve (the dialog closes) instead of throwing.
+   */
+  const acknowledge = useCallback(
+    async (
+      plugin: InstalledPlugin,
+      options: { acceptUnverifiedToolchain: boolean; acceptReducedIsolation?: boolean },
+      success: string,
+      failure: string
+    ) => {
       try {
-        await acknowledgeNativePlugin(plugin.manifest.id, { acceptUnverifiedToolchain });
+        await acknowledgeNativePlugin(plugin.manifest.id, plugin.trustSnapshot, options);
         await load();
-        toast.success(`Trusted and loaded ${name}`);
+        toast.success(success);
       } catch (err) {
-        toast.error(`Failed to trust ${name}: ${errorMessage(err)}`);
+        if (isTrustBindingRefusal(err)) {
+          frontendLog(
+            "native_plugin_gate",
+            `trust for ${plugin.manifest.id} refused (${err.code}); re-fetching`
+          );
+          toast.error(`${plugin.manifest.name} was not trusted: ${err.message}`);
+          await Promise.all([loadPlugins(), load()]);
+          return;
+        }
+        toast.error(`${failure}: ${errorMessage(err)}`);
         throw err;
       }
     },
-    [load]
+    [load, loadPlugins]
+  );
+
+  const handleTrust = useCallback(
+    (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
+      const name = plugin.manifest.name;
+      return acknowledge(
+        plugin,
+        { acceptUnverifiedToolchain },
+        `Trusted and loaded ${name}`,
+        `Failed to trust ${name}`
+      );
+    },
+    [acknowledge]
   );
 
   const handleAcceptReducedIsolation = useCallback(
-    async (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
+    (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
       const name = plugin.manifest.name;
-      try {
-        await acknowledgeNativePlugin(plugin.manifest.id, {
-          acceptUnverifiedToolchain,
-          acceptReducedIsolation: true,
-        });
-        await load();
-        toast.success(`Loaded ${name} with reduced isolation`);
-      } catch (err) {
-        toast.error(`Failed to load ${name}: ${errorMessage(err)}`);
-        throw err;
-      }
+      return acknowledge(
+        plugin,
+        { acceptUnverifiedToolchain, acceptReducedIsolation: true },
+        `Loaded ${name} with reduced isolation`,
+        `Failed to load ${name}`
+      );
     },
-    [load]
+    [acknowledge]
   );
 
   const handleRestart = useCallback(

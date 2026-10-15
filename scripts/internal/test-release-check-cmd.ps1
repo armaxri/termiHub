@@ -155,12 +155,25 @@ if ($RealBundle) {
     # node_modules, "skip"): proof it ran rather than exiting 0 silently.
     $version = (Get-Content -Raw package.json | ConvertFrom-Json).version
     Assert-Result 'versions-only' (Invoke-Raw '--versions-only') 0 `
-        -Expect @("PASS: All 5 files agree on version $version", '  tauri (', 'RESULT: version checks passed') `
+        -Expect @("PASS: All 7 files agree on version $version", 'INFO: plugin-api\Cargo.toml is at', '  tauri (', 'RESULT: version checks passed') `
         -Reject @('FAIL:')
     Assert-Result 'versions-only --expect-version v<ver>' (Invoke-Raw "--versions-only --expect-version v$version") 0 `
         -Expect @("matches the expected version $version", 'RESULT: version checks passed') -Reject @('FAIL:')
     Assert-Result 'versions-only --expect-version mismatch' (Invoke-Raw '--versions-only --expect-version 0.0.0-harness') 1 `
         -Expect @("does not match the expected version '0.0.0-harness'", 'RESULT: version checks FAILED')
+
+    # A shipped sidecar crate left behind on a bump must fail the gate (DOC2-007).
+    $sidecarManifest = Join-Path $RepoRoot 'rdp-sidecar\Cargo.toml'
+    $sidecarOriginal = [IO.File]::ReadAllText($sidecarManifest)
+    try {
+        $bumped = ([regex]'(?m)^version = "[^"]*"').Replace($sidecarOriginal, 'version = "0.0.0-harness"', 1)
+        [IO.File]::WriteAllText($sidecarManifest, $bumped)
+        Assert-Result 'versions-only: rdp-sidecar version drift' (Invoke-Raw '--versions-only') 1 `
+            -Expect @("rdp-sidecar\Cargo.toml has version '0.0.0-harness'", 'RESULT: version checks FAILED') `
+            -Reject @('PASS: All 7 files agree')
+    } finally {
+        [IO.File]::WriteAllText($sidecarManifest, $sidecarOriginal)
+    }
 
     # ------------------------------------------------------------------ markers
     $r = Invoke-ReleaseCheck 'markers'
