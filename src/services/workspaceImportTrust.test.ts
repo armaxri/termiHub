@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceTabDef, WorkspaceTabGroupDef } from "@/types/workspace";
 import {
   canonicalJson,
+  collectImportedItems,
   describeImportedConnection,
   formatUntrustedImportNotice,
   importedCommandKey,
   importedConnectionKey,
+  importKeyKind,
   isImportConfirmed,
   resolveImportTrust,
   withImportConfirmed,
+  withImportsRevoked,
 } from "./workspaceImportTrust";
 
 function groupOf(tabs: WorkspaceTabDef[]): WorkspaceTabGroupDef[] {
@@ -173,5 +176,38 @@ describe("workspaceImportTrust (#4434)", () => {
     expect(notice).toContain(
       'WS: opens local shell /tmp/payload, starts a local program; its connection runs "id"'
     );
+  });
+});
+
+describe("workspaceImportTrust revoke helpers (#4445)", () => {
+  it("withImportsRevoked drops only the given keys and keeps order", () => {
+    expect(withImportsRevoked(["cmd:a", "conn:b", "cmd:c"], ["cmd:a", "cmd:c"])).toEqual([
+      "conn:b",
+    ]);
+    expect(withImportsRevoked(undefined, ["cmd:a"])).toEqual([]);
+    expect(withImportsRevoked(["cmd:a"], [])).toEqual(["cmd:a"]);
+  });
+
+  it("importKeyKind reads the key prefix", () => {
+    expect(importKeyKind("cmd:abc")).toBe("command");
+    expect(importKeyKind("conn:abc")).toBe("connection");
+    expect(importKeyKind("other")).toBe("unknown");
+  });
+
+  it("collectImportedItems lists held items with keys matching the trust keys", async () => {
+    const inline = { type: "ssh", config: { host: "h" } };
+    const items = collectImportedItems(
+      groupOf([
+        { title: "A", pendingInitialCommand: "make" },
+        { title: "B", inlineConfig: inline, inlineConfigUnconfirmed: true },
+        { title: "Local", initialCommand: "npm start" },
+      ])
+    );
+    expect(items.map((i) => [i.id, i.kind, i.tabLabel, i.text])).toEqual([
+      ["0-0-0-cmd", "command", "A (Main)", "make"],
+      ["0-0-1-conn", "connection", "B (Main)", "ssh h"],
+    ]);
+    expect(await items[0].key()).toBe(await importedCommandKey("make"));
+    expect(await items[1].key()).toBe(await importedConnectionKey(inline));
   });
 });
