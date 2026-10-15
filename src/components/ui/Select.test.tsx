@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { Select } from "./Select";
+import { Select, SelectGroup, SelectItem, SelectLabel, SelectSeparator } from "./Select";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -72,5 +72,34 @@ describe("Select", () => {
     expect(items.length).toBe(OPTIONS.length);
     const labels = Array.from(items).map((i) => i.textContent);
     expect(labels.join(" ")).toContain("Telnet");
+  });
+
+  it("renders group, separator and label skins in the children mode (UISF2-009)", () => {
+    render(
+      <Select data-testid="sel" value="ssh" onChange={() => {}}>
+        <SelectItem value="ssh">SSH</SelectItem>
+        <SelectGroup data-testid="grp">
+          <SelectSeparator data-testid="sep" />
+          <SelectLabel data-testid="lbl">Plugins</SelectLabel>
+          <SelectItem value="mqtt">MQTT</SelectItem>
+        </SelectGroup>
+      </Select>
+    );
+    const trigger = document.querySelector('[data-testid="sel"]') as HTMLButtonElement;
+    act(() => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    const group = document.querySelector('[data-testid="grp"]') as HTMLElement;
+    expect(group.getAttribute("role")).toBe("group");
+    expect(group.classList.contains("ui-select__group")).toBe(true);
+    expect(
+      document.querySelector('[data-testid="sep"]')!.classList.contains("ui-select__separator")
+    ).toBe(true);
+    const label = document.querySelector('[data-testid="lbl"]') as HTMLElement;
+    expect(label.classList.contains("ui-select__group-label")).toBe(true);
+    // Radix labels the group by its heading for assistive tech.
+    expect(group.getAttribute("aria-labelledby")).toBe(label.id);
+    expect(document.querySelectorAll('[role="option"]').length).toBe(2);
   });
 });

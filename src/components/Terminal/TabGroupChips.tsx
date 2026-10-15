@@ -3,13 +3,19 @@ import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useAppStore } from "@/store/appStore";
 import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { TabGroup } from "@/types/terminal";
 import { closeTabGroupGuarded } from "@/utils/tabGroupCloseGuard";
 import { RenameDialog } from "./RenameDialog";
-import { Tooltip } from "@/components/ui";
+import {
+  Tooltip,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { withActionAccelerator } from "@/services/keybindings";
 import "./TabGroupChips.css";
 
@@ -144,8 +150,8 @@ function TabGroupChip({
   };
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <button
           ref={setNodeRef}
           style={style}
@@ -174,47 +180,38 @@ function TabGroupChip({
             </span>
           )}
         </button>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={onRename}
-            data-testid="tab-group-ctx-rename"
-          >
-            Rename
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            disabled={!onMoveLeft}
-            onSelect={() => onMoveLeft?.()}
-            data-testid="tab-group-ctx-move-left"
-          >
-            <ArrowLeft size={14} /> Move Left
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            disabled={!onMoveRight}
-            onSelect={() => onMoveRight?.()}
-            data-testid="tab-group-ctx-move-right"
-          >
-            <ArrowRight size={14} /> Move Right
-          </ContextMenu.Item>
-          {canClose && (
-            <>
-              <ContextMenu.Separator className="context-menu__separator" />
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={(e) => onClose(e as unknown as React.MouseEvent)}
-                data-testid="tab-group-ctx-close"
-              >
-                Close Group
-              </ContextMenu.Item>
-            </>
-          )}
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <MenuItem onSelect={onRename} data-testid="tab-group-ctx-rename">
+          Rename
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem
+          disabled={!onMoveLeft}
+          onSelect={() => onMoveLeft?.()}
+          data-testid="tab-group-ctx-move-left"
+        >
+          <ArrowLeft size={14} /> Move Left
+        </MenuItem>
+        <MenuItem
+          disabled={!onMoveRight}
+          onSelect={() => onMoveRight?.()}
+          data-testid="tab-group-ctx-move-right"
+        >
+          <ArrowRight size={14} /> Move Right
+        </MenuItem>
+        {canClose && (
+          <>
+            <MenuSeparator />
+            <MenuItem
+              onSelect={(e) => onClose(e as unknown as React.MouseEvent)}
+              data-testid="tab-group-ctx-close"
+            >
+              Close Group
+            </MenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }

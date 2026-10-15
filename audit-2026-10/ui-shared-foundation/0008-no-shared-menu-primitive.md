@@ -6,8 +6,8 @@ severity: low
 category: arch
 is_workaround: false
 subsystem: "src/components/ui"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4383 — ui/Menu primitive (Context/DropdownMenuContent, MenuItem danger/icon/shortcut, MenuSeparator); 16 menus migrated, skin moved to ui.css .ui-menu__*"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

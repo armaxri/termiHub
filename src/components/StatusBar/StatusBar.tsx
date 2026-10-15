@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Activity,
   AlertTriangle,
@@ -53,7 +52,22 @@ import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { connectionConfigFields, readConfigString } from "@/utils/connectionConfigFields";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
-import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
+import {
+  Tooltip,
+  Spinner,
+  EmptyState,
+  SearchInput,
+  toast,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
+  MenuItemIndicator,
+  MenuLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { MetricSparkline } from "./MetricSparkline";
 import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
 import { ProcessTablePanel } from "./ProcessTablePanel";
@@ -163,9 +177,9 @@ export function StatusBar() {
             <span className="status-bar__item">
               Ln {editorStatus.line}, Col {editorStatus.column}
             </span>
-            <DropdownMenu.Root>
+            <DropdownMenuRoot>
               <Tooltip content="Select indentation" side="top">
-                <DropdownMenu.Trigger asChild>
+                <DropdownMenuTrigger asChild>
                   <button
                     className="status-bar__item status-bar__item--interactive"
                     aria-label="Select indentation"
@@ -173,45 +187,32 @@ export function StatusBar() {
                   >
                     {indentLabel}
                   </button>
-                </DropdownMenu.Trigger>
+                </DropdownMenuTrigger>
               </Tooltip>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  className="indent-menu__content"
-                  side="top"
-                  align="start"
-                  sideOffset={4}
-                >
-                  <DropdownMenu.Label className="indent-menu__label">
-                    Indent Using Spaces
-                  </DropdownMenu.Label>
-                  {INDENT_SIZES.map((size) => (
-                    <DropdownMenu.Item
-                      key={`spaces-${size}`}
-                      className="indent-menu__item"
-                      onSelect={() => editorActions?.setIndent(size, true)}
-                      data-testid={`indent-spaces-${size}`}
-                    >
-                      {size} {size === 1 ? "Space" : "Spaces"}
-                    </DropdownMenu.Item>
-                  ))}
-                  <DropdownMenu.Separator className="indent-menu__separator" />
-                  <DropdownMenu.Label className="indent-menu__label">
-                    Indent Using Tabs
-                  </DropdownMenu.Label>
-                  {INDENT_SIZES.map((size) => (
-                    <DropdownMenu.Item
-                      key={`tabs-${size}`}
-                      className="indent-menu__item"
-                      onSelect={() => editorActions?.setIndent(size, false)}
-                      data-testid={`indent-tabs-${size}`}
-                    >
-                      Tab Size: {size}
-                    </DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+              <DropdownMenuContent side="top" align="start" sideOffset={4}>
+                <MenuLabel>Indent Using Spaces</MenuLabel>
+                {INDENT_SIZES.map((size) => (
+                  <MenuItem
+                    key={`spaces-${size}`}
+                    onSelect={() => editorActions?.setIndent(size, true)}
+                    data-testid={`indent-spaces-${size}`}
+                  >
+                    {size} {size === 1 ? "Space" : "Spaces"}
+                  </MenuItem>
+                ))}
+                <MenuSeparator />
+                <MenuLabel>Indent Using Tabs</MenuLabel>
+                {INDENT_SIZES.map((size) => (
+                  <MenuItem
+                    key={`tabs-${size}`}
+                    onSelect={() => editorActions?.setIndent(size, false)}
+                    data-testid={`indent-tabs-${size}`}
+                  >
+                    Tab Size: {size}
+                  </MenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenuRoot>
             <span className="status-bar__item">{editorStatus.encoding}</span>
             <Tooltip content="Toggle line endings" side="top">
               <button
@@ -1125,8 +1126,8 @@ function MonitoringDetailDropdown({
   const showSpinner = loading || isReconnecting;
   return (
     <>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
+      <DropdownMenuRoot>
+        <DropdownMenuTrigger asChild>
           <button
             className="status-bar__item status-bar__item--interactive monitoring-status__host"
             // Intentional no-tooltip (#1163): the visible label already shows the
@@ -1145,195 +1146,164 @@ function MonitoringDetailDropdown({
             {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
             {host}
           </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            className="monitoring-menu__content"
-            side="top"
-            align="start"
-            sideOffset={4}
-          >
-            {stats && (
-              <>
-                <MonitoringHostInfo stats={stats} />
-                <DropdownMenu.Separator className="monitoring-menu__separator" />
-              </>
-            )}
-            {/*
+        </DropdownMenuTrigger>
+        <DropdownMenuContent width="wide" side="top" align="start" sideOffset={4}>
+          {stats && (
+            <>
+              <MonitoringHostInfo stats={stats} />
+              <MenuSeparator />
+            </>
+          )}
+          {/*
             Client-side metric history sparklines (PROD-0030): CPU, memory, swap
             (when present) and network rx/tx. Each is rendered only once it has a
             real (post-priming) sample, so a just-connected monitor shows the
             numbers without empty charts. The last-known value labels each row.
           */}
-            {hasAnyHistory && (
-              <>
-                <div className="monitoring-menu__sparks" data-testid="monitoring-sparklines">
-                  {metricBlocks
-                    .filter((block) => block.hasData)
-                    .map((block) => {
-                      const latest = latestValue(block.values);
-                      const label =
-                        latest == null
-                          ? "—"
-                          : block.unit === "percent"
-                            ? `${latest.toFixed(0)}%`
-                            : formatRate(latest) || "0 B/s";
-                      return (
-                        <div
-                          key={block.key}
-                          className="monitoring-menu__spark"
-                          data-testid={`monitoring-sparkline-${block.key}`}
-                        >
-                          <div className="monitoring-menu__spark-header">
-                            <span className="monitoring-menu__label">{block.label}</span>
-                            <span className="monitoring-menu__value">{label}</span>
-                          </div>
-                          <MetricSparkline
-                            values={block.values}
-                            min={block.min}
-                            max={block.max}
-                            ariaLabel={`${block.label} history`}
-                          />
+          {hasAnyHistory && (
+            <>
+              <div className="monitoring-menu__sparks" data-testid="monitoring-sparklines">
+                {metricBlocks
+                  .filter((block) => block.hasData)
+                  .map((block) => {
+                    const latest = latestValue(block.values);
+                    const label =
+                      latest == null
+                        ? "—"
+                        : block.unit === "percent"
+                          ? `${latest.toFixed(0)}%`
+                          : formatRate(latest) || "0 B/s";
+                    return (
+                      <div
+                        key={block.key}
+                        className="monitoring-menu__spark"
+                        data-testid={`monitoring-sparkline-${block.key}`}
+                      >
+                        <div className="monitoring-menu__spark-header">
+                          <span className="monitoring-menu__label">{block.label}</span>
+                          <span className="monitoring-menu__value">{label}</span>
                         </div>
-                      );
-                    })}
-                </div>
-                {/* Open the fuller history panel with larger time-series charts. */}
-                <DropdownMenu.Item
-                  className="monitoring-menu__action"
-                  onSelect={() => setHistoryOpen(true)}
-                  data-testid="monitoring-history-open"
-                >
-                  <LineChart size={14} />
-                  View history
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="monitoring-menu__separator" />
-              </>
-            )}
-            {/*
+                        <MetricSparkline
+                          values={block.values}
+                          min={block.min}
+                          max={block.max}
+                          ariaLabel={`${block.label} history`}
+                        />
+                      </div>
+                    );
+                  })}
+              </div>
+              {/* Open the fuller history panel with larger time-series charts. */}
+              <MenuItem onSelect={() => setHistoryOpen(true)} data-testid="monitoring-history-open">
+                <LineChart size={14} />
+                View history
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
+          {/*
             Per-core CPU mini-bars (#3178). Rendered only when the collector
             supplies per-core data — empty for a non-Linux SSH remote or an older
             agent — so hosts without it are unaffected.
           */}
-            {stats && stats.perCoreCpuPercent.length > 0 && (
-              <>
-                <PerCoreCpuBars values={stats.perCoreCpuPercent} />
-                <DropdownMenu.Separator className="monitoring-menu__separator" />
-              </>
-            )}
-            {/* Process list + kill (PROD-0028) — opens the process table panel. */}
-            {monitorKey && (
-              <>
-                {stats && isMetricUnavailable(stats, "processes") ? (
-                  // The stats fallback cannot list processes (#3202): say so
-                  // rather than open a panel that can only fail.
-                  <DropdownMenu.Item
-                    className="monitoring-menu__action"
-                    disabled
-                    data-testid="monitoring-processes-unavailable"
-                  >
-                    <ListTree size={14} />
-                    {unavailableTitle("Processes", stats)}
-                  </DropdownMenu.Item>
-                ) : (
-                  <DropdownMenu.Item
-                    className="monitoring-menu__action"
-                    onSelect={() => setProcessesOpen(true)}
-                    data-testid="monitoring-processes-open"
-                  >
-                    <ListTree size={14} />
-                    View processes
-                  </DropdownMenu.Item>
-                )}
-                <DropdownMenu.Separator className="monitoring-menu__separator" />
-              </>
-            )}
-            {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
-            <DropdownMenu.Item
-              className="monitoring-menu__action"
-              onSelect={() => onSetPaused(!paused)}
+          {stats && stats.perCoreCpuPercent.length > 0 && (
+            <>
+              <PerCoreCpuBars values={stats.perCoreCpuPercent} />
+              <MenuSeparator />
+            </>
+          )}
+          {/* Process list + kill (PROD-0028) — opens the process table panel. */}
+          {monitorKey && (
+            <>
+              {stats && isMetricUnavailable(stats, "processes") ? (
+                // The stats fallback cannot list processes (#3202): say so
+                // rather than open a panel that can only fail.
+                <MenuItem disabled data-testid="monitoring-processes-unavailable">
+                  <ListTree size={14} />
+                  {unavailableTitle("Processes", stats)}
+                </MenuItem>
+              ) : (
+                <MenuItem
+                  onSelect={() => setProcessesOpen(true)}
+                  data-testid="monitoring-processes-open"
+                >
+                  <ListTree size={14} />
+                  View processes
+                </MenuItem>
+              )}
+              <MenuSeparator />
+            </>
+          )}
+          {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
+          <MenuItem
+            onSelect={() => onSetPaused(!paused)}
+            disabled={!monitorKey}
+            data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
+          >
+            {paused ? <Play size={14} /> : <Pause size={14} />}
+            {paused ? "Resume monitoring" : "Pause monitoring"}
+          </MenuItem>
+
+          {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
+          {isConnecting && (
+            <MenuItem
+              onSelect={() => onCancel()}
               disabled={!monitorKey}
-              data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
+              data-testid="monitoring-cancel-btn"
             >
-              {paused ? <Play size={14} /> : <Pause size={14} />}
-              {paused ? "Resume monitoring" : "Pause monitoring"}
-            </DropdownMenu.Item>
+              <X size={14} />
+              Cancel connect
+            </MenuItem>
+          )}
+          {isOffline && (
+            <>
+              <MenuLabel className="monitoring-menu__label" data-testid="monitoring-offline-reason">
+                {monitorOfflineLabel(statusReason)}
+              </MenuLabel>
+              <MenuItem onSelect={onRetry} data-testid="monitoring-retry-btn">
+                <RotateCw size={14} />
+                Retry
+              </MenuItem>
+            </>
+          )}
 
-            {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
-            {isConnecting && (
-              <DropdownMenu.Item
-                className="monitoring-menu__action"
-                onSelect={() => onCancel()}
+          <MenuSeparator />
+
+          {/* Refresh-interval selector — radio-style items (#1233). */}
+          <MenuLabel className="monitoring-menu__interval-label">Refresh interval</MenuLabel>
+          <MenuRadioGroup
+            value={String(intervalMs)}
+            onValueChange={(v) => onSetInterval(Number(v))}
+          >
+            {MONITORING_INTERVAL_OPTIONS.map((opt) => (
+              <MenuRadioItem
+                key={opt}
+                className="monitoring-menu__radio"
+                value={String(opt)}
                 disabled={!monitorKey}
-                data-testid="monitoring-cancel-btn"
+                data-testid={`monitoring-interval-${opt}`}
               >
-                <X size={14} />
-                Cancel connect
-              </DropdownMenu.Item>
-            )}
-            {isOffline && (
-              <>
-                <DropdownMenu.Label
-                  className="monitoring-menu__label"
-                  data-testid="monitoring-offline-reason"
-                >
-                  {monitorOfflineLabel(statusReason)}
-                </DropdownMenu.Label>
-                <DropdownMenu.Item
-                  className="monitoring-menu__action"
-                  onSelect={onRetry}
-                  data-testid="monitoring-retry-btn"
-                >
-                  <RotateCw size={14} />
-                  Retry
-                </DropdownMenu.Item>
-              </>
-            )}
+                <MenuItemIndicator className="monitoring-menu__radio-indicator">
+                  <Check size={14} />
+                </MenuItemIndicator>
+                <span className="monitoring-menu__radio-label">
+                  Refresh every {formatIntervalLabel(opt)}
+                </span>
+                {opt === DEFAULT_MONITORING_INTERVAL_MS && (
+                  <span className="monitoring-menu__radio-default">default</span>
+                )}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
 
-            <DropdownMenu.Separator className="monitoring-menu__separator" />
+          <MenuSeparator />
 
-            {/* Refresh-interval selector — radio-style items (#1233). */}
-            <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
-              Refresh interval
-            </DropdownMenu.Label>
-            <DropdownMenu.RadioGroup
-              value={String(intervalMs)}
-              onValueChange={(v) => onSetInterval(Number(v))}
-            >
-              {MONITORING_INTERVAL_OPTIONS.map((opt) => (
-                <DropdownMenu.RadioItem
-                  key={opt}
-                  className="monitoring-menu__action monitoring-menu__radio"
-                  value={String(opt)}
-                  disabled={!monitorKey}
-                  data-testid={`monitoring-interval-${opt}`}
-                >
-                  <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
-                    <Check size={14} />
-                  </DropdownMenu.ItemIndicator>
-                  <span className="monitoring-menu__radio-label">
-                    Refresh every {formatIntervalLabel(opt)}
-                  </span>
-                  {opt === DEFAULT_MONITORING_INTERVAL_MS && (
-                    <span className="monitoring-menu__radio-default">default</span>
-                  )}
-                </DropdownMenu.RadioItem>
-              ))}
-            </DropdownMenu.RadioGroup>
-
-            <DropdownMenu.Separator className="monitoring-menu__separator" />
-
-            <DropdownMenu.Item
-              className="monitoring-menu__action"
-              onSelect={onDisconnect}
-              data-testid="monitoring-disconnect"
-            >
-              <Unplug size={14} />
-              Disconnect
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+          <MenuItem onSelect={onDisconnect} data-testid="monitoring-disconnect">
+            <Unplug size={14} />
+            Disconnect
+          </MenuItem>
+        </DropdownMenuContent>
+      </DropdownMenuRoot>
       <MonitoringHistoryPanel
         open={historyOpen}
         onOpenChange={setHistoryOpen}
@@ -1391,7 +1361,7 @@ function LanguageSelector({
   const filtered = useMemo(() => filterLanguages(languages, search), [languages, search]);
 
   return (
-    <DropdownMenu.Root
+    <DropdownMenuRoot
       open={open}
       onOpenChange={(isOpen) => {
         setOpen(isOpen);
@@ -1399,7 +1369,7 @@ function LanguageSelector({
       }}
     >
       <Tooltip content="Select language mode" side="top">
-        <DropdownMenu.Trigger asChild>
+        <DropdownMenuTrigger asChild>
           <button
             className="status-bar__item status-bar__item--interactive"
             aria-label="Select language mode"
@@ -1407,47 +1377,44 @@ function LanguageSelector({
           >
             {displayName}
           </button>
-        </DropdownMenu.Trigger>
+        </DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          className="lang-menu__content"
-          side="top"
-          align="end"
-          sideOffset={4}
-          onCloseAutoFocus={(e) => e.preventDefault()}
-        >
-          <div className="lang-menu__search-wrapper">
-            <SearchInput
-              size="sm"
-              placeholder="Search languages..."
-              aria-label="Search languages"
-              value={search}
-              onValueChange={setSearch}
-              onKeyDown={(e) => e.stopPropagation()}
-              autoFocus
-              data-testid="lang-menu-search"
-              clearLabel="Clear language search"
-            />
-          </div>
-          <div className="lang-menu__list">
-            {filtered.map((lang) => (
-              <DropdownMenu.Item
-                key={lang.id}
-                className="lang-menu__item"
-                onSelect={() => onSelect(lang.id)}
-                data-testid={`lang-${lang.id}`}
-              >
-                {lang.name}
-                {lang.id !== lang.name.toLowerCase() && (
-                  <span className="lang-menu__item-id">{lang.id}</span>
-                )}
-              </DropdownMenu.Item>
-            ))}
-            {filtered.length === 0 && <EmptyState title="No matching languages" />}
-          </div>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      <DropdownMenuContent
+        width="wide"
+        side="top"
+        align="end"
+        sideOffset={4}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <div className="lang-menu__search-wrapper">
+          <SearchInput
+            size="sm"
+            placeholder="Search languages..."
+            aria-label="Search languages"
+            value={search}
+            onValueChange={setSearch}
+            onKeyDown={(e) => e.stopPropagation()}
+            autoFocus
+            data-testid="lang-menu-search"
+            clearLabel="Clear language search"
+          />
+        </div>
+        <div className="lang-menu__list">
+          {filtered.map((lang) => (
+            <MenuItem
+              key={lang.id}
+              onSelect={() => onSelect(lang.id)}
+              data-testid={`lang-${lang.id}`}
+            >
+              {lang.name}
+              {lang.id !== lang.name.toLowerCase() && (
+                <span className="lang-menu__item-id">{lang.id}</span>
+              )}
+            </MenuItem>
+          ))}
+          {filtered.length === 0 && <EmptyState title="No matching languages" />}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }

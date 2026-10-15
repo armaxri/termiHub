@@ -20,8 +20,9 @@ export interface SelectOption {
  * from Radix.
  *
  * The common case is the declarative `options` API. For richer items (icons,
- * groups) pass `children` instead, using the exported {@link SelectItem} and the
- * raw `RadixSelect.*` parts as an escape hatch.
+ * groups) pass `children` instead, composed from the exported {@link SelectItem},
+ * {@link SelectGroup}, {@link SelectSeparator} and {@link SelectLabel} — callers
+ * never import `@radix-ui/react-select` directly (UISF2-009).
  */
 export interface SelectProps {
   /** Controlled selected value. */
@@ -86,6 +87,51 @@ export const SelectItem = React.forwardRef<
     </RadixSelect.Item>
   );
 });
+
+/** Props for the exported {@link SelectGroup}. */
+export type SelectGroupProps = React.ComponentPropsWithoutRef<typeof RadixSelect.Group>;
+
+/**
+ * Groups related {@link SelectItem}s (e.g. a "Plugins" section) for the
+ * `children` mode. Pair with {@link SelectLabel} for an accessible heading.
+ */
+export const SelectGroup = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Group>,
+  SelectGroupProps
+>(function SelectGroup({ className, ...rest }, ref) {
+  return <RadixSelect.Group ref={ref} className={cx("ui-select__group", className)} {...rest} />;
+});
+
+/** Props for the exported {@link SelectSeparator}. */
+export type SelectSeparatorProps = React.ComponentPropsWithoutRef<typeof RadixSelect.Separator>;
+
+/** A token-styled divider between option groups in the `children` mode. */
+export const SelectSeparator = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Separator>,
+  SelectSeparatorProps
+>(function SelectSeparator({ className, ...rest }, ref) {
+  return (
+    <RadixSelect.Separator ref={ref} className={cx("ui-select__separator", className)} {...rest} />
+  );
+});
+
+/** Props for the exported {@link SelectLabel}. */
+export type SelectLabelProps = React.ComponentPropsWithoutRef<typeof RadixSelect.Label>;
+
+/** A token-styled, non-selectable group heading inside a {@link SelectGroup}. */
+export const SelectLabel = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Label>,
+  SelectLabelProps
+>(function SelectLabel({ className, ...rest }, ref) {
+  return (
+    <RadixSelect.Label ref={ref} className={cx("ui-select__group-label", className)} {...rest} />
+  );
+});
+
+/** Joins a base class with an optional caller class. */
+function cx(base: string, extra: string | undefined): string {
+  return extra ? `${base} ${extra}` : base;
+}
 
 /**
  * The single shared select primitive. Compose from this instead of a native
