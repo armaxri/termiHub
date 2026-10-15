@@ -32,7 +32,8 @@ fn start_reader(server: DuplexStream, gen: u64) -> mpsc::Receiver<AgentCommand> 
     rx
 }
 
-/// Drain commands until `Disconnected`, counting everything else seen before it.
+/// Drain commands until `Disconnected`, counting everything else seen before it
+/// bar the worker's declared capabilities (forwarded for output credit, #4768).
 /// `None` if the reader never disconnected within `limit`.
 async fn until_disconnected(
     rx: &mut mpsc::Receiver<AgentCommand>,
@@ -43,6 +44,7 @@ async fn until_disconnected(
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 AgentCommand::Disconnected(gen) => return Some((gen, others)),
+                AgentCommand::AgentCapabilities { .. } => {}
                 _ => others += 1,
             }
         }

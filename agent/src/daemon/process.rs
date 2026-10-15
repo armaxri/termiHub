@@ -307,8 +307,9 @@ enum AgentCommand {
     QueryBuffer,
     /// Agent paused (`true`) or resumed (`false`) the session's output (#4416).
     OutputFlow(bool),
-    /// The agent returns output credit ([`CAP_OUTPUT_CREDIT`], #4439).
-    OutputCredit,
+    /// The agent declared its optional features ([`MSG_AGENT_CAPABILITIES`],
+    /// #3140): whether it returns output credit ([`CAP_OUTPUT_CREDIT`], #4439).
+    AgentCapabilities { output_credit: bool },
     /// The agent wrote this many output bytes to its transport (#4439).
     OutputAck(u32),
     /// Agent requested a process list / kill in this session's backend (#3210).
@@ -446,6 +447,12 @@ async fn daemon_loop(
     // sent to it but not acknowledged as written to its transport.
     let mut output_credit = false;
     let mut unacked: usize = 0;
+    // Until the attached worker's capabilities are in, it is held to the
+    // credit window as if it took credit (#4768): output read between attach
+    // and the capabilities frame would otherwise go out unbounded, and on a
+    // loaded runner that stretch was long enough to queue 1.5 MiB. A worker
+    // that declares no capabilities by this deadline is taken to return none.
+    let mut credit_pending_until: Option<tokio::time::Instant> = None;
 
     // Newcomers that connected while a worker held the session, each on its
     // own task reading the attach intent (#3928): a slow newcomer never stalls
@@ -478,9 +485,20 @@ async fn daemon_loop(
         // flows into the ring buffer.
         let reading_output = forwarding
             && !(output_paused && agent_writer.is_some())
-            && credit_available(output_credit && agent_writer.is_some(), unacked);
+            && credit_available(
+                agent_writer.is_some() && (output_credit || credit_pending_until.is_some()),
+                unacked,
+            );
 
         tokio::select! {
+            // The attached worker declared no capabilities in time (#4768): an
+            // older worker that never returns credit, so stop holding it to
+            // the window.
+            _ = sleep_until_opt(credit_pending_until) => {
+                debug!(session_id, "Worker declared no capabilities; no output credit");
+                credit_pending_until = None;
+            }
+
             // No worker has been attached for the whole `detached_timeout`
             // window (#3636): end the session rather than orphan it forever.
             _ = sleep_until_opt(detached_deadline) => {
@@ -660,9 +678,10 @@ async fn daemon_loop(
                         debug!(session_id, paused, "Agent set output flow");
                         output_paused = paused;
                     }
-                    Some(AgentCommand::OutputCredit) => {
-                        debug!(session_id, "Agent returns output credit");
-                        output_credit = true;
+                    Some(AgentCommand::AgentCapabilities { output_credit: credit }) => {
+                        debug!(session_id, credit, "Agent declared its capabilities");
+                        output_credit = credit;
+                        credit_pending_until = None;
                     }
                     Some(AgentCommand::OutputAck(bytes)) => {
                         // Saturating: credit for output sent over a previous
@@ -821,8 +840,10 @@ async fn daemon_loop(
         // The pause belonged to the previous worker (#4416); the newcomer
         // starts flowing and pauses again if its own terminal falls behind.
         output_paused = false;
-        // Credit is per connection: the newcomer opts in with its capabilities.
+        // Credit is per connection: the newcomer opts in with its capabilities,
+        // and is held to the window until they arrive (#4768).
         output_credit = false;
+        credit_pending_until = Some(tokio::time::Instant::now() + AGENT_CAPABILITIES_TIMEOUT);
         unacked = 0;
         let gen = connection_gen;
 
@@ -1162,10 +1183,11 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                         if heartbeat::negotiated(flags) && watchdog.is_none() {
                             watchdog = Some(Heartbeat::new());
                         }
-                        if flags & CAP_OUTPUT_CREDIT == 0 {
-                            continue;
+                        // Always forwarded, credit or not: the loop holds output
+                        // to the window until it knows (#4768).
+                        AgentCommand::AgentCapabilities {
+                            output_credit: flags & CAP_OUTPUT_CREDIT != 0,
                         }
-                        AgentCommand::OutputCredit
                     }
                     MSG_OUTPUT_ACK => match protocol::decode_output_ack(&frame.payload) {
                         Some(bytes) => AgentCommand::OutputAck(bytes),
@@ -1252,6 +1274,14 @@ fn decide_attach(writer_attached: bool, intent: Option<u8>) -> AttachDecision {
 /// the desktop and agent ship version-matched and no released worker predates
 /// AGT-015, so a silent newcomer is only ever a current worker running late.
 const ATTACH_INTENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a newly-attached worker has to declare its capabilities
+/// ([`MSG_AGENT_CAPABILITIES`]) before the daemon stops holding its output to
+/// the credit window (#4768). A current worker sends them in the same write as
+/// its attach intent, before it reads anything, so only a worker that predates
+/// #3140 (and never sends them) ever waits this out — and it waits with at most
+/// [`OUTPUT_CREDIT_WINDOW`] of output sent, not stalled for good.
+const AGENT_CAPABILITIES_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How many newcomers may be owed their attach intent at once. Past this, a
 /// further connect is refused rather than read: a flood of silent connects must

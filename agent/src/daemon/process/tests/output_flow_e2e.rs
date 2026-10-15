@@ -281,3 +281,134 @@ async fn a_stalled_transport_pauses_the_daemon_at_the_budget() {
         "the held output and the tail arrived"
     );
 }
+
+/// Flood the producer with `chunk` until a send stays blocked; returns how many
+/// were accepted, capped at `max`.
+async fn flood_until_blocked(
+    out: &tokio::sync::mpsc::Sender<Vec<u8>>,
+    chunk: &[u8],
+    max: usize,
+) -> usize {
+    let mut accepted = 0;
+    while accepted < max {
+        let send = out.send(chunk.to_vec());
+        if tokio::time::timeout(Duration::from_millis(500), send)
+            .await
+            .is_err()
+        {
+            break;
+        }
+        accepted += 1;
+    }
+    accepted
+}
+
+/// #4768: the credit window holds from the moment a worker attaches, not only
+/// once its capabilities frame has been processed. A worker whose capabilities
+/// are late — the stretch a loaded Windows runner stretched until the daemon
+/// had sent 1.5 MiB against a 576 KiB bound — is still held to the window
+/// while they are owed; once they arrive declaring no credit, output flows.
+///
+/// The worker here is raw: it attaches, keeps reading every frame (so the
+/// daemon's worker queue never fills and only credit can stop the reads), and
+/// sends neither its capabilities nor any ack until told to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_window_holds_while_a_workers_capabilities_are_owed() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use crate::daemon::protocol::{self, MSG_AGENT_CAPABILITIES, MSG_OUTPUT, OUTPUT_CREDIT_WINDOW};
+
+    const CHUNK: usize = 64 * 1024;
+    let endpoint = unique_endpoint("owed-caps");
+    let out = spawn_daemon(&endpoint).await;
+    let (mut reader, mut writer) = transport::connect(&endpoint)
+        .await
+        .expect("worker connects");
+
+    let received = Arc::new(AtomicUsize::new(0));
+    let counted = received.clone();
+    let tail = Arc::new(tokio::sync::Notify::new());
+    let tail_seen = tail.clone();
+    tokio::spawn(async move {
+        while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+            if frame.msg_type == MSG_OUTPUT {
+                counted.fetch_add(frame.payload.len(), Ordering::SeqCst);
+                if frame.payload == b"end" {
+                    tail_seen.notify_one();
+                }
+            }
+        }
+    });
+
+    let chunk = vec![b'z'; CHUNK];
+    let max = 8 * OUTPUT_CREDIT_WINDOW / CHUNK;
+    let accepted = flood_until_blocked(&out, &chunk, max).await;
+    assert!(
+        accepted < max,
+        "the daemon kept reading output for a worker whose capabilities are owed"
+    );
+    // Frames the daemon sent before stopping may still be on the socket.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let sent = received.load(Ordering::SeqCst);
+    let bound = OUTPUT_CREDIT_WINDOW + CHUNK;
+    assert!(
+        sent <= bound,
+        "{sent} bytes sent before the worker's capabilities (bound {bound})"
+    );
+
+    // The capabilities arrive, declaring no credit: nothing is held any more.
+    protocol::write_frame_async(&mut writer, MSG_AGENT_CAPABILITIES, &[0])
+        .await
+        .expect("capabilities sent");
+    tokio::time::timeout(Duration::from_secs(5), out.send(b"end".to_vec()))
+        .await
+        .expect("the daemon resumed reading")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), tail.notified())
+        .await
+        .expect("the held output and the tail arrived");
+}
+
+/// #4768: a worker that never declares its capabilities (one predating #3140)
+/// is held to the window only until the capabilities deadline, never stalled
+/// for good: past it, the daemon reads its output again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_worker_that_declares_no_capabilities_flows_after_the_deadline() {
+    use crate::daemon::protocol::{self, MSG_OUTPUT, OUTPUT_CREDIT_WINDOW};
+
+    const CHUNK: usize = 64 * 1024;
+    let endpoint = unique_endpoint("no-caps");
+    let out = spawn_daemon(&endpoint).await;
+    let (mut reader, _writer) = transport::connect(&endpoint)
+        .await
+        .expect("worker connects");
+    let (tail_tx, tail_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let mut tail_tx = Some(tail_tx);
+        while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+            if frame.msg_type == MSG_OUTPUT && frame.payload == b"end" {
+                if let Some(tx) = tail_tx.take() {
+                    let _ = tx.send(());
+                }
+            }
+        }
+    });
+
+    let max = 8 * OUTPUT_CREDIT_WINDOW / CHUNK;
+    let accepted = flood_until_blocked(&out, &vec![b'z'; CHUNK], max).await;
+    assert!(
+        accepted < max,
+        "held to the window while capabilities are owed"
+    );
+
+    let deadline = super::super::AGENT_CAPABILITIES_TIMEOUT + Duration::from_secs(5);
+    tokio::time::timeout(deadline, out.send(b"end".to_vec()))
+        .await
+        .expect("the daemon reads again once the capabilities deadline passed")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), tail_rx)
+        .await
+        .expect("the held output and the tail arrived")
+        .unwrap();
+}
