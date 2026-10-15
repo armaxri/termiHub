@@ -15,7 +15,7 @@
  * `handleContextAction`.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
@@ -24,6 +24,7 @@ import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { FileBrowser, FileMenuItems } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import { OpenTestMenu } from "@/test/OpenTestMenu";
 import type { FileEntry } from "@/types/connection";
 import { seedLayoutState } from "@/test/layoutState";
 
@@ -250,26 +251,6 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
   });
 });
 
-/** Renders menu items as plain divs (bypassing Radix portal issues in JSDOM). */
-function SimpleItem({
-  children,
-  onSelect,
-  ...rest
-}: {
-  children: React.ReactNode;
-  onSelect?: () => void;
-  [key: string]: unknown;
-}) {
-  return (
-    <div role="menuitem" onClick={onSelect} {...rest}>
-      {children}
-    </div>
-  );
-}
-function SimpleSeparator(props: Record<string, unknown>) {
-  return <hr {...props} />;
-}
-
 describe("FileBrowser — folder-row OS-integration context items (#2656)", () => {
   const dirEntry: FileEntry = {
     name: "projects",
@@ -306,18 +287,18 @@ describe("FileBrowser — folder-row OS-integration context items (#2656)", () =
     const onAction = vi.fn();
     act(() => {
       root.render(
-        <FileMenuItems
-          entry={entry}
-          vscodeAvailable={opts.vscodeAvailable}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          onShareVia={opts.local ? vi.fn() : undefined}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={entry}
+            vscodeAvailable={opts.vscodeAvailable}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            onShareVia={opts.local ? vi.fn() : undefined}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     return onAction;

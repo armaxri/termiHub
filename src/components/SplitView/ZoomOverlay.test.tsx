@@ -14,7 +14,7 @@ import { createRoot, Root } from "react-dom/client";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import * as ContextMenu from "@radix-ui/react-context-menu";
+import { MenuItem } from "@/components/ui";
 import { clearOverrides, setOverride, unbindAction } from "@/services/keybindings";
 import { ZoomOverlay } from "./ZoomOverlay";
 
@@ -220,13 +220,13 @@ describe("ZoomOverlay — menus open above the overlay (#4347)", () => {
     return Number(m![1]);
   }
 
-  /** The `--z-*` token `.context-menu__content` stacks at. */
+  /** The `--z-*` token `.ui-menu__content` stacks at. */
   function contextMenuZToken(): string {
-    const css = readFileSync(join(SRC_DIR, "components", "Sidebar", "ConnectionList.css"), "utf8");
-    const rule = /\.context-menu__content\s*\{([^}]*)\}/.exec(css);
+    const css = readFileSync(join(SRC_DIR, "components", "ui", "ui.css"), "utf8");
+    const rule = /\.ui-menu__content\s*\{([^}]*)\}/.exec(css);
     expect(rule).not.toBeNull();
     const z = /z-index\s*:\s*var\((--z-[a-z0-9-]+)\)/.exec(rule![1]);
-    expect(z, ".context-menu__content must set a --z-* token").not.toBeNull();
+    expect(z, ".ui-menu__content must set a --z-* token").not.toBeNull();
     return z![1];
   }
 
@@ -237,11 +237,7 @@ describe("ZoomOverlay — menus open above the overlay (#4347)", () => {
           title="build-server"
           icon={<span />}
           onClose={() => {}}
-          menu={
-            <ContextMenu.Item className="context-menu__item" data-testid="zoom-menu-item">
-              Rename
-            </ContextMenu.Item>
-          }
+          menu={<MenuItem data-testid="zoom-menu-item">Rename</MenuItem>}
         >
           <div>terminal</div>
         </ZoomOverlay>
@@ -258,7 +254,7 @@ describe("ZoomOverlay — menus open above the overlay (#4347)", () => {
 
     const item = q("zoom-menu-item");
     expect(item, "the right-click menu should be open").not.toBeNull();
-    const menu = item!.closest<HTMLElement>(".context-menu__content");
+    const menu = item!.closest<HTMLElement>(".ui-menu__content");
     expect(menu).not.toBeNull();
     // Inside the dialog: the modal's pointer-events lock leaves it clickable.
     expect(q("zoom-overlay")!.contains(menu)).toBe(true);

@@ -1,7 +1,5 @@
 import { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import * as ContextMenu from "@radix-ui/react-context-menu";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Folder,
@@ -50,7 +48,23 @@ import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { sessionPaneShowsOtherSession } from "@/store/slices/fileBrowsersSlice";
 import { findAgentConnectionType } from "@/utils/agentSessionType";
-import { Button, Tooltip, Input, SearchInput, Spinner, EmptyState, toast } from "@/components/ui";
+import {
+  Button,
+  Tooltip,
+  Input,
+  SearchInput,
+  Spinner,
+  EmptyState,
+  toast,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { TransferEntryRow } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
@@ -159,8 +173,6 @@ export function FileMenuItems({
   onPaste,
   hasClipboard,
   onShareVia,
-  Item,
-  Separator,
   testIdPrefix,
 }: {
   entry: FileEntry;
@@ -177,8 +189,6 @@ export function FileMenuItems({
   hasClipboard: boolean;
   /** Only provided in local mode for directory entries. */
   onShareVia?: (path: string, protocol: "http" | "ftp" | "tftp") => void;
-  Item: React.ElementType;
-  Separator: React.ElementType;
   testIdPrefix: string;
 }) {
   // "Share via …" switches to the Services sidebar, which is an experimental
@@ -188,182 +198,152 @@ export function FileMenuItems({
   return (
     <>
       {entry.isDirectory && (
-        <Item
-          className="context-menu__item"
-          onSelect={() => onNavigate(entry)}
-          data-testid={`${testIdPrefix}-open`}
-        >
+        <MenuItem onSelect={() => onNavigate(entry)} data-testid={`${testIdPrefix}-open`}>
           <FolderOpen size={14} /> Open
-        </Item>
+        </MenuItem>
       )}
       {entry.isDirectory && onShareVia && experimental && (
         <>
-          <Separator className="context-menu__separator" />
-          <Item
-            className="context-menu__item"
+          <MenuSeparator />
+          <MenuItem
             onSelect={() => onShareVia(entry.path, "http")}
             data-testid={`${testIdPrefix}-share-http`}
           >
             <Globe size={14} /> Share via HTTP Server
-          </Item>
-          <Item
-            className="context-menu__item"
+          </MenuItem>
+          <MenuItem
             onSelect={() => onShareVia(entry.path, "ftp")}
             data-testid={`${testIdPrefix}-share-ftp`}
           >
             <Globe size={14} /> Share via FTP Server
-          </Item>
-          <Item
-            className="context-menu__item"
+          </MenuItem>
+          <MenuItem
             onSelect={() => onShareVia(entry.path, "tftp")}
             data-testid={`${testIdPrefix}-share-tftp`}
           >
             <Globe size={14} /> Share via TFTP Server
-          </Item>
-          <Separator className="context-menu__separator" />
+          </MenuItem>
+          <MenuSeparator />
         </>
       )}
       {entry.isDirectory && onShareVia && (
         <>
-          <Item
-            className="context-menu__item"
+          <MenuItem
             onSelect={() => onContextAction(entry, "openInExplorer")}
             data-testid={`${testIdPrefix}-open-in-explorer`}
           >
             <ExternalLink size={14} /> {fileManagerActionLabel()}
-          </Item>
+          </MenuItem>
           {vscodeAvailable && (
-            <Item
-              className="context-menu__item"
+            <MenuItem
               onSelect={() => onContextAction(entry, "openFolderVscode")}
               data-testid={`${testIdPrefix}-open-folder-vscode`}
             >
               <CodeXml size={14} /> Open Folder in VS Code
-            </Item>
+            </MenuItem>
           )}
-          <Separator className="context-menu__separator" />
+          <MenuSeparator />
         </>
       )}
       {!entry.isDirectory && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "download")}
           data-testid={`${testIdPrefix}-download`}
         >
           <Download size={14} /> Download
-        </Item>
+        </MenuItem>
       )}
       {!entry.isDirectory && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "edit")}
           data-testid={`${testIdPrefix}-edit`}
         >
           <FileEdit size={14} /> Edit
-        </Item>
+        </MenuItem>
       )}
       {!entry.isDirectory && vscodeAvailable && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "vscode")}
           data-testid={`${testIdPrefix}-vscode`}
         >
           <CodeXml size={14} /> Open in VS Code
-        </Item>
+        </MenuItem>
       )}
-      <Separator className="context-menu__separator" />
-      <Item
-        className="context-menu__item"
+      <MenuSeparator />
+      <MenuItem
         onSelect={() => onContextAction(entry, "copy")}
         data-testid={`${testIdPrefix}-copy`}
       >
         <Copy size={14} /> Copy
-      </Item>
-      <Item
-        className="context-menu__item"
-        onSelect={() => onContextAction(entry, "cut")}
-        data-testid={`${testIdPrefix}-cut`}
-      >
+      </MenuItem>
+      <MenuItem onSelect={() => onContextAction(entry, "cut")} data-testid={`${testIdPrefix}-cut`}>
         <Scissors size={14} /> Cut
-      </Item>
-      <Item
-        className="context-menu__item"
-        disabled={!hasClipboard}
-        onSelect={onPaste}
-        data-testid={`${testIdPrefix}-paste`}
-      >
+      </MenuItem>
+      <MenuItem disabled={!hasClipboard} onSelect={onPaste} data-testid={`${testIdPrefix}-paste`}>
         <ClipboardPaste size={14} /> Paste
-      </Item>
-      <Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuItem
         onSelect={() => onContextAction(entry, "moveTo")}
         data-testid={`${testIdPrefix}-move-to`}
       >
         <FolderInput size={14} /> Move to…
-      </Item>
-      <Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuItem
         onSelect={() => onContextAction(entry, "copyTo")}
         data-testid={`${testIdPrefix}-copy-to`}
       >
         <CopyPlus size={14} /> Copy to…
-      </Item>
-      <Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuItem
         onSelect={() => onContextAction(entry, "copyName")}
         data-testid={`${testIdPrefix}-copy-name`}
       >
         <Copy size={14} /> Copy Name
-      </Item>
-      <Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuItem
         onSelect={() => onContextAction(entry, "copyPath")}
         data-testid={`${testIdPrefix}-copy-path`}
       >
         <Copy size={14} /> Copy Path
-      </Item>
-      <Separator className="context-menu__separator" />
-      <Item
-        className="context-menu__item"
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem
         onSelect={() => onContextAction(entry, "rename")}
         data-testid={`${testIdPrefix}-rename`}
       >
         <Pencil size={14} /> Rename
-      </Item>
+      </MenuItem>
       {canChangePermissions && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "permissions")}
           data-testid={`${testIdPrefix}-permissions`}
         >
           <KeyRound size={14} /> Change Permissions
-        </Item>
+        </MenuItem>
       )}
       {canChangeOwner && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "owner")}
           data-testid={`${testIdPrefix}-owner`}
         >
           <UserCog size={14} /> Change Owner
-        </Item>
+        </MenuItem>
       )}
       {canCreateSymlink && (
-        <Item
-          className="context-menu__item"
+        <MenuItem
           onSelect={() => onContextAction(entry, "symlink")}
           data-testid={`${testIdPrefix}-symlink`}
         >
           <Link2 size={14} /> Create Symlink…
-        </Item>
+        </MenuItem>
       )}
-      <Item
-        className="context-menu__item context-menu__item--danger"
+      <MenuItem
+        danger
         onSelect={() => onContextAction(entry, "delete")}
         data-testid={`${testIdPrefix}-delete`}
       >
         <Trash2 size={14} /> Delete
-      </Item>
+      </MenuItem>
     </>
   );
 }
@@ -376,70 +356,37 @@ export function MultiSelectMenuItems({
   onAction,
   onPaste,
   hasClipboard,
-  Item,
-  Separator,
 }: {
   count: number;
   onAction: (action: string) => void;
   onPaste: () => void;
   hasClipboard: boolean;
-  Item: React.ElementType;
-  Separator: React.ElementType;
 }) {
   return (
     <>
-      <Item
-        className="context-menu__item"
-        onSelect={() => onAction("copy")}
-        data-testid="multi-select-copy"
-      >
+      <MenuItem onSelect={() => onAction("copy")} data-testid="multi-select-copy">
         <Copy size={14} /> Copy ({count} items)
-      </Item>
-      <Item
-        className="context-menu__item"
-        onSelect={() => onAction("cut")}
-        data-testid="multi-select-cut"
-      >
+      </MenuItem>
+      <MenuItem onSelect={() => onAction("cut")} data-testid="multi-select-cut">
         <Scissors size={14} /> Cut ({count} items)
-      </Item>
-      <Item
-        className="context-menu__item"
-        disabled={!hasClipboard}
-        onSelect={onPaste}
-        data-testid="multi-select-paste"
-      >
+      </MenuItem>
+      <MenuItem disabled={!hasClipboard} onSelect={onPaste} data-testid="multi-select-paste">
         <ClipboardPaste size={14} /> Paste
-      </Item>
-      <Item
-        className="context-menu__item"
-        onSelect={() => onAction("moveTo")}
-        data-testid="multi-select-move-to"
-      >
+      </MenuItem>
+      <MenuItem onSelect={() => onAction("moveTo")} data-testid="multi-select-move-to">
         <FolderInput size={14} /> Move to… ({count} items)
-      </Item>
-      <Item
-        className="context-menu__item"
-        onSelect={() => onAction("copyTo")}
-        data-testid="multi-select-copy-to"
-      >
+      </MenuItem>
+      <MenuItem onSelect={() => onAction("copyTo")} data-testid="multi-select-copy-to">
         <CopyPlus size={14} /> Copy to… ({count} items)
-      </Item>
-      <Separator className="context-menu__separator" />
-      <Item
-        className="context-menu__item"
-        onSelect={() => onAction("download")}
-        data-testid="multi-select-download"
-      >
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onSelect={() => onAction("download")} data-testid="multi-select-download">
         <Download size={14} /> Download ({count} items)
-      </Item>
-      <Separator className="context-menu__separator" />
-      <Item
-        className="context-menu__item context-menu__item--danger"
-        onSelect={() => onAction("delete")}
-        data-testid="multi-select-delete"
-      >
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem danger onSelect={() => onAction("delete")} data-testid="multi-select-delete">
         <Trash2 size={14} /> Delete ({count} items)
-      </Item>
+      </MenuItem>
     </>
   );
 }
@@ -692,8 +639,8 @@ function FileRow({
     );
   }
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <div
           ref={dnd.setNodeRef}
           className={`file-browser__row-wrapper${isSelected ? " file-browser__row-wrapper--selected" : ""}${
@@ -758,9 +705,9 @@ function FileRow({
               without ever reserving space in the filename area. */}
           {metaParts.length > 0 && <span className="file-browser__meta">{metaParts}</span>}
           <div className="file-browser__row-menu">
-            <DropdownMenu.Root>
+            <DropdownMenuRoot>
               <Tooltip content="Actions" side="top">
-                <DropdownMenu.Trigger asChild>
+                <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -775,44 +722,28 @@ function FileRow({
                     tabIndex={-1}
                     data-testid={`file-row-menu-${entry.name}`}
                   />
-                </DropdownMenu.Trigger>
+                </DropdownMenuTrigger>
               </Tooltip>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="context-menu__content" align="end">
-                  <FileMenuItems
-                    {...menuItemProps}
-                    Item={DropdownMenu.Item}
-                    Separator={DropdownMenu.Separator}
-                    testIdPrefix="file-menu"
-                  />
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+              <DropdownMenuContent align="end">
+                <FileMenuItems {...menuItemProps} testIdPrefix="file-menu" />
+              </DropdownMenuContent>
+            </DropdownMenuRoot>
           </div>
         </div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          {showMultiSelect ? (
-            <MultiSelectMenuItems
-              count={selectedCount}
-              onAction={onMultiContextAction}
-              onPaste={onPaste}
-              hasClipboard={hasClipboard}
-              Item={ContextMenu.Item}
-              Separator={ContextMenu.Separator}
-            />
-          ) : (
-            <FileMenuItems
-              {...menuItemProps}
-              Item={ContextMenu.Item}
-              Separator={ContextMenu.Separator}
-              testIdPrefix="context-file"
-            />
-          )}
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {showMultiSelect ? (
+          <MultiSelectMenuItems
+            count={selectedCount}
+            onAction={onMultiContextAction}
+            onPaste={onPaste}
+            hasClipboard={hasClipboard}
+          />
+        ) : (
+          <FileMenuItems {...menuItemProps} testIdPrefix="context-file" />
+        )}
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }
 
@@ -2171,8 +2102,8 @@ export function FileBrowser() {
           </div>
         )}
 
-        <ContextMenu.Root>
-          <ContextMenu.Trigger asChild>
+        <ContextMenuRoot>
+          <ContextMenuTrigger asChild>
             {isLoading && fileEntries.length === 0 ? (
               <div className="file-browser__loading">
                 <Spinner size="md" label={null} />
@@ -2261,35 +2192,24 @@ export function FileBrowser() {
                 )}
               </div>
             )}
-          </ContextMenu.Trigger>
-          <ContextMenu.Portal>
-            <ContextMenu.Content className="context-menu__content">
-              <ContextMenu.Item
-                className="context-menu__item"
-                disabled={!fileClipboard}
-                onSelect={handlePaste}
-                data-testid="context-bg-paste"
-              >
-                <ClipboardPaste size={14} /> Paste
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="context-menu__separator" />
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => setNewFileName("")}
-                data-testid="context-bg-new-file"
-              >
-                <FilePlus size={14} /> New File
-              </ContextMenu.Item>
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => setNewDirName("")}
-                data-testid="context-bg-new-folder"
-              >
-                <FolderPlus size={14} /> New Folder
-              </ContextMenu.Item>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <MenuItem
+              disabled={!fileClipboard}
+              onSelect={handlePaste}
+              data-testid="context-bg-paste"
+            >
+              <ClipboardPaste size={14} /> Paste
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onSelect={() => setNewFileName("")} data-testid="context-bg-new-file">
+              <FilePlus size={14} /> New File
+            </MenuItem>
+            <MenuItem onSelect={() => setNewDirName("")} data-testid="context-bg-new-folder">
+              <FolderPlus size={14} /> New Folder
+            </MenuItem>
+          </ContextMenuContent>
+        </ContextMenuRoot>
       </FileBrowserDndProvider>
       {(mode === "local" || selectedPaths.size > 0) && (
         <div className="file-browser__statusbar">

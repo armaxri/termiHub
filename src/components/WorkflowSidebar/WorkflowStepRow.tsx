@@ -2,7 +2,6 @@ import type React from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Button,
   Input,
@@ -12,6 +11,10 @@ import {
   Toggle,
   Field,
   useModalPortalContainer,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
 } from "@/components/ui";
 import type { WorkflowCondition, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
@@ -559,8 +562,8 @@ interface AddSubStepMenuProps {
 function AddSubStepMenu({ base, onAdd }: AddSubStepMenuProps) {
   const portalContainer = useModalPortalContainer();
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
+    <DropdownMenuRoot>
+      <DropdownMenuTrigger asChild>
         <Button
           variant="secondary"
           size="sm"
@@ -569,26 +572,23 @@ function AddSubStepMenu({ base, onAdd }: AddSubStepMenuProps) {
         >
           Add step…
         </Button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal container={portalContainer}>
-        <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-          {LEAF_STEP_KINDS.map((kind) => {
-            const Icon = stepKindIcon(kind);
-            return (
-              <DropdownMenu.Item
-                key={kind}
-                className="settings-menu__item"
-                onSelect={() => onAdd(kind)}
-                data-testid={`workflow-editor-add-substep-${base}-${kind}`}
-              >
-                <Icon size={14} />
-                {stepKindLabel(kind)}
-              </DropdownMenu.Item>
-            );
-          })}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent container={portalContainer} align="start" sideOffset={4}>
+        {LEAF_STEP_KINDS.map((kind) => {
+          const Icon = stepKindIcon(kind);
+          return (
+            <MenuItem
+              key={kind}
+              onSelect={() => onAdd(kind)}
+              data-testid={`workflow-editor-add-substep-${base}-${kind}`}
+            >
+              <Icon size={14} />
+              {stepKindLabel(kind)}
+            </MenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }
 

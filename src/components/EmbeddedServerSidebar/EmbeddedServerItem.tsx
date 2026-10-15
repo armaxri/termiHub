@@ -10,10 +10,18 @@ import {
   ExternalLink,
   Clipboard,
 } from "lucide-react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Button, toast, Tooltip } from "@/components/ui";
+import {
+  Button,
+  toast,
+  Tooltip,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
@@ -157,8 +165,8 @@ export function EmbeddedServerItem({
     `${stats.activeConnections} conn · ↑ ${formatBytes(stats.bytesSent, { maxUnit: "MB" })} ↓ ${formatBytes(stats.bytesReceived, { maxUnit: "MB" })}`;
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <SidebarListItem
           ref={rowRef}
           {...rowProps}
@@ -305,86 +313,68 @@ export function EmbeddedServerItem({
             </>
           }
         />
-      </ContextMenu.Trigger>
+      </ContextMenuTrigger>
 
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          {active ? (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() =>
-                // handleStop already toasts on failure and re-throws for the
-                // Button lifecycle; from the context menu there is no Button, so
-                // swallow-with-audit the already-surfaced rejection.
-                fireAndForget(handleStop(), `stop server ${config.id} from context menu`)
-              }
-              data-testid={`ctx-stop-${config.id}`}
-            >
-              <Square size={14} /> Stop
-            </ContextMenu.Item>
-          ) : (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() =>
-                // handleStart already toasts on failure and re-throws for the
-                // Button lifecycle; from the context menu there is no Button, so
-                // swallow-with-audit the already-surfaced rejection.
-                fireAndForget(handleStart(), `start server ${config.id} from context menu`)
-              }
-              data-testid={`ctx-start-${config.id}`}
-            >
-              <Play size={14} /> Start
-            </ContextMenu.Item>
-          )}
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onEdit(config.id)}
-            data-testid={`ctx-edit-${config.id}`}
+      <ContextMenuContent>
+        {active ? (
+          <MenuItem
+            onSelect={() =>
+              // handleStop already toasts on failure and re-throws for the
+              // Button lifecycle; from the context menu there is no Button, so
+              // swallow-with-audit the already-surfaced rejection.
+              fireAndForget(handleStop(), `stop server ${config.id} from context menu`)
+            }
+            data-testid={`ctx-stop-${config.id}`}
           >
-            <Pencil size={14} /> Edit...
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onDuplicate(config.id)}
-            data-testid={`ctx-duplicate-${config.id}`}
+            <Square size={14} /> Stop
+          </MenuItem>
+        ) : (
+          <MenuItem
+            onSelect={() =>
+              // handleStart already toasts on failure and re-throws for the
+              // Button lifecycle; from the context menu there is no Button, so
+              // swallow-with-audit the already-surfaced rejection.
+              fireAndForget(handleStart(), `start server ${config.id} from context menu`)
+            }
+            data-testid={`ctx-start-${config.id}`}
           >
-            <Copy size={14} /> Duplicate
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => setShowActivity((v) => !v)}
-            data-testid={`ctx-activity-${config.id}`}
-          >
-            <Activity size={14} /> {showActivity ? "Hide Activity" : "Show Activity"}
-          </ContextMenu.Item>
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={handleCopyUrl}
-            data-testid={`ctx-copy-url-${config.id}`}
-          >
-            <Clipboard size={14} /> Copy URL
-          </ContextMenu.Item>
-          {config.serverType === "http" && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={handleOpenBrowser}
-              data-testid={`ctx-open-browser-${config.id}`}
-            >
-              <ExternalLink size={14} /> Open in Browser
-            </ContextMenu.Item>
-          )}
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item context-menu__item--danger"
-            onSelect={() => onDelete(config.id)}
-            data-testid={`ctx-delete-${config.id}`}
-          >
-            <Trash2 size={14} /> Delete
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+            <Play size={14} /> Start
+          </MenuItem>
+        )}
+        <MenuSeparator />
+        <MenuItem onSelect={() => onEdit(config.id)} data-testid={`ctx-edit-${config.id}`}>
+          <Pencil size={14} /> Edit...
+        </MenuItem>
+        <MenuItem
+          onSelect={() => onDuplicate(config.id)}
+          data-testid={`ctx-duplicate-${config.id}`}
+        >
+          <Copy size={14} /> Duplicate
+        </MenuItem>
+        <MenuItem
+          onSelect={() => setShowActivity((v) => !v)}
+          data-testid={`ctx-activity-${config.id}`}
+        >
+          <Activity size={14} /> {showActivity ? "Hide Activity" : "Show Activity"}
+        </MenuItem>
+        <MenuSeparator />
+        <MenuItem onSelect={handleCopyUrl} data-testid={`ctx-copy-url-${config.id}`}>
+          <Clipboard size={14} /> Copy URL
+        </MenuItem>
+        {config.serverType === "http" && (
+          <MenuItem onSelect={handleOpenBrowser} data-testid={`ctx-open-browser-${config.id}`}>
+            <ExternalLink size={14} /> Open in Browser
+          </MenuItem>
+        )}
+        <MenuSeparator />
+        <MenuItem
+          danger
+          onSelect={() => onDelete(config.id)}
+          data-testid={`ctx-delete-${config.id}`}
+        >
+          <Trash2 size={14} /> Delete
+        </MenuItem>
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }

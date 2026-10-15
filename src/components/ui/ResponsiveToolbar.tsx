@@ -1,9 +1,19 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { errorMessage } from "@/utils/errorMessage";
 import { Button } from "./Button";
+import {
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+} from "./Menu";
 import { Tooltip } from "./Tooltip";
 import { toast } from "./Toast";
 import "./ui.css";
@@ -166,30 +176,21 @@ function runFromMenu(action: ToolbarAction): void {
   }
 }
 
-/** Render a drop-down action's entries with the given Radix menu parts. */
+/** Render a drop-down action's entries with the shared Menu parts. */
 function renderEntries(entries: ToolbarMenuEntry[]): React.ReactNode {
   return entries.map((entry) => {
-    if (entry.type === "separator") {
-      return <DropdownMenu.Separator key={entry.id} className="settings-menu__separator" />;
-    }
-    if (entry.type === "label") {
-      return (
-        <DropdownMenu.Label key={entry.id} className="settings-menu__label">
-          {entry.label}
-        </DropdownMenu.Label>
-      );
-    }
+    if (entry.type === "separator") return <MenuSeparator key={entry.id} />;
+    if (entry.type === "label") return <MenuLabel key={entry.id}>{entry.label}</MenuLabel>;
     return (
-      <DropdownMenu.Item
+      <MenuItem
         key={entry.id}
-        className="settings-menu__item"
+        icon={entry.icon}
         disabled={entry.disabled}
         onSelect={entry.onSelect}
         data-testid={entry.testId}
       >
-        {entry.icon}
         {entry.label}
-      </DropdownMenu.Item>
+      </MenuItem>
     );
   });
 }
@@ -325,9 +326,9 @@ export function ResponsiveToolbar({
         />
       ))}
       {overflow.length > 0 && (
-        <DropdownMenu.Root>
+        <DropdownMenuRoot>
           <Tooltip content={overflowLabel} side={tooltipSide}>
-            <DropdownMenu.Trigger asChild>
+            <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="sm"
@@ -336,44 +337,35 @@ export function ResponsiveToolbar({
                 aria-label={overflowLabel}
                 data-testid={overflowTestId}
               />
-            </DropdownMenu.Trigger>
+            </DropdownMenuTrigger>
           </Tooltip>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content className="settings-menu__content" align="end" sideOffset={4}>
-              {overflow.map((action) =>
-                action.menu ? (
-                  <DropdownMenu.Sub key={action.id}>
-                    <DropdownMenu.SubTrigger
-                      className="settings-menu__item"
-                      disabled={action.disabled}
-                      data-testid={action.testId}
-                    >
-                      {action.icon}
-                      {action.label}
-                      <ChevronRight size={12} className="ui-toolbar__sub-chevron" />
-                    </DropdownMenu.SubTrigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.SubContent className="settings-menu__content" sideOffset={4}>
-                        {renderEntries(action.menu)}
-                      </DropdownMenu.SubContent>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Sub>
-                ) : (
-                  <DropdownMenu.Item
-                    key={action.id}
-                    className="settings-menu__item"
+          <DropdownMenuContent align="end" sideOffset={4}>
+            {overflow.map((action) =>
+              action.menu ? (
+                <MenuSub key={action.id}>
+                  <MenuSubTrigger
+                    icon={action.icon}
                     disabled={action.disabled}
-                    onSelect={() => runFromMenu(action)}
                     data-testid={action.testId}
                   >
-                    {action.icon}
                     {action.label}
-                  </DropdownMenu.Item>
-                )
-              )}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+                  </MenuSubTrigger>
+                  <MenuSubContent sideOffset={4}>{renderEntries(action.menu)}</MenuSubContent>
+                </MenuSub>
+              ) : (
+                <MenuItem
+                  key={action.id}
+                  icon={action.icon}
+                  disabled={action.disabled}
+                  onSelect={() => runFromMenu(action)}
+                  data-testid={action.testId}
+                >
+                  {action.label}
+                </MenuItem>
+              )
+            )}
+          </DropdownMenuContent>
+        </DropdownMenuRoot>
       )}
       {/* Invisible measuring copy of every labelled form, plus one icon-only
           button (last child). Disabled + aria-hidden so it is never focusable
@@ -444,15 +436,13 @@ function InlineAction({ action, showLabel, tooltipSide }: InlineActionProps) {
   }
 
   return (
-    <DropdownMenu.Root>
+    <DropdownMenuRoot>
       <Tooltip content={action.tooltip ?? action.label} side={tooltipSide}>
-        <DropdownMenu.Trigger asChild>{button}</DropdownMenu.Trigger>
+        <DropdownMenuTrigger asChild>{button}</DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-          {renderEntries(action.menu)}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      <DropdownMenuContent align="start" sideOffset={4}>
+        {renderEntries(action.menu)}
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }

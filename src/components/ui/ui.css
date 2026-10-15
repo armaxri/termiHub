@@ -409,6 +409,129 @@
   color: var(--text-muted);
 }
 
+/* ── Menu (Radix ContextMenu / DropdownMenu skin, UISF2-008) ────────── */
+/* Portaled menus stack on the popover tier so they open above modals (#4347). */
+.ui-menu__content {
+  min-width: 170px;
+  background-color: var(--bg-dropdown);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xs) 0;
+  box-shadow: var(--shadow-dropdown);
+  z-index: var(--z-popover);
+}
+
+.ui-menu__content--wide {
+  min-width: 220px;
+}
+
+.ui-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  margin: 1px var(--spacing-xs);
+  width: calc(100% - 8px);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.ui-menu__item:hover,
+.ui-menu__item[data-highlighted] {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ui-menu__item--danger {
+  color: var(--color-error);
+}
+
+.ui-menu__item--danger:hover,
+.ui-menu__item--danger[data-highlighted] {
+  background-color: color-mix(in srgb, var(--color-error) 12%, var(--bg-hover));
+  color: var(--color-error);
+}
+
+.ui-menu__item[data-disabled] {
+  color: var(--text-secondary);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ui-menu__item[data-disabled]:hover {
+  background-color: transparent;
+}
+
+.ui-menu__separator {
+  height: 1px;
+  background-color: var(--border-secondary);
+  margin: var(--spacing-xs) var(--spacing-sm);
+}
+
+.ui-menu__label {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+  user-select: none;
+}
+
+/* Fixed-width slot for a checkbox/radio tick so labels stay aligned. */
+.ui-menu__indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+}
+
+/* Trailing keyboard accelerator (e.g. "Settings  ⌘,"). */
+.ui-menu__shortcut {
+  margin-left: auto;
+  padding-left: var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Trailing secondary hint (e.g. "current", "— Experimental"). */
+.ui-menu__hint {
+  margin-left: auto;
+  padding-left: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* A hint followed by a shortcut: only the first trailing slot pushes right. */
+.ui-menu__hint + .ui-menu__shortcut {
+  margin-left: 0;
+}
+
+/* Submenu trigger (e.g. "Move to Window ▸") and its trailing chevron. */
+.ui-menu__sub-trigger[data-state="open"] {
+  background-color: var(--bg-hover);
+}
+
+.ui-menu__sub-arrow {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+.ui-menu__hint + .ui-menu__sub-arrow {
+  margin-left: 0;
+}
+
 /* ── Toggle (Radix Switch skin) ─────────────────────────────────────── */
 .ui-toggle {
   width: 34px;
@@ -1516,10 +1639,6 @@
   overflow: hidden;
   visibility: hidden;
   pointer-events: none;
-}
-
-.ui-toolbar__sub-chevron {
-  margin-left: auto;
 }
 
 /* ── Truncated text (#4709) ─────────────────────────────────────────── */

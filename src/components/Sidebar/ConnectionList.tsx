@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
   DragOverlay,
@@ -34,7 +33,6 @@ import {
   ArrowDown,
   FolderInput,
   Folder,
-  ChevronRight,
 } from "lucide-react";
 import { open as openFileDialog } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
@@ -44,7 +42,17 @@ import { currentConnectionsView } from "@/store/connectionsBridge";
 import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
 import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
 import { newId } from "@/services/transport/ids";
-import { toast } from "@/components/ui";
+import {
+  toast,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuItem,
+  MenuSeparator,
+  MenuSub,
+  MenuSubContent,
+  MenuSubTrigger,
+} from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, SearchInput, ConfirmDialog, EmptyState } from "@/components/ui";
@@ -210,8 +218,8 @@ function TreeNode({
 
   return (
     <div className="connection-tree__node" role="none">
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>
+      <ContextMenuRoot>
+        <ContextMenuTrigger asChild>
           <TreeFolderRow
             buttonRef={setRowNode}
             label={folder.name}
@@ -225,34 +233,30 @@ function TreeNode({
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
             onFocus={() => onRowFocus(rowIndex)}
           />
-        </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onNewConnectionInFolder(folder.id)}
-              data-testid="context-folder-new-connection"
-            >
-              <Plus size={14} /> New Connection
-            </ContextMenu.Item>
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => setCreatingSubfolder(true)}
-              data-testid="context-folder-new-subfolder"
-            >
-              <FolderPlus size={14} /> New Subfolder
-            </ContextMenu.Item>
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ContextMenu.Item
-              className="context-menu__item context-menu__item--danger"
-              onSelect={() => onDeleteFolder(folder.id)}
-              data-testid="context-folder-delete"
-            >
-              <Trash2 size={14} /> Delete Folder
-            </ContextMenu.Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <MenuItem
+            onSelect={() => onNewConnectionInFolder(folder.id)}
+            data-testid="context-folder-new-connection"
+          >
+            <Plus size={14} /> New Connection
+          </MenuItem>
+          <MenuItem
+            onSelect={() => setCreatingSubfolder(true)}
+            data-testid="context-folder-new-subfolder"
+          >
+            <FolderPlus size={14} /> New Subfolder
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            danger
+            onSelect={() => onDeleteFolder(folder.id)}
+            data-testid="context-folder-delete"
+          >
+            <Trash2 size={14} /> Delete Folder
+          </MenuItem>
+        </ContextMenuContent>
+      </ContextMenuRoot>
       {expanded && (
         <div className="connection-tree__children" role="group">
           {creatingSubfolder && (
@@ -455,8 +459,8 @@ function ConnectionItem({
           onClose={() => setShowConnectionPath(false)}
         />
       )}
-      <ContextMenu.Root>
-        <ContextMenu.Trigger asChild>
+      <ContextMenuRoot>
+        <ContextMenuTrigger asChild>
           <div className="connection-tree__item-row" role="none">
             <TreeItemRow
               buttonRef={setRowNode}
@@ -586,127 +590,102 @@ function ConnectionItem({
               </Tooltip>
             )}
           </div>
-        </ContextMenu.Trigger>
-        <ContextMenu.Portal>
-          <ContextMenu.Content className="context-menu__content">
-            {persistentCapable && isPersistentStopped && (
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={handleStartPersistent}
-                data-testid="context-connection-start-persistent"
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          {persistentCapable && isPersistentStopped && (
+            <MenuItem
+              onSelect={handleStartPersistent}
+              data-testid="context-connection-start-persistent"
+            >
+              <Play size={14} /> Start Session
+            </MenuItem>
+          )}
+          {persistentCapable && isPersistentRunning && (
+            <>
+              <MenuItem
+                onSelect={handleAttachPersistent}
+                data-testid="context-connection-attach-persistent"
               >
-                <Play size={14} /> Start Session
-              </ContextMenu.Item>
-            )}
-            {persistentCapable && isPersistentRunning && (
-              <>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={handleAttachPersistent}
-                  data-testid="context-connection-attach-persistent"
-                >
-                  <Link size={14} /> Attach New Tab
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item context-menu__item--danger"
-                  onSelect={handleStopPersistent}
-                  data-testid="context-connection-stop-persistent"
-                >
-                  <Square size={14} /> Stop Session
-                </ContextMenu.Item>
-              </>
-            )}
-            {persistentCapable && !isPersistentTransitioning && (
-              <ContextMenu.Separator className="context-menu__separator" />
-            )}
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onConnect(connection)}
-              data-testid="context-connection-connect"
-            >
-              <Play size={14} /> Connect
-            </ContextMenu.Item>
-            {pluginIssue && (
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={handleManagePlugin}
-                data-testid="context-connection-manage-plugin"
+                <Link size={14} /> Attach New Tab
+              </MenuItem>
+              <MenuItem
+                danger
+                onSelect={handleStopPersistent}
+                data-testid="context-connection-stop-persistent"
               >
-                <Puzzle size={14} />{" "}
-                {pluginIssue.installed
-                  ? `Manage Plugin '${pluginIssue.pluginName}'`
-                  : `Install Plugin '${pluginIssue.pluginId}'…`}
-              </ContextMenu.Item>
-            )}
-            {!!readConfigString(connection.config, "host") && (
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => onPingHost(connection)}
-                data-testid="context-connection-ping"
+                <Square size={14} /> Stop Session
+              </MenuItem>
+            </>
+          )}
+          {persistentCapable && !isPersistentTransitioning && <MenuSeparator />}
+          <MenuItem onSelect={() => onConnect(connection)} data-testid="context-connection-connect">
+            <Play size={14} /> Connect
+          </MenuItem>
+          {pluginIssue && (
+            <MenuItem onSelect={handleManagePlugin} data-testid="context-connection-manage-plugin">
+              <Puzzle size={14} />{" "}
+              {pluginIssue.installed
+                ? `Manage Plugin '${pluginIssue.pluginName}'`
+                : `Install Plugin '${pluginIssue.pluginId}'…`}
+            </MenuItem>
+          )}
+          {!!readConfigString(connection.config, "host") && (
+            <MenuItem onSelect={() => onPingHost(connection)} data-testid="context-connection-ping">
+              <Activity size={14} /> Ping Host
+            </MenuItem>
+          )}
+          <MenuItem onSelect={() => onEdit(connection.id)} data-testid="context-connection-edit">
+            <Pencil size={14} /> Edit
+          </MenuItem>
+          {jumpHosts.length > 0 && (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                onSelect={() => {
+                  // Resolve a saved-connection reference hop against the
+                  // unified view (main store + enabled external files), #3620.
+                  const gateway = jumpHostGatewayConnection(
+                    connection,
+                    currentConnectionsView().connections
+                  );
+                  if (!gateway) return;
+                  if ("error" in gateway) {
+                    toast.error(`Cannot open jump host terminal: ${gateway.error}`);
+                    return;
+                  }
+                  onConnect(gateway.connection);
+                }}
+                data-testid="context-connection-open-jump-host"
               >
-                <Activity size={14} /> Ping Host
-              </ContextMenu.Item>
-            )}
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onEdit(connection.id)}
-              data-testid="context-connection-edit"
-            >
-              <Pencil size={14} /> Edit
-            </ContextMenu.Item>
-            {jumpHosts.length > 0 && (
-              <>
-                <ContextMenu.Separator className="context-menu__separator" />
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => {
-                    // Resolve a saved-connection reference hop against the
-                    // unified view (main store + enabled external files), #3620.
-                    const gateway = jumpHostGatewayConnection(
-                      connection,
-                      currentConnectionsView().connections
-                    );
-                    if (!gateway) return;
-                    if ("error" in gateway) {
-                      toast.error(`Cannot open jump host terminal: ${gateway.error}`);
-                      return;
-                    }
-                    onConnect(gateway.connection);
-                  }}
-                  data-testid="context-connection-open-jump-host"
-                >
-                  <Server size={14} /> Open Jump Host Terminal
-                </ContextMenu.Item>
-                <ContextMenu.Item
-                  className="context-menu__item"
-                  onSelect={() => setShowConnectionPath(true)}
-                  data-testid="context-connection-show-path"
-                >
-                  <Route size={14} /> Show Connection Path
-                </ContextMenu.Item>
-                <ContextMenu.Separator className="context-menu__separator" />
-              </>
-            )}
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onDuplicate(connection.id)}
-              data-testid="context-connection-duplicate"
-            >
-              <Copy size={14} /> Duplicate
-            </ContextMenu.Item>
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ConnectionMoveItems connection={connection} moveActions={moveActions} />
-            <ContextMenu.Separator className="context-menu__separator" />
-            <ContextMenu.Item
-              className="context-menu__item context-menu__item--danger"
-              onSelect={() => onDelete(connection.id)}
-              data-testid="context-connection-delete"
-            >
-              <Trash2 size={14} /> Delete
-            </ContextMenu.Item>
-          </ContextMenu.Content>
-        </ContextMenu.Portal>
-      </ContextMenu.Root>
+                <Server size={14} /> Open Jump Host Terminal
+              </MenuItem>
+              <MenuItem
+                onSelect={() => setShowConnectionPath(true)}
+                data-testid="context-connection-show-path"
+              >
+                <Route size={14} /> Show Connection Path
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
+          <MenuItem
+            onSelect={() => onDuplicate(connection.id)}
+            data-testid="context-connection-duplicate"
+          >
+            <Copy size={14} /> Duplicate
+          </MenuItem>
+          <MenuSeparator />
+          <ConnectionMoveItems connection={connection} moveActions={moveActions} />
+          <MenuSeparator />
+          <MenuItem
+            danger
+            onSelect={() => onDelete(connection.id)}
+            data-testid="context-connection-delete"
+          >
+            <Trash2 size={14} /> Delete
+          </MenuItem>
+        </ContextMenuContent>
+      </ContextMenuRoot>
     </>
   );
 }
@@ -723,67 +702,52 @@ function ConnectionMoveItems({
   const atRoot = connection.folderId === null;
   return (
     <>
-      <ContextMenu.Sub>
-        <ContextMenu.SubTrigger
-          className="context-menu__item context-menu__sub-trigger"
-          data-testid="context-connection-move-folder"
-        >
+      <MenuSub>
+        <MenuSubTrigger data-testid="context-connection-move-folder">
           <FolderInput size={14} /> Move to Folder
-          <ChevronRight size={14} className="context-menu__sub-arrow" />
-        </ContextMenu.SubTrigger>
-        <ContextMenu.Portal>
-          <ContextMenu.SubContent
-            className="context-menu__content"
-            data-testid="context-connection-move-folder-submenu"
+        </MenuSubTrigger>
+        <MenuSubContent data-testid="context-connection-move-folder-submenu">
+          <MenuItem
+            disabled={atRoot}
+            onSelect={() => moveToFolder(connection.id, null)}
+            data-testid="context-connection-move-folder-root"
           >
-            <ContextMenu.Item
-              className="context-menu__item"
-              disabled={atRoot}
-              onSelect={() => moveToFolder(connection.id, null)}
-              data-testid="context-connection-move-folder-root"
-            >
-              <Folder size={14} /> Top Level
-              {atRoot && <span className="context-menu__sub-label">current</span>}
-            </ContextMenu.Item>
-            {folderTargets.length > 0 && (
-              <ContextMenu.Separator className="context-menu__separator" />
-            )}
-            {folderTargets.map((target) => {
-              const isCurrent = connection.folderId === target.id;
-              return (
-                <ContextMenu.Item
-                  key={target.id}
-                  className="context-menu__item"
-                  disabled={isCurrent}
-                  onSelect={() => moveToFolder(connection.id, target.id)}
-                  data-testid={`context-connection-move-folder-${target.id}`}
-                >
-                  <Folder size={14} /> {target.label}
-                  {isCurrent && <span className="context-menu__sub-label">current</span>}
-                </ContextMenu.Item>
-              );
-            })}
-          </ContextMenu.SubContent>
-        </ContextMenu.Portal>
-      </ContextMenu.Sub>
-      <ContextMenu.Item
-        className="context-menu__item"
+            <Folder size={14} /> Top Level
+            {atRoot && <span className="ui-menu__hint">current</span>}
+          </MenuItem>
+          {folderTargets.length > 0 && <MenuSeparator />}
+          {folderTargets.map((target) => {
+            const isCurrent = connection.folderId === target.id;
+            return (
+              <MenuItem
+                key={target.id}
+                disabled={isCurrent}
+                onSelect={() => moveToFolder(connection.id, target.id)}
+                data-testid={`context-connection-move-folder-${target.id}`}
+              >
+                <Folder size={14} /> {target.label}
+                {isCurrent && <span className="ui-menu__hint">current</span>}
+              </MenuItem>
+            );
+          })}
+        </MenuSubContent>
+      </MenuSub>
+      <MenuItem
         disabled={!canMoveBy(connection.id, -1)}
         onSelect={() => moveBy(connection.id, -1)}
         data-testid="context-connection-move-up"
       >
         <ArrowUp size={14} /> Move Up
-        <span className="context-menu__sub-label">{moveShortcutHint("Up")}</span>
-      </ContextMenu.Item>
-      <ContextMenu.Item
-        className="context-menu__item"
+        <span className="ui-menu__hint">{moveShortcutHint("Up")}</span>
+      </MenuItem>
+      <MenuItem
         disabled={!canMoveBy(connection.id, 1)}
         onSelect={() => moveBy(connection.id, 1)}
         data-testid="context-connection-move-down"
       >
         <ArrowDown size={14} /> Move Down
-        <span className="context-menu__sub-label">{moveShortcutHint("Down")}</span>
-      </ContextMenu.Item>
+        <span className="ui-menu__hint">{moveShortcutHint("Down")}</span>
+      </MenuItem>
     </>
   );
 }
@@ -1853,8 +1817,8 @@ function RootDropZone({
     active?.data.current?.type !== "agent-connection";
 
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>
         <div
           ref={setNodeRef}
           className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
@@ -1925,25 +1889,15 @@ function RootDropZone({
             />
           ))}
         </div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={onNewConnection}
-            data-testid="context-root-new-connection"
-          >
-            <Plus size={14} /> New Connection
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={onNewFolder}
-            data-testid="context-root-new-folder"
-          >
-            <FolderPlus size={14} /> New Folder
-          </ContextMenu.Item>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <MenuItem onSelect={onNewConnection} data-testid="context-root-new-connection">
+          <Plus size={14} /> New Connection
+        </MenuItem>
+        <MenuItem onSelect={onNewFolder} data-testid="context-root-new-folder">
+          <FolderPlus size={14} /> New Folder
+        </MenuItem>
+      </ContextMenuContent>
+    </ContextMenuRoot>
   );
 }
