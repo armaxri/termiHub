@@ -218,6 +218,7 @@ jobs:
           # Grade the branch this matrix leg targets (main or develop), not just
           # the default branch the scheduled run fires from.
           ref: ${{ matrix.branch }}
+          persist-credentials: false
 
       - name: Docker Hub resilience (mirror + pre-pulled images)
         # #4614: point Docker at the mirror.gcr.io Docker Hub mirror (restarts
@@ -644,6 +645,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ matrix.branch }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -836,6 +838,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ matrix.branch }}
+          persist-credentials: false
 
       - name: Docker Hub resilience (mirror + pre-pulled alpine:latest)
         # #4614: the suites start alpine:latest containers; pull it through the
