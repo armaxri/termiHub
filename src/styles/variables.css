@@ -28,7 +28,7 @@
   /* Sidebar */
   --sidebar-bg: #161b24;
   --sidebar-width: 260px;
-  --sidebar-min-width: 170px;
+  --sidebar-min-width: 200px; /* == SIDEBAR_MIN_WIDTH in useSidebarResize.ts (#4709) */
   --sidebar-max-width: 600px;
   --sidebar-header-bg: #161b24;
 

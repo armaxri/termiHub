@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
-import { Button, toast, ConfirmDialog, EmptyState } from "@/components/ui";
+import { toast, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -157,18 +157,18 @@ export function TunnelSidebar() {
 
   return (
     <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
-      <SidebarToolbar>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Plus size={14} />}
-          onClick={handleNew}
-          title="New Tunnel"
-          data-testid="tunnel-new-btn"
-        >
-          New Tunnel
-        </Button>
-      </SidebarToolbar>
+      <SidebarToolbar
+        aria-label="Tunnel actions"
+        actions={[
+          {
+            id: "new",
+            label: "New Tunnel",
+            icon: <Plus size={14} />,
+            onClick: handleNew,
+            testId: "tunnel-new-btn",
+          },
+        ]}
+      />
       {tunnels.length === 0 ? (
         <EmptyState
           title="No SSH tunnels configured."

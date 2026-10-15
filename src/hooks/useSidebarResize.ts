@@ -8,7 +8,14 @@
 import { useCallback, useRef, useState, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 
-const MIN_WIDTH = 170;
+/**
+ * Narrowest the sidebar may be dragged to (px). Raised from 170 in #4709: at
+ * 200 every sidebar still fits its toolbar (icon-only / overflow) and its
+ * section-header controls, and list names keep a readable share of the row.
+ * Mirrored by `--sidebar-min-width` in `variables.css`.
+ */
+export const SIDEBAR_MIN_WIDTH = 200;
+const MIN_WIDTH = SIDEBAR_MIN_WIDTH;
 const MAX_WIDTH = 600;
 /** Pixels one arrow-key press moves the sidebar edge (A11Y2-003, #4329). */
 export const SIDEBAR_KEYBOARD_STEP = 16;

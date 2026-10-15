@@ -1,14 +1,16 @@
 /**
- * Unit tests for the shared export/import button pair (UISF-019).
+ * Unit tests for the shared export/import action pair (UISF-019, #4709).
  *
- * These lock in the DOM parity contract the Macro/Workflow/Workspace toolbars
- * rely on: the two icon-only ghost buttons render in export-then-import order
- * with the caller's labels, testids, and disabled state.
+ * These lock in the contract the Macro/Workflow/Workspace toolbars rely on: the
+ * two icon-only actions render in export-then-import order with the caller's
+ * labels, testids, and disabled state inside the responsive SidebarToolbar.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { ExportImportButtons } from "./ExportImportButtons";
+import { exportImportActions } from "./ExportImportButtons";
+import type { ExportImportButtonsProps } from "./ExportImportButtons";
+import { SidebarToolbar } from "./SidebarToolbar";
 import { withTooltip } from "@/test/tooltip";
 
 let container: HTMLDivElement;
@@ -25,7 +27,12 @@ afterEach(() => {
   container.remove();
 });
 
-describe("ExportImportButtons", () => {
+/** Render the pair the way the sidebars do: as actions of a SidebarToolbar. */
+function ExportImportButtons(props: ExportImportButtonsProps) {
+  return <SidebarToolbar aria-label="Actions" actions={exportImportActions(props)} />;
+}
+
+describe("exportImportActions", () => {
   it("renders export then import with labels, testids, and disabled state", () => {
     const onExport = vi.fn();
     const onImport = vi.fn();
