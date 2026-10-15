@@ -174,6 +174,73 @@ pub(crate) fn store_field_secrets(
     written.with_context(|| format!("Failed to store credential {key}"))
 }
 
+/// The names of the field secrets stored for a connection — never their
+/// values — so the connection editor can show which are saved (#4431).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredFieldSecretKeys {
+    /// Settings keys of the stored top-level secret fields, sorted.
+    pub fields: Vec<String>,
+    /// Identities (`user@host:port`) of the inline hops with a stored secret, sorted.
+    pub hops: Vec<String>,
+}
+
+/// The names of the field secrets stored for `owner` (empty when there are
+/// none). The values are read only to be zeroized.
+pub(crate) fn stored_field_secret_keys(
+    store: &dyn CredentialStore,
+    owner: &str,
+) -> Result<StoredFieldSecretKeys> {
+    let mut stored = read_field_secrets(store, owner)?;
+    let keys = StoredFieldSecretKeys {
+        fields: stored.fields.keys().cloned().collect(),
+        hops: stored.hops.keys().cloned().collect(),
+    };
+    zeroize_secrets(&mut stored);
+    Ok(keys)
+}
+
+/// Remove exactly the named field and hop secrets from the entry of `owner`,
+/// keeping every other one. The entry is deleted once it is empty; a name that
+/// is not stored is ignored, and nothing is written when none of them is.
+pub(crate) fn remove_field_secrets(
+    store: &dyn CredentialStore,
+    owner: &str,
+    fields: &[String],
+    hops: &[String],
+) -> Result<()> {
+    let mut stored = read_field_secrets(store, owner)?;
+    let mut removed = false;
+    for key in fields {
+        if let Some(mut value) = stored.fields.remove(key) {
+            value.zeroize();
+            removed = true;
+        }
+    }
+    for identity in hops {
+        if let Some(mut value) = stored.hops.remove(identity) {
+            value.zeroize();
+            removed = true;
+        }
+    }
+    if !removed {
+        zeroize_secrets(&mut stored);
+        return Ok(());
+    }
+    let key = field_secrets_key(owner);
+    if stored.is_empty() {
+        return store
+            .remove(&key)
+            .with_context(|| format!("Failed to remove credential {key}"));
+    }
+    let value = serde_json::to_string(&stored).context("Failed to serialize field secrets");
+    zeroize_secrets(&mut stored);
+    let mut value = value?;
+    let written = store.set(&key, &value);
+    value.zeroize();
+    written.with_context(|| format!("Failed to store credential {key}"))
+}
+
 /// Overwrite every secret in `taken` with zeros and empty it.
 pub(crate) fn zeroize_secrets(taken: &mut TakenSecrets) {
     for value in taken.fields.values_mut().chain(taken.hops.values_mut()) {
