@@ -281,6 +281,7 @@ export function PluginCatalogSettings() {
           trust={pending.trust}
           hostPlatform={pending.hostPlatform}
           platformSupported={pending.platformSupported}
+          resolvedFilesystemPaths={pending.resolvedFilesystemPaths}
           onClose={() => setPending(null)}
         />
       )}

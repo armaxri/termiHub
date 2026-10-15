@@ -221,6 +221,20 @@ describe("nativePluginSandbox helpers", () => {
     expect(noNetwork.some((c) => c.id === "local-network")).toBe(false);
   });
 
+  it("shows a placeholder folder with the folder it resolves to (#4533)", () => {
+    const withPlaceholder: InstalledPlugin = {
+      ...plugin({
+        permissions: ["terminal", "filesystem"],
+        filesystemPaths: ["${home}/.kube", "/var/log/app"],
+      }),
+      resolvedFilesystemPaths: [{ declared: "${home}/.kube", resolved: "/Users/alice/.kube" }],
+    };
+    const declared = accessChips(withPlaceholder).find((c) => c.id === "declared-files");
+    expect(declared?.rule).toBe(
+      "Through termiHub only:\n${home}/.kube → /Users/alice/.kube\n/var/log/app"
+    );
+  });
+
   it("lists every declared folder on its own line and rewords the files denial", () => {
     const chips = accessChips(
       plugin({

@@ -1,5 +1,5 @@
 import { assessPluginTrust, previewPlugin } from "@/services/api";
-import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import type { PluginManifest, PluginTrustInfo, ResolvedFilesystemPath } from "@/types/plugin";
 
 /**
  * A downloaded, checksum-verified package awaiting the install dialog — the
@@ -14,6 +14,8 @@ export interface DownloadedPackageReview {
   hostPlatform: string;
   /** Whether the package ships a native library for this computer. */
   platformSupported: boolean;
+  /** `${home}`/`${config}` folders resolved on this computer (#4533). */
+  resolvedFilesystemPaths?: ResolvedFilesystemPath[];
 }
 
 /**
@@ -26,6 +28,6 @@ export async function reviewDownloadedPackage(filePath: string): Promise<Downloa
     previewPlugin(filePath),
     assessPluginTrust(filePath),
   ]);
-  const { manifest, hostPlatform, platformSupported } = preview;
-  return { filePath, manifest, trust, hostPlatform, platformSupported };
+  const { manifest, hostPlatform, platformSupported, resolvedFilesystemPaths } = preview;
+  return { filePath, manifest, trust, hostPlatform, platformSupported, resolvedFilesystemPaths };
 }
