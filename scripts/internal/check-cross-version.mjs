@@ -3,18 +3,21 @@
 //
 // Single source of truth: `.github/cross-version`, holding `version=X.Y.Z` and
 // `sha256=<64 hex>` (the SHA256 of that release's
-// cross-x86_64-unknown-linux-gnu.tar.gz). Two readers use it: the
+// cross-x86_64-unknown-linux-gnu.tar.gz). Its readers: the
 // `.github/actions/setup-cross` composite action (every CI job that installs
-// cross-rs) and `scripts/internal/build-system-test-agent.sh --install-cross`.
+// cross-rs), `scripts/internal/build-system-test-agent.sh --install-cross`, and
+// the local `scripts/setup-agent-cross.sh` / `.cmd` (#4731).
 // Before #4360 the version + hash were copied into agent.yml, dev-build.yml,
 // release.yml and that script with nothing keeping them in step. This check
 // fails if:
 //
 //   1. `.github/cross-version` is missing or lacks a valid version/sha256 line;
-//   2. either reader no longer reads `.github/cross-version`;
+//   2. any reader no longer reads `.github/cross-version`;
 //   3. any other workflow, composite action or script downloads a cross-rs
-//      release itself, or a workflow / the script hard-codes a CROSS_VERSION or
-//      CROSS_SHA256 value — a duplicated pin that would drift.
+//      release itself, or a workflow / a script hard-codes a CROSS_VERSION or
+//      CROSS_SHA256 value — a duplicated pin that would drift;
+//   4. anything (readers included) runs `cargo install cross` without a
+//      `--tag`, `--rev` or `--version` — an unpinned install from git HEAD.
 //
 // Sibling of check-uv-version.mjs and check-rust-version.mjs.
 // Bump procedure: docs/contributing.md -> "cross-rs version".
@@ -36,11 +39,17 @@ export const PIN_FILE = ".github/cross-version";
 export const WRAPPER_ACTION = ".github/actions/setup-cross/action.yml";
 /** The local/CI script that installs cross-rs for the system-test agent build. */
 export const AGENT_SCRIPT = "scripts/internal/build-system-test-agent.sh";
+/** The local developer setup scripts that install cross-rs (#4731). */
+export const SETUP_SCRIPTS = ["scripts/setup-agent-cross.sh", "scripts/setup-agent-cross.cmd"];
 
 /** A direct download of a cross-rs release binary. */
 const RELEASE_DOWNLOAD = /github\.com\/cross-rs\/cross\/releases\/download/;
 /** A hard-coded value for CROSS_VERSION / CROSS_SHA256 (env: or shell assignment). */
 const HARDCODED_PIN = /\bCROSS_(?:VERSION|SHA256)\s*[:=]\s*['"]?[0-9a-f.]{3,}/;
+/** A `cargo install ... cross` command (the crate, not cross-util etc.). */
+const CARGO_INSTALL_CROSS = /\bcargo\s+install\b.*\scross(?:\s|$)/;
+/** A flag that pins what `cargo install` builds. */
+const INSTALL_PIN_FLAG = /\s--(?:tag|rev|version)\b/;
 
 /**
  * Parse the pin file's contents.
@@ -82,12 +91,55 @@ export function duplicatedPins(files, { allowDownload = false } = {}) {
 }
 
 /**
+ * Find `cargo install cross` commands that build an unpinned cross-rs.
+ *
+ * @param {Record<string, string>} files - path -> text.
+ * @returns {string[]} `path:line` for each install without --tag/--rev/--version.
+ */
+export function unpinnedInstalls(files) {
+  const hits = [];
+  for (const [name, text] of Object.entries(files)) {
+    text.split(/\r?\n/).forEach((line, index) => {
+      if (CARGO_INSTALL_CROSS.test(line) && !INSTALL_PIN_FLAG.test(line)) {
+        hits.push(`${name}:${index + 1}`);
+      }
+    });
+  }
+  return hits;
+}
+
+/**
+ * Check one script that reads the pin file: it must reference the pin file and
+ * must not hard-code a pin (downloading the release is its job, so allowed).
+ *
+ * @param {string} name - repo-relative path.
+ * @param {string | null} text - contents, or null when missing.
+ * @returns {string[]} problems.
+ */
+function readerProblems(name, text) {
+  if (text === null) return [`${name} not found`];
+  const problems = [];
+  if (!text.includes(PIN_FILE) && !text.includes(PIN_FILE.replaceAll("/", "\\"))) {
+    problems.push(`${name} must read the pin from ${PIN_FILE}`);
+  }
+  for (const hit of duplicatedPins({ [name]: text }, { allowDownload: true })) {
+    problems.push(`${hit}: hard-codes a cross-rs pin — read it from ${PIN_FILE}`);
+  }
+  for (const hit of unpinnedInstalls({ [name]: text })) {
+    problems.push(`${hit}: installs cross-rs unpinned — pass --tag v<version> from ${PIN_FILE}`);
+  }
+  return problems;
+}
+
+/**
  * Run every consistency rule against an in-memory view of the repo.
  *
  * @param {object} repo
  * @param {string | null} repo.pinFile - `.github/cross-version` contents.
  * @param {string | null} repo.wrapperAction - the setup-cross composite action YAML.
  * @param {string | null} repo.agentScript - build-system-test-agent.sh contents.
+ * @param {Record<string, string | null>} [repo.setupScripts] - SETUP_SCRIPTS path
+ *   -> contents (null when missing).
  * @param {Record<string, string>} repo.files - workflows, other actions, scripts.
  * @returns {string[]} human-readable problems; empty when consistent.
  */
@@ -107,16 +159,9 @@ export function findProblems(repo) {
     problems.push(`${WRAPPER_ACTION} must read the pin from ${PIN_FILE}`);
   }
 
-  if (repo.agentScript === null) {
-    problems.push(`${AGENT_SCRIPT} not found`);
-  } else {
-    if (!repo.agentScript.includes(PIN_FILE)) {
-      problems.push(`${AGENT_SCRIPT} must read the pin from ${PIN_FILE}`);
-    }
-    const script = { [AGENT_SCRIPT]: repo.agentScript };
-    for (const hit of duplicatedPins(script, { allowDownload: true })) {
-      problems.push(`${hit}: hard-codes a cross-rs pin — read it from ${PIN_FILE}`);
-    }
+  problems.push(...readerProblems(AGENT_SCRIPT, repo.agentScript));
+  for (const [name, text] of Object.entries(repo.setupScripts ?? {})) {
+    problems.push(...readerProblems(name, text));
   }
 
   for (const hit of duplicatedPins(repo.files)) {
@@ -124,6 +169,9 @@ export function findProblems(repo) {
       `${hit}: pins or downloads cross-rs itself — use ./.github/actions/setup-cross so the ` +
         `pin in ${PIN_FILE} applies`
     );
+  }
+  for (const hit of unpinnedInstalls(repo.files)) {
+    problems.push(`${hit}: installs cross-rs unpinned — pin it to the version in ${PIN_FILE}`);
   }
   return problems;
 }
@@ -139,7 +187,7 @@ function addDir(files, root, dir, pattern) {
   if (!existsSync(abs)) return;
   for (const f of readdirSync(abs).filter((f) => pattern.test(f))) {
     const rel = `${dir}/${f}`;
-    if (rel === AGENT_SCRIPT) continue;
+    if (rel === AGENT_SCRIPT || SETUP_SCRIPTS.includes(rel)) continue;
     files[rel] = readFileSync(path.join(abs, f), "utf8");
   }
 }
@@ -167,6 +215,9 @@ export function loadRepo(root) {
     pinFile: readOrNull(path.join(root, PIN_FILE)),
     wrapperAction: readOrNull(path.join(root, WRAPPER_ACTION)),
     agentScript: readOrNull(path.join(root, AGENT_SCRIPT)),
+    setupScripts: Object.fromEntries(
+      SETUP_SCRIPTS.map((rel) => [rel, readOrNull(path.join(root, rel))])
+    ),
     files,
   };
 }
@@ -184,6 +235,6 @@ if (isMainModule(import.meta.url)) {
   }
   console.log(
     `cross-rs ${parsePin(repo.pinFile).version}: pinned once in ${PIN_FILE} ` +
-      `(setup-cross action + build-system-test-agent.sh).`
+      `(setup-cross action, build-system-test-agent.sh, setup-agent-cross.sh/.cmd).`
   );
 }

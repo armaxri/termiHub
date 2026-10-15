@@ -4,11 +4,13 @@ import path from "path";
 import {
   parsePin,
   duplicatedPins,
+  unpinnedInstalls,
   findProblems,
   loadRepo,
   PIN_FILE,
   WRAPPER_ACTION,
   AGENT_SCRIPT,
+  SETUP_SCRIPTS,
 } from "./check-cross-version.mjs";
 
 const SHA = "642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad";
@@ -22,12 +24,24 @@ const SCRIPT = [
   DOWNLOAD,
 ].join("\n");
 
+const [SETUP_SH, SETUP_CMD] = SETUP_SCRIPTS;
+const SETUP_SH_TEXT = [
+  `CROSS_PIN_FILE="$REPO_ROOT/${PIN_FILE}"`,
+  DOWNLOAD,
+  'cargo install cross --locked --git "$CROSS_GIT_URL" --tag "v$CROSS_VERSION"',
+].join("\n");
+const SETUP_CMD_TEXT = [
+  "set CROSS_PIN_FILE=.github\\cross-version",
+  "    cargo install cross --locked --git %CROSS_GIT_URL% --tag v%CROSS_VERSION%",
+].join("\r\n");
+
 /** A consistent repo view; tests override one field at a time. */
 function repo(overrides = {}) {
   return {
     pinFile: PIN,
     wrapperAction: WRAPPER,
     agentScript: SCRIPT,
+    setupScripts: { [SETUP_SH]: SETUP_SH_TEXT, [SETUP_CMD]: SETUP_CMD_TEXT },
     files: { ".github/workflows/agent.yml": "      - uses: ./.github/actions/setup-cross\n" },
     ...overrides,
   };
@@ -67,9 +81,32 @@ describe("duplicatedPins", () => {
     expect(duplicatedPins({ "s.sh": text }, { allowDownload: true })).toEqual(["s.sh:2"]);
   });
 
-  it("ignores cargo install from git (the local setup path)", () => {
+  it("ignores cargo install (unpinnedInstalls covers it)", () => {
     const text = "cargo install cross --git https://github.com/cross-rs/cross";
     expect(duplicatedPins({ "setup.sh": text })).toEqual([]);
+  });
+});
+
+describe("unpinnedInstalls", () => {
+  it("flags cargo install cross from git HEAD or crates.io latest", () => {
+    const text = [
+      "cargo install cross --git https://github.com/cross-rs/cross",
+      "    cargo install cross",
+      "cargo install --locked cross --git %CROSS_GIT_URL%",
+    ].join("\n");
+    expect(unpinnedInstalls({ "s.sh": text })).toEqual(["s.sh:1", "s.sh:2", "s.sh:3"]);
+  });
+
+  it("accepts installs pinned by --tag, --rev or --version, and other crates", () => {
+    const text = [
+      'cargo install cross --locked --git "$URL" --tag "v$CROSS_VERSION"',
+      "cargo install cross --git https://github.com/cross-rs/cross --rev 588b3c9",
+      "cargo install cross --locked --version 0.2.5",
+      "cargo install cross-util",
+      "cargo install cargo-cross-thing",
+      "echo Installing cross via cargo...",
+    ].join("\n");
+    expect(unpinnedInstalls({ "s.sh": text })).toEqual([]);
   });
 });
 
@@ -99,6 +136,32 @@ describe("findProblems", () => {
     ]);
   });
 
+  it("fails when a setup script is missing, stops reading the pin, or installs unpinned", () => {
+    const missing = findProblems(repo({ setupScripts: { [SETUP_SH]: null } }));
+    expect(missing).toEqual([`${SETUP_SH} not found`]);
+    const unpinned = "cargo install cross --git https://github.com/cross-rs/cross";
+    const problems = findProblems(repo({ setupScripts: { [SETUP_CMD]: unpinned } }));
+    expect(problems).toEqual([
+      `${SETUP_CMD} must read the pin from ${PIN_FILE}`,
+      `${SETUP_CMD}:1: installs cross-rs unpinned — pass --tag v<version> from ${PIN_FILE}`,
+    ]);
+  });
+
+  it("allows a setup script to download the pinned release but not hard-code it", () => {
+    const hardcoded = `${SETUP_SH_TEXT}\nCROSS_VERSION="0.2.5"`;
+    expect(findProblems(repo({ setupScripts: { [SETUP_SH]: hardcoded } }))).toEqual([
+      `${SETUP_SH}:4: hard-codes a cross-rs pin — read it from ${PIN_FILE}`,
+    ]);
+  });
+
+  it("fails when any other script installs cross-rs unpinned (the pre-#4731 shape)", () => {
+    const stray = "cargo install cross --git https://github.com/cross-rs/cross\n";
+    const problems = findProblems(repo({ files: { "scripts/other.sh": stray } }));
+    expect(problems).toEqual([
+      `scripts/other.sh:1: installs cross-rs unpinned — pin it to the version in ${PIN_FILE}`,
+    ]);
+  });
+
   it("fails when a workflow pins cross-rs itself (the pre-#4360 shape)", () => {
     const stray = `        env:\n          CROSS_VERSION: "0.2.5"\n        run: |\n          ${DOWNLOAD}\n`;
     const problems = findProblems(repo({ files: { ".github/workflows/x.yml": stray } }));
@@ -111,5 +174,14 @@ describe("the real repository", () => {
   it("is consistent", () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
     expect(findProblems(loadRepo(root))).toEqual([]);
+  });
+
+  it("checks both setup scripts as pin readers, not as stray files", () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const loaded = loadRepo(root);
+    for (const rel of SETUP_SCRIPTS) {
+      expect(loaded.setupScripts[rel]).toEqual(expect.any(String));
+      expect(loaded.files[rel]).toBeUndefined();
+    }
   });
 });
