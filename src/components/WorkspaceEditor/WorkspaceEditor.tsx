@@ -381,7 +381,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
         <div className="workspace-editor__layout-section">
           <div className="workspace-editor__layout-header">
-            <label className="workspace-editor__label">Layout</label>
+            <span className="workspace-editor__label">Layout</span>
             <span className="workspace-editor__layout-info">{infoLine}</span>
           </div>
 

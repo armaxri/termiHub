@@ -210,8 +210,13 @@
   color: var(--text-primary);
 }
 
-.rd-clipboard__text {
+/* Rendered through ui/Textarea (UISF2-010); the doubled selector keeps this
+   panel's compact look over the primitive's defaults regardless of CSS order. */
+.rd-clipboard .rd-clipboard__text {
   flex: 1 1 auto;
+  min-height: 0;
+  line-height: inherit;
+  letter-spacing: normal;
   resize: none;
   padding: var(--spacing-xs-sm);
   font-family: var(--font-mono);
