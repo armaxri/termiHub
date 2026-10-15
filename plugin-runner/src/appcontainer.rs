@@ -80,7 +80,7 @@ pub const LPAC_CRYPTO_SERVICES: &str = "lpacCryptoServices";
 /// ([`crate::sandbox`]). No network capability (`internetClient`, loopback)
 /// and no user-profile capability is ever added: the network goes through
 /// the capability bridge.
-pub const RUNNER_CAPABILITIES: &[&str] = &[LPAC_CRYPTO_SERVICES];
+pub const RUNNER_CAPABILITIES: &[&str] = &[LPAC_CRYPTO_SERVICES, "registryRead"];
 
 /// The capability SID of the named capability (`S-1-15-3-1024-…`), derived
 /// with `DeriveCapabilitySidsFromName` (a hash of the name, no lookup).
