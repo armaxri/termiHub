@@ -30,6 +30,10 @@ export interface TransferPaneProps {
   listing: PaneListing;
   /** Selected entry paths. */
   selected: ReadonlySet<string>;
+  /**
+   * Replaces the selection. Pass a stable function (a state setter or a
+   * `useCallback`): a new identity counts as a reset and clears the selection.
+   */
   onSelectedChange: (next: Set<string>) => void;
   /** Copy entries to the other pane (F5, or the view's copy buttons). */
   onCopy: (entries: FileEntry[]) => void;
@@ -139,8 +143,7 @@ export function TransferPane({
     setAnchor(0);
     setPathDraft(path);
     onSelectedChange(new Set());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [path, onSelectedChange]);
 
   useEffect(() => {
     document.getElementById(`${baseId}-row-${active}`)?.scrollIntoView?.({ block: "nearest" });

@@ -144,4 +144,17 @@ describe("TunnelEditor — follows connection id changes (#3603)", () => {
       expect.objectContaining({ id: TUNNEL.id, name: "Edited", sshConnectionId: "Job/bastion" })
     );
   });
+
+  it("reloads the working copy when the tunnel id changes (#4370)", async () => {
+    const other: TunnelConfig = { ...TUNNEL, id: "tun-2", name: "Cache" };
+    act(() => useAppStore.setState({ tunnels: [TUNNEL, other] }));
+    render(TUNNEL.id);
+    await flushAsync();
+    setValue(input("tunnel-editor-name"), "Edited");
+
+    render(other.id);
+    await flushAsync();
+
+    expect(input("tunnel-editor-name").value).toBe("Cache");
+  });
 });

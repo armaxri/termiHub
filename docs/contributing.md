@@ -582,7 +582,7 @@ Frontend changes appear instantly. Rust backend changes trigger a recompile and 
 
 ```bash
 # Frontend
-pnpm run lint            # ESLint
+pnpm run lint            # ESLint (fails on any warning)
 pnpm run format:check    # Prettier check (format to auto-fix)
 pnpm test                # Vitest single run
 pnpm test:watch          # Vitest watch mode
@@ -594,6 +594,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
+
+`pnpm run lint` runs with `--max-warnings 0`, and `react-hooks/exhaustive-deps` is an
+error. A deliberate dependency omission (a mount-once effect, an effect keyed on an id)
+takes an `eslint-disable-next-line` with a one-line justification comment directly above
+it; `src/hooks/exhaustiveDepsSuppressions.test.ts` enforces that and caps the count.
+Depend on a stable value (`useDeepStable`, `useZodEditorForm`'s `draft`) instead of a
+`JSON.stringify` dependency key.
 
 CI runs the same clippy command a second time on `windows-latest` (the **Rust Code
 Quality (Windows)** job), because `#[cfg(windows)]` code is compiled out on Linux and
