@@ -3395,7 +3395,7 @@ terminal sessions for people who expect nothing to leave their machine.
   crash reports over the existing connection (`agent.crash_reports.list` / `.read`, see
   `docs/remote-protocol.md`); it never opens a connection for this and contacts no other host. The
   preview lists each agent's reports with an include checkbox. The agent serves only names from
-  its own crash-report directory (no path parameter), capped at 10 reports and 96 KiB each; the
+  its own crash-report directory (no path parameter), capped at 10 reports and 160 KiB each; the
   desktop validates the names again before using them as zip paths
   (`agents/<agent id>/crash-reports/<name>`), re-applies the per-report cap plus a 1 MiB total
   cap, and **redacts every report again** with its own redactor before writing it. An agent that

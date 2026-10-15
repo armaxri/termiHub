@@ -25,6 +25,10 @@
 # addr2line (Linux) or atos (macOS) — the steps docs/contributing.md ->
 # "Symbolizing a crash report" documents.
 #
+# It also checks the report's `modules:` section (#4795): it must list a module
+# marked `*` (holding a backtrace frame), and with split symbols that module must
+# be the probe itself, at the `image:` base.
+#
 # Usage:
 #   scripts/internal/check-release-crash-symbols.sh [<probe-binary>]
 #   scripts/internal/check-release-crash-symbols.sh --help
@@ -103,6 +107,14 @@ if ! printf '%s\n' "$backtrace" | grep -Eq '[0-9]+: .*termihub_core(\[[0-9a-f]+\
 fi
 echo "OK: the release crash report names termiHub functions."
 
+# The modules section (#4795): from the "modules:" line up to the first blank line.
+modules="$(sed -n '/^modules:/,/^$/p' "$report")"
+if ! printf '%s\n' "$modules" | grep -Eq '^\* 0x[0-9a-f]+ 0x[0-9a-f]+ [^ ]+ '; then
+  echo "::error::the crash report lists no loaded module holding a backtrace frame (#4795)" >&2
+  exit 1
+fi
+echo "OK: the crash report lists the loaded modules."
+
 # --- Offline symbolization with split debug symbols (#4504) ---------------
 if [ "$#" -eq 1 ]; then
   exit 0
@@ -139,6 +151,13 @@ if [ -z "$addr" ] || [ -z "$base" ]; then
   echo "::error::the report lacks the image base or the capture frame address (#4504)" >&2
   exit 1
 fi
+
+own="$(sed -n '/^modules:/,/^$/p' "$split_report" | grep -E "^\* $base " || true)"
+if [ -z "$own" ]; then
+  echo "::error::the modules section does not mark the probe's image at $base (#4795)" >&2
+  exit 1
+fi
+echo "module: $own"
 
 want_id="$(node "$REPO_ROOT/scripts/internal/debug-symbols.mjs" id "$symbols" |
   sed -E 's/.*"id":"([^"]*)".*/\1/')"
