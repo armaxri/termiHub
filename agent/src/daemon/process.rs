@@ -1071,10 +1071,10 @@ fn route_monitoring_request(
 /// stops a worker that never does from holding the connection.
 const REFUSAL_LINGER: Duration = Duration::from_secs(2);
 
-/// Upper bound on the best-effort [`MSG_EVICTED`] write to an incumbent writer
-/// (SM-003). The frame is tiny and normally lands in the socket buffer at once;
-/// the bound only guards against a wedged incumbent stalling the takeover.
-const EVICTED_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
+/// Progress bound on the refusal write to a refused worker (AGT-015). The
+/// frame is tiny and normally lands in the socket buffer at once; the bound only
+/// stops a worker that is not reading from holding the refusal task.
+const REFUSAL_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Answer a refused recovery connect (AGT-015) with [`ERR_OWNED_BY_LIVE_PEER`],
 /// off the loop (#3890), then hold the connection open — discarding whatever
@@ -1082,7 +1082,7 @@ const EVICTED_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
 /// passes, so the worker's own handshake writes never meet a closed connection.
 async fn refuse_connection(mut read_half: BoxedReader, mut write_half: BoxedWriter) {
     let refusal = protocol::encode_frame(MSG_ERROR, ERR_OWNED_BY_LIVE_PEER);
-    if worker_sink::write_with_progress_deadline(&mut write_half, &refusal, EVICTED_NOTIFY_TIMEOUT)
+    if worker_sink::write_with_progress_deadline(&mut write_half, &refusal, REFUSAL_WRITE_TIMEOUT)
         .await
         .is_err()
     {
@@ -1095,16 +1095,20 @@ async fn refuse_connection(mut read_half: BoxedReader, mut write_half: BoxedWrit
     .await;
 }
 
-/// Best-effort: send [`MSG_EVICTED`] to the current writer, if any, as a
-/// takeover drops it (SM-003, single-attach). The frame joins the end of the
-/// incumbent's queue, which drains off the loop for at most
-/// [`EVICTED_NOTIFY_TIMEOUT`] before its connection closes (#3890); failures
-/// are ignored — the incumbent then observes the plain EOF, which is the
-/// historical behaviour.
+/// Send [`MSG_EVICTED`] to the current writer, if any, as a takeover drops it
+/// (SM-003, single-attach). The frame joins the end of the incumbent's queue,
+/// which drains off the loop before its connection closes (#3890).
+///
+/// The queue drains in full while the incumbent keeps reading (#4409): an
+/// incumbent that lost a takeover race moments after attaching still has its
+/// own handshake queued, and must read `MSG_READY` and then `MSG_EVICTED` — a
+/// typed eviction — never a connection closed mid-handshake. Only an incumbent
+/// that stops reading is cut off, at the writer's stall bound; it then observes
+/// the plain EOF, which is the historical behaviour.
 fn notify_evicted(agent_writer: &mut Option<WorkerSink>) {
     if let Some(sink) = agent_writer.take() {
         sink.send(MSG_EVICTED, &[]);
-        tokio::spawn(sink.close(EVICTED_NOTIFY_TIMEOUT));
+        tokio::spawn(sink.drain_and_close());
     }
 }
 
@@ -1796,6 +1800,10 @@ pub(crate) mod tests {
 
     /// The attach intent is read off the loop, and a slow one is honoured (#3928).
     mod attach_intent_tests;
+
+    /// The loser of a takeover race reads a typed eviction, never a torn
+    /// handshake (#4409).
+    mod takeover_race_tests;
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────
     //
