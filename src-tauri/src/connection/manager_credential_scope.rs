@@ -221,10 +221,12 @@ impl ConnectionManager {
         if self.main_field_secrets_moved.load(Ordering::SeqCst) {
             return;
         }
+        // Only drop the bare entry's stale hop secrets when no external file may
+        // still read it (#4792); the sweep catches the rest later.
+        let prune_hops = self.may_prune_hop_secrets(None);
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let mut connections = store.connections.clone();
-        let prune_hops = self.may_prune_hop_secrets(None);
         match migrate_plaintext_field_secrets(
             &mut connections,
             None,
