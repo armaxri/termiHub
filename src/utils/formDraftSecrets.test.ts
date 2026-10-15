@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clearDraftSecrets } from "./formDraftSecrets";
+import { changedSecretLabels, clearDraftSecrets, restoreDraftSecrets } from "./formDraftSecrets";
 import { isSecretKeyName } from "./redactLogText";
 import type { SettingsSchema } from "@/types/schema";
 
@@ -65,6 +65,44 @@ describe("clearDraftSecrets (#4500)", () => {
     const draft = { password: "x", nested: { token: "y" } };
     clearDraftSecrets(draft);
     expect(draft).toEqual({ password: "x", nested: { token: "y" } });
+  });
+});
+
+describe("changedSecretLabels (#4758)", () => {
+  it("names only the secrets that differ from the saved document, at any depth", () => {
+    const saved = { apiToken: "saved", plugin: { clientSecret: "s" }, fontSize: 13 };
+    const edited = { apiToken: "saved", plugin: { clientSecret: "typed" }, fontSize: 18 };
+    expect(changedSecretLabels(edited, saved)).toEqual(["Client secret"]);
+  });
+
+  it("names a secret typed into a field the saved document lacks, or one cleared", () => {
+    expect(changedSecretLabels({ apiToken: "typed" }, {})).toEqual(["API token"]);
+    expect(changedSecretLabels({ apiToken: "" }, { apiToken: "saved" })).toEqual(["API token"]);
+    expect(changedSecretLabels({ apiToken: "" }, {})).toEqual([]);
+  });
+});
+
+describe("restoreDraftSecrets (#4758)", () => {
+  it("takes every secret string from the saved document instead of leaving it empty", () => {
+    const draft = { fontSize: 18, apiToken: "", plugin: { clientSecret: "" }, hops: [{ pin: "" }] };
+    const saved = {
+      fontSize: 13,
+      apiToken: "a",
+      plugin: { clientSecret: "b" },
+      hops: [{ pin: "c" }],
+    };
+    expect(restoreDraftSecrets(draft, saved)).toEqual({
+      fontSize: 18,
+      apiToken: "a",
+      plugin: { clientSecret: "b" },
+      hops: [{ pin: "c" }],
+    });
+  });
+
+  it("leaves a secret out when nothing is saved for it", () => {
+    expect(restoreDraftSecrets({ fontSize: 18, apiToken: "" }, { fontSize: 13 })).toEqual({
+      fontSize: 18,
+    });
   });
 });
 
