@@ -25,16 +25,30 @@ export function isFramebufferSizeValid(width: number, height: number): boolean {
 }
 
 /**
+ * Whether a rect's geometry is integral, non-empty and lies fully inside a
+ * `fbWidth × fbHeight` framebuffer. Used alone for a decoded JPEG rect (#4424),
+ * whose bitmap size was checked against the rect when it was decoded.
+ */
+export function isRectInBounds(
+  rect: { x: number; y: number; width: number; height: number },
+  fbWidth: number,
+  fbHeight: number
+): boolean {
+  const { x, y, width, height } = rect;
+  if (![x, y, width, height].every((v) => Number.isInteger(v) && v >= 0)) return false;
+  if (width === 0 || height === 0) return false;
+  return x + width <= fbWidth && y + height <= fbHeight;
+}
+
+/**
  * Whether a dirty rect is non-empty, lies fully inside a `fbWidth × fbHeight`
  * framebuffer and carries exactly `width * height * 4` bytes (mirrors Rust
  * `DirtyRect::check_within`).
  */
 export function isDirtyRectValid(rect: CheckedRect, fbWidth: number, fbHeight: number): boolean {
-  const { x, y, width, height } = rect;
-  if (![x, y, width, height].every((v) => Number.isInteger(v) && v >= 0)) return false;
-  if (width === 0 || height === 0) return false;
-  if (x + width > fbWidth || y + height > fbHeight) return false;
-  return rect.data.length === width * height * 4;
+  return (
+    isRectInBounds(rect, fbWidth, fbHeight) && rect.data.length === rect.width * rect.height * 4
+  );
 }
 
 /**

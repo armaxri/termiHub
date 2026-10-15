@@ -4,12 +4,19 @@ import {
   type BinaryCursorShape,
   type DecodedCursor,
   type DecodedFrame,
+  type RemoteDesktopFrameSubscription,
 } from "@/services/remoteDesktopFrames";
 import { remoteDesktopRequestFullFrame } from "@/services/api";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog, frontendWarn } from "@/utils/frontendLog";
+import {
+  createFramePaintQueue,
+  notifyWireMismatch,
+  paintReadyRects,
+  type ReadyRect,
+} from "./framePaintQueue";
 import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
-import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
+import { isCursorShapeValid, isFramebufferSizeValid } from "./frameBounds";
 import type { Viewport } from "./monitorLayout";
 import { errorMessage } from "@/utils/errorMessage";
 import { LiveRegion } from "@/components/ui/LiveRegion";
@@ -307,11 +314,18 @@ export function RemoteDesktopCanvas({
   // Subscribe to this session's binary frame + cursor channel (#4291).
   useEffect(() => {
     let disposed = false;
-    let unsubscribe: (() => void) | null = null;
+    let subscription: RemoteDesktopFrameSubscription | null = null;
     // A fresh (re)attach has painted nothing yet.
     firstFramePaintedRef.current = false;
 
-    const onFrame = (frame: DecodedFrame): void => {
+    const requestFullFrame = (why: string): void => {
+      void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
+        frontendLog("remote_desktop", `request_full_frame ${why} failed: ${errorMessage(err)}`)
+      );
+    };
+
+    // Paint one frame, in server order, with its JPEG rects already decoded.
+    const paint = (frame: DecodedFrame, rects: ReadyRect[]): void => {
       if (disposed) return;
       // Never size the offscreen canvas from an untrusted, absurd size (MOCK-011).
       if (!isFramebufferSizeValid(frame.width, frame.height)) return;
@@ -325,13 +339,34 @@ export function RemoteDesktopCanvas({
       }
       const ctx = fb.getContext("2d");
       if (!ctx) return;
-      for (const rect of frame.rects) {
-        if (!isDirtyRectValid(rect, fb.width, fb.height)) continue;
-        // `rect.data` is already a Uint8ClampedArray view onto the IPC buffer.
-        ctx.putImageData(new ImageData(rect.data, rect.width, rect.height), rect.x, rect.y);
-      }
+      paintReadyRects(ctx, fb.width, fb.height, rects);
       scheduleRepaint();
     };
+
+    // Switch this channel to RGBA, then repaint everything a skipped JPEG rect
+    // left stale (#4424). Deferred until the subscription exists.
+    let fallbackPending = false;
+    const fallBackToRgba = (sub: RemoteDesktopFrameSubscription): void => {
+      void sub
+        .disableJpeg()
+        .catch((err) =>
+          frontendLog("remote_desktop", `disable jpeg frames failed: ${errorMessage(err)}`)
+        )
+        .finally(() => {
+          if (!disposed) requestFullFrame("after jpeg fallback");
+        });
+    };
+
+    // JPEG rects decode asynchronously; the queue keeps server paint order (#4424).
+    const queue = createFramePaintQueue({
+      paint,
+      onDecodeFailure: (reason) => {
+        frontendWarn("remote_desktop", `${reason}; falling back to RGBA frames`);
+        if (disposed) return;
+        if (subscription) fallBackToRgba(subscription);
+        else fallbackPending = true;
+      },
+    });
 
     const onCursor = (cursor: DecodedCursor): void => {
       if (disposed) return;
@@ -345,29 +380,40 @@ export function RemoteDesktopCanvas({
       cursorRef.current = { x: cursor.x, y: cursor.y, visible: cursor.visible, shape };
     };
 
-    void subscribeRemoteDesktopFrames(sessionId, { onFrame, onCursor }).then(
-      (un) => {
+    const onWireMismatch = (backendVersion: number | null): void => {
+      if (!disposed) notifyWireMismatch(backendVersion);
+    };
+
+    void subscribeRemoteDesktopFrames(sessionId, {
+      onFrame: (frame) => {
+        if (!disposed) queue.push(frame);
+      },
+      onCursor,
+      onWireMismatch,
+    }).then(
+      (sub) => {
         if (disposed) {
-          un();
+          sub.unsubscribe();
           return;
         }
-        unsubscribe = un;
+        subscription = sub;
         // The backend streams frames from the moment the connect returns, before
         // this channel existed, and a static desktop never resends them: ask for
         // a full frame now that nothing can be missed (#4017).
-        void remoteDesktopRequestFullFrame(sessionId).catch((err) =>
-          frontendLog(
-            "remote_desktop",
-            `request_full_frame on subscribe failed: ${errorMessage(err)}`
-          )
-        );
+        if (fallbackPending) fallBackToRgba(sub);
+        else requestFullFrame("on subscribe");
       },
-      (err) => frontendLog("remote_desktop", `frame channel subscribe failed: ${errorMessage(err)}`)
+      (err) => {
+        frontendError("remote_desktop", `frame channel subscribe failed: ${errorMessage(err)}`);
+        // A refused wire version is a build skew the user must hear about.
+        if (/wire version mismatch/.test(errorMessage(err))) onWireMismatch(null);
+      }
     );
 
     return () => {
       disposed = true;
-      unsubscribe?.();
+      queue.dispose();
+      subscription?.unsubscribe();
     };
   }, [sessionId, ensureFramebuffer, scheduleRepaint]);
 
