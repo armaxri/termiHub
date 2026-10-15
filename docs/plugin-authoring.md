@@ -74,7 +74,7 @@ silently ignored.
   "apiVersion": "1.1",
   "platforms": ["windows", "linux", "macos"],
   "permissions": ["terminal", "network", "filesystem"],
-  "filesystemPaths": ["/var/log/k8s-exec", "C:\\ProgramData\\k8s-exec"],
+  "filesystemPaths": ["${home}/.kube", "/var/log/k8s-exec", "C:\\ProgramData\\k8s-exec"],
   "connectionPolicy": { "maxConnections": 4, "connectTimeoutMs": 10000 },
   "extensions": {
     "terminalBackend": {
@@ -99,22 +99,22 @@ silently ignored.
 
 ### Fields
 
-| Field              | Type     | Required          | Notes                                                                                                                                                                                                            |
-| ------------------ | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`               | string   | yes               | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`).                                   |
-| `name`             | string   | yes               | Human-readable display name.                                                                                                                                                                                     |
-| `version`          | string   | yes               | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.                                                 |
-| `author`           | string   | yes               | Plugin author.                                                                                                                                                                                                   |
-| `description`      | string   | yes               | Short description.                                                                                                                                                                                               |
-| `license`          | string   | yes               | SPDX-style license identifier.                                                                                                                                                                                   |
-| `apiVersion`       | string   | yes               | Plugin ABI version as canonical `"major.minor"` (currently `"1.1"`; theme/JS-only plugins may keep `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility). |
-| `platforms`        | string[] | yes               | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                        |
-| `permissions`      | string[] | yes               | Requested capabilities (see below). May be empty.                                                                                                                                                                |
-| `filesystemPaths`  | string[] | with `filesystem` | Folders the plugin may read and write through termiHub. Required with, and only allowed with, the `filesystem` permission — see [Filesystem paths](#filesystem-paths).                                           |
-| `connectionPolicy` | object   | no                | Limits on the network connections a session opens through termiHub: `maxConnections`, `connectTimeoutMs` and `allowLocalNetwork`. Absent keeps the defaults — see [Connection policy](#connection-policy).       |
-| `extensions`       | object   | yes               | Extension points provided; **at least one** required.                                                                                                                                                            |
-| `settings`         | object   | no                | User-configurable settings, keyed by setting name.                                                                                                                                                               |
-| `updateUrl`        | string   | no                | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                             |
+| Field              | Type     | Required          | Notes                                                                                                                                                                                                                  |
+| ------------------ | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | string   | yes               | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`).                                         |
+| `name`             | string   | yes               | Human-readable display name.                                                                                                                                                                                           |
+| `version`          | string   | yes               | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.                                                       |
+| `author`           | string   | yes               | Plugin author.                                                                                                                                                                                                         |
+| `description`      | string   | yes               | Short description.                                                                                                                                                                                                     |
+| `license`          | string   | yes               | SPDX-style license identifier.                                                                                                                                                                                         |
+| `apiVersion`       | string   | yes               | Plugin ABI version as canonical `"major.minor"` (currently `"1.1"`; theme/JS-only plugins may keep `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility).       |
+| `platforms`        | string[] | yes               | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                              |
+| `permissions`      | string[] | yes               | Requested capabilities (see below). May be empty.                                                                                                                                                                      |
+| `filesystemPaths`  | string[] | with `filesystem` | Folders the plugin may read and write through termiHub: absolute paths, or `${home}/…` / `${config}/…`. Required with, and only allowed with, the `filesystem` permission — see [Filesystem paths](#filesystem-paths). |
+| `connectionPolicy` | object   | no                | Limits on the network connections a session opens through termiHub: `maxConnections`, `connectTimeoutMs` and `allowLocalNetwork`. Absent keeps the defaults — see [Connection policy](#connection-policy).             |
+| `extensions`       | object   | yes               | Extension points provided; **at least one** required.                                                                                                                                                                  |
+| `settings`         | object   | no                | User-configurable settings, keyed by setting name.                                                                                                                                                                     |
+| `updateUrl`        | string   | no                | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                                   |
 
 ### Permissions
 
@@ -142,12 +142,12 @@ available (see the host context's `data_dir`).
 Each entry must be:
 
 - **Absolute**, in POSIX form (`/var/log/app`) or Windows form
-  (`C:\Logs\app`, `D:/captures`, `\\server\share\folder`). One manifest serves
-  every platform, so an entry in another OS's form is accepted but grants
-  nothing on this one. A relative path, `~/…`, `C:folder` or `\folder` is
-  rejected: it would depend on termiHub's working directory. termiHub does
-  not expand `~` or environment variables, so a folder inside the user's
-  home folder can only be listed by its full path.
+  (`C:\Logs\app`, `D:/captures`, `\\server\share\folder`), **or** start with
+  one of the [placeholders](#home-and-config-placeholders) below. One manifest
+  serves every platform, so an entry in another OS's form is accepted but
+  grants nothing on this one. A relative path, `~/…`, `C:folder` or `\folder`
+  is rejected: it would depend on termiHub's working directory. termiHub does
+  not expand `~` or environment variables; use `${home}` instead.
 - **Normalised**: no `.` or `..` segments.
 - **Below a root**: not `/`, `C:\` or a bare network share
   (`\\server\share`). Windows verbatim and device paths (`\\?\…`, `\\.\…`)
@@ -163,6 +163,43 @@ home folder, such as `/Users/me/captures`, is fine.
 
 Requests are checked the same way at run time. A relative path is refused, and
 so is a path that leaves the declared folders through `..` or a symlink.
+
+#### Home and config placeholders
+
+To name a folder inside the user's home or config folder portably, start the
+entry with a placeholder. termiHub replaces it with the folder of the user
+running termiHub when the plugin loads (never when it is packed):
+
+| Placeholder | Resolves to                                                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `${home}`   | The home folder: `$HOME`; `%USERPROFILE%` on Windows.                                                                                     |
+| `${config}` | The per-user config folder: `$XDG_CONFIG_HOME` or `~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows. |
+
+So `${home}/.kube` is `/home/alice/.kube` on Linux, `/Users/alice/.kube` on
+macOS and `C:\Users\alice\.kube` on Windows. The rules:
+
+- **Only `${home}` and `${config}` exist**, exactly as written. Any other
+  `${…}` (`${HOME}`, `${env}`, …) fails validation; it is never kept as a
+  literal folder name.
+- **The placeholder comes first**, followed by `/` and at least one folder:
+  `${home}/.kube`. A placeholder later in the entry (`/data/${home}`) is
+  rejected, and so is a bare `${home}` (the whole home folder) or `${config}`
+  (which holds termiHub's own settings).
+- **Separate folders with `/`**, on every platform. After the placeholder, `\`,
+  `:`, `.` and `..` segments, and folder names ending in `.` or a space are
+  rejected.
+- **The resolved folder is checked like any other entry**: it must be
+  absolute and below a root, may not contain the home folder or overlap
+  termiHub's own folders (`${home}/.config` on Linux is refused for that
+  reason), and may not leave the placeholder's folder through a symlink
+  (`~/.kube` being a symlink to `/etc` fails the load). If this computer has
+  no such folder, the plugin fails to load rather than guessing.
+
+The install dialog and the plugin's access summary show the declared entry
+and the folder it resolves to (`${home}/.kube → /Users/alice/.kube`). A native
+plugin's trust is bound to the **resolved** folder: if the placeholder later
+resolves somewhere else (a different home or config folder), termiHub asks for
+trust again before loading it.
 
 ### Connection policy
 

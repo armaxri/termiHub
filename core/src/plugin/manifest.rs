@@ -1286,7 +1286,12 @@ mod tests {
             manifest
                 .validate()
                 .unwrap_or_else(|e| panic!("example manifest does not validate: {e}\n{json}"));
-            let permissions = crate::plugin::PermissionSet::from_manifest(&manifest);
+            let bases = crate::plugin::PlaceholderBases::new(
+                Some("/home/author"),
+                Some("/home/author/.config"),
+            );
+            let permissions =
+                crate::plugin::PermissionSet::from_manifest_with_bases(&manifest, &bases);
             permissions
                 .check_consistency(&manifest.extensions)
                 .unwrap_or_else(|e| panic!("example manifest is refused at load: {e}\n{json}"));
