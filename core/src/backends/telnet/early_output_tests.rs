@@ -36,6 +36,25 @@ async fn connect_to_greeting_server() -> (Telnet, TcpStream) {
     (telnet, peer)
 }
 
+/// Close the server side the way a real server does: send FIN now, keep
+/// reading what the client sent until it closes too, then drop.
+///
+/// A plain `drop` is not that. `connect` writes the opening negotiation offer
+/// (`IAC WILL NAWS`), which this server never reads, and closing a socket with
+/// unread receive data sends RST instead of FIN. On Windows a reset makes the
+/// client's next `recv` fail with WSAECONNRESET and discards data it had
+/// already buffered, so the greeting would vanish there (a test artifact, not
+/// the bug under test).
+fn close_gracefully(mut peer: TcpStream) {
+    peer.shutdown(std::net::Shutdown::Write)
+        .expect("shutdown server write side");
+    std::thread::spawn(move || {
+        let _ = peer.set_read_timeout(Some(CEILING));
+        let mut sink = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut peer, &mut sink);
+    });
+}
+
 /// Receive until `needle` has been seen, or fail after [`CEILING`].
 async fn receive_until(rx: &mut OutputReceiver, needle: &[u8]) -> Vec<u8> {
     let deadline = Instant::now() + CEILING;
@@ -100,7 +119,7 @@ async fn a_second_subscribe_replaces_the_first() {
 #[tokio::test]
 async fn early_output_then_close_is_delivered_and_ends_the_stream() {
     let (mut telnet, peer) = connect_to_greeting_server().await;
-    drop(peer);
+    close_gracefully(peer);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let mut rx = telnet.subscribe_output();
     receive_until(&mut rx, b"TH_EARLY_GREETING").await;
