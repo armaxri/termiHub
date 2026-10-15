@@ -125,14 +125,15 @@ mod tests {
             host: "10.0.0.1".into(),
             port: 22,
             state: PortState::Open,
-            latency_ms: Some(3),
+            latency_ms: Some(0.42),
         };
         let p = scan_result_payload("task-1", &r);
         assert_eq!(p["taskId"], "task-1");
         assert_eq!(p["host"], "10.0.0.1");
         assert_eq!(p["port"], 22);
         assert_eq!(p["state"], "open"); // PortState serializes camelCase
-        assert_eq!(p["latencyMs"], 3);
+                                        // Fractional milliseconds reach the frontend unrounded (#4542).
+        assert_eq!(p["latencyMs"], 0.42);
         // Exactly these keys — a stray/renamed field would break the frontend.
         let obj = p.as_object().unwrap();
         assert_eq!(obj.len(), 5);
@@ -177,10 +178,10 @@ mod tests {
 
     #[test]
     fn sweep_shapes_are_stable() {
-        let p = sweep_result_payload("t", "10.0.0.5", Some(7u64), Some("host.lan"));
+        let p = sweep_result_payload("t", "10.0.0.5", Some(0.25f64), Some("host.lan"));
         assert_eq!(p["taskId"], "t");
         assert_eq!(p["host"], "10.0.0.5");
-        assert_eq!(p["latencyMs"], 7);
+        assert_eq!(p["latencyMs"], 0.25);
         assert_eq!(p["hostname"], "host.lan");
 
         let done = sweep_complete_payload("t", json!({ "total": 3, "up": 1 }), true);

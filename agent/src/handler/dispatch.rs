@@ -29,7 +29,9 @@ use crate::io::transport::NotificationSender;
 use crate::io::update_auth::{carries_update_auth_token, UpdateAuth};
 use crate::ki_prompt::{is_secret_bearing_request, KiBinding, KiPromptHub};
 use crate::monitoring::MonitoringManagerApi;
-use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
+use crate::network::streaming::{
+    round_events_for_legacy_client, RunLimits, StartError, ToolRunManager,
+};
 use crate::protocol::errors;
 use crate::protocol::methods::{
     AgentForwardAckParams, AgentForwardCloseParams, AgentForwardConnectParams,
@@ -189,7 +191,12 @@ use termihub_core::monitoring::{
 /// agent host's own file system, so a remote-desktop upload claims its name
 /// without ever truncating a file it did not create. An older desktop never
 /// sends the flag; an older agent does not advertise it and is never sent it.
-const AGENT_PROTOCOL_VERSION: &str = "0.30.0";
+/// Bumped to 0.31.0 for the additive `clientCapabilities.fractionalLatency`
+/// initialize flag (#4542): streamed network tool results carry fractional
+/// `latencyMs` (`0.42`) to a desktop that advertises it, and whole milliseconds
+/// to one that does not (an older desktop parses the field as an integer). An
+/// older agent always sends whole milliseconds, which the desktop still reads.
+const AGENT_PROTOCOL_VERSION: &str = "0.31.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -948,6 +955,11 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             if p.client_capabilities.keyboard_interactive_prompts {
                 s.ki_binding.attach();
             }
+
+            // Stream fractional `latencyMs` only to a desktop that reads it; an
+            // older one parses the field as an integer (#4542).
+            s.tool_runs
+                .set_fractional_latency(p.client_capabilities.fractional_latency);
 
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
@@ -2294,6 +2306,7 @@ fn register_tool_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Re
 fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method(pm::TOOL_RUN, |params, ctx, _ext| async move {
         let registry = get_tool_registry(&ctx).await?;
+        let fractional_latency = ctx.lock().await.tool_runs.fractional_latency();
 
         let p: Value = params.parse().map_err(|e| invalid_params("tool.run", e))?;
         let tool_id = p
@@ -2316,7 +2329,12 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
             .await
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
 
-        Ok::<_, ErrorObjectOwned>(json!({ "events": host.take(), "result": result }))
+        let mut events = host.take();
+        if !fractional_latency {
+            // An older desktop parses `latencyMs` as an integer (#4542).
+            round_events_for_legacy_client(&mut events);
+        }
+        Ok::<_, ErrorObjectOwned>(json!({ "events": events, "result": result }))
     })?;
     Ok(())
 }
@@ -3892,10 +3910,10 @@ mod tests {
     /// the connect window and its `forwardFlow` capability (#4284), and
     /// 0.29.0 the `hostFileAttributeOps` capability (#4601), and 0.30.0 the
     /// `write_range` exclusive create with its `fileCreateNew` capability
-    /// (#4433).
+    /// (#4433), and 0.31.0 the `fractionalLatency` client capability (#4542).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.30.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.31.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -5439,6 +5457,50 @@ mod tests {
                 "{method} must be gone: {result}"
             );
         }
+    }
+
+    // ── fractional latency (#4542) ─────────────────────────────────
+
+    /// Scan one open loopback port through `tool.run` and return the result
+    /// event's `latencyMs`.
+    async fn open_port_latency(init: Value) -> Value {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().unwrap().port();
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init, 1).await;
+        assert!(result.get("result").is_some(), "init failed: {result}");
+
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({
+                "toolId": "port_scan",
+                "params": { "host": "127.0.0.1", "ports": port.to_string(), "timeoutMs": 2000 }
+            }),
+            2,
+        )
+        .await;
+        let events = result["result"]["events"].as_array().expect("events array");
+        assert_eq!(events.len(), 1, "{result}");
+        assert_eq!(events[0]["payload"]["state"], "open", "{result}");
+        drop(listener);
+        events[0]["payload"]["latencyMs"].clone()
+    }
+
+    #[tokio::test]
+    async fn tool_run_sends_fractional_latency_to_a_capable_desktop() {
+        let mut init = init_params();
+        init["clientCapabilities"] = json!({ "fractionalLatency": true });
+        let latency = open_port_latency(init).await;
+        assert!(latency.is_f64(), "fractional latency expected: {latency}");
+    }
+
+    #[tokio::test]
+    async fn tool_run_rounds_latency_for_an_older_desktop() {
+        // An older desktop sends no `fractionalLatency` and parses the field
+        // as an unsigned integer.
+        let latency = open_port_latency(init_params()).await;
+        assert!(latency.is_u64(), "whole milliseconds expected: {latency}");
     }
 
     // ── network tools via tool.run (the replacement path, #3731) ───

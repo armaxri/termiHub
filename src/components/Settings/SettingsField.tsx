@@ -1,9 +1,31 @@
 import type { ReactElement, ReactNode } from "react";
+import { isValidElement } from "react";
 import { Field } from "../ui/Field";
 import type { FieldHintVariant } from "../ui/Field";
+import { Button } from "../ui/Button";
+import { Toggle } from "../ui/Toggle";
 
 /** Visual variant applied to the field's hint text. */
 export type SettingsHintVariant = FieldHintVariant;
+
+/**
+ * Settings row layout. `"inline"` puts the label and its hint on the left and the
+ * control right-aligned (toggles, action buttons); `"stack"` renders label, then
+ * the control, then the hint (inputs, selects).
+ */
+export type SettingsFieldLayout = "stack" | "inline";
+
+/** Controls compact enough to sit right-aligned beside their label. */
+const INLINE_CONTROLS: ReadonlySet<unknown> = new Set([Toggle, Button]);
+
+/**
+ * Pick the row layout for a settings control: a {@link Toggle} or a single
+ * {@link Button} renders inline; everything else (inputs, selects, composite
+ * controls) stacks.
+ */
+export function settingsFieldLayout(control: ReactNode): SettingsFieldLayout {
+  return isValidElement(control) && INLINE_CONTROLS.has(control.type) ? "inline" : "stack";
+}
 
 export interface SettingsFieldProps {
   /**
@@ -34,6 +56,11 @@ export interface SettingsFieldProps {
    * control already declares its own.
    */
   children: ReactElement;
+  /**
+   * Row layout. Defaults to {@link settingsFieldLayout} of the child: inline for
+   * a `Toggle` or `Button`, stacked for everything else.
+   */
+  layout?: SettingsFieldLayout;
 }
 
 /**
@@ -50,10 +77,12 @@ export function SettingsField({
   hintVariant = "default",
   error,
   children,
+  layout,
 }: SettingsFieldProps): ReactElement {
   return (
     <Field
       variant="settings"
+      layout={layout ?? settingsFieldLayout(children)}
       label={label}
       htmlFor={htmlFor}
       hint={hint}

@@ -3601,6 +3601,9 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
         // to a desktop that advertises them.
         client_capabilities: ClientCapabilities {
             keyboard_interactive_prompts: true,
+            // Network tool results may carry fractional `latencyMs` (#4542);
+            // an older agent sends whole milliseconds, which still parse.
+            fractional_latency: true,
         },
     };
     // Serializing plain strings/bools/ints cannot fail; the fallback is

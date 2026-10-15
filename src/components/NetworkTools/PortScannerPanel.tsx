@@ -13,6 +13,7 @@ import {
   onScanError,
 } from "@/services/networkApi";
 import type { NetworkToolRun, PortScanSummary } from "@/types/network";
+import { formatLatencyMs } from "@/utils/formatters";
 import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
@@ -158,7 +159,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     host: r.host,
     port: r.port,
     state: r.state,
-    latencyMs: r.latencyMs != null ? `${r.latencyMs}ms` : "—",
+    latencyMs: formatLatencyMs(r.latencyMs),
   }));
 
   // Live open-port tally so the running footer surfaces progress, not just the

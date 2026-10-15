@@ -9,7 +9,8 @@ export type PingResult = {
  */
 seq: number, 
 /**
- * Round-trip time in milliseconds. `None` when the packet timed out.
+ * Round-trip time in (fractional) milliseconds. `None` when the packet
+ * timed out.
  */
 latencyMs?: number | null, 
 /**

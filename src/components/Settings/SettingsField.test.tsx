@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { SettingsField } from "./SettingsField";
+import { Button } from "../ui/Button";
+import { Toggle } from "../ui/Toggle";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -167,5 +169,58 @@ describe("SettingsField", () => {
     expect(ids).toContain("port-hint");
     // The generated error id is also present alongside the pre-existing one.
     expect(ids.length).toBeGreaterThan(1);
+  });
+  it("renders a Toggle as an inline row: label + hint left, control right", () => {
+    render(
+      <SettingsField label="Allow Experimental Features" hint="Enables hidden features.">
+        <Toggle checked={false} onCheckedChange={() => {}} data-testid="toggle" />
+      </SettingsField>
+    );
+    const field = container.querySelector(".settings-form__field");
+    expect(field?.classList.contains("settings-form__field--inline")).toBe(true);
+    const text = field?.querySelector(".settings-form__field-text");
+    expect(text?.querySelector(".settings-form__hint")?.textContent).toBe(
+      "Enables hidden features."
+    );
+    expect(
+      field?.querySelector('.settings-form__field-control [data-testid="toggle"]')
+    ).not.toBeNull();
+  });
+
+  it("renders an action Button as an inline row", () => {
+    render(
+      <SettingsField label="Clear Session History" hint="Remove all recorded sessions.">
+        <Button size="sm">Clear All History</Button>
+      </SettingsField>
+    );
+    const field = container.querySelector(".settings-form__field");
+    expect(field?.classList.contains("settings-form__field--inline")).toBe(true);
+    expect(field?.querySelector(".settings-form__field-control button")?.textContent).toBe(
+      "Clear All History"
+    );
+  });
+
+  it("stacks inputs: label, then control, then hint", () => {
+    render(
+      <SettingsField label="Default User" hint="Pre-filled username.">
+        <input type="text" data-testid="my-control" />
+      </SettingsField>
+    );
+    const field = container.querySelector(".settings-form__field");
+    expect(field?.classList.contains("settings-form__field--inline")).toBe(false);
+    const order = Array.from(field?.children ?? []).map((el) =>
+      el.matches("input") ? "control" : el.className
+    );
+    expect(order).toEqual(["settings-form__label", "control", "settings-form__hint"]);
+  });
+
+  it("honours an explicit layout override", () => {
+    render(
+      <SettingsField label="Mode" layout="stack">
+        <Toggle checked={false} onCheckedChange={() => {}} />
+      </SettingsField>
+    );
+    const field = container.querySelector(".settings-form__field");
+    expect(field?.classList.contains("settings-form__field--inline")).toBe(false);
   });
 });

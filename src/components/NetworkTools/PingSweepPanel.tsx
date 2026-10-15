@@ -10,6 +10,7 @@ import {
   onSweepError,
 } from "@/services/networkApi";
 import type { NetworkToolRun, PingSweepSummary } from "@/types/network";
+import { formatLatencyMs } from "@/utils/formatters";
 import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { pingSweepResultsTable } from "./exportResults";
@@ -149,7 +150,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
   const formattedRows = results.map((r) => ({
     host: r.host,
     status: "up",
-    latencyMs: r.latencyMs != null ? `${r.latencyMs}ms` : "—",
+    latencyMs: formatLatencyMs(r.latencyMs),
     hostname: r.hostname ?? "—",
   }));
 

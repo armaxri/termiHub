@@ -119,6 +119,27 @@ export function formatElapsed(seconds: number): string {
   return `${days}d ${String(hours).padStart(2, "0")}h`;
 }
 
+/**
+ * Format a network round-trip latency in milliseconds (#4542).
+ *
+ * Precision scales with the magnitude so a sub-millisecond LAN reply stays
+ * meaningful without cluttering a slow WAN one:
+ * - `< 10` → up to 2 decimals (`"0.42ms"`, `"3.5ms"`)
+ * - `< 100` → up to 1 decimal (`"12.3ms"`)
+ * - `>= 100` → whole milliseconds (`"238ms"`)
+ *
+ * Trailing zeros are dropped, so a whole-millisecond value from an older agent
+ * still reads `"12ms"`. A positive value that would round to zero reads
+ * `"<0.01ms"` rather than a misleading `"0ms"`. Missing, negative or
+ * non-finite input reads `"—"`. Locale-formatted like the other numbers here.
+ */
+export function formatLatencyMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms > 0 && ms < 0.005) return `<${formatNumber(0.01, 2, 2)}ms`;
+  const digits = ms < 10 ? 2 : ms < 100 ? 1 : 0;
+  return `${formatNumber(ms, 0, digits)}ms`;
+}
+
 /** Options for {@link formatRelativeTime} / {@link formatRelativeAgo}. */
 export interface RelativeTimeOptions {
   /**

@@ -288,4 +288,35 @@ describe("Field", () => {
     expect(document.querySelector('[data-testid="field-error"]')).toBeTruthy();
     errorSpy.mockRestore();
   });
+  it("inline layout puts label and hint in a text column and the control beside it", () => {
+    render(
+      <Field data-testid="field" variant="settings" layout="inline" label="Wrap" hint="Long hint">
+        <input type="checkbox" data-testid="ctl" />
+      </Field>
+    );
+    const field = document.querySelector('[data-testid="field"]') as HTMLElement;
+    expect(field.className).toContain("settings-form__field--inline");
+    const [text, control] = Array.from(field.children);
+    expect(text.className).toBe("settings-form__field-text");
+    expect(text.querySelector(".settings-form__label")?.textContent).toBe("Wrap");
+    // The hint sits under the label, never between the label and the control.
+    expect(text.querySelector(".settings-form__hint")?.textContent).toBe("Long hint");
+    expect(control.className).toBe("settings-form__field-control");
+    expect(control.querySelector('[data-testid="ctl"]')).toBeTruthy();
+  });
+
+  it("inline layout uses the ui-field class family in the default variant", () => {
+    render(
+      <Field data-testid="field" layout="inline" label="Wrap" error="Bad">
+        <input type="checkbox" data-testid="ctl" />
+      </Field>
+    );
+    const field = document.querySelector('[data-testid="field"]') as HTMLElement;
+    expect(field.className).toContain("ui-field--inline");
+    expect(field.querySelector(".ui-field__text")).toBeTruthy();
+    expect(field.querySelector(".ui-field__control")).toBeTruthy();
+    expect(document.querySelector('[data-testid="ctl"]')?.getAttribute("aria-invalid")).toBe(
+      "true"
+    );
+  });
 });

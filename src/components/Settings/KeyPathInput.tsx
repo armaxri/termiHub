@@ -162,7 +162,7 @@ export function KeyPathInput({
         <Tooltip content="Browse">
           <button
             type="button"
-            className="settings-form__list-browse"
+            className="key-path-input__browse"
             onClick={handleBrowse}
             aria-label="Browse"
             data-testid={`${prefix}key-path-browse`}

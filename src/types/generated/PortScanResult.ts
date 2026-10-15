@@ -12,6 +12,6 @@ export type PortScanResult = {
  */
 host: string, port: number, state: PortState, 
 /**
- * Round-trip latency in milliseconds for open ports.
+ * Round-trip latency in (fractional) milliseconds for open ports.
  */
 latencyMs?: number | null, };
