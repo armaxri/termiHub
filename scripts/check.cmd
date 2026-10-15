@@ -78,6 +78,12 @@ node scripts\internal\check-cross-version.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === GitHub Actions pin consistency ===
+REM Every third-party action pinned to ONE full commit SHA with a version comment (#4360).
+node scripts\internal\check-action-pins.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === Doc code-reference drift ===
 REM Symbol-based file-to-symbol references in reference docs resolve (#4369).
 node scripts\internal\check-doc-symbols.mjs
