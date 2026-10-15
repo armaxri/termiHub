@@ -65,6 +65,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           sparse-checkout: scripts/internal
+          persist-credentials: false
 
       - name: Download Linux arm64 release asset
         id: download
