@@ -867,8 +867,9 @@ jobs:
   # Check the full release asset set before anything is published (#4746). Runs
   # in a real release AND in a dry run: it downloads every build job's artifact
   # and asserts every expected file is present and non-empty, and every agent
-  # binary matches its .sha256 sidecar. Read-only, no checkout. The upload-*
-  # jobs need it, so they only ever publish a checked set.
+  # binary matches its .sha256 sidecar, and every SBOM is well-formed CycloneDX
+  # JSON (#4484). Read-only, no checkout. The upload-* jobs and sbom need it, so
+  # they only ever publish a checked set.
   check-release-assets:
     name: Check Release Assets
     needs:
@@ -881,6 +882,7 @@ jobs:
         agent-binaries-macos,
         agent-binaries-windows,
         third-party-notices,
+        sbom-generate,
       ]
     runs-on: ubuntu-latest
     permissions:
@@ -904,6 +906,11 @@ jobs:
         with:
           name: third-party-notices
 
+      - name: Download SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-sboms
+
       # Names mirror build-app's rename logic, the agent-binaries-* matrices
       # and verify-release's expected list.
       - name: Check the asset set
@@ -922,6 +929,11 @@ jobs:
           for a in "${agents[@]}"; do
             expected+=("$a" "${a}.sha256")
           done
+          sboms=()
+          for c in desktop agent rdp-sidecar frontend; do
+            sboms+=("termiHub-${VERSION}-sbom-${c}.cdx.json")
+          done
+          expected+=("${sboms[@]}")
           missing=0
           {
             echo "### Release assets (v${VERSION})"
@@ -941,6 +953,16 @@ jobs:
           # Publish only bytes that match their checksum sidecar.
           for a in "${agents[@]}"; do
             sha256sum -c "${a}.sha256"
+          done
+          # Every SBOM must be a CycloneDX document that lists components (#4484).
+          for f in "${sboms[@]}"; do
+            if ! jq -e '.bomFormat == "CycloneDX"
+                and (.specVersion | type == "string")
+                and (.components | type == "array" and length > 0)' "$f" > /dev/null; then
+              echo "::error::Malformed SBOM (not CycloneDX JSON with components): ${f}"
+              exit 1
+            fi
+            echo "${f}: CycloneDX $(jq -r .specVersion "$f"), $(jq '.components | length' "$f") components"
           done
           echo "All ${#expected[@]} expected assets are present."
 
@@ -1357,12 +1379,13 @@ jobs:
   #   - sbom only downloads that artifact, attests it and uploads it with
   #     first-party actions and `gh`; it checks nothing out and runs no npm code.
   # release-sbom-split.test.mjs pins both halves.
-  # Not part of the dry run yet: it needs create-release for the version. #4484
-  # moves it into the lane by needing release-version instead (and the version
-  # from needs.release-version.outputs.version).
+  # sbom-generate is part of the dry run (#4484): it needs release-version, not
+  # create-release, so a dispatched run generates all four SBOMs (including the
+  # direct-dependency completeness check) under 0.0.0-dryrun and
+  # check-release-assets verifies them. sbom stays tag-only via create-release.
   sbom-generate:
     name: Generate SBOMs
-    needs: [verify-version, verify-supply-chain, create-release]
+    needs: [verify-version, verify-supply-chain, release-version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1392,7 +1415,7 @@ jobs:
 
       - name: Generate Rust SBOMs
         env:
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.release-version.outputs.version }}
         run: |
           set -euo pipefail
           # One run per lockfile; cargo-cyclonedx writes <crate dir>/sbom.json
@@ -1406,7 +1429,7 @@ jobs:
 
       - name: Generate frontend SBOM
         env:
-          VERSION: ${{ needs.create-release.outputs.version }}
+          VERSION: ${{ needs.release-version.outputs.version }}
         run: |
           set -euo pipefail
           # Installs the pinned @cyclonedx/cyclonedx-npm devDependency too; the
@@ -1437,7 +1460,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-sboms
-          path: termiHub-${{ needs.create-release.outputs.version }}-sbom-*.cdx.json
+          path: termiHub-${{ needs.release-version.outputs.version }}-sbom-*.cdx.json
           if-no-files-found: error
           retention-days: 7
 
@@ -1446,7 +1469,7 @@ jobs:
   # never share a runner with the generators.
   sbom:
     name: Attest and Upload SBOMs
-    needs: [verify-version, verify-supply-chain, create-release, sbom-generate]
+    needs: [verify-version, verify-supply-chain, create-release, check-release-assets, sbom-generate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
