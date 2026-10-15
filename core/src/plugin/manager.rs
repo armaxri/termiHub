@@ -46,6 +46,7 @@ use thiserror::Error;
 use crate::util::persist;
 
 use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
+use super::native_trust::{manifest_library_hash, NativeTrustSnapshot};
 use super::package::{
     check_entry_count, check_host_platform, check_package_size, read_entry_bounded,
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
@@ -131,6 +132,14 @@ pub struct InstalledPlugin {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<ResolvedFilesystemPath>>", optional))]
     pub resolved_filesystem_paths: Vec<ResolvedFilesystemPath>,
+    /// For a native plugin, the trust binding the Settings row renders and
+    /// sends back when the user trusts it (#4419): the hash of the library this
+    /// host would load and a digest of the access shown above, derived from the
+    /// same manifest as this listing. Absent for a non-native plugin, or when
+    /// the library cannot be read (it then cannot be trusted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub trust_snapshot: Option<NativeTrustSnapshot>,
     /// When the plugin was installed, as milliseconds since the Unix epoch.
     #[cfg_attr(test, ts(type = "number"))]
     pub installed_at: u64,
@@ -1162,12 +1171,20 @@ impl PluginManager {
         };
         let resolved_filesystem_paths =
             resolve_filesystem_paths_for_host(&manifest.filesystem_paths);
+        // Only a native plugin has a trust binding; a library that cannot be
+        // read leaves it absent, and the host then refuses to trust it.
+        let trust_snapshot = manifest.extensions.terminal_backend.as_ref().and_then(|_| {
+            manifest_library_hash(dir, &manifest)
+                .ok()
+                .map(|hash| NativeTrustSnapshot::new(hash, &manifest))
+        });
         InstalledPlugin {
             manifest,
             state: plugin_state,
             error_message,
             invalid_manifest: false,
             resolved_filesystem_paths,
+            trust_snapshot,
             installed_at,
         }
     }
@@ -1457,6 +1474,7 @@ fn invalid_plugin_from(
         error_message: Some(invalid.reason),
         invalid_manifest: true,
         resolved_filesystem_paths: Vec::new(),
+        trust_snapshot: None,
         installed_at,
     }
 }
@@ -2633,6 +2651,53 @@ mod tests {
             "other plugins keep their trust"
         );
         assert!(trust.is_native_enabled(), "the global switch is untouched");
+    }
+
+    /// #4419: a listed native plugin carries the trust binding the Settings
+    /// row renders, derived from the listed manifest; a theme plugin has none.
+    #[test]
+    fn listing_carries_the_native_trust_snapshot() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("theme", "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        let dir = mgr.root().join("nat");
+        std::fs::create_dir_all(dir.join("backend")).unwrap();
+        let lib = format!(
+            "{}nat{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        std::fs::write(dir.join("backend").join(lib), b"native bytes").unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE_NAME),
+            r#"{
+                "id": "nat", "name": "N", "version": "1.0.0", "author": "a",
+                "description": "d", "license": "MIT", "apiVersion": "1.1",
+                "platforms": ["linux", "macos", "windows"], "permissions": ["terminal"],
+                "extensions": { "terminalBackend": {
+                    "connectionType": "nat", "displayName": "N", "configSchema": {}
+                } }
+            }"#,
+        )
+        .unwrap();
+
+        let listed = mgr.list().unwrap();
+        let native = listed.iter().find(|p| p.manifest.id == "nat").unwrap();
+        let (_, on_disk) =
+            crate::plugin::native_trust_binding_with_snapshot(mgr.root(), "nat").unwrap();
+        assert_eq!(native.trust_snapshot.as_ref(), Some(&on_disk));
+        let theme = listed.iter().find(|p| p.manifest.id == "theme").unwrap();
+        assert!(theme.trust_snapshot.is_none());
+        // On the wire as `trustSnapshot`, omitted when absent.
+        let json = serde_json::to_value(native).unwrap();
+        assert_eq!(
+            json["trustSnapshot"]["librarySha256"],
+            on_disk.library_sha256
+        );
+        assert!(serde_json::to_value(theme)
+            .unwrap()
+            .get("trustSnapshot")
+            .is_none());
     }
 
     /// Windows: uninstall also deletes the plugin's AppContainer profile

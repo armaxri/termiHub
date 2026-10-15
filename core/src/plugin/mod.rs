@@ -129,8 +129,9 @@ pub use manifest::{
     MIN_CONNECT_TIMEOUT_MS, MIN_MAX_CONNECTIONS,
 };
 pub use native_trust::{
-    native_library_hash, native_trust_binding, normalize_declared_path, AckAcceptances, AckStatus,
-    ApprovedAccess, NativeAck, NativeTrustError, NativeTrustStore, TrustBinding,
+    native_library_hash, native_trust_binding, native_trust_binding_with_snapshot,
+    normalize_declared_path, AckAcceptances, AckStatus, ApprovedAccess, NativeAck,
+    NativeTrustError, NativeTrustSnapshot, NativeTrustStore, TrustBinding, ACCESS_DIGEST_PREFIX,
     NATIVE_TRUST_DISCLOSURE, NATIVE_TRUST_FILE_NAME,
 };
 pub use pack::{

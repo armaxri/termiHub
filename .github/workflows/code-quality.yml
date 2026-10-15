@@ -353,6 +353,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # The version check (CI-009, DOC2-007) for PRs that touch only the
+      # sidecar area (#4777): rdp-sidecar/Cargo.toml and rdp-sidecar/Cargo.lock
+      # are in no area that runs frontend-quality, so without this step a
+      # sidecar-only version bump would first fail at the tag-time
+      # verify-version gate. Plain bash + Node, no pnpm install: without
+      # node_modules the Tauri npm/crate drift half reports `skip` (a
+      # sidecar-only PR cannot change those versions; frontend-quality checks
+      # them whenever it can). Sub-second, so it runs before the Rust setup.
+      - name: Check version sources
+        run: scripts/release-check.sh --versions-only
+        working-directory: .
+
       # Same pinned toolchain as the workspace `rust-quality` job (#2549): a
       # floating `@stable` lets a new Rust release introduce clippy lints that
       # fire under `-D warnings` and red the job with no code change. The
@@ -473,7 +485,9 @@ jobs:
       # gates release.yml (verify-version), so drift is caught on the PR that
       # introduces it instead of when a tag is pushed. Every version source but
       # rdp-sidecar/Cargo.toml is in the frontend or rust area, both of which run
-      # this job; an rdp-sidecar-only bump is caught at the tag gate.
+      # this job; the sidecar area runs the same check in rdp-sidecar-quality
+      # (#4777). release-version-gate.test.mjs pins that every compared file
+      # (and both Cargo lockfiles) triggers one of the two.
       # Sub-second; reuses the install above.
       - name: Check version sources + Tauri npm/crate drift
         run: scripts/release-check.sh --versions-only

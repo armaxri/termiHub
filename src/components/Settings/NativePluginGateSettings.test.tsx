@@ -11,24 +11,36 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
 import type { NativeAckInfo } from "@/types/generated/NativeAckInfo";
+import type { NativeTrustSnapshot } from "@/types/generated/NativeTrustSnapshot";
 import type { PluginSandboxStatus, PluginSandboxView } from "@/store/pluginSandboxBridge";
 
 const getNativePluginTrust = vi.fn<() => Promise<NativePluginTrust>>();
 const setNativePluginsEnabled = vi.fn<(enabled: boolean) => Promise<void>>(() => Promise.resolve());
 const acknowledgeNativePlugin = vi.fn<
-  (id: string, options?: { acceptUnverifiedToolchain?: boolean }) => Promise<InstalledPlugin>
+  (
+    id: string,
+    binding: NativeTrustSnapshot | undefined,
+    options?: { acceptUnverifiedToolchain?: boolean }
+  ) => Promise<InstalledPlugin>
 >(() => Promise.resolve({} as InstalledPlugin));
 const revokeNativePluginTrust = vi.fn<(id: string) => Promise<void>>(() => Promise.resolve());
 const enablePlugin = vi.fn<(id: string) => Promise<void>>(() => Promise.resolve());
 
-vi.mock("@/services/api", () => ({
-  getNativePluginTrust: () => getNativePluginTrust(),
-  setNativePluginsEnabled: (enabled: boolean) => setNativePluginsEnabled(enabled),
-  acknowledgeNativePlugin: (id: string, options?: { acceptUnverifiedToolchain?: boolean }) =>
-    acknowledgeNativePlugin(id, options),
-  revokeNativePluginTrust: (id: string) => revokeNativePluginTrust(id),
-  enablePlugin: (id: string) => enablePlugin(id),
-}));
+vi.mock("@/services/api", async () => {
+  const actual = await vi.importActual<typeof import("@/services/api")>("@/services/api");
+  return {
+    getNativePluginTrust: () => getNativePluginTrust(),
+    setNativePluginsEnabled: (enabled: boolean) => setNativePluginsEnabled(enabled),
+    acknowledgeNativePlugin: (
+      id: string,
+      binding: NativeTrustSnapshot | undefined,
+      options?: { acceptUnverifiedToolchain?: boolean }
+    ) => acknowledgeNativePlugin(id, binding, options),
+    isTrustBindingRefusal: actual.isTrustBindingRefusal,
+    revokeNativePluginTrust: (id: string) => revokeNativePluginTrust(id),
+    enablePlugin: (id: string) => enablePlugin(id),
+  };
+});
 
 let mockSandbox: PluginSandboxView = { plugins: {} };
 vi.mock("@/store/usePluginSandbox", () => ({
@@ -40,9 +52,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 let mockPlugins: InstalledPlugin[] = [];
+const loadPlugins = vi.fn<() => Promise<void>>(() => Promise.resolve());
 vi.mock("@/store/appStore", () => ({
-  useAppStore: <T,>(selector: (s: { plugins: InstalledPlugin[] }) => T): T =>
-    selector({ plugins: mockPlugins }),
+  useAppStore: <T,>(
+    selector: (s: { plugins: InstalledPlugin[]; loadPlugins: () => Promise<void> }) => T
+  ): T => selector({ plugins: mockPlugins, loadPlugins }),
 }));
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
@@ -52,7 +66,7 @@ vi.mock("@/components/ui", async () => {
   return { ...actual, toast: { success: vi.fn(), error: vi.fn() } };
 });
 
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
 import { NativePluginGateSettings } from "./NativePluginGateSettings";
 
 let container: HTMLDivElement;
@@ -60,6 +74,11 @@ let root: Root;
 
 function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
+}
+
+/** The trust binding the host lists for native plugin `id` (#4419). */
+function snapshot(id: string): NativeTrustSnapshot {
+  return { librarySha256: `sha256:${id}-library`, accessDigest: `access-v1:sha256:${id}-access` };
 }
 
 /**
@@ -83,6 +102,7 @@ function plugin(id: string, name: string, native: boolean, apiVersion = "1.1"): 
         : { theme: { themes: [] } },
     },
     state: "installed",
+    ...(native ? { trustSnapshot: snapshot(id) } : {}),
     installedAt: 0,
   } as unknown as InstalledPlugin;
 }
@@ -195,7 +215,7 @@ describe("NativePluginGateSettings", () => {
     await renderFlushed();
     expect(query("native-plugin-toolchain-warning-echo")).toBeNull();
     await act(async () => query("native-plugin-trust-echo")!.click());
-    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
       acceptUnverifiedToolchain: false,
     });
   });
@@ -210,7 +230,7 @@ describe("NativePluginGateSettings", () => {
     await renderFlushed();
     expect(query("native-plugin-toolchain-warning-old")!.textContent).toContain("cannot verify");
     await act(async () => query("native-plugin-trust-old")!.click());
-    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("old", {
+    expect(acknowledgeNativePlugin).toHaveBeenCalledWith("old", snapshot("old"), {
       acceptUnverifiedToolchain: true,
     });
   });
@@ -313,7 +333,7 @@ describe("NativePluginGateSettings", () => {
           '[data-testid="native-plugin-review-echo-confirm"]'
         ) as HTMLElement | null)!.click()
       );
-      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
         acceptUnverifiedToolchain: false,
       });
     });
@@ -340,8 +360,78 @@ describe("NativePluginGateSettings", () => {
       const trust = query("native-plugin-trust-echo")!;
       expect(trust.textContent).toContain("Trust new build");
       await act(async () => trust.click());
-      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
         acceptUnverifiedToolchain: false,
+      });
+    });
+
+    describe("binding changed since render (#4419)", () => {
+      const refusal = {
+        code: "binding_changed",
+        message: "This plugin's library changed since it was shown.",
+      };
+
+      it("re-fetches the plugins and trust state when the row's Trust is refused", async () => {
+        getNativePluginTrust.mockResolvedValue(ackIn("libraryChanged"));
+        acknowledgeNativePlugin.mockRejectedValueOnce(refusal);
+        await renderFlushed();
+        expect(getNativePluginTrust).toHaveBeenCalledTimes(1);
+        await act(async () => query("native-plugin-trust-echo")!.click());
+        expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
+          acceptUnverifiedToolchain: false,
+        });
+        expect(loadPlugins).toHaveBeenCalledTimes(1);
+        expect(getNativePluginTrust).toHaveBeenCalledTimes(2);
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining(refusal.message));
+        expect(toast.success).not.toHaveBeenCalled();
+      });
+
+      it("sends the binding the review dialog rendered and closes it on refusal", async () => {
+        getNativePluginTrust.mockResolvedValue(ackIn("accessChanged", ["network"]));
+        acknowledgeNativePlugin.mockRejectedValueOnce({
+          code: "binding_changed",
+          message: "The access this plugin asks for changed since it was shown.",
+        });
+        await renderFlushed();
+        await act(async () => query("native-plugin-trust-echo")!.click());
+        const dialog = () =>
+          document.querySelector('[data-testid="native-plugin-review-dialog-echo"]');
+        expect(dialog()).not.toBeNull();
+        await act(async () =>
+          (document.querySelector(
+            '[data-testid="native-plugin-review-echo-confirm"]'
+          ) as HTMLElement | null)!.click()
+        );
+        expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
+          acceptUnverifiedToolchain: false,
+        });
+        expect(loadPlugins).toHaveBeenCalledTimes(1);
+        expect(getNativePluginTrust).toHaveBeenCalledTimes(2);
+        expect(dialog()).toBeNull();
+      });
+
+      it("sends no binding for a row without one, and re-fetches on the refusal", async () => {
+        getNativePluginTrust.mockResolvedValue(ackIn("libraryChanged"));
+        mockPlugins = [{ ...mockPlugins[0], trustSnapshot: undefined } as InstalledPlugin];
+        acknowledgeNativePlugin.mockRejectedValueOnce({
+          code: "binding_missing",
+          message: "termiHub could not tell which build of this plugin you reviewed.",
+        });
+        await renderFlushed();
+        await act(async () => query("native-plugin-trust-echo")!.click());
+        expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", undefined, {
+          acceptUnverifiedToolchain: false,
+        });
+        expect(loadPlugins).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not re-fetch the plugin list for an unrelated failure", async () => {
+        getNativePluginTrust.mockResolvedValue(ackIn("libraryChanged"));
+        acknowledgeNativePlugin.mockRejectedValueOnce({ code: "failed", message: "disk full" });
+        await renderFlushed();
+        await act(async () => query("native-plugin-trust-echo")!.click());
+        expect(loadPlugins).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("disk full"));
       });
     });
 
@@ -528,7 +618,7 @@ describe("NativePluginGateSettings", () => {
           ) as HTMLElement
         ).click();
       });
-      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", {
+      expect(acknowledgeNativePlugin).toHaveBeenCalledWith("echo", snapshot("echo"), {
         acceptUnverifiedToolchain: false,
         acceptReducedIsolation: true,
       });
