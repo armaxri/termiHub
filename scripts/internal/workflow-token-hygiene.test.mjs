@@ -8,7 +8,9 @@
 //   - release.yml defaults to contents: read, and no job that installs
 //     dependencies or compiles holds a write token: the build jobs hand their
 //     outputs on as workflow artifacts to small write-scoped upload jobs that
-//     check nothing out and run no package manager (#4730).
+//     check nothing out and run no package manager (#4730);
+//   - a dispatched dry run of release.yml builds and checks every asset but can
+//     never reach a write-scoped job (#4746).
 // Text-based like release-draft.test.mjs: the workflow layout is the contract.
 
 import { readFileSync } from "node:fs";
@@ -237,4 +239,101 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
       }
     }
   });
+});
+
+const TAG_PUSH_ONLY = "github.event_name == 'push'";
+
+describe("release.yml dry run never reaches a write token (#4746)", () => {
+  const jobs = releaseJobs();
+  const ids = [...jobs.keys()];
+  /**
+   * Jobs a dispatched dry run can start: a job is skipped when its own `if` is
+   * tag-push-only or any job it needs is skipped (no write job may override
+   * that with an `if`, pinned below).
+   */
+  const reached = new Map();
+  const runsInDryRun = (id) => {
+    if (!reached.has(id)) {
+      reached.set(id, false);
+      const job = jobs.get(id);
+      reached.set(id, job.if !== TAG_PUSH_ONLY && job.needs.every((n) => runsInDryRun(n)));
+    }
+    return reached.get(id);
+  };
+  const dryRunJobs = ids.filter((id) => runsInDryRun(id));
+
+  it("is dispatchable only with a boolean dry_run input that defaults to true", () => {
+    expect(RELEASE).toMatch(
+      /\n {2}workflow_dispatch:\n {4}inputs:\n {6}dry_run:\n(?: {8}[^\n]*\n)*? {8}type: boolean\n/
+    );
+    expect(RELEASE).toMatch(/\n {6}dry_run:\n(?: {8}[^\n]*\n)*? {8}default: true\n/);
+    const triggers = RELEASE.slice(RELEASE.indexOf("\non:\n"), RELEASE.indexOf("\npermissions:\n"));
+    expect([...triggers.matchAll(/^ {2}([a-z_]+):/gm)].map((m) => m[1])).toEqual([
+      "push",
+      "workflow_dispatch",
+    ]);
+  });
+
+  it("verify-version refuses a dispatch that is not a dry run", () => {
+    const body = jobBody(RELEASE, "verify-version");
+    expect(body).toContain(
+      "if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true"
+    );
+  });
+
+  it("create-release runs on a tag push only", () => {
+    expect(jobs.get("create-release").if).toBe(TAG_PUSH_ONLY);
+  });
+
+  it("every other write-scoped job directly needs create-release and has no if", () => {
+    for (const id of ids) {
+      if (id === "create-release") continue;
+      if (writeScopes(jobBody(RELEASE, id), { contents: "read" }).length === 0) continue;
+      expect(jobs.get(id).needs, id).toContain("create-release");
+      expect(jobs.get(id).if, id).toBeUndefined();
+    }
+  });
+
+  it("every job a dry run reaches is read-only", () => {
+    const writers = dryRunJobs.filter(
+      (id) => writeScopes(jobBody(RELEASE, id), { contents: "read" }).length > 0
+    );
+    expect(writers).toEqual([]);
+  });
+
+  it("a dry run builds every artifact and checks the asset set", () => {
+    expect(dryRunJobs).toEqual(
+      expect.arrayContaining([
+        "verify-version",
+        "verify-supply-chain",
+        "verify-integration",
+        "release-version",
+        "build-app",
+        "agent-binaries-linux",
+        "agent-binaries-macos",
+        "agent-binaries-windows",
+        "third-party-notices",
+        "check-release-assets",
+      ])
+    );
+    for (const id of dryRunJobs) {
+      expect(jobBody(RELEASE, id), id).not.toContain("needs.create-release");
+    }
+    expect(jobPermissions(jobBody(RELEASE, "check-release-assets"))).toEqual({
+      contents: "read",
+    });
+  });
+
+  it("release-version resolves the stand-in version without a token", () => {
+    const body = jobBody(RELEASE, "release-version");
+    expect(body).toMatch(/\n {4}permissions: \{\}\n/);
+    expect(body).toContain("version=0.0.0-dryrun");
+  });
+
+  it.each(["upload-app", "upload-agent-binaries", "upload-third-party-notices"])(
+    "%s publishes only an asset set check-release-assets passed",
+    (id) => {
+      expect(jobs.get(id).needs).toContain("check-release-assets");
+    }
+  );
 });
