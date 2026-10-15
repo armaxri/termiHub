@@ -46,7 +46,7 @@ fn plaintext_secrets_move_to_the_store_and_are_stripped() {
         ),
         conn("plain", "local", json!({ "shell": "zsh" })),
     ];
-    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).unwrap());
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap());
 
     let text = serde_json::to_string(&conns).unwrap();
     assert!(
@@ -64,7 +64,7 @@ fn plaintext_secrets_move_to_the_store_and_are_stripped() {
 fn an_external_file_scopes_the_owner() {
     let store = RecordingStore::default();
     let mut conns = vec![tunnelled_vnc()];
-    assert!(migrate_plaintext_field_secrets(&mut conns, Some("file-1"), &store).unwrap());
+    assert!(migrate_plaintext_field_secrets(&mut conns, Some("file-1"), &store, false).unwrap());
     assert!(store
         .value(&owner_id("desk", Some("file-1")), FS)
         .unwrap()
@@ -79,7 +79,7 @@ fn a_failed_migration_write_deletes_nothing() {
     };
     let mut conns = vec![tunnelled_vnc()];
     let before = serde_json::to_value(&conns).unwrap();
-    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).is_err());
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, false).is_err());
     assert_eq!(serde_json::to_value(&conns).unwrap(), before);
     assert!(store.snapshot().is_empty());
 }
@@ -91,7 +91,7 @@ fn a_failed_read_deletes_nothing() {
         ..Default::default()
     };
     let mut conns = vec![tunnelled_vnc()];
-    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).is_err());
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, false).is_err());
     assert_eq!(conns[0].config.settings["sshPassword"], "gw-secret");
 }
 
@@ -100,7 +100,7 @@ fn a_locked_store_defers_the_move_without_touching_anything() {
     let store = RecordingStore::default();
     store.locked.store(true, Ordering::SeqCst);
     let mut conns = vec![tunnelled_vnc()];
-    assert!(!migrate_plaintext_field_secrets(&mut conns, None, &store).unwrap());
+    assert!(!migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap());
     assert_eq!(conns[0].config.settings["sshPassword"], "gw-secret");
     assert!(store.calls().is_empty());
 }
@@ -113,7 +113,7 @@ fn a_plaintext_secret_wins_over_a_stale_stored_one_and_others_are_kept() {
         r#"{"fields":{"sshPassword":"old"},"hops":{"u@h:22":"kept"}}"#,
     )]);
     let mut conns = vec![tunnelled_vnc()];
-    migrate_plaintext_field_secrets(&mut conns, None, &store).unwrap();
+    migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap();
     let stored = secret_fields::read_field_secrets(&store, "desk").unwrap();
     assert_eq!(
         stored.fields.get("sshPassword").map(String::as_str),
@@ -133,7 +133,7 @@ fn nothing_to_move_never_touches_the_store() {
         "ssh",
         json!({ "host": "h", "authMethod": "key" }),
     )];
-    assert!(!migrate_plaintext_field_secrets(&mut conns, None, &store).unwrap());
+    assert!(!migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap());
     assert!(store.calls().is_empty());
 }
 
@@ -145,7 +145,7 @@ fn an_empty_secret_is_stripped_without_a_write() {
         "vnc",
         json!({ "host": "h", "sshPassword": "" }),
     )];
-    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store).unwrap());
+    assert!(migrate_plaintext_field_secrets(&mut conns, None, &store, false).unwrap());
     assert!(conns[0].config.settings.get("sshPassword").is_none());
     assert!(store.snapshot().is_empty());
 }

@@ -188,6 +188,12 @@ pub struct ConnectionManager {
     /// Set once the main store's plaintext field secrets were moved to the
     /// credential store (#4289), so later calls skip the scan.
     main_field_secrets_moved: std::sync::atomic::AtomicBool,
+    /// Set once the stored hop secrets were swept for hops that no longer
+    /// exist (#4792); cleared again when a save has to defer its prune.
+    hop_secrets_swept: std::sync::atomic::AtomicBool,
+    /// Serializes a save's store-then-prune with the hop-secret sweep, so the
+    /// sweep never judges a secret against a file the save has not written yet.
+    hop_prune: Mutex<()>,
 }
 
 impl ConnectionManager {
@@ -215,6 +221,8 @@ impl ConnectionManager {
             file_scopes,
             scope_migration: Mutex::new(()),
             main_field_secrets_moved: std::sync::atomic::AtomicBool::new(false),
+            hop_secrets_swept: std::sync::atomic::AtomicBool::new(false),
+            hop_prune: Mutex::new(()),
         })
     }
 
@@ -240,6 +248,8 @@ impl ConnectionManager {
             file_scopes: FileScopes::load(dir.join(STATE_FILE_NAME)),
             scope_migration: Mutex::new(()),
             main_field_secrets_moved: std::sync::atomic::AtomicBool::new(false),
+            hop_secrets_swept: std::sync::atomic::AtomicBool::new(false),
+            hop_prune: Mutex::new(()),
         })
     }
 
@@ -667,6 +677,7 @@ impl ConnectionManager {
     /// the window in which a credential could be stored under the stale id.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<String> {
         self.migrate_credential_scopes();
+        let _pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
         let connection = prepare_for_storage(connection, None, &*self.credential_store)?;
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
@@ -698,7 +709,10 @@ impl ConnectionManager {
             (&store.connections, &store.folders),
             &HashSet::new(),
         );
+        let saved = store.connections[placement.index].clone();
         drop(store);
+        self.prune_hop_secrets_after_save(&saved, None);
+        drop(_pruning);
         self.follow_references(&placement.changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&placement.changes);
         Ok(persisted_id)
@@ -1012,6 +1026,7 @@ impl ConnectionManager {
                 // the frontend reload still reconciles if it changed on disk.
                 let conn_id = connection.id.clone();
                 let scope = self.external_scope(&file_path);
+                let pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
                 let mut conn =
                     prepare_for_storage(connection, Some(&scope), &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
@@ -1030,6 +1045,11 @@ impl ConnectionManager {
                     (&written.connections, &written.folders),
                     &HashSet::new(),
                 );
+                self.prune_hop_secrets_after_save(
+                    &written.connections[written.index],
+                    Some(&scope),
+                );
+                drop(pruning);
                 self.follow_references(&written.changes, ChangeOrigin::ExternalFile(&file_path));
                 self.notify_id_changes(&written.changes);
                 Ok(conn_id)
@@ -1322,6 +1342,7 @@ impl ConnectionManager {
             .map(|path| self.external_scope(path));
         // A password typed in the editor is stored where the connection is now;
         // it follows the connection below like every other secret.
+        let pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
         let mut disk_conn =
             prepare_for_storage(connection, source_scope.as_deref(), &*self.credential_store)?;
         disk_conn.source_file = None; // Strip before writing to disk
@@ -1373,6 +1394,11 @@ impl ConnectionManager {
             (&written.connections, &written.folders),
             &in_use,
         );
+        self.prune_hop_secrets_after_save(
+            &written.connections[written.index],
+            target_scope.as_deref(),
+        );
+        drop(pruning);
         let origin = match &target_source {
             None => ChangeOrigin::MainStore,
             Some(file_path) => ChangeOrigin::ExternalFile(file_path),
@@ -1599,7 +1625,7 @@ pub(crate) fn try_load_external_file(
     // the store in one batch. A failure (or a locked store) leaves them in the
     // file and in memory, so nothing is lost; the move is retried next load.
     let field_secrets_migrated =
-        match migrate_plaintext_field_secrets(&mut connections, Some(file_scope), store) {
+        match migrate_plaintext_field_secrets(&mut connections, Some(file_scope), store, true) {
             Ok(migrated) => migrated,
             Err(e) => {
                 tracing::warn!(
@@ -3263,6 +3289,9 @@ mod tests {
 
 #[path = "manager_credential_scope.rs"]
 mod credential_scopes;
+
+#[path = "manager_hop_secrets.rs"]
+mod hop_secrets;
 
 #[cfg(test)]
 #[path = "manager_credential_scope_tests.rs"]
