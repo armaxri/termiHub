@@ -206,13 +206,13 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
         useAppStore
           .getState()
           .setPendingWindowClose(
-            request({ dirtyEditors: [{ tabId: "e1", title: "New Connection", movable: false }] })
+            request({ dirtyEditors: [{ tabId: "e1", title: "Settings", movable: false }] })
           )
       );
 
       const move = q("close-window-decision-move") as HTMLButtonElement;
       expect(move.disabled).toBe(true);
-      expect(q("close-window-decision-move-blocked").textContent).toContain("New Connection");
+      expect(q("close-window-decision-move-blocked").textContent).toContain("Settings");
       expect(q("close-window-decision-outcome-blocked")).not.toBeNull();
 
       await act(async () => move.click());
@@ -348,6 +348,89 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       );
 
       expect(q("close-window-decision-target")).not.toBeNull();
+    });
+  });
+
+  describe("unsaved form editors (#4500)", () => {
+    it("moves a dirty connection, tunnel and workspace editor without blocking", async () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [
+              { tabId: "c1", title: "New Connection", movable: true },
+              { tabId: "t1", title: "New Tunnel", movable: true },
+              { tabId: "w1", title: "New Workspace", movable: true },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-move-blocked")).toBeNull();
+      expect(qa("close-window-decision-outcome-move")).toHaveLength(3);
+      expect(q("close-window-decision-dialog").textContent).toContain(
+        "3 unsaved editors: moving keeps them, closing discards them."
+      );
+      expect(q("close-window-decision-secrets-note")).toBeNull();
+      const move = q("close-window-decision-move") as HTMLButtonElement;
+      expect(move.disabled).toBe(false);
+      await act(async () => move.click());
+      expect(moveWindowSessionsToWindow).toHaveBeenCalledWith({ kind: "existing", label: "win-1" });
+    });
+
+    it("names the typed secrets that reopen empty in the other window", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            dirtyEditors: [
+              {
+                tabId: "c1",
+                title: "Edit: prod-db",
+                movable: true,
+                clearedSecrets: ["Password"],
+              },
+              {
+                tabId: "c2",
+                title: "New Connection",
+                movable: true,
+                clearedSecrets: ["Password", "SSH tunnel password", "Jump host password"],
+              },
+            ],
+          })
+        )
+      );
+
+      const rows = qa("close-window-decision-secrets-row").map((row) => row.textContent);
+      expect(rows).toEqual([
+        '"Edit: prod-db" moves with Password left empty, since typed secrets are never copied ' +
+          "to another window. Type it again there before saving.",
+        '"New Connection" moves with Password, SSH tunnel password and Jump host password left ' +
+          "empty, since typed secrets are never copied to another window. Type them again " +
+          "there before saving.",
+      ]);
+      // Moving stays available: the user is told, nothing is blocked.
+      expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("says nothing about secrets when there is no window to move to", () => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(
+          request({
+            sessions: [],
+            otherWindows: [],
+            dirtyEditors: [
+              { tabId: "c1", title: "Edit: prod-db", movable: true, clearedSecrets: ["Password"] },
+            ],
+          })
+        )
+      );
+
+      expect(q("close-window-decision-secrets-note")).toBeNull();
+      expect(q("close-window-decision-outcome-discard")).not.toBeNull();
     });
   });
 });

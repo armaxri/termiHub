@@ -43,7 +43,10 @@ import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal"
 import { collectWindowTabs } from "./layoutHelpers";
 import {
   clearEditorBuffers,
+  peekCarriedFormDraft,
+  readFormDraft,
   registerEditorBuffer,
+  registerFormDraft,
   takeCarriedBuffer,
   type EditorBufferSnapshot,
 } from "@/utils/editorBufferRegistry";
@@ -100,7 +103,7 @@ describe("appStore — Move tabs carries unsaved editors (#4412)", () => {
       ]);
     });
 
-    it("marks a dirty connection editor as not movable", async () => {
+    it("marks a dirty connection editor without a readable draft as not movable", async () => {
       const tabId = useAppStore
         .getState()
         .addTab("New Connection", "local", undefined, { contentType: "connection-editor" });
@@ -392,7 +395,7 @@ describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => 
     expect(openWindow).not.toHaveBeenCalled();
   });
 
-  it("still refuses the move while a dirty form editor cannot carry its state", async () => {
+  it("still refuses the move while a dirty form editor has no readable draft", async () => {
     const formEditor = MOVABLE_TABS.find((t) => t.contentType === "connection-editor")!;
     seedTabs([formEditor]);
     useAppStore.getState().setEditorDirty(formEditor.id, true);
@@ -473,5 +476,160 @@ describe("appStore — Move tabs carries clean non-session tabs (#4501)", () => 
       );
       expect(editors).toHaveLength(2);
     });
+  });
+});
+
+describe("appStore — Move tabs carries unsaved form editors (#4500)", () => {
+  const connEditor = MOVABLE_TABS.find((t) => t.contentType === "connection-editor")!;
+  const tunnelEditor = MOVABLE_TABS.find((t) => t.contentType === "tunnel-editor")!;
+  const workspaceEditor = MOVABLE_TABS.find((t) => t.contentType === "workspace-editor")!;
+
+  const CONN_DRAFT = {
+    selectedType: "ssh",
+    connSettings: { host: "db.internal", username: "ops", authMethod: "password", password: "" },
+    topLevel: { name: "prod-db (edited)" },
+  };
+  const TUNNEL_DRAFT = { name: "db tunnel", sshConnectionId: "conn-1", autoStart: true };
+  const WORKSPACE_DRAFT = { name: "Ops", description: "on-call", activeGroupIndex: 0 };
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    clearEditorBuffers();
+    openWindow.mockReset().mockResolvedValue("win-9");
+    sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
+  });
+
+  /** Seed the three form editors dirty, each with a registered draft provider. */
+  function seedDirtyFormEditors(connClearedSecrets?: string[]): void {
+    seedTabs([connEditor, tunnelEditor, workspaceEditor]);
+    registerFormDraft(connEditor.id, () => ({
+      kind: "connection-editor",
+      values: CONN_DRAFT,
+      ...(connClearedSecrets ? { clearedSecrets: connClearedSecrets } : {}),
+    }));
+    registerFormDraft(tunnelEditor.id, () => ({ kind: "tunnel-editor", values: TUNNEL_DRAFT }));
+    registerFormDraft(workspaceEditor.id, () => ({
+      kind: "workspace-editor",
+      values: WORKSPACE_DRAFT,
+    }));
+    for (const tab of [connEditor, tunnelEditor, workspaceEditor]) {
+      useAppStore.getState().setEditorDirty(tab.id, true);
+    }
+  }
+
+  it("lists dirty form editors with a draft as movable, naming the secrets left behind", async () => {
+    seedDirtyFormEditors(["Password"]);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+
+    expect(useAppStore.getState().pendingWindowClose?.dirtyEditors).toEqual([
+      { tabId: "ce", title: "Edit server-1", movable: true, clearedSecrets: ["Password"] },
+      { tabId: "te", title: "Edit tunnel", movable: true },
+      { tabId: "we", title: "Edit workspace", movable: true },
+    ]);
+  });
+
+  it("a dirty connection, tunnel and workspace editor each reappears dirty with its values", async () => {
+    seedDirtyFormEditors(["Password"]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const records = sentRecords();
+    expect(records.map((r) => r.tab.formDraft)).toEqual([
+      { kind: "connection-editor", values: CONN_DRAFT },
+      { kind: "tunnel-editor", values: TUNNEL_DRAFT },
+      { kind: "workspace-editor", values: WORKSPACE_DRAFT },
+    ]);
+    expect(records.every((r) => r.tab.editorDirty === true)).toBe(true);
+
+    const tabs = hydrateInFreshWindow(records);
+
+    const byType = (type: string) => tabs.find((t) => t.contentType === type)!;
+    const conn = byType("connection-editor");
+    const tunnel = byType("tunnel-editor");
+    const workspace = byType("workspace-editor");
+    expect(conn.connectionEditorMeta).toEqual(connEditor.connectionEditorMeta);
+    expect(tunnel.tunnelEditorMeta).toEqual(tunnelEditor.tunnelEditorMeta);
+    expect(workspace.workspaceEditorMeta).toEqual(workspaceEditor.workspaceEditorMeta);
+    for (const tab of [conn, tunnel, workspace]) {
+      expect(useAppStore.getState().editorDirtyTabs[tab.id]).toBe(true);
+      // Nothing about the draft is stored in the tab itself, so it is never persisted.
+      expect(JSON.stringify(tab)).not.toContain("db.internal");
+    }
+    // Each draft waits for the editor that mounts for its new tab, and only that kind.
+    expect(peekCarriedFormDraft(conn.id, "connection-editor")).toEqual(CONN_DRAFT);
+    expect(peekCarriedFormDraft(conn.id, "tunnel-editor")).toBeNull();
+    expect(peekCarriedFormDraft(tunnel.id, "tunnel-editor")).toEqual(TUNNEL_DRAFT);
+    expect(peekCarriedFormDraft(workspace.id, "workspace-editor")).toEqual(WORKSPACE_DRAFT);
+  });
+
+  it("never puts a typed secret into the hand-off, even if an editor's draft holds one", async () => {
+    seedTabs([connEditor]);
+    registerFormDraft(connEditor.id, () => ({
+      kind: "connection-editor",
+      values: {
+        selectedType: "ssh",
+        connSettings: {
+          host: "db.internal",
+          password: "hunter2",
+          keyPassphrase: "open sesame",
+          savePassword: true,
+          proxyJump: [{ host: "bastion", username: "ops", password: "hop-secret" }],
+        },
+        topLevel: { name: "prod-db" },
+      },
+    }));
+    useAppStore.getState().setEditorDirty(connEditor.id, true);
+
+    await useAppStore.getState().prepareWindowClose(OTHERS);
+    expect(useAppStore.getState().pendingWindowClose?.dirtyEditors?.[0].clearedSecrets).toEqual([
+      "Password",
+      "Key passphrase",
+      "Jump host password",
+    ]);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const [record] = sentRecords();
+    const wire = JSON.stringify(record);
+    for (const secret of ["hunter2", "open sesame", "hop-secret"]) {
+      expect(wire).not.toContain(secret);
+    }
+    expect(record.tab.formDraft?.values).toEqual({
+      selectedType: "ssh",
+      connSettings: {
+        host: "db.internal",
+        password: "",
+        keyPassphrase: "",
+        savePassword: true,
+        proxyJump: [{ host: "bastion", username: "ops", password: "" }],
+      },
+      topLevel: { name: "prod-db" },
+    });
+    // The labels are for this window's dialog only; they never travel.
+    expect(record.tab.formDraft?.clearedSecrets).toBeUndefined();
+  });
+
+  it("moves a clean form editor without a draft", async () => {
+    seedTabs([connEditor]);
+    // A clean editor's provider returns null.
+    registerFormDraft(connEditor.id, () => null);
+
+    await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+
+    const [record] = sentRecords();
+    expect(record.tab.formDraft).toBeUndefined();
+    expect(record.tab.editorDirty).toBeUndefined();
+    expect(readFormDraft(connEditor.id)).toBeNull();
+  });
+
+  it("ignores a draft whose kind does not match the tab", async () => {
+    seedTabs([connEditor]);
+    registerFormDraft(connEditor.id, () => ({ kind: "tunnel-editor", values: TUNNEL_DRAFT }));
+    useAppStore.getState().setEditorDirty(connEditor.id, true);
+
+    await expect(
+      useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" })
+    ).rejects.toThrow(/Edit server-1/);
   });
 });

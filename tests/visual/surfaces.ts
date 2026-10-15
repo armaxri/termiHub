@@ -48,7 +48,8 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
     args: ["build.example.com", "ci", "The saved password was rejected by the server."],
   },
   {
-    // The window-close decision with every row kind and the #4501 move summary.
+    // The window-close decision with every row kind, the #4501 move summary and
+    // the #4500 note on typed secrets that reopen empty.
     name: "close-window",
     action: "setPendingWindowClose",
     args: [
@@ -72,7 +73,10 @@ export const STORE_DIALOGS: ReadonlyArray<{ name: string; action: string; args: 
           },
         ],
         otherWindows: [{ label: "main" }, { label: "win-3" }],
-        dirtyEditors: [{ tabId: "e1", title: "deploy.yaml", movable: true }],
+        dirtyEditors: [
+          { tabId: "e1", title: "deploy.yaml", movable: true },
+          { tabId: "c1", title: "Edit: prod-db", movable: true, clearedSecrets: ["Password"] },
+        ],
         otherTabs: [
           { tabId: "e2", title: "hosts", contentType: "editor", movable: true },
           { tabId: "st", title: "Settings", contentType: "settings", movable: true },

@@ -6,9 +6,11 @@
  * "Move tabs" choice when closing a window) must carry that text along, so every
  * mounted file editor registers a provider here that returns its current buffer.
  *
- * Editors that do not register (the connection, tunnel, workspace and settings
- * editors) cannot hand over their unsaved form state: a dirty one blocks the
- * move until the user explicitly saves or discards it.
+ * The connection, tunnel and workspace form editors register a form draft
+ * provider instead (#4500): it returns the editor's unsaved form values with any
+ * typed secret cleared (see `src/utils/formDraftSecrets.ts`). An editor that
+ * registers neither (the Settings panel) cannot hand over its unsaved state: a
+ * dirty one blocks the move until the user explicitly saves or discards it.
  */
 
 /** A snapshot of one file editor's buffer at the moment it is read. */
@@ -67,8 +69,63 @@ export function takeCarriedBuffer(tabId: string): string | null {
   return content ?? null;
 }
 
-/** Drop every registration and carried buffer. Test-only reset hook. */
+import type { FormDraftKind, FormDraftSnapshot } from "@/types/window";
+
+export type { FormDraftKind, FormDraftSnapshot };
+
+type FormDraftProvider = () => FormDraftSnapshot | null;
+
+const draftProviders = new Map<string, FormDraftProvider>();
+
+/**
+ * Register the form draft provider for `tabId` (#4500). The provider returns
+ * `null` while the form holds no unsaved changes. Returns an unregister
+ * function that removes only this provider, like {@link registerEditorBuffer}.
+ */
+export function registerFormDraft(tabId: string, provider: FormDraftProvider): () => void {
+  draftProviders.set(tabId, provider);
+  return () => {
+    if (draftProviders.get(tabId) === provider) draftProviders.delete(tabId);
+  };
+}
+
+/** Read `tabId`'s current form draft, or `null` when no form editor is registered. */
+export function readFormDraft(tabId: string): FormDraftSnapshot | null {
+  return draftProviders.get(tabId)?.() ?? null;
+}
+
+const carriedDrafts = new Map<string, FormDraftSnapshot>();
+
+/**
+ * Hold the unsaved draft of a form editor moved in from another window until
+ * the editor mounted for `tabId` takes it (#4500).
+ */
+export function stashCarriedFormDraft(tabId: string, draft: FormDraftSnapshot): void {
+  carriedDrafts.set(tabId, draft);
+}
+
+/**
+ * The draft carried in for `tabId` when it is of `kind`, without forgetting it.
+ * An editor reads it while it first renders (React may render more than once
+ * before committing) and calls {@link forgetCarriedFormDraft} once mounted.
+ */
+export function peekCarriedFormDraft(
+  tabId: string,
+  kind: FormDraftKind
+): Record<string, unknown> | null {
+  const draft = carriedDrafts.get(tabId);
+  return draft && draft.kind === kind ? draft.values : null;
+}
+
+/** Forget the draft carried in for `tabId`, once its editor has mounted. */
+export function forgetCarriedFormDraft(tabId: string): void {
+  carriedDrafts.delete(tabId);
+}
+
+/** Drop every registration and carried buffer or draft. Test-only reset hook. */
 export function clearEditorBuffers(): void {
   providers.clear();
   carried.clear();
+  draftProviders.clear();
+  carriedDrafts.clear();
 }

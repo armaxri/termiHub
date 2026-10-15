@@ -46,7 +46,7 @@ import { createLayoutCommit } from "./layoutCommit";
 import { prunedTabState, prunedTabsState, releaseTabFromSharedRegions } from "../tabTeardown";
 import { notifyWorkflowTabClosing } from "../workflowSessionTriggers";
 import { errorMessage } from "@/utils/errorMessage";
-import { stashCarriedBuffer } from "@/utils/editorBufferRegistry";
+import { stashCarriedBuffer, stashCarriedFormDraft } from "@/utils/editorBufferRegistry";
 
 /**
  * Tab-groups slice (ARCH-001/FES-011, appStore god-module split via #2881): the
@@ -576,6 +576,9 @@ export const createTabGroupsSlice: StateCreator<AppState, [], [], TabGroupsSlice
         // new tab (#4412). It is consumed once, never stored in the tab itself,
         // so it is not persisted and cannot reappear on a later remount.
         if (h.editorBuffer !== undefined) stashCarriedBuffer(newTabId, h.editorBuffer);
+        // Likewise a moved form editor's unsaved values (#4500): the connection,
+        // tunnel or workspace editor mounted for the new tab takes them once.
+        if (h.formDraft) stashCarriedFormDraft(newTabId, h.formDraft);
 
         const newTab: TerminalTab = {
           id: newTabId,

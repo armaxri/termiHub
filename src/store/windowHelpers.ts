@@ -19,7 +19,9 @@ import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "./appStore";
 import { collectLiveTabs, type LayoutViewState } from "./layoutHelpers";
 import { errorMessage } from "@/utils/errorMessage";
-import { readEditorBuffer } from "@/utils/editorBufferRegistry";
+import { readEditorBuffer, readFormDraft } from "@/utils/editorBufferRegistry";
+import type { FormDraftKind, FormDraftSnapshot } from "@/types/window";
+import { clearDraftSecrets } from "@/utils/formDraftSecrets";
 
 /**
  * The runtime label of the window this store belongs to (multi-window
@@ -144,7 +146,43 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
     ...(tab.workspaceAgentRef ? { workspaceAgentRef: tab.workspaceAgentRef } : {}),
     ...editorHandoffFields(tab),
     ...tabMetaHandoffFields(tab),
+    ...formDraftHandoffFields(tab),
   };
+}
+
+/** The tab content types whose editor can hand over a form draft (#4500). */
+const FORM_DRAFT_KINDS: ReadonlySet<string> = new Set<FormDraftKind>([
+  "connection-editor",
+  "tunnel-editor",
+  "workspace-editor",
+]);
+
+/**
+ * `tab`'s current form draft (#4500), or `null` when `tab` is not a form editor,
+ * its editor is not mounted, or the editor holds no unsaved changes (a provider
+ * returns `null` while its form is clean). The secret check runs again here, on top of the
+ * editor's own, so a typed secret can never reach a hand-off record.
+ */
+export function readTabFormDraft(tab: TerminalTab): FormDraftSnapshot | null {
+  if (!FORM_DRAFT_KINDS.has(tab.contentType)) return null;
+  const draft = readFormDraft(tab.id);
+  if (!draft || draft.kind !== tab.contentType) return null;
+  const { values, cleared } = clearDraftSecrets(draft.values);
+  const clearedSecrets = [...(draft.clearedSecrets ?? [])];
+  for (const label of cleared) if (!clearedSecrets.includes(label)) clearedSecrets.push(label);
+  return { kind: draft.kind, values, ...(clearedSecrets.length > 0 ? { clearedSecrets } : {}) };
+}
+
+/**
+ * The form draft fields of a hand-off record (#4500): a dirty connection,
+ * tunnel or workspace editor's unsaved values, read now, by value, so the
+ * source window tearing the editor down afterwards cannot lose them. Only the
+ * values travel, never the labels of cleared secrets.
+ */
+function formDraftHandoffFields(tab: TerminalTab): Pick<HandoffTab, "formDraft" | "editorDirty"> {
+  const draft = readTabFormDraft(tab);
+  if (!draft) return {};
+  return { formDraft: { kind: draft.kind, values: draft.values }, editorDirty: true };
 }
 
 /** The non-editor tab metadata a hand-off record carries (#4501). */
@@ -206,13 +244,16 @@ export function canMoveTabWithoutSession(tab: TerminalTab): boolean {
 }
 
 /**
- * Whether `tab` is a file editor whose live buffer can be read, so a window
- * move can carry its unsaved changes (#4412). The form editors (connection,
- * tunnel, workspace, settings) keep their state inside the component and are
- * never movable with unsaved changes.
+ * Whether a window move can carry `tab`'s unsaved changes: a file editor whose
+ * live buffer can be read (#4412), or a connection, tunnel or workspace editor
+ * whose form draft can be read (#4500). The Settings panel keeps its state
+ * inside the component and is never movable with unsaved changes.
  */
 export function canCarryEditorBuffer(tab: TerminalTab): boolean {
-  return tab.contentType === "editor" && !!tab.editorMeta && readEditorBuffer(tab.id) !== null;
+  if (tab.contentType === "editor") {
+    return !!tab.editorMeta && readEditorBuffer(tab.id) !== null;
+  }
+  return canMoveTabWithoutSession(tab) && readTabFormDraft(tab) !== null;
 }
 
 /**

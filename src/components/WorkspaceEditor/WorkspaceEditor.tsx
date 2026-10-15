@@ -20,6 +20,8 @@ import { ImportedItemsSection } from "./ImportedItemsSection";
 import { normalizeWorkspaceSettings } from "@/services/workspaceSettings";
 import { newId } from "@/services/transport/ids";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
+import { clearDraftSecrets } from "@/utils/formDraftSecrets";
 import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
 import { isImeComposing } from "@/utils/imeComposition";
@@ -51,6 +53,19 @@ function workspaceDraftKey(
   return draftKey({ name, description, tabGroupDefs, settings });
 }
 
+/**
+ * A workspace editor's unsaved values as "Move tabs" carries them to another
+ * window (#4500). Secret-named strings (an inline connection's password) are
+ * always empty here.
+ */
+interface WorkspaceEditorDraft {
+  name: string;
+  description: string;
+  tabGroupDefs: WorkspaceTabGroupDef[];
+  settings: WorkspaceSettings;
+  activeGroupIndex: number;
+}
+
 export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps) {
   const saveWorkspace = useAppStore((s) => s.saveWorkspaceToBackend);
   const closeTab = useAppStore((s) => s.closeTab);
@@ -59,16 +74,20 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const rootPanel = useLayoutRenderTree();
 
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [tabGroupDefs, setTabGroupDefs] = useState<WorkspaceTabGroupDef[]>([
-    { name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT },
-  ]);
-  const [activeGroupIndex, setActiveGroupIndex] = useState(0);
+  // Unsaved values carried in from another window by "Move tabs" (#4500). A new
+  // workspace starts from them; a saved one takes them in place of the loaded
+  // values, while the baseline stays the saved workspace, so the editor is dirty.
+  const carriedDraft = useCarriedFormDraft<WorkspaceEditorDraft>(tabId, "workspace-editor");
+  const [name, setName] = useState(carriedDraft?.name ?? "");
+  const [description, setDescription] = useState(carriedDraft?.description ?? "");
+  const [tabGroupDefs, setTabGroupDefs] = useState<WorkspaceTabGroupDef[]>(
+    carriedDraft?.tabGroupDefs ?? [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }]
+  );
+  const [activeGroupIndex, setActiveGroupIndex] = useState(carriedDraft?.activeGroupIndex ?? 0);
   const [loading, setLoading] = useState(!!meta.workspaceId);
   const [renamingGroupIndex, setRenamingGroupIndex] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [settings, setSettings] = useState<WorkspaceSettings>({});
+  const [settings, setSettings] = useState<WorkspaceSettings>(carriedDraft?.settings ?? {});
   // Carried through unchanged so editing a multi-window workspace keeps its windows.
   const [windows, setWindows] = useState<WorkspaceWindowDef[] | undefined>(undefined);
   // The tab groups the editor was opened with (a new workspace's defaults, or
@@ -112,12 +131,12 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
             ws.tabGroups.length > 0
               ? ws.tabGroups
               : [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }];
-          setName(ws.name);
-          setDescription(ws.description ?? "");
-          setSettings(ws.settings ?? {});
+          setName(carriedDraft?.name ?? ws.name);
+          setDescription(carriedDraft?.description ?? ws.description ?? "");
+          setSettings(carriedDraft?.settings ?? ws.settings ?? {});
           setWindows(ws.windows);
-          setTabGroupDefs(groups);
-          setActiveGroupIndex(0);
+          setTabGroupDefs(carriedDraft?.tabGroupDefs ?? groups);
+          setActiveGroupIndex(carriedDraft?.activeGroupIndex ?? 0);
           setBaselineGroups(groups);
           setBaselineFields({
             name: ws.name,
@@ -126,12 +145,15 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
           });
         })
         .catch(() => {
-          // Discard broken workspace; editor starts fresh
-          setTabGroupDefs([{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }]);
+          // Discard broken workspace; editor starts fresh (or from a carried draft)
+          setTabGroupDefs(
+            carriedDraft?.tabGroupDefs ?? [{ name: DEFAULT_GROUP_NAME, layout: DEFAULT_LAYOUT }]
+          );
         })
         .finally(() => setLoading(false));
     }
-  }, [meta.workspaceId]);
+    // `carriedDraft` is fixed at mount, so it never re-triggers the load.
+  }, [meta.workspaceId, carriedDraft]);
 
   const updateActiveGroupLayout = useCallback(
     (layout: WorkspaceLayoutNode) => {
@@ -236,11 +258,37 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
   // Report unsaved edits like ConnectionEditor does, so the tab-bar close guard
   // and every bulk close (panel, group, window) see this tab as dirty (UX2-004).
-  const isDirty =
-    !loading && workspaceDraftKey(name, description, tabGroupDefs, settings) !== baselineKey;
+  // A draft carried in from another window is unsaved even before the saved
+  // workspace has loaded to compare against (#4500).
+  const isDirty = loading
+    ? carriedDraft !== null
+    : workspaceDraftKey(name, description, tabGroupDefs, settings) !== baselineKey;
   useEffect(() => {
     setEditorDirty(tabId, isDirty);
   }, [tabId, isDirty, setEditorDirty]);
+
+  // Hand the unsaved draft to "Move tabs" on window close (#4500), with any
+  // secret-named string (an inline connection's password) cleared.
+  useFormDraftProvider(tabId, () => {
+    if (!isDirty) return null;
+    // Still loading a moved-in workspace: its carried draft is the current one.
+    const draft: WorkspaceEditorDraft =
+      carriedDraft && loading
+        ? carriedDraft
+        : {
+            name,
+            description,
+            tabGroupDefs,
+            settings,
+            activeGroupIndex,
+          };
+    const { values, cleared } = clearDraftSecrets(draft);
+    return {
+      kind: "workspace-editor",
+      values: values as unknown as Record<string, unknown>,
+      ...(cleared.length > 0 ? { clearedSecrets: cleared } : {}),
+    };
+  });
 
   const closeThisTab = useCallback(() => {
     const leaf = findLeafByTab(rootPanel, tabId);

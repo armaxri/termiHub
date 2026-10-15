@@ -89,6 +89,8 @@ import {
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
+import { clearDraftSecrets } from "@/utils/formDraftSecrets";
 import {
   inferFolderFollow,
   remapJumpHostRefs,
@@ -263,6 +265,17 @@ interface TopLevelFormValues {
   agentSettings: AgentSettings;
 }
 
+/**
+ * A connection editor's unsaved values as "Move tabs" carries them to another
+ * window (#4500): the type, the schema-driven settings and the top-level form.
+ * Typed secrets are always empty here.
+ */
+interface ConnectionEditorDraft {
+  selectedType: string;
+  connSettings: Record<string, unknown>;
+  topLevel: TopLevelFormValues;
+}
+
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const { connections, folders } = useProjectedConnections();
   const connectionTypes = useAppStore((s) => s.connectionTypes);
@@ -407,8 +420,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+  // Unsaved values carried in from another window by "Move tabs" (#4500). They
+  // seed the form, while the baseline below stays the saved record, so the
+  // moved editor is dirty from its first render and nothing is saved for it.
+  const carriedDraft = useCarriedFormDraft<ConnectionEditorDraft>(tabId, "connection-editor");
   const { control: topLevelControl, setValue: setTopLevelValue } = useForm<TopLevelFormValues>({
-    defaultValues: initialTopLevel,
+    defaultValues: carriedDraft
+      ? { ...initialTopLevel, ...carriedDraft.topLevel }
+      : initialTopLevel,
   });
   // Live top-level values. `useWatch` can lag the seeded defaults by a render, so
   // merge it over the initial values to keep a complete, immediately-correct view
@@ -444,9 +463,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // during the first render, and dozens of derived memos/effects key off it —
   // moving it would disturb the ConnectionSettingsForm/DynamicForm lifecycle for
   // no validation benefit (the type is picked from a closed list).
-  const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
+  const [selectedType, setSelectedType] = useState(
+    carriedDraft?.selectedType ?? initialTypeAndSettings.typeId
+  );
   const [connSettings, setConnSettings] = useState<Record<string, unknown>>(
-    initialTypeAndSettings.settings
+    carriedDraft?.connSettings ?? initialTypeAndSettings.settings
   );
 
   /** Agent transport mode: editing the SSH config to reach the agent itself. */
@@ -586,14 +607,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }
   const connSettingsSchemaDefaults = connSettingsSchemaDefaultsRef.current!;
 
-  const initialName = useRef(name);
-  const initialSelectedType = useRef(selectedType);
-  const initialConnSettings = useRef({ ...connSettingsSchemaDefaults, ...connSettings });
-  const initialTerminalOptions = useRef(terminalOptions);
-  const initialIcon = useRef(icon);
-  const initialPersistent = useRef(persistent);
-  const initialAgentSettings = useRef(agentSettings);
-  const initialSourceFile = useRef(sourceFile);
+  // The baseline is what the editor opened on, never a draft carried in from
+  // another window (#4500), so a moved draft keeps comparing against the record.
+  const initialName = useRef(initialTopLevel.name);
+  const initialSelectedType = useRef(initialTypeAndSettings.typeId);
+  const initialConnSettings = useRef({
+    ...connSettingsSchemaDefaults,
+    ...initialTypeAndSettings.settings,
+  });
+  const initialTerminalOptions = useRef<TerminalOptions>(initialTopLevel.terminalOptions);
+  const initialIcon = useRef<string | undefined>(initialTopLevel.icon ?? undefined);
+  const initialPersistent = useRef(initialTopLevel.persistent);
+  const initialAgentSettings = useRef<AgentSettings>(initialTopLevel.agentSettings);
+  const initialSourceFile = useRef(initialTopLevel.sourceFile);
 
   // Another saved connection renamed or moved while this editor is open: re-point
   // the draft's saved-connection jump-host hops, or saving would write the old id
@@ -635,6 +661,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // baseline follows either way, so a clean editor stays clean and an edited
   // field keeps the user's value.
   const [baselineVersion, setBaselineVersion] = useState(0);
+  // The last dirty verdict, for the "Move tabs" draft provider below (#4500).
+  const isDirtyRef = useRef(false);
   const followedConnectionRef = useRef(existingConnection);
   useEffect(() => {
     if (!existingConnection) return;
@@ -675,6 +703,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       persistent !== initialPersistent.current ||
       JSON.stringify(agentSettings) !== JSON.stringify(initialAgentSettings.current) ||
       sourceFile !== initialSourceFile.current;
+    isDirtyRef.current = isDirty;
     setEditorDirty(tabId, isDirty);
   }, [
     name,
@@ -1542,6 +1571,35 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   // Filter Docker runtime options based on what's actually installed
   const { dockerAvailable, podmanAvailable, loading: runtimesLoading } = useAvailableRuntimes();
+
+  // Hand the unsaved draft to "Move tabs" on window close (#4500), with every
+  // typed secret cleared: the schema's password fields (checked against the
+  // unfiltered schema, so a field hidden by the credential store mode still
+  // counts), inline jump-host passwords and any secret-named key.
+  const draftSchema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+  useFormDraftProvider(tabId, () => {
+    if (!isDirtyRef.current) return null;
+    const settingsPart = clearDraftSecrets(connSettings, draftSchema);
+    const topLevelPart = clearDraftSecrets<TopLevelFormValues>({
+      name,
+      sourceFile,
+      persistent,
+      icon: icon ?? null,
+      terminalOptions,
+      agentSettings,
+    });
+    const draft: ConnectionEditorDraft = {
+      selectedType,
+      connSettings: settingsPart.values,
+      topLevel: topLevelPart.values,
+    };
+    const clearedSecrets = [...settingsPart.cleared, ...topLevelPart.cleared];
+    return {
+      kind: "connection-editor",
+      values: draft as unknown as Record<string, unknown>,
+      ...(clearedSecrets.length > 0 ? { clearedSecrets } : {}),
+    };
+  });
 
   const currentSchema = useMemo(() => {
     const base = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
