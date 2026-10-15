@@ -24,6 +24,8 @@
   align-items: center;
   gap: var(--spacing-xs-sm);
   min-width: 0;
+  /* The row keeps the height its in-flow buttons used to give it. */
+  min-height: var(--control-height-md);
 }
 
 /* The leading status dot now comes from the shared StatusDot primitive
@@ -64,9 +66,14 @@
    reveals them through :focus-within. */
 .sidebar-list-item__actions {
   position: absolute;
-  top: 50%;
+  top: 0;
   right: 0;
-  transform: translateY(-50%);
+  /* Never wider than the row: a long action set (a workflow row has seven)
+     wraps onto a second line over the details instead of clipping off the
+     row's leading edge. */
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   display: flex;
   align-items: center;
   gap: var(--spacing-xxs);
@@ -87,7 +94,7 @@
    the name ellipsizes before them instead of hiding under them. */
 .sidebar-list-item--error .sidebar-list-item__actions {
   position: static;
-  transform: none;
+  flex-wrap: nowrap;
   flex-shrink: 0;
   padding-left: 0;
   background: none;

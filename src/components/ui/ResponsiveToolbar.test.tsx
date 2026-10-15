@@ -118,6 +118,7 @@ describe("computeToolbarLayout", () => {
     expect(computeToolbarLayout({ ...input, available: null })).toEqual({
       mode: "full",
       visibleCount: 4,
+      labelledCount: 4,
     });
   });
 
@@ -126,11 +127,19 @@ describe("computeToolbarLayout", () => {
   });
 
   it("collapses to icons when labels no longer fit", () => {
+    // The leading label still fits: 119 + 3 × 28 + 3 × 4 = 215.
     expect(computeToolbarLayout({ ...input, available: 298 })).toEqual({
       mode: "icons",
       visibleCount: 4,
+      labelledCount: 1,
     });
-    expect(computeToolbarLayout({ ...input, available: 124 }).mode).toBe("icons");
+    expect(computeToolbarLayout({ ...input, available: 215 }).labelledCount).toBe(1);
+    expect(computeToolbarLayout({ ...input, available: 214 }).labelledCount).toBe(0);
+    expect(computeToolbarLayout({ ...input, available: 124 })).toEqual({
+      mode: "icons",
+      visibleCount: 4,
+      labelledCount: 0,
+    });
   });
 
   it("overflows the trailing actions when even the icons do not fit", () => {
@@ -138,11 +147,13 @@ describe("computeToolbarLayout", () => {
     expect(computeToolbarLayout({ ...input, available: 92 })).toEqual({
       mode: "overflow",
       visibleCount: 2,
+      labelledCount: 0,
     });
     // Too narrow for anything but the trigger: everything is in the menu.
     expect(computeToolbarLayout({ ...input, available: 20 })).toEqual({
       mode: "overflow",
       visibleCount: 0,
+      labelledCount: 0,
     });
   });
 });
@@ -214,6 +225,14 @@ describe("ResponsiveToolbar", () => {
     openOverflow();
     expect(inline.length + menuItemNames().length).toBe(4);
     expect(menuItemNames()).toContain("New Workspace");
+  });
+
+  it("keeps the leading action labelled while only it still fits", () => {
+    render();
+    ro.resize(244);
+    expect(layout()).toBe("icons");
+    expect(liveButton("New Workspace")?.textContent).toBe("New Workspace");
+    expect(liveButton("Save Current Layout")?.textContent).toBe("");
   });
 
   it("restores the labels when the toolbar grows again", () => {

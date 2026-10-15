@@ -71,6 +71,12 @@ export interface ToolbarLayout {
   mode: ToolbarLayoutMode;
   /** Number of leading actions rendered inline; the rest go to the overflow menu. */
   visibleCount: number;
+  /**
+   * Number of leading actions that keep their text label (`iconOnly` ones never
+   * show one). In `"icons"` mode the first actions stay labelled while that
+   * still fits, so the primary action reads as text as long as possible.
+   */
+  labelledCount: number;
 }
 
 /** Inputs of {@link computeToolbarLayout}, all in CSS pixels. */
@@ -87,9 +93,10 @@ export interface ToolbarLayoutInput {
 
 /**
  * Pure layout decision for a {@link ResponsiveToolbar}: labelled buttons when
- * they all fit, icon-only buttons when only those fit, otherwise as many icons
- * as fit next to an overflow "…" trigger that holds the rest. An unknown width
- * (`null`) means "unconstrained" — the full layout.
+ * they all fit; icon-only buttons when only those fit (keeping the labels of as
+ * many leading actions as still fit); otherwise as many icons as fit next to an
+ * overflow "…" trigger that holds the rest. An unknown width (`null`) means
+ * "unconstrained" — the full layout.
  */
 export function computeToolbarLayout({
   available,
@@ -98,17 +105,32 @@ export function computeToolbarLayout({
   gap,
 }: ToolbarLayoutInput): ToolbarLayout {
   const n = fullWidths.length;
-  if (available === null || n === 0) return { mode: "full", visibleCount: n };
+  if (available === null || n === 0) return { mode: "full", visibleCount: n, labelledCount: n };
   const gaps = gap * Math.max(0, n - 1);
   const full = fullWidths.reduce((sum, w) => sum + w, 0) + gaps;
   // Sub-pixel rounding in measured widths must not flip a toolbar that fits.
   const slack = 0.5;
-  if (full <= available + slack) return { mode: "full", visibleCount: n };
+  if (full <= available + slack) return { mode: "full", visibleCount: n, labelledCount: n };
   const icons = iconWidth * n + gaps;
-  if (icons <= available + slack) return { mode: "icons", visibleCount: n };
+  if (icons <= available + slack) {
+    // Re-label leading actions one by one while the strip still fits.
+    let labelledCount = 0;
+    let width = icons;
+    while (labelledCount < n) {
+      const next = width - iconWidth + fullWidths[labelledCount];
+      if (next > available + slack) break;
+      width = next;
+      labelledCount += 1;
+    }
+    return { mode: "icons", visibleCount: n, labelledCount };
+  }
   // Room for k icons plus the overflow trigger: (k + 1) icons and k gaps.
   const fit = Math.floor((available + slack + gap) / (iconWidth + gap)) - 1;
-  return { mode: "overflow", visibleCount: Math.max(0, Math.min(n - 1, fit)) };
+  return {
+    mode: "overflow",
+    visibleCount: Math.max(0, Math.min(n - 1, fit)),
+    labelledCount: 0,
+  };
 }
 
 /** Fallback icon-button width when layout cannot be measured (jsdom). */
@@ -275,11 +297,10 @@ export function ResponsiveToolbar({
     () =>
       metrics
         ? computeToolbarLayout({ available, ...metrics })
-        : { mode: "full" as const, visibleCount: actions.length },
+        : { mode: "full" as const, visibleCount: actions.length, labelledCount: actions.length },
     [available, metrics, actions.length]
   );
 
-  const compact = layout.mode !== "full";
   const inline = actions.slice(0, layout.visibleCount);
   const overflow = actions.slice(layout.visibleCount);
 
@@ -295,11 +316,11 @@ export function ResponsiveToolbar({
       aria-label={ariaLabel}
     >
       {leading != null && <div className="ui-toolbar__leading">{leading}</div>}
-      {inline.map((action) => (
+      {inline.map((action, index) => (
         <InlineAction
           key={action.id}
           action={action}
-          showLabel={!compact && !action.iconOnly}
+          showLabel={index < layout.labelledCount && !action.iconOnly}
           tooltipSide={tooltipSide}
         />
       ))}

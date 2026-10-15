@@ -65,6 +65,9 @@ describe("SidebarListItem — names get the full row width (#4709)", () => {
     expect(actions).toMatch(/position:\s*absolute/);
     expect(actions).toMatch(/opacity:\s*0/);
     expect(actions).toMatch(/pointer-events:\s*none/);
+    // A long action set wraps inside the row instead of clipping off its edge.
+    expect(actions).toMatch(/max-width:\s*100%/);
+    expect(actions).toMatch(/flex-wrap:\s*wrap/);
     // The overlay is anchored to the header row.
     expect(rule(".sidebar-list-item__header")).toMatch(/position:\s*relative/);
   });
