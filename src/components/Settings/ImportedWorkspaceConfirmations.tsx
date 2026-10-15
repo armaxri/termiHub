@@ -97,7 +97,7 @@ function groupRows(
   }
   const groups: ConfirmationGroup[] = [...byWorkspace.entries()]
     .sort(([a], [b]) => compareNames(a, b))
-    .map(([name, rows]) => ({ id: `ws-${name}`, title: name, rows }));
+    .map(([name, rows]) => ({ id: `ws-${name}`, title: `Workspace “${name}”`, rows }));
   if (unused.length > 0) {
     groups.push({
       id: "unused",

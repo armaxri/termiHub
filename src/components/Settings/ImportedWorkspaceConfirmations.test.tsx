@@ -122,7 +122,7 @@ describe("ImportedWorkspaceConfirmations (#4445)", () => {
     await until(() => expect(byTestId("imported-confirmations-group-ws-Imported")).not.toBeNull());
 
     const group = byTestId("imported-confirmations-group-ws-Imported")!;
-    expect(group.textContent).toContain("Imported");
+    expect(group.textContent).toContain("Workspace “Imported”");
     expect(group.textContent).toContain("make deploy");
     expect(group.textContent).toContain("Build (Main) · runs");
     expect(group.textContent).toContain("ssh ci@build.example.com");
