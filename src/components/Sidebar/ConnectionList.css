@@ -146,6 +146,9 @@
    dot + server icon) so they read as belonging to the agent above them. */
 .connection-list__group-header--agent .connection-list__group-actions {
   padding-left: calc(var(--spacing-2xl) + var(--spacing-lg));
+  /* Wrap rather than clip the agent's buttons in a narrow sidebar (#4709). */
+  flex-wrap: wrap;
+  flex-shrink: 1;
 }
 
 .connection-list__tree {
@@ -200,17 +203,19 @@
   text-overflow: ellipsis;
 }
 
+/* The hover-only type tag is out of the layout until hover (#4709): an
+   invisible-but-present tag used to reserve its width on every row and cut the
+   connection name short in a narrow sidebar. */
 .connection-tree__type {
+  display: none;
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   text-transform: uppercase;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
 }
 
 .connection-tree__item:hover .connection-tree__type {
-  opacity: 1;
+  display: inline;
 }
 
 /* Missing / unavailable plugin (#3344): muted row + warning badge. The row stays
@@ -428,7 +433,7 @@
 /* The Connect affordance replaces the type tag on hover/focus to avoid overlap */
 .connection-tree__item-row:hover .connection-tree__type,
 .connection-tree__item-row:focus-within .connection-tree__type {
-  opacity: 0;
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
