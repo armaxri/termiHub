@@ -93,6 +93,7 @@ vi.mock("@/services/keybindings", () => ({
   isAppShortcut: vi.fn(() => true),
   isChordPending: vi.fn(() => false),
   isShellReservedKey: vi.fn(() => false),
+  getActionScope: vi.fn(() => "global"),
 }));
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
