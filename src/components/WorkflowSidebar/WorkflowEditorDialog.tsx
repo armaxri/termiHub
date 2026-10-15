@@ -3,7 +3,6 @@ import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { Plus } from "lucide-react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import {
@@ -14,6 +13,10 @@ import {
   Field,
   useModalPortalContainer,
   EmptyState,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
 } from "@/components/ui";
 import type {
   Workflow,
@@ -388,8 +391,8 @@ interface AddStepMenuProps {
 function AddStepMenu({ onAdd }: AddStepMenuProps) {
   const portalContainer = useModalPortalContainer();
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
+    <DropdownMenuRoot>
+      <DropdownMenuTrigger asChild>
         <Button
           variant="secondary"
           size="sm"
@@ -398,25 +401,22 @@ function AddStepMenu({ onAdd }: AddStepMenuProps) {
         >
           Add step…
         </Button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal container={portalContainer}>
-        <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-          {WORKFLOW_STEP_KINDS.map((kind) => {
-            const Icon = stepKindIcon(kind);
-            return (
-              <DropdownMenu.Item
-                key={kind}
-                className="settings-menu__item"
-                onSelect={() => onAdd(kind)}
-                data-testid={`workflow-editor-add-step-${kind}`}
-              >
-                <Icon size={14} />
-                {stepKindLabel(kind)}
-              </DropdownMenu.Item>
-            );
-          })}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent container={portalContainer} align="start" sideOffset={4}>
+        {WORKFLOW_STEP_KINDS.map((kind) => {
+          const Icon = stepKindIcon(kind);
+          return (
+            <MenuItem
+              key={kind}
+              onSelect={() => onAdd(kind)}
+              data-testid={`workflow-editor-add-step-${kind}`}
+            >
+              <Icon size={14} />
+              {stepKindLabel(kind)}
+            </MenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenuRoot>
   );
 }

@@ -1,6 +1,11 @@
 import React from "react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Modal, useModalPortalContainer } from "@/components/ui";
+import {
+  Modal,
+  useModalPortalContainer,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+} from "@/components/ui";
 import { getActionAccelerator } from "@/services/keybindings";
 
 /** Props for {@link ZoomOverlay}. */
@@ -50,12 +55,10 @@ function ZoomTitle({ title, icon, menu }: Pick<ZoomOverlayProps, "title" | "icon
   );
   if (!menu) return label;
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>{label}</ContextMenu.Trigger>
-      <ContextMenu.Portal container={container}>
-        <ContextMenu.Content className="context-menu__content">{menu}</ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
+    <ContextMenuRoot>
+      <ContextMenuTrigger asChild>{label}</ContextMenuTrigger>
+      <ContextMenuContent container={container}>{menu}</ContextMenuContent>
+    </ContextMenuRoot>
   );
 }
 

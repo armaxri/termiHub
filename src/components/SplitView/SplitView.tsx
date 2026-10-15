@@ -9,7 +9,6 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   Settings as SettingsIcon,
   FileEdit,
@@ -73,7 +72,18 @@ import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBa
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { ImportedCommandBanner } from "@/components/Terminal/ImportedCommandBanner";
 import { ImportedConnectionPrompt } from "@/components/Terminal/ImportedConnectionPrompt";
-import { toast, Spinner, EmptyState } from "@/components/ui";
+import {
+  toast,
+  Spinner,
+  EmptyState,
+  ContextMenuContent,
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuItemIndicator,
+  MenuSeparator,
+} from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -457,38 +467,33 @@ export function SplitView() {
             <>
               {zoomedTab.contentType === "terminal" && (
                 <>
-                  <ContextMenu.Item
-                    className="context-menu__item"
+                  <MenuItem
                     onSelect={() => setZoomRenameOpen(true)}
                     data-testid="zoom-context-rename"
                   >
                     <Pencil size={14} /> Rename
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.Item
-                    className="context-menu__item"
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem
                     onSelect={() => saveTerminalToFile(zoomedTabId)}
                     data-testid="zoom-context-save"
                   >
                     <FileDown size={14} /> Save to File
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
+                  </MenuItem>
+                  <MenuItem
                     onSelect={() => copyTerminalToClipboard(zoomedTabId)}
                     data-testid="zoom-context-copy"
                   >
                     <ClipboardCopy size={14} /> Copy to Clipboard
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
+                  </MenuItem>
+                  <MenuItem
                     onSelect={() => clearTerminal(zoomedTabId)}
                     data-testid="zoom-context-clear"
                   >
                     <Eraser size={14} /> Clear Terminal
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.CheckboxItem
-                    className="context-menu__item"
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuCheckboxItem
                     checked={tabHorizontalScrollingZoom[zoomedTabId] ?? false}
                     onSelect={() =>
                       setTabHorizontalScrollingZoom(
@@ -498,21 +503,20 @@ export function SplitView() {
                     }
                     data-testid="zoom-context-horizontal-scroll"
                   >
-                    <ContextMenu.ItemIndicator className="context-menu__indicator">
+                    <MenuItemIndicator>
                       <Check size={14} />
-                    </ContextMenu.ItemIndicator>
+                    </MenuItemIndicator>
                     <ArrowRightLeft size={14} /> Horizontal Scrolling
-                  </ContextMenu.CheckboxItem>
-                  <ContextMenu.Separator className="context-menu__separator" />
+                  </MenuCheckboxItem>
+                  <MenuSeparator />
                 </>
               )}
-              <ContextMenu.Item
-                className="context-menu__item"
+              <MenuItem
                 onSelect={() => setZoomColorPickerOpen(true)}
                 data-testid="zoom-context-set-color"
               >
                 <Palette size={14} /> Set Color...
-              </ContextMenu.Item>
+              </MenuItem>
             </>
           }
         >
@@ -1015,7 +1019,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               />
             </div>
           ) : (
-            <ContextMenu.Root
+            <ContextMenuRoot
               key={tab.id}
               onOpenChange={(open) => {
                 if (open) {
@@ -1023,7 +1027,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 }
               }}
             >
-              <ContextMenu.Trigger
+              <ContextMenuTrigger
                 asChild
                 // Preventing default before Radix's own handler keeps the menu
                 // closed when the right-click belongs to the app (#3801).
@@ -1045,76 +1049,57 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                     isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
                   />
                 </div>
-              </ContextMenu.Trigger>
-              <ContextMenu.Portal>
-                <ContextMenu.Content className="context-menu__content">
-                  {contextMenuTabSelection && (
-                    <ContextMenu.Item
-                      className="context-menu__item"
-                      onSelect={() => copySelectionToClipboard(tab.id)}
-                      data-testid="terminal-context-copy-selection"
-                    >
-                      <Copy size={14} /> Copy Selection
-                    </ContextMenu.Item>
-                  )}
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => pasteToTerminal(tab.id)}
-                    data-testid="terminal-context-paste"
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                {contextMenuTabSelection && (
+                  <MenuItem
+                    onSelect={() => copySelectionToClipboard(tab.id)}
+                    data-testid="terminal-context-copy-selection"
                   >
-                    <ClipboardPaste size={14} /> Paste
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => copyTerminalToClipboard(tab.id)}
-                    data-testid="terminal-context-copy-all"
-                  >
-                    <ClipboardCopy size={14} /> Copy All
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => setRenameTabId(tab.id)}
-                    data-testid="tab-context-rename"
-                  >
-                    <Pencil size={14} /> Rename
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => saveTerminalToFile(tab.id)}
-                  >
-                    <FileDown size={14} /> Save to File
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => clearTerminal(tab.id)}
-                  >
-                    <Eraser size={14} /> Clear Terminal
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.CheckboxItem
-                    className="context-menu__item"
-                    checked={tabHorizontalScrolling[tab.id] ?? false}
-                    onSelect={() =>
-                      setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
-                    }
-                  >
-                    <ContextMenu.ItemIndicator className="context-menu__indicator">
-                      <Check size={14} />
-                    </ContextMenu.ItemIndicator>
-                    <ArrowRightLeft size={14} /> Horizontal Scrolling
-                  </ContextMenu.CheckboxItem>
-                  <ContextMenu.Separator className="context-menu__separator" />
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => setColorPickerTabId(tab.id)}
-                  >
-                    <Palette size={14} /> Set Color...
-                  </ContextMenu.Item>
-                </ContextMenu.Content>
-              </ContextMenu.Portal>
-            </ContextMenu.Root>
+                    <Copy size={14} /> Copy Selection
+                  </MenuItem>
+                )}
+                <MenuItem
+                  onSelect={() => pasteToTerminal(tab.id)}
+                  data-testid="terminal-context-paste"
+                >
+                  <ClipboardPaste size={14} /> Paste
+                </MenuItem>
+                <MenuItem
+                  onSelect={() => copyTerminalToClipboard(tab.id)}
+                  data-testid="terminal-context-copy-all"
+                >
+                  <ClipboardCopy size={14} /> Copy All
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem onSelect={() => setRenameTabId(tab.id)} data-testid="tab-context-rename">
+                  <Pencil size={14} /> Rename
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem onSelect={() => saveTerminalToFile(tab.id)}>
+                  <FileDown size={14} /> Save to File
+                </MenuItem>
+                <MenuItem onSelect={() => clearTerminal(tab.id)}>
+                  <Eraser size={14} /> Clear Terminal
+                </MenuItem>
+                <MenuSeparator />
+                <MenuCheckboxItem
+                  checked={tabHorizontalScrolling[tab.id] ?? false}
+                  onSelect={() =>
+                    setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
+                  }
+                >
+                  <MenuItemIndicator>
+                    <Check size={14} />
+                  </MenuItemIndicator>
+                  <ArrowRightLeft size={14} /> Horizontal Scrolling
+                </MenuCheckboxItem>
+                <MenuSeparator />
+                <MenuItem onSelect={() => setColorPickerTabId(tab.id)}>
+                  <Palette size={14} /> Set Color...
+                </MenuItem>
+              </ContextMenuContent>
+            </ContextMenuRoot>
           )
         )}
         {activeDragTab && <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />}

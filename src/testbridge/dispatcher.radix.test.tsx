@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import {
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuItem,
+} from "@/components/ui";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 
 /**
- * The bridge `click` must drive Radix dropdowns the way a real mouse does: open
+ * The bridge `click` must drive Radix dropdowns (via the shared ui/Menu skin) the way a real mouse does: open
  * the menu (which opens on pointerdown) and select an item exactly once. A naive
  * `element.click()` never opened the menu; the realistic pointer+mouse+click
  * sequence must not regress into double-activating the item either.
@@ -44,18 +49,16 @@ describe("dispatchCommand click against a Radix dropdown", () => {
     const onSelect = vi.fn();
     act(() => {
       root.render(
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
+        <DropdownMenuRoot>
+          <DropdownMenuTrigger asChild>
             <button data-testid="menu-host">Host</button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content>
-              <DropdownMenu.Item data-testid="menu-disconnect" onSelect={onSelect}>
-                Disconnect
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <MenuItem data-testid="menu-disconnect" onSelect={onSelect}>
+              Disconnect
+            </MenuItem>
+          </DropdownMenuContent>
+        </DropdownMenuRoot>
       );
     });
 

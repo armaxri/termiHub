@@ -8,33 +8,14 @@
  * so they are absent with the toggle off and present with it on.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { FileMenuItems } from "./FileBrowser";
+import { OpenTestMenu } from "@/test/OpenTestMenu";
 import type { FileEntry } from "@/types/connection";
 
 setupSettingsRegion();
-
-function SimpleItem({
-  children,
-  onSelect,
-  ...rest
-}: {
-  children: React.ReactNode;
-  onSelect?: () => void;
-  [key: string]: unknown;
-}) {
-  return (
-    <div role="menuitem" onClick={onSelect} {...rest}>
-      {children}
-    </div>
-  );
-}
-
-function SimpleSeparator() {
-  return <hr />;
-}
 
 const dirEntry: FileEntry = {
   name: "shared",
@@ -66,18 +47,18 @@ describe("FileMenuItems — Share via gating (#4498)", () => {
   function renderMenu(onShareVia = vi.fn()) {
     act(() => {
       root.render(
-        <FileMenuItems
-          entry={dirEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={vi.fn()}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          onShareVia={onShareVia}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={dirEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={vi.fn()}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            onShareVia={onShareVia}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     return onShareVia;

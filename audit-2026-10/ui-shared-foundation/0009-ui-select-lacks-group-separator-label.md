@@ -6,8 +6,8 @@ severity: low
 category: arch
 is_workaround: true
 subsystem: "src/components/ui"
-status: open
-resolution: ""
+status: fixed
+resolution: "#4383 — ui/Select exports SelectGroup/SelectSeparator/SelectLabel; ConnectionEditor + AppearanceSettings migrated off direct Radix imports"
 audit: "2026-10"
 commit: "663465d52"
 relation: new

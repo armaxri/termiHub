@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Bookmark, BookmarkCheck, BookmarkMinus, BookmarkPlus, ListChecks } from "lucide-react";
-import { Button, Tooltip, toast } from "@/components/ui";
+import {
+  Button,
+  Tooltip,
+  toast,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+  MenuGroup,
+  MenuItem,
+  MenuSeparator,
+} from "@/components/ui";
 import { bookmarksForScope, useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { errorMessage } from "@/utils/errorMessage";
 import { FileBookmarksDialog } from "./FileBookmarksDialog";
@@ -69,9 +78,9 @@ export function FileBookmarksMenu({
 
   return (
     <>
-      <DropdownMenu.Root>
+      <DropdownMenuRoot>
         <Tooltip content={current ? `Bookmarked: ${current.name}` : "Bookmarks"} side="top">
-          <DropdownMenu.Trigger asChild>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
@@ -80,85 +89,72 @@ export function FileBookmarksMenu({
               aria-pressed={current !== null}
               data-testid={testId}
             />
-          </DropdownMenu.Trigger>
+          </DropdownMenuTrigger>
         </Tooltip>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            className="context-menu__content file-bookmarks__menu"
-            align="end"
-            data-testid="file-bookmarks-menu"
-          >
-            {scope === null ? (
-              <DropdownMenu.Item
-                className="context-menu__item"
-                disabled
-                data-testid="file-bookmarks-unavailable"
-              >
-                Bookmarks need a saved connection
-              </DropdownMenu.Item>
-            ) : (
-              <>
-                {current ? (
-                  <DropdownMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => void handleRemoveCurrent()}
-                    data-testid="file-bookmarks-remove-current"
-                  >
-                    <BookmarkMinus size={14} /> Remove Bookmark for This Folder
-                  </DropdownMenu.Item>
-                ) : (
-                  <DropdownMenu.Item
-                    className="context-menu__item"
-                    disabled={!currentPath}
-                    onSelect={() => void handleAdd()}
-                    data-testid="file-bookmarks-add"
-                  >
-                    <BookmarkPlus size={14} /> Bookmark This Folder
-                  </DropdownMenu.Item>
-                )}
-                <DropdownMenu.Separator className="context-menu__separator" />
-                {bookmarks.length === 0 ? (
-                  <DropdownMenu.Item
-                    className="context-menu__item"
-                    disabled
-                    data-testid="file-bookmarks-empty"
-                  >
-                    No bookmarks yet
-                  </DropdownMenu.Item>
-                ) : (
-                  <DropdownMenu.Group aria-label="Bookmarked folders">
-                    {bookmarks.map((b) => (
-                      <DropdownMenu.Item
-                        key={b.id}
-                        className="context-menu__item file-bookmarks__item"
-                        onSelect={() => onNavigate(b.path)}
-                        title={b.path}
-                        data-testid={`file-bookmark-item-${b.id}`}
-                      >
-                        {b.id === current?.id ? (
-                          <BookmarkCheck size={14} aria-hidden="true" />
-                        ) : (
-                          <Bookmark size={14} aria-hidden="true" />
-                        )}
-                        <span className="file-bookmarks__name">{b.name}</span>
-                      </DropdownMenu.Item>
-                    ))}
-                  </DropdownMenu.Group>
-                )}
-                <DropdownMenu.Separator className="context-menu__separator" />
-                <DropdownMenu.Item
-                  className="context-menu__item"
-                  disabled={bookmarks.length === 0}
-                  onSelect={() => setManageOpen(true)}
-                  data-testid="file-bookmarks-manage"
+        <DropdownMenuContent
+          className="file-bookmarks__menu"
+          align="end"
+          data-testid="file-bookmarks-menu"
+        >
+          {scope === null ? (
+            <MenuItem disabled data-testid="file-bookmarks-unavailable">
+              Bookmarks need a saved connection
+            </MenuItem>
+          ) : (
+            <>
+              {current ? (
+                <MenuItem
+                  onSelect={() => void handleRemoveCurrent()}
+                  data-testid="file-bookmarks-remove-current"
                 >
-                  <ListChecks size={14} /> Manage Bookmarks…
-                </DropdownMenu.Item>
-              </>
-            )}
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+                  <BookmarkMinus size={14} /> Remove Bookmark for This Folder
+                </MenuItem>
+              ) : (
+                <MenuItem
+                  disabled={!currentPath}
+                  onSelect={() => void handleAdd()}
+                  data-testid="file-bookmarks-add"
+                >
+                  <BookmarkPlus size={14} /> Bookmark This Folder
+                </MenuItem>
+              )}
+              <MenuSeparator />
+              {bookmarks.length === 0 ? (
+                <MenuItem disabled data-testid="file-bookmarks-empty">
+                  No bookmarks yet
+                </MenuItem>
+              ) : (
+                <MenuGroup aria-label="Bookmarked folders">
+                  {bookmarks.map((b) => (
+                    <MenuItem
+                      key={b.id}
+                      className="file-bookmarks__item"
+                      onSelect={() => onNavigate(b.path)}
+                      title={b.path}
+                      data-testid={`file-bookmark-item-${b.id}`}
+                    >
+                      {b.id === current?.id ? (
+                        <BookmarkCheck size={14} aria-hidden="true" />
+                      ) : (
+                        <Bookmark size={14} aria-hidden="true" />
+                      )}
+                      <span className="file-bookmarks__name">{b.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuGroup>
+              )}
+              <MenuSeparator />
+              <MenuItem
+                disabled={bookmarks.length === 0}
+                onSelect={() => setManageOpen(true)}
+                data-testid="file-bookmarks-manage"
+              >
+                <ListChecks size={14} /> Manage Bookmarks…
+              </MenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenuRoot>
       {manageOpen && (
         <FileBookmarksDialog
           open={manageOpen}

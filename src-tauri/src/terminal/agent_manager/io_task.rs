@@ -42,7 +42,7 @@ use super::{
     fold_evicted_hosted_sessions, handle_agent_forward_notification, hosted_sessions_for_agent,
     list_recovered_session_ids_bounded, reattach_after_reconnect, reconcile_output_senders,
     reconnect_agent, resolve_hosted_sessions_after_reconnect, route_tool_run_notification,
-    AgentIoCommand, AgentReaper, AgentRpcFailure, MonitoringRoute, ToolRunSender,
+    AgentIoCommand, AgentReaper, AgentRpcFailure, MonitoringRoute, ReconnectTuning, ToolRunSender,
 };
 use super::{reap_agent, serialize_ki_respond, serialize_request};
 use crate::connection::config::AgentSettings;
@@ -209,6 +209,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
     ki_activity: Arc<AgentPromptActivity>,
     update_auth_token_path: Option<String>,
     capabilities: SharedCapabilities,
+    reconnect_tuning: ReconnectTuning,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     // #3018: however this task ends — return, panic or a teardown abort — fail
@@ -661,7 +662,15 @@ pub(super) async fn agent_io_task<R: Runtime>(
             )));
         }
 
-        match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
+        match reconnect_agent(
+            &config,
+            &agent_settings,
+            &mut request_id,
+            &alive,
+            &reconnect_tuning,
+        )
+        .await
+        {
             Ok((
                 new_session,
                 new_channel,

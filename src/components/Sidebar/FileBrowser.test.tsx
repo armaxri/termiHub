@@ -3,7 +3,7 @@ import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarn
 import { setupFileBrowsersRegion, seedFileBrowsers } from "@/test/fileBrowsersRegionTestHarness";
 import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
@@ -12,6 +12,7 @@ import { flushAsync } from "@/test/flushAsync";
 import { getHomeDir } from "@/services/api";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
+import { OpenTestMenu } from "@/test/OpenTestMenu";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
@@ -747,26 +748,6 @@ describe("FileBrowser – useFileBrowserSync", () => {
   });
 });
 
-/** Simple wrapper that renders items as plain divs (bypassing Radix portal issues in JSDOM). */
-function SimpleItem({
-  children,
-  onSelect,
-  ...rest
-}: {
-  children: React.ReactNode;
-  onSelect?: () => void;
-  [key: string]: unknown;
-}) {
-  return (
-    <div role="menuitem" onClick={onSelect} {...rest}>
-      {children}
-    </div>
-  );
-}
-function SimpleSeparator(props: Record<string, unknown>) {
-  return <hr {...props} />;
-}
-
 describe("FileBrowser – Copy/Cut/Paste UI", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -963,17 +944,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={fileEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={fileEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -986,17 +967,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={dirEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={dirEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -1009,17 +990,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={fileEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={fileEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -1036,17 +1017,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={fileEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={fileEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -1063,17 +1044,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={dirEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={dirEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -1090,17 +1071,17 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     const onAction = vi.fn();
     await act(async () => {
       root.render(
-        <FileMenuItems
-          entry={dirEntry}
-          vscodeAvailable={false}
-          onNavigate={vi.fn()}
-          onContextAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-          testIdPrefix="file-menu"
-        />
+        <OpenTestMenu container={container}>
+          <FileMenuItems
+            entry={dirEntry}
+            vscodeAvailable={false}
+            onNavigate={vi.fn()}
+            onContextAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+            testIdPrefix="file-menu"
+          />
+        </OpenTestMenu>
       );
     });
     await flushAsync();
@@ -1344,14 +1325,14 @@ describe("FileBrowser – MultiSelectMenuItems", () => {
   it("shows correct item count label", () => {
     act(() => {
       localRoot.render(
-        <MultiSelectMenuItems
-          count={3}
-          onAction={vi.fn()}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-        />
+        <OpenTestMenu container={localContainer}>
+          <MultiSelectMenuItems
+            count={3}
+            onAction={vi.fn()}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+          />
+        </OpenTestMenu>
       );
     });
 
@@ -1367,14 +1348,14 @@ describe("FileBrowser – MultiSelectMenuItems", () => {
     const onAction = vi.fn();
     act(() => {
       localRoot.render(
-        <MultiSelectMenuItems
-          count={2}
-          onAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-        />
+        <OpenTestMenu container={localContainer}>
+          <MultiSelectMenuItems
+            count={2}
+            onAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+          />
+        </OpenTestMenu>
       );
     });
 
@@ -1389,14 +1370,14 @@ describe("FileBrowser – MultiSelectMenuItems", () => {
     const onAction = vi.fn();
     act(() => {
       localRoot.render(
-        <MultiSelectMenuItems
-          count={2}
-          onAction={onAction}
-          onPaste={vi.fn()}
-          hasClipboard={false}
-          Item={SimpleItem}
-          Separator={SimpleSeparator}
-        />
+        <OpenTestMenu container={localContainer}>
+          <MultiSelectMenuItems
+            count={2}
+            onAction={onAction}
+            onPaste={vi.fn()}
+            hasClipboard={false}
+          />
+        </OpenTestMenu>
       );
     });
 
