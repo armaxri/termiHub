@@ -3,6 +3,11 @@ import type { SettingsField } from "@/types/schema";
 import type { SavedConnectionOption } from "@/utils/jumpHost";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { DynamicField } from "@/components/DynamicForm/DynamicField";
+import {
+  storedSecretState,
+  type StoredSecretsControl,
+} from "@/components/DynamicForm/storedSecrets";
+import { hopIdentity } from "@/utils/fieldSecrets";
 import { Field, RadioGroup, Select, SelectItem } from "@/components/ui";
 
 interface JumpHostEntryProps {
@@ -21,6 +26,11 @@ interface JumpHostEntryProps {
   onChange: (patch: Partial<JumpHostConfig>) => void;
   /** SSH connections selectable as a saved-connection hop (folder-path labelled). */
   savedConnections: SavedConnectionOption[];
+  /**
+   * The inline-hop passwords stored for the saved connection, by hop identity
+   * (`user@host:port`), with the user's pending clears (#4431).
+   */
+  storedHopSecrets?: StoredSecretsControl;
 }
 
 /** Kebab-case test-id slug for each hop field key (stable across the migration). */
@@ -84,6 +94,7 @@ export function JumpHostEntry({
   fields,
   onChange,
   savedConnections,
+  storedHopSecrets,
 }: JumpHostEntryProps) {
   const tid = (field: string) => `jump-host-${field}-${index}`;
   const mode: "saved" | "inline" = hop.connectionId ? "saved" : "inline";
@@ -114,13 +125,25 @@ export function JumpHostEntry({
 
   const renderField = (field: SettingsField) => {
     const slug = FIELD_TEST_SLUG[field.key] ?? field.key;
+    const value = fieldValue(hop, field.key);
+    // A hop's password is stored by the hop's identity, so the indicator follows
+    // the hop through reordering (#4431).
+    const storedSecret =
+      field.key === "password"
+        ? storedSecretState(
+            storedHopSecrets,
+            hopIdentity(hop as unknown as Record<string, unknown>),
+            value
+          )
+        : undefined;
     return (
       <DynamicField
         key={field.key}
         field={field}
-        value={fieldValue(hop, field.key)}
-        onChange={(value) => onChange(fieldPatch(field.key, value))}
+        value={value}
+        onChange={(next) => onChange(fieldPatch(field.key, next))}
         testId={tid(slug)}
+        storedSecret={storedSecret}
       />
     );
   };

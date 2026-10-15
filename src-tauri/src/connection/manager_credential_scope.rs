@@ -17,8 +17,9 @@ use crate::connection::credential_scope::{
 use crate::connection::placement::PlaceMode;
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::secret_fields::{
-    has_plaintext_field_secrets, may_have_field_secrets, read_field_secrets,
-    restore_saved_field_secrets, store_field_secrets,
+    has_plaintext_field_secrets, may_have_field_secrets, read_field_secrets, remove_field_secrets,
+    restore_saved_field_secrets, store_field_secrets, stored_field_secret_keys,
+    StoredFieldSecretKeys,
 };
 use crate::connection::secret_migration::migrate_plaintext_field_secrets;
 use crate::connection::tree::flatten_tree;
@@ -143,6 +144,42 @@ impl ConnectionManager {
             CredentialType::FieldSecrets,
         );
         store_field_secrets(&*self.credential_store, &key.connection_id, secrets)
+    }
+
+    /// The names — never the values — of the schema secrets other than
+    /// `password` stored for connection `connection_id` in `source_file`
+    /// (`None` = main store), for the connection editor to show (#4431).
+    /// Fails — e.g. on a locked store — rather than reporting none.
+    pub fn stored_field_secret_keys(
+        &self,
+        connection_id: &str,
+        source_file: Option<&str>,
+    ) -> Result<StoredFieldSecretKeys> {
+        let key = self.connection_credential_key(
+            connection_id,
+            source_file,
+            CredentialType::FieldSecrets,
+        );
+        stored_field_secret_keys(&*self.credential_store, &key.connection_id)
+    }
+
+    /// Remove exactly the named field secrets (`fields` by settings key,
+    /// `hops` by hop identity) stored for connection `connection_id` in
+    /// `source_file`, keeping the others — the editor's explicit "clear" on
+    /// save (#4431).
+    pub fn clear_field_secrets(
+        &self,
+        connection_id: &str,
+        source_file: Option<&str>,
+        fields: &[String],
+        hops: &[String],
+    ) -> Result<()> {
+        let key = self.connection_credential_key(
+            connection_id,
+            source_file,
+            CredentialType::FieldSecrets,
+        );
+        remove_field_secrets(&*self.credential_store, &key.connection_id, fields, hops)
     }
 
     /// The credential store saved connections' secrets live in.

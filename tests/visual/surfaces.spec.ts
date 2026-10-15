@@ -15,6 +15,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import { allowedBy, ALLOWLIST, type AllowEntry } from "./allowlist";
 import type { VisualScenario } from "./harness/mockBackend";
+import { STORED_SECRET_CONNECTIONS } from "./harness/storedSecretIds";
 import { auditLayout, type LayoutIssue } from "./layoutAudit";
 import { SCREENS, SIDEBAR_WIDTHS, SIDEBARS, STORE_DIALOGS, USAGE_DIR, WINDOWS } from "./surfaces";
 import { styledPrimitiveClasses } from "./uiClasses";
@@ -88,6 +89,9 @@ class SurfaceReport {
     }
   }
 }
+
+/** The connection editor of the active tab (inactive editor tabs are `display: none`). */
+const VISIBLE_EDITOR = '.connection-editor:not([style*="display: none"])';
 
 /** Wait for React to commit and the browser to lay out the change. */
 async function settle(page: Page): Promise<void> {
@@ -232,6 +236,32 @@ for (const win of WINDOWS) {
               },
             ];
       await report.check("dialog/shortcuts", "[role=dialog]", extra);
+      await report.finish();
+    });
+
+    test("connection editor with stored secrets", async ({ page }, testInfo) => {
+      const report = new SurfaceReport(page, testInfo, win.name);
+      await boot(page, {
+        storedSecrets: true,
+        credentialStore: { mode: "master_password", status: "unlocked" },
+      });
+      // A plugin connection with two stored schema secrets: one kept ("saved"
+      // placeholder + Clear), one marked for removal ("removed on save" + Undo).
+      await store(page, "openConnectionEditorTab", STORED_SECRET_CONNECTIONS.plugin);
+      const editor = page.locator(VISIBLE_EDITOR);
+      await editor.locator("[data-testid=field-apiToken-secret-saved]").waitFor();
+      await editor.locator("[data-testid=field-signingSecret-secret-clear]").click();
+      await editor.locator("[data-testid=field-signingSecret-secret-cleared]").waitFor();
+      await report.check("editor/stored-field-secret", VISIBLE_EDITOR);
+
+      // An SSH connection whose inline jump-host hop password is stored.
+      await store(page, "openConnectionEditorTab", STORED_SECRET_CONNECTIONS.hop);
+      const hopSecret = page.locator(
+        `${VISIBLE_EDITOR} [data-testid=jump-host-password-0-secret-saved]`
+      );
+      await hopSecret.waitFor();
+      await hopSecret.scrollIntoViewIfNeeded();
+      await report.check("editor/stored-hop-secret", VISIBLE_EDITOR);
       await report.finish();
     });
 

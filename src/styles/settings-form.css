@@ -61,6 +61,21 @@
   color: var(--color-success);
 }
 
+/* A stored schema secret's status row (#4431): the hint and its Clear/Undo
+   control on one line, wrapping under the hint in a narrow editor. */
+.settings-form__stored-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--spacing-sm);
+  row-gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.settings-form__stored-secret > .settings-form__hint {
+  min-width: 0;
+}
+
 .settings-form__hint-action {
   background: none;
   border: none;
