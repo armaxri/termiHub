@@ -305,7 +305,7 @@ pub fn agent_folder(agent_id: &str) -> String {
 }
 
 /// Reduce an untrusted string to one short zip path segment.
-fn sanitize_segment(s: &str) -> String {
+pub(crate) fn sanitize_segment(s: &str) -> String {
     let cleaned: String = s
         .chars()
         .filter(|c| !c.is_control())

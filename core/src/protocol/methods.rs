@@ -113,6 +113,11 @@ pub const AGENT_REQUEST_DEFERRED_UPDATE: &str = "agent.request_deferred_update";
 pub const AGENT_CRASH_REPORTS_LIST: &str = "agent.crash_reports.list";
 /// Read one of the agent's crash reports by a name from the listing (#3574).
 pub const AGENT_CRASH_REPORTS_READ: &str = "agent.crash_reports.read";
+/// List the agent's own per-process log files (#4519, protocol 0.32.0). An
+/// older agent answers "method not found".
+pub const AGENT_LOGS_LIST: &str = "agent.logs.list";
+/// Read one of the agent's log files by a name from the listing (#4519).
+pub const AGENT_LOGS_READ: &str = "agent.logs.read";
 
 // ssh-agent relay (#1727). `data`/`close` are used both as desktop→agent
 // requests and as agent→desktop notifications; `open` is notification-only.
@@ -625,6 +630,52 @@ pub struct CrashReportsReadResult {
     pub name: String,
     pub text: String,
     /// `true` when the file exceeded the cap and `text` was cut.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+// ── agent.logs.* (#4519) ─────────────────────────────────────────────
+
+/// One log file in an `agent.logs.list` result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[cfg_attr(test, ts(rename = "AgentLogFileSummary"))]
+#[serde(rename_all = "camelCase")]
+pub struct LogFileSummary {
+    /// File name (`termihub-agent-<role>-<pid>.log`, `….N.log` for an archive,
+    /// `termihub-agent-stderr-….log` for a daemon's stderr capture); pass to
+    /// `agent.logs.read`. Never a path.
+    pub name: String,
+    /// Size on disk in bytes.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub size: u64,
+}
+
+/// Result of `agent.logs.list`: the agent's log files, newest first, at most
+/// `MAX_REMOTE_LOGS` of them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogsListResult {
+    pub logs: Vec<LogFileSummary>,
+}
+
+/// Params of `agent.logs.read`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogsReadParams {
+    /// A name exactly as returned by `agent.logs.list`.
+    pub name: String,
+}
+
+/// Result of `agent.logs.read`: the log's redacted text — its newest lines,
+/// capped at `MAX_REMOTE_LOG_BYTES`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LogsReadResult {
+    pub name: String,
+    pub text: String,
+    /// `true` when the file exceeded the cap and only its tail was returned.
     #[serde(default)]
     pub truncated: bool,
 }
@@ -4014,6 +4065,8 @@ mod tests {
         assert_eq!(AGENT_LIST_CONNECTIONS, "agent.list_connections");
         assert_eq!(AGENT_CRASH_REPORTS_LIST, "agent.crash_reports.list");
         assert_eq!(AGENT_CRASH_REPORTS_READ, "agent.crash_reports.read");
+        assert_eq!(AGENT_LOGS_LIST, "agent.logs.list");
+        assert_eq!(AGENT_LOGS_READ, "agent.logs.read");
         assert_eq!(AGENT_SHUTDOWN, "agent.shutdown");
         assert_eq!(AGENT_SETTINGS_UPDATE, "agent.settingsUpdate");
         assert_eq!(AGENT_REQUEST_UPDATE, "agent.request_update");

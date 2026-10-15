@@ -49,6 +49,8 @@ import type {
   AgentCrashNotice,
   AgentCrashReportRef,
   AgentCrashReports,
+  AgentLogRef,
+  AgentLogs,
   CrashReportNotice,
   DiagnosticsBundleEntry,
   DiagnosticsExportResult,
@@ -1480,6 +1482,14 @@ export async function listAgentCrashReports(): Promise<AgentCrashReports[]> {
   return await invoke<AgentCrashReports[]>("list_agent_crash_reports");
 }
 
+/**
+ * List the log files of every already-connected remote agent (#4519). Never
+ * connects to an agent; an agent too old to share them has `supported: false`.
+ */
+export async function listAgentLogs(): Promise<AgentLogs[]> {
+  return await invoke<AgentLogs[]>("list_agent_logs");
+}
+
 /** Pending "agent crashed since last connect" notices (#3593). */
 export async function getAgentCrashNotices(): Promise<AgentCrashNotice[]> {
   return await invoke<AgentCrashNotice[]>("get_agent_crash_notices");
@@ -1500,15 +1510,17 @@ export async function readAgentCrashReport(agentId: string, name: string): Promi
 
 /**
  * Write the redacted diagnostics zip to a user-chosen absolute `.zip` path,
- * adding the selected remote agent crash reports (#3574).
+ * adding the selected remote agent crash reports (#3574) and log files (#4519).
  */
 export async function exportDiagnosticsBundle(
   destination: string,
-  agentReports: AgentCrashReportRef[] = []
+  agentReports: AgentCrashReportRef[] = [],
+  agentLogs: AgentLogRef[] = []
 ): Promise<DiagnosticsExportResult> {
   return await invoke<DiagnosticsExportResult>("export_diagnostics_bundle", {
     destination,
     agentReports,
+    agentLogs,
   });
 }
 

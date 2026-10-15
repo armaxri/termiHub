@@ -14,8 +14,13 @@
 //! - `file_log` (feature `file-log`) — the size-rotating, count-capped log
 //!   file writer, the per-directory log-family budget and the `russh` WARN
 //!   clamp. Shared by the desktop and the agent (#4319).
+//! - `remote_log` (feature `file-log`) — listing and reading a log family for a
+//!   **remote** reader: the agent serving its own logs to a connected desktop's
+//!   diagnostics export (#4519), with name validation and size caps.
 
 pub mod crash_report;
 #[cfg(feature = "file-log")]
 pub mod file_log;
 pub mod redact;
+#[cfg(feature = "file-log")]
+pub mod remote_log;

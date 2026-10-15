@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.31.0
+**Version**: 0.32.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416, #4433
+**Issue**: #17, #360, #1349, #2185, #2192, #2607, #3731, #3213, #3424, #3425, #3751, #3089, #3210, #3871, #3242, #3051, #4081, #3587, #4416, #4433, #4519
 
 ---
 
@@ -337,6 +337,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.32.0        | Yes (the desktop requests 0.24.0; `agent.logs.*` lets Export Diagnostics include the agent's log files)                               |
 | 0.24.0          | 0.31.0        | Yes (the desktop requests 0.24.0; `clientCapabilities.fractionalLatency` gets it sub-millisecond `latencyMs` in network tool results) |
 | 0.24.0          | 0.30.0        | Yes (the desktop requests 0.24.0; `fileCreateNew` lets a remote-desktop upload claim its name without truncating a file)              |
 | 0.24.0          | 0.29.0        | Yes (the desktop requests 0.24.0; `hostFileAttributeOps` hides chmod / chown / symlink a Windows agent host cannot perform)           |
@@ -413,6 +414,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.32.0 (additive, minor)** — adds [`agent.logs.list`](#agentlogslist) and [`agent.logs.read`](#agentlogsread) (#4519): a connected desktop pulls the agent's own per-process log files (`<config-dir>/logs/termihub-agent-<role>-<pid>.log`, their rotated archives, and the capped `termihub-agent-stderr-….log` captures of detached daemons, #4319) into its **Export Diagnostics** bundle, so a support case no longer needs shell access to the agent host. Read-only, confined to the agent's fixed log directory, redacted on the agent and again on the desktop, and size-capped per file and per export. No capability flag: an older agent answers `-32601` Method not found, which the desktop reports as "this agent version cannot share its log files" and skips. The desktop still requests `0.24.0`.
 
 **0.31.0 (additive, minor)** — network tool results carry **fractional** milliseconds (#4542): `latencyMs` in a `ping` / `port_scan` / `ping_sweep` `result` event is now a number with microsecond precision (`0.42`) rather than a whole number, so a sub-millisecond LAN reply no longer reads `0`. The `initialize` **params** gain `clientCapabilities.fractionalLatency`. Negotiation is by **capability** from the desktop side, like `keyboardInteractivePrompts`: an older desktop parses `latencyMs` as an unsigned integer and would reject `0.42`, so the agent rounds every streamed (`tool.event`) and collected (`tool.run`) `latencyMs` to the nearest whole millisecond unless the desktop sent `fractionalLatency: true`. An older agent ignores the member and always sends whole milliseconds, which the desktop reads as the same number. The aggregate `PingStats` (`minMs`, `avgMs`, …) and traceroute `rttMs` were already fractional and are unchanged. The desktop still requests `0.24.0`.
 
@@ -1543,6 +1546,119 @@ own redactor before writing it into the bundle.
 - `-32602` Invalid params (missing `name`, or not a plain crash-report name)
 - `-32010` File not found (no such report in the current listing)
 - `-32012` File operation failed (the report could not be read)
+
+---
+
+### `agent.logs.list`
+
+List the agent's own log files (#4519, protocol 0.32.0) so a connected desktop can offer them in
+its **Export Diagnostics** bundle. Mirrors [`agent.crash_reports.list`](#agentcrash_reportslist):
+read-only, takes no parameters, and only ever looks at the agent's fixed log directory
+(`<config-dir>/logs/`). Only the agent log family is listed — `termihub-agent.log`,
+`termihub-agent-<role>-<pid>.log`, their rotated archives (`….N.log`) and the detached daemons'
+stderr captures (`termihub-agent-stderr-….log`) — as regular files with plain names; symlinks,
+directories and every other file (crash reports, `state.json`) are never listed. An older agent
+answers `-32601` Method not found.
+
+The desktop calls this only on agents that are **already connected**, when the user opens the
+Export Diagnostics dialog, and never opens a connection for it.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.logs.list",
+  "params": {},
+  "id": 14
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "logs": [
+      { "name": "termihub-agent-stdio-4242.log", "size": 18211 },
+      { "name": "termihub-agent-registry-17.1.log", "size": 2097152 }
+    ]
+  },
+  "id": 14
+}
+```
+
+| Result Field  | Type     | Description                                                                      |
+| ------------- | -------- | -------------------------------------------------------------------------------- |
+| `logs`        | `array`  | Log files, newest (most recently modified) first, at most 40 (`MAX_REMOTE_LOGS`) |
+| `logs[].name` | `string` | Log file name (never a path); pass to `.read`                                    |
+| `logs[].size` | `number` | Size on disk in bytes                                                            |
+
+A missing log directory yields an empty list.
+
+**Errors:**
+
+- `-32007` Not initialized (must call `initialize` first)
+
+---
+
+### `agent.logs.read`
+
+Read one log file by a name returned from [`agent.logs.list`](#agentlogslist) (#4519). Log files
+are not redacted when written, so the agent **redacts the text before sending it** (credentials,
+keys, tokens, host names, IP addresses, usernames, home paths); the desktop redacts it **again**
+with its own redactor before writing it into the bundle.
+
+- `name` must be a plain agent log name (`termihub-agent….log`, ASCII letters/digits/`-`/`_`/`.`,
+  no `..`, no path separators, at most 128 bytes) **and** one of the names the current, capped
+  listing returns. There is no way to express a path, so the method cannot read outside the log
+  directory.
+- The text is capped at 256 KiB (`MAX_REMOTE_LOG_BYTES`). A longer file returns its **newest**
+  lines: the tail, cut on a line boundary, prefixed with `… [earlier lines cut by the size cap]`,
+  and flagged `truncated`. The desktop re-applies this cap and a 4 MiB total cap per export.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.logs.read",
+  "params": { "name": "termihub-agent-stdio-4242.log" },
+  "id": 15
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "name": "termihub-agent-stdio-4242.log",
+    "text": "2026-10-15T03:12:01Z  INFO termihub_agent: agent started …\n",
+    "truncated": false
+  },
+  "id": 15
+}
+```
+
+| Param  | Type     | Required | Description                   |
+| ------ | -------- | -------- | ----------------------------- |
+| `name` | `string` | Yes      | A name from `agent.logs.list` |
+
+| Result Field | Type      | Description                                       |
+| ------------ | --------- | ------------------------------------------------- |
+| `name`       | `string`  | The log file's name                               |
+| `text`       | `string`  | The redacted text (newest lines when capped)      |
+| `truncated`  | `boolean` | `true` when the file exceeded the cap and was cut |
+
+**Errors:**
+
+- `-32007` Not initialized (must call `initialize` first)
+- `-32602` Invalid params (missing `name`, or not a plain agent log name)
+- `-32010` File not found (no such log file in the current listing)
+- `-32012` File operation failed (the log file could not be read)
 
 ---
 
