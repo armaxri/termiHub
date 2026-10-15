@@ -8,7 +8,7 @@
 //! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 //!
 //! Currently lifted: the **local** (`ssh -L`), **remote** (`ssh -R`), and
-//! **dynamic** (`ssh -D`, SOCKS5) engines plus the shared channel-opener seam
+//! **dynamic** (`ssh -D`, SOCKS4/4a/5) engines plus the shared channel-opener seam
 //! and stats. The desktop `tunnel` module re-exports these so existing call
 //! sites are unchanged; the agent uses them to forward on the agent (#2198
 //! completed the trilogy with `-D`).
@@ -19,6 +19,7 @@ pub mod config;
 pub mod dynamic_forward;
 pub mod local_forward;
 pub mod remote_forward;
+pub(crate) mod socks4;
 
 pub use active_forwarder::ActiveForwarder;
 pub use channel::{ChannelOpener, SshChannelOpener};

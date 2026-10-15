@@ -717,7 +717,7 @@ sequenceDiagram
 
 ### SSH Tunnel Lifecycle
 
-termiHub supports three types of SSH tunnels: local forwarding (expose a remote service on a local port), remote forwarding (expose a local service on the remote host), and dynamic forwarding (SOCKS5 proxy through the remote host). Tunnels are managed independently from terminal sessions and can auto-start on application launch.
+termiHub supports three types of SSH tunnels: local forwarding (expose a remote service on a local port), remote forwarding (expose a local service on the remote host), and dynamic forwarding (SOCKS5/SOCKS4/SOCKS4a proxy through the remote host). Tunnels are managed independently from terminal sessions and can auto-start on application launch.
 
 ```mermaid
 sequenceDiagram
@@ -755,6 +755,8 @@ sequenceDiagram
 ```
 
 The dynamic forwarder is a SOCKS5 server (RFC 1928, `CONNECT` with no authentication) that accepts IPv4, IPv6 and domain-name targets and opens one SSH `direct-tcpip` channel per request. When the SSH server refuses the channel, the client gets the matching SOCKS5 reply instead of a generic failure: "administratively prohibited" becomes "connection not allowed by ruleset" (0x02), "connect failed" becomes "host unreachable" (0x04), and an unknown channel type becomes "command not supported" (0x07). SSH only reports these coarse reasons, so a refused port and an unreachable host both read as 0x04. An address type other than 0x01/0x03/0x04 gets 0x08 ("address type not supported").
+
+The same listener also serves SOCKS4 and SOCKS4a, as OpenSSH's `ssh -D` does: the first byte of each connection (0x04 or 0x05) picks the protocol. A SOCKS4 `CONNECT` names an IPv4 target; a SOCKS4a request (`DSTIP` = `0.0.0.x`, `x` non-zero) adds a hostname that is passed to the SSH server unresolved, so it is looked up from the server's network like a SOCKS5 domain target. The USERID field is read and ignored, since there is no authentication, and it is capped at 255 bytes. The 4a hostname has the same 255-byte cap. SOCKS4 has only one failure code, so BIND, unknown commands, malformed requests and refused channels all get 0x5B; success is 0x5A. Both protocols share the handshake timeout, the reject-and-drain close and the concurrent-connection cap. Any other first byte closes the connection without a reply.
 
 Tunnels are persisted in `tunnels.json` alongside connections. The SSH Session Pool reuses SSH connections across multiple tunnels targeting the same host, avoiding redundant authentication.
 

@@ -1,9 +1,11 @@
-//! Dynamic (`ssh -D`, SOCKS5) port-forward engine, shared by desktop and agent
+//! Dynamic (`ssh -D`, SOCKS) port-forward engine, shared by desktop and agent
 //! (#2185, #2198).
 //!
-//! Binds a TCP listener on the tunnel host as a SOCKS5 proxy. For each accepted
-//! connection it performs the SOCKS5 handshake (CONNECT only, no auth; IPv4,
-//! IPv6 and domain targets), then
+//! Binds a TCP listener on the tunnel host as a SOCKS proxy. Like OpenSSH's
+//! `ssh -D`, one listener serves SOCKS5, SOCKS4 and SOCKS4a: the first byte of
+//! each connection picks the protocol. SOCKS5 is CONNECT only, no auth, with
+//! IPv4, IPv6 and domain targets; SOCKS4/4a is CONNECT only, with the USERID
+//! ignored and a 4a hostname resolved remotely (#4541). The forwarder then
 //! opens an SSH `direct-tcpip` channel to the client-chosen target and relays
 //! bytes bidirectionally. Lifted from the desktop `tunnel` module into core so
 //! the identical engine runs on the desktop **or** on a remote agent — only the
@@ -21,13 +23,14 @@ use crate::backends::ssh::handler::SshSession;
 use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{DynamicForwardConfig, TunnelStats};
 use super::local_forward::ForwarderStats;
+use super::socks4::{self, SOCKS4_REP_GRANTED, SOCKS4_REP_REJECTED, SOCKS4_VERSION};
 use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
 
-/// Manages a dynamic (SOCKS5) forwarding tunnel.
+/// Manages a dynamic (SOCKS) forwarding tunnel.
 ///
-/// Binds a local TCP listener as a SOCKS5 proxy. For each incoming connection,
-/// performs the SOCKS5 handshake (CONNECT only, no auth) and then relays
-/// traffic through an SSH `channel_open_direct_tcpip`.
+/// Binds a local TCP listener as a SOCKS4/4a/5 proxy. For each incoming
+/// connection, performs the SOCKS handshake (CONNECT only, no auth) and then
+/// relays traffic through an SSH `channel_open_direct_tcpip`.
 pub struct DynamicForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
@@ -41,16 +44,16 @@ pub struct DynamicForwarder {
     death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
-/// Upper bound on the SOCKS5 negotiation (greeting, method select, request
-/// parse, channel open, success reply). It bounds **only** the handshake so a
+/// Upper bound on the SOCKS negotiation (SOCKS5: greeting, method select,
+/// request parse; SOCKS4: request parse; then channel open and success reply). It bounds **only** the handshake so a
 /// slow or absent client cannot tie up a task forever; the established relay
 /// runs with no deadline (#2329).
-const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const SOCKS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a rejected connection is drained before it is closed, and the most
 /// bytes read while draining (see `DynamicForwarder::reject`).
-const SOCKS5_REJECT_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
-const SOCKS5_REJECT_DRAIN_LIMIT: usize = 64 * 1024;
+const SOCKS_REJECT_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+const SOCKS_REJECT_DRAIN_LIMIT: usize = 64 * 1024;
 
 const SOCKS5_VERSION: u8 = 0x05;
 const SOCKS5_NO_AUTH: u8 = 0x00;
@@ -176,7 +179,7 @@ impl DynamicForwarder {
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
                         let _permit = permit;
-                        Self::handle_socks5(stream, opener, &stats, SOCKS5_HANDSHAKE_TIMEOUT).await;
+                        Self::handle_socks(stream, opener, &stats, SOCKS_HANDSHAKE_TIMEOUT).await;
                         stats.decrement_active();
                     });
                 }
@@ -188,7 +191,7 @@ impl DynamicForwarder {
         }
     }
 
-    async fn handle_socks5<O: ChannelOpener>(
+    async fn handle_socks<O: ChannelOpener>(
         mut stream: tokio::net::TcpStream,
         opener: Arc<O>,
         stats: &ForwarderStats,
@@ -201,7 +204,7 @@ impl DynamicForwarder {
         // relay by the handshake timeout would kill every session (#2329).
         let mut channel_stream = match tokio::time::timeout(
             handshake_timeout,
-            Self::socks5_handshake(&mut stream, opener),
+            Self::socks_handshake(&mut stream, opener),
         )
         .await
         {
@@ -212,11 +215,11 @@ impl DynamicForwarder {
             // failure — each already sent its own reply).
             Ok(Ok(None)) => return,
             Ok(Err(e)) => {
-                tracing::debug!("SOCKS5 handshake error: {}", e);
+                tracing::debug!("SOCKS handshake error: {}", e);
                 return;
             }
             Err(_) => {
-                tracing::debug!("SOCKS5 handshake timed out");
+                tracing::debug!("SOCKS handshake timed out");
                 return;
             }
         };
@@ -229,8 +232,70 @@ impl DynamicForwarder {
         }
     }
 
-    /// Perform the SOCKS5 negotiation (greeting, method select, request parse,
-    /// channel open, success reply).
+    /// Read the protocol version byte and run the matching negotiation.
+    ///
+    /// SOCKS4/4a and SOCKS5 share the listener, as with OpenSSH's `ssh -D`; any
+    /// other first byte closes the connection without a reply. Both protocols
+    /// return the same shape as [`socks5_handshake`](Self::socks5_handshake).
+    async fn socks_handshake<O: ChannelOpener>(
+        stream: &mut tokio::net::TcpStream,
+        opener: Arc<O>,
+    ) -> std::io::Result<Option<O::Stream>> {
+        match stream.read_u8().await? {
+            SOCKS5_VERSION => Self::socks5_handshake(stream, opener).await,
+            SOCKS4_VERSION => Self::socks4_handshake(stream, opener).await,
+            _ => Ok(None),
+        }
+    }
+
+    /// Perform the SOCKS4/4a negotiation after the version byte: parse the
+    /// request, open the channel, and reply `0x5A`, or `0x5B` on any refusal or
+    /// failure (SOCKS4 has no finer codes, #4541).
+    async fn socks4_handshake<O: ChannelOpener>(
+        stream: &mut tokio::net::TcpStream,
+        opener: Arc<O>,
+    ) -> std::io::Result<Option<O::Stream>> {
+        let request = match socks4::read_request(stream).await? {
+            Ok(request) => request,
+            Err(rejection) => {
+                tracing::debug!("SOCKS4 request rejected: {:?}", rejection);
+                Self::reject(stream, &socks4::reply(SOCKS4_REP_REJECTED)).await?;
+                return Ok(None);
+            }
+        };
+        let channel_stream = match Self::open_channel(&*opener, request.host, request.port).await {
+            Ok(ch) => ch,
+            Err(_) => {
+                Self::reject(stream, &socks4::reply(SOCKS4_REP_REJECTED)).await?;
+                return Ok(None);
+            }
+        };
+        stream.write_all(&socks4::reply(SOCKS4_REP_GRANTED)).await?;
+        Ok(Some(channel_stream))
+    }
+
+    /// Open the `direct-tcpip` channel for a parsed target, logging a failure.
+    /// Shared by the SOCKS4 and SOCKS5 paths so both dial the same way.
+    async fn open_channel<O: ChannelOpener>(
+        opener: &O,
+        host: String,
+        port: u16,
+    ) -> std::io::Result<O::Stream> {
+        opener
+            .open_direct_tcpip(host.clone(), port)
+            .await
+            .inspect_err(|e| {
+                tracing::debug!(
+                    "SOCKS channel_open_direct_tcpip to {}:{} failed: {}",
+                    host,
+                    port,
+                    e
+                );
+            })
+    }
+
+    /// Perform the SOCKS5 negotiation after the version byte (method select,
+    /// request parse, channel open, success reply).
     ///
     /// Returns `Ok(Some(stream))` with the opened channel byte stream when the
     /// connection is negotiated and ready to relay (the success reply has already
@@ -242,14 +307,8 @@ impl DynamicForwarder {
         stream: &mut tokio::net::TcpStream,
         opener: Arc<O>,
     ) -> std::io::Result<Option<O::Stream>> {
-        // Greeting
-        let mut header = [0u8; 2];
-        stream.read_exact(&mut header).await?;
-        if header[0] != SOCKS5_VERSION {
-            return Ok(None);
-        }
-
-        let nmethods = header[1] as usize;
+        // Greeting (the version byte was consumed by `socks_handshake`).
+        let nmethods = stream.read_u8().await? as usize;
         let mut methods = vec![0u8; nmethods];
         stream.read_exact(&mut methods).await?;
 
@@ -304,15 +363,9 @@ impl DynamicForwarder {
         stream.read_exact(&mut port_buf).await?;
         let dest_port = u16::from_be_bytes(port_buf);
 
-        let channel_stream = match opener.open_direct_tcpip(dest_host.clone(), dest_port).await {
+        let channel_stream = match Self::open_channel(&*opener, dest_host, dest_port).await {
             Ok(ch) => ch,
             Err(e) => {
-                tracing::debug!(
-                    "SOCKS5 channel_open_direct_tcpip to {}:{} failed: {}",
-                    dest_host,
-                    dest_port,
-                    e
-                );
                 Self::reject(stream, &Self::reply(Self::reply_for_open_error(&e))).await?;
                 return Ok(None);
             }
@@ -356,8 +409,8 @@ impl DynamicForwarder {
 
         let mut buf = [0u8; 4096];
         let mut drained = 0usize;
-        let _ = tokio::time::timeout(SOCKS5_REJECT_DRAIN_TIMEOUT, async {
-            while drained < SOCKS5_REJECT_DRAIN_LIMIT {
+        let _ = tokio::time::timeout(SOCKS_REJECT_DRAIN_TIMEOUT, async {
+            while drained < SOCKS_REJECT_DRAIN_LIMIT {
                 match stream.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => drained += n,
@@ -394,6 +447,9 @@ impl Drop for DynamicForwarder {
         self.stop();
     }
 }
+
+#[cfg(test)]
+mod socks4_tests;
 
 #[cfg(test)]
 mod tests {
@@ -849,7 +905,7 @@ mod tests {
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept client");
-            DynamicForwarder::handle_socks5(
+            DynamicForwarder::handle_socks(
                 stream,
                 Arc::new(EchoChannelOpener::new()),
                 &stats_clone,
