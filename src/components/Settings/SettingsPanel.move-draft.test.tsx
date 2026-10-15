@@ -3,6 +3,9 @@
  * panel mounted for the moved tab shows the pending values, is dirty, and then
  * auto-saves them as the source window would have. A secret typed into the
  * settings never travels, and a saved one is never overwritten with `""`.
+ *
+ * When the destination already shows Settings, the moved values are merged into
+ * that tab instead of opening a second one (#4760).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -13,7 +16,10 @@ import { hydrateInDestination, moveTabs, seedSingleTab } from "@/test/formDraftM
 import { clearEditorBuffers } from "@/utils/editorBufferRegistry";
 import type { AppSettings } from "@/types/connection";
 import type { TerminalTab } from "@/types/terminal";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
+import { collectWindowTabs } from "@/store/layoutHelpers";
+import type { PanelNode } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 import { SettingsPanel } from "./SettingsPanel";
 
 vi.mock("@/themes", () => ({
@@ -46,6 +52,18 @@ vi.mock("./GeneralSettings", () => ({
       <button
         data-testid="type-api-token"
         onClick={() => onChange((prev) => ({ ...prev, apiToken: "typed-secret" }))}
+      />
+      <button
+        data-testid="edit-font-size-20"
+        onClick={() => onChange((prev) => ({ ...prev, fontSize: 20 }))}
+      />
+      <button
+        data-testid="disable-file-browser"
+        onClick={() => onChange((prev) => ({ ...prev, fileBrowserEnabled: false }))}
+      />
+      <button
+        data-testid="type-api-token-here"
+        onClick={() => onChange((prev) => ({ ...prev, apiToken: "typed-here" }))}
       />
     </div>
   ),
@@ -232,5 +250,197 @@ describe("SettingsPanel — Move tabs carries unsaved settings (#4758)", () => {
       { tabId: SOURCE_TAB.id, title: "Settings", movable: true },
     ]);
     expect(JSON.stringify(await moveTabs())).not.toContain("saved-secret");
+  });
+});
+
+const DESTINATION_TAB: TerminalTab = {
+  ...SOURCE_TAB,
+  id: "tab-dst",
+  panelId: "panel-dst",
+};
+
+/** A destination layout already showing its own Settings tab, beside a terminal. */
+function seedDestinationWithSettings(): void {
+  const terminal: TerminalTab = {
+    ...SOURCE_TAB,
+    id: "tab-term",
+    title: "Terminal",
+    contentType: "terminal",
+    panelId: "panel-dst",
+    isActive: true,
+  };
+  const rootPanel: PanelNode = {
+    type: "leaf",
+    id: "panel-dst",
+    tabs: [{ ...DESTINATION_TAB, isActive: false }, terminal],
+    activeTabId: terminal.id,
+  };
+  seedLayoutState({
+    rootPanel,
+    activePanelId: "panel-dst",
+    tabGroups: [{ id: "g1", name: "Main", rootPanel, activePanelId: "panel-dst" }],
+    activeTabGroupId: "g1",
+  });
+  useAppStore.setState({ editorDirtyTabs: {} });
+}
+
+describe("SettingsPanel — a moved unsaved panel merges into an open Settings tab (#4760)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    clearEditorBuffers();
+    useAppStore.setState(useAppStore.getInitialState());
+    seedSettings(SAVED);
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "get_app_info") return Promise.resolve({ version: "0.0.0", gitHash: "abc" });
+      return Promise.resolve(undefined);
+    });
+    seedSingleTab(SOURCE_TAB);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /** Edit Settings in the source window with `clicks` and move it out. */
+  async function moveDirtySettings(clicks: string[], sourceSaved = SAVED) {
+    seedSettings(sourceSaved);
+    await render(SOURCE_TAB.id);
+    for (const testId of clicks) await click(testId);
+    const record = await moveTabs();
+    act(() => root.unmount());
+    root = createRoot(container);
+    // Let the source's flush-on-unmount save land before the destination seeds.
+    await settle();
+    return record;
+  }
+
+  /** Open the destination's own Settings tab, edited with `clicks`. */
+  async function openDestinationSettings(saved: SettingsWithSecret, clicks: string[] = []) {
+    seedDestinationWithSettings();
+    seedSettings(saved);
+    await render(DESTINATION_TAB.id);
+    for (const testId of clicks) await click(testId);
+    mockedInvoke.mockClear();
+  }
+
+  async function hydrate(record: Awaited<ReturnType<typeof moveTabs>>) {
+    await act(async () => {
+      useAppStore.getState().hydrateHandoffTab(record);
+    });
+    await settle();
+  }
+
+  function settingsTabs(): TerminalTab[] {
+    return collectWindowTabs(useAppStore.getState()).filter((t) => t.contentType === "settings");
+  }
+
+  it("applies the moved values to a clean Settings tab, activates it and adds no tab", async () => {
+    const info = vi.spyOn(toast, "info");
+    const record = await moveDirtySettings(["edit-font-size"]);
+    await openDestinationSettings(SAVED);
+
+    await hydrate(record);
+
+    const tabs = settingsTabs();
+    expect(tabs.map((t) => t.id)).toEqual([DESTINATION_TAB.id]);
+    expect(tabs[0].isActive).toBe(true);
+    expect(useAppStore.getState().editorDirtyTabs[DESTINATION_TAB.id]).toBe(true);
+    expect(savedDocs()).toEqual([]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([expect.objectContaining({ fontSize: 18 })]);
+    expect(useAppStore.getState().editorDirtyTabs[DESTINATION_TAB.id]).toBe(false);
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("merges into a dirty Settings tab field by field when nothing conflicts", async () => {
+    const record = await moveDirtySettings(["edit-font-size"]);
+    await openDestinationSettings(SAVED, ["disable-file-browser"]);
+
+    await hydrate(record);
+    expect(settingsTabs()).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([
+      expect.objectContaining({ fontSize: 18, fileBrowserEnabled: false }),
+    ]);
+  });
+
+  it("keeps the destination's value for a field both changed and says so", async () => {
+    const info = vi.spyOn(toast, "info");
+    const record = await moveDirtySettings(["edit-font-size"]);
+    await openDestinationSettings(SAVED, ["edit-font-size-20"]);
+
+    await hydrate(record);
+    expect(settingsTabs()).toHaveLength(1);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0][0]).toContain("fontSize");
+
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([expect.objectContaining({ fontSize: 20 })]);
+  });
+
+  it("never copies a typed secret and keeps the destination's saved one", async () => {
+    const record = await moveDirtySettings(["type-api-token", "edit-font-size"], SAVED_WITH_SECRET);
+    expect(JSON.stringify(record)).not.toContain("typed-secret");
+    await openDestinationSettings(SAVED_WITH_SECRET);
+
+    await hydrate(record);
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([
+      expect.objectContaining({ fontSize: 18, apiToken: "saved-secret" }),
+    ]);
+  });
+
+  it("keeps a secret typed in the destination's Settings tab", async () => {
+    const info = vi.spyOn(toast, "info");
+    const record = await moveDirtySettings(["type-api-token", "edit-font-size"], SAVED_WITH_SECRET);
+    await openDestinationSettings(SAVED_WITH_SECRET, ["type-api-token-here"]);
+
+    await hydrate(record);
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([
+      expect.objectContaining({ fontSize: 18, apiToken: "typed-here" }),
+    ]);
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("holds the draft for a Settings tab that is not mounted yet", async () => {
+    const record = await moveDirtySettings(["edit-font-size"]);
+    seedDestinationWithSettings();
+    seedSettings(SAVED);
+
+    useAppStore.getState().hydrateHandoffTab(record);
+    expect(settingsTabs().map((t) => t.id)).toEqual([DESTINATION_TAB.id]);
+    expect(useAppStore.getState().editorDirtyTabs[DESTINATION_TAB.id]).toBe(true);
+
+    mockedInvoke.mockClear();
+    await render(DESTINATION_TAB.id);
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(savedDocs()).toEqual([expect.objectContaining({ fontSize: 18 })]);
   });
 });
