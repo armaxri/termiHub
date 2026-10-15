@@ -61,12 +61,18 @@ export function matchOnConnectWorkflows(connectionId: string, workflows: Workflo
 }
 
 /**
- * Session opens already dispatched, keyed by backend session id. Enforces the
- * "at most once per session open" guard so a session-open signal delivered more
- * than once (React strict-mode double-invoke, a re-registration) does not run
- * the on-connect workflows twice.
+ * Session opens already dispatched: backend session id → the tab the workflows
+ * ran against. Enforces the "at most once per session open" guard so a
+ * session-open signal delivered more than once (React strict-mode double-invoke,
+ * a re-registration, a persistent session re-attached after its transport
+ * recovered) does not run the on-connect workflows twice.
+ *
+ * A record lives until its session can no longer be re-bound in this window
+ * (#4784): the owning tab closes, moves to another window, binds a different
+ * session, or its session exits cleanly — see {@link releaseOnConnectSessions}.
+ * A drop does not release it, because a reconnect may re-attach the same id.
  */
-const dispatchedSessions = new Set<string>();
+const dispatchedSessions = new Map<string, string>();
 
 /** Arguments for {@link dispatchOnConnectTriggers}. */
 export interface OnConnectDispatch {
@@ -100,19 +106,46 @@ export function dispatchOnConnectTriggers({
   const matches = matchOnConnectWorkflows(connectionId, workflows);
   if (matches.length === 0) return;
 
-  dispatchedSessions.add(sessionId);
+  dispatchedSessions.set(sessionId, tabId);
   for (const workflow of matches) {
     run(workflow.id, tabId);
   }
 }
 
 /**
- * Forget a session's dispatch record (e.g. when its tab disconnects/closes).
- *
- * @internal No production caller yet (dispatch records are never pruned; see #4784).
+ * Forget a session's dispatch record, so a later open of that session id runs
+ * the on-connect workflows again. Called by {@link releaseOnConnectSessions} on
+ * session teardown.
  */
 export function forgetOnConnectSession(sessionId: string): void {
   dispatchedSessions.delete(sessionId);
+}
+
+/**
+ * Release the dispatch records owned by `tabId` (#4784). For each one,
+ * `rebindTo(sessionId)` names the tab that still shows that session in this
+ * window: the record moves to it and stays guarded. A `null` result means no tab
+ * can re-bind the session, so its record is forgotten.
+ */
+export function releaseOnConnectSessions(
+  tabId: string,
+  rebindTo: (sessionId: string) => string | null
+): void {
+  for (const [sessionId, owner] of [...dispatchedSessions]) {
+    if (owner !== tabId) continue;
+    const next = rebindTo(sessionId);
+    if (next) dispatchedSessions.set(sessionId, next);
+    else forgetOnConnectSession(sessionId);
+  }
+}
+
+/**
+ * Number of live on-connect dispatch records. Intended for tests.
+ *
+ * @internal Test-only hook; no production code calls it.
+ */
+export function onConnectDispatchRecordCount(): number {
+  return dispatchedSessions.size;
 }
 
 /**

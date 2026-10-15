@@ -1,6 +1,7 @@
 /**
  * Store glue for the session-driven workflow triggers (PROD-041, #3791):
- * `on-disconnect` and `on-output-match`.
+ * `on-disconnect` and `on-output-match`, plus the teardown of the on-connect
+ * once-per-session-open guard (#4784).
  *
  * The matching logic lives in the pure services
  * ({@link "@/services/workflowTriggers"} for on-disconnect,
@@ -20,6 +21,7 @@ import {
   armSessionEnd,
   dispatchOnDisconnectTriggers,
   isSessionEndHandled,
+  releaseOnConnectSessions,
   sessionEndCauseFromExit,
   type SessionEndCause,
 } from "@/services/workflowTriggers";
@@ -165,7 +167,33 @@ function notifyWorkflowSessionEnded(
   });
 }
 
-/** A terminal session exited with a classified reason (#1121). */
+/**
+ * Release the on-connect dispatch records `tabId` owns (#4784). A session still
+ * shown by another tab in this window stays guarded under that tab, as does
+ * `keepSessionId` (the session the tab itself now shows); every other record is
+ * forgotten. Tabs in `departing` are leaving together and cannot keep a record.
+ */
+function releaseTabOnConnectRecords(
+  store: WorkflowTriggerStore,
+  tabId: string,
+  { departing, keepSessionId }: { departing?: ReadonlySet<string>; keepSessionId?: string } = {}
+): void {
+  const others = collectLiveTabs(store.get()).filter(
+    (t) => t.id !== tabId && !departing?.has(t.id)
+  );
+  releaseOnConnectSessions(tabId, (sessionId) =>
+    sessionId === keepSessionId
+      ? tabId
+      : (others.find((t) => t.sessionId === sessionId)?.id ?? null)
+  );
+}
+
+/**
+ * A terminal session exited with a classified reason (#1121). A clean exit also
+ * ends the session for good, so its on-connect record is released; a drop or a
+ * kill keeps it, because a reconnect may re-attach the same session id (a
+ * persistent session whose transport recovered) and must not re-fire on-connect.
+ */
 export function notifyWorkflowSessionExited(
   store: WorkflowTriggerStore,
   tabId: string,
@@ -174,14 +202,23 @@ export function notifyWorkflowSessionExited(
   guarded("session-exit", () =>
     notifyWorkflowSessionEnded(store, tabId, sessionEndCauseFromExit(reason))
   );
+  if (reason === "clean") {
+    guarded("session-exit", () => releaseTabOnConnectRecords(store, tabId));
+  }
 }
 
 /**
  * A tab is about to close. When its session is still live, that is a user
  * close; a session that already ended was handled when it ended. Either way
- * the tab's end-of-session record is dropped with the tab.
+ * the tab's end-of-session record and its on-connect records are dropped with
+ * the tab. `closingTabIds` names every tab closing in the same batch (a tab
+ * group close), so none of them inherits another's on-connect record.
  */
-export function notifyWorkflowTabClosing(store: WorkflowTriggerStore, tabId: string): void {
+export function notifyWorkflowTabClosing(
+  store: WorkflowTriggerStore,
+  tabId: string,
+  closingTabIds?: ReadonlySet<string>
+): void {
   guarded("tab-close", () => {
     const tab = collectLiveTabs(store.get()).find((t) => t.id === tabId);
     const live =
@@ -189,11 +226,34 @@ export function notifyWorkflowTabClosing(store: WorkflowTriggerStore, tabId: str
     if (live) notifyWorkflowSessionEnded(store, tabId, "user-close");
     armSessionEnd(tabId);
   });
+  guarded("tab-close", () =>
+    releaseTabOnConnectRecords(store, tabId, { departing: closingTabIds })
+  );
 }
 
-/** A tab's (new) session connected: re-arm its on-disconnect guard. */
-export function notifyWorkflowSessionStarted(tabId: string): void {
-  guarded("session-start", () => armSessionEnd(tabId));
+/**
+ * A tab left this window without closing (moved to another window). No trigger
+ * fires — the session lives on elsewhere — but its on-connect records are
+ * dropped, since the tab id no longer exists here (#4784).
+ */
+export function notifyWorkflowTabDeparted(store: WorkflowTriggerStore, tabId: string): void {
+  guarded("tab-move", () => releaseTabOnConnectRecords(store, tabId));
+}
+
+/**
+ * A tab's (new) session connected: re-arm its on-disconnect guard, and release
+ * the on-connect records of any session it showed before (#4784). The record of
+ * `sessionId` itself is kept, so re-binding the same session does not re-fire.
+ */
+export function notifyWorkflowSessionStarted(
+  store: WorkflowTriggerStore,
+  tabId: string,
+  sessionId: string
+): void {
+  guarded("session-start", () => {
+    armSessionEnd(tabId);
+    releaseTabOnConnectRecords(store, tabId, { keepSessionId: sessionId });
+  });
 }
 
 // ── On-output-match ──────────────────────────────────────────────────────────
