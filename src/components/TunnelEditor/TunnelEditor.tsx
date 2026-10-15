@@ -573,6 +573,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           data-testid="tunnel-editor-ssh-connection-field"
         >
           <Select
+            id={`tunnel-ssh-${tabId}`}
             value={sshConnectionMissing ? undefined : form.sshConnectionId || undefined}
             onChange={(v) => setValue("sshConnectionId", v)}
             options={sshOptions}
@@ -588,6 +589,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
         <Field label="Tunnel host" htmlFor={`tunnel-host-${tabId}`}>
           <Select
+            id={`tunnel-host-${tabId}`}
             value={encodeHost(host)}
             onChange={(v) => setValue("host", decodeHost(v))}
             options={hostOptions}

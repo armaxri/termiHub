@@ -13,6 +13,7 @@ import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TunnelEditor } from "./TunnelEditor";
 import { checkA11y } from "@/test/axe";
+import { getByRole } from "@/test/accessibleRoles";
 import { pressRadioArrow } from "@/test/radioKeyboard";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
@@ -139,6 +140,17 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
     await flush();
     const saved = vi.mocked(saveTunnel).mock.calls[0][0];
     expect(saved.tunnelType.type).toBe("remote");
+  });
+
+  it("names every control and leaves no orphan <label> (UISF2-010, #4351)", async () => {
+    await render();
+    expect(getByRole("radiogroup", "Tunnel Type", container)).toBe(
+      q("tunnel-editor-type-selector")
+    );
+    const orphans = Array.from(container.querySelectorAll("label"))
+      .filter((label) => label.control === null)
+      .map((label) => label.outerHTML);
+    expect(orphans).toEqual([]);
   });
 
   it("has no a11y violations", async () => {
