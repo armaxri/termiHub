@@ -320,3 +320,25 @@ tests:
       - "The overflow menu action runs exactly like its toolbar button."
     verification: manual
     tags: [visual]
+
+  - id: MT-UI-55
+    release_gate: true
+    manual_reason: "real flex-wrap layout at the minimum window size; the wrap rules and header structure are pinned by ExternalFilesSettings.test.tsx"
+    name: "Settings section headers keep every button visible at the minimum window size"
+    pr: 4728
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Resize the window to its minimum size (800x600) with the sidebar at its default width (260px)."
+      - "Open Settings > External Files and look at the 'External Connection Files' header; click 'Create File'."
+      - "Open Settings > File Types (add one custom mapping), Custom Grammars and Shell Integration, and look at each section header."
+      - "Widen the window until the External Files header fits on one row."
+    expected:
+      - "At 800x600 the Reload, Create File and Add File buttons move below the title (wrapping onto a second row if needed); none is cut off at the window edge and each is clickable."
+      - "The title reads on as few lines as possible and is never squeezed next to the buttons."
+      - "The create-file prompt keeps the name field usable; Save and Cancel wrap below it rather than clipping."
+      - "Other section headers (Reset All, Import Grammar File, Add entry) also wrap below their title instead of clipping."
+      - "Once wide enough, title and buttons sit on one row again, buttons on the right."
+    verification: manual
+    tags: [visual]
