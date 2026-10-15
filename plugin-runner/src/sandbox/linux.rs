@@ -1090,16 +1090,21 @@ mod tests {
     #[test]
     fn file_watching_is_not_allowed() {
         let allowed: HashSet<_> = filters::allowed().into_iter().collect();
-        let mut watchers = vec![
+        // The legacy `inotify_init` only exists on x86_64; aarch64 has just
+        // the `*1` variant. A cfg-gated slice keeps the binding immutable on
+        // every arch (a cfg-gated `push` left `mut` unused on aarch64, #4788).
+        #[cfg(target_arch = "x86_64")]
+        let arch_specific: &[libc::c_long] = &[libc::SYS_inotify_init];
+        #[cfg(not(target_arch = "x86_64"))]
+        let arch_specific: &[libc::c_long] = &[];
+        let watchers = [
             libc::SYS_inotify_init1,
             libc::SYS_inotify_add_watch,
             libc::SYS_inotify_rm_watch,
             libc::SYS_fanotify_init,
             libc::SYS_fanotify_mark,
         ];
-        #[cfg(target_arch = "x86_64")]
-        watchers.push(libc::SYS_inotify_init);
-        for nr in watchers {
+        for &nr in watchers.iter().chain(arch_specific) {
             assert!(!allowed.contains(&nr), "syscall {nr} must answer ENOSYS");
         }
     }

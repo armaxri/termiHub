@@ -260,6 +260,41 @@ jobs:
             "
           '
 
+  # The runner's Linux sandbox code branches on target_arch (seccomp syscall
+  # tables differ, e.g. aarch64 has no legacy `inotify_init`), so a lint
+  # can fire only on aarch64 while the x86_64 workspace clippy stays green
+  # (#4788). Clippy needs just the target's std, not a cross linker, so this
+  # lints the runner for aarch64-unknown-linux-gnu on the x86_64 runner.
+  runner-clippy-aarch64:
+    name: Plugin runner clippy (aarch64-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: aarch64-unknown-linux-gnu
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Clippy the plugin runner for aarch64 Linux
+        run: >-
+          cargo clippy --locked -p termihub-plugin-runner --all-targets
+          --target aarch64-unknown-linux-gnu -- -D warnings
+
   merge:
     name: Merge into a multi-platform package
     needs: package-and-load
