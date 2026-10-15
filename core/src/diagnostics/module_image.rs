@@ -149,7 +149,8 @@ impl LoadedModule {
 pub const MAX_MODULE_NAME_BYTES: usize = 96;
 
 /// Every image currently loaded into this process, in the loader's order (the
-/// executable first on Linux and macOS). Empty on a platform this does not
+/// executable first on Linux and macOS; on macOS dyld itself, which its own
+/// image list omits, comes last). Empty on a platform this does not
 /// support. Each name is reduced to its file name by [`module_file_name`].
 pub fn loaded_modules() -> Vec<LoadedModule> {
     platform::loaded_modules()
@@ -396,12 +397,122 @@ mod platform {
         fn _dyld_get_image_name(image_index: u32) -> *const libc::c_char;
     }
 
+    // The Mach task API (`<mach/task.h>`, `<mach/mach_init.h>`, libSystem),
+    // declared here for the same reason. `mach_task_self()` is a C macro over
+    // the `mach_task_self_` global.
+    extern "C" {
+        static mach_task_self_: u32;
+        fn task_info(target_task: u32, flavor: u32, info: *mut i32, count: *mut u32) -> i32;
+    }
+
+    /// `TASK_DYLD_INFO` from `<mach/task_info.h>`.
+    const TASK_DYLD_INFO: u32 = 17;
+
+    /// `struct task_dyld_info` (`<mach/task_info.h>`, declared under
+    /// `#pragma pack(4)`).
+    #[repr(C, packed(4))]
+    struct TaskDyldInfo {
+        all_image_info_addr: u64,
+        all_image_info_size: u64,
+        all_image_info_format: i32,
+    }
+
+    /// `TASK_DYLD_INFO_COUNT`: the struct's size in `natural_t` units.
+    const TASK_DYLD_INFO_COUNT: u32 = (std::mem::size_of::<TaskDyldInfo>() / 4) as u32;
+
+    /// Offset of `dyldImageLoadAddress` in `struct dyld_all_image_infos`
+    /// (`<mach-o/dyld_images.h>`, 64-bit): `version` and `infoArrayCount`
+    /// (2 x u32), `infoArray` and `notification` (2 pointers), two `bool`s
+    /// padded to pointer alignment, then the header pointer: 32 on 64-bit.
+    /// Present since `version` 2.
+    const DYLD_IMAGE_LOAD_ADDRESS_OFFSET: usize = 8 + 3 * std::mem::size_of::<usize>();
+
+    /// The mapped Mach-O header of dyld itself (`/usr/lib/dyld`), which dyld's
+    /// image list (`_dyld_image_count`) leaves out (#4806). Read from the
+    /// task's `dyld_all_image_infos`, the structure debuggers use to find it.
+    fn dyld_header() -> Option<*const u8> {
+        let mut info = TaskDyldInfo {
+            all_image_info_addr: 0,
+            all_image_info_size: 0,
+            all_image_info_format: 0,
+        };
+        let mut count = TASK_DYLD_INFO_COUNT;
+        // SAFETY: `task_info` writes at most `count` natural_t words into
+        // `info`, which is exactly that large; `mach_task_self_` is the
+        // process's own task port, set by libSystem before any Rust code runs.
+        let kr = unsafe {
+            task_info(
+                mach_task_self_,
+                TASK_DYLD_INFO,
+                std::ptr::addr_of_mut!(info).cast::<i32>(),
+                &mut count,
+            )
+        };
+        let addr = usize::try_from(info.all_image_info_addr).ok()?;
+        let size = usize::try_from(info.all_image_info_size).ok()?;
+        if kr != 0
+            || addr == 0
+            || size < DYLD_IMAGE_LOAD_ADDRESS_OFFSET + std::mem::size_of::<usize>()
+        {
+            return None;
+        }
+        let infos = addr as *const u8;
+        // SAFETY: `addr` is dyld's own `dyld_all_image_infos`, mapped for the
+        // life of the process and at least `size` bytes long (checked above).
+        let version = unsafe { infos.cast::<u32>().read_unaligned() };
+        if version < 2 {
+            return None;
+        }
+        // SAFETY: as above; the field lies inside the checked size.
+        let header = unsafe {
+            infos
+                .add(DYLD_IMAGE_LOAD_ADDRESS_OFFSET)
+                .cast::<*const u8>()
+                .read_unaligned()
+        };
+        (!header.is_null()).then_some(header)
+    }
+
+    /// dyld itself as a module, named by `dladdr` on its header (falling back
+    /// to `dyld`).
+    fn dyld_module() -> Option<LoadedModule> {
+        let header = dyld_header()?;
+        // SAFETY: Dl_info is plain old data; all-zero is a valid value.
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        // SAFETY: dladdr only reads the loader's image list and writes `info`.
+        let found = unsafe { libc::dladdr(header.cast(), &mut info) } != 0;
+        let name = if found && !info.dli_fname.is_null() {
+            // SAFETY: dladdr hands out a NUL-terminated C string.
+            unsafe { std::ffi::CStr::from_ptr(info.dli_fname) }
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            "dyld".to_string()
+        };
+        Some(image_module(header, &name))
+    }
+
+    /// A module entry for the Mach-O image mapped at `header`.
+    fn image_module(header: *const u8, path: &str) -> LoadedModule {
+        // SAFETY: every caller passes a loaded image's mapped Mach-O header.
+        let image = unsafe { header_and_commands(header) };
+        LoadedModule {
+            name: module_file_name(path),
+            base: header as usize,
+            size: image
+                .and_then(macho_text_size)
+                .and_then(|s| usize::try_from(s).ok())
+                .unwrap_or(0),
+            build_id: image.and_then(macho_uuid).map(BuildId::MachoUuid),
+        }
+    }
+
     /// The header and load commands of the Mach-O image mapped at `header`,
     /// or `None` when they are absurdly large.
     ///
     /// # Safety
     /// `header` must be the mapped Mach-O header of a loaded image.
-    unsafe fn header_and_commands<'a>(header: *const u8) -> Option<&'a [u8]> {
+    pub(super) unsafe fn header_and_commands<'a>(header: *const u8) -> Option<&'a [u8]> {
         // SAFETY: the caller guarantees a mapped Mach-O header; its fixed-size
         // part is readable.
         let fixed = unsafe { std::slice::from_raw_parts(header, MACH_HEADER_64_SIZE) };
@@ -438,7 +549,8 @@ mod platform {
         // another thread between these calls yields a null header (skipped);
         // the same window exists for the backtrace capture itself.
         let count = unsafe { _dyld_image_count() };
-        let mut modules = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+        // One extra slot for dyld itself.
+        let mut modules = Vec::with_capacity(usize::try_from(count).unwrap_or(0) + 1);
         for index in 0..count {
             // SAFETY: `index < count`; dyld returns null for a vanished image.
             let header = unsafe { _dyld_get_image_header(index) }.cast::<u8>();
@@ -455,17 +567,15 @@ mod platform {
                     .to_string_lossy()
                     .into_owned()
             };
-            // SAFETY: a non-null header from dyld is a mapped Mach-O header.
-            let image = unsafe { header_and_commands(header) };
-            modules.push(LoadedModule {
-                name: module_file_name(&name),
-                base: header as usize,
-                size: image
-                    .and_then(macho_text_size)
-                    .and_then(|s| usize::try_from(s).ok())
-                    .unwrap_or(0),
-                build_id: image.and_then(macho_uuid).map(BuildId::MachoUuid),
-            });
+            // A non-null header from dyld is a mapped Mach-O header.
+            modules.push(image_module(header, &name));
+        }
+        // dyld is not in its own image list; add it unless a future dyld
+        // starts listing itself.
+        if let Some(dyld) = dyld_module() {
+            if !modules.iter().any(|m| m.base == dyld.base) {
+                modules.push(dyld);
+            }
         }
         modules
     }

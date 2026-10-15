@@ -343,3 +343,63 @@ fn the_live_module_list_contains_this_module() {
         );
     }
 }
+
+/// A dyld-resident function, found independently of the module list: the
+/// `notification` pointer of the task's `dyld_all_image_infos` (dyld's
+/// debugger hook, `lldb_image_notifier`, which lives in dyld's own `__TEXT`).
+#[cfg(target_vendor = "apple")]
+fn dyld_resident_function() -> usize {
+    extern "C" {
+        static mach_task_self_: u32;
+        fn task_info(target_task: u32, flavor: u32, info: *mut i32, count: *mut u32) -> i32;
+    }
+    // `struct task_dyld_info`: address (u64), size (u64), format (i32).
+    let mut info = [0i32; 5];
+    let mut count = 5u32;
+    // SAFETY: TASK_DYLD_INFO (17) writes at most `count` words into `info`.
+    let kr = unsafe { task_info(mach_task_self_, 17, info.as_mut_ptr(), &mut count) };
+    assert_eq!(kr, 0);
+    let addr = (u64::from(info[0] as u32) | (u64::from(info[1] as u32) << 32)) as usize;
+    assert_ne!(addr, 0);
+    // `notification` follows `version`, `infoArrayCount` and `infoArray`.
+    let offset = 8 + std::mem::size_of::<usize>();
+    // SAFETY: `addr` is dyld's mapped `dyld_all_image_infos`.
+    let notifier = unsafe {
+        (addr as *const u8)
+            .add(offset)
+            .cast::<usize>()
+            .read_unaligned()
+    };
+    assert_ne!(notifier, 0);
+    notifier
+}
+
+/// dyld is missing from its own image list, so `loaded_modules` adds it
+/// (#4806): exactly once, with the base `dladdr` reports for a dyld-resident
+/// function and that image's `LC_UUID`.
+#[cfg(target_vendor = "apple")]
+#[test]
+fn the_live_module_list_contains_dyld_on_macos() {
+    let function = dyld_resident_function();
+    // SAFETY: Dl_info is plain old data; all-zero is a valid value.
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    // SAFETY: dladdr only reads the loader's image list and writes `info`.
+    assert_ne!(
+        unsafe { libc::dladdr(function as *const libc::c_void, &mut info) },
+        0
+    );
+    let base = info.dli_fbase as usize;
+    // SAFETY: dli_fbase is the mapped Mach-O header of a loaded image.
+    let image = unsafe { super::platform::header_and_commands(base as *const u8) }
+        .expect("dyld's load commands are readable");
+    let uuid = macho_uuid(image).expect("dyld carries an LC_UUID");
+
+    let modules = loaded_modules();
+    let dyld: Vec<&LoadedModule> = modules.iter().filter(|m| m.name == "dyld").collect();
+    assert_eq!(dyld.len(), 1, "{modules:#?}");
+    assert_eq!(dyld[0].base, base, "{dyld:?}");
+    assert_eq!(dyld[0].build_id, Some(BuildId::MachoUuid(uuid)));
+    assert!(dyld[0].contains(function), "{dyld:?}");
+    let containing = modules.iter().filter(|m| m.contains(function)).count();
+    assert_eq!(containing, 1, "{modules:#?}");
+}
